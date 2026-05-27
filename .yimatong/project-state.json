@@ -1,0 +1,43 @@
+{
+  "project": "yimatong",
+  "version": "1.0",
+  "last_updated": "2026-05-28",
+  "current_phase": "alpha",
+  "current_wave": "A1",
+  "current_story": null,
+  "total_waves": 23,
+  "phases": [
+    {
+      "name": "alpha",
+      "status": "pending",
+      "waves": ["A1", "A2", "A3", "A4", "A5", "A6", "A7"]
+    },
+    {
+      "name": "beta",
+      "status": "pending",
+      "waves": ["B1", "B2", "B3", "B4", "B5"]
+    },
+    {
+      "name": "phase2",
+      "status": "pending",
+      "waves": ["W9", "W10", "W11", "W12", "W13", "W14", "W15", "W16"]
+    },
+    {
+      "name": "phase3",
+      "status": "pending",
+      "waves": ["W17", "W18", "W19", "W20", "W21", "W22", "W23"]
+    }
+  ],
+  "stats": {
+    "stories_total": 0,
+    "stories_passed": 0,
+    "stories_failed": 0
+  },
+  "golden_paths": {
+    "tenant_isolation": "pending",
+    "product_to_scan": "pending",
+    "first_scan_rescan": "pending",
+    "benefit_claim_idempotent": "pending",
+    "export_and_audit": "pending"
+  }
+}

@@ -1,0 +1,178 @@
+{
+  "wave": "A1",
+  "title": "工程底座",
+  "phase": "alpha",
+  "epic": "EPIC-01",
+  "status": "pending",
+  "stories": [
+    {
+      "id": "A1-001",
+      "title": "FastAPI 项目骨架与目录结构",
+      "acceptance": [
+        "项目包含 src/ 目录，内含 main.py 入口文件，应用可通过 uvicorn 启动",
+        "目录结构包含 routers/、services/、models/、schemas/、core/、tasks/ 子模块",
+        "配置管理使用 pydantic-settings，支持 .env 文件和环境变量覆盖",
+        "lint（ruff）和 format（ruff format）配置就绪，pre-commit hook 可用",
+        "README 包含本地开发启动说明"
+      ],
+      "tests": [
+        "tests/test_skeleton.py"
+      ],
+      "passes": false,
+      "attempt_count": 0
+    },
+    {
+      "id": "A1-002",
+      "title": "Alembic 迁移体系（async env.py 模板）",
+      "acceptance": [
+        "Alembic 配置使用 async 引擎，env.py 使用 run_async_migrations 模式",
+        "alembic.ini 指向正确的数据库 URL（从 settings 读取）",
+        "初始迁移文件可成功生成（alembic revision --autogenerate）",
+        "alembic upgrade head 可成功执行",
+        "alembic downgrade base 可成功回退"
+      ],
+      "tests": [
+        "tests/test_alembic_migration.py"
+      ],
+      "passes": false,
+      "attempt_count": 0
+    },
+    {
+      "id": "A1-003",
+      "title": "docker-compose.dev.yml 完整开发环境",
+      "acceptance": [
+        "docker-compose.dev.yml 包含 postgres、redis、minio、minio-init、backend、worker、migration、mock-sms、mock-wechat 共 9 个服务",
+        "postgres 服务健康检查就绪，默认数据库 yimatong_dev",
+        "redis 服务健康检查就绪，默认端口 6379",
+        "minio + minio-init 可自动创建所需 bucket",
+        "backend 服务依赖 postgres/redis/minio，启动后 healthcheck 正常",
+        "worker 服务使用 arq 并依赖 redis",
+        "migration 服务执行 alembic upgrade head 后自动退出"
+      ],
+      "tests": [
+        "tests/test_docker_compose.py"
+      ],
+      "passes": false,
+      "attempt_count": 0
+    },
+    {
+      "id": "A1-004",
+      "title": "多租户数据模型（Tenant、Organization、Account、Role、Permission）",
+      "acceptance": [
+        "Tenant 模型包含 id、name、slug、status、plan、quota 字段",
+        "Organization 模型关联 Tenant，支持组织层级",
+        "Account 模型包含 hashed_password，关联 Organization 和 Role",
+        "Role 和 Permission 模型支持多对多关系",
+        "所有模型包含 tenant_id 外键（除 Tenant 自身），并有索引约束",
+        "Alembic 迁移文件可正确生成对应表结构"
+      ],
+      "tests": [
+        "tests/test_models/test_tenant.py",
+        "tests/test_models/test_organization.py",
+        "tests/test_models/test_account.py",
+        "tests/test_models/test_role_permission.py"
+      ],
+      "passes": false,
+      "attempt_count": 0
+    },
+    {
+      "id": "A1-005",
+      "title": "PostgreSQL RLS 策略与事务级 tenant_id 设置",
+      "acceptance": [
+        "提供 set_tenant_context(conn, tenant_id) 函数，执行 SET LOCAL app.tenant_id",
+        "所有业务表启用 RLS 策略，WITH CHECK 和 USING 均基于 app.tenant_id",
+        "RLS 策略对 superuser 不生效（平台管理员路径）",
+        "迁移脚本包含 RLS ENABLE 和 POLICY 创建语句",
+        "单元测试验证不同 tenant_id 的数据完全隔离"
+      ],
+      "tests": [
+        "tests/test_rls.py"
+      ],
+      "passes": false,
+      "attempt_count": 0
+    },
+    {
+      "id": "A1-006",
+      "title": "JWT 双 token 认证体系",
+      "acceptance": [
+        "access_token 使用 HS256 签名，有效期 15 分钟，载荷包含 tenant_id、account_id、role",
+        "refresh_token 有效期 7 天，存储于 Redis（key: refresh:{account_id}:{jti}）",
+        "refresh_token 吊销机制：删除 Redis key 即可吊销",
+        "access_token 黑名单：吊销时 jti 加入 Redis Set 并设置 TTL",
+        "登录接口 POST /api/v1/auth/login 返回双 token",
+        "刷新接口 POST /api/v1/auth/refresh 使用 refresh_token 换取新 access_token"
+      ],
+      "tests": [
+        "tests/test_auth/test_jwt_token.py",
+        "tests/test_auth/test_login.py",
+        "tests/test_auth/test_refresh.py",
+        "tests/test_auth/test_revoke.py"
+      ],
+      "passes": false,
+      "attempt_count": 0
+    },
+    {
+      "id": "A1-007",
+      "title": "Tenant scope 中间件与 service 层强制过滤",
+      "acceptance": [
+        "中间件从 JWT 提取 tenant_id 注入 request.state.tenant_id",
+        "提供 TenantSession 上下文管理器，自动执行 SET LOCAL app.tenant_id",
+        "Service 层基类自动注入 tenant_id 过滤条件",
+        "未携带 tenant_id 的请求返回 401",
+        "中间件对 public 路由（如 /health、/c/{public_id}）跳过认证"
+      ],
+      "tests": [
+        "tests/test_middleware/test_tenant_scope.py",
+        "tests/test_services/test_tenant_filter.py"
+      ],
+      "passes": false,
+      "attempt_count": 0
+    },
+    {
+      "id": "A1-008",
+      "title": "最小 RBAC（admin / operator 角色）",
+      "acceptance": [
+        "系统预置 admin 和 operator 两个角色",
+        "admin 拥有全部权限，operator 拥有受限权限（排除租户管理、账号管理等）",
+        "提供 require_role() 依赖注入装饰器，用于路由级权限控制",
+        "无权限访问返回 403",
+        "角色和权限数据通过 seed 迁移脚本初始化"
+      ],
+      "tests": [
+        "tests/test_auth/test_rbac.py"
+      ],
+      "passes": false,
+      "attempt_count": 0
+    },
+    {
+      "id": "A1-009",
+      "title": "套餐额度字段与限制检查",
+      "acceptance": [
+        "Tenant 模型包含 quota 字段（JSON），存储码量、活动数、账号数等额度",
+        "提供 check_quota(tenant_id, resource_type, amount) 服务方法",
+        "超额时抛出 QuotaExceeded 异常，返回 429 状态码",
+        "额度检查集成到码生成、活动创建等关键操作路径"
+      ],
+      "tests": [
+        "tests/test_services/test_quota.py"
+      ],
+      "passes": false,
+      "attempt_count": 0
+    },
+    {
+      "id": "A1-010",
+      "title": "API healthcheck 与集成验证",
+      "acceptance": [
+        "GET /health 返回 {\"status\": \"ok\", \"version\": \"...\"}",
+        "GET /health/detail 返回 postgres、redis、minio 连接状态",
+        "docker-compose up 后所有服务健康检查通过",
+        "全量测试套件可在 CI 环境中通过（make test）"
+      ],
+      "tests": [
+        "tests/test_health.py"
+      ],
+      "passes": false,
+      "attempt_count": 0
+    }
+  ]
+}

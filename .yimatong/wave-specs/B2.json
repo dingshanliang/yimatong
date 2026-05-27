@@ -1,0 +1,158 @@
+{
+  "wave": "B2",
+  "title": "页面模板与发布",
+  "phase": "beta",
+  "epic": "EPIC-05",
+  "status": "pending",
+  "stories": [
+    {
+      "id": "B2-001",
+      "title": "config_json DSL JSON Schema 定义与校验",
+      "acceptance": [
+        "定义 config_json 的 JSON Schema，包含 dsl_version 字段（初始版本 \"1.0\"）",
+        "Schema 覆盖所有模块类型：产品卡、溯源信息、检测报告、优惠券、私域按钮、活动规则、留资表单",
+        "后端保存页面版本时自动校验 config_json 符合 Schema，不符合返回 422 和具体错误",
+        "前端编辑器加载时根据 Schema 动态生成表单字段",
+        "Schema 文件纳入版本控制，支持向后兼容扩展"
+      ],
+      "tests": [
+        "tests/backend/test_page_schema_validation.py",
+        "tests/frontend/playwright/b2-dsl-editor.spec.ts"
+      ],
+      "passes": false,
+      "attempt_count": 0
+    },
+    {
+      "id": "B2-002",
+      "title": "页面版本状态机实现（草稿/预览/发布/下线/回滚）",
+      "acceptance": [
+        "页面版本状态流转：draft -> preview -> published -> offline，支持 draft -> published 直接发布",
+        "发布操作将当前草稿版本状态改为 published，同时将上一个 published 版本改为 archived",
+        "同一模板同一时刻只有一个 published 版本",
+        "下线操作将 published 版本改为 offline，码解析服务返回「页面已下线」提示页",
+        "状态变更记录操作人、操作时间、变更原因（可选）"
+      ],
+      "tests": [
+        "tests/backend/test_page_version_state_machine.py"
+      ],
+      "passes": false,
+      "attempt_count": 0
+    },
+    {
+      "id": "B2-003",
+      "title": "页面回滚策略实现",
+      "acceptance": [
+        "回滚操作创建新版本号，config_json 内容复制自目标历史版本",
+        "回滚后新版本状态为 draft，需手动预览和发布",
+        "回滚操作不删除任何历史版本，完整保留版本链",
+        "后台提供版本历史列表，展示每个版本的版本号、状态、发布时间、操作人",
+        "点击历史版本可预览其配置内容"
+      ],
+      "tests": [
+        "tests/backend/test_page_rollback.py"
+      ],
+      "passes": false,
+      "attempt_count": 0
+    },
+    {
+      "id": "B2-004",
+      "title": "活动期页面切换（campaign_status 条件）",
+      "acceptance": [
+        "页面版本 config_json 支持 campaign_rules 字段，可配置基于 campaign_status 的模块显隐",
+        "码解析服务获取页面时，查询当前绑定的活动状态，动态选择匹配的模块配置",
+        "活动进行中展示活动模块（优惠券、留资表单），活动未开始或已结束隐藏活动模块",
+        "支持配置默认模块配置作为无活动时的兜底展示",
+        "活动状态变更后页面内容实时更新，无需重新发布页面版本"
+      ],
+      "tests": [
+        "tests/backend/test_campaign_page_switch.py"
+      ],
+      "passes": false,
+      "attempt_count": 0
+    },
+    {
+      "id": "B2-005",
+      "title": "行业模板：食品溯源页",
+      "acceptance": [
+        "预置食品行业模板，包含模块：产品卡、溯源时间线、检测报告、企业资质、底部活动区",
+        "模板 config_json 符合 JSON Schema 校验",
+        "模板可在后台「行业模板库」中一键复制创建为新页面",
+        "创建后自动生成 draft 状态的页面版本，可编辑、预览、发布",
+        "模板预设合理的默认值（模块顺序、颜色主题等），减少运营配置工作"
+      ],
+      "tests": [
+        "tests/backend/test_industry_template_food.py",
+        "tests/frontend/playwright/b2-template-food.spec.ts"
+      ],
+      "passes": false,
+      "attempt_count": 0
+    },
+    {
+      "id": "B2-006",
+      "title": "行业模板：农产品溯源页与礼盒页",
+      "acceptance": [
+        "预置农产品行业模板，强调产地信息、种植/采摘流程、质量认证",
+        "预置礼盒行业模板，强调品牌故事、礼盒内容物、节日活动推广",
+        "两个模板均可从模板库一键复制创建",
+        "模板 config_json 分别包含各自行业特色模块",
+        "后台模板库页面展示所有行业模板，显示模板名称、行业标签、预览缩略图"
+      ],
+      "tests": [
+        "tests/backend/test_industry_template_agri_gift.py",
+        "tests/frontend/playwright/b2-template-agri-gift.spec.ts"
+      ],
+      "passes": false,
+      "attempt_count": 0
+    },
+    {
+      "id": "B2-007",
+      "title": "后台页面编辑器（模块化配置）",
+      "acceptance": [
+        "页面编辑器左侧展示可用模块列表，右侧展示当前页面模块排列预览",
+        "支持拖拽排序调整模块顺序",
+        "每个模块可点击展开配置面板，根据 config_json Schema 动态渲染表单",
+        "支持模块显隐开关控制",
+        "编辑内容实时保存为草稿，不直接发布"
+      ],
+      "tests": [
+        "tests/frontend/playwright/b2-page-editor.spec.ts"
+      ],
+      "passes": false,
+      "attempt_count": 0
+    },
+    {
+      "id": "B2-008",
+      "title": "页面预览功能",
+      "acceptance": [
+        "点击「预览」按钮生成预览链接，可在新窗口打开查看 H5 效果",
+        "预览链接带有 token 参数，仅限内部预览使用，不对外公开",
+        "预览页面渲染结果与消费者实际扫码看到的内容一致",
+        "预览状态下页面版本标记为 preview，不影响当前 published 版本",
+        "预览链接有效期 24 小时，过期后需重新生成"
+      ],
+      "tests": [
+        "tests/frontend/playwright/b2-preview.spec.ts",
+        "tests/backend/test_page_preview.py"
+      ],
+      "passes": false,
+      "attempt_count": 0
+    },
+    {
+      "id": "B2-009",
+      "title": "页面发布与消费者 H5 渲染对接",
+      "acceptance": [
+        "发布操作调用 POST /api/v1/page-versions/{id}/publish，状态改为 published",
+        "码解析服务 /c/{public_id} 获取当前 published 版本的 config_json",
+        "消费者 H5 根据 config_json 渲染对应模块：产品卡、溯源信息、检测报告等",
+        "扫码看到的页面内容与后台发布时预览的内容一致",
+        "发布后后台列表中该版本显示「已发布」标签和发布时间"
+      ],
+      "tests": [
+        "tests/backend/test_page_publish.py",
+        "tests/frontend/playwright/b2-publish-and-scan.spec.ts"
+      ],
+      "passes": false,
+      "attempt_count": 0
+    }
+  ]
+}

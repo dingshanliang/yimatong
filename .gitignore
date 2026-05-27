@@ -4,3 +4,38 @@
 *.db
 .beads-credential-key
 .DS_Store
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+*.egg-info/
+dist/
+build/
+.ruff_cache/
+.mypy_cache/
+.pytest_cache/
+
+# Node
+node_modules/
+.next/
+.turbo/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Env
+.env
+.env.local
+.env.dev
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Minio data (local dev)
+minio-data/

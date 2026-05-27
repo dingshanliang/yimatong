@@ -1,0 +1,171 @@
+{
+  "wave": "B1",
+  "title": "极简 Admin Shell",
+  "phase": "beta",
+  "epic": "EPIC-08",
+  "status": "pending",
+  "stories": [
+    {
+      "id": "B1-001",
+      "title": "Next.js App Router 项目脚手架与 Ant Design 集成",
+      "acceptance": [
+        "Next.js App Router 项目初始化完成，TypeScript 配置正确",
+        "Ant Design 5.x 集成完成，主题令牌可配置（主色、字体等）",
+        "目录结构符合多模块管理后台规范：app/(auth)、app/(dashboard) 等路由分组",
+        "ESLint + Prettier 配置完成，代码风格统一",
+        "项目可通过 npm run dev 启动并显示默认首页"
+      ],
+      "tests": [
+        "tests/frontend/playwright/b1-scaffold.spec.ts"
+      ],
+      "passes": false,
+      "attempt_count": 0
+    },
+    {
+      "id": "B1-002",
+      "title": "JWT 登录页面与认证流程",
+      "acceptance": [
+        "登录页面包含用户名/密码输入框和登录按钮",
+        "登录成功后后端返回 JWT Bearer Token，前端存储于 httpOnly cookie 或 localStorage",
+        "未登录状态访问受保护页面自动重定向到登录页",
+        "Token 过期后自动跳转登录页并提示会话过期",
+        "登录接口调用 POST /api/v1/auth/login，返回 access_token 和 expires_in"
+      ],
+      "tests": [
+        "tests/frontend/playwright/b1-login.spec.ts",
+        "tests/backend/test_auth_login.py"
+      ],
+      "passes": false,
+      "attempt_count": 0
+    },
+    {
+      "id": "B1-003",
+      "title": "管理后台布局框架（侧边栏、顶栏、面包屑）",
+      "acceptance": [
+        "Ant Design ProLayout 集成完成，侧边栏支持多级菜单",
+        "顶栏显示当前租户名称、用户头像、退出登录按钮",
+        "面包屑导航根据当前路由自动生成",
+        "侧边栏菜单项：产品管理、码管理、扫码统计",
+        "布局响应式适配，移动端侧边栏可折叠"
+      ],
+      "tests": [
+        "tests/frontend/playwright/b1-layout.spec.ts"
+      ],
+      "passes": false,
+      "attempt_count": 0
+    },
+    {
+      "id": "B1-004",
+      "title": "认证中间件与 tenant scope 注入",
+      "acceptance": [
+        "后端中间件从 JWT 解析 tenant_id 并注入请求上下文",
+        "所有受保护 API 请求自动附带 tenant_id 条件查询，确保数据隔离",
+        "缺失或无效 Token 返回 401 Unauthorized",
+        "权限不足返回 403 Forbidden",
+        "tenant scope 中间件对全部业务路由生效，无需逐个手动添加"
+      ],
+      "tests": [
+        "tests/backend/test_auth_middleware.py",
+        "tests/backend/test_tenant_scope.py"
+      ],
+      "passes": false,
+      "attempt_count": 0
+    },
+    {
+      "id": "B1-005",
+      "title": "产品列表页面（CRUD 前端）",
+      "acceptance": [
+        "产品列表页面使用 Ant Design Table 组件，支持分页（默认每页 20 条）",
+        "列表展示：产品名称、品牌、品类、状态、创建时间",
+        "支持按产品名称搜索和按状态筛选",
+        "点击「新建产品」可打开表单弹窗，填写名称、品类、产地、描述等字段",
+        "创建成功后列表自动刷新，新记录排在第一位"
+      ],
+      "tests": [
+        "tests/frontend/playwright/b1-product-list.spec.ts"
+      ],
+      "passes": false,
+      "attempt_count": 0
+    },
+    {
+      "id": "B1-006",
+      "title": "产品 CRUD 后端 API",
+      "acceptance": [
+        "GET /api/v1/products 返回当前租户下的产品列表，支持分页和搜索参数",
+        "POST /api/v1/products 创建产品，自动填充 tenant_id",
+        "PUT /api/v1/products/{id} 更新产品，验证归属当前租户",
+        "DELETE /api/v1/products/{id} 软删除（状态改为 archived）",
+        "所有接口包含请求参数校验，返回标准错误格式"
+      ],
+      "tests": [
+        "tests/backend/test_product_api.py"
+      ],
+      "passes": false,
+      "attempt_count": 0
+    },
+    {
+      "id": "B1-007",
+      "title": "码批次列表页面",
+      "acceptance": [
+        "码批次列表使用 Table 组件，展示：批次号、码类型、数量、关联产品、状态、创建时间",
+        "支持按状态筛选（generated、exported、active 等）",
+        "点击批次可查看批次详情（基本信息 + 码数量统计）",
+        "列表数据调用 GET /api/v1/code-batches 接口",
+        "空状态有友好提示引导用户创建码批次"
+      ],
+      "tests": [
+        "tests/frontend/playwright/b1-code-batch-list.spec.ts"
+      ],
+      "passes": false,
+      "attempt_count": 0
+    },
+    {
+      "id": "B1-008",
+      "title": "扫码统计概览页面",
+      "acceptance": [
+        "统计概览页展示关键指标卡片：总扫码量、今日扫码、独立用户数、首扫率",
+        "使用 Ant Design Statistic 组件展示数值，支持与昨日对比",
+        "下方展示近 7 天扫码趋势折线图（Ant Design Charts）",
+        "数据调用 GET /api/v1/stats/overview 接口",
+        "数据为空时展示骨架屏，加载完成展示真实数据"
+      ],
+      "tests": [
+        "tests/frontend/playwright/b1-scan-stats.spec.ts"
+      ],
+      "passes": false,
+      "attempt_count": 0
+    },
+    {
+      "id": "B1-009",
+      "title": "扫码统计后端汇总 API",
+      "acceptance": [
+        "GET /api/v1/stats/overview 返回汇总统计（总扫码、今日扫码、独立用户、首扫率）",
+        "GET /api/v1/stats/scan-trend 返回近 N 天扫码趋势数据",
+        "所有统计数据按 tenant_id 隔离",
+        "汇总数据从预计算的汇总表读取，不实时聚合原始事件表",
+        "接口响应时间 < 500ms（租户数据量 < 10 万条场景）"
+      ],
+      "tests": [
+        "tests/backend/test_stats_api.py"
+      ],
+      "passes": false,
+      "attempt_count": 0
+    },
+    {
+      "id": "B1-010",
+      "title": "全局错误处理与 HTTP 请求封装",
+      "acceptance": [
+        "封装统一的 HTTP 请求工具（基于 fetch/axios），自动附加 Bearer Token",
+        "401 响应自动跳转登录页，403 显示权限不足提示",
+        "网络异常和服务端错误统一展示 Ant Design message 提示",
+        "请求 loading 状态统一管理，避免重复提交",
+        "接口返回格式统一：{ code, data, message }"
+      ],
+      "tests": [
+        "tests/frontend/playwright/b1-error-handling.spec.ts"
+      ],
+      "passes": false,
+      "attempt_count": 0
+    }
+  ]
+}

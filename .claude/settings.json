@@ -1,0 +1,25 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(uv *)",
+      "Bash(python *)",
+      "Bash(pytest *)",
+      "Bash(ruff *)",
+      "Bash(git *)",
+      "Bash(docker *)",
+      "Bash(docker-compose *)",
+      "Bash(pnpm *)",
+      "Bash(node *)",
+      "Bash(npm *)",
+      "Bash(mkdir *)",
+      "Bash(ls *)",
+      "Bash(cat .yimatong/*)",
+      "Bash(alembic *)",
+      "Bash(which *)",
+      "Bash(curl *)",
+      "Bash(grep *)",
+      "Bash(find *)",
+      "Bash(wc *)"
+    ]
+  }
+}
