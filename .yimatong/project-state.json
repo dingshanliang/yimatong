@@ -3,14 +3,15 @@
   "version": "1.0",
   "last_updated": "2026-05-28",
   "current_phase": "alpha",
-  "current_wave": "A1",
+  "current_wave": "A2",
   "current_story": null,
   "total_waves": 23,
   "phases": [
     {
       "name": "alpha",
-      "status": "pending",
-      "waves": ["A1", "A2", "A3", "A4", "A5", "A6", "A7"]
+      "status": "in_progress",
+      "waves": ["A1", "A2", "A3", "A4", "A5", "A6", "A7"],
+      "completed_waves": ["A1"]
     },
     {
       "name": "beta",
@@ -29,8 +30,8 @@
     }
   ],
   "stats": {
-    "stories_total": 0,
-    "stories_passed": 0,
+    "stories_total": 105,
+    "stories_passed": 10,
     "stories_failed": 0
   },
   "golden_paths": {

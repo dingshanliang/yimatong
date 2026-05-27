@@ -3,7 +3,7 @@
   "title": "工程底座",
   "phase": "alpha",
   "epic": "EPIC-01",
-  "status": "pending",
+  "status": "complete",
   "stories": [
     {
       "id": "A1-001",
@@ -134,8 +134,8 @@
       "tests": [
         "tests/test_auth/test_rbac.py"
       ],
-      "passes": false,
-      "attempt_count": 0
+      "passes": true,
+      "attempt_count": 1
     },
     {
       "id": "A1-009",
@@ -149,8 +149,8 @@
       "tests": [
         "tests/test_services/test_quota.py"
       ],
-      "passes": false,
-      "attempt_count": 0
+      "passes": true,
+      "attempt_count": 1
     },
     {
       "id": "A1-010",
@@ -164,8 +164,8 @@
       "tests": [
         "tests/test_health.py"
       ],
-      "passes": false,
-      "attempt_count": 0
+      "passes": true,
+      "attempt_count": 1
     }
   ]
 }
