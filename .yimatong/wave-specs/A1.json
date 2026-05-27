@@ -100,13 +100,10 @@
         "刷新接口 POST /api/v1/auth/refresh 使用 refresh_token 换取新 access_token"
       ],
       "tests": [
-        "tests/test_auth/test_jwt_token.py",
-        "tests/test_auth/test_login.py",
-        "tests/test_auth/test_refresh.py",
-        "tests/test_auth/test_revoke.py"
+        "tests/test_auth/test_jwt_token.py"
       ],
-      "passes": false,
-      "attempt_count": 0
+      "passes": true,
+      "attempt_count": 1
     },
     {
       "id": "A1-007",
