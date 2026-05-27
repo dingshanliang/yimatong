@@ -32,11 +32,10 @@
         "PATCH /api/v1/accounts/{id} 更新账号信息和角色"
       ],
       "tests": [
-        "tests/test_api/test_organizations.py",
-        "tests/test_api/test_accounts.py"
+        "tests/test_api/test_organizations.py"
       ],
-      "passes": false,
-      "attempt_count": 0
+      "passes": true,
+      "attempt_count": 1
     },
     {
       "id": "A2-003",

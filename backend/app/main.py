@@ -1,9 +1,11 @@
 from fastapi import FastAPI
 
+from app.api.v1.organizations import router as orgs_router
 from app.api.v1.tenants import router as tenants_router
 
 app = FastAPI(title="一码通", version="0.1.0")
 app.include_router(tenants_router)
+app.include_router(orgs_router)
 
 
 @app.get("/health")
