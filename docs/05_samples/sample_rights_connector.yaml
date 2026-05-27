@@ -1,0 +1,31 @@
+connectors:
+  - id: benefit_ext_link_001
+    type: external_link
+    platform: douyin_shop
+    title: 抖店扫码专享券
+    claim_url: https://example.com/douyin-coupon
+    attribution:
+      append_params:
+        ymt_code_id: "{{code.public_id}}"
+        ymt_campaign_id: "{{campaign.id}}"
+        ymt_channel_id: "{{channel.id}}"
+
+  - id: benefit_code_pool_001
+    type: coupon_code_pool
+    platform: custom
+    title: 私域专属券码
+    delivery_mode: one_consumer_one_code
+    auth_required: mobile
+    codes:
+      import_file_id: file_coupon_codes_001
+
+  - id: benefit_api_wechatpay_001
+    type: api_coupon
+    platform: wechat_pay
+    title: 微信支付商家券
+    auth_account_id: mch_001
+    coupon_stock_id: stock_001
+    send_rule:
+      per_consumer_limit: 1
+      per_code_limit: 1
+      idempotency_key: "{{consumer.id}}:{{benefit.id}}"

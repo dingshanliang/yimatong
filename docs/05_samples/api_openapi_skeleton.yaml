@@ -1,0 +1,85 @@
+openapi: 3.0.3
+info:
+  title: Yimatong API
+  version: 0.1.0
+servers:
+  - url: https://api.yimatong.example.com/api/v1
+security:
+  - bearerAuth: []
+paths:
+  /products:
+    get:
+      summary: List products
+      responses:
+        '200':
+          description: OK
+    post:
+      summary: Create product
+      responses:
+        '201':
+          description: Created
+  /code-batches:
+    post:
+      summary: Create code batch
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateCodeBatchRequest'
+      responses:
+        '201':
+          description: Created
+  /public/resolve/{public_id}:
+    get:
+      security: []
+      summary: Resolve public code
+      parameters:
+        - name: public_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Resolved
+        '404':
+          description: Not found
+  /public/benefits/{benefit_id}/claim:
+    post:
+      security: []
+      summary: Claim benefit
+      parameters:
+        - name: benefit_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Claimed
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  schemas:
+    CreateCodeBatchRequest:
+      type: object
+      required: [code_type, quantity, product_id]
+      properties:
+        code_type:
+          type: string
+          enum: [batch_code, item_code, outer_inner_pair, box_code]
+        quantity:
+          type: integer
+          minimum: 1
+        product_id:
+          type: string
+        sku_id:
+          type: string
+        production_batch_id:
+          type: string
+        campaign_id:
+          type: string

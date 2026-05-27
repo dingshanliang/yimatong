@@ -1,0 +1,73 @@
+page:
+  page_id: page_001
+  version: 3
+  status: draft
+  locale: zh-CN
+  brand_theme:
+    logo_asset_id: asset_logo_001
+    primary_color: "#1F7A4D"
+    hide_yimatong_brand: true
+  routing:
+    default_page: true
+    campaign_periods:
+      - campaign_id: cam_spring_2026
+        start_at: "2026-06-01T00:00:00+08:00"
+        end_at: "2026-06-30T23:59:59+08:00"
+        mode: campaign
+      - mode: evergreen
+  modules:
+    - id: hero
+      type: product_hero
+      enabled: true
+      config:
+        show_verify_badge: true
+        title_template: "{{product.name}}"
+        subtitle_template: "{{sku.spec}} · {{batch.batch_no}}"
+    - id: verify
+      type: verification_status
+      enabled: true
+      config:
+        first_scan_text: "该产品码为首次扫码验证，产品信息匹配。"
+        repeat_scan_text: "该码已被多次扫码，请核对购买渠道。"
+        invalid_text: "未查询到该产品码，请谨慎购买。"
+    - id: trace
+      type: light_traceability
+      enabled: true
+      config:
+        fields:
+          - origin
+          - production_date
+          - expiry_date
+          - batch_no
+    - id: reports
+      type: test_reports
+      enabled: true
+      config:
+        report_ids:
+          - report_001
+    - id: coupon
+      type: benefit_card
+      enabled: true
+      config:
+        benefit_id: ben_10yuan_coupon
+        require_auth: mobile_or_wechat
+    - id: private_domain
+      type: cta_group
+      enabled: true
+      config:
+        buttons:
+          - label: "加企业微信领产地直供价"
+            action: wecom_link
+            config_id: wecom_001
+          - label: "进入品牌小程序购买"
+            action: mini_program
+            config_id: mp_001
+          - label: "去抖店购买"
+            action: external_shop
+            config_id: shop_douyin_001
+    - id: legal
+      type: legal_terms
+      enabled: true
+      config:
+        show_privacy_policy: true
+        show_campaign_rules: true

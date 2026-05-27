@@ -1,0 +1,25 @@
+tenant:
+  id: ten_demo_food_brand
+  name: 示例农产品品牌
+  type: brand
+  plan: standard
+  quotas:
+    code_count: 100000
+    scan_count_monthly: 500000
+    products: 100
+    campaigns_active: 20
+  domains:
+    platform_subdomain: demo.yimatong.cn
+    custom_domain: scan.demo-brand.cn
+  white_label:
+    h5_hide_yimatong_brand: true
+    admin_hide_yimatong_brand: false
+  enabled_modules:
+    - code_management
+    - h5_page_engine
+    - light_traceability
+    - campaign_center
+    - benefit_center
+    - private_domain
+    - business_dashboard
+    - risk_dashboard

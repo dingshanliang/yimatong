@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "YimatongEvent",
+  "type": "object",
+  "required": ["event_id", "event_name", "tenant_id", "occurred_at"],
+  "properties": {
+    "event_id": {"type": "string"},
+    "event_name": {"type": "string"},
+    "tenant_id": {"type": "string"},
+    "occurred_at": {"type": "string", "format": "date-time"},
+    "code_public_id": {"type": "string"},
+    "consumer_id": {"type": "string"},
+    "anonymous_id": {"type": "string"},
+    "campaign_id": {"type": "string"},
+    "page_version_id": {"type": "string"},
+    "scan_app": {"type": "string"},
+    "geo": {
+      "type": "object",
+      "properties": {
+        "province": {"type": "string"},
+        "city": {"type": "string"}
+      }
+    },
+    "properties": {"type": "object"}
+  }
+}
