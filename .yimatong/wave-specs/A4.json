@@ -1,0 +1,128 @@
+{
+  "wave": "A4",
+  "title": "码生成与状态",
+  "phase": "alpha",
+  "epic": "EPIC-03",
+  "status": "pending",
+  "stories": [
+    {
+      "id": "A4-001",
+      "title": "CodeBatch 与 CodeItem 数据模型",
+      "acceptance": [
+        "CodeBatch 模型包含 id、tenant_id、product_id、sku_id、batch_code、quantity、status、created_by 字段",
+        "CodeItem 模型包含 id、tenant_id、code_batch_id、public_id、status、activated_at、bound_at、revoked_at 字段",
+        "CodeItem.public_id 有唯一索引",
+        "CodeItem.status 枚举：created、activated、bound、expired、revoked",
+        "两张表均有 tenant_id 索引和 code_batch_id 索引"
+      ],
+      "tests": [
+        "tests/test_models/test_code_batch.py",
+        "tests/test_models/test_code_item.py"
+      ],
+      "passes": false,
+      "attempt_count": 0
+    },
+    {
+      "id": "A4-002",
+      "title": "public_id 生成算法（CSPRNG + Base62 + Luhn 校验位）",
+      "acceptance": [
+        "使用 secrets 模块生成随机数（CSPRNG），不使用 random 模块",
+        "public_id 格式：10 位 Base62 + 1 位 Luhn 校验位 = 11 位",
+        "Base62 字符集：0-9A-Za-z，排除易混淆字符（0/O、1/l/I）",
+        "碰撞检测：生成后查询数据库，碰撞时重试最多 3 次",
+        "生成 10000 个 public_id 无碰撞，且分布均匀",
+        "Luhn 校验位可正确验证 public_id 的完整性"
+      ],
+      "tests": [
+        "tests/test_services/test_public_id.py",
+        "tests/test_services/test_luhn.py"
+      ],
+      "passes": false,
+      "attempt_count": 0
+    },
+    {
+      "id": "A4-003",
+      "title": "码批次创建 API",
+      "acceptance": [
+        "POST /api/v1/code-batches 创建码批次，需关联产品/SKU和批次",
+        "创建时指定数量 quantity，系统批量生成对应数量的 CodeItem",
+        "批量生成使用数据库批量插入（executemany 或 COPY），避免逐条 INSERT",
+        "创建前检查额度：quantity 不超过租户剩余码额度",
+        "创建后返回批次信息和实际生成数量"
+      ],
+      "tests": [
+        "tests/test_api/test_code_batches.py"
+      ],
+      "passes": false,
+      "attempt_count": 0
+    },
+    {
+      "id": "A4-004",
+      "title": "码状态机（created -> activated -> bound -> expired/revoked）",
+      "acceptance": [
+        "实现 CodeItemStateMachine，定义合法状态转换：created->activated->bound、activated->revoked、bound->expired、任意状态->revoked",
+        "非法状态转换抛出 InvalidStateTransition 异常，返回 409",
+        "POST /api/v1/code-batches/{id}/activate 批量激活码（created -> activated）",
+        "POST /api/v1/code-items/{id}/revoke 单个码作废",
+        "POST /api/v1/code-batches/{id}/revoke 批量作废码（仅 activated 状态）",
+        "状态变更记录 updated_at 时间戳"
+      ],
+      "tests": [
+        "tests/test_services/test_code_state_machine.py",
+        "tests/test_api/test_code_state_transitions.py"
+      ],
+      "passes": false,
+      "attempt_count": 0
+    },
+    {
+      "id": "A4-005",
+      "title": "码包导出 CSV（异步任务 arq）",
+      "acceptance": [
+        "POST /api/v1/code-batches/{id}/export 触发异步导出任务，返回 task_id",
+        "导出文件为 CSV，包含 public_id、status、created_at 列",
+        "异步任务使用 arq worker 执行，任务状态存储于 Redis",
+        "GET /api/v1/tasks/{task_id} 查询任务状态和下载链接",
+        "导出完成后文件上传至对象存储，返回临时下载 URL",
+        "导出行为记录 export_log（含 operator_id、resource_type、timestamp）"
+      ],
+      "tests": [
+        "tests/test_api/test_code_export.py",
+        "tests/test_tasks/test_export_task.py"
+      ],
+      "passes": false,
+      "attempt_count": 0
+    },
+    {
+      "id": "A4-006",
+      "title": "码查询与列表 API",
+      "acceptance": [
+        "GET /api/v1/code-batches 分页列表，支持按产品、状态过滤",
+        "GET /api/v1/code-batches/{id} 返回批次详情（含码数量统计）",
+        "GET /api/v1/code-items 分页列表，支持按批次、状态过滤",
+        "GET /api/v1/code-items/{id} 返回码详情",
+        "统计 API 返回各状态的码数量汇总"
+      ],
+      "tests": [
+        "tests/test_api/test_code_list.py"
+      ],
+      "passes": false,
+      "attempt_count": 0
+    },
+    {
+      "id": "A4-007",
+      "title": "Resolver Stub（GET /api/v1/code-items/{public_id}）",
+      "acceptance": [
+        "GET /api/v1/code-items/{public_id} 返回码基本信息（public_id、status、关联产品）",
+        "public_id 不存在返回 404",
+        "码为 revoked 状态返回 410（Gone）",
+        "此为管理端接口，需要 JWT 认证",
+        "为 A6 的公开解析路由预留扩展点（公开解析使用 /c/{public_id}）"
+      ],
+      "tests": [
+        "tests/test_api/test_code_resolve_admin.py"
+      ],
+      "passes": false,
+      "attempt_count": 0
+    }
+  ]
+}

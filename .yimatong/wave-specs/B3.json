@@ -1,0 +1,205 @@
+{
+  "wave": "B3",
+  "title": "活动与权益",
+  "phase": "beta",
+  "epic": "EPIC-06",
+  "status": "pending",
+  "stories": [
+    {
+      "id": "B3-001",
+      "title": "活动 CRUD API",
+      "acceptance": [
+        "POST /api/v1/campaigns 创建活动，必填字段：name、campaign_type、start_at、end_at",
+        "GET /api/v1/campaigns 返回当前租户活动列表，支持按 status 和 campaign_type 筛选",
+        "PUT /api/v1/campaigns/{id} 更新活动信息，draft 状态可修改，active 状态仅可修改 end_at",
+        "DELETE /api/v1/campaigns/{id} 仅 draft 状态可删除",
+        "活动状态变更（draft -> active -> paused -> ended）通过独立的状态变更接口"
+      ],
+      "tests": [
+        "tests/backend/test_campaign_crud.py"
+      ],
+      "passes": false,
+      "attempt_count": 0
+    },
+    {
+      "id": "B3-002",
+      "title": "权益 CRUD（4 种类型：平台券、外部链接、私域权益、表单权益）",
+      "acceptance": [
+        "POST /api/v1/campaigns/{id}/benefits 创建权益，benefit_type 枚举：platform_coupon、external_link、private_domain、form_benefit",
+        "每种类型有独立的 config_json 结构：平台券含面额/使用条件；外部链接含 URL/跳转方式；私域含企微/公众号参数；表单含字段定义",
+        "权益包含 stock_total（总库存）和 stock_used（已发放），创建时 stock_used = 0",
+        "GET /api/v1/campaigns/{id}/benefits 返回该活动下所有权益列表",
+        "库存不足时 stock_used >= stock_total，领取接口返回「权益已抢光」"
+      ],
+      "tests": [
+        "tests/backend/test_benefit_crud.py"
+      ],
+      "passes": false,
+      "attempt_count": 0
+    },
+    {
+      "id": "B3-003",
+      "title": "权益领取接口与双层幂等控制",
+      "acceptance": [
+        "POST /api/v1/benefits/{id}/claim 领取权益，请求须携带 Idempotency-Key 头",
+        "第一层幂等：Redis SETNX 缓存 Idempotency-Key，TTL 24 小时，重复请求直接返回上次结果",
+        "第二层幂等：数据库 benefit_claims 表的 (benefit_id, consumer_id, idempotency_key) 唯一约束",
+        "幂等返回时 HTTP 状态码为 200（非 201），响应体包含 original_response 标记",
+        "并发领取场景下库存不超发（Redis DECR 原子扣减 + 数据库事务二次校验）"
+      ],
+      "tests": [
+        "tests/backend/test_benefit_claim_idempotent.py",
+        "tests/backend/test_benefit_claim_concurrency.py"
+      ],
+      "passes": false,
+      "attempt_count": 0
+    },
+    {
+      "id": "B3-004",
+      "title": "基础风控：IP 限流",
+      "acceptance": [
+        "领取接口按 IP 维度限流，默认每 IP 每分钟最多 10 次请求",
+        "限流规则从租户配置的 risk_rules_json 中读取，支持自定义阈值",
+        "超限返回 429 Too Many Requests，响应体包含 retry_after 秒数",
+        "限流计数使用 Redis滑动窗口实现",
+        "后台可查看 IP 限流日志（IP、触发时间、请求路径）"
+      ],
+      "tests": [
+        "tests/backend/test_risk_ip_rate_limit.py"
+      ],
+      "passes": false,
+      "attempt_count": 0
+    },
+    {
+      "id": "B3-005",
+      "title": "基础风控：设备频率限制（anonymous_id 维度）",
+      "acceptance": [
+        "领取接口按 anonymous_id 维度限流，默认每设备每活动每天最多领取 3 次",
+        "anonymous_id 由前端 SDK 生成并上报，存储于 cookie/localStorage",
+        "限流计数使用 Redis，key 格式：risk:device:{anonymous_id}:campaign:{campaign_id}:{date}",
+        "超限返回 429，提示「今日领取次数已达上限」",
+        "后台可配置每活动的 anonymous_id 维度领取上限"
+      ],
+      "tests": [
+        "tests/backend/test_risk_device_limit.py"
+      ],
+      "passes": false,
+      "attempt_count": 0
+    },
+    {
+      "id": "B3-006",
+      "title": "基础风控：每人每活动领取上限",
+      "acceptance": [
+        "同一消费者（通过 mobile_hash 或 anonymous_id 识别）在单个活动中累计领取不超过配置上限",
+        "领取前查询 benefit_claims 表统计该消费者在本活动的已领取次数",
+        "达到上限后领取接口返回 403，提示「您已达到本次活动领取上限」",
+        "后台权益配置中可设置 per_person_limit 字段，默认为 1",
+        "领取记录在后台可按消费者、活动、权益维度查询"
+      ],
+      "tests": [
+        "tests/backend/test_risk_per_person_limit.py"
+      ],
+      "passes": false,
+      "attempt_count": 0
+    },
+    {
+      "id": "B3-007",
+      "title": "留资表单提交与存储",
+      "acceptance": [
+        "POST /api/v1/campaigns/{id}/lead 提交留资表单，支持字段：姓名、手机号、地址（可配置）",
+        "手机号存储为 mobile_hash（哈希索引），原始手机号加密存储，查询时脱敏展示",
+        "表单字段配置从权益的 config_json 中读取，支持必填/选填控制",
+        "同一手机号同一活动限提交一次（幂等控制）",
+        "提交成功后触发 lead_submitted 事件写入事件表"
+      ],
+      "tests": [
+        "tests/backend/test_lead_submission.py"
+      ],
+      "passes": false,
+      "attempt_count": 0
+    },
+    {
+      "id": "B3-008",
+      "title": "私域跳转记录",
+      "acceptance": [
+        "POST /api/v1/benefits/{id}/redirect 记录私域跳转行为（企微、公众号、小程序、店铺）",
+        "跳转记录写入 benefit_claims 表，claim_type 为 redirect",
+        "记录包含：跳转目标 URL、跳转来源页面、anonymous_id、时间戳",
+        "同一消费者同一私域入口 24 小时内不重复计数",
+        "跳转记录在后台「私域数据」列表可查看"
+      ],
+      "tests": [
+        "tests/backend/test_private_domain_redirect.py"
+      ],
+      "passes": false,
+      "attempt_count": 0
+    },
+    {
+      "id": "B3-009",
+      "title": "活动法律声明（rules_json 必填字段）",
+      "acceptance": [
+        "活动创建时 rules_json 为必填字段，包含以下子字段：participation_conditions（参与条件）、claim_limits（领取限制）、validity_period（有效期）、disclaimer（免责说明）、minor_notice（未成年人提示）、customer_service_contact（客服联系方式）",
+        "缺失任一子字段时创建接口返回 422 并提示具体缺失项",
+        "H5 页面底部展示活动规则区域，从 rules_json 渲染",
+        "活动规则支持富文本格式（至少支持换行和加粗）",
+        "后台编辑活动时提供 rules_json 可视化编辑表单，非直接编辑 JSON"
+      ],
+      "tests": [
+        "tests/backend/test_campaign_rules_validation.py",
+        "tests/frontend/playwright/b3-campaign-rules.spec.ts"
+      ],
+      "passes": false,
+      "attempt_count": 0
+    },
+    {
+      "id": "B3-010",
+      "title": "隐私政策页与授权管理",
+      "acceptance": [
+        "隐私政策页面 URL：/privacy，内容从后台配置读取，支持按租户自定义",
+        "消费者首次访问 H5 页面时弹出隐私授权弹窗，需同意后才可继续操作",
+        "授权记录写入 consent_records 表，记录授权类型、时间、IP、UA",
+        "消费者可在 H5 页面中撤回授权，撤回后记录 consent_status 改为 withdrawn",
+        "授权和撤回操作触发 consent_granted / consent_withdrawn 事件"
+      ],
+      "tests": [
+        "tests/backend/test_consent_management.py",
+        "tests/frontend/playwright/b3-privacy-consent.spec.ts"
+      ],
+      "passes": false,
+      "attempt_count": 0
+    },
+    {
+      "id": "B3-011",
+      "title": "后台权益领取记录查询页面",
+      "acceptance": [
+        "后台「活动中心」->「领取记录」列表展示：消费者匿名 ID、权益名称、领取时间、领取状态",
+        "支持按活动、权益类型、时间范围筛选",
+        "手机号字段脱敏展示（如 138****1234）",
+        "列表支持分页，默认每页 20 条",
+        "新产生的领取记录在列表顶部展示"
+      ],
+      "tests": [
+        "tests/frontend/playwright/b3-claim-records.spec.ts"
+      ],
+      "passes": false,
+      "attempt_count": 0
+    },
+    {
+      "id": "B3-012",
+      "title": "扫码领取端到端流程验证",
+      "acceptance": [
+        "扫码 -> H5 页面加载 -> 展示活动模块 -> 点击领券 -> 风控校验通过 -> 领取成功，完整流程可走通",
+        "扫码 -> 填写留资表单 -> 提交成功 -> 后台可查看记录",
+        "扫码 -> 点击私域入口 -> 跳转记录写入 -> 后台可查看",
+        "风控拦截场景：IP 限流 / 设备频率限制 / 领取上限，被拦截时用户看到友好提示",
+        "后台创建的活动数据、权益配置在 H5 端正确展示"
+      ],
+      "tests": [
+        "tests/frontend/playwright/b3-e2e-claim-flow.spec.ts",
+        "tests/backend/test_e2e_campaign_flow.py"
+      ],
+      "passes": false,
+      "attempt_count": 0
+    }
+  ]
+}

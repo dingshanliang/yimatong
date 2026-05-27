@@ -1,0 +1,124 @@
+{
+  "wave": "A3",
+  "title": "产品资料最小集",
+  "phase": "alpha",
+  "epic": "EPIC-02",
+  "status": "pending",
+  "stories": [
+    {
+      "id": "A3-001",
+      "title": "Brand 数据模型与 CRUD API",
+      "acceptance": [
+        "Brand 模型包含 id、tenant_id、name、logo_url、description、status 字段",
+        "POST /api/v1/brands 创建品牌，自动关联当前租户",
+        "GET /api/v1/brands 分页列表，支持按名称搜索",
+        "PATCH /api/v1/brands/{id} 更新品牌信息",
+        "name 字段在同一租户内唯一"
+      ],
+      "tests": [
+        "tests/test_api/test_brands.py"
+      ],
+      "passes": false,
+      "attempt_count": 0
+    },
+    {
+      "id": "A3-002",
+      "title": "Product 数据模型与 CRUD API",
+      "acceptance": [
+        "Product 模型包含 id、tenant_id、brand_id、name、category、description、status 字段",
+        "POST /api/v1/products 创建产品，关联品牌和租户",
+        "GET /api/v1/products 分页列表，支持按品牌和分类过滤",
+        "PATCH /api/v1/products/{id} 更新产品信息",
+        "删除产品时检查是否有关联 SKU，有则拒绝并返回 409"
+      ],
+      "tests": [
+        "tests/test_api/test_products.py"
+      ],
+      "passes": false,
+      "attempt_count": 0
+    },
+    {
+      "id": "A3-003",
+      "title": "SKU 数据模型与 CRUD API",
+      "acceptance": [
+        "SKU 模型包含 id、tenant_id、product_id、code、name、specifications(JSON)、status 字段",
+        "POST /api/v1/skus 创建 SKU，关联产品和租户",
+        "GET /api/v1/skus 分页列表，支持按产品过滤",
+        "code 字段在同一产品下唯一",
+        "specifications 字段使用 JSON 类型存储规格信息"
+      ],
+      "tests": [
+        "tests/test_api/test_skus.py"
+      ],
+      "passes": false,
+      "attempt_count": 0
+    },
+    {
+      "id": "A3-004",
+      "title": "ProductionBatch 数据模型与 CRUD API",
+      "acceptance": [
+        "ProductionBatch 模型包含 id、tenant_id、product_id、sku_id、batch_code、production_date、expiry_date、status 字段",
+        "POST /api/v1/production-batches 创建批次，关联产品和 SKU",
+        "GET /api/v1/production-batches 分页列表，支持按产品和日期范围过滤",
+        "batch_code 在同一租户内唯一",
+        "支持批量导入批次（CSV 格式）"
+      ],
+      "tests": [
+        "tests/test_api/test_production_batches.py"
+      ],
+      "passes": false,
+      "attempt_count": 0
+    },
+    {
+      "id": "A3-005",
+      "title": "文件上传服务（MinIO / S3 兼容）",
+      "acceptance": [
+        "使用 boto3 兼容接口对接 MinIO / S3",
+        "POST /api/v1/files/upload 支持单文件上传，返回 file_url",
+        "支持图片格式校验（jpg、png、webp）和大小限制（默认 5MB）",
+        "文件 key 格式：{tenant_id}/{module}/{uuid}.{ext}，避免路径猜测",
+        "GET /api/v1/files/{file_id} 返回文件元信息，支持生成临时下载链接"
+      ],
+      "tests": [
+        "tests/test_api/test_file_upload.py",
+        "tests/test_services/test_storage.py"
+      ],
+      "passes": false,
+      "attempt_count": 0
+    },
+    {
+      "id": "A3-006",
+      "title": "CLI seed 工具（ymt seed）",
+      "acceptance": [
+        "ymt seed tenant --name X --slug Y 创建租户及默认组织和 admin 账号",
+        "ymt seed product --tenant SLUG --brand NAME --product NAME --sku CODE 创建完整产品链",
+        "ymt seed code --tenant SLUG --batch-code X --count N 生成码批次",
+        "seed 命令幂等：重复执行不创建重复数据",
+        "seed 输出清晰的创建结果摘要（含 ID 和关键信息）"
+      ],
+      "tests": [
+        "tests/test_cli/test_seed_tenant.py",
+        "tests/test_cli/test_seed_product.py",
+        "tests/test_cli/test_seed_code.py"
+      ],
+      "passes": false,
+      "attempt_count": 0
+    },
+    {
+      "id": "A3-007",
+      "title": "产品资料关联查询与验证",
+      "acceptance": [
+        "GET /api/v1/brands/{id}/products 返回品牌下所有产品",
+        "GET /api/v1/products/{id}/skus 返回产品下所有 SKU",
+        "GET /api/v1/products/{id}/batches 返回产品下所有批次",
+        "所有关联查询自动过滤 tenant_id",
+        "级联关系验证：删除品牌前检查是否有关联产品"
+      ],
+      "tests": [
+        "tests/test_api/test_product_relations.py"
+      ],
+      "passes": false,
+      "attempt_count": 0
+    }
+  ]
+}

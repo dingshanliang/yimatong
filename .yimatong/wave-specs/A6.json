@@ -1,0 +1,171 @@
+{
+  "wave": "A6",
+  "title": "码解析与扫码事件",
+  "phase": "alpha",
+  "epic": "EPIC-05",
+  "status": "pending",
+  "stories": [
+    {
+      "id": "A6-001",
+      "title": "码解析公开路由（GET /c/{public_id}）",
+      "acceptance": [
+        "GET /c/{public_id} 为公开路由，不走 JWT 认证，不走 /api/v1/ 前缀",
+        "public_id 不存在返回 404 并展示通用降级页面",
+        "码为 revoked 状态返回 410 并展示已作废提示页",
+        "码为 created（未激活）状态返回通用提示页（此码尚未启用）",
+        "正常码（activated/bound）返回对应页面内容（302 重定向到 H5 页面或直接返回 HTML）"
+      ],
+      "tests": [
+        "tests/test_api/test_code_resolve_public.py"
+      ],
+      "passes": false,
+      "attempt_count": 0
+    },
+    {
+      "id": "A6-002",
+      "title": "码解析对接页面引擎",
+      "acceptance": [
+        "解析码时查询 CodeItem 获取关联的 code_batch_id -> product_id -> page_template_id",
+        "调用页面渲染引擎获取当前 published 版本的渲染内容",
+        "页面无绑定模板时返回默认通用页面",
+        "渲染时注入品牌、产品、批次等上下文数据",
+        "页面模板查询结果缓存于 Redis（TTL 5 分钟）"
+      ],
+      "tests": [
+        "tests/test_services/test_resolve_page_engine.py"
+      ],
+      "passes": false,
+      "attempt_count": 0
+    },
+    {
+      "id": "A6-003",
+      "title": "限流策略（IP + public_id + 全局）",
+      "acceptance": [
+        "IP 级限流：单 IP 100 次/分钟，超出返回 429",
+        "public_id 级限流：单码 10 次/分钟/IP，超出返回 429",
+        "全局限流：10000 次/秒，超出触发熔断",
+        "限流使用 Redis 滑动窗口实现",
+        "限流响应包含 Retry-After 头"
+      ],
+      "tests": [
+        "tests/test_middleware/test_rate_limit.py"
+      ],
+      "passes": false,
+      "attempt_count": 0
+    },
+    {
+      "id": "A6-004",
+      "title": "Redis 缓存策略（热门码 + 页面版本）",
+      "acceptance": [
+        "码解析结果缓存：key resolve:{public_id}，TTL 5 分钟，包含页面内容和码状态",
+        "页面版本缓存：key page_version:{template_id}，TTL 5 分钟",
+        "码状态变更时主动失效对应缓存",
+        "页面版本发布时主动失效对应缓存",
+        "缓存未命中时回源查询并回填缓存"
+      ],
+      "tests": [
+        "tests/test_services/test_resolve_cache.py"
+      ],
+      "passes": false,
+      "attempt_count": 0
+    },
+    {
+      "id": "A6-005",
+      "title": "scan_event 异步写入（Redis Stream -> arq worker）",
+      "acceptance": [
+        "扫码事件写入 Redis Stream（key: scan_events），包含 public_id、ip、user_agent、timestamp",
+        "arq worker 消费 Stream 批量写入 scan_events 表",
+        "事件结构包含 tenant_id、public_id、scan_time、ip_hash、user_agent、is_first_scan、environment",
+        "异步写入失败时事件不丢失（Stream 持久化 + 重试机制）",
+        "worker 支持 consumer group，多实例并行消费"
+      ],
+      "tests": [
+        "tests/test_tasks/test_scan_event_worker.py"
+      ],
+      "passes": false,
+      "attempt_count": 0
+    },
+    {
+      "id": "A6-006",
+      "title": "首扫/重扫判断与环境解析",
+      "acceptance": [
+        "首扫判断：同一 public_id 在 scan_events 中无记录即为首扫",
+        "首扫使用 Redis 布隆过滤器加速判断（避免每次查库）",
+        "is_first_scan 字段正确标记到事件记录",
+        "环境解析：从 User-Agent 识别微信/支付宝/普通浏览器",
+        "环境信息写入 scan_event 的 environment 字段（枚举：wechat、alipay、browser）"
+      ],
+      "tests": [
+        "tests/test_services/test_first_scan_detection.py",
+        "tests/test_services/test_environment_parse.py"
+      ],
+      "passes": false,
+      "attempt_count": 0
+    },
+    {
+      "id": "A6-007",
+      "title": "scan_token 防伪机制",
+      "acceptance": [
+        "码解析成功后颁发 scan_token（短期 JWT，有效期 5 分钟）",
+        "scan_token 载荷包含 public_id、ip_hash、exp",
+        "H5 页面后续 API 请求需携带 scan_token 进行验证",
+        "scan_token 只能用于对应的 public_id，篡改即失效",
+        "scan_token 过期后需重新扫码获取"
+      ],
+      "tests": [
+        "tests/test_services/test_scan_token.py"
+      ],
+      "passes": false,
+      "attempt_count": 0
+    },
+    {
+      "id": "A6-008",
+      "title": "熔断降级与通用降级页面",
+      "acceptance": [
+        "全局限流触发时返回通用降级页面（静态 HTML，CDN 友好）",
+        "页面渲染引擎异常时返回降级页面而非 500 错误",
+        "Redis 不可用时码解析走数据库直查（降级模式），记录告警日志",
+        "降级页面包含品牌信息（如可获取）和通用提示文案",
+        "降级页面为纯静态 HTML，不依赖后端渲染"
+      ],
+      "tests": [
+        "tests/test_api/test_fallback_page.py",
+        "tests/test_services/test_circuit_breaker.py"
+      ],
+      "passes": false,
+      "attempt_count": 0
+    },
+    {
+      "id": "A6-009",
+      "title": "消费者 H5 前端模块化渲染",
+      "acceptance": [
+        "H5 页面使用 React/Next.js 构建，支持 SSR 渲染",
+        "页面组件模块化：品牌信息区、产品信息区、批次信息区、扫码提示区",
+        "H5 前端通过 scan_token 获取页面数据",
+        "H5 页面适配微信内置浏览器和主流移动浏览器",
+        "首屏渲染时间 < 1.5 秒（本地测试）"
+      ],
+      "tests": [
+        "tests/test_integration/test_h5_render.py"
+      ],
+      "passes": false,
+      "attempt_count": 0
+    },
+    {
+      "id": "A6-010",
+      "title": "短链格式与端到端扫码验证",
+      "acceptance": [
+        "短链格式：https://qr.yimatong.cn/c/{public_id}，永久可解析",
+        "模拟手机浏览器访问短链，返回正确 H5 页面",
+        "模拟微信 User-Agent 访问短链，返回正确 H5 页面",
+        "重复扫码时扫码次数正确累计",
+        "首扫与重扫事件正确区分并记录"
+      ],
+      "tests": [
+        "tests/test_integration/test_e2e_scan_flow.py"
+      ],
+      "passes": false,
+      "attempt_count": 0
+    }
+  ]
+}

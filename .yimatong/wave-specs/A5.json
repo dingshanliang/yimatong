@@ -1,0 +1,108 @@
+{
+  "wave": "A5",
+  "title": "固定模板页面",
+  "phase": "alpha",
+  "epic": "EPIC-04",
+  "status": "pending",
+  "stories": [
+    {
+      "id": "A5-001",
+      "title": "PageTemplate 与 PageVersion 数据模型",
+      "acceptance": [
+        "PageTemplate 模型包含 id、tenant_id、name、template_type、status、description 字段",
+        "PageVersion 模型包含 id、tenant_id、page_template_id、version、config_json(JSONB)、status、created_by 字段",
+        "PageVersion.status 枚举：draft、published、archived",
+        "config_json 存储 DSL 配置，固定模板使用预设 schema",
+        "PageVersion.version 自增，同一模板下唯一"
+      ],
+      "tests": [
+        "tests/test_models/test_page_template.py",
+        "tests/test_models/test_page_version.py"
+      ],
+      "passes": false,
+      "attempt_count": 0
+    },
+    {
+      "id": "A5-002",
+      "title": "PageTemplate CRUD API",
+      "acceptance": [
+        "POST /api/v1/page-templates 创建页面模板",
+        "GET /api/v1/page-templates 分页列表，支持按类型和状态过滤",
+        "GET /api/v1/page-templates/{id} 返回模板详情（含当前发布版本信息）",
+        "PATCH /api/v1/page-templates/{id} 更新模板基本信息",
+        "DELETE /api/v1/page-templates/{id} 软删除（设 status=archived）"
+      ],
+      "tests": [
+        "tests/test_api/test_page_templates.py"
+      ],
+      "passes": false,
+      "attempt_count": 0
+    },
+    {
+      "id": "A5-003",
+      "title": "PageVersion 版本管理与发布 API",
+      "acceptance": [
+        "POST /api/v1/page-templates/{id}/versions 创建新版本（status=draft）",
+        "PATCH /api/v1/page-versions/{id} 更新版本的 config_json",
+        "POST /api/v1/page-versions/{id}/publish 发布版本（draft -> published，自动归档旧版本）",
+        "POST /api/v1/page-versions/{id}/archive 归档版本（published -> archived）",
+        "GET /api/v1/page-templates/{id}/versions 列出所有版本（含状态）",
+        "同一模板仅允许一个 published 版本"
+      ],
+      "tests": [
+        "tests/test_api/test_page_versions.py"
+      ],
+      "passes": false,
+      "attempt_count": 0
+    },
+    {
+      "id": "A5-004",
+      "title": "固定模板定义与 schema 校验",
+      "acceptance": [
+        "定义固定模板类型枚举：product_info、traceability、brand_story",
+        "每种固定模板有对应的 config_json schema（Pydantic model 校验）",
+        "product_info 模板支持配置：品牌名、品牌 logo、产品名、产品图片、规格、批次信息",
+        "schema 校验失败返回 422 及具体字段错误",
+        "固定模板不允许自定义 DSL 编辑，只支持预设字段填值"
+      ],
+      "tests": [
+        "tests/test_services/test_template_schema.py"
+      ],
+      "passes": false,
+      "attempt_count": 0
+    },
+    {
+      "id": "A5-005",
+      "title": "模板渲染引擎（服务端渲染固定模板）",
+      "acceptance": [
+        "提供 render_page(template_id, context) 服务方法，将固定模板 + 上下文数据渲染为 HTML",
+        "context 包含 brand、product、sku、batch 数据，从数据库查询填充",
+        "渲染引擎使用 Jinja2 模板，固定模板文件位于 templates/ 目录",
+        "渲染结果缓存于 Redis（key: page:{template_id}:{version}，TTL 5 分钟）",
+        "模板变更后自动失效缓存"
+      ],
+      "tests": [
+        "tests/test_services/test_page_render.py"
+      ],
+      "passes": false,
+      "attempt_count": 0
+    },
+    {
+      "id": "A5-006",
+      "title": "页面预览与发布集成验证",
+      "acceptance": [
+        "GET /api/v1/page-templates/{id}/preview 返回渲染后的 HTML 预览",
+        "预览支持传入 mock 数据（query param），方便编辑时实时预览",
+        "published 状态的模板可被码解析服务引用",
+        "页面版本发布后，通过 API 可获取最终渲染内容",
+        "端到端验证：创建模板 -> 填充数据 -> 发布 -> 渲染返回完整页面"
+      ],
+      "tests": [
+        "tests/test_api/test_page_preview.py",
+        "tests/test_integration/test_page_publish_flow.py"
+      ],
+      "passes": false,
+      "attempt_count": 0
+    }
+  ]
+}
