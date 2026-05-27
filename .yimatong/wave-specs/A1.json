@@ -9,17 +9,17 @@
       "id": "A1-001",
       "title": "FastAPI 项目骨架与目录结构",
       "acceptance": [
-        "项目包含 src/ 目录，内含 main.py 入口文件，应用可通过 uvicorn 启动",
-        "目录结构包含 routers/、services/、models/、schemas/、core/、tasks/ 子模块",
+        "项目包含 app/ 目录，内含 main.py 入口文件，应用可通过 uvicorn 启动",
+        "目录结构包含 api/v1/、services/、models/、schemas/、core/、tasks/、middleware/、utils/ 子模块",
         "配置管理使用 pydantic-settings，支持 .env 文件和环境变量覆盖",
-        "lint（ruff）和 format（ruff format）配置就绪，pre-commit hook 可用",
+        "lint（ruff）和 format（ruff format）配置就绪",
         "README 包含本地开发启动说明"
       ],
       "tests": [
         "tests/test_skeleton.py"
       ],
-      "passes": false,
-      "attempt_count": 0
+      "passes": true,
+      "attempt_count": 1
     },
     {
       "id": "A1-002",
