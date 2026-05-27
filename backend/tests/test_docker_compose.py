@@ -63,8 +63,15 @@ class TestDockerComposeServices:
 
     def test_service_count(self):
         expected = {
-            "postgres", "redis", "minio", "minio-init",
-            "backend", "worker", "migration", "mock-sms", "mock-wechat",
+            "postgres",
+            "redis",
+            "minio",
+            "minio-init",
+            "backend",
+            "worker",
+            "migration",
+            "mock-sms",
+            "mock-wechat",
         }
         actual = set(self.services.keys())
         assert expected == actual, f"不匹配: 缺 {expected - actual}, 多 {actual - expected}"

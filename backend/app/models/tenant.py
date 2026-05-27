@@ -42,9 +42,7 @@ class Tenant(Base):
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid7)
     name: Mapped[str] = mapped_column(String(100), nullable=False)
     slug: Mapped[str] = mapped_column(String(50), unique=True, nullable=False)
-    status: Mapped[TenantStatus] = mapped_column(
-        SQLEnum(TenantStatus), default=TenantStatus.active, nullable=False
-    )
+    status: Mapped[TenantStatus] = mapped_column(SQLEnum(TenantStatus), default=TenantStatus.active, nullable=False)
     plan: Mapped[TenantPlan] = mapped_column(SQLEnum(TenantPlan), default=TenantPlan.free, nullable=False)
     quota: Mapped[dict | None] = mapped_column(JSON, default=dict, nullable=True)
 
@@ -86,9 +84,7 @@ class Role(Base):
     description: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
     accounts = relationship("Account", secondary="account_roles", back_populates="roles", lazy="selectin")
-    permissions = relationship(
-        "Permission", secondary="role_permissions", back_populates="roles", lazy="selectin"
-    )
+    permissions = relationship("Permission", secondary="role_permissions", back_populates="roles", lazy="selectin")
 
 
 class Permission(Base):
