@@ -18,8 +18,8 @@
       "tests": [
         "tests/test_api/test_tenants.py"
       ],
-      "passes": false,
-      "attempt_count": 0
+      "passes": true,
+      "attempt_count": 1
     },
     {
       "id": "A2-002",

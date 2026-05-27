@@ -1,0 +1,84 @@
+import re
+import uuid
+
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.models.tenant import Account, Organization, Tenant, TenantPlan, TenantStatus
+from app.utils.security import hash_password
+
+
+def _generate_slug(name: str) -> str:
+    slug = name.lower().strip()
+    slug = re.sub(r"[^a-z0-9-]+", "-", slug)
+    slug = re.sub(r"-+", "-", slug).strip("-")
+    if not slug or slug == "-":
+        slug = f"tenant-{uuid.uuid4().hex[:8]}"
+    return slug[:50]
+
+
+async def create_tenant(
+    db: AsyncSession,
+    name: str,
+    slug: str | None,
+    plan: str,
+    admin_email: str,
+    admin_name: str,
+    admin_password: str,
+) -> Tenant:
+    if not slug:
+        slug = _generate_slug(name)
+
+    tenant = Tenant(
+        name=name,
+        slug=slug,
+        status=TenantStatus.active,
+        plan=TenantPlan(plan),
+        quota={"max_codes": 10000, "max_campaigns": 50, "max_accounts": 10},
+    )
+    db.add(tenant)
+    await db.flush()
+
+    org = Organization(tenant_id=tenant.id, name=f"{name} 默认组织")
+    db.add(org)
+    await db.flush()
+
+    hashed = hash_password(admin_password)
+    account = Account(
+        tenant_id=tenant.id,
+        organization_id=org.id,
+        email=admin_email,
+        hashed_password=hashed,
+        name=admin_name,
+    )
+    db.add(account)
+    await db.flush()
+
+    await db.commit()
+    await db.refresh(tenant)
+    return tenant
+
+
+async def get_tenant(db: AsyncSession, tenant_id: uuid.UUID) -> Tenant | None:
+    result = await db.execute(select(Tenant).where(Tenant.id == tenant_id))
+    return result.scalar_one_or_none()
+
+
+async def update_tenant(db: AsyncSession, tenant_id: uuid.UUID, name: str | None) -> Tenant | None:
+    tenant = await get_tenant(db, tenant_id)
+    if not tenant:
+        return None
+    if name:
+        tenant.name = name
+    await db.commit()
+    await db.refresh(tenant)
+    return tenant
+
+
+async def soft_delete_tenant(db: AsyncSession, tenant_id: uuid.UUID) -> bool:
+    tenant = await get_tenant(db, tenant_id)
+    if not tenant:
+        return False
+    tenant.status = TenantStatus.terminated
+    await db.commit()
+    return True
