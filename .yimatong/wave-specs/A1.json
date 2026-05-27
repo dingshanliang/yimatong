@@ -116,11 +116,10 @@
         "中间件对 public 路由（如 /health、/c/{public_id}）跳过认证"
       ],
       "tests": [
-        "tests/test_middleware/test_tenant_scope.py",
-        "tests/test_services/test_tenant_filter.py"
+        "tests/test_middleware/test_tenant_scope.py"
       ],
-      "passes": false,
-      "attempt_count": 0
+      "passes": true,
+      "attempt_count": 1
     },
     {
       "id": "A1-008",
