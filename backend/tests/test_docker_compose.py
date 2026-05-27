@@ -62,9 +62,12 @@ class TestDockerComposeServices:
         assert "mock-wechat" in self.services, "缺少 mock-wechat 服务"
 
     def test_service_count(self):
-        expected = {"postgres", "redis", "minio", "minio-init", "backend", "worker", "migration", "mock-sms", "mock-wechat"}
+        expected = {
+            "postgres", "redis", "minio", "minio-init",
+            "backend", "worker", "migration", "mock-sms", "mock-wechat",
+        }
         actual = set(self.services.keys())
-        assert expected == actual, f"服务列表不匹配: 缺少 {expected - actual}, 多出 {actual - expected}"
+        assert expected == actual, f"不匹配: 缺 {expected - actual}, 多 {actual - expected}"
 
 
 class TestDockerComposeVolumes:

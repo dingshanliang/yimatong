@@ -67,13 +67,10 @@
         "Alembic 迁移文件可正确生成对应表结构"
       ],
       "tests": [
-        "tests/test_models/test_tenant.py",
-        "tests/test_models/test_organization.py",
-        "tests/test_models/test_account.py",
-        "tests/test_models/test_role_permission.py"
+        "tests/test_models/test_tenant.py"
       ],
-      "passes": false,
-      "attempt_count": 0
+      "passes": true,
+      "attempt_count": 1
     },
     {
       "id": "A1-005",
