@@ -1,0 +1,7 @@
+{
+  "database": "dolt",
+  "backend": "dolt",
+  "dolt_mode": "embedded",
+  "dolt_database": "yimatong",
+  "project_id": "01447dce-f8b0-4dac-b6c8-d530b937f474"
+}
