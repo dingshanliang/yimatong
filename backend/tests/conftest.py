@@ -13,6 +13,8 @@ sys.path.insert(0, str(backend_dir))
 os.environ.setdefault("database_url", "sqlite+aiosqlite://")
 os.environ.setdefault("redis_url", "redis://localhost:6379/0")
 os.environ.setdefault("secret_key", "test-secret-key")
+os.environ.setdefault("aes_master_key_v1", "00" * 32)
+os.environ.setdefault("hmac_pepper", "ff" * 32)
 
 # 必须在设置环境变量后导入
 from app.models.analytics import DailyScanStats  # noqa: E402, F401

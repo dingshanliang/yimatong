@@ -1,3 +1,5 @@
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 
 from app.api.v1.analytics import analytics_router
@@ -27,9 +29,22 @@ from app.api.v1.i18n import i18n_router
 from app.api.v1.redpacket import redpacket_router
 from app.api.v1.tasks import task_router
 from app.api.v1.tenants import router as tenants_router
+from app.core.config import settings
 from app.middleware.tenant import TenantScopeMiddleware
 
-app = FastAPI(title="一码通", version="0.1.0")
+
+@asynccontextmanager
+async def lifespan(app):
+    # 初始化加密模块（仅当配置了密钥时）
+    from app.utils.crypto import EnvKeyProvider, init_crypto
+
+    if settings.aes_master_key_v1 and settings.hmac_pepper:
+        init_crypto(EnvKeyProvider())
+
+    yield
+
+
+app = FastAPI(title="一码通", version="0.1.0", lifespan=lifespan)
 app.add_middleware(TenantScopeMiddleware)
 app.include_router(tenants_router)
 app.include_router(orgs_router)
