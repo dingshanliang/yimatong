@@ -22,7 +22,7 @@ member_router = APIRouter(prefix="/api/v1/members", tags=["members"])
 
 
 class ConsumerCreateRequest(BaseModel):
-    phone_hash: str | None = None
+    phone: str | None = None
     nickname: str | None = None
 
 
@@ -58,7 +58,7 @@ async def create_consumer_endpoint(
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
-    consumer = await get_or_create_consumer(db, tenant_id, phone_hash=body.phone_hash)
+    consumer = await get_or_create_consumer(db, tenant_id, phone=body.phone)
     return {
         "id": str(consumer.id),
         "member_level": consumer.member_level,
