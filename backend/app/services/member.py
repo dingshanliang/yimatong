@@ -12,17 +12,19 @@ from app.models.member import (
     PointTransaction,
     PointTransactionType,
 )
+from app.utils.crypto import encrypt_phone, hash_phone
 
 
 async def get_or_create_consumer(
-    db: AsyncSession, tenant_id: uuid.UUID, phone_hash: str | None = None,
+    db: AsyncSession, tenant_id: uuid.UUID, phone: str | None = None,
 ) -> ConsumerProfile:
     """获取或创建消费者档案"""
-    if phone_hash:
+    if phone:
+        phone_h = hash_phone(phone)
         result = await db.execute(
             select(ConsumerProfile).where(
                 ConsumerProfile.tenant_id == tenant_id,
-                ConsumerProfile.phone_hash == phone_hash,
+                ConsumerProfile.phone_hash == phone_h,
             )
         )
         consumer = result.scalar_one_or_none()
@@ -31,7 +33,8 @@ async def get_or_create_consumer(
 
     consumer = ConsumerProfile(
         tenant_id=tenant_id,
-        phone_hash=phone_hash,
+        phone_hash=hash_phone(phone) if phone else None,
+        phone_encrypted=encrypt_phone(phone) if phone else None,
     )
     db.add(consumer)
     await db.commit()
@@ -206,3 +209,21 @@ async def list_point_transactions(
     stmt = stmt.order_by(PointTransaction.id.desc()).offset((page - 1) * page_size).limit(page_size)
     result = await db.execute(stmt)
     return list(result.scalars().all()), total
+
+
+async def get_consumer_phone(
+    db: AsyncSession, consumer_id: uuid.UUID,
+) -> str | None:
+    """获取消费者脱敏手机号"""
+    from app.utils.crypto import decrypt_phone, mask_phone
+
+    result = await db.execute(
+        select(ConsumerProfile).where(ConsumerProfile.id == consumer_id)
+    )
+    consumer = result.scalar_one_or_none()
+    if not consumer or not consumer.phone_encrypted:
+        return None
+    try:
+        return mask_phone(decrypt_phone(consumer.phone_encrypted))
+    except Exception:
+        return None
