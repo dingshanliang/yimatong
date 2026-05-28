@@ -34,37 +34,48 @@ async def create_code_batch(
     await db.flush()
 
     items = []
-    if code_type == CodeType.paired:
-        # 配对码：每个 quantity 生成一组 outer + inner
-        for _ in range(quantity):
-            pair_id = uuid.uuid4()
-            outer_public_id = generate_public_id()
-            inner_public_id = generate_public_id()
-            items.append(CodeItem(
-                tenant_id=tenant_id,
-                code_batch_id=batch.id,
-                public_id=outer_public_id,
-                code_type=CodeType.outer,
-                pair_id=pair_id,
-            ))
-            items.append(CodeItem(
-                tenant_id=tenant_id,
-                code_batch_id=batch.id,
-                public_id=inner_public_id,
-                code_type=CodeType.inner,
-                pair_id=pair_id,
-            ))
-    else:
-        for _ in range(quantity):
-            public_id = generate_public_id()
-            items.append(CodeItem(
-                tenant_id=tenant_id,
-                code_batch_id=batch.id,
-                public_id=public_id,
-                code_type=CodeType.single,
-            ))
+    BATCH_SIZE = 5000
+    total_generated = 0
 
-    db.add_all(items)
+    def _build_items():
+        if code_type == CodeType.paired:
+            for _ in range(quantity):
+                pair_id = uuid.uuid4()
+                yield CodeItem(
+                    tenant_id=tenant_id,
+                    code_batch_id=batch.id,
+                    public_id=generate_public_id(),
+                    code_type=CodeType.outer,
+                    pair_id=pair_id,
+                )
+                yield CodeItem(
+                    tenant_id=tenant_id,
+                    code_batch_id=batch.id,
+                    public_id=generate_public_id(),
+                    code_type=CodeType.inner,
+                    pair_id=pair_id,
+                )
+        else:
+            for _ in range(quantity):
+                yield CodeItem(
+                    tenant_id=tenant_id,
+                    code_batch_id=batch.id,
+                    public_id=generate_public_id(),
+                    code_type=CodeType.single,
+                )
+
+    batch_items = []
+    for item in _build_items():
+        batch_items.append(item)
+        if len(batch_items) >= BATCH_SIZE:
+            db.add_all(batch_items)
+            await db.flush()
+            total_generated += len(batch_items)
+            batch_items = []
+    if batch_items:
+        db.add_all(batch_items)
+        total_generated += len(batch_items)
+
     batch.status = CodeBatchStatus.completed
     await db.commit()
     await db.refresh(batch)
@@ -76,7 +87,7 @@ async def create_code_batch(
         "sku_id": str(batch.sku_id),
         "batch_code": batch.batch_code,
         "quantity": batch.quantity,
-        "generated_count": len(items),
+        "generated_count": total_generated,
         "status": batch.status,
         "code_type": batch.code_type,
         "created_by": str(batch.created_by),
@@ -208,27 +219,35 @@ async def resolve_code_by_public_id(
 async def activate_batch(
     db: AsyncSession, tenant_id: uuid.UUID, batch_id: uuid.UUID
 ) -> dict:
-    from datetime import datetime
+    from sqlalchemy import update as sa_update
 
     from app.services.code_state import can_transition
 
+    # Validate current state with a lightweight count query
     result = await db.execute(
-        select(CodeItem).where(
+        select(CodeItem.status).where(
+            CodeItem.tenant_id == tenant_id,
+            CodeItem.code_batch_id == batch_id,
+            CodeItem.status == CodeItemStatus.created,
+        ).limit(1)
+    )
+    sample = result.scalar_one_or_none()
+    if sample is not None:
+        can_transition(sample, CodeItemStatus.activated, raise_on_invalid=True)
+
+    now = utcnow()
+    stmt = (
+        sa_update(CodeItem)
+        .where(
             CodeItem.tenant_id == tenant_id,
             CodeItem.code_batch_id == batch_id,
             CodeItem.status == CodeItemStatus.created,
         )
+        .values(status=CodeItemStatus.activated, activated_at=now)
     )
-    items = list(result.scalars().all())
-    now = utcnow()
-    activated = 0
-    for item in items:
-        can_transition(item.status, CodeItemStatus.activated, raise_on_invalid=True)
-        item.status = CodeItemStatus.activated
-        item.activated_at = now
-        activated += 1
+    r = await db.execute(stmt)
     await db.commit()
-    return {"activated": activated}
+    return {"activated": r.rowcount}
 
 
 async def revoke_code_item(

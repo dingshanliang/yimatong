@@ -37,22 +37,22 @@ async def login(body: LoginRequest, db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(Account).where(Account.email == body.email))
     account = result.scalar_one_or_none()
 
-    now_naive = utcnow()
+    now = utcnow()
 
     if not account or not verify_password(body.password, account.hashed_password):
         if account:
             account.failed_login_attempts += 1
             if account.failed_login_attempts >= MAX_FAILED_ATTEMPTS:
-                account.locked_until = now_naive + timedelta(minutes=LOCK_DURATION_MINUTES)
+                account.locked_until = now + timedelta(minutes=LOCK_DURATION_MINUTES)
             await db.commit()
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
-    if account.locked_until and account.locked_until > now_naive:
+    if account.locked_until and account.locked_until > now:
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
     account.failed_login_attempts = 0
     account.locked_until = None
-    account.last_login_at = now_naive
+    account.last_login_at = now
     await db.commit()
 
     access = create_access_token(str(account.tenant_id), str(account.id), "admin")

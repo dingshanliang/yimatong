@@ -16,4 +16,4 @@ class PlatformAuditLog(Base):
     target_tenant_id: Mapped[str] = mapped_column(String(36), nullable=False)
     action: Mapped[str] = mapped_column(String(100), nullable=False)
     resource: Mapped[str] = mapped_column(String(255), nullable=False)
-    timestamp: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
+    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)

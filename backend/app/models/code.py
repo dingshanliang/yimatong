@@ -68,9 +68,9 @@ class CodeItem(Base):
     )
     code_type: Mapped[str] = mapped_column(String(20), nullable=False, default=CodeType.single)
     pair_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True, index=True)
-    activated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
-    bound_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
-    revoked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    activated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    bound_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     __table_args__ = (
         Index("ix_code_items_tenant_batch", "tenant_id", "code_batch_id"),

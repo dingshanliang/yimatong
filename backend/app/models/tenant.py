@@ -72,8 +72,8 @@ class Account(Base):
     hashed_password: Mapped[str] = mapped_column(String(255), nullable=False)
     name: Mapped[str] = mapped_column(String(100), nullable=False)
     failed_login_attempts: Mapped[int] = mapped_column(default=0, nullable=False)
-    locked_until: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
-    last_login_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    locked_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     organization = relationship("Organization", back_populates="accounts")
     roles = relationship("Role", secondary="account_roles", back_populates="accounts", lazy="selectin")

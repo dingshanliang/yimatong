@@ -3,7 +3,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Index, String
+from sqlalchemy import DateTime, Index, String
 from sqlalchemy.orm import Mapped, mapped_column
 from uuid6 import uuid7
 
@@ -19,7 +19,7 @@ class ExternalOrder(Base):
     amount: Mapped[float] = mapped_column(nullable=False)
     phone_hash: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     product_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
-    order_time: Mapped[datetime | None] = mapped_column(nullable=True)
+    order_time: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     matched: Mapped[bool] = mapped_column(default=False, nullable=False)
 
     __table_args__ = (
