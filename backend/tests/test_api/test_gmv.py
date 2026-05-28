@@ -12,6 +12,7 @@ from app.core.database import get_db
 from app.main import app
 from app.models.gmv import ExternalOrder, GmvAttribution
 from app.utils.security import create_access_token
+from app.utils.crypto import hash_phone
 from tests.conftest import TestSessionLocal
 
 
@@ -63,14 +64,14 @@ class TestExternalOrderImport:
                     {
                         "external_id": "ORD-001",
                         "amount": 99.9,
-                        "phone_hash": "abc123",
+                        "phone_hash": "13900139001",
                         "product_name": "脐橙",
                         "order_time": "2026-05-28T10:00:00Z",
                     },
                     {
                         "external_id": "ORD-002",
                         "amount": 199.0,
-                        "phone_hash": "def456",
+                        "phone_hash": "13900139002",
                         "product_name": "蜂蜜",
                         "order_time": "2026-05-28T11:00:00Z",
                     },
@@ -92,7 +93,7 @@ class TestExternalOrderImport:
                     {
                         "external_id": "ORD-LIST",
                         "amount": 50.0,
-                        "phone_hash": "xyz",
+                        "phone_hash": "13900139003",
                         "product_name": "测试商品",
                         "order_time": "2026-05-28T10:00:00Z",
                     },
@@ -123,7 +124,7 @@ class TestMatching:
                     {
                         "external_id": "ORD-MATCH",
                         "amount": 100.0,
-                        "phone_hash": "match_phone",
+                        "phone_hash": "13800138000",
                         "product_name": "匹配测试",
                         "order_time": "2026-05-28T10:00:00Z",
                     },
@@ -135,7 +136,7 @@ class TestMatching:
         # 创建消费者并扫码（关联 phone_hash）
         consumer_resp = await client.post(
             "/api/v1/members/consumers",
-            json={"phone_hash": "match_phone"},
+            json={"phone": "13800138000"},
             headers=headers,
         )
         cid = consumer_resp.json()["id"]
@@ -143,7 +144,7 @@ class TestMatching:
         # 执行匹配
         resp = await client.post(
             "/api/v1/gmv/match",
-            json={"match_by": "phone_hash", "value": "match_phone"},
+            json={"match_by": "phone_hash", "value": "13800138000"},
             headers=headers,
         )
         assert resp.status_code == 200
@@ -173,7 +174,7 @@ class TestGmvDashboard:
             tenant_id=UUID(tid),
             external_id="GMV-ORD",
             amount=299.0,
-            phone_hash="gmv_phone",
+            phone_hash=hash_phone("13800138001"),
             product_name="GMV商品",
             order_time=datetime.now(UTC),
             matched=True,
@@ -219,7 +220,7 @@ class TestTransactionRecord:
             tenant_id=UUID(tid),
             external_id="ATTR-ORD",
             amount=88.0,
-            phone_hash="attr_phone",
+            phone_hash=hash_phone("13800138002"),
             product_name="归因测试",
             order_time=datetime.now(UTC),
             matched=True,

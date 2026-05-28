@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.gmv import ExternalOrder, GmvAttribution
 from app.models.member import ConsumerProfile
+from app.utils.crypto import hash_phone
 
 
 async def import_orders(
@@ -20,7 +21,7 @@ async def import_orders(
             tenant_id=tenant_id,
             external_id=o["external_id"],
             amount=o["amount"],
-            phone_hash=o.get("phone_hash"),
+            phone_hash=hash_phone(o["phone_hash"]) if o.get("phone_hash") else None,
             product_name=o.get("product_name"),
             order_time=datetime.fromisoformat(o["order_time"].replace("Z", "+00:00")) if o.get("order_time") else None,
         )
@@ -57,10 +58,11 @@ async def match_order(
 ) -> dict:
     """按匹配规则关联订单与消费者/扫码"""
     if match_by == "phone_hash":
+        phone_h = hash_phone(value)
         consumer_result = await db.execute(
             select(ConsumerProfile).where(
                 ConsumerProfile.tenant_id == tenant_id,
-                ConsumerProfile.phone_hash == value,
+                ConsumerProfile.phone_hash == phone_h,
             )
         )
         consumer = consumer_result.scalar_one_or_none()
@@ -69,7 +71,7 @@ async def match_order(
             order_result = await db.execute(
                 select(ExternalOrder).where(
                     ExternalOrder.tenant_id == tenant_id,
-                    ExternalOrder.phone_hash == value,
+                    ExternalOrder.phone_hash == phone_h,
                     ExternalOrder.matched.is_(False),
                 )
             )
