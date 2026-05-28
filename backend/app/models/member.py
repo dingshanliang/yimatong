@@ -3,7 +3,7 @@
 import uuid
 from enum import StrEnum
 
-from sqlalchemy import Index, String
+from sqlalchemy import Index, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 from uuid6 import uuid7
 
@@ -23,6 +23,7 @@ class ConsumerProfile(Base):
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid7)
     tenant_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
     phone_hash: Mapped[str | None] = mapped_column(String(64), nullable=True, unique=True)
+    phone_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
     nickname: Mapped[str | None] = mapped_column(String(100), nullable=True)
     member_level: Mapped[str] = mapped_column(
         String(20), nullable=False, default=MemberLevel.normal,
