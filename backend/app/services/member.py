@@ -12,15 +12,16 @@ from app.models.member import (
     PointTransaction,
     PointTransactionType,
 )
-from app.utils.crypto import encrypt_phone, hash_phone
+from app.utils.crypto import CryptoError, decrypt_phone, encrypt_phone, hash_phone, mask_phone
 
 
 async def get_or_create_consumer(
     db: AsyncSession, tenant_id: uuid.UUID, phone: str | None = None,
 ) -> ConsumerProfile:
     """获取或创建消费者档案"""
-    if phone:
-        phone_h = hash_phone(phone)
+    phone_h = hash_phone(phone) if phone else None
+
+    if phone_h:
         result = await db.execute(
             select(ConsumerProfile).where(
                 ConsumerProfile.tenant_id == tenant_id,
@@ -33,11 +34,25 @@ async def get_or_create_consumer(
 
     consumer = ConsumerProfile(
         tenant_id=tenant_id,
-        phone_hash=hash_phone(phone) if phone else None,
+        phone_hash=phone_h,
         phone_encrypted=encrypt_phone(phone) if phone else None,
     )
     db.add(consumer)
-    await db.commit()
+    try:
+        await db.commit()
+    except Exception:
+        await db.rollback()
+        if phone_h:
+            result = await db.execute(
+                select(ConsumerProfile).where(
+                    ConsumerProfile.tenant_id == tenant_id,
+                    ConsumerProfile.phone_hash == phone_h,
+                )
+            )
+            consumer = result.scalar_one_or_none()
+            if consumer:
+                return consumer
+        raise
     await db.refresh(consumer)
     return consumer
 
@@ -215,8 +230,6 @@ async def get_consumer_phone(
     db: AsyncSession, consumer_id: uuid.UUID,
 ) -> str | None:
     """获取消费者脱敏手机号"""
-    from app.utils.crypto import decrypt_phone, mask_phone
-
     result = await db.execute(
         select(ConsumerProfile).where(ConsumerProfile.id == consumer_id)
     )
@@ -225,5 +238,5 @@ async def get_consumer_phone(
         return None
     try:
         return mask_phone(decrypt_phone(consumer.phone_encrypted))
-    except Exception:
+    except CryptoError:
         return None

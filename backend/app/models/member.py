@@ -22,7 +22,7 @@ class ConsumerProfile(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid7)
     tenant_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
-    phone_hash: Mapped[str | None] = mapped_column(String(64), nullable=True, unique=True)
+    phone_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     phone_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
     nickname: Mapped[str | None] = mapped_column(String(100), nullable=True)
     member_level: Mapped[str] = mapped_column(
@@ -33,6 +33,7 @@ class ConsumerProfile(Base):
 
     __table_args__ = (
         Index("ix_consumer_profiles_tenant", "tenant_id"),
+        Index("ix_consumer_profiles_tenant_phone", "tenant_id", "phone_hash", unique=True),
     )
 
 

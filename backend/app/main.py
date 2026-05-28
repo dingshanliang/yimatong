@@ -35,11 +35,14 @@ from app.middleware.tenant import TenantScopeMiddleware
 
 @asynccontextmanager
 async def lifespan(app):
-    # 初始化加密模块（仅当配置了密钥时）
     from app.utils.crypto import EnvKeyProvider, init_crypto
 
-    if settings.aes_master_key_v1 and settings.hmac_pepper:
-        init_crypto(EnvKeyProvider())
+    if not settings.aes_master_key_v1 or not settings.hmac_pepper:
+        raise RuntimeError(
+            "AES_MASTER_KEY_V1 and HMAC_PEPPER must be configured. "
+            "Crypto module cannot start without encryption keys."
+        )
+    init_crypto(EnvKeyProvider())
 
     yield
 
