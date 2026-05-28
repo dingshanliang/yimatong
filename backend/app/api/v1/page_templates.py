@@ -208,6 +208,8 @@ async def publish_page_version_endpoint(
     data = await publish_page_version(db, tenant_id, version_id)
     if not data:
         raise HTTPException(status_code=404, detail="Page version not found")
+    from app.services.page_render import invalidate_cache
+    invalidate_cache(uuid.UUID(data["page_template_id"]))
     return data
 
 
@@ -220,6 +222,8 @@ async def archive_page_version_endpoint(
     data = await archive_page_version(db, tenant_id, version_id)
     if not data:
         raise HTTPException(status_code=404, detail="Page version not found")
+    from app.services.page_render import invalidate_cache
+    invalidate_cache(uuid.UUID(data["page_template_id"]))
     return data
 
 
@@ -236,4 +240,6 @@ async def rollback_page_version_endpoint(
     )
     if not data:
         raise HTTPException(status_code=404, detail="Target version not found")
+    from app.services.page_render import invalidate_cache
+    invalidate_cache(template_id)
     return data

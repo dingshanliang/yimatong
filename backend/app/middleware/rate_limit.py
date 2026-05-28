@@ -74,3 +74,7 @@ class RateLimiter:
             )
 
         return RateLimitResult(allowed=True)
+
+
+# 全局限流器实例
+rate_limiter = RateLimiter()

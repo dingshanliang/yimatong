@@ -78,6 +78,16 @@ async def create_code_batch_endpoint(
     tenant_id: uuid.UUID = Depends(get_current_tenant),
     account_id: uuid.UUID = Depends(get_current_account_id),
 ):
+    from app.services.quota import check_quota, QuotaExceededError
+    from app.models.tenant import Tenant
+
+    tenant = await db.get(Tenant, tenant_id)
+    if tenant and tenant.quota:
+        try:
+            check_quota(tenant.quota, "max_codes_per_batch", body.quantity)
+        except QuotaExceededError as e:
+            raise HTTPException(status_code=429, detail=str(e))
+
     return await create_code_batch(
         db, tenant_id, body.product_id, body.sku_id,
         body.batch_code, body.quantity, account_id,

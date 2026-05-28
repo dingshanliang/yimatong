@@ -1,14 +1,19 @@
 """码解析公开路由"""
 
+import hashlib
 import uuid
 
 from fastapi import APIRouter, Depends, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.models.code import CodeItemStatus, CodeType
+from app.middleware.rate_limit import rate_limiter
 from app.services.page_render import render_page
+from app.services.public_id import validate_public_id
+from app.services.resolve_cache import resolve_cache
+from app.services.scan_event import parse_environment, record_scan_event
 from app.services.resolver import (
     INNER_VERIFY_PAGE,
     NOT_ACTIVE_PAGE,
@@ -28,10 +33,47 @@ async def resolve_code_endpoint(
     request: Request,
     db: AsyncSession = Depends(get_db),
 ):
-    data = await resolve_public_code(db, public_id)
+    # 1. 限流检查
+    client_ip = request.client.host if request.client else "unknown"
+    rate_result = rate_limiter.check_resolver(client_ip, public_id)
+    if not rate_result.allowed:
+        return JSONResponse(
+            status_code=429,
+            content={"detail": "Too many requests"},
+            headers={"Retry-After": str(rate_result.retry_after)},
+        )
+
+    # 2. public_id 格式校验（Luhn）
+    if not validate_public_id(public_id):
+        return HTMLResponse(content=NOT_FOUND_PAGE, status_code=404)
+
+    # 3. 缓存查询
+    cached = resolve_cache.get(f"resolve:{public_id}")
+    if cached:
+        data = cached
+    else:
+        data = await resolve_public_code(db, public_id)
+        if data:
+            resolve_cache.set(f"resolve:{public_id}", data)
 
     if not data:
         return HTMLResponse(content=NOT_FOUND_PAGE, status_code=404)
+
+    # 4. 记录扫码事件（仅对已激活的码）
+    if data["status"] == CodeItemStatus.activated:
+        user_agent = request.headers.get("user-agent")
+        ip_hash = hashlib.sha256(client_ip.encode()).hexdigest() if client_ip != "unknown" else None
+        try:
+            await record_scan_event(
+                db=db,
+                tenant_id=uuid.UUID(data["tenant_id"]),
+                public_id=public_id,
+                ip_hash=ip_hash,
+                user_agent=user_agent,
+                environment=parse_environment(user_agent),
+            )
+        except Exception:
+            pass  # 扫码事件记录失败不应阻塞码解析
 
     status = data["status"]
 
