@@ -1,5 +1,6 @@
 """码批次和码项 API"""
 
+import io
 import uuid
 from datetime import datetime
 
@@ -150,7 +151,6 @@ async def export_code_batch_endpoint(
     account_id: uuid.UUID = Depends(get_current_account_id),
 ):
     csv_content = await generate_code_csv(db, tenant_id, batch_id)
-    import io
     return StreamingResponse(
         io.StringIO(csv_content),
         media_type="text/csv",

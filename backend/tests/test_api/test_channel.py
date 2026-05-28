@@ -175,7 +175,7 @@ class TestIPResolution:
 
     @pytest.mark.anyio
     async def test_resolve_known_ip(self):
-        from app.services.channel import resolve_ip_to_city
+        from app.services.geoip import resolve_ip_to_city
 
         assert resolve_ip_to_city("110.1.2.3") == "北京"
         assert resolve_ip_to_city("120.1.2.3") == "上海"
@@ -183,7 +183,7 @@ class TestIPResolution:
 
     @pytest.mark.anyio
     async def test_resolve_unknown_ip(self):
-        from app.services.channel import resolve_ip_to_city
+        from app.services.geoip import resolve_ip_to_city
 
         assert resolve_ip_to_city("8.8.8.8") is None
 

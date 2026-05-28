@@ -9,8 +9,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.services.scan_token import verify_scan_token
+from app.services.redis_cache import RedisCache
 
 benefit_claim_router = APIRouter(prefix="/api/v1", tags=["benefit-claims"])
+
+_claim_cache = RedisCache(prefix="claim", default_ttl=300)
 
 
 class BenefitClaimRequest(BaseModel):
@@ -35,18 +38,18 @@ async def claim_benefit_h5(
     if not token:
         raise HTTPException(status_code=401, detail="scan_token required")
 
-    # scan_token 不需要 public_id 匹配（benefit claim 不知道 public_id）
-    from app.services.scan_token import verify_scan_token
+    # 复用 scan_token 服务层验证（不校验 public_id，仅验证 type 和签名）
+    import jwt
+    from app.core.config import settings
     try:
-        import jwt
-        from app.core.config import settings
         payload = jwt.decode(token, settings.secret_key, algorithms=["HS256"])
-        if payload.get("type") != "scan_token":
-            raise HTTPException(status_code=401, detail="invalid token type")
     except jwt.exceptions.DecodeError:
         raise HTTPException(status_code=401, detail="invalid token")
     except jwt.exceptions.ExpiredSignatureError:
         raise HTTPException(status_code=401, detail="token expired")
+
+    if payload.get("type") != "scan_token":
+        raise HTTPException(status_code=401, detail="invalid token type")
 
     # 2. 查找权益
     from app.models.campaign import Benefit
@@ -64,13 +67,10 @@ async def claim_benefit_h5(
     if benefit.stock_total <= 0:
         raise HTTPException(status_code=410, detail="权益已抢光")
 
-    # 4. 幂等键（基于 scan_token + benefit_id）
+    # 4. 双层幂等：Redis 缓存层 + DB 唯一约束
     idempotency_key = f"claim:{token[:16]}:{benefit_id}"
 
-    # Redis 幂等缓存（体验优化层）
-    from app.services.redis_cache import RedisCache
-    cache = RedisCache(prefix="claim", default_ttl=300)
-    if not cache.set_idempotent(idempotency_key, ttl=300):
+    if not _claim_cache.set_idempotent(idempotency_key, ttl=300):
         raise HTTPException(status_code=409, detail="already claimed")
 
     from app.models.campaign import BenefitClaim
@@ -95,7 +95,7 @@ async def claim_benefit_h5(
         tenant_id=benefit.tenant_id,
         benefit_id=benefit_id,
         campaign_id=benefit.campaign_id,
-        consumer_id=idempotency_key,  # H5 端用 idempotency_key 代替 consumer_id
+        consumer_id=idempotency_key,
         idempotency_key=idempotency_key,
         status="claimed",
     )

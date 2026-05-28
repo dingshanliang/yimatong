@@ -75,34 +75,24 @@ async def batch_with_codes(client: AsyncClient):
 
 class TestCodeExport:
     @pytest.mark.anyio
-    async def test_trigger_export_returns_task_id(
+    async def test_trigger_export_returns_csv(
         self, client: AsyncClient, batch_with_codes
     ):
         _, headers, batch_id = batch_with_codes
-        with patch("app.api.v1.code_batches.enqueue_export_task") as mock_enqueue:
-            mock_enqueue.return_value = "task-export-001"
-            resp = await client.post(
-                f"/api/v1/code-batches/{batch_id}/export", headers=headers,
-            )
-            assert resp.status_code == 202
-            data = resp.json()
-            assert data["task_id"] == "task-export-001"
+        resp = await client.post(
+            f"/api/v1/code-batches/{batch_id}/export", headers=headers,
+        )
+        assert resp.status_code == 200
+        assert "text/csv" in resp.headers.get("content-type", "")
+        assert "public_id" in resp.text
 
     @pytest.mark.anyio
-    async def test_query_task_status(
+    async def test_export_contains_code_url(
         self, client: AsyncClient, batch_with_codes
     ):
-        _, headers, _ = batch_with_codes
-        with patch("app.api.v1.tasks.get_task_status") as mock_status:
-            mock_status.return_value = {
-                "task_id": "task-export-001",
-                "status": "completed",
-                "download_url": "https://minio.example.com/export.csv",
-            }
-            resp = await client.get(
-                "/api/v1/tasks/task-export-001", headers=headers,
-            )
-            assert resp.status_code == 200
-            data = resp.json()
-            assert data["status"] == "completed"
-            assert "download_url" in data
+        _, headers, batch_id = batch_with_codes
+        resp = await client.post(
+            f"/api/v1/code-batches/{batch_id}/export", headers=headers,
+        )
+        assert resp.status_code == 200
+        assert "qr.yimatong.cn" in resp.text

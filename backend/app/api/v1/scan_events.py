@@ -1,14 +1,15 @@
 """扫码事件上报端点（H5 前端使用）"""
 
+import hashlib
+import uuid
+
 from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.services.scan_token import verify_scan_token
-from app.services.scan_event import record_scan_event
-import hashlib
-import uuid
+from app.services.scan_event import parse_environment, record_scan_event
 
 scan_event_router = APIRouter(tags=["scan-events"])
 
@@ -40,7 +41,7 @@ async def report_scan_event(
     user_agent = request.headers.get("user-agent")
     ip_hash = hashlib.sha256(client_ip.encode()).hexdigest() if client_ip != "unknown" else None
 
-    # 解析码数据获取 tenant_id（通过 resolver 的缓存或直接查询）
+    # 解析码数据获取 tenant_id
     from app.services.resolver import resolve_public_code
     data = await resolve_public_code(db, body.public_id)
     if not data:
@@ -53,19 +54,8 @@ async def report_scan_event(
             public_id=body.public_id,
             ip_hash=ip_hash,
             user_agent=user_agent,
-            environment=_parse_environment(user_agent),
+            environment=parse_environment(user_agent),
         )
         return {"status": "ok", "is_first_scan": event.is_first_scan}
     except Exception:
         return {"status": "ignored", "reason": "internal_error"}
-
-
-def _parse_environment(user_agent: str | None) -> str:
-    if not user_agent:
-        return "browser"
-    ua_lower = user_agent.lower()
-    if "micromessenger" in ua_lower:
-        return "wechat"
-    if "alipayclient" in ua_lower or "alipay" in ua_lower:
-        return "alipay"
-    return "browser"

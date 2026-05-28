@@ -9,20 +9,27 @@ from app.core.config import settings
 logger = logging.getLogger(__name__)
 
 _redis_client = None
+_redis_failed_at: float = 0
+_RETRY_INTERVAL = 30  # seconds between reconnection attempts
 
 
 def _get_redis():
-    global _redis_client
+    global _redis_client, _redis_failed_at
     if _redis_client is not None:
         return _redis_client
+    # Throttle reconnection attempts
+    if _redis_failed_at and time.time() - _redis_failed_at < _RETRY_INTERVAL:
+        return None
     try:
         import redis
-        _redis_client = redis.from_url(settings.redis_url, decode_responses=True)
-        _redis_client.ping()
+        client = redis.from_url(settings.redis_url, decode_responses=True)
+        client.ping()
+        _redis_client = client
+        _redis_failed_at = 0
         return _redis_client
-    except Exception:
-        logger.warning("Redis unavailable, using in-memory fallback")
-        _redis_client = None
+    except Exception as e:
+        logger.warning("Redis unavailable (%s), using in-memory fallback", e)
+        _redis_failed_at = time.time()
         return None
 
 
@@ -41,10 +48,13 @@ class RedisCache:
         full_key = self._key(key)
         r = _get_redis()
         if r:
-            raw = r.get(full_key)
-            if raw:
-                return json.loads(raw)
-            return None
+            try:
+                raw = r.get(full_key)
+                if raw:
+                    return json.loads(raw)
+                return None
+            except Exception:
+                return None
         # 内存降级
         entry = self._mem_store.get(full_key)
         if not entry:
@@ -61,8 +71,11 @@ class RedisCache:
         serialized = json.dumps(value)
         r = _get_redis()
         if r:
-            r.setex(full_key, ttl, serialized)
-            return
+            try:
+                r.setex(full_key, ttl, serialized)
+                return
+            except Exception:
+                pass
         # 内存降级
         self._mem_store[full_key] = (serialized, time.time() + ttl)
 
@@ -70,8 +83,11 @@ class RedisCache:
         full_key = self._key(key)
         r = _get_redis()
         if r:
-            r.delete(full_key)
-            return
+            try:
+                r.delete(full_key)
+                return
+            except Exception:
+                pass
         self._mem_store.pop(full_key, None)
 
     def set_idempotent(self, key: str, ttl: int = 60) -> bool:
@@ -79,7 +95,10 @@ class RedisCache:
         full_key = self._key(f"idem:{key}")
         r = _get_redis()
         if r:
-            return r.set(full_key, "1", nx=True, ex=ttl) is not None
+            try:
+                return r.set(full_key, "1", nx=True, ex=ttl) is not None
+            except Exception:
+                pass
         # 内存降级
         now = time.time()
         entry = self._mem_store.get(full_key)
