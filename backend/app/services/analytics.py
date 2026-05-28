@@ -124,7 +124,7 @@ async def aggregate_daily_stats(
     """聚合同一天的扫码事件到汇总表"""
     from datetime import UTC, datetime
 
-    start = datetime(target_date.year, target_date.month, target_date.day, tzinfo=UTC)
+    start = datetime(target_date.year, target_date.month, target_date.day)
     end = start + timedelta(days=1)
 
     result = await db.execute(

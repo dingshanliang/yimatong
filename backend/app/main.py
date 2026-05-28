@@ -27,6 +27,7 @@ from app.api.v1.webhooks import webhook_router
 from app.api.v1.integration import integration_router
 from app.api.v1.i18n import i18n_router
 from app.api.v1.redpacket import redpacket_router
+from app.api.v1.roles import router as roles_router
 from app.api.v1.tasks import task_router
 from app.api.v1.tenants import router as tenants_router
 from app.core.config import settings
@@ -81,6 +82,7 @@ app.include_router(webhook_router)
 app.include_router(integration_router)
 app.include_router(i18n_router)
 app.include_router(redpacket_router)
+app.include_router(roles_router)
 
 
 @app.get("/health")

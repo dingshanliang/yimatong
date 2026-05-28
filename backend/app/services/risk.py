@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.code import CodeItem, CodeItemStatus
 from app.models.risk import RiskAlert, RiskAlertType
 from app.models.scan import ScanEvent
+from app.utils import utcnow
 
 # 多地扫码检测阈值：同一码在 10 分钟内从 2+ 不同 IP 扫描
 MULTI_LOCATION_WINDOW_MINUTES = 10
@@ -23,7 +24,7 @@ async def check_multi_location(
     db: AsyncSession, tenant_id: uuid.UUID, public_id: str, ip_hash: str,
 ) -> RiskAlert | None:
     """检测同一码短时间内从不同 IP 扫描"""
-    since = datetime.now(UTC) - timedelta(minutes=MULTI_LOCATION_WINDOW_MINUTES)
+    since = utcnow() - timedelta(minutes=MULTI_LOCATION_WINDOW_MINUTES)
     result = await db.execute(
         select(func.count(func.distinct(ScanEvent.ip_hash)))
         .where(
@@ -59,7 +60,7 @@ async def check_suspected_copy(
     db: AsyncSession, tenant_id: uuid.UUID, public_id: str, ip_hash: str,
 ) -> RiskAlert | None:
     """检测同一码短时间内高频扫码（疑似复制码）"""
-    since = datetime.now(UTC) - timedelta(minutes=SUSPECTED_COPY_WINDOW_MINUTES)
+    since = utcnow() - timedelta(minutes=SUSPECTED_COPY_WINDOW_MINUTES)
     result = await db.execute(
         select(func.count())
         .select_from(ScanEvent)

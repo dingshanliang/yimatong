@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.code import CodeBatch, CodeBatchStatus, CodeItem, CodeItemStatus, CodeType
 from app.services.public_id import generate_public_id
+from app.utils import utcnow
 
 
 async def create_code_batch(
@@ -219,7 +220,7 @@ async def activate_batch(
         )
     )
     items = list(result.scalars().all())
-    now = datetime.now(UTC)
+    now = utcnow()
     activated = 0
     for item in items:
         can_transition(item.status, CodeItemStatus.activated, raise_on_invalid=True)
@@ -247,7 +248,7 @@ async def revoke_code_item(
         raise HTTPException(status_code=404, detail="Code item not found")
     can_transition(item.status, CodeItemStatus.revoked, raise_on_invalid=True)
     item.status = CodeItemStatus.revoked
-    item.revoked_at = datetime.now(UTC)
+    item.revoked_at = utcnow()
     await db.commit()
     await db.refresh(item)
     return item
@@ -270,7 +271,7 @@ async def bind_code_item(
         raise HTTPException(status_code=404, detail="Code item not found")
     can_transition(item.status, CodeItemStatus.bound, raise_on_invalid=True)
     item.status = CodeItemStatus.bound
-    item.bound_at = datetime.now(UTC)
+    item.bound_at = utcnow()
     await db.commit()
     await db.refresh(item)
     return item

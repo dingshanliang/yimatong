@@ -7,6 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.scan import ScanEvent
+from app.utils import utcnow
 
 
 async def record_scan_event(
@@ -23,7 +24,7 @@ async def record_scan_event(
     event = ScanEvent(
         tenant_id=tenant_id,
         public_id=public_id,
-        scan_time=datetime.now(UTC),
+        scan_time=utcnow(),
         ip_hash=ip_hash,
         user_agent=user_agent,
         is_first_scan=is_first,

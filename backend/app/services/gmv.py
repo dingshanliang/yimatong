@@ -23,7 +23,7 @@ async def import_orders(
             amount=o["amount"],
             phone_hash=hash_phone(o["phone"]) if o.get("phone") else None,
             product_name=o.get("product_name"),
-            order_time=datetime.fromisoformat(o["order_time"].replace("Z", "+00:00")) if o.get("order_time") else None,
+            order_time=datetime.fromisoformat(o["order_time"].replace("Z", "+00:00")).replace(tzinfo=None) if o.get("order_time") else None,
         )
         db.add(order)
         count += 1
