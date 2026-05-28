@@ -64,14 +64,14 @@ class TestExternalOrderImport:
                     {
                         "external_id": "ORD-001",
                         "amount": 99.9,
-                        "phone_hash": "13900139001",
+                        "phone": "13900139001",
                         "product_name": "脐橙",
                         "order_time": "2026-05-28T10:00:00Z",
                     },
                     {
                         "external_id": "ORD-002",
                         "amount": 199.0,
-                        "phone_hash": "13900139002",
+                        "phone": "13900139002",
                         "product_name": "蜂蜜",
                         "order_time": "2026-05-28T11:00:00Z",
                     },
@@ -93,7 +93,7 @@ class TestExternalOrderImport:
                     {
                         "external_id": "ORD-LIST",
                         "amount": 50.0,
-                        "phone_hash": "13900139003",
+                        "phone": "13900139003",
                         "product_name": "测试商品",
                         "order_time": "2026-05-28T10:00:00Z",
                     },
@@ -124,7 +124,7 @@ class TestMatching:
                     {
                         "external_id": "ORD-MATCH",
                         "amount": 100.0,
-                        "phone_hash": "13800138000",
+                        "phone": "13800138000",
                         "product_name": "匹配测试",
                         "order_time": "2026-05-28T10:00:00Z",
                     },
@@ -133,7 +133,7 @@ class TestMatching:
             headers=headers,
         )
 
-        # 创建消费者并扫码（关联 phone_hash）
+        # 创建消费者（关联 phone）
         consumer_resp = await client.post(
             "/api/v1/members/consumers",
             json={"phone": "13800138000"},
@@ -144,7 +144,7 @@ class TestMatching:
         # 执行匹配
         resp = await client.post(
             "/api/v1/gmv/match",
-            json={"match_by": "phone_hash", "value": "13800138000"},
+            json={"match_by": "phone", "value": "13800138000"},
             headers=headers,
         )
         assert resp.status_code == 200
@@ -187,7 +187,7 @@ class TestGmvDashboard:
             external_order_id=order.id,
             public_id="GMV_CODE",
             amount=299.0,
-            match_type="phone_hash",
+            match_type="phone",
         )
         db_session.add(attribution)
         await db_session.commit()

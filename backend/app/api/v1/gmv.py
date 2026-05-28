@@ -22,7 +22,7 @@ gmv_router = APIRouter(prefix="/api/v1/gmv", tags=["gmv"])
 class OrderItem(BaseModel):
     external_id: str
     amount: float
-    phone_hash: str | None = None
+    phone: str | None = None
     product_name: str | None = None
     order_time: str | None = None
 
@@ -68,7 +68,6 @@ async def list_orders_endpoint(
                 "id": str(o.id),
                 "external_id": o.external_id,
                 "amount": o.amount,
-                "phone_hash": o.phone_hash,
                 "product_name": o.product_name,
                 "matched": o.matched,
             }

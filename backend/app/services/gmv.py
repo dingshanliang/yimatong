@@ -21,7 +21,7 @@ async def import_orders(
             tenant_id=tenant_id,
             external_id=o["external_id"],
             amount=o["amount"],
-            phone_hash=hash_phone(o["phone_hash"]) if o.get("phone_hash") else None,
+            phone_hash=hash_phone(o["phone"]) if o.get("phone") else None,
             product_name=o.get("product_name"),
             order_time=datetime.fromisoformat(o["order_time"].replace("Z", "+00:00")) if o.get("order_time") else None,
         )
@@ -57,7 +57,7 @@ async def match_order(
     db: AsyncSession, tenant_id: uuid.UUID, match_by: str, value: str,
 ) -> dict:
     """按匹配规则关联订单与消费者/扫码"""
-    if match_by == "phone_hash":
+    if match_by == "phone":
         phone_h = hash_phone(value)
         consumer_result = await db.execute(
             select(ConsumerProfile).where(
@@ -81,7 +81,7 @@ async def match_order(
                     tenant_id=tenant_id,
                     external_order_id=order.id,
                     amount=order.amount,
-                    match_type="phone_hash",
+                    match_type="phone",
                 )
                 db.add(attr)
             await db.commit()
