@@ -34,6 +34,12 @@ from app.api.v1.consumers import consumer_router
 from app.api.v1.benefit_claims import benefit_claim_router
 from app.api.v1.tasks import task_router
 from app.api.v1.tenants import router as tenants_router
+from app.api.v1.consents import consent_router
+from app.api.v1.public_pages import public_page_router
+from app.api.v1.imports import import_router
+from app.api.v1.private_domain import private_domain_router
+from app.api.v1.analytics_dashboard import dashboard_router
+from app.api.v1.risk_evaluate import risk_evaluate_router
 from app.core.config import settings
 from app.middleware.tenant import TenantScopeMiddleware
 
@@ -91,6 +97,12 @@ app.include_router(roles_router)
 app.include_router(scan_event_router)
 app.include_router(consumer_router)
 app.include_router(benefit_claim_router)
+app.include_router(consent_router)
+app.include_router(public_page_router)
+app.include_router(import_router)
+app.include_router(private_domain_router)
+app.include_router(dashboard_router)
+app.include_router(risk_evaluate_router)
 
 
 @app.get("/health")

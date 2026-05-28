@@ -294,3 +294,79 @@ async def bind_code_item(
     await db.commit()
     await db.refresh(item)
     return item
+
+
+async def freeze_batch(
+    db: AsyncSession, tenant_id: uuid.UUID, batch_id: uuid.UUID
+) -> dict:
+    from sqlalchemy import update as sa_update
+
+    now = utcnow()
+    stmt = (
+        sa_update(CodeItem)
+        .where(
+            CodeItem.tenant_id == tenant_id,
+            CodeItem.code_batch_id == batch_id,
+            CodeItem.status.in_([CodeItemStatus.activated, CodeItemStatus.bound]),
+        )
+        .values(status=CodeItemStatus.frozen)
+    )
+    r = await db.execute(stmt)
+    await db.commit()
+    return {"frozen": r.rowcount}
+
+
+async def void_batch(
+    db: AsyncSession, tenant_id: uuid.UUID, batch_id: uuid.UUID
+) -> dict:
+    from sqlalchemy import update as sa_update
+
+    now = utcnow()
+    stmt = (
+        sa_update(CodeItem)
+        .where(
+            CodeItem.tenant_id == tenant_id,
+            CodeItem.code_batch_id == batch_id,
+            CodeItem.status != CodeItemStatus.revoked,
+        )
+        .values(status=CodeItemStatus.revoked, revoked_at=now)
+    )
+    r = await db.execute(stmt)
+    await db.commit()
+    return {"voided": r.rowcount}
+
+
+async def update_batch(
+    db: AsyncSession, tenant_id: uuid.UUID, batch_id: uuid.UUID, **kwargs,
+) -> dict | None:
+    batch = await get_code_batch(db, tenant_id, batch_id)
+    if not batch:
+        return None
+    result = await db.execute(
+        select(CodeBatch).where(CodeBatch.id == batch_id, CodeBatch.tenant_id == tenant_id)
+    )
+    obj = result.scalar_one_or_none()
+    if not obj:
+        return None
+    for k, v in kwargs.items():
+        if v is not None and hasattr(obj, k):
+            setattr(obj, k, v)
+    await db.commit()
+    return await get_code_batch(db, tenant_id, batch_id)
+
+
+async def update_code_item(
+    db: AsyncSession, tenant_id: uuid.UUID, item_id: uuid.UUID, **kwargs,
+) -> CodeItem | None:
+    result = await db.execute(
+        select(CodeItem).where(CodeItem.id == item_id, CodeItem.tenant_id == tenant_id)
+    )
+    item = result.scalar_one_or_none()
+    if not item:
+        return None
+    for k, v in kwargs.items():
+        if v is not None and hasattr(item, k):
+            setattr(item, k, v)
+    await db.commit()
+    await db.refresh(item)
+    return item

@@ -16,12 +16,16 @@ from app.services.code import (
     activate_batch,
     bind_code_item,
     create_code_batch,
+    freeze_batch,
     get_code_batch,
     get_code_item,
     list_code_batches,
     list_code_items,
     resolve_code_by_public_id,
     revoke_code_item,
+    update_batch,
+    update_code_item,
+    void_batch,
 )
 from app.services.code_export import generate_code_csv
 
@@ -151,11 +155,60 @@ async def export_code_batch_endpoint(
     account_id: uuid.UUID = Depends(get_current_account_id),
 ):
     csv_content = await generate_code_csv(db, tenant_id, batch_id)
+    # 记录导出审计日志
+    from app.services.export_audit import log_export
+    await log_export(
+        db, tenant_id, account_id, "code_csv",
+        resource_id=str(batch_id),
+        file_name=f"codes-{batch_id}.csv",
+        row_count=csv_content.count("\n") - 1,
+    )
+    await db.commit()
     return StreamingResponse(
         io.StringIO(csv_content),
         media_type="text/csv",
         headers={"Content-Disposition": f"attachment; filename=codes-{batch_id}.csv"},
     )
+
+
+class CodeBatchUpdateRequest(BaseModel):
+    batch_code: str | None = None
+
+
+@code_batch_router.patch("/{batch_id}")
+async def update_code_batch_endpoint(
+    batch_id: uuid.UUID,
+    body: CodeBatchUpdateRequest,
+    db: AsyncSession = Depends(get_db),
+    tenant_id: uuid.UUID = Depends(get_current_tenant),
+):
+    from app.services.code_state import InvalidStateTransitionError
+
+    result = await update_batch(
+        db, tenant_id, batch_id,
+        batch_code=body.batch_code,
+    )
+    if not result:
+        raise HTTPException(status_code=404, detail="Code batch not found")
+    return result
+
+
+@code_batch_router.post("/{batch_id}/freeze")
+async def freeze_batch_endpoint(
+    batch_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    tenant_id: uuid.UUID = Depends(get_current_tenant),
+):
+    return await freeze_batch(db, tenant_id, batch_id)
+
+
+@code_batch_router.post("/{batch_id}/void")
+async def void_batch_endpoint(
+    batch_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    tenant_id: uuid.UUID = Depends(get_current_tenant),
+):
+    return await void_batch(db, tenant_id, batch_id)
 
 
 @code_item_router.get("/public/{public_id}")
@@ -170,6 +223,23 @@ async def resolve_code_by_public_id_endpoint(
     if data["status"] == CodeItemStatus.revoked:
         raise HTTPException(status_code=410, detail="Code has been revoked")
     return data
+
+
+class CodeItemUpdateRequest(BaseModel):
+    status: str | None = None
+
+
+@code_item_router.patch("/{item_id}", response_model=CodeItemRead)
+async def update_code_item_endpoint(
+    item_id: uuid.UUID,
+    body: CodeItemUpdateRequest,
+    db: AsyncSession = Depends(get_db),
+    tenant_id: uuid.UUID = Depends(get_current_tenant),
+):
+    item = await update_code_item(db, tenant_id, item_id)
+    if not item:
+        raise HTTPException(status_code=404, detail="Code item not found")
+    return CodeItemRead.model_validate(item)
 
 
 @code_item_router.get("/{item_id}")

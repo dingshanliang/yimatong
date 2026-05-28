@@ -1,12 +1,13 @@
 import uuid
 from datetime import UTC, datetime, timedelta
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
+from app.core.dependencies import get_current_account_id, get_current_tenant
 from app.models.tenant import Account
 from app.utils import utcnow
 from app.utils.security import create_access_token, create_refresh_token, verify_password
@@ -75,3 +76,38 @@ async def refresh(body: RefreshRequest, db: AsyncSession = Depends(get_db)):
     access = create_access_token(str(account.tenant_id), str(account.id), "admin")
     refresh = create_refresh_token(str(account.id))
     return TokenResponse(access_token=access, refresh_token=refresh)
+
+
+class MeResponse(BaseModel):
+    id: str
+    email: str
+    name: str
+    tenant_id: str
+    organization_id: str | None = None
+    role: str
+
+
+@router.get("/me", response_model=MeResponse)
+async def me(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    account_id: uuid.UUID = Depends(get_current_account_id),
+):
+    result = await db.execute(select(Account).where(Account.id == account_id))
+    account = result.scalar_one_or_none()
+    if not account:
+        raise HTTPException(status_code=404, detail="Account not found")
+    return MeResponse(
+        id=str(account.id),
+        email=account.email,
+        name=account.name,
+        tenant_id=str(account.tenant_id),
+        organization_id=str(account.organization_id) if account.organization_id else None,
+        role=request.state.role if hasattr(request.state, "role") else "admin",
+    )
+
+
+@router.post("/logout")
+async def logout():
+    """登出端点（客户端清除 token 即可，服务端无状态）"""
+    return {"status": "ok"}
