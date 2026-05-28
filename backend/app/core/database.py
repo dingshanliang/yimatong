@@ -10,4 +10,15 @@ async_session_factory = async_sessionmaker(engine, class_=AsyncSession, expire_o
 
 async def get_db() -> AsyncGenerator[AsyncSession, None]:
     async with async_session_factory() as session:
+        # Set RLS tenant context if available
+        from app.core.context import get_request_tenant_id
+
+        tenant_id = get_request_tenant_id()
+        if tenant_id:
+            from sqlalchemy import text
+
+            await session.execute(
+                text("SET LOCAL app.tenant_id = :tenant_id"),
+                {"tenant_id": tenant_id},
+            )
         yield session

@@ -31,8 +31,13 @@ class TenantScopeMiddleware(BaseHTTPMiddleware):
 
             return JSONResponse(status_code=401, content={"detail": "Invalid or expired token"})
 
-        request.state.tenant_id = payload.get("tenant_id")
+        tenant_id = payload.get("tenant_id")
+        request.state.tenant_id = tenant_id
         request.state.account_id = payload.get("sub")
         request.state.role = payload.get("role")
+
+        # Set context var for RLS (consumed by get_db)
+        from app.core.context import set_request_tenant_id
+        set_request_tenant_id(tenant_id)
 
         return await call_next(request)
