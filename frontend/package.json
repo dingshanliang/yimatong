@@ -1,0 +1,14 @@
+{
+  "name": "yimatong-frontend",
+  "private": true,
+  "scripts": {
+    "dev:admin": "pnpm --filter @yimatong/admin dev",
+    "dev:h5": "pnpm --filter @yimatong/h5 dev",
+    "build:admin": "pnpm --filter @yimatong/admin build",
+    "build:h5": "pnpm --filter @yimatong/h5 build",
+    "build:shared": "pnpm --filter @yimatong/shared build",
+    "build": "pnpm build:shared && pnpm build:admin && pnpm build:h5",
+    "lint:admin": "pnpm --filter @yimatong/admin lint",
+    "lint:h5": "pnpm --filter @yimatong/h5 lint"
+  }
+}

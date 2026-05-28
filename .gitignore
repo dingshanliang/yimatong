@@ -44,3 +44,9 @@ minio-data/
 task_plan.md
 findings.md
 progress.md
+
+# Local tool artifacts
+.claude/skills/
+.playwright-mcp/
+skills-lock.json
+login-page.png
