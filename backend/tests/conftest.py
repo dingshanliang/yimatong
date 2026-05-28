@@ -45,6 +45,8 @@ from app.models.tenant import (  # noqa: E402, F401
     account_roles,
     role_permissions,
 )
+from app.models.export_log import ExportLog  # noqa: E402, F401
+from app.models.consent import ConsentRecord  # noqa: E402, F401
 from app.utils.crypto import EnvKeyProvider, init_crypto  # noqa: E402
 
 # 初始化加密模块（读取上面设置的环境变量）

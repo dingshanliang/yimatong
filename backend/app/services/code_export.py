@@ -22,7 +22,7 @@ async def generate_code_csv(
             CodeItem.tenant_id == tenant_id,
             CodeItem.code_batch_id == batch_id,
         )
-        .order_by(CodeItem.created_at.desc())
+        .order_by(CodeItem.id.desc())
     )
     result = await db.execute(stmt)
     items = result.scalars().all()
