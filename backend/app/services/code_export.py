@@ -4,34 +4,39 @@ import csv
 import io
 import uuid
 
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
-def generate_csv_content(items: list[dict]) -> str:
-    output = io.StringIO()
-    writer = csv.DictWriter(output, fieldnames=["public_id", "status"])
-    writer.writeheader()
-    writer.writerows(items)
-    return output.getvalue()
+from app.models.code import CodeItem
 
 
-async def enqueue_export_task(
-    tenant_id: uuid.UUID, batch_id: uuid.UUID, operator_id: uuid.UUID
+async def generate_code_csv(
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    batch_id: uuid.UUID,
 ) -> str:
-    task_id = f"export-{uuid.uuid4().hex[:12]}"
-    # In production: enqueue to arq worker via Redis
-    # For now: store task status in-memory placeholder
-    _task_store[task_id] = {
-        "task_id": task_id,
-        "status": "pending",
-        "tenant_id": str(tenant_id),
-        "batch_id": str(batch_id),
-        "operator_id": str(operator_id),
-    }
-    return task_id
+    """从数据库查询码项并生成 CSV 内容"""
+    stmt = (
+        select(CodeItem)
+        .where(
+            CodeItem.tenant_id == tenant_id,
+            CodeItem.code_batch_id == batch_id,
+        )
+        .order_by(CodeItem.created_at.desc())
+    )
+    result = await db.execute(stmt)
+    items = result.scalars().all()
 
-
-async def get_task_status(task_id: str) -> dict | None:
-    return _task_store.get(task_id)
-
-
-# Simple in-memory task store for development
-_task_store: dict[str, dict] = {}
+    output = io.StringIO()
+    writer = csv.DictWriter(output, fieldnames=[
+        "public_id", "status", "code_type", "code_url",
+    ])
+    writer.writeheader()
+    for item in items:
+        writer.writerow({
+            "public_id": item.public_id,
+            "status": item.status,
+            "code_type": item.code_type,
+            "code_url": f"https://qr.yimatong.cn/c/{item.public_id}",
+        })
+    return output.getvalue()

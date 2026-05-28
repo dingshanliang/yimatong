@@ -58,12 +58,17 @@ async def submit_kyc(
     id_number: str,
     phone: str,
 ) -> KYCRecord:
+    from app.utils.crypto import encrypt_phone, hash_phone
+    phone_encrypted = encrypt_phone(phone)
+    phone_hash = hash_phone(phone)
+
     kyc = KYCRecord(
         tenant_id=tenant_id,
         account_id=account_id,
         real_name=real_name,
         id_number=id_number,
-        phone=phone,
+        phone_encrypted=phone_encrypted,
+        phone_hash=phone_hash,
     )
     db.add(kyc)
     await db.commit()

@@ -3,7 +3,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, Index, Integer, String, func
+from sqlalchemy import Boolean, DateTime, Index, Integer, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column
 from uuid6 import uuid7
 
@@ -41,7 +41,8 @@ class KYCRecord(Base):
     account_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
     real_name: Mapped[str] = mapped_column(String(100), nullable=False)
     id_number: Mapped[str] = mapped_column(String(50), nullable=False)
-    phone: Mapped[str] = mapped_column(String(20), nullable=False)
+    phone_encrypted: Mapped[str] = mapped_column(Text, nullable=False)
+    phone_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 

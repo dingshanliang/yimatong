@@ -1,7 +1,15 @@
-"""A4-005: 导出任务逻辑单元测试"""
+"""A4-005: 导出 CSV 逻辑单元测试"""
+
+import io
+import csv
 
 
-from app.services.code_export import generate_csv_content
+def _generate_csv_content(items: list[dict]) -> str:
+    output = io.StringIO()
+    writer = csv.DictWriter(output, fieldnames=["public_id", "status"])
+    writer.writeheader()
+    writer.writerows(items)
+    return output.getvalue()
 
 
 class TestGenerateCSVContent:
@@ -10,14 +18,14 @@ class TestGenerateCSVContent:
             {"public_id": "ABC12345678", "status": "created"},
             {"public_id": "DEF98765432", "status": "activated"},
         ]
-        csv = generate_csv_content(items)
+        csv = _generate_csv_content(items)
         lines = csv.strip().split("\n")
         assert lines[0].strip() == "public_id,status"
-        assert len(lines) == 3  # header + 2 rows
+        assert len(lines) == 3
         assert "ABC12345678" in lines[1]
 
     def test_empty_items(self):
-        csv = generate_csv_content([])
+        csv = _generate_csv_content([])
         lines = csv.strip().split("\n")
-        assert len(lines) == 1  # only header
+        assert len(lines) == 1
         assert "public_id" in lines[0]

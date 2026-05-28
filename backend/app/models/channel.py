@@ -2,7 +2,7 @@
 
 import uuid
 
-from sqlalchemy import ForeignKey, Index, String
+from sqlalchemy import ForeignKey, Index, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 from uuid6 import uuid7
 
@@ -17,7 +17,8 @@ class Distributor(Base):
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     code: Mapped[str] = mapped_column(String(50), nullable=False)
     contact_name: Mapped[str | None] = mapped_column(String(100), nullable=True)
-    contact_phone: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    contact_phone_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
+    contact_phone_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="active")
 
     __table_args__ = (

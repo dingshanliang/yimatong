@@ -1,6 +1,5 @@
 """渠道服务层：经销商/区域/门店 CRUD + 窜货检测"""
 
-import ipaddress
 import uuid
 
 from sqlalchemy import func, select
@@ -9,39 +8,28 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.channel import Distributor, DiversionClue, Region, Store
 from app.models.code import CodeBatch, CodeItem
 
-# 简易 IP → 城市 查找表（模拟 GeoLite2）
-IP_CITY_MAP: dict[str, str] = {
-    "110.0.0.0/8": "北京",
-    "112.0.0.0/8": "北京",
-    "120.0.0.0/8": "上海",
-    "121.0.0.0/8": "上海",
-    "113.0.0.0/8": "广东",
-    "119.0.0.0/8": "广东",
-    "114.0.0.0/8": "湖北",
-    "202.0.0.0/8": "四川",
-    "221.0.0.0/8": "辽宁",
-}
 
-
-def resolve_ip_to_city(ip: str) -> str | None:
-    """将 IP 地址解析为城市名称"""
-    try:
-        addr = ipaddress.ip_address(ip)
-        for cidr, city in IP_CITY_MAP.items():
-            if addr in ipaddress.ip_network(cidr):
-                return city
-    except ValueError:
-        pass
-    return None
+def _resolve_ip(ip: str) -> str | None:
+    from app.services.geoip import resolve_ip_to_city
+    return resolve_ip_to_city(ip)
 
 
 async def create_distributor(
     db: AsyncSession, tenant_id: uuid.UUID, name: str, code: str,
     contact_name: str | None = None, contact_phone: str | None = None,
 ) -> Distributor:
+    phone_encrypted = None
+    phone_hash = None
+    if contact_phone:
+        from app.utils.crypto import encrypt_phone, hash_phone
+        phone_encrypted = encrypt_phone(contact_phone)
+        phone_hash = hash_phone(contact_phone)
+
     dist = Distributor(
         tenant_id=tenant_id, name=name, code=code,
-        contact_name=contact_name, contact_phone=contact_phone,
+        contact_name=contact_name,
+        contact_phone_encrypted=phone_encrypted,
+        contact_phone_hash=phone_hash,
     )
     db.add(dist)
     await db.commit()
@@ -156,7 +144,7 @@ async def check_diversion(
     db: AsyncSession, tenant_id: uuid.UUID, public_id: str, ip: str,
 ) -> DiversionClue | None:
     """检测窜货：扫码 IP 城市与批次分配区域不匹配"""
-    detected_city = resolve_ip_to_city(ip)
+    detected_city = _resolve_ip(ip)
     if not detected_city:
         return None
 

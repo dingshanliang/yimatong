@@ -26,8 +26,12 @@ from app.api.v1.connectors import connector_router
 from app.api.v1.webhooks import webhook_router
 from app.api.v1.integration import integration_router
 from app.api.v1.i18n import i18n_router
+from app.api.v1.industry_templates import template_router
 from app.api.v1.redpacket import redpacket_router
 from app.api.v1.roles import router as roles_router
+from app.api.v1.scan_events import scan_event_router
+from app.api.v1.consumers import consumer_router
+from app.api.v1.benefit_claims import benefit_claim_router
 from app.api.v1.tasks import task_router
 from app.api.v1.tenants import router as tenants_router
 from app.core.config import settings
@@ -81,8 +85,12 @@ app.include_router(connector_router)
 app.include_router(webhook_router)
 app.include_router(integration_router)
 app.include_router(i18n_router)
+app.include_router(template_router)
 app.include_router(redpacket_router)
 app.include_router(roles_router)
+app.include_router(scan_event_router)
+app.include_router(consumer_router)
+app.include_router(benefit_claim_router)
 
 
 @app.get("/health")

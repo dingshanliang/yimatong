@@ -5,15 +5,18 @@ import uuid
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import HTMLResponse, JSONResponse
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
-from app.models.code import CodeItemStatus, CodeType
+from app.models.code import CodeBatch, CodeItemStatus, CodeType
+from app.models.page import PageTemplate, PageVersion, PageVersionStatus
 from app.middleware.rate_limit import rate_limiter
 from app.services.page_render import render_page
 from app.services.public_id import validate_public_id
 from app.services.resolve_cache import resolve_cache
 from app.services.scan_event import parse_environment, record_scan_event
+from app.services.scan_token import create_scan_token
 from app.services.resolver import (
     INNER_VERIFY_PAGE,
     NOT_ACTIVE_PAGE,
@@ -33,6 +36,9 @@ async def resolve_code_endpoint(
     request: Request,
     db: AsyncSession = Depends(get_db),
 ):
+    accept = request.headers.get("accept", "")
+    want_json = "application/json" in accept
+
     # 1. 限流检查
     client_ip = request.client.host if request.client else "unknown"
     rate_result = rate_limiter.check_resolver(client_ip, public_id)
@@ -45,6 +51,8 @@ async def resolve_code_endpoint(
 
     # 2. public_id 格式校验（Luhn）
     if not validate_public_id(public_id):
+        if want_json:
+            return JSONResponse(status_code=404, content={"detail": "not_found"})
         return HTMLResponse(content=NOT_FOUND_PAGE, status_code=404)
 
     # 3. 缓存查询
@@ -57,14 +65,35 @@ async def resolve_code_endpoint(
             resolve_cache.set(f"resolve:{public_id}", data)
 
     if not data:
+        if want_json:
+            return JSONResponse(status_code=404, content={"detail": "not_found"})
         return HTMLResponse(content=NOT_FOUND_PAGE, status_code=404)
 
+    status = data["status"]
+
+    # 错误状态统一处理
+    if status == CodeItemStatus.revoked:
+        if want_json:
+            return JSONResponse(status_code=410, content={"code_data": {"status": "revoked", "public_id": public_id}})
+        return HTMLResponse(content=REVOKED_PAGE, status_code=410)
+
+    if status == CodeItemStatus.frozen:
+        if want_json:
+            return JSONResponse(status_code=403, content={"code_data": {"status": "frozen", "public_id": public_id}})
+        return HTMLResponse(content=RISK_FROZEN_PAGE, status_code=403)
+
+    if status == CodeItemStatus.created:
+        if want_json:
+            return JSONResponse(content={"code_data": {"status": "not_active", "public_id": public_id}})
+        return HTMLResponse(content=NOT_ACTIVE_PAGE, status_code=200)
+
     # 4. 记录扫码事件（仅对已激活的码）
-    if data["status"] == CodeItemStatus.activated:
+    scan_info = {"is_first_scan": False, "scan_count": 0}
+    if status == CodeItemStatus.activated:
         user_agent = request.headers.get("user-agent")
         ip_hash = hashlib.sha256(client_ip.encode()).hexdigest() if client_ip != "unknown" else None
         try:
-            await record_scan_event(
+            event = await record_scan_event(
                 db=db,
                 tenant_id=uuid.UUID(data["tenant_id"]),
                 public_id=public_id,
@@ -72,27 +101,24 @@ async def resolve_code_endpoint(
                 user_agent=user_agent,
                 environment=parse_environment(user_agent),
             )
+            scan_info["is_first_scan"] = event.is_first_scan
         except Exception:
-            pass  # 扫码事件记录失败不应阻塞码解析
+            pass
 
-    status = data["status"]
+    # 5. 生成 scan_token
+    ip_hash_val = hashlib.sha256(client_ip.encode()).hexdigest() if client_ip != "unknown" else ""
+    scan_token = create_scan_token(public_id, ip_hash_val)
 
-    if status == CodeItemStatus.revoked:
-        return HTMLResponse(content=REVOKED_PAGE, status_code=410)
+    # 6. JSON 响应模式（H5 前端使用）
+    if want_json:
+        return JSONResponse(content=_build_json_response(db, data, scan_token, scan_info))
 
-    if status == CodeItemStatus.frozen:
-        return HTMLResponse(content=RISK_FROZEN_PAGE, status_code=403)
-
-    if status == CodeItemStatus.created:
-        return HTMLResponse(content=NOT_ACTIVE_PAGE, status_code=200)
-
+    # --- HTML 响应模式（向后兼容 / 直连浏览器） ---
     code_type = data.get("code_type", CodeType.single)
 
-    # 外码：展示引流页
     if code_type == CodeType.outer:
         return HTMLResponse(content=OUTER_LANDING_PAGE.format(public_id=public_id))
 
-    # 内码：展示验真页
     if code_type == CodeType.inner:
         template_id = data.get("template_id")
         tenant_id = data.get("tenant_id")
@@ -102,17 +128,64 @@ async def resolve_code_endpoint(
                 return HTMLResponse(content=html)
         return HTMLResponse(content=INNER_VERIFY_PAGE.format(public_id=public_id))
 
-    # 单码：尝试渲染关联的页面模板
     template_id = data.get("template_id")
     tenant_id = data.get("tenant_id")
-
     if template_id and tenant_id:
         html = await render_page(db, uuid.UUID(tenant_id), uuid.UUID(template_id))
         if html:
             return HTMLResponse(content=html)
 
-    # 无绑定模板时返回默认页面
     return HTMLResponse(content=_build_code_page(data))
+
+
+async def _build_json_response(
+    db: AsyncSession, data: dict, scan_token: str, scan_info: dict,
+) -> dict:
+    """构建 H5 前端所需的 JSON 响应"""
+    tenant_id = uuid.UUID(data["tenant_id"])
+    product_id = data.get("product_id")
+
+    result: dict = {
+        "scan_token": scan_token,
+        "code_data": {
+            "public_id": data["public_id"],
+            "status": data["status"],
+            "code_type": data.get("code_type", "single"),
+        },
+        "scan_info": scan_info,
+    }
+
+    # 查询品牌信息
+    if product_id:
+        from app.models.product import Product, Brand
+        prod_result = await db.execute(select(Product).where(Product.id == uuid.UUID(product_id)))
+        product = prod_result.scalar_one_or_none()
+        if product:
+            result["code_data"]["product"] = {
+                "name": product.name,
+                "description": product.description,
+                "images": product.images if hasattr(product, "images") and product.images else [],
+            }
+            brand_result = await db.execute(select(Brand).where(Brand.id == product.brand_id))
+            brand = brand_result.scalar_one_or_none()
+            if brand:
+                result["brand"] = {"name": brand.name, "logo_url": brand.logo_url or ""}
+                result["tenant_branding"] = {"name": brand.name, "logo_url": brand.logo_url or ""}
+
+    # 查询页面配置（DSL）
+    template_id = data.get("template_id")
+    if template_id:
+        ver_result = await db.execute(
+            select(PageVersion).where(
+                PageVersion.page_template_id == uuid.UUID(template_id),
+                PageVersion.status == PageVersionStatus.published,
+            ).limit(1)
+        )
+        version = ver_result.scalar_one_or_none()
+        if version:
+            result["page_config"] = version.config_json
+
+    return result
 
 
 def _build_code_page(data: dict) -> str:

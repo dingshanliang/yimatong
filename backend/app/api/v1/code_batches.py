@@ -4,6 +4,7 @@ import uuid
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -21,7 +22,7 @@ from app.services.code import (
     resolve_code_by_public_id,
     revoke_code_item,
 )
-from app.services.code_export import enqueue_export_task
+from app.services.code_export import generate_code_csv
 
 code_batch_router = APIRouter(prefix="/api/v1/code-batches", tags=["code-batches"])
 code_item_router = APIRouter(prefix="/api/v1/code-items", tags=["code-items"])
@@ -141,15 +142,20 @@ async def activate_batch_endpoint(
         raise HTTPException(status_code=409, detail=str(e))
 
 
-@code_batch_router.post("/{batch_id}/export", status_code=202)
+@code_batch_router.post("/{batch_id}/export")
 async def export_code_batch_endpoint(
     batch_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
     account_id: uuid.UUID = Depends(get_current_account_id),
 ):
-    task_id = await enqueue_export_task(tenant_id, batch_id, account_id)
-    return {"task_id": task_id}
+    csv_content = await generate_code_csv(db, tenant_id, batch_id)
+    import io
+    return StreamingResponse(
+        io.StringIO(csv_content),
+        media_type="text/csv",
+        headers={"Content-Disposition": f"attachment; filename=codes-{batch_id}.csv"},
+    )
 
 
 @code_item_router.get("/public/{public_id}")
