@@ -126,3 +126,21 @@ class TestKeyProvider:
         provider = EnvKeyProvider()
         pepper = provider.get_pepper()
         assert len(pepper) == 32
+
+
+class TestNotInitialized:
+    """未初始化时调用加密函数应报错"""
+
+    def test_encrypt_without_init(self):
+        import app.utils.crypto as crypto_mod
+
+        crypto_mod._provider = None
+        with pytest.raises(CryptoError, match="not initialized"):
+            encrypt_phone("13800138000")
+
+    def test_decrypt_without_init(self):
+        import app.utils.crypto as crypto_mod
+
+        crypto_mod._provider = None
+        with pytest.raises(CryptoError, match="not initialized"):
+            decrypt_phone("anything")
