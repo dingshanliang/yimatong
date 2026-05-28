@@ -13,8 +13,8 @@ sys.path.insert(0, str(backend_dir))
 os.environ.setdefault("database_url", "sqlite+aiosqlite://")
 os.environ.setdefault("redis_url", "redis://localhost:6379/0")
 os.environ.setdefault("secret_key", "test-secret-key")
-os.environ.setdefault("aes_master_key_v1", "00" * 32)
-os.environ.setdefault("hmac_pepper", "ff" * 32)
+os.environ.setdefault("AES_MASTER_KEY_V1", "00" * 32)
+os.environ.setdefault("HMAC_PEPPER", "ff" * 32)
 
 # 必须在设置环境变量后导入
 from app.models.analytics import DailyScanStats  # noqa: E402, F401
@@ -45,6 +45,10 @@ from app.models.tenant import (  # noqa: E402, F401
     account_roles,
     role_permissions,
 )
+from app.utils.crypto import EnvKeyProvider, init_crypto  # noqa: E402
+
+# 初始化加密模块（读取上面设置的环境变量）
+init_crypto(EnvKeyProvider())
 
 TEST_DATABASE_URL = "sqlite+aiosqlite://"
 test_engine = create_async_engine(TEST_DATABASE_URL, echo=False)

@@ -56,7 +56,7 @@ class TestConsumerProfile:
         tid, headers = setup_tenant
         resp = await client.post(
             "/api/v1/members/consumers",
-            json={"phone_hash": "abc123"},
+            json={"phone": "13800138000"},
             headers=headers,
         )
         assert resp.status_code == 201
