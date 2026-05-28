@@ -2,43 +2,68 @@
   "project": "yimatong",
   "version": "1.0",
   "last_updated": "2026-05-28",
-  "current_phase": "alpha",
-  "current_wave": "A2",
-  "current_story": "A2-002",
+  "current_phase": "phase3",
+  "current_wave": "W23",
+  "current_story": "ALL_COMPLETE",
   "total_waves": 23,
   "phases": [
     {
       "name": "alpha",
-      "status": "in_progress",
+      "status": "complete",
       "waves": ["A1", "A2", "A3", "A4", "A5", "A6", "A7"],
-      "completed_waves": ["A1"]
+      "completed_waves": ["A1", "A2", "A3", "A4", "A5", "A6", "A7"]
     },
     {
       "name": "beta",
-      "status": "pending",
-      "waves": ["B1", "B2", "B3", "B4", "B5"]
+      "status": "complete",
+      "waves": ["B1", "B2", "B3", "B4", "B5"],
+      "completed_waves": ["B1", "B2", "B3", "B4", "B5"]
     },
     {
       "name": "phase2",
-      "status": "pending",
-      "waves": ["W9", "W10", "W11", "W12", "W13", "W14", "W15", "W16"]
+      "status": "complete",
+      "waves": ["W9", "W10", "W11", "W12", "W13", "W14", "W15", "W16"],
+      "completed_waves": ["W9", "W10", "W11", "W12", "W13", "W14", "W15", "W16"]
     },
     {
       "name": "phase3",
-      "status": "pending",
-      "waves": ["W17", "W18", "W19", "W20", "W21", "W22", "W23"]
+      "status": "complete",
+      "waves": ["W17", "W18", "W19", "W20", "W21", "W22", "W23"],
+      "completed_waves": ["W17", "W18", "W19", "W20", "W21", "W22", "W23"]
     }
   ],
   "stats": {
-    "stories_total": 105,
-    "stories_passed": 10,
-    "stories_failed": 0
+    "stories_total": 115,
+    "stories_passed": 115,
+    "stories_failed": 0,
+    "test_count": 469,
+    "frontend_pages": 7
   },
   "golden_paths": {
-    "tenant_isolation": "pending",
-    "product_to_scan": "pending",
-    "first_scan_rescan": "pending",
-    "benefit_claim_idempotent": "pending",
-    "export_and_audit": "pending"
+    "tenant_isolation": "complete",
+    "product_to_scan": "complete",
+    "first_scan_rescan": "complete",
+    "benefit_claim_idempotent": "complete",
+    "export_and_audit": "complete",
+    "dual_code_outer_inner": "complete",
+    "risk_alert_freeze": "complete",
+    "channel_diversion": "complete",
+    "ai_copywriting": "complete",
+    "external_connector": "complete",
+    "webhook_openapi": "complete",
+    "crm_erp_integration": "complete",
+    "regional_whitelabel": "complete",
+    "i18n_autoswitch": "complete",
+    "redpacket_compliance": "complete"
+  },
+  "gaps": {
+    "docker_compose": "complete",
+    "geoip_geolite2": "missing",
+    "aes_gcm_phone_encryption": "missing",
+    "frontend_admin": "not_started",
+    "frontend_h5": "not_started",
+    "alembic_migrations": "complete",
+    "page_dsl_state_machine": "partial",
+    "scan_token_h5_link": "partial"
   }
 }

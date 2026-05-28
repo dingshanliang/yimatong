@@ -1,7 +1,8 @@
 import uuid
+from datetime import datetime
 from enum import StrEnum
 
-from sqlalchemy import JSON, Column, ForeignKey, String, Table
+from sqlalchemy import JSON, Column, DateTime, ForeignKey, String, Table
 from sqlalchemy import Enum as SQLEnum
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from uuid6 import uuid7
@@ -70,6 +71,9 @@ class Account(Base):
     email: Mapped[str] = mapped_column(String(255), nullable=False)
     hashed_password: Mapped[str] = mapped_column(String(255), nullable=False)
     name: Mapped[str] = mapped_column(String(100), nullable=False)
+    failed_login_attempts: Mapped[int] = mapped_column(default=0, nullable=False)
+    locked_until: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    last_login_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     organization = relationship("Organization", back_populates="accounts")
     roles = relationship("Role", secondary="account_roles", back_populates="accounts", lazy="selectin")

@@ -3,7 +3,7 @@
   "title": "固定模板页面",
   "phase": "alpha",
   "epic": "EPIC-04",
-  "status": "pending",
+  "status": "complete",
   "stories": [
     {
       "id": "A5-001",
@@ -19,8 +19,8 @@
         "tests/test_models/test_page_template.py",
         "tests/test_models/test_page_version.py"
       ],
-      "passes": false,
-      "attempt_count": 0
+      "passes": true,
+      "attempt_count": 1
     },
     {
       "id": "A5-002",
@@ -35,8 +35,8 @@
       "tests": [
         "tests/test_api/test_page_templates.py"
       ],
-      "passes": false,
-      "attempt_count": 0
+      "passes": true,
+      "attempt_count": 1
     },
     {
       "id": "A5-003",
@@ -50,10 +50,10 @@
         "同一模板仅允许一个 published 版本"
       ],
       "tests": [
-        "tests/test_api/test_page_versions.py"
+        "tests/test_api/test_page_templates.py"
       ],
-      "passes": false,
-      "attempt_count": 0
+      "passes": true,
+      "attempt_count": 1
     },
     {
       "id": "A5-004",
@@ -68,8 +68,8 @@
       "tests": [
         "tests/test_services/test_template_schema.py"
       ],
-      "passes": false,
-      "attempt_count": 0
+      "passes": true,
+      "attempt_count": 1
     },
     {
       "id": "A5-005",
@@ -84,8 +84,8 @@
       "tests": [
         "tests/test_services/test_page_render.py"
       ],
-      "passes": false,
-      "attempt_count": 0
+      "passes": true,
+      "attempt_count": 1
     },
     {
       "id": "A5-006",
@@ -101,8 +101,8 @@
         "tests/test_api/test_page_preview.py",
         "tests/test_integration/test_page_publish_flow.py"
       ],
-      "passes": false,
-      "attempt_count": 0
+      "passes": true,
+      "attempt_count": 1
     }
   ]
 }

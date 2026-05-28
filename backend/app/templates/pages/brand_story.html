@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{{ config.get('story_title', '品牌故事') }}</title>
+    <style>
+        body { font-family: sans-serif; margin: 0; padding: 16px; }
+        .cover { width: 100%; border-radius: 8px; margin-bottom: 16px; }
+        .brand { color: #666; font-size: 14px; }
+        .story-title { font-size: 22px; font-weight: bold; margin: 8px 0; }
+        .story-content { line-height: 1.8; color: #333; }
+    </style>
+</head>
+<body>
+    {% if config.get('cover_image') %}
+    <img class="cover" src="{{ config['cover_image'] }}" alt="cover">
+    {% endif %}
+    <div class="brand">{{ config.get('brand_name', '') }}</div>
+    <div class="story-title">{{ config.get('story_title', '') }}</div>
+    <div class="story-content">{{ config.get('story_content', '') }}</div>
+</body>
+</html>

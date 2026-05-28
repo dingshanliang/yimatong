@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.main import app
+from app.utils.security import create_access_token
 from tests.conftest import TestSessionLocal
 
 
@@ -29,40 +30,54 @@ async def client(db_session: AsyncSession):
     app.dependency_overrides.clear()
 
 
+def _auth_headers(tenant_id: str) -> dict:
+    token = create_access_token(tenant_id, "00000000-0000-0000-0000-000000000001", "admin")
+    return {"Authorization": f"Bearer {token}"}
+
+
+@pytest.fixture
+async def tenant_with_auth(client: AsyncClient):
+    """创建租户并返回 (tenant_id, auth_headers)"""
+    resp = await client.post(
+        "/api/v1/tenants",
+        json={
+            "name": "Test",
+            "admin_email": "a@b.com",
+            "admin_name": "Admin",
+            "admin_password": "Pass1234",
+        },
+    )
+    assert resp.status_code == 201
+    tenant_id = resp.json()["id"]
+    return tenant_id, _auth_headers(tenant_id)
+
+
 class TestOrganizationCRUD:
     @pytest.mark.anyio
-    async def test_create_organization(self, client: AsyncClient):
-        resp = await client.post("/api/v1/organizations", json={"name": "研发部"})
+    async def test_create_organization(self, client: AsyncClient, tenant_with_auth):
+        tenant_id, headers = tenant_with_auth
+        resp = await client.post("/api/v1/organizations", json={"name": "研发部"}, headers=headers)
         assert resp.status_code == 201
         data = resp.json()
         assert data["name"] == "研发部"
-        assert "id" in data
+        assert data["tenant_id"] == tenant_id
 
     @pytest.mark.anyio
-    async def test_list_organizations(self, client: AsyncClient):
-        await client.post("/api/v1/organizations", json={"name": "部门A"})
-        resp = await client.get("/api/v1/organizations")
+    async def test_list_organizations(self, client: AsyncClient, tenant_with_auth):
+        _, headers = tenant_with_auth
+        await client.post("/api/v1/organizations", json={"name": "部门A"}, headers=headers)
+        resp = await client.get("/api/v1/organizations", headers=headers)
         assert resp.status_code == 200
         assert isinstance(resp.json(), list)
 
 
 class TestAccountCRUD:
     @pytest.mark.anyio
-    async def test_create_account(self, client: AsyncClient):
-        # 先创建租户+组织
-        tenant_resp = await client.post(
-            "/api/v1/tenants",
-            json={
-                "name": "Test",
-                "admin_email": "a@b.com",
-                "admin_name": "Admin",
-                "admin_password": "Pass1234",
-            },
-        )
-        assert tenant_resp.status_code == 201
+    async def test_create_account(self, client: AsyncClient, tenant_with_auth):
+        tenant_id, headers = tenant_with_auth
 
         # 创建组织
-        org_resp = await client.post("/api/v1/organizations", json={"name": "Test Org"})
+        org_resp = await client.post("/api/v1/organizations", json={"name": "Test Org"}, headers=headers)
         assert org_resp.status_code == 201
         org_id = org_resp.json()["id"]
 
@@ -75,19 +90,23 @@ class TestAccountCRUD:
                 "password": "Test1234",
                 "organization_id": org_id,
             },
+            headers=headers,
         )
         assert resp.status_code == 201
         assert resp.json()["email"] == "user@test.com"
 
     @pytest.mark.anyio
-    async def test_list_accounts(self, client: AsyncClient):
-        resp = await client.get("/api/v1/accounts")
+    async def test_list_accounts(self, client: AsyncClient, tenant_with_auth):
+        _, headers = tenant_with_auth
+        resp = await client.get("/api/v1/accounts", headers=headers)
         assert resp.status_code == 200
 
     @pytest.mark.anyio
-    async def test_update_account(self, client: AsyncClient):
+    async def test_update_account(self, client: AsyncClient, tenant_with_auth):
+        _, headers = tenant_with_auth
         resp = await client.patch(
             "/api/v1/accounts/00000000-0000-0000-0000-000000000000",
             json={"name": "New Name"},
+            headers=headers,
         )
         assert resp.status_code == 404

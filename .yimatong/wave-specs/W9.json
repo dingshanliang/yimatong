@@ -1,0 +1,52 @@
+{
+  "wave": "W9",
+  "title": "外码/内码双码",
+  "phase": "phase2",
+  "epic": "EPIC-09",
+  "status": "complete",
+  "stories": [
+    {
+      "id": "W9-001",
+      "title": "CodeItem 扩展：outer/inner 配对模型",
+      "tests": ["tests/test_api/test_dual_code.py (test_code_item_has_type_and_pair PASS)"],
+      "passes": true,
+      "attempt_count": 1,
+      "notes": "CodeItem 增加 code_type(outer/inner/single)、pair_id 字段"
+    },
+    {
+      "id": "W9-002",
+      "title": "配对码批量生成服务",
+      "tests": ["tests/test_api/test_dual_code.py (test_create_paired_batch PASS)"],
+      "passes": true,
+      "attempt_count": 1,
+      "notes": "code_type=paired 时自动生成外码+内码配对，共享 pair_id"
+    },
+    {
+      "id": "W9-003",
+      "title": "外码解析：引流页",
+      "tests": ["tests/test_api/test_dual_code.py (test_outer_code_shows_landing_page PASS)"],
+      "passes": true,
+      "attempt_count": 1,
+      "notes": "外码扫码展示引流页，引导用户刮开内码"
+    },
+    {
+      "id": "W9-004",
+      "title": "内码解析：验真+领奖",
+      "tests": ["tests/test_api/test_dual_code.py (test_inner_code_verifies_authentic PASS)"],
+      "passes": true,
+      "attempt_count": 1,
+      "notes": "内码扫码展示验真页（正品保障），有模板则渲染模板"
+    },
+    {
+      "id": "W9-005",
+      "title": "双码 API 端点与集成测试",
+      "tests": [
+        "tests/test_api/test_dual_code.py (test_get_pair_info PASS)",
+        "tests/test_api/test_dual_code.py (test_single_code_batch_still_works PASS)"
+      ],
+      "passes": true,
+      "attempt_count": 1,
+      "notes": "GET /api/v1/code-items/{id}/pair 查询配对码，单码向后兼容"
+    }
+  ]
+}

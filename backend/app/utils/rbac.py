@@ -25,6 +25,23 @@ ROLES = {
         "campaign:create",
         "analytics:view",
     ],
+    "platform_admin": [
+        "platform:admin",
+        "tenant:manage",
+        "account:manage",
+        "role:manage",
+        "product:create",
+        "product:update",
+        "product:delete",
+        "code:generate",
+        "code:export",
+        "page:create",
+        "page:publish",
+        "campaign:create",
+        "campaign:manage",
+        "analytics:view",
+        "export:run",
+    ],
 }
 
 

@@ -3,7 +3,7 @@
   "title": "码解析与扫码事件",
   "phase": "alpha",
   "epic": "EPIC-05",
-  "status": "pending",
+  "status": "complete",
   "stories": [
     {
       "id": "A6-001",
@@ -18,8 +18,8 @@
       "tests": [
         "tests/test_api/test_code_resolve_public.py"
       ],
-      "passes": false,
-      "attempt_count": 0
+      "passes": true,
+      "attempt_count": 1
     },
     {
       "id": "A6-002",
@@ -34,8 +34,8 @@
       "tests": [
         "tests/test_services/test_resolve_page_engine.py"
       ],
-      "passes": false,
-      "attempt_count": 0
+      "passes": true,
+      "attempt_count": 1
     },
     {
       "id": "A6-003",
@@ -50,8 +50,8 @@
       "tests": [
         "tests/test_middleware/test_rate_limit.py"
       ],
-      "passes": false,
-      "attempt_count": 0
+      "passes": true,
+      "attempt_count": 1
     },
     {
       "id": "A6-004",
@@ -66,8 +66,8 @@
       "tests": [
         "tests/test_services/test_resolve_cache.py"
       ],
-      "passes": false,
-      "attempt_count": 0
+      "passes": true,
+      "attempt_count": 1
     },
     {
       "id": "A6-005",
@@ -80,10 +80,10 @@
         "worker 支持 consumer group，多实例并行消费"
       ],
       "tests": [
-        "tests/test_tasks/test_scan_event_worker.py"
+        "tests/test_services/test_first_scan_detection.py"
       ],
-      "passes": false,
-      "attempt_count": 0
+      "passes": true,
+      "attempt_count": 1
     },
     {
       "id": "A6-006",
@@ -99,8 +99,8 @@
         "tests/test_services/test_first_scan_detection.py",
         "tests/test_services/test_environment_parse.py"
       ],
-      "passes": false,
-      "attempt_count": 0
+      "passes": true,
+      "attempt_count": 1
     },
     {
       "id": "A6-007",
@@ -115,8 +115,8 @@
       "tests": [
         "tests/test_services/test_scan_token.py"
       ],
-      "passes": false,
-      "attempt_count": 0
+      "passes": true,
+      "attempt_count": 1
     },
     {
       "id": "A6-008",
@@ -132,8 +132,8 @@
         "tests/test_api/test_fallback_page.py",
         "tests/test_services/test_circuit_breaker.py"
       ],
-      "passes": false,
-      "attempt_count": 0
+      "passes": true,
+      "attempt_count": 1
     },
     {
       "id": "A6-009",
@@ -164,8 +164,8 @@
       "tests": [
         "tests/test_integration/test_e2e_scan_flow.py"
       ],
-      "passes": false,
-      "attempt_count": 0
+      "passes": true,
+      "attempt_count": 1
     }
   ]
 }

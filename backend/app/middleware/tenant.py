@@ -8,7 +8,14 @@ class TenantScopeMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         # 公开路由跳过认证
         public_paths = {"/health", "/health/detail", "/docs", "/openapi.json", "/redoc"}
-        if request.url.path in public_paths or request.url.path.startswith("/c/"):
+        public_auth_paths = {"/api/v1/auth/login", "/api/v1/auth/refresh"}
+        if (
+            request.url.path in public_paths
+            or request.url.path in public_auth_paths
+            or request.url.path.startswith("/c/")
+            or request.url.path == "/api/v1/platform/auth/login"
+            or (request.url.path == "/api/v1/tenants" and request.method == "POST")
+        ):
             return await call_next(request)
 
         auth_header = request.headers.get("Authorization", "")

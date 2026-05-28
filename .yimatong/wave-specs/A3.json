@@ -3,7 +3,7 @@
   "title": "产品资料最小集",
   "phase": "alpha",
   "epic": "EPIC-02",
-  "status": "pending",
+  "status": "complete",
   "stories": [
     {
       "id": "A3-001",
@@ -18,8 +18,8 @@
       "tests": [
         "tests/test_api/test_brands.py"
       ],
-      "passes": false,
-      "attempt_count": 0
+      "passes": true,
+      "attempt_count": 1
     },
     {
       "id": "A3-002",
@@ -34,8 +34,8 @@
       "tests": [
         "tests/test_api/test_products.py"
       ],
-      "passes": false,
-      "attempt_count": 0
+      "passes": true,
+      "attempt_count": 1
     },
     {
       "id": "A3-003",
@@ -50,8 +50,8 @@
       "tests": [
         "tests/test_api/test_skus.py"
       ],
-      "passes": false,
-      "attempt_count": 0
+      "passes": true,
+      "attempt_count": 1
     },
     {
       "id": "A3-004",
@@ -66,8 +66,8 @@
       "tests": [
         "tests/test_api/test_production_batches.py"
       ],
-      "passes": false,
-      "attempt_count": 0
+      "passes": true,
+      "attempt_count": 1
     },
     {
       "id": "A3-005",
@@ -83,8 +83,8 @@
         "tests/test_api/test_file_upload.py",
         "tests/test_services/test_storage.py"
       ],
-      "passes": false,
-      "attempt_count": 0
+      "passes": true,
+      "attempt_count": 1
     },
     {
       "id": "A3-006",
@@ -101,8 +101,8 @@
         "tests/test_cli/test_seed_product.py",
         "tests/test_cli/test_seed_code.py"
       ],
-      "passes": false,
-      "attempt_count": 0
+      "passes": true,
+      "attempt_count": 1
     },
     {
       "id": "A3-007",
@@ -117,8 +117,8 @@
       "tests": [
         "tests/test_api/test_product_relations.py"
       ],
-      "passes": false,
-      "attempt_count": 0
+      "passes": true,
+      "attempt_count": 1
     }
   ]
 }

@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.main import app
+from app.utils.security import create_access_token
 from tests.conftest import TestSessionLocal
 
 
@@ -27,6 +28,11 @@ async def client(db_session: AsyncSession):
     async with AsyncClient(transport=transport, base_url="http://test") as c:
         yield c
     app.dependency_overrides.clear()
+
+
+def _auth_headers(tenant_id: str) -> dict:
+    token = create_access_token(tenant_id, "00000000-0000-0000-0000-000000000001", "admin")
+    return {"Authorization": f"Bearer {token}"}
 
 
 @pytest.fixture
@@ -98,31 +104,39 @@ class TestCreateTenant:
 class TestGetTenant:
     @pytest.mark.anyio
     async def test_get_existing_tenant(self, client: AsyncClient, sample_tenant):
-        resp = await client.get(f"/api/v1/tenants/{sample_tenant['id']}")
+        headers = _auth_headers(sample_tenant["id"])
+        resp = await client.get(f"/api/v1/tenants/{sample_tenant['id']}", headers=headers)
         assert resp.status_code == 200
         assert resp.json()["name"] == "测试租户"
 
     @pytest.mark.anyio
     async def test_get_nonexistent_tenant(self, client: AsyncClient):
-        resp = await client.get("/api/v1/tenants/00000000-0000-0000-0000-000000000000")
+        headers = _auth_headers("00000000-0000-0000-0000-000000000000")
+        resp = await client.get(
+            "/api/v1/tenants/00000000-0000-0000-0000-000000000000", headers=headers
+        )
         assert resp.status_code == 404
 
 
 class TestUpdateTenant:
     @pytest.mark.anyio
     async def test_update_tenant_name(self, client: AsyncClient, sample_tenant):
+        headers = _auth_headers(sample_tenant["id"])
         resp = await client.patch(
             f"/api/v1/tenants/{sample_tenant['id']}",
             json={"name": "更新后的名称"},
+            headers=headers,
         )
         assert resp.status_code == 200
         assert resp.json()["name"] == "更新后的名称"
 
     @pytest.mark.anyio
     async def test_update_nonexistent_tenant(self, client: AsyncClient):
+        headers = _auth_headers("00000000-0000-0000-0000-000000000000")
         resp = await client.patch(
             "/api/v1/tenants/00000000-0000-0000-0000-000000000000",
             json={"name": "不存在"},
+            headers=headers,
         )
         assert resp.status_code == 404
 
@@ -130,8 +144,9 @@ class TestUpdateTenant:
 class TestDeleteTenant:
     @pytest.mark.anyio
     async def test_soft_delete_tenant(self, client: AsyncClient, sample_tenant):
-        resp = await client.delete(f"/api/v1/tenants/{sample_tenant['id']}")
+        headers = _auth_headers(sample_tenant["id"])
+        resp = await client.delete(f"/api/v1/tenants/{sample_tenant['id']}", headers=headers)
         assert resp.status_code == 204
 
-        resp = await client.get(f"/api/v1/tenants/{sample_tenant['id']}")
+        resp = await client.get(f"/api/v1/tenants/{sample_tenant['id']}", headers=headers)
         assert resp.json()["status"] == "terminated"

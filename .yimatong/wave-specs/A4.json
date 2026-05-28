@@ -3,7 +3,7 @@
   "title": "码生成与状态",
   "phase": "alpha",
   "epic": "EPIC-03",
-  "status": "pending",
+  "status": "complete",
   "stories": [
     {
       "id": "A4-001",
@@ -19,8 +19,8 @@
         "tests/test_models/test_code_batch.py",
         "tests/test_models/test_code_item.py"
       ],
-      "passes": false,
-      "attempt_count": 0
+      "passes": true,
+      "attempt_count": 1
     },
     {
       "id": "A4-002",
@@ -37,8 +37,8 @@
         "tests/test_services/test_public_id.py",
         "tests/test_services/test_luhn.py"
       ],
-      "passes": false,
-      "attempt_count": 0
+      "passes": true,
+      "attempt_count": 1
     },
     {
       "id": "A4-003",
@@ -53,8 +53,8 @@
       "tests": [
         "tests/test_api/test_code_batches.py"
       ],
-      "passes": false,
-      "attempt_count": 0
+      "passes": true,
+      "attempt_count": 1
     },
     {
       "id": "A4-004",
@@ -71,8 +71,8 @@
         "tests/test_services/test_code_state_machine.py",
         "tests/test_api/test_code_state_transitions.py"
       ],
-      "passes": false,
-      "attempt_count": 0
+      "passes": true,
+      "attempt_count": 1
     },
     {
       "id": "A4-005",
@@ -89,8 +89,8 @@
         "tests/test_api/test_code_export.py",
         "tests/test_tasks/test_export_task.py"
       ],
-      "passes": false,
-      "attempt_count": 0
+      "passes": true,
+      "attempt_count": 1
     },
     {
       "id": "A4-006",
@@ -105,8 +105,8 @@
       "tests": [
         "tests/test_api/test_code_list.py"
       ],
-      "passes": false,
-      "attempt_count": 0
+      "passes": true,
+      "attempt_count": 1
     },
     {
       "id": "A4-007",
@@ -121,8 +121,8 @@
       "tests": [
         "tests/test_api/test_code_resolve_admin.py"
       ],
-      "passes": false,
-      "attempt_count": 0
+      "passes": true,
+      "attempt_count": 1
     }
   ]
 }

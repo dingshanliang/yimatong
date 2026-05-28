@@ -1,0 +1,58 @@
+{
+  "wave": "W11",
+  "title": "渠道流向绑定",
+  "phase": "phase2",
+  "epic": "EPIC-11",
+  "status": "complete",
+  "stories": [
+    {
+      "id": "W11-001",
+      "title": "Distributor/Region/Store 主数据模型",
+      "tests": ["tests/test_api/test_channel.py (11 tests PASS)"],
+      "passes": true,
+      "attempt_count": 1,
+      "notes": "经销商、区域、门店三张主数据表，含 tenant_id 隔离和唯一 code 约束"
+    },
+    {
+      "id": "W11-002",
+      "title": "渠道主数据 CRUD API",
+      "tests": [
+        "tests/test_api/test_channel.py (test_create_distributor/list/region/store PASS)"
+      ],
+      "passes": true,
+      "attempt_count": 1,
+      "notes": "经销商/区域/门店的 CRUD API，含分页查询"
+    },
+    {
+      "id": "W11-003",
+      "title": "码批次分配给经销商/区域",
+      "tests": ["tests/test_api/test_channel.py (test_assign_batch_to_region PASS)"],
+      "passes": true,
+      "attempt_count": 1,
+      "notes": "CodeBatch 增加 distributor_id、region_id，POST assign 端点"
+    },
+    {
+      "id": "W11-004",
+      "title": "扫码 IP → 城市解析",
+      "tests": [
+        "tests/test_api/test_channel.py (test_resolve_known_ip PASS)",
+        "tests/test_api/test_channel.py (test_resolve_unknown_ip PASS)"
+      ],
+      "passes": true,
+      "attempt_count": 1,
+      "notes": "简易 IP 段→城市查找表模拟 GeoLite2"
+    },
+    {
+      "id": "W11-005",
+      "title": "跨区扫码线索检测",
+      "tests": [
+        "tests/test_api/test_channel.py (test_diversion_creates_clue PASS)",
+        "tests/test_api/test_channel.py (test_no_diversion_same_city PASS)",
+        "tests/test_api/test_channel.py (test_list_diversion_clues PASS)"
+      ],
+      "passes": true,
+      "attempt_count": 1,
+      "notes": "IP 城市与分配区域不匹配时生成窜货线索 DiversionClue"
+    }
+  ]
+}

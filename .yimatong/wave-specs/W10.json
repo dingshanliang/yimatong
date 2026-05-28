@@ -1,0 +1,64 @@
+{
+  "wave": "W10",
+  "title": "轻量验真与异常预警",
+  "phase": "phase2",
+  "epic": "EPIC-10",
+  "status": "complete",
+  "stories": [
+    {
+      "id": "W10-001",
+      "title": "RiskAlert 模型与预警类型",
+      "tests": ["tests/test_api/test_risk_alert.py (9 tests PASS)"],
+      "passes": true,
+      "attempt_count": 1,
+      "notes": "RiskAlert 模型支持 multi_location、suspected_copy、risk_frozen 类型"
+    },
+    {
+      "id": "W10-002",
+      "title": "首扫验真提示配置",
+      "passes": true,
+      "attempt_count": 1,
+      "notes": "内码扫码自动展示验真结果，W9-004 已覆盖"
+    },
+    {
+      "id": "W10-003",
+      "title": "多地扫码预警检测",
+      "tests": ["tests/test_api/test_risk_alert.py (test_multi_location_creates_alert PASS)"],
+      "passes": true,
+      "attempt_count": 1,
+      "notes": "同一码 10 分钟内 2+ 不同 IP 扫描触发 multi_location 预警"
+    },
+    {
+      "id": "W10-004",
+      "title": "疑似复制码预警",
+      "tests": ["tests/test_api/test_risk_alert.py (test_high_frequency_creates_alert PASS)"],
+      "passes": true,
+      "attempt_count": 1,
+      "notes": "同一码 1 分钟内 10+ 次扫码触发 suspected_copy 预警"
+    },
+    {
+      "id": "W10-005",
+      "title": "风险冻结流程",
+      "tests": [
+        "tests/test_api/test_risk_alert.py (test_freeze_activated_code PASS)",
+        "tests/test_api/test_risk_alert.py (test_frozen_code_shows_warning_page PASS)",
+        "tests/test_api/test_risk_alert.py (test_unfreeze_code PASS)"
+      ],
+      "passes": true,
+      "attempt_count": 1,
+      "notes": "冻结/解冻码项，frozen 状态展示异常提示页"
+    },
+    {
+      "id": "W10-006",
+      "title": "后台预警查询 API",
+      "tests": [
+        "tests/test_api/test_risk_alert.py (test_list_alerts PASS)",
+        "tests/test_api/test_risk_alert.py (test_resolve_alert PASS)",
+        "tests/test_api/test_risk_alert.py (test_filter_by_type PASS)"
+      ],
+      "passes": true,
+      "attempt_count": 1,
+      "notes": "GET /api/v1/risk-alerts 支持类型/状态过滤、分页，支持 resolve"
+    }
+  ]
+}

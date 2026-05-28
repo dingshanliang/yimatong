@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{{ config.get('product_name', '产品信息') }}</title>
+    <style>
+        body { font-family: sans-serif; margin: 0; padding: 16px; }
+        .brand { color: #666; font-size: 14px; }
+        .product-name { font-size: 20px; font-weight: bold; margin: 8px 0; }
+        .specs { background: #f5f5f5; padding: 12px; border-radius: 8px; margin-top: 12px; }
+        .specs dt { font-weight: bold; }
+        .batch { margin-top: 12px; color: #666; font-size: 13px; }
+    </style>
+</head>
+<body>
+    {% if config.get('brand_logo') %}
+    <img src="{{ config['brand_logo'] }}" alt="logo" style="max-height: 40px;">
+    {% endif %}
+    <div class="brand">{{ config.get('brand_name', '') }}</div>
+    <div class="product-name">{{ config.get('product_name', '') }}</div>
+    {% if config.get('product_image') %}
+    <img src="{{ config['product_image'] }}" alt="product" style="max-width: 100%; border-radius: 8px;">
+    {% endif %}
+    {% if config.get('specifications') %}
+    <dl class="specs">
+        {% for key, value in config['specifications'].items() %}
+        <dt>{{ key }}</dt><dd>{{ value }}</dd>
+        {% endfor %}
+    </dl>
+    {% endif %}
+    {% if config.get('batch_info') %}
+    <div class="batch">
+        {% for key, value in config['batch_info'].items() %}
+        <span>{{ key }}: {{ value }}</span>
+        {% endfor %}
+    </div>
+    {% endif %}
+</body>
+</html>

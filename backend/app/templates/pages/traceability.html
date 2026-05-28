@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{{ config.get('product_name', '溯源信息') }}</title>
+    <style>
+        body { font-family: sans-serif; margin: 0; padding: 16px; }
+        .brand { color: #666; font-size: 14px; }
+        .product-name { font-size: 20px; font-weight: bold; margin: 8px 0; }
+        .timeline { margin-top: 16px; }
+        .node { padding: 12px; border-left: 3px solid #4CAF50; margin-bottom: 8px; background: #f9f9f9; }
+        .node h3 { margin: 0 0 4px; }
+        .node .meta { color: #666; font-size: 13px; }
+    </style>
+</head>
+<body>
+    <div class="brand">{{ config.get('brand_name', '') }}</div>
+    <div class="product-name">{{ config.get('product_name', '') }}</div>
+    {% if config.get('trace_nodes') %}
+    <div class="timeline">
+        {% for node in config['trace_nodes'] %}
+        <div class="node">
+            <h3>{{ node.get('name', '') }}</h3>
+            <div class="meta">{{ node.get('location', '') }} · {{ node.get('date', '') }}</div>
+        </div>
+        {% endfor %}
+    </div>
+    {% endif %}
+</body>
+</html>

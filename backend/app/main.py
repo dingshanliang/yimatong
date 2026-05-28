@@ -1,11 +1,68 @@
 from fastapi import FastAPI
 
+from app.api.v1.analytics import analytics_router
+from app.api.v1.auth import router as auth_router
+from app.api.v1.campaigns import campaign_router
+from app.api.v1.code_batches import code_batch_router, code_item_router
+from app.api.v1.files import file_router
+from app.api.v1.ops import ops_router
 from app.api.v1.organizations import router as orgs_router
+from app.api.v1.page_templates import page_template_router, page_version_router
+from app.api.v1.password import router as password_router
+from app.api.v1.platform import router as platform_router
+from app.api.v1.products import batch_router, brand_router, product_router, sku_router
+from app.api.v1.resolver import resolver_router
+from app.api.v1.risk import risk_router
+from app.api.v1.channels import channel_router
+from app.api.v1.members import member_router
+from app.api.v1.risk_rules import risk_rule_router
+from app.api.v1.risk_dashboard import risk_dashboard_router
+from app.api.v1.regional import regional_router
+from app.api.v1.gmv import gmv_router
+from app.api.v1.ai import ai_router
+from app.api.v1.connectors import connector_router
+from app.api.v1.webhooks import webhook_router
+from app.api.v1.integration import integration_router
+from app.api.v1.i18n import i18n_router
+from app.api.v1.redpacket import redpacket_router
+from app.api.v1.tasks import task_router
 from app.api.v1.tenants import router as tenants_router
+from app.middleware.tenant import TenantScopeMiddleware
 
 app = FastAPI(title="一码通", version="0.1.0")
+app.add_middleware(TenantScopeMiddleware)
 app.include_router(tenants_router)
 app.include_router(orgs_router)
+app.include_router(auth_router)
+app.include_router(password_router)
+app.include_router(platform_router)
+app.include_router(brand_router)
+app.include_router(product_router)
+app.include_router(sku_router)
+app.include_router(batch_router)
+app.include_router(file_router)
+app.include_router(code_batch_router)
+app.include_router(code_item_router)
+app.include_router(task_router)
+app.include_router(page_template_router)
+app.include_router(page_version_router)
+app.include_router(resolver_router)
+app.include_router(analytics_router)
+app.include_router(campaign_router)
+app.include_router(ops_router)
+app.include_router(risk_router)
+app.include_router(channel_router)
+app.include_router(member_router)
+app.include_router(risk_rule_router)
+app.include_router(risk_dashboard_router)
+app.include_router(regional_router)
+app.include_router(gmv_router)
+app.include_router(ai_router)
+app.include_router(connector_router)
+app.include_router(webhook_router)
+app.include_router(integration_router)
+app.include_router(i18n_router)
+app.include_router(redpacket_router)
 
 
 @app.get("/health")
