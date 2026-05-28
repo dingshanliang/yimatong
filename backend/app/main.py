@@ -40,6 +40,7 @@ from app.api.v1.imports import import_router
 from app.api.v1.private_domain import private_domain_router
 from app.api.v1.analytics_dashboard import dashboard_router
 from app.api.v1.risk_evaluate import risk_evaluate_router
+from app.api.v1.prd_compat import prd_compat_router
 from app.core.config import settings
 from app.middleware.tenant import TenantScopeMiddleware
 
@@ -103,6 +104,7 @@ app.include_router(import_router)
 app.include_router(private_domain_router)
 app.include_router(dashboard_router)
 app.include_router(risk_evaluate_router)
+app.include_router(prd_compat_router)
 
 
 @app.get("/health")
