@@ -39,3 +39,8 @@ Thumbs.db
 
 # Minio data (local dev)
 minio-data/
+
+# Planning files (working memory, not for commit)
+task_plan.md
+findings.md
+progress.md
