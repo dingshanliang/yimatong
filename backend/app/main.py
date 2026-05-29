@@ -8,6 +8,7 @@ from app.api.v1.analytics import analytics_router
 from app.api.v1.analytics_dashboard import dashboard_router
 from app.api.v1.auth import router as auth_router
 from app.api.v1.benefit_claims import benefit_claim_router
+from app.api.v1.benefits import benefit_router
 from app.api.v1.campaigns import campaign_router
 from app.api.v1.channels import channel_router
 from app.api.v1.code_batches import code_batch_router, code_item_router
@@ -99,6 +100,7 @@ app.include_router(page_version_router)
 app.include_router(resolver_router)
 app.include_router(analytics_router)
 app.include_router(campaign_router)
+app.include_router(benefit_router)
 app.include_router(ops_router)
 app.include_router(risk_router)
 app.include_router(channel_router)

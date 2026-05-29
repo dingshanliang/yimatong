@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback } from "react";
 import {
   Table,
   Button,
+  Space,
   Modal,
   Form,
   Input,
@@ -13,6 +14,7 @@ import {
   Typography,
   Tabs,
   message,
+  Popconfirm,
 } from "antd";
 import { PlusOutlined } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
@@ -25,11 +27,13 @@ interface Benefit {
   id: string;
   name: string;
   benefit_type: string;
-  total_quota: number;
-  remaining_quota: number;
+  stock_total: number;
+  stock_used: number;
+  per_person_limit: number;
   campaign_id: string;
   status: string;
   created_at: string;
+  config_json: Record<string, unknown>;
 }
 
 interface BenefitClaim {
@@ -46,10 +50,10 @@ interface Campaign {
 }
 
 const BENEFIT_TYPE_MAP: Record<string, { label: string; color: string }> = {
-  coupon: { label: "优惠券", color: "blue" },
-  points: { label: "积分", color: "green" },
-  gift: { label: "实物礼品", color: "orange" },
-  lottery: { label: "抽奖", color: "purple" },
+  platform_coupon: { label: "平台券", color: "blue" },
+  external_link: { label: "外部链接", color: "green" },
+  private_domain: { label: "私域", color: "orange" },
+  form_benefit: { label: "表单", color: "purple" },
 };
 
 const CLAIM_STATUS_MAP: Record<string, { label: string; color: string }> = {
@@ -59,6 +63,66 @@ const CLAIM_STATUS_MAP: Record<string, { label: string; color: string }> = {
   expired: { label: "已过期", color: "gray" },
   cancelled: { label: "已取消", color: "red" },
 };
+
+function BenefitConfigFields({ benefitType }: { benefitType: string }) {
+  if (benefitType === "platform_coupon") {
+    return (
+      <>
+        <Form.Item name={["config_json", "amount"]} label="券面额（元）">
+          <InputNumber min={0} className="w-full" />
+        </Form.Item>
+        <Form.Item name={["config_json", "min_order"]} label="最低订单金额（元）">
+          <InputNumber min={0} className="w-full" />
+        </Form.Item>
+        <Form.Item name={["config_json", "coupon_code"]} label="券码">
+          <Input placeholder="可选，留空则系统自动生成" />
+        </Form.Item>
+      </>
+    );
+  }
+  if (benefitType === "external_link") {
+    return (
+      <>
+        <Form.Item name={["config_json", "url"]} label="跳转链接">
+          <Input placeholder="https://example.com" />
+        </Form.Item>
+        <Form.Item name={["config_json", "link_text"]} label="链接文案">
+          <Input placeholder="点击领取" />
+        </Form.Item>
+      </>
+    );
+  }
+  if (benefitType === "private_domain") {
+    return (
+      <>
+        <Form.Item name={["config_json", "qr_image_url"]} label="微信群二维码图片 URL">
+          <Input placeholder="https://..." />
+        </Form.Item>
+        <Form.Item name={["config_json", "group_name"]} label="群名称">
+          <Input />
+        </Form.Item>
+      </>
+    );
+  }
+  if (benefitType === "form_benefit") {
+    return (
+      <>
+        <Form.Item name={["config_json", "form_url"]} label="表单链接">
+          <Input placeholder="https://..." />
+        </Form.Item>
+        <Form.Item name={["config_json", "require_phone"]} label="需要手机号">
+          <Select
+            options={[
+              { value: true, label: "是" },
+              { value: false, label: "否" },
+            ]}
+          />
+        </Form.Item>
+      </>
+    );
+  }
+  return null;
+}
 
 export default function BenefitsPage() {
   const {
@@ -82,7 +146,7 @@ export default function BenefitsPage() {
   } = usePaginatedList<BenefitClaim>(
     async ({ page, page_size }) => {
       try {
-        const { data } = await api.get("/benefit-claims", { params: { page, page_size } });
+        const { data } = await api.get("/benefits/admin/claims", { params: { page, page_size } });
         return { items: data.items || [], total: data.total || 0 };
       } catch {
         message.error("加载领取记录失败");
@@ -92,9 +156,11 @@ export default function BenefitsPage() {
   );
 
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
-  const [createOpen, setCreateOpen] = useState(false);
+  const [modalOpen, setModalOpen] = useState(false);
+  const [editItem, setEditItem] = useState<Benefit | null>(null);
   const [form] = Form.useForm();
   const [activeTab, setActiveTab] = useState("benefits");
+  const [benefitType, setBenefitType] = useState<string>("");
 
   const fetchCampaigns = useCallback(async () => {
     try {
@@ -109,18 +175,69 @@ export default function BenefitsPage() {
     fetchCampaigns();
   }, [fetchCampaigns]);
 
-  const handleCreate = async (values: Record<string, unknown>) => {
+  const openCreate = () => {
+    setEditItem(null);
+    form.resetFields();
+    setBenefitType("");
+    setModalOpen(true);
+  };
+
+  const openEdit = (record: Benefit) => {
+    setEditItem(record);
+    setBenefitType(record.benefit_type);
+    form.setFieldsValue({
+      name: record.name,
+      benefit_type: record.benefit_type,
+      stock_total: record.stock_total,
+      per_person_limit: record.per_person_limit,
+      campaign_id: record.campaign_id,
+      status: record.status,
+      config_json: record.config_json,
+    });
+    setModalOpen(true);
+  };
+
+  const handleSubmit = async (values: Record<string, unknown>) => {
     try {
-      await api.post("/benefits", values);
-      message.success("权益创建成功");
-      setCreateOpen(false);
+      const payload: Record<string, unknown> = {
+        name: values.name,
+        benefit_type: values.benefit_type,
+        stock_total: values.stock_total,
+        per_person_limit: values.per_person_limit,
+        campaign_id: values.campaign_id,
+        config_json: values.config_json || {},
+      };
+      if (editItem) {
+        await api.patch(`/benefits/${editItem.id}`, payload);
+        message.success("权益更新成功");
+      } else {
+        await api.post(`/campaigns/${values.campaign_id}/benefits`, payload);
+        message.success("权益创建成功");
+      }
+      setModalOpen(false);
       form.resetFields();
       setBenefitsPage(1);
       refreshBenefits();
-    } catch {
-      message.error("创建权益失败");
+    } catch (e: unknown) {
+      const err = e as { response?: { data?: { detail?: string } } };
+      message.error(err.response?.data?.detail || (editItem ? "更新权益失败" : "创建权益失败"));
     }
   };
+
+  const handleDelete = async (id: string) => {
+    try {
+      await api.delete(`/benefits/${id}`);
+      message.success("权益已删除");
+      refreshBenefits();
+    } catch {
+      message.error("删除失败");
+    }
+  };
+
+  const campaignMap = campaigns.reduce<Record<string, string>>((acc, c) => {
+    acc[c.id] = c.name;
+    return acc;
+  }, {});
 
   const benefitColumns: ColumnsType<Benefit> = [
     { title: "权益名称", dataIndex: "name", key: "name" },
@@ -133,8 +250,19 @@ export default function BenefitsPage() {
         return <Tag color={info.color}>{info.label}</Tag>;
       },
     },
-    { title: "总配额", dataIndex: "total_quota", key: "total_quota" },
-    { title: "剩余配额", dataIndex: "remaining_quota", key: "remaining_quota" },
+    {
+      title: "关联活动",
+      dataIndex: "campaign_id",
+      key: "campaign_id",
+      render: (v: string) => campaignMap[v] || v,
+    },
+    { title: "总库存", dataIndex: "stock_total", key: "stock_total" },
+    {
+      title: "剩余库存",
+      key: "remaining",
+      render: (_: unknown, record: Benefit) => record.stock_total - record.stock_used,
+    },
+    { title: "每人限领", dataIndex: "per_person_limit", key: "per_person_limit" },
     {
       title: "状态",
       dataIndex: "status",
@@ -142,6 +270,21 @@ export default function BenefitsPage() {
       render: (s: string) => <Tag>{s}</Tag>,
     },
     { title: "创建时间", dataIndex: "created_at", key: "created_at" },
+    {
+      title: "操作",
+      key: "actions",
+      render: (_: unknown, record: Benefit) => (
+        <Space>
+          <Button size="small" onClick={() => openEdit(record)}>编辑</Button>
+          <Popconfirm
+            title="确认删除权益？"
+            onConfirm={() => handleDelete(record.id)}
+          >
+            <Button size="small" danger>删除</Button>
+          </Popconfirm>
+        </Space>
+      ),
+    },
   ];
 
   const claimColumns: ColumnsType<BenefitClaim> = [
@@ -209,7 +352,7 @@ export default function BenefitsPage() {
         <Button
           type="primary"
           icon={<PlusOutlined />}
-          onClick={() => setCreateOpen(true)}
+          onClick={openCreate}
         >
           新建权益
         </Button>
@@ -222,13 +365,22 @@ export default function BenefitsPage() {
       />
 
       <Modal
-        title="新建权益"
-        open={createOpen}
-        onCancel={() => setCreateOpen(false)}
+        title={editItem ? "编辑权益" : "新建权益"}
+        open={modalOpen}
+        onCancel={() => setModalOpen(false)}
         onOk={() => form.submit()}
-        width={500}
+        width={560}
       >
-        <Form form={form} layout="vertical" onFinish={handleCreate}>
+        <Form
+          form={form}
+          layout="vertical"
+          onFinish={handleSubmit}
+          onValuesChange={(changed) => {
+            if (changed.benefit_type) {
+              setBenefitType(changed.benefit_type as string);
+            }
+          }}
+        >
           <Form.Item
             name="name"
             label="权益名称"
@@ -249,13 +401,6 @@ export default function BenefitsPage() {
             />
           </Form.Item>
           <Form.Item
-            name="total_quota"
-            label="总配额"
-            rules={[{ required: true, message: "请输入总配额" }]}
-          >
-            <InputNumber min={1} className="w-full" />
-          </Form.Item>
-          <Form.Item
             name="campaign_id"
             label="关联活动"
             rules={[{ required: true, message: "请选择关联活动" }]}
@@ -267,6 +412,23 @@ export default function BenefitsPage() {
               optionFilterProp="label"
             />
           </Form.Item>
+          <div className="grid grid-cols-2 gap-4">
+            <Form.Item
+              name="stock_total"
+              label="总库存"
+              rules={[{ required: true, message: "请输入总库存" }]}
+            >
+              <InputNumber min={1} className="w-full" />
+            </Form.Item>
+            <Form.Item
+              name="per_person_limit"
+              label="每人限领"
+              rules={[{ required: true, message: "请输入每人限领数量" }]}
+            >
+              <InputNumber min={1} className="w-full" />
+            </Form.Item>
+          </div>
+          <BenefitConfigFields benefitType={benefitType} />
         </Form>
       </Modal>
     </div>

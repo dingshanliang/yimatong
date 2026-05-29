@@ -162,6 +162,82 @@ async def list_benefits(
     return [_benefit_to_dict(b) for b in result.scalars().all()]
 
 
+async def list_all_benefits(
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    page: int = 1,
+    page_size: int = 20,
+) -> tuple[list[dict], int]:
+    stmt = select(Benefit).where(Benefit.tenant_id == tenant_id)
+    count_stmt = select(func.count()).select_from(Benefit).where(
+        Benefit.tenant_id == tenant_id,
+    )
+    total = (await db.execute(count_stmt)).scalar() or 0
+    stmt = stmt.order_by(Benefit.id.desc()).offset((page - 1) * page_size).limit(page_size)
+    result = await db.execute(stmt)
+    return [_benefit_to_dict(b) for b in result.scalars().all()], total
+
+
+async def get_benefit(
+    db: AsyncSession, tenant_id: uuid.UUID, benefit_id: uuid.UUID,
+) -> dict | None:
+    result = await db.execute(
+        select(Benefit).where(Benefit.id == benefit_id, Benefit.tenant_id == tenant_id),
+    )
+    b = result.scalar_one_or_none()
+    return _benefit_to_dict(b) if b else None
+
+
+async def update_benefit(
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    benefit_id: uuid.UUID,
+    **fields,
+) -> dict | None:
+    result = await db.execute(
+        select(Benefit).where(Benefit.id == benefit_id, Benefit.tenant_id == tenant_id),
+    )
+    b = result.scalar_one_or_none()
+    if not b:
+        return None
+    for k, v in fields.items():
+        if v is not None:
+            setattr(b, k, v)
+    await db.flush()
+    await db.refresh(b)
+    return _benefit_to_dict(b)
+
+
+async def delete_benefit(
+    db: AsyncSession, tenant_id: uuid.UUID, benefit_id: uuid.UUID,
+) -> bool:
+    result = await db.execute(
+        select(Benefit).where(Benefit.id == benefit_id, Benefit.tenant_id == tenant_id),
+    )
+    b = result.scalar_one_or_none()
+    if not b:
+        return False
+    await db.delete(b)
+    await db.flush()
+    return True
+
+
+async def list_benefit_claims_admin(
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    page: int = 1,
+    page_size: int = 20,
+) -> tuple[list[dict], int]:
+    stmt = select(BenefitClaim).where(BenefitClaim.tenant_id == tenant_id)
+    count_stmt = select(func.count()).select_from(BenefitClaim).where(
+        BenefitClaim.tenant_id == tenant_id,
+    )
+    total = (await db.execute(count_stmt)).scalar() or 0
+    stmt = stmt.order_by(BenefitClaim.id.desc()).offset((page - 1) * page_size).limit(page_size)
+    result = await db.execute(stmt)
+    return [_claim_to_dict(c) for c in result.scalars().all()], total
+
+
 async def claim_benefit(
     db: AsyncSession,
     tenant_id: uuid.UUID,

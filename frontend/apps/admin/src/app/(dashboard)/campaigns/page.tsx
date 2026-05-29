@@ -14,7 +14,7 @@ import {
   message,
   Popconfirm,
 } from "antd";
-import { PlusOutlined, SearchOutlined } from "@ant-design/icons";
+import { PlusOutlined } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
 import api from "@/lib/api";
 import { usePaginatedList } from "@/lib/hooks";
@@ -36,7 +36,8 @@ const STATUS_MAP: Record<string, { label: string; color: string }> = {
 };
 
 export default function CampaignsPage() {
-  const [createOpen, setCreateOpen] = useState(false);
+  const [modalOpen, setModalOpen] = useState(false);
+  const [editItem, setEditItem] = useState<Record<string, unknown> | null>(null);
   const [form] = Form.useForm();
 
   const { items: campaigns, total, page, loading, setPage, refresh } = usePaginatedList<Record<string, unknown>>(
@@ -52,9 +53,34 @@ export default function CampaignsPage() {
     []
   );
 
-  const handleCreate = async (values: Record<string, unknown>) => {
+  const openCreate = () => {
+    setEditItem(null);
+    form.resetFields();
+    setModalOpen(true);
+  };
+
+  const openEdit = (record: Record<string, unknown>) => {
+    setEditItem(record);
+    const rules = (record.rules_json as Record<string, string>) || {};
+    form.setFieldsValue({
+      name: record.name,
+      campaign_type: record.campaign_type,
+      start_at: record.start_at,
+      end_at: record.end_at,
+      description: record.description,
+      participation_conditions: rules.participation_conditions || "",
+      claim_limits: rules.claim_limits || "",
+      validity_period: rules.validity_period || "",
+      disclaimer: rules.disclaimer || "",
+      minor_notice: rules.minor_notice || "",
+      customer_service_contact: rules.customer_service_contact || "",
+    });
+    setModalOpen(true);
+  };
+
+  const handleSubmit = async (values: Record<string, unknown>) => {
     try {
-      await api.post("/campaigns", {
+      const payload = {
         ...values,
         rules_json: {
           participation_conditions: values.participation_conditions || "",
@@ -64,15 +90,21 @@ export default function CampaignsPage() {
           minor_notice: values.minor_notice || "未成年人请在监护人陪同下参与",
           customer_service_contact: values.customer_service_contact || "",
         },
-      });
-      message.success("活动创建成功");
-      setCreateOpen(false);
+      };
+      if (editItem) {
+        await api.patch(`/campaigns/${editItem.id as string}`, payload);
+        message.success("活动更新成功");
+      } else {
+        await api.post("/campaigns", payload);
+        message.success("活动创建成功");
+      }
+      setModalOpen(false);
       form.resetFields();
       setPage(1);
       refresh();
     } catch (e: unknown) {
       const err = e as { response?: { data?: { detail?: string } } };
-      message.error(err.response?.data?.detail || "创建失败");
+      message.error(err.response?.data?.detail || (editItem ? "更新失败" : "创建失败"));
     }
   };
 
@@ -110,6 +142,7 @@ export default function CampaignsPage() {
       key: "actions",
       render: (_: unknown, record: Record<string, unknown>) => (
         <Space>
+          <Button size="small" onClick={() => openEdit(record)}>编辑</Button>
           {record.status === "draft" && (
             <Popconfirm
               title="确认上线活动？"
@@ -151,7 +184,7 @@ export default function CampaignsPage() {
     <div>
       <div className="mb-4 flex items-center justify-between">
         <Title level={4} className="!mb-0">活动管理</Title>
-        <Button type="primary" icon={<PlusOutlined />} onClick={() => setCreateOpen(true)}>
+        <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
           新建活动
         </Button>
       </div>
@@ -171,13 +204,13 @@ export default function CampaignsPage() {
       />
 
       <Modal
-        title="新建活动"
-        open={createOpen}
-        onCancel={() => setCreateOpen(false)}
+        title={editItem ? "编辑活动" : "新建活动"}
+        open={modalOpen}
+        onCancel={() => setModalOpen(false)}
         onOk={() => form.submit()}
         width={600}
       >
-        <Form form={form} layout="vertical" onFinish={handleCreate}>
+        <Form form={form} layout="vertical" onFinish={handleSubmit}>
           <Form.Item name="name" label="活动名称" rules={[{ required: true }]}>
             <Input />
           </Form.Item>
@@ -194,8 +227,17 @@ export default function CampaignsPage() {
               </Form.Item>
             </div>
           </Space>
+          <Form.Item name="description" label="活动描述">
+            <TextArea rows={2} />
+          </Form.Item>
           <Form.Item name="participation_conditions" label="参与条件">
             <TextArea rows={2} />
+          </Form.Item>
+          <Form.Item name="claim_limits" label="领取限制">
+            <Input placeholder="每人限领1次" />
+          </Form.Item>
+          <Form.Item name="validity_period" label="有效期">
+            <Input placeholder="领取后7天有效" />
           </Form.Item>
           <Form.Item name="disclaimer" label="免责声明">
             <TextArea rows={2} />
