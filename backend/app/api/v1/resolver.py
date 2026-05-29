@@ -111,7 +111,8 @@ async def resolve_code_endpoint(
 
     # 6. JSON 响应模式（H5 前端使用）
     if want_json:
-        return JSONResponse(content=_build_json_response(db, data, scan_token, scan_info))
+        resp = await _build_json_response(db, data, scan_token, scan_info)
+        return JSONResponse(content=resp)
 
     # --- HTML 响应模式（向后兼容 / 直连浏览器） ---
     code_type = data.get("code_type", CodeType.single)

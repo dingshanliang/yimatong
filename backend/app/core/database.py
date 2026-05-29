@@ -17,8 +17,10 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
         if tenant_id:
             from sqlalchemy import text
 
+            # Begin an explicit transaction that lasts the entire request
+            # so SET LOCAL remains in effect for all subsequent queries.
+            await session.begin()
             await session.execute(
-                text("SET LOCAL app.tenant_id = :tenant_id"),
-                {"tenant_id": tenant_id},
+                text(f"SET LOCAL app.tenant_id = '{tenant_id}'"),
             )
         yield session
