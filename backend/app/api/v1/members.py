@@ -6,6 +6,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.schemas.common import PaginatedResponse
+
 from app.core.database import get_db
 from app.core.dependencies import get_current_tenant
 from app.services.member import (
@@ -43,13 +45,6 @@ class SpendPointsRequest(BaseModel):
 class PointRuleCreate(BaseModel):
     rule_type: str
     points: int
-
-
-class PaginatedResponse(BaseModel):
-    items: list
-    total: int
-    page: int
-    page_size: int
 
 
 @member_router.post("/consumers", status_code=201)

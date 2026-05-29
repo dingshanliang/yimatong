@@ -6,6 +6,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.schemas.common import PaginatedResponse
+
 from app.core.database import get_db
 from app.core.dependencies import get_current_tenant
 from app.services.risk_rule import (
@@ -46,13 +48,6 @@ class EvaluateRequest(BaseModel):
 class CampaignEvaluateRequest(BaseModel):
     context: dict
     consumer_id: str | None = None
-
-
-class PaginatedResponse(BaseModel):
-    items: list
-    total: int
-    page: int
-    page_size: int
 
 
 # --- 静态路径必须放在 /{rule_id} 之前 ---

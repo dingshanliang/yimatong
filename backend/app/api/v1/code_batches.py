@@ -9,6 +9,8 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.schemas.common import PaginatedResponse
+
 from app.core.database import get_db
 from app.core.dependencies import get_current_account_id, get_current_tenant
 from app.models.code import CodeItemStatus, CodeType
@@ -68,13 +70,6 @@ class CodeItemRead(BaseModel):
     revoked_at: datetime | None = None
 
     model_config = {"from_attributes": True}
-
-
-class PaginatedResponse(BaseModel):
-    items: list
-    total: int
-    page: int
-    page_size: int
 
 
 @code_batch_router.post("", status_code=201)

@@ -6,6 +6,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.schemas.common import PaginatedResponse
+
 from app.core.database import get_db
 from app.core.dependencies import get_current_tenant
 from app.services.webhook import (
@@ -29,13 +31,6 @@ class WebhookCreate(BaseModel):
 class ApiKeyCreate(BaseModel):
     name: str
     permissions: list[str] = []
-
-
-class PaginatedResponse(BaseModel):
-    items: list
-    total: int
-    page: int
-    page_size: int
 
 
 @webhook_router.post("/endpoints", status_code=201)

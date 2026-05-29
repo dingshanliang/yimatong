@@ -4,6 +4,7 @@ from datetime import date
 from pydantic import BaseModel, Field
 
 from app.models.product import BatchStatus, BrandStatus, ProductStatus, SKUStatus
+from app.schemas.common import PaginatedResponse  # noqa: F401 — re-exported
 
 
 class BrandCreate(BaseModel):
@@ -80,13 +81,6 @@ class SKURead(BaseModel):
     status: SKUStatus
 
     model_config = {"from_attributes": True}
-
-
-class PaginatedResponse(BaseModel):
-    items: list
-    total: int
-    page: int
-    page_size: int
 
 
 class ProductionBatchCreate(BaseModel):

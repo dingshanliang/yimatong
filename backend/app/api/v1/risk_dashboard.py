@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.core.dependencies import get_current_tenant
+from app.schemas.common import PaginatedResponse
 from app.services.risk_dashboard import (
     export_risk_data,
     get_cross_region_stats,
@@ -27,7 +28,7 @@ async def repeat_scans_endpoint(
     tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
     items, total = await get_repeat_scan_stats(db, tenant_id, min_count=min_count, page=page, page_size=page_size)
-    return {"items": items, "total": total, "page": page, "page_size": page_size}
+    return PaginatedResponse(items=items, total=total, page=page, page_size=page_size)
 
 
 @risk_dashboard_router.get("/cross-region")

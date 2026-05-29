@@ -6,6 +6,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.schemas.common import PaginatedResponse
+
 from app.core.database import get_db
 from app.core.dependencies import get_current_tenant
 from app.models.risk import RiskAlert
@@ -25,13 +27,6 @@ class RiskAlertRead(BaseModel):
     resolved: bool
 
     model_config = {"from_attributes": True}
-
-
-class PaginatedResponse(BaseModel):
-    items: list
-    total: int
-    page: int
-    page_size: int
 
 
 @risk_router.get("")

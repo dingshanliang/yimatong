@@ -7,6 +7,8 @@ from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.schemas.common import PaginatedResponse
+
 from app.core.database import get_db
 from app.core.dependencies import get_current_account_id, get_current_tenant
 from app.services.industry_templates import ALL_TEMPLATES
@@ -47,13 +49,6 @@ class PageVersionCreateRequest(BaseModel):
 
 class PageVersionUpdateRequest(BaseModel):
     config_json: dict
-
-
-class PaginatedResponse(BaseModel):
-    items: list
-    total: int
-    page: int
-    page_size: int
 
 
 @page_template_router.get("/industry-templates")

@@ -6,6 +6,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.schemas.common import PaginatedResponse
+
 from app.core.database import get_db
 from app.core.dependencies import get_current_tenant
 from app.services.channel import (
@@ -47,13 +49,6 @@ class StoreCreate(BaseModel):
 class BatchAssign(BaseModel):
     distributor_id: uuid.UUID | None = None
     region_id: uuid.UUID | None = None
-
-
-class PaginatedResponse(BaseModel):
-    items: list
-    total: int
-    page: int
-    page_size: int
 
 
 # --- Distributor ---

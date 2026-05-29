@@ -6,6 +6,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, field_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.schemas.common import PaginatedResponse
+
 from app.core.database import get_db
 from app.core.dependencies import get_current_tenant
 from app.services.campaign import (
@@ -73,13 +75,6 @@ class BenefitCreateRequest(BaseModel):
 class ClaimRequest(BaseModel):
     consumer_id: str
     idempotency_key: str
-
-
-class PaginatedResponse(BaseModel):
-    items: list
-    total: int
-    page: int
-    page_size: int
 
 
 @campaign_router.post("", status_code=201)
