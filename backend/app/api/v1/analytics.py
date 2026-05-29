@@ -34,7 +34,8 @@ async def get_code_stats_endpoint(
 
 @analytics_router.get("/dashboard")
 async def get_dashboard_endpoint(
+    days_back: int = Query(30, ge=1, le=365),
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
-    return await get_dashboard(db, tenant_id)
+    return await get_dashboard(db, tenant_id, days_back=days_back)

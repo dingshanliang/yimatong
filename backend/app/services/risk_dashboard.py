@@ -14,16 +14,19 @@ from app.models.scan import ScanEvent
 
 async def get_repeat_scan_stats(
     db: AsyncSession, tenant_id: uuid.UUID, min_count: int = 2,
-    page: int = 1, page_size: int = 20,
+    page: int = 1, page_size: int = 20, days_back: int = 30,
 ) -> tuple[list[dict], int]:
     """按码统计重复扫码次数"""
+    from datetime import UTC, date, datetime, timedelta
+
+    cutoff = datetime.combine(date.today() - timedelta(days=days_back), datetime.min.time(), tzinfo=UTC)
     subq = (
         select(
             ScanEvent.public_id,
             func.count().label("scan_count"),
             func.count(func.distinct(ScanEvent.ip_hash)).label("distinct_ips"),
         )
-        .where(ScanEvent.tenant_id == tenant_id)
+        .where(ScanEvent.tenant_id == tenant_id, ScanEvent.scan_time >= cutoff)
         .group_by(ScanEvent.public_id)
         .having(func.count() >= min_count)
         .subquery()

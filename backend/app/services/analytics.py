@@ -70,10 +70,12 @@ async def get_code_stats(
 async def get_dashboard(
     db: AsyncSession,
     tenant_id: uuid.UUID,
+    days_back: int = 30,
 ) -> dict:
     """获取看板数据"""
     today = date.today()
     seven_days_ago = today - timedelta(days=7)
+    cutoff = today - timedelta(days=days_back)
 
     # 今日统计
     today_result = await db.execute(
@@ -98,10 +100,13 @@ async def get_dashboard(
     # 最近 7 天趋势
     trend = await get_scan_stats(db, tenant_id, seven_days_ago, today)
 
-    # 环境占比（从 scan_events 查询）
+    # 环境占比（从 scan_events 查询，限制日期范围避免全表扫描）
+    from datetime import UTC, datetime
+
+    cutoff_dt = datetime(cutoff.year, cutoff.month, cutoff.day, tzinfo=UTC)
     env_result = await db.execute(
         select(ScanEvent.environment, func.count())
-        .where(ScanEvent.tenant_id == tenant_id)
+        .where(ScanEvent.tenant_id == tenant_id, ScanEvent.scan_time >= cutoff_dt)
         .group_by(ScanEvent.environment)
     )
     env_stats = {env or "unknown": count for env, count in env_result.all()}

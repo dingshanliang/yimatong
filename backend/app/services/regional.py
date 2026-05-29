@@ -86,9 +86,11 @@ async def authorize_product(
 
 
 async def get_regional_dashboard(
-    db: AsyncSession, org_id: uuid.UUID,
+    db: AsyncSession, org_id: uuid.UUID, days_back: int = 30,
 ) -> dict:
     """获取区域品牌汇总看板"""
+    from datetime import UTC, date, datetime, timedelta
+
     members_result = await db.execute(
         select(func.count()).select_from(RegionalOrgMember).where(RegionalOrgMember.org_id == org_id)
     )
@@ -101,8 +103,12 @@ async def get_regional_dashboard(
 
     total_scans = 0
     if member_tids:
+        cutoff = datetime.combine(date.today() - timedelta(days=days_back), datetime.min.time(), tzinfo=UTC)
         scans_result = await db.execute(
-            select(func.count()).select_from(ScanEvent).where(ScanEvent.tenant_id.in_(member_tids))
+            select(func.count()).select_from(ScanEvent).where(
+                ScanEvent.tenant_id.in_(member_tids),
+                ScanEvent.scan_time >= cutoff,
+            )
         )
         total_scans = scans_result.scalar() or 0
 

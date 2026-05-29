@@ -3,7 +3,7 @@
 import csv
 import io
 import uuid
-from datetime import date
+from datetime import UTC, date, datetime, timedelta
 
 from fastapi import APIRouter, Depends, Query
 from fastapi.responses import StreamingResponse
@@ -45,9 +45,14 @@ async def campaign_dashboard(
         claim_count = claim_result.scalar() or 0
 
         # 每个活动的扫码数
+        cutoff = datetime.combine(start_date or (date.today() - timedelta(days=30)), datetime.min.time(), tzinfo=UTC)
         scan_count_stmt = select(func.count()).select_from(ScanEvent).where(
             ScanEvent.tenant_id == tenant_id,
+            ScanEvent.scan_time >= cutoff,
         )
+        if end_date:
+            end_dt = datetime(end_date.year, end_date.month, end_date.day, tzinfo=UTC) + timedelta(days=1)
+            scan_count_stmt = scan_count_stmt.where(ScanEvent.scan_time < end_dt)
         scan_result = await db.execute(scan_count_stmt)
         scan_count = scan_result.scalar() or 0
 
@@ -161,6 +166,12 @@ async def create_export(
     """数据导出"""
     if export_type == "scan_events":
         stmt = select(ScanEvent).where(ScanEvent.tenant_id == tenant_id)
+        if start_date:
+            cutoff = datetime(start_date.year, start_date.month, start_date.day, tzinfo=UTC)
+            stmt = stmt.where(ScanEvent.scan_time >= cutoff)
+        if end_date:
+            end_dt = datetime(end_date.year, end_date.month, end_date.day, tzinfo=UTC) + timedelta(days=1)
+            stmt = stmt.where(ScanEvent.scan_time < end_dt)
         result = await db.execute(stmt)
         events = result.scalars().all()
 
