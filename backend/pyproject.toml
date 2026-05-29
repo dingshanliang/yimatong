@@ -20,6 +20,7 @@ dependencies = [
     "python-multipart>=0.0.18",
     "uuid6>=2024.1.12",
     "boto3>=1.35.0",
+    "typer>=0.15.0",
 ]
 
 [dependency-groups]
