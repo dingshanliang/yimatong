@@ -1,18 +1,16 @@
 """私域承接配置 API"""
 
 import uuid
-from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
-from sqlalchemy import func, select
+from sqlalchemy import JSON, String, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.database import get_db
 from app.core.dependencies import get_current_tenant
-from app.models.base import Base, TenantModel
-from sqlalchemy.orm import Mapped, mapped_column
-from sqlalchemy import String, JSON
+from app.models.base import Base
 
 private_domain_router = APIRouter(prefix="/api/v1/private-domain-configs", tags=["private-domain"])
 

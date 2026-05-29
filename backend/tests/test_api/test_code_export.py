@@ -1,7 +1,6 @@
 """A4-005: 码包导出 CSV API 验收测试"""
 
 from collections.abc import AsyncGenerator
-from unittest.mock import patch
 
 import pytest
 from httpx import ASGITransport, AsyncClient

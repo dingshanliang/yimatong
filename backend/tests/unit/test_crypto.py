@@ -4,20 +4,19 @@ import os
 
 import pytest
 
-
 # 在导入 crypto 之前设置测试密钥
 os.environ["AES_MASTER_KEY_V1"] = "00" * 32
 os.environ["HMAC_PEPPER"] = "ff" * 32
 
 from app.utils.crypto import (
     CryptoError,
+    EnvKeyProvider,
     decrypt_phone,
     encrypt_phone,
     hash_phone,
     init_crypto,
     mask_phone,
 )
-from app.utils.crypto import EnvKeyProvider
 
 
 @pytest.fixture(autouse=True)

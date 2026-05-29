@@ -84,8 +84,8 @@ async def create_code_batch_endpoint(
     tenant_id: uuid.UUID = Depends(get_current_tenant),
     account_id: uuid.UUID = Depends(get_current_account_id),
 ):
-    from app.services.quota import check_quota, QuotaExceededError
     from app.models.tenant import Tenant
+    from app.services.quota import QuotaExceededError, check_quota
 
     tenant = await db.get(Tenant, tenant_id)
     if tenant and tenant.quota:
@@ -182,7 +182,6 @@ async def update_code_batch_endpoint(
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
-    from app.services.code_state import InvalidStateTransitionError
 
     result = await update_batch(
         db, tenant_id, batch_id,

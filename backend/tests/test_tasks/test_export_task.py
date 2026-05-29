@@ -1,7 +1,7 @@
 """A4-005: 导出 CSV 逻辑单元测试"""
 
-import io
 import csv
+import io
 
 
 def _generate_csv_content(items: list[dict]) -> str:

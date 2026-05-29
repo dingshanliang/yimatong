@@ -1,7 +1,6 @@
 """W12: 轻量会员与积分测试"""
 
 from collections.abc import AsyncGenerator
-from uuid import UUID
 
 import pytest
 from httpx import ASGITransport, AsyncClient

@@ -8,7 +8,6 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
-from app.services.scan_token import verify_scan_token
 from app.services.redis_cache import RedisCache
 
 benefit_claim_router = APIRouter(prefix="/api/v1", tags=["benefit-claims"])
@@ -40,6 +39,7 @@ async def claim_benefit_h5(
 
     # 复用 scan_token 服务层验证（不校验 public_id，仅验证 type 和签名）
     import jwt
+
     from app.core.config import settings
     try:
         payload = jwt.decode(token, settings.secret_key, algorithms=["HS256"])

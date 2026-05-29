@@ -6,12 +6,10 @@ from uuid import UUID
 
 import pytest
 from httpx import ASGITransport, AsyncClient
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.main import app
-from app.models.code import CodeItem, CodeItemStatus
 from app.models.risk import RiskAlert, RiskAlertType
 from app.models.scan import ScanEvent
 from app.utils.security import create_access_token

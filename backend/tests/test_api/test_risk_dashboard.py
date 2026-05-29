@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.main import app
-from app.models.channel import Distributor, Region, Store, DiversionClue
+from app.models.channel import Distributor, DiversionClue, Region
 from app.models.risk import RiskAlert, RiskAlertType
 from app.models.scan import ScanEvent
 from app.utils.security import create_access_token

@@ -11,8 +11,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
 from app.main import app
 from app.models.gmv import ExternalOrder, GmvAttribution
-from app.utils.security import create_access_token
 from app.utils.crypto import hash_phone
+from app.utils.security import create_access_token
 from tests.conftest import TestSessionLocal
 
 
@@ -139,7 +139,7 @@ class TestMatching:
             json={"phone": "13800138000"},
             headers=headers,
         )
-        cid = consumer_resp.json()["id"]
+        consumer_resp.json()["id"]
 
         # 执行匹配
         resp = await client.post(

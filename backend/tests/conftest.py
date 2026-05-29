@@ -21,21 +21,33 @@ from app.models.analytics import DailyScanStats  # noqa: E402, F401
 from app.models.audit import PlatformAuditLog  # noqa: E402, F401
 from app.models.base import Base  # noqa: E402
 from app.models.campaign import Benefit, BenefitClaim, Campaign  # noqa: E402, F401
+from app.models.channel import Distributor, DiversionClue, Region, Store  # noqa: E402, F401
 from app.models.code import CodeBatch, CodeItem  # noqa: E402, F401
+from app.models.connector import Connector, CouponCode, CouponPool  # noqa: E402, F401
+from app.models.consent import ConsentRecord  # noqa: E402, F401
+from app.models.export_log import ExportLog  # noqa: E402, F401
+from app.models.gmv import ExternalOrder, GmvAttribution  # noqa: E402, F401
+from app.models.i18n import Translation  # noqa: E402, F401
+from app.models.integration import SyncRecord  # noqa: E402, F401
+from app.models.member import ConsumerProfile, PointRule, PointTransaction  # noqa: E402, F401
 from app.models.page import PageTemplate, PageVersion  # noqa: E402, F401
 from app.models.product import SKU, Brand, Product, ProductionBatch  # noqa: E402, F401
+from app.models.redpacket import KYCRecord, RedPacketClaim, RedPacketRule, Withdrawal  # noqa: E402, F401
+from app.models.regional import (  # noqa: E402, F401
+    RegionalCodeRule,
+    RegionalOrg,
+    RegionalOrgMember,
+    RegionalProductAuth,
+    RegionalTemplate,
+    WhitelabelConfig,
+)
+from app.models.risk import (  # noqa: E402, F401
+    CampaignRiskRule,
+    InterceptionRecord,
+    RiskAlert,  # noqa: E402, F401
+    RiskRule,
+)
 from app.models.scan import ScanEvent  # noqa: E402, F401
-from app.models.risk import RiskAlert  # noqa: E402, F401
-from app.models.risk import RiskRule, CampaignRiskRule, InterceptionRecord  # noqa: E402, F401
-from app.models.regional import RegionalOrg, RegionalOrgMember, RegionalTemplate, RegionalProductAuth, RegionalCodeRule, WhitelabelConfig  # noqa: E402, F401
-from app.models.gmv import ExternalOrder, GmvAttribution  # noqa: E402, F401
-from app.models.connector import Connector, CouponPool, CouponCode  # noqa: E402, F401
-from app.models.webhook import WebhookEndpoint, ApiKey, WebhookDelivery  # noqa: E402, F401
-from app.models.integration import SyncRecord  # noqa: E402, F401
-from app.models.i18n import Translation  # noqa: E402, F401
-from app.models.redpacket import RedPacketRule, KYCRecord, RedPacketClaim, Withdrawal  # noqa: E402, F401
-from app.models.channel import Distributor, Region, Store, DiversionClue  # noqa: E402, F401
-from app.models.member import ConsumerProfile, PointTransaction, PointRule  # noqa: E402, F401
 from app.models.tenant import (  # noqa: E402, F401
     Account,
     Organization,
@@ -45,8 +57,7 @@ from app.models.tenant import (  # noqa: E402, F401
     account_roles,
     role_permissions,
 )
-from app.models.export_log import ExportLog  # noqa: E402, F401
-from app.models.consent import ConsentRecord  # noqa: E402, F401
+from app.models.webhook import ApiKey, WebhookDelivery, WebhookEndpoint  # noqa: E402, F401
 from app.utils.crypto import EnvKeyProvider, init_crypto  # noqa: E402
 
 # 初始化加密模块（读取上面设置的环境变量）

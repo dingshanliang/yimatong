@@ -1,7 +1,6 @@
 """扫码事件服务"""
 
 import uuid
-from datetime import UTC, datetime
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession

@@ -1,7 +1,6 @@
 """W23: 现金红包插件测试"""
 
 from collections.abc import AsyncGenerator
-from datetime import datetime, timezone
 
 import pytest
 from httpx import ASGITransport, AsyncClient

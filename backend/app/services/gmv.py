@@ -1,7 +1,7 @@
 """外部成交与 GMV 归因服务"""
 
 import uuid
-from datetime import UTC, datetime
+from datetime import datetime
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession

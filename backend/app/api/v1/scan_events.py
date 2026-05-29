@@ -8,8 +8,8 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
-from app.services.scan_token import verify_scan_token
 from app.services.scan_event import parse_environment, record_scan_event
+from app.services.scan_token import verify_scan_token
 
 scan_event_router = APIRouter(tags=["scan-events"])
 

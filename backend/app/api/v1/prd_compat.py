@@ -8,9 +8,11 @@ prd_compat_router = APIRouter(tags=["prd-compat"])
 
 # ---- /api/v1/public/events → 复用 /scan-events 逻辑 ----
 
-from app.api.v1.scan_events import ScanEventRequest, report_scan_event
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.api.v1.scan_events import ScanEventRequest, report_scan_event
 from app.core.database import get_db
+
 
 @prd_compat_router.post("/api/v1/public/events", status_code=201)
 async def public_events_compat(
@@ -26,6 +28,7 @@ async def public_events_compat(
 
 from app.api.v1.consumers import LeadCaptureRequest, lead_capture
 
+
 @prd_compat_router.post("/api/v1/public/leads", status_code=201)
 async def public_leads_compat(
     request: Request,
@@ -39,6 +42,7 @@ async def public_leads_compat(
 # ---- /api/v1/public/benefits/{benefit_id}/claim → 复用 benefit-claims 逻辑 ----
 
 from app.api.v1.benefit_claims import BenefitClaimRequest, claim_benefit_h5
+
 
 @prd_compat_router.post("/api/v1/public/benefits/{benefit_id}/claim", status_code=201)
 async def public_benefit_claim_compat(
@@ -58,13 +62,20 @@ async def public_benefit_claim_compat(
 # ---- /api/v1/risk/rules → 复用 risk-rules 逻辑 ----
 
 import uuid
+
 from pydantic import BaseModel
+
 from app.core.dependencies import get_current_tenant
 from app.services.risk_rule import (
     create_risk_rule as _create_rule,
+)
+from app.services.risk_rule import (
     list_risk_rules as _list_rules,
+)
+from app.services.risk_rule import (
     update_risk_rule as _update_rule,
 )
+
 
 class RiskRuleCreateCompat(BaseModel):
     name: str
@@ -110,6 +121,7 @@ async def update_risk_rule_compat(
 # ---- /api/v1/analytics/business-dashboard → 复用 dashboard 逻辑 ----
 
 from app.services.analytics import get_dashboard
+
 
 @prd_compat_router.get("/api/v1/analytics/business-dashboard")
 async def business_dashboard_compat(

@@ -1,7 +1,6 @@
 """W21: 区域品牌高级能力与白标测试"""
 
 from collections.abc import AsyncGenerator
-from uuid import UUID
 
 import pytest
 from httpx import ASGITransport, AsyncClient

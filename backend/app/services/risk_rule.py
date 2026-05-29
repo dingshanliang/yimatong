@@ -2,14 +2,13 @@
 
 import uuid
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.risk import (
     CampaignRiskRule,
     InterceptionRecord,
     RiskRule,
-    RiskRuleAction,
 )
 
 
@@ -161,7 +160,7 @@ async def evaluate_campaign_rules(
         )
     )
     links = list(result.scalars().all())
-    rule_ids = [l.risk_rule_id for l in links]
+    rule_ids = [link.risk_rule_id for link in links]
 
     if not rule_ids:
         return {"triggered": False, "action": None, "rules_evaluated": 0}

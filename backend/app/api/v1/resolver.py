@@ -9,14 +9,12 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
-from app.models.code import CodeBatch, CodeItemStatus, CodeType
-from app.models.page import PageTemplate, PageVersion, PageVersionStatus
 from app.middleware.rate_limit import rate_limiter
+from app.models.code import CodeItemStatus, CodeType
+from app.models.page import PageVersion, PageVersionStatus
 from app.services.page_render import render_page
 from app.services.public_id import validate_public_id
 from app.services.resolve_cache import resolve_cache
-from app.services.scan_event import parse_environment, record_scan_event
-from app.services.scan_token import create_scan_token
 from app.services.resolver import (
     INNER_VERIFY_PAGE,
     NOT_ACTIVE_PAGE,
@@ -26,6 +24,8 @@ from app.services.resolver import (
     RISK_FROZEN_PAGE,
     resolve_public_code,
 )
+from app.services.scan_event import parse_environment, record_scan_event
+from app.services.scan_token import create_scan_token
 
 resolver_router = APIRouter(tags=["resolver"])
 
@@ -143,7 +143,7 @@ async def _build_json_response(
     db: AsyncSession, data: dict, scan_token: str, scan_info: dict,
 ) -> dict:
     """构建 H5 前端所需的 JSON 响应"""
-    tenant_id = uuid.UUID(data["tenant_id"])
+    uuid.UUID(data["tenant_id"])
     product_id = data.get("product_id")
 
     result: dict = {
@@ -158,7 +158,7 @@ async def _build_json_response(
 
     # 查询品牌信息
     if product_id:
-        from app.models.product import Product, Brand
+        from app.models.product import Brand, Product
         prod_result = await db.execute(select(Product).where(Product.id == uuid.UUID(product_id)))
         product = prod_result.scalar_one_or_none()
         if product:

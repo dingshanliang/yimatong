@@ -1,7 +1,6 @@
 """W13: 活动风控规则引擎测试"""
 
 from collections.abc import AsyncGenerator
-from uuid import UUID
 
 import pytest
 from httpx import ASGITransport, AsyncClient

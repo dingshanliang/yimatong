@@ -1,7 +1,6 @@
 """码管理服务层"""
 
 import uuid
-from datetime import UTC
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -33,8 +32,7 @@ async def create_code_batch(
     db.add(batch)
     await db.flush()
 
-    items = []
-    BATCH_SIZE = 5000
+    batch_size = 5000
     total_generated = 0
 
     def _build_items():
@@ -67,7 +65,7 @@ async def create_code_batch(
     batch_items = []
     for item in _build_items():
         batch_items.append(item)
-        if len(batch_items) >= BATCH_SIZE:
+        if len(batch_items) >= batch_size:
             db.add_all(batch_items)
             await db.flush()
             total_generated += len(batch_items)
@@ -253,7 +251,6 @@ async def activate_batch(
 async def revoke_code_item(
     db: AsyncSession, tenant_id: uuid.UUID, item_id: uuid.UUID
 ) -> CodeItem:
-    from datetime import datetime
 
     from app.services.code_state import can_transition
 
@@ -276,7 +273,6 @@ async def revoke_code_item(
 async def bind_code_item(
     db: AsyncSession, tenant_id: uuid.UUID, item_id: uuid.UUID
 ) -> CodeItem:
-    from datetime import datetime
 
     from app.services.code_state import can_transition
 
@@ -301,7 +297,7 @@ async def freeze_batch(
 ) -> dict:
     from sqlalchemy import update as sa_update
 
-    now = utcnow()
+    utcnow()
     stmt = (
         sa_update(CodeItem)
         .where(

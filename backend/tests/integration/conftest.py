@@ -8,10 +8,9 @@ import sys
 import uuid
 from pathlib import Path
 
-import pytest
 import pytest_asyncio
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 # Ensure backend/ is on sys.path
 backend_dir = Path(__file__).resolve().parent.parent.parent

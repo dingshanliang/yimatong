@@ -2,10 +2,10 @@
 一码通集成测试 — 9 条场景验证完整链路
 使用 in-process ASGI client，无需启动外部服务。
 """
-import pytest
-import pytest_asyncio
 import uuid
 
+import pytest
+import pytest_asyncio
 from httpx import AsyncClient
 
 BASE = "/api/v1"
@@ -13,7 +13,6 @@ RESULTS: list[dict] = []
 
 
 def report(name: str, passed: bool, detail: str = ""):
-    status = "✅ PASS" if passed else "❌ FAIL"
     RESULTS.append({"name": name, "passed": passed, "detail": detail})
 
 
@@ -225,7 +224,7 @@ async def test_2_page_publish(client: AsyncClient, auth_ctx: dict):
 async def test_3_campaign_flow(client: AsyncClient, auth_ctx: dict):
     """Admin 活动链路：创建活动→权益→analytics"""
     token = auth_ctx["token"]
-    product_id = auth_ctx["product_id"]
+    auth_ctx["product_id"]
     h = auth_headers(token)
     try:
         rules = {

@@ -3,7 +3,7 @@
 import csv
 import io
 import uuid
-from datetime import date, datetime
+from datetime import date
 
 from fastapi import APIRouter, Depends, Query
 from fastapi.responses import StreamingResponse
@@ -82,7 +82,7 @@ async def risk_dashboard(
     # 未解决预警数
     unresolved_stmt = select(func.count()).select_from(RiskAlert).where(
         RiskAlert.tenant_id == tenant_id,
-        RiskAlert.resolved == False,
+        not RiskAlert.resolved,
     )
     unresolved_result = await db.execute(unresolved_stmt)
     unresolved_count = unresolved_result.scalar() or 0
@@ -191,7 +191,7 @@ async def create_export(
         return StreamingResponse(
             io.StringIO(csv_content),
             media_type="text/csv",
-            headers={"Content-Disposition": f"attachment; filename=scan-events.csv"},
+            headers={"Content-Disposition": "attachment; filename=scan-events.csv"},
         )
 
     raise NotImplementedError(f"Export type '{export_type}' not supported")

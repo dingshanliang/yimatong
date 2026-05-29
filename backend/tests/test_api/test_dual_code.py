@@ -8,7 +8,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.main import app
-from app.models.code import CodeItem, CodeItemStatus
 from app.utils.security import create_access_token
 from tests.conftest import TestSessionLocal
 

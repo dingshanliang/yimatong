@@ -7,7 +7,8 @@ def generate_copywriting(
     """生成文案（模拟）"""
     if copy_type == "brand_story":
         kw_str = "、".join(keywords) if keywords else "品质"
-        content = f"{product_name}，{kw_str}。源自大自然的馈赠，每一份都承载着匠心与诚意。从产地到餐桌，我们用心守护每一个环节，只为让您品尝到最纯正的美味。"
+        content = f"{product_name}，{kw_str}。源自大自然的馈赠，每一份都承载着匠心与诚意。从产地到餐桌，"\
+        "我们用心守护每一个环节，只为让您品尝到最纯正的美味。"
         return {"content": content}
     elif copy_type == "selling_points":
         items = [f"{kw}：{product_name}的核心优势" for kw in keywords] if keywords else ["优质品质"]

@@ -4,14 +4,13 @@ import csv
 import io
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.core.dependencies import get_current_account_id, get_current_tenant
-from app.models.code import CodeItem, CodeItemStatus, CodeType
-from app.models.product import Brand, Product, SKU
-from app.services.public_id import generate_public_id
+from app.models.code import CodeItem, CodeItemStatus
+from app.models.product import SKU, Brand, Product
 
 import_router = APIRouter(prefix="/api/v1/imports", tags=["imports"])
 
@@ -90,8 +89,9 @@ async def import_existing_codes(
     if not code_batch_id:
         raise HTTPException(status_code=400, detail="code_batch_id is required")
 
-    from app.models.code import CodeBatch, CodeBatchStatus
     from sqlalchemy import select
+
+    from app.models.code import CodeBatch
 
     result = await db.execute(
         select(CodeBatch).where(

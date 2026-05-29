@@ -1,46 +1,47 @@
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
+from app.api.v1.ai import ai_router
 from app.api.v1.analytics import analytics_router
+from app.api.v1.analytics_dashboard import dashboard_router
 from app.api.v1.auth import router as auth_router
+from app.api.v1.benefit_claims import benefit_claim_router
 from app.api.v1.campaigns import campaign_router
+from app.api.v1.channels import channel_router
 from app.api.v1.code_batches import code_batch_router, code_item_router
+from app.api.v1.connectors import connector_router
+from app.api.v1.consents import consent_router
+from app.api.v1.consumers import consumer_router
 from app.api.v1.files import file_router
+from app.api.v1.gmv import gmv_router
+from app.api.v1.i18n import i18n_router
+from app.api.v1.imports import import_router
+from app.api.v1.industry_templates import template_router
+from app.api.v1.integration import integration_router
+from app.api.v1.members import member_router
 from app.api.v1.ops import ops_router
 from app.api.v1.organizations import router as orgs_router
 from app.api.v1.page_templates import page_template_router, page_version_router
 from app.api.v1.password import router as password_router
 from app.api.v1.platform import router as platform_router
+from app.api.v1.prd_compat import prd_compat_router
+from app.api.v1.private_domain import private_domain_router
 from app.api.v1.products import batch_router, brand_router, product_router, sku_router
+from app.api.v1.public_pages import public_page_router
+from app.api.v1.redpacket import redpacket_router
+from app.api.v1.regional import regional_router
 from app.api.v1.resolver import resolver_router
 from app.api.v1.risk import risk_router
-from app.api.v1.channels import channel_router
-from app.api.v1.members import member_router
-from app.api.v1.risk_rules import risk_rule_router
 from app.api.v1.risk_dashboard import risk_dashboard_router
-from app.api.v1.regional import regional_router
-from app.api.v1.gmv import gmv_router
-from app.api.v1.ai import ai_router
-from app.api.v1.connectors import connector_router
-from app.api.v1.webhooks import webhook_router
-from app.api.v1.integration import integration_router
-from app.api.v1.i18n import i18n_router
-from app.api.v1.industry_templates import template_router
-from app.api.v1.redpacket import redpacket_router
+from app.api.v1.risk_evaluate import risk_evaluate_router
+from app.api.v1.risk_rules import risk_rule_router
 from app.api.v1.roles import router as roles_router
 from app.api.v1.scan_events import scan_event_router
-from app.api.v1.consumers import consumer_router
-from app.api.v1.benefit_claims import benefit_claim_router
 from app.api.v1.tasks import task_router
 from app.api.v1.tenants import router as tenants_router
-from app.api.v1.consents import consent_router
-from app.api.v1.public_pages import public_page_router
-from app.api.v1.imports import import_router
-from app.api.v1.private_domain import private_domain_router
-from app.api.v1.analytics_dashboard import dashboard_router
-from app.api.v1.risk_evaluate import risk_evaluate_router
-from app.api.v1.prd_compat import prd_compat_router
+from app.api.v1.webhooks import webhook_router
 from app.core.config import settings
 from app.middleware.tenant import TenantScopeMiddleware
 
@@ -62,8 +63,6 @@ async def lifespan(app):
 app = FastAPI(title="一码通", version="0.1.0", lifespan=lifespan)
 
 # CORS — 开发环境默认允许所有，生产环境通过 CORS_ORIGINS 限制
-from fastapi.middleware.cors import CORSMiddleware
-
 origins = [o.strip() for o in settings.cors_origins.split(",")] if settings.cors_origins != "*" else ["*"]
 app.add_middleware(
     CORSMiddleware,

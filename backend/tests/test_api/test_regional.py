@@ -1,7 +1,6 @@
 """W15: 区域品牌/协会基础版测试"""
 
 from collections.abc import AsyncGenerator
-from uuid import UUID
 
 import pytest
 from httpx import ASGITransport, AsyncClient

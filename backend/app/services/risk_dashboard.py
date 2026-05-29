@@ -3,12 +3,11 @@
 import csv
 import io
 import uuid
-from collections import defaultdict
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.channel import DiversionClue, Distributor
+from app.models.channel import Distributor, DiversionClue
 from app.models.risk import RiskAlert
 from app.models.scan import ScanEvent
 

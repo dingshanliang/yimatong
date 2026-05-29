@@ -1,7 +1,6 @@
 """Webhook / Open API 模型"""
 
 import uuid
-import secrets
 
 from sqlalchemy import JSON, Index, String
 from sqlalchemy.orm import Mapped, mapped_column
