@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback } from "react";
 import {
-  Table, Button, Space, Modal, Form, Input, Select, Tag, Typography,
+  Table, Button, Space, Modal, Form, Input, InputNumber, Select, Tag, Typography,
   message, Popconfirm, Drawer, Tabs, Switch, DatePicker, Tooltip,
 } from "antd";
 import {
@@ -641,9 +641,11 @@ function ModuleEditor({
             </div>
             {mod.config && Object.keys(mod.config).length > 0 && (
               <div className="mt-2 rounded bg-gray-50 p-2">
-                <Text type="secondary" className="text-xs">
-                  配置: {JSON.stringify(mod.config)}
-                </Text>
+                <ModuleConfigForm
+                  moduleType={mod.type}
+                  config={mod.config}
+                  onChange={(config) => updateModule(i, { config })}
+                />
               </div>
             )}
           </div>
@@ -778,4 +780,97 @@ function RoutingEditor({
       </div>
     </div>
   );
+}
+
+/* ─── 模块配置表单 ────────────────────────────── */
+
+function ModuleConfigForm({
+  moduleType,
+  config,
+  onChange,
+}: {
+  moduleType: string;
+  config: Record<string, unknown>;
+  onChange: (config: Record<string, unknown>) => void;
+}) {
+  const update = (key: string, value: unknown) => {
+    onChange({ ...config, [key]: value });
+  };
+
+  switch (moduleType) {
+    case "product_hero":
+      return (
+        <div className="space-y-2">
+          <div className="flex items-center gap-2">
+            <Switch size="small" checked={!!config.show_verify_badge} onChange={(v) => update("show_verify_badge", v)} />
+            <Text type="secondary" className="text-xs">显示验真徽章</Text>
+          </div>
+          <Input size="small" placeholder="产品图片 URL" value={String(config.image_url || "")} onChange={(e) => update("image_url", e.target.value)} />
+        </div>
+      );
+
+    case "benefit_card":
+      return (
+        <div className="space-y-2">
+          <Input size="small" placeholder="权益 ID" value={String(config.benefit_id || "")} onChange={(e) => update("benefit_id", e.target.value)} />
+          <Select size="small" placeholder="权益类型" value={config.benefit_type || undefined} onChange={(v) => update("benefit_type", v)}
+            options={[{ value: "coupon", label: "优惠券" }, { value: "points", label: "积分" }, { value: "lottery", label: "抽奖" }, { value: "gift", label: "礼品" }]}
+            style={{ width: 120 }} />
+          <Input size="small" placeholder="标题" value={String(config.title || "")} onChange={(e) => update("title", e.target.value)} />
+        </div>
+      );
+
+    case "member_card":
+      return (
+        <div className="space-y-2">
+          <Input size="small" placeholder="消费者 ID" value={String(config.consumer_id || "")} onChange={(e) => update("consumer_id", e.target.value)} />
+          <Select size="small" placeholder="会员等级" value={config.member_level || undefined} onChange={(v) => update("member_level", v)}
+            options={[{ value: "bronze", label: "青铜" }, { value: "silver", label: "白银" }, { value: "gold", label: "黄金" }, { value: "diamond", label: "钻石" }]}
+            style={{ width: 120 }} />
+        </div>
+      );
+
+    case "points_exchange":
+      return (
+        <div className="space-y-2">
+          <Input size="small" placeholder="权益 ID" value={String(config.benefit_id || "")} onChange={(e) => update("benefit_id", e.target.value)} />
+          <Input size="small" placeholder="标题" value={String(config.title || "")} onChange={(e) => update("title", e.target.value)} />
+          <InputNumber size="small" placeholder="所需积分" min={0} value={Number(config.points_cost) || undefined} onChange={(v) => update("points_cost", v)} />
+        </div>
+      );
+
+    case "outer_code_guide":
+      return (
+        <div className="space-y-2">
+          <Input size="small" placeholder="品牌名称" value={String(config.brand_name || "")} onChange={(e) => update("brand_name", e.target.value)} />
+          <Input size="small" placeholder="内码提示文案" value={String(config.inner_code_hint || "")} onChange={(e) => update("inner_code_hint", e.target.value)} />
+        </div>
+      );
+
+    case "risk_alert":
+      return (
+        <div className="space-y-2">
+          <Select size="small" placeholder="预警类型" value={config.alert_type || undefined} onChange={(v) => update("alert_type", v)}
+            options={[{ value: "frequency", label: "频率限制" }, { value: "multi_location", label: "多地扫码" }, { value: "suspected_copy", label: "疑似复制码" }]}
+            style={{ width: 140 }} />
+          <Input size="small" placeholder="详情" value={String(config.detail || "")} onChange={(e) => update("detail", e.target.value)} />
+        </div>
+      );
+
+    case "cta_group":
+      return (
+        <div className="space-y-1">
+          <Text type="secondary" className="text-xs">按钮配置（JSON）</Text>
+          <TextArea size="small" rows={2} value={JSON.stringify(config.buttons || [], null, 0)}
+            onChange={(e) => { try { update("buttons", JSON.parse(e.target.value)); } catch { /* ignore parse error */ } }} />
+        </div>
+      );
+
+    default:
+      return (
+        <Text type="secondary" className="text-xs">
+          配置: {JSON.stringify(config)}
+        </Text>
+      );
+  }
 }

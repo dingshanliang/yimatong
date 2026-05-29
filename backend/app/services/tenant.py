@@ -64,12 +64,22 @@ async def get_tenant(db: AsyncSession, tenant_id: uuid.UUID) -> Tenant | None:
     return result.scalar_one_or_none()
 
 
-async def update_tenant(db: AsyncSession, tenant_id: uuid.UUID, name: str | None) -> Tenant | None:
+async def update_tenant(
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    name: str | None = None,
+    quota: dict | None = None,
+    compliance_settings: dict | None = None,
+) -> Tenant | None:
     tenant = await get_tenant(db, tenant_id)
     if not tenant:
         return None
     if name:
         tenant.name = name
+    if quota is not None:
+        tenant.quota = quota
+    if compliance_settings is not None:
+        tenant.compliance_settings = compliance_settings
     await db.commit()
     await db.refresh(tenant)
     return tenant

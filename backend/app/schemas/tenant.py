@@ -14,6 +14,8 @@ class TenantCreate(BaseModel):
 
 class TenantUpdate(BaseModel):
     name: str | None = Field(None, min_length=1, max_length=100)
+    quota: dict | None = None
+    compliance_settings: dict | None = None
 
 
 class TenantRead(BaseModel):
@@ -23,5 +25,6 @@ class TenantRead(BaseModel):
     status: str
     plan: str
     quota: dict | None = None
+    compliance_settings: dict | None = None
 
     model_config = {"from_attributes": True}

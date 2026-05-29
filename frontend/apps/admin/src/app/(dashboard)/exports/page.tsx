@@ -19,92 +19,79 @@ const { Title } = Typography;
 
 interface CodeBatch {
   id: string;
-  batch_code: string;
+  name?: string;
   quantity: number;
   status: string;
-  product_name?: string;
-  exported_at?: string;
-  export_status?: string;
+  code_type?: string;
   created_at: string;
 }
 
-interface AuditRow {
+interface ExportLog {
   id: string;
-  batch_code: string;
-  operator: string;
-  action: string;
-  timestamp: string;
-  detail: string;
+  export_type: string;
+  resource_id: string;
+  file_name: string;
+  row_count: number;
+  status: string;
+  created_at: string;
 }
 
-const EXPORT_STATUS_MAP: Record<string, { label: string; color: string }> = {
-  pending: { label: "待导出", color: "default" },
-  processing: { label: "导出中", color: "blue" },
-  completed: { label: "已完成", color: "green" },
-  failed: { label: "导出失败", color: "red" },
-};
-
 const BATCH_STATUS_MAP: Record<string, { label: string; color: string }> = {
-  pending: { label: "待生成", color: "default" },
-  generating: { label: "生成中", color: "blue" },
-  completed: { label: "已完成", color: "green" },
-  failed: { label: "失败", color: "red" },
+  draft: { label: "草稿", color: "default" },
+  activated: { label: "已激活", color: "green" },
+  frozen: { label: "已冻结", color: "orange" },
+  voided: { label: "已作废", color: "red" },
 };
-
-// Mock audit data skeleton - backend API not yet available
-const MOCK_AUDIT_DATA: AuditRow[] = [
-  {
-    id: "1",
-    batch_code: "CB-2026-001",
-    operator: "管理员",
-    action: "导出",
-    timestamp: "2026-05-27 14:30:00",
-    detail: "导出 10,000 码",
-  },
-  {
-    id: "2",
-    batch_code: "CB-2026-002",
-    operator: "运营专员",
-    action: "导出",
-    timestamp: "2026-05-26 10:15:00",
-    detail: "导出 5,000 码",
-  },
-];
 
 export default function ExportsPage() {
   const [batches, setBatches] = useState<CodeBatch[]>([]);
-  const [total, setTotal] = useState(0);
-  const [page, setPage] = useState(1);
-  const [loading, setLoading] = useState(false);
+  const [batchTotal, setBatchTotal] = useState(0);
+  const [batchPage, setBatchPage] = useState(1);
+  const [batchLoading, setBatchLoading] = useState(false);
+
+  const [exports, setExports] = useState<ExportLog[]>([]);
+  const [exportTotal, setExportTotal] = useState(0);
+  const [exportPage, setExportPage] = useState(1);
+  const [exportLoading, setExportLoading] = useState(false);
   const [exportingId, setExportingId] = useState<string | null>(null);
 
   const fetchBatches = useCallback(async () => {
-    setLoading(true);
+    setBatchLoading(true);
     try {
-      const { data } = await api.get("/code-batches", {
-        params: { page, page_size: 20 },
-      });
-      const items = (data.items || []) as CodeBatch[];
-      // Filter to show batches that are completed/generated (exportable)
-      setBatches(items);
-      setTotal(data.total || 0);
+      const { data } = await api.get("/code-batches", { params: { page: batchPage, page_size: 20 } });
+      setBatches(data.items || []);
+      setBatchTotal(data.total || 0);
     } catch {
       message.error("加载码批次列表失败");
     } finally {
-      setLoading(false);
+      setBatchLoading(false);
     }
-  }, [page]);
+  }, [batchPage]);
 
-  useEffect(() => {
-    fetchBatches();
-  }, [fetchBatches]);
+  const fetchExports = useCallback(async () => {
+    setExportLoading(true);
+    try {
+      const { data } = await api.get("/analytics/exports", { params: { page: exportPage, page_size: 20 } });
+      setExports(data.items || []);
+      setExportTotal(data.total || 0);
+    } catch {
+      setExports([]);
+      setExportTotal(0);
+    } finally {
+      setExportLoading(false);
+    }
+  }, [exportPage]);
+
+  useEffect(() => { fetchBatches(); }, [fetchBatches]);
+  useEffect(() => { fetchExports(); }, [fetchExports]);
 
   const handleExport = async (batchId: string) => {
     setExportingId(batchId);
     try {
       await api.post(`/code-batches/${batchId}/export`);
-      message.success("导出任务已提交，请稍后刷新查看");
+      message.success("导出任务已提交");
       fetchBatches();
+      fetchExports();
     } catch {
       message.error("导出失败");
     } finally {
@@ -113,20 +100,11 @@ export default function ExportsPage() {
   };
 
   const batchColumns: ColumnsType<CodeBatch> = [
-    { title: "批次号", dataIndex: "batch_code", key: "batch_code" },
+    { title: "批次名称", dataIndex: "name", key: "name", render: (v: string) => v || "—" },
+    { title: "码数量", dataIndex: "quantity", key: "quantity" },
+    { title: "码类型", dataIndex: "code_type", key: "code_type", render: (v: string) => v || "standard" },
     {
-      title: "产品",
-      dataIndex: "product_name",
-      key: "product_name",
-      render: (v: string) => v || "-",
-    },
-    {
-      title: "数量",
-      dataIndex: "quantity",
-      key: "quantity",
-    },
-    {
-      title: "批次状态",
+      title: "状态",
       dataIndex: "status",
       key: "status",
       render: (s: string) => {
@@ -135,93 +113,77 @@ export default function ExportsPage() {
       },
     },
     {
-      title: "导出状态",
-      dataIndex: "export_status",
-      key: "export_status",
-      render: (s: string) => {
-        if (!s) return <Tag>未导出</Tag>;
-        const info = EXPORT_STATUS_MAP[s] || { label: s, color: "default" };
-        return <Tag color={info.color}>{info.label}</Tag>;
-      },
-    },
-    {
-      title: "导出时间",
-      dataIndex: "exported_at",
-      key: "exported_at",
-      render: (v: string) => (v ? dayjsFormat(v) : "-"),
-    },
-    {
       title: "操作",
       key: "action",
-      render: (_, record) => (
-        <Space>
-          <Button
-            size="small"
-            icon={<DownloadOutlined />}
-            loading={exportingId === record.id}
-            onClick={() => handleExport(record.id)}
-            disabled={record.status !== "completed"}
-          >
-            导出
-          </Button>
-        </Space>
+      render: (_: unknown, record: CodeBatch) => (
+        <Button
+          size="small"
+          icon={<DownloadOutlined />}
+          loading={exportingId === record.id}
+          onClick={() => handleExport(record.id)}
+        >
+          导出
+        </Button>
       ),
     },
   ];
 
-  const auditColumns: ColumnsType<AuditRow> = [
-    { title: "批次号", dataIndex: "batch_code", key: "batch_code" },
-    { title: "操作人", dataIndex: "operator", key: "operator" },
-    { title: "操作类型", dataIndex: "action", key: "action" },
-    { title: "时间", dataIndex: "timestamp", key: "timestamp" },
-    { title: "详情", dataIndex: "detail", key: "detail" },
+  const exportColumns: ColumnsType<ExportLog> = [
+    { title: "导出类型", dataIndex: "export_type", key: "export_type" },
+    { title: "资源 ID", dataIndex: "resource_id", key: "resource_id", render: (v: string) => v?.slice(0, 8) + "..." },
+    { title: "文件名", dataIndex: "file_name", key: "file_name", render: (v: string) => v || "—" },
+    { title: "行数", dataIndex: "row_count", key: "row_count" },
+    {
+      title: "状态",
+      dataIndex: "status",
+      key: "status",
+      render: (s: string) => <Tag color={s === "completed" ? "green" : s === "failed" ? "red" : "blue"}>{s}</Tag>,
+    },
+    { title: "导出时间", dataIndex: "created_at", key: "created_at", render: (v: string) => formatDate(v) },
   ];
 
   return (
     <div>
       <Title level={4}>导出管理</Title>
       <Tabs
-        defaultActiveKey="batches"
+        defaultActiveKey="exports"
         items={[
           {
-            key: "batches",
-            label: "已导出码批次",
+            key: "exports",
+            label: "导出记录",
             children: (
               <Table
-                columns={batchColumns}
-                dataSource={batches}
+                columns={exportColumns}
+                dataSource={exports}
                 rowKey="id"
-                loading={loading}
+                loading={exportLoading}
                 pagination={{
-                  current: page,
-                  total,
+                  current: exportPage,
+                  total: exportTotal,
                   pageSize: 20,
-                  onChange: setPage,
+                  onChange: setExportPage,
                   showTotal: (t) => `共 ${t} 条`,
                 }}
               />
             ),
           },
           {
-            key: "audit",
-            label: "导出审计",
+            key: "batches",
+            label: "码批次导出",
             children: (
-              <>
-                <div className="mb-4 text-gray-400 text-sm">
-                  注：导出审计功能待后端 API 实现，当前为模拟数据
-                </div>
-                {MOCK_AUDIT_DATA.length > 0 ? (
-                  <Table
-                    columns={auditColumns}
-                    dataSource={MOCK_AUDIT_DATA}
-                    rowKey="id"
-                    pagination={false}
-                    size="small"
-                  />
-                ) : (
-                  <Empty description="暂无审计日志数据" />
-                )}
-              </>
+              <Table
+                columns={batchColumns}
+                dataSource={batches}
+                rowKey="id"
+                loading={batchLoading}
+                pagination={{
+                  current: batchPage,
+                  total: batchTotal,
+                  pageSize: 20,
+                  onChange: setBatchPage,
+                  showTotal: (t) => `共 ${t} 条`,
+                }}
+              />
             ),
           },
         ]}
@@ -230,7 +192,7 @@ export default function ExportsPage() {
   );
 }
 
-function dayjsFormat(dateStr: string): string {
+function formatDate(dateStr: string): string {
   try {
     return new Date(dateStr).toLocaleString("zh-CN");
   } catch {

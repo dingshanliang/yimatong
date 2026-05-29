@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
+from app.core.dependencies import get_current_tenant
 from app.schemas.tenant import TenantCreate, TenantRead, TenantUpdate
 from app.services.tenant import create_tenant, get_tenant, soft_delete_tenant, update_tenant
 
@@ -24,6 +25,34 @@ async def create_tenant_endpoint(body: TenantCreate, db: AsyncSession = Depends(
     return tenant
 
 
+@router.get("/me", response_model=TenantRead)
+async def get_current_tenant_endpoint(
+    db: AsyncSession = Depends(get_db),
+    tenant_id: uuid.UUID = Depends(get_current_tenant),
+):
+    tenant = await get_tenant(db, tenant_id)
+    if not tenant:
+        raise HTTPException(status_code=404, detail="Tenant not found")
+    return tenant
+
+
+@router.patch("/me", response_model=TenantRead)
+async def update_current_tenant_endpoint(
+    body: TenantUpdate,
+    db: AsyncSession = Depends(get_db),
+    tenant_id: uuid.UUID = Depends(get_current_tenant),
+):
+    tenant = await update_tenant(
+        db, tenant_id,
+        name=body.name,
+        quota=body.quota,
+        compliance_settings=body.compliance_settings,
+    )
+    if not tenant:
+        raise HTTPException(status_code=404, detail="Tenant not found")
+    return tenant
+
+
 @router.get("/{tenant_id}", response_model=TenantRead)
 async def get_tenant_endpoint(tenant_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
     tenant = await get_tenant(db, tenant_id)
@@ -34,7 +63,12 @@ async def get_tenant_endpoint(tenant_id: uuid.UUID, db: AsyncSession = Depends(g
 
 @router.patch("/{tenant_id}", response_model=TenantRead)
 async def update_tenant_endpoint(tenant_id: uuid.UUID, body: TenantUpdate, db: AsyncSession = Depends(get_db)):
-    tenant = await update_tenant(db, tenant_id, body.name)
+    tenant = await update_tenant(
+        db, tenant_id,
+        name=body.name,
+        quota=body.quota,
+        compliance_settings=body.compliance_settings,
+    )
     if not tenant:
         raise HTTPException(status_code=404, detail="Tenant not found")
     return tenant

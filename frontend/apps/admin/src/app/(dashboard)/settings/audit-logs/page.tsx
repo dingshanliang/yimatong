@@ -71,7 +71,7 @@ export default function AuditLogsPage() {
       if (keyword) {
         params.keyword = keyword;
       }
-      const { data } = await api.get("/audit-logs", { params });
+      const { data } = await api.get("/platform/audit-logs", { params });
       setLogs(data.items || []);
       setTotal(data.total || 0);
     } catch {
@@ -195,9 +195,6 @@ export default function AuditLogsPage() {
         />
       )}
 
-      <div className="mt-4 text-gray-400 text-sm">
-        注：审计日志 API 待后端实现（预留接口：GET /api/v1/audit-logs）
-      </div>
     </div>
   );
 }

@@ -46,6 +46,7 @@ class Tenant(Base):
     status: Mapped[TenantStatus] = mapped_column(SQLEnum(TenantStatus), default=TenantStatus.active, nullable=False)
     plan: Mapped[TenantPlan] = mapped_column(SQLEnum(TenantPlan), default=TenantPlan.free, nullable=False)
     quota: Mapped[dict | None] = mapped_column(JSON, default=dict, nullable=True)
+    compliance_settings: Mapped[dict | None] = mapped_column(JSON, default=dict, nullable=True)
 
     organizations = relationship("Organization", back_populates="tenant", lazy="selectin")
 

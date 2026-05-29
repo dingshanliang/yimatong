@@ -20,7 +20,13 @@ export type ModuleType =
   | "benefit_card"
   | "cta_group"
   | "legal_terms"
-  | "custom_html";
+  | "custom_html"
+  | "member_card"
+  | "points_balance"
+  | "points_exchange"
+  | "outer_code_guide"
+  | "risk_alert"
+  | "dual_code_verify";
 
 export interface CampaignPeriod {
   campaign_id?: string;
@@ -49,6 +55,12 @@ export const MODULE_TYPE_LABELS: Record<ModuleType, string> = {
   cta_group: "私域/跳转按钮",
   legal_terms: "法律条款",
   custom_html: "自定义 HTML",
+  member_card: "会员卡片",
+  points_balance: "积分余额",
+  points_exchange: "积分兑换",
+  outer_code_guide: "外码引导",
+  risk_alert: "风险预警",
+  dual_code_verify: "双码验真",
 };
 
 export const MODULE_TYPES = Object.entries(MODULE_TYPE_LABELS).map(
