@@ -8,6 +8,12 @@ import { PrivateDomainButtons } from "@/components/PrivateDomainButtons";
 import { CampaignRules } from "@/components/CampaignRules";
 import { PrivacyPolicy } from "@/components/PrivacyPolicy";
 import { ShopRedirect } from "@/components/ShopRedirect";
+import { MemberCard } from "@/components/MemberCard";
+import { PointsBalance } from "@/components/PointsBalance";
+import { PointsExchange } from "@/components/PointsExchange";
+import { OuterCodeGuide } from "@/components/OuterCodeGuide";
+import { RiskAlert } from "@/components/RiskAlert";
+import { DualCodeVerify } from "@/components/DualCodeVerify";
 import { ErrorPage } from "@/components/ErrorPage";
 
 interface ResolveContentProps {
@@ -259,6 +265,79 @@ function ModuleRenderer({
         );
       }
       return null;
+
+    case "member_card":
+      return (
+        <div className="px-4 mt-3">
+          <MemberCard
+            consumerId={(config.consumer_id as string) || ""}
+            memberLevel={config.member_level as string}
+            totalPoints={config.total_points as number}
+            scanToken={scanToken}
+          />
+        </div>
+      );
+
+    case "points_balance":
+      return (
+        <div className="px-4 mt-3">
+          <PointsBalance
+            points={(config.points as number) || 0}
+            consumerId={config.consumer_id as string}
+          />
+        </div>
+      );
+
+    case "points_exchange":
+      return (
+        <div className="px-4 mt-3">
+          <PointsExchange
+            benefitId={(config.benefit_id as string) || ""}
+            title={(config.title as string) || "积分兑换"}
+            pointsCost={(config.points_cost as number) || 0}
+            description={config.description as string}
+            scanToken={scanToken}
+          />
+        </div>
+      );
+
+    case "outer_code_guide":
+      return (
+        <div className="px-4 mt-3">
+          <OuterCodeGuide
+            brandName={(config.brand_name as string) || ""}
+            productName={config.product_name as string}
+            productImage={config.product_image as string}
+            innerCodeHint={config.inner_code_hint as string}
+          />
+        </div>
+      );
+
+    case "risk_alert":
+      return (
+        <div className="px-4 mt-3">
+          <RiskAlert
+            alertType={(config.alert_type as string) || "frequency"}
+            detail={config.detail as string}
+            scanCount={config.scan_count as number}
+            detectedCity={config.detected_city as string}
+          />
+        </div>
+      );
+
+    case "dual_code_verify":
+      return (
+        <div className="px-4 mt-3">
+          <DualCodeVerify
+            publicId={publicId}
+            codeType={(codeData.code_type as string) || "standard"}
+            isFirstScan={(scanInfo.is_first_scan as boolean) ?? true}
+            scanCount={scanInfo.scan_count as number}
+            firstScanTime={scanInfo.first_scan_time as string}
+            productVerified={config.product_verified as boolean}
+          />
+        </div>
+      );
 
     default:
       return null;

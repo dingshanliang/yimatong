@@ -46,9 +46,15 @@ const menuItems: MenuProps["items"] = [
     children: [
       { key: "/stats", icon: <BarChartOutlined />, label: "扫码统计" },
       { key: "/campaign-analytics", icon: <LineChartOutlined />, label: "活动看板" },
+      { key: "/risk-dashboard", icon: <SafetyCertificateOutlined />, label: "风控看板" },
       { key: "/exports", icon: <ExportOutlined />, label: "导出管理" },
     ],
   },
+  { key: "/channels", icon: <ShopOutlined />, label: "渠道管理" },
+  { key: "/risk", icon: <SafetyCertificateOutlined />, label: "风控中心" },
+  { key: "/members", icon: <UserOutlined />, label: "会员积分" },
+  { key: "/gmv", icon: <LineChartOutlined />, label: "GMV 归因" },
+  { key: "/regional", icon: <TeamOutlined />, label: "区域品牌" },
   { key: "/accounts", icon: <TeamOutlined />, label: "组织账户" },
   {
     key: "settings-group",
@@ -91,7 +97,7 @@ export default function DashboardLayout({
 
   // 展开包含当前路径的子菜单
   const openKeys: string[] = [];
-  if (pathname.startsWith("/stats") || pathname.startsWith("/campaign-analytics") || pathname.startsWith("/exports")) {
+  if (pathname.startsWith("/stats") || pathname.startsWith("/campaign-analytics") || pathname.startsWith("/exports") || pathname.startsWith("/risk-dashboard")) {
     openKeys.push("analytics-group");
   }
   if (pathname.startsWith("/settings")) {
