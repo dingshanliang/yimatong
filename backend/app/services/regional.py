@@ -21,7 +21,7 @@ async def create_regional_org(
 ) -> RegionalOrg:
     org = RegionalOrg(tenant_id=tenant_id, name=name, org_type=org_type)
     db.add(org)
-    await db.commit()
+    await db.flush()
     await db.refresh(org)
     return org
 
@@ -42,7 +42,7 @@ async def add_member(
         org_id=org_id, tenant_id=tenant_id, member_name=member_name,
     )
     db.add(member)
-    await db.commit()
+    await db.flush()
     await db.refresh(member)
     return member
 
@@ -61,7 +61,7 @@ async def create_shared_template(
 ) -> RegionalTemplate:
     template = RegionalTemplate(org_id=org_id, name=name, config=config)
     db.add(template)
-    await db.commit()
+    await db.flush()
     await db.refresh(template)
     return template
 
@@ -80,7 +80,7 @@ async def authorize_product(
 ) -> RegionalProductAuth:
     auth = RegionalProductAuth(org_id=org_id, product_id=product_id, tenant_id=tenant_id)
     db.add(auth)
-    await db.commit()
+    await db.flush()
     await db.refresh(auth)
     return auth
 
@@ -118,7 +118,7 @@ async def create_code_rule(
 ) -> RegionalCodeRule:
     rule = RegionalCodeRule(org_id=org_id, rule_name=rule_name, pattern=pattern, prefix=prefix)
     db.add(rule)
-    await db.commit()
+    await db.flush()
     await db.refresh(rule)
     return rule
 
@@ -162,7 +162,7 @@ async def set_whitelabel(
             org_id=org_id, brand_name=brand_name, hide_yimatong=hide_yimatong, primary_color=primary_color,
         )
         db.add(config)
-    await db.commit()
+    await db.flush()
     await db.refresh(config)
     return config
 

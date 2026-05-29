@@ -54,7 +54,7 @@ async def create_tenant(
     db.add(account)
     await db.flush()
 
-    await db.commit()
+    await db.flush()
     await db.refresh(tenant)
     return tenant
 
@@ -80,7 +80,7 @@ async def update_tenant(
         tenant.quota = quota
     if compliance_settings is not None:
         tenant.compliance_settings = compliance_settings
-    await db.commit()
+    await db.flush()
     await db.refresh(tenant)
     return tenant
 
@@ -90,5 +90,5 @@ async def soft_delete_tenant(db: AsyncSession, tenant_id: uuid.UUID) -> bool:
     if not tenant:
         return False
     tenant.status = TenantStatus.terminated
-    await db.commit()
+    await db.flush()
     return True

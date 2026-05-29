@@ -12,7 +12,7 @@ async def create_organization(
 ) -> Organization:
     org = Organization(tenant_id=tenant_id, name=name, parent_id=parent_id)
     db.add(org)
-    await db.commit()
+    await db.flush()
     await db.refresh(org)
     return org
 
@@ -49,7 +49,7 @@ async def create_account(
         roles = list(result.scalars().all())
         account.roles = roles
 
-    await db.commit()
+    await db.flush()
     await db.refresh(account)
     return account
 
@@ -77,6 +77,6 @@ async def update_account(
 
         result = await db.execute(select(Role).where(Role.id.in_(role_ids), Role.tenant_id == tenant_id))
         account.roles = list(result.scalars().all())
-    await db.commit()
+    await db.flush()
     await db.refresh(account)
     return account

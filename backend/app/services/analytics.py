@@ -167,5 +167,5 @@ async def aggregate_daily_stats(
         )
         db.add(stats)
 
-    await db.commit()
+    await db.flush()
     return {"date": str(target_date), "total": total, "first_scans": first}

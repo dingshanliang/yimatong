@@ -28,7 +28,7 @@ async def create_campaign(
         description=description,
     )
     db.add(c)
-    await db.commit()
+    await db.flush()
     await db.refresh(c)
     return _campaign_to_dict(c)
 
@@ -83,7 +83,7 @@ async def update_campaign(
     for k, v in fields.items():
         if v is not None:
             setattr(c, k, v)
-    await db.commit()
+    await db.flush()
     await db.refresh(c)
     return _campaign_to_dict(c)
 
@@ -101,7 +101,7 @@ async def change_campaign_status(
     if not c:
         return None
     c.status = new_status
-    await db.commit()
+    await db.flush()
     await db.refresh(c)
     return _campaign_to_dict(c)
 
@@ -120,7 +120,7 @@ async def delete_campaign(
     if not c:
         return False
     await db.delete(c)
-    await db.commit()
+    await db.flush()
     return True
 
 
@@ -146,7 +146,7 @@ async def create_benefit(
         per_person_limit=per_person_limit,
     )
     db.add(b)
-    await db.commit()
+    await db.flush()
     await db.refresh(b)
     return _benefit_to_dict(b)
 
@@ -221,7 +221,7 @@ async def claim_benefit(
         idempotency_key=idempotency_key,
     )
     db.add(claim)
-    await db.commit()
+    await db.flush()
     await db.refresh(claim)
 
     return {"status": "success", "claim": _claim_to_dict(claim)}

@@ -10,17 +10,20 @@ async_session_factory = async_sessionmaker(engine, class_=AsyncSession, expire_o
 
 async def get_db() -> AsyncGenerator[AsyncSession, None]:
     async with async_session_factory() as session:
-        # Set RLS tenant context if available
         from app.core.context import get_request_tenant_id
 
         tenant_id = get_request_tenant_id()
         if tenant_id:
             from sqlalchemy import text
 
-            # Begin an explicit transaction that lasts the entire request
-            # so SET LOCAL remains in effect for all subsequent queries.
             await session.begin()
             await session.execute(
-                text(f"SET LOCAL app.tenant_id = '{tenant_id}'"),
+                text("SET LOCAL app.tenant_id = :tid").bindparams(tenant_id=str(tenant_id)),
             )
-        yield session
+        try:
+            yield session
+        except Exception:
+            await session.rollback()
+            raise
+        else:
+            await session.commit()

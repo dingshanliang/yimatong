@@ -21,7 +21,7 @@ async def batch_import_products(
         )
         db.add(product)
         count += 1
-    await db.commit()
+    await db.flush()
     return count
 
 
@@ -37,7 +37,7 @@ async def sync_inventory(
         )
         db.add(sync)
         count += 1
-    await db.commit()
+    await db.flush()
     return count
 
 
@@ -54,5 +54,5 @@ async def sync_customers(
         )
         db.add(sync)
         count += 1
-    await db.commit()
+    await db.flush()
     return count

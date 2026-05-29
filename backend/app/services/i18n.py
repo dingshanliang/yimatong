@@ -13,7 +13,7 @@ async def create_translation(
 ) -> Translation:
     t = Translation(tenant_id=tenant_id, key=key, locale=locale, value=value)
     db.add(t)
-    await db.commit()
+    await db.flush()
     await db.refresh(t)
     return t
 
@@ -48,7 +48,7 @@ async def batch_update_translations(
                 tenant_id=tenant_id, key=t["key"], locale=t["locale"], value=t["value"],
             ))
         count += 1
-    await db.commit()
+    await db.flush()
     return count
 
 

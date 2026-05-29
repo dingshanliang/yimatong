@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
 from app.core.database import get_db
 from app.core.dependencies import get_current_account_id
 from app.models.tenant import Account
@@ -27,6 +28,7 @@ class TokenResponse(BaseModel):
     access_token: str
     refresh_token: str
     token_type: str = "bearer"
+    expires_in: int = 900
 
 
 class RefreshRequest(BaseModel):
@@ -58,7 +60,11 @@ async def login(body: LoginRequest, db: AsyncSession = Depends(get_db)):
 
     access = create_access_token(str(account.tenant_id), str(account.id), "admin")
     refresh = create_refresh_token(str(account.id))
-    return TokenResponse(access_token=access, refresh_token=refresh)
+    return TokenResponse(
+        access_token=access,
+        refresh_token=refresh,
+        expires_in=settings.access_token_expire_minutes * 60,
+    )
 
 
 @router.post("/refresh", response_model=TokenResponse)
@@ -75,7 +81,11 @@ async def refresh(body: RefreshRequest, db: AsyncSession = Depends(get_db)):
         raise HTTPException(status_code=401, detail="Account not found")
     access = create_access_token(str(account.tenant_id), str(account.id), "admin")
     refresh = create_refresh_token(str(account.id))
-    return TokenResponse(access_token=access, refresh_token=refresh)
+    return TokenResponse(
+        access_token=access,
+        refresh_token=refresh,
+        expires_in=settings.access_token_expire_minutes * 60,
+    )
 
 
 class MeResponse(BaseModel):

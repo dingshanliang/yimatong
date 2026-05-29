@@ -27,7 +27,7 @@ async def import_orders(
         )
         db.add(order)
         count += 1
-    await db.commit()
+    await db.flush()
     return count
 
 
@@ -84,7 +84,7 @@ async def match_order(
                     match_type="phone",
                 )
                 db.add(attr)
-            await db.commit()
+            await db.flush()
             return {"matched": True, "consumer_id": str(consumer.id)}
 
     return {"matched": False}

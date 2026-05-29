@@ -39,9 +39,9 @@ async def get_or_create_consumer(
     )
     db.add(consumer)
     try:
-        await db.commit()
+        async with db.begin_nested():
+            await db.flush()
     except Exception:
-        await db.rollback()
         if phone_h:
             result = await db.execute(
                 select(ConsumerProfile).where(
@@ -82,7 +82,7 @@ async def award_points(
         reference_id=reference_id,
     )
     db.add(txn)
-    await db.commit()
+    await db.flush()
     await db.refresh(txn)
 
     # 更新会员等级
@@ -118,7 +118,7 @@ async def spend_points(
         reference_id=reference_id,
     )
     db.add(txn)
-    await db.commit()
+    await db.flush()
     await db.refresh(txn)
     return txn
 
@@ -136,7 +136,7 @@ async def _update_member_level(db: AsyncSession, consumer: ConsumerProfile):
         consumer.member_level = MemberLevel.normal
 
     if consumer.member_level != old_level:
-        await db.commit()
+        await db.flush()
 
 
 async def get_point_rules(
@@ -159,7 +159,7 @@ async def create_point_rule(
         points=points,
     )
     db.add(rule)
-    await db.commit()
+    await db.flush()
     await db.refresh(rule)
     return rule
 

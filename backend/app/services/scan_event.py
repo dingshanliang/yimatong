@@ -30,7 +30,7 @@ async def record_scan_event(
         environment=environment,
     )
     db.add(event)
-    await db.commit()
+    await db.flush()
     await db.refresh(event)
     return event
 

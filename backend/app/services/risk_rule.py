@@ -24,7 +24,7 @@ async def create_risk_rule(
         config=config,
     )
     db.add(rule)
-    await db.commit()
+    await db.flush()
     await db.refresh(rule)
     return rule
 
@@ -56,7 +56,7 @@ async def update_risk_rule(
         raise ValueError("Risk rule not found")
     for k, v in updates.items():
         setattr(rule, k, v)
-    await db.commit()
+    await db.flush()
     await db.refresh(rule)
     return rule
 
@@ -68,7 +68,7 @@ async def delete_risk_rule(
     if not rule:
         raise ValueError("Risk rule not found")
     await db.delete(rule)
-    await db.commit()
+    await db.flush()
     return True
 
 
@@ -122,7 +122,7 @@ async def evaluate_rule(
                 consumer_id=consumer_id,
             )
             db.add(record)
-            await db.commit()
+            await db.flush()
             await db.refresh(record)
             return {
                 "triggered": True,
@@ -144,7 +144,7 @@ async def attach_rule_to_campaign(
         risk_rule_id=rule_id,
     )
     db.add(link)
-    await db.commit()
+    await db.flush()
     await db.refresh(link)
     return link
 
@@ -183,7 +183,7 @@ async def evaluate_campaign_rules(
                 context=context,
             )
             db.add(record)
-            await db.commit()
+            await db.flush()
             await db.refresh(record)
             return {
                 "triggered": True,

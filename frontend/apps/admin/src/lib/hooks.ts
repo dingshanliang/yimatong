@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 
 export function usePaginatedList<T>(
   fetchFn: (params: { page: number; page_size: number }) => Promise<{ items: T[]; total: number }>,
@@ -11,10 +11,14 @@ export function usePaginatedList<T>(
   const [loading, setLoading] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
 
+  // Store fetchFn in a ref so identity changes don't trigger re-fetches
+  const fetchFnRef = useRef(fetchFn);
+  fetchFnRef.current = fetchFn;
+
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
-    fetchFn({ page, page_size: pageSize })
+    fetchFnRef.current({ page, page_size: pageSize })
       .then((result) => {
         if (!cancelled) {
           setItems(result.items || []);
@@ -25,7 +29,7 @@ export function usePaginatedList<T>(
         if (!cancelled) setLoading(false);
       });
     return () => { cancelled = true; };
-  }, [page, pageSize, refreshKey, fetchFn, ...deps]);
+  }, [page, pageSize, refreshKey, ...deps]);
 
   const refresh = useCallback(() => setRefreshKey((k) => k + 1), []);
 

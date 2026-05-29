@@ -6,13 +6,6 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.services.scan_event import _check_first_scan, record_scan_event
-from tests.conftest import TestSessionLocal
-
-
-@pytest.fixture
-async def db():
-    async with TestSessionLocal() as session:
-        yield session
 
 
 class TestRecordScanEvent:

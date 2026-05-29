@@ -1,19 +1,11 @@
 """A2-006: 审计日志 service 测试"""
 
-from collections.abc import AsyncGenerator
 from datetime import UTC, datetime, timedelta
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.services.audit import query_audit_logs, write_audit_log
-from tests.conftest import TestSessionLocal
-
-
-@pytest.fixture
-async def db() -> AsyncGenerator[AsyncSession, None]:
-    async with TestSessionLocal() as session:
-        yield session
 
 
 class TestAuditLogService:

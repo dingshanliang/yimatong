@@ -24,7 +24,7 @@ async def create_page_template(
         product_id=product_id,
     )
     db.add(t)
-    await db.commit()
+    await db.flush()
     await db.refresh(t)
     return _template_to_dict(t)
 
@@ -109,7 +109,7 @@ async def update_page_template(
         t.name = name
     if description is not None:
         t.description = description
-    await db.commit()
+    await db.flush()
     await db.refresh(t)
     return _template_to_dict(t)
 
@@ -126,7 +126,7 @@ async def delete_page_template(
     if not t:
         return False
     t.status = PageTemplateStatus.archived
-    await db.commit()
+    await db.flush()
     return True
 
 
@@ -153,7 +153,7 @@ async def create_page_version(
         created_by=created_by,
     )
     db.add(v)
-    await db.commit()
+    await db.flush()
     await db.refresh(v)
     return _version_to_dict(v)
 
@@ -173,7 +173,7 @@ async def update_page_version(
     if not v:
         return None
     v.config_json = config_json
-    await db.commit()
+    await db.flush()
     await db.refresh(v)
     return _version_to_dict(v)
 
@@ -203,7 +203,7 @@ async def publish_page_version(
         old.status = PageVersionStatus.archived
 
     v.status = PageVersionStatus.published
-    await db.commit()
+    await db.flush()
     await db.refresh(v)
     return _version_to_dict(v)
 
@@ -222,7 +222,7 @@ async def archive_page_version(
     if not v:
         return None
     v.status = PageVersionStatus.archived
-    await db.commit()
+    await db.flush()
     await db.refresh(v)
     return _version_to_dict(v)
 

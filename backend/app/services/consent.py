@@ -26,7 +26,7 @@ async def grant_consent(
         ip_hash=ip_hash,
     )
     db.add(record)
-    await db.commit()
+    await db.flush()
     await db.refresh(record)
     return record
 
@@ -47,6 +47,6 @@ async def withdraw_consent(
         return None
     record.status = ConsentStatus.withdrawn
     record.withdrawn_at = utcnow()
-    await db.commit()
+    await db.flush()
     await db.refresh(record)
     return record

@@ -22,9 +22,11 @@ api.interceptors.response.use(
   (res) => res,
   (error) => {
     if (error.response?.status === 401 && typeof window !== "undefined") {
-      localStorage.removeItem("access_token");
-      localStorage.removeItem("auth_store");
-      window.location.href = "/login";
+      // 委托给 auth store 的 logout，确保 localStorage + cookie 同步清除
+      import("./auth").then(({ useAuthStore }) => {
+        useAuthStore.getState().logout();
+        window.location.href = "/login";
+      });
     }
     return Promise.reject(error);
   }

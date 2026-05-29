@@ -43,7 +43,7 @@ class TestCodeBatchModel:
                 created_by=uuid(),
             )
             db.add(batch)
-            await db.commit()
+            await db.flush()
             await db.refresh(batch)
             assert batch.id is not None
             assert batch.batch_code == "BATCH-001"
@@ -79,7 +79,7 @@ class TestCodeItemModel:
                 public_id="ABC12345678",
             )
             db.add(item)
-            await db.commit()
+            await db.flush()
             await db.refresh(item)
             assert item.id is not None
             assert item.public_id == "ABC12345678"

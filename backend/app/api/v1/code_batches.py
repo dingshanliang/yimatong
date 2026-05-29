@@ -235,7 +235,7 @@ async def update_code_item_endpoint(
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
-    item = await update_code_item(db, tenant_id, item_id)
+    item = await update_code_item(db, tenant_id, item_id, status=body.status)
     if not item:
         raise HTTPException(status_code=404, detail="Code item not found")
     return CodeItemRead.model_validate(item)

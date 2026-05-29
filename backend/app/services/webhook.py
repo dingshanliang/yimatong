@@ -14,7 +14,7 @@ async def create_webhook_endpoint(
 ) -> WebhookEndpoint:
     ep = WebhookEndpoint(tenant_id=tenant_id, url=url, events=events, secret=secret)
     db.add(ep)
-    await db.commit()
+    await db.flush()
     await db.refresh(ep)
     return ep
 
@@ -39,7 +39,7 @@ async def create_api_key(
         permissions=permissions,
     )
     db.add(api_key)
-    await db.commit()
+    await db.flush()
     await db.refresh(api_key)
     return api_key
 
@@ -63,7 +63,7 @@ async def revoke_api_key(
     if not key:
         raise ValueError("API key not found")
     key.revoked = True
-    await db.commit()
+    await db.flush()
     return True
 
 

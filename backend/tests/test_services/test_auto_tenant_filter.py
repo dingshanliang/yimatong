@@ -1,20 +1,11 @@
 """A2-004: 自动查询过滤 service 层测试 — 覆盖 3 种模型"""
 
-from collections.abc import AsyncGenerator
-
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.tenant import Role, Tenant
 from app.services.organization import create_account, create_organization, list_accounts, list_organizations
 from app.services.tenant import create_tenant
-from tests.conftest import TestSessionLocal
-
-
-@pytest.fixture
-async def db() -> AsyncGenerator[AsyncSession, None]:
-    async with TestSessionLocal() as session:
-        yield session
 
 
 @pytest.fixture
@@ -72,7 +63,7 @@ class TestRoleAutoFilter:
         role_a = Role(tenant_id=tenant_a.id, name="A管理员")
         role_b = Role(tenant_id=tenant_b.id, name="B管理员")
         db.add_all([role_a, role_b])
-        await db.commit()
+        await db.flush()
 
         result = await db.execute(select(Role).where(Role.tenant_id == tenant_a.id))
         roles = list(result.scalars().all())

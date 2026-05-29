@@ -7,13 +7,6 @@ from sqlalchemy import inspect
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.page import PageTemplate, PageTemplateStatus, PageVersion, PageVersionStatus
-from tests.conftest import TestSessionLocal
-
-
-@pytest.fixture
-async def db():
-    async with TestSessionLocal() as session:
-        yield session
 
 
 class TestPageTemplate:
@@ -26,7 +19,7 @@ class TestPageTemplate:
             description="展示产品基本信息的固定模板",
         )
         db.add(t)
-        await db.commit()
+        await db.flush()
         await db.refresh(t)
         assert t.id is not None
         assert t.name == "产品信息页"
@@ -66,7 +59,7 @@ class TestPageVersion:
             created_by=uuid.uuid4(),
         )
         db.add(v)
-        await db.commit()
+        await db.flush()
         await db.refresh(v)
         assert v.version == 1
         assert v.config_json["brand_name"] == "测试品牌"

@@ -50,6 +50,14 @@ from app.middleware.tenant import TenantScopeMiddleware
 async def lifespan(app):
     from app.utils.crypto import EnvKeyProvider, init_crypto
 
+    if settings.secret_key == "dev-secret-key-change-in-production":
+        import os
+        if os.getenv("ENVIRONMENT", "development") != "development":
+            raise RuntimeError(
+                "SECRET_KEY must be changed from default value in non-development environments. "
+                "Set the SECRET_KEY environment variable."
+            )
+
     if not settings.aes_master_key_v1 or not settings.hmac_pepper:
         raise RuntimeError(
             "AES_MASTER_KEY_V1 and HMAC_PEPPER must be configured. "
@@ -139,10 +147,10 @@ async def health_detail():
         checks["postgres"] = "error"
 
     try:
-        import redis as redis_lib
+        import redis.asyncio as aioredis
 
-        r = redis_lib.from_url(settings.redis_url)
-        r.ping()
+        async with aioredis.from_url(settings.redis_url) as r:
+            await r.ping()
         checks["redis"] = "ok"
     except Exception:
         checks["redis"] = "error"

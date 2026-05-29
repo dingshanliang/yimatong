@@ -36,7 +36,7 @@ async def create_rule(
         end_time=end_time,
     )
     db.add(rule)
-    await db.commit()
+    await db.flush()
     await db.refresh(rule)
     return rule
 
@@ -71,7 +71,7 @@ async def submit_kyc(
         phone_hash=phone_hash,
     )
     db.add(kyc)
-    await db.commit()
+    await db.flush()
     await db.refresh(kyc)
     return kyc
 
@@ -145,7 +145,7 @@ async def claim_redpacket(
     db.add(claim)
 
     rule.claimed_budget += amount
-    await db.commit()
+    await db.flush()
     await db.refresh(claim)
     return claim
 
@@ -162,7 +162,7 @@ async def request_withdrawal(
         amount=amount,
     )
     db.add(w)
-    await db.commit()
+    await db.flush()
     await db.refresh(w)
     return w
 

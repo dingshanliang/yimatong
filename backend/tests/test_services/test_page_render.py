@@ -7,13 +7,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.page import PageTemplate, PageVersion, PageVersionStatus
 from app.services.page_render import _render_cache, invalidate_cache, render_page
-from tests.conftest import TestSessionLocal
-
-
-@pytest.fixture
-async def db():
-    async with TestSessionLocal() as session:
-        yield session
 
 
 @pytest.fixture(autouse=True)
@@ -43,7 +36,7 @@ async def _setup_published_template(db: AsyncSession, template_type: str, config
         created_by=uuid.uuid4(),
     )
     db.add(version)
-    await db.commit()
+    await db.flush()
 
     return tid, template.id, version.id
 
@@ -98,7 +91,7 @@ class TestPageRender:
             template_type="product_info",
         )
         db.add(template)
-        await db.commit()
+        await db.flush()
 
         html = await render_page(db, tid, template.id)
         assert html is None

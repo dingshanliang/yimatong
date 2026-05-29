@@ -38,6 +38,9 @@ class TenantScopeMiddleware(BaseHTTPMiddleware):
 
         # Set context var for RLS (consumed by get_db)
         from app.core.context import set_request_tenant_id
-        set_request_tenant_id(tenant_id)
 
-        return await call_next(request)
+        set_request_tenant_id(tenant_id)
+        try:
+            return await call_next(request)
+        finally:
+            set_request_tenant_id(None)

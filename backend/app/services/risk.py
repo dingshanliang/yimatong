@@ -118,7 +118,7 @@ async def freeze_code_item(
         detail="码已被风险冻结",
     )
     db.add(alert)
-    await db.commit()
+    await db.flush()
     await db.refresh(item)
     return item
 
@@ -140,7 +140,7 @@ async def unfreeze_code_item(
         raise HTTPException(status_code=409, detail="Code item is not frozen")
 
     item.status = CodeItemStatus.activated
-    await db.commit()
+    await db.flush()
     await db.refresh(item)
     return item
 

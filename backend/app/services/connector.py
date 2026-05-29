@@ -23,7 +23,7 @@ async def create_coupon_pool(
     for code in codes:
         cc = CouponCode(pool_id=pool.id, code=code)
         db.add(cc)
-    await db.commit()
+    await db.flush()
     await db.refresh(pool)
     return pool
 
@@ -50,7 +50,7 @@ async def distribute_coupon(
     pool = pool_result.scalar_one()
     pool.remaining -= 1
 
-    await db.commit()
+    await db.flush()
     await db.refresh(code)
     return code
 
@@ -65,7 +65,7 @@ async def create_connector(
         config=config,
     )
     db.add(conn)
-    await db.commit()
+    await db.flush()
     await db.refresh(conn)
     return conn
 
@@ -96,7 +96,7 @@ async def update_connector(
         raise ValueError("Connector not found")
     for k, v in updates.items():
         setattr(conn, k, v)
-    await db.commit()
+    await db.flush()
     await db.refresh(conn)
     return conn
 

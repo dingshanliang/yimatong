@@ -36,7 +36,7 @@ async def create_brand(
         description=description,
     )
     db.add(brand)
-    await db.commit()
+    await db.flush()
     await db.refresh(brand)
     return brand
 
@@ -97,7 +97,7 @@ async def update_brand(
     if status is not None:
         brand.status = status
 
-    await db.commit()
+    await db.flush()
     await db.refresh(brand)
     return brand
 
@@ -118,7 +118,7 @@ async def create_product(
         description=description,
     )
     db.add(product)
-    await db.commit()
+    await db.flush()
     await db.refresh(product)
     return product
 
@@ -174,7 +174,7 @@ async def update_product(
     if status is not None:
         product.status = status
 
-    await db.commit()
+    await db.flush()
     await db.refresh(product)
     return product
 
@@ -205,7 +205,7 @@ async def create_sku(
         specifications=specifications,
     )
     db.add(sku)
-    await db.commit()
+    await db.flush()
     await db.refresh(sku)
     return sku
 
@@ -268,7 +268,7 @@ async def update_sku(
     if status is not None:
         sku.status = status
 
-    await db.commit()
+    await db.flush()
     await db.refresh(sku)
     return sku
 
@@ -301,7 +301,7 @@ async def create_production_batch(
         expiry_date=expiry_date,
     )
     db.add(batch)
-    await db.commit()
+    await db.flush()
     await db.refresh(batch)
     return batch
 
@@ -377,7 +377,7 @@ async def import_batches_csv(
             errors.append(f"Row {row_num}: {e}")
 
     if imported > 0:
-        await db.commit()
+        await db.flush()
 
     return imported, errors
 

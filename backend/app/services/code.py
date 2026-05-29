@@ -75,7 +75,7 @@ async def create_code_batch(
         total_generated += len(batch_items)
 
     batch.status = CodeBatchStatus.completed
-    await db.commit()
+    await db.flush()
     await db.refresh(batch)
 
     return {
@@ -244,7 +244,7 @@ async def activate_batch(
         .values(status=CodeItemStatus.activated, activated_at=now)
     )
     r = await db.execute(stmt)
-    await db.commit()
+    await db.flush()
     return {"activated": r.rowcount}
 
 
@@ -265,7 +265,7 @@ async def revoke_code_item(
     can_transition(item.status, CodeItemStatus.revoked, raise_on_invalid=True)
     item.status = CodeItemStatus.revoked
     item.revoked_at = utcnow()
-    await db.commit()
+    await db.flush()
     await db.refresh(item)
     return item
 
@@ -287,7 +287,7 @@ async def bind_code_item(
     can_transition(item.status, CodeItemStatus.bound, raise_on_invalid=True)
     item.status = CodeItemStatus.bound
     item.bound_at = utcnow()
-    await db.commit()
+    await db.flush()
     await db.refresh(item)
     return item
 
@@ -296,6 +296,20 @@ async def freeze_batch(
     db: AsyncSession, tenant_id: uuid.UUID, batch_id: uuid.UUID
 ) -> dict:
     from sqlalchemy import update as sa_update
+
+    from app.services.code_state import can_transition
+
+    # Validate current state before bulk update
+    sample_result = await db.execute(
+        select(CodeItem.status).where(
+            CodeItem.tenant_id == tenant_id,
+            CodeItem.code_batch_id == batch_id,
+            CodeItem.status.in_([CodeItemStatus.activated, CodeItemStatus.bound]),
+        ).limit(1)
+    )
+    sample = sample_result.scalar_one_or_none()
+    if sample is not None:
+        can_transition(sample, CodeItemStatus.frozen, raise_on_invalid=True)
 
     utcnow()
     stmt = (
@@ -308,7 +322,7 @@ async def freeze_batch(
         .values(status=CodeItemStatus.frozen)
     )
     r = await db.execute(stmt)
-    await db.commit()
+    await db.flush()
     return {"frozen": r.rowcount}
 
 
@@ -328,8 +342,11 @@ async def void_batch(
         .values(status=CodeItemStatus.revoked, revoked_at=now)
     )
     r = await db.execute(stmt)
-    await db.commit()
+    await db.flush()
     return {"voided": r.rowcount}
+
+
+_BATCH_ALLOWED_FIELDS = {"batch_code"}
 
 
 async def update_batch(
@@ -345,10 +362,13 @@ async def update_batch(
     if not obj:
         return None
     for k, v in kwargs.items():
-        if v is not None and hasattr(obj, k):
+        if k in _BATCH_ALLOWED_FIELDS and v is not None:
             setattr(obj, k, v)
-    await db.commit()
+    await db.flush()
     return await get_code_batch(db, tenant_id, batch_id)
+
+
+_ITEM_ALLOWED_FIELDS = {"status"}
 
 
 async def update_code_item(
@@ -361,8 +381,8 @@ async def update_code_item(
     if not item:
         return None
     for k, v in kwargs.items():
-        if v is not None and hasattr(item, k):
+        if k in _ITEM_ALLOWED_FIELDS and v is not None:
             setattr(item, k, v)
-    await db.commit()
+    await db.flush()
     await db.refresh(item)
     return item

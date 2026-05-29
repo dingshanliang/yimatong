@@ -20,7 +20,7 @@ async def write_audit_log(
         resource=resource,
     )
     db.add(log)
-    await db.commit()
+    await db.flush()
     await db.refresh(log)
     return log
 

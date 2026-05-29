@@ -32,7 +32,7 @@ async def create_distributor(
         contact_phone_hash=phone_hash,
     )
     db.add(dist)
-    await db.commit()
+    await db.flush()
     await db.refresh(dist)
     return dist
 
@@ -61,7 +61,7 @@ async def create_region(
         province=province, city=city, distributor_id=distributor_id,
     )
     db.add(region)
-    await db.commit()
+    await db.flush()
     await db.refresh(region)
     return region
 
@@ -91,7 +91,7 @@ async def create_store(
         address=address,
     )
     db.add(store)
-    await db.commit()
+    await db.flush()
     await db.refresh(store)
     return store
 
@@ -112,7 +112,7 @@ async def assign_batch_to_channel(
         batch.distributor_id = distributor_id
     if region_id:
         batch.region_id = region_id
-    await db.commit()
+    await db.flush()
     await db.refresh(batch)
 
     return {
@@ -179,7 +179,7 @@ async def check_diversion(
         distributor_id=batch.distributor_id if batch else None,
     )
     db.add(clue)
-    await db.commit()
+    await db.flush()
     await db.refresh(clue)
     return clue
 
