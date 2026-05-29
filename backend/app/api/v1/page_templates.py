@@ -7,10 +7,9 @@ from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.schemas.common import PaginatedResponse
-
 from app.core.database import get_db
 from app.core.dependencies import get_current_account_id, get_current_tenant
+from app.schemas.common import PaginatedResponse
 from app.services.industry_templates import ALL_TEMPLATES
 from app.services.page import (
     archive_page_version,

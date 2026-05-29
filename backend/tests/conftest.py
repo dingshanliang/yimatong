@@ -79,7 +79,6 @@ async def setup_database():
 
 @pytest.fixture
 async def db():
-    from collections.abc import AsyncGenerator
 
     async with TestSessionLocal() as session:
         try:

@@ -6,11 +6,10 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.schemas.common import PaginatedResponse
-
 from app.core.database import get_db
 from app.core.dependencies import get_current_tenant
 from app.models.risk import RiskAlert
+from app.schemas.common import PaginatedResponse
 from app.services.risk import freeze_code_item, list_risk_alerts, unfreeze_code_item
 
 risk_router = APIRouter(prefix="/api/v1/risk-alerts", tags=["risk-alerts"])

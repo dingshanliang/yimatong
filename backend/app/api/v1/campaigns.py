@@ -6,10 +6,9 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, field_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.schemas.common import PaginatedResponse
-
 from app.core.database import get_db
 from app.core.dependencies import get_current_tenant
+from app.schemas.common import PaginatedResponse
 from app.services.campaign import (
     change_campaign_status,
     claim_benefit,
