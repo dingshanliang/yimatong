@@ -79,18 +79,22 @@ export default function DashboardLayout({
   const router = useRouter();
   const pathname = usePathname();
   const { user, hydrate, logout } = useAuthStore();
-  const [ready, setReady] = useState(false);
+
+  // 同步初始化：lazy initializer 在首次渲染时同步读取 localStorage，
+  // 避免 useEffect 异步竞争导致的误判重定向
+  const [ready] = useState(() => {
+    if (typeof window === "undefined") return false;
+    return !!localStorage.getItem("access_token");
+  });
 
   useEffect(() => {
-    hydrate();
-    setReady(true);
-  }, [hydrate]);
-
-  useEffect(() => {
-    if (ready && !useAuthStore.getState().token) {
+    if (!ready) {
       router.replace("/login");
+      return;
     }
-  }, [ready, router]);
+    // 确保 store 已 hydrate（幂等操作）
+    hydrate();
+  }, [ready, hydrate, router]);
 
   // 从 pathname 提取选中的菜单 key
   const selectedKeys = [pathname];

@@ -15,6 +15,9 @@ class Settings(BaseSettings):
     # HMAC-SHA256 pepper（hex 编码）
     hmac_pepper: str = ""
 
+    # CORS 配置（逗号分隔的前端域名）
+    cors_origins: str = "http://localhost:3000,http://localhost:3001"
+
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 
 

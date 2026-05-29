@@ -10,8 +10,7 @@ export function middleware(request: NextRequest) {
     return NextResponse.next();
   }
 
-  // Check for token in cookies or let client-side handle redirect
-  // Server-side middleware can't access localStorage, so we use a cookie approach
+  // 从 cookie 读取 access_token（登录时同步写入）
   const token = request.cookies.get("access_token")?.value;
 
   if (!token) {

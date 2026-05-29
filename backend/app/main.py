@@ -60,6 +60,19 @@ async def lifespan(app):
 
 
 app = FastAPI(title="一码通", version="0.1.0", lifespan=lifespan)
+
+# CORS — 开发环境默认允许所有，生产环境通过 CORS_ORIGINS 限制
+from fastapi.middleware.cors import CORSMiddleware
+
+origins = [o.strip() for o in settings.cors_origins.split(",")] if settings.cors_origins != "*" else ["*"]
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 app.add_middleware(TenantScopeMiddleware)
 app.include_router(tenants_router)
 app.include_router(orgs_router)
@@ -129,7 +142,7 @@ async def health_detail():
     try:
         import redis as redis_lib
 
-        r = redis_lib.from_url("redis://localhost:6379/0")
+        r = redis_lib.from_url(settings.redis_url)
         r.ping()
         checks["redis"] = "ok"
     except Exception:
