@@ -13,8 +13,12 @@ async def shutdown(ctx: dict) -> None:
     """Called when the worker shuts down."""
 
 
+async def dummy_task(ctx: dict) -> None:
+    """Placeholder task to satisfy arq worker requirement."""
+
+
 class WorkerSettings:
     on_startup = startup
     on_shutdown = shutdown
     redis_settings = RedisSettings.from_dsn(settings.redis_url)
-    functions: list = []
+    functions = [dummy_task]

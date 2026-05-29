@@ -18,7 +18,7 @@ services:
   redis:
     image: redis:7-alpine
     ports:
-      - "6379:6379"
+      - "6380:6379"
     volumes:
       - redis_data:/data
     healthcheck:
@@ -71,6 +71,8 @@ services:
       minio_access_key: minioadmin
       minio_secret_key: minioadmin
       secret_key: dev-secret-key-change-in-production
+      AES_MASTER_KEY_V1: f18d81c3b455f9a5a01db6a8546fc5acc242b51cbc4ae70ec99654e091f38a4b
+      HMAC_PEPPER: 7c9cade78554566742f263539bd4ff404493e9b9ed6939168da7ad5ceb3813cd
     depends_on:
       postgres:
         condition: service_healthy
@@ -88,6 +90,7 @@ services:
       start_period: 10s
     volumes:
       - ./backend:/app
+      - backend_venv:/app/.venv
 
   worker:
     build:
@@ -98,11 +101,16 @@ services:
       database_url: postgresql+asyncpg://yimatong:yimatong@postgres:5432/yimatong_dev
       redis_url: redis://redis:6379/0
       secret_key: dev-secret-key-change-in-production
+      AES_MASTER_KEY_V1: f18d81c3b455f9a5a01db6a8546fc5acc242b51cbc4ae70ec99654e091f38a4b
+      HMAC_PEPPER: 7c9cade78554566742f263539bd4ff404493e9b9ed6939168da7ad5ceb3813cd
     depends_on:
       redis:
         condition: service_healthy
       postgres:
         condition: service_healthy
+    volumes:
+      - ./backend:/app
+      - backend_venv:/app/.venv
 
   migration:
     build:
@@ -114,6 +122,9 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+    volumes:
+      - ./backend:/app
+      - backend_venv:/app/.venv
 
   mock-sms:
     image: node:20-alpine
@@ -133,3 +144,4 @@ volumes:
   postgres_data:
   redis_data:
   minio_data:
+  backend_venv:
