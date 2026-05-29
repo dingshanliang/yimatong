@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { apiClient } from "@/lib/api";
 
 interface PrivacyPolicyProps {
   /** 隐私政策内容（支持 HTML 富文本或纯文本） */
@@ -11,6 +12,8 @@ interface PrivacyPolicyProps {
   onReject?: () => void;
   /** 是否显示操作按钮（默认 true） */
   showActions?: boolean;
+  /** 关联的 public_id（用于 consent API） */
+  publicId?: string;
 }
 
 /**
@@ -19,30 +22,49 @@ interface PrivacyPolicyProps {
  * 展示隐私政策内容，提供同意/拒绝操作按钮。
  * 支持富文本 HTML 和纯文本两种展示模式。
  * 同意后提供撤回授权入口。
+ * 同意/撤回操作会调用后端 consent API（best-effort，失败不阻断 UI）。
  */
 export function PrivacyPolicy({
   content,
   onAccept,
   onReject,
   showActions = true,
+  publicId,
 }: PrivacyPolicyProps) {
   const [accepted, setAccepted] = useState(false);
+  const [consentId, setConsentId] = useState<string | null>(null);
   const [showRevokeConfirm, setShowRevokeConfirm] = useState(false);
 
   if (!content) return null;
 
-  const handleAccept = () => {
+  const handleAccept = async () => {
     setAccepted(true);
     onAccept?.();
+    try {
+      const res = await apiClient.post("/public/consents", {
+        consent_type: "privacy_policy",
+        public_id: publicId,
+      });
+      setConsentId(res.data?.id || null);
+    } catch {
+      // best-effort: consent failure does not block UX
+    }
   };
 
   const handleReject = () => {
     onReject?.();
   };
 
-  const handleRevoke = () => {
+  const handleRevoke = async () => {
     setAccepted(false);
     setShowRevokeConfirm(false);
+    try {
+      if (consentId) {
+        await apiClient.post(`/public/consents/${consentId}/withdraw`);
+      }
+    } catch {
+      // best-effort
+    }
   };
 
   return (

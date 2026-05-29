@@ -15,6 +15,12 @@ import { OuterCodeGuide } from "@/components/OuterCodeGuide";
 import { RiskAlert } from "@/components/RiskAlert";
 import { DualCodeVerify } from "@/components/DualCodeVerify";
 import { ErrorPage } from "@/components/ErrorPage";
+import { BrandHeader } from "@/components/BrandHeader";
+import { ProductCard } from "@/components/ProductCard";
+import { TraceabilitySection } from "@/components/TraceabilitySection";
+import { LeadForm } from "@/components/LeadForm";
+import { FooterSection } from "@/components/FooterSection";
+import { FallbackError } from "@/components/FallbackError";
 
 interface ResolveContentProps {
   mode: "json" | "html";
@@ -44,7 +50,6 @@ export function ResolveContent({
     pageVersionId: undefined,
   });
 
-  // HTML 兼容模式
   if (mode === "html") {
     if (!htmlContent) return <FallbackError />;
     return (
@@ -57,7 +62,6 @@ export function ResolveContent({
 
   if (!jsonPayload) return <FallbackError />;
 
-  // 检查码状态异常
   const codeData = jsonPayload.code_data as Record<string, unknown> | undefined;
   const codeStatus = codeData?.status as string | undefined;
 
@@ -79,11 +83,9 @@ export function ResolveContent({
   } | undefined;
   const pageConfig = jsonPayload.page_config as Record<string, unknown> | undefined;
 
-  // 从 pageConfig 提取模块列表
   const modules = (pageConfig?.modules as ModuleConfig[] | undefined) || [];
   const enabledModules = modules.filter((m) => m.enabled !== false);
 
-  // 从 codeData 提取产品信息
   const product = codeData?.product as Record<string, unknown> | undefined;
   const brand = codeData?.brand as Record<string, unknown> | undefined;
   const batch = codeData?.batch as Record<string, unknown> | undefined;
@@ -95,7 +97,6 @@ export function ResolveContent({
   const productDesc = (product?.description as string) || "";
   const productImages = product?.images as string[] | undefined;
 
-  // 如果没有 DSL 模块配置，使用默认渲染
   if (enabledModules.length === 0) {
     return (
       <DefaultRender
@@ -112,7 +113,6 @@ export function ResolveContent({
     );
   }
 
-  // DSL 驱动渲染
   return (
     <div className="mx-auto max-w-md min-h-screen bg-gray-50">
       <BrandHeader
@@ -152,6 +152,7 @@ function ModuleRenderer({
   product,
   campaign,
   scanInfo,
+  batch,
 }: {
   module: ModuleConfig;
   publicId: string;
@@ -160,6 +161,7 @@ function ModuleRenderer({
   product: Record<string, unknown>;
   campaign: Record<string, unknown>;
   scanInfo: Record<string, unknown>;
+  batch: Record<string, unknown>;
   [key: string]: unknown;
 }) {
   const config = module.config || {};
@@ -170,6 +172,7 @@ function ModuleRenderer({
         <ProductCard
           productName={(product.name as string) || ""}
           description={(product.description as string) || ""}
+          images={product.images as string[] | undefined}
           imageUrl={((product.images as string[])?.[0])}
           showBadge={config.show_verify_badge as boolean}
         />
@@ -191,7 +194,12 @@ function ModuleRenderer({
       );
 
     case "light_traceability":
-      return <TraceabilitySection codeData={codeData} />;
+      return (
+        <TraceabilitySection
+          codeData={{ ...codeData, batch, product }}
+          config={config as { fields?: string[] }}
+        />
+      );
 
     case "test_reports":
       return (
@@ -207,6 +215,11 @@ function ModuleRenderer({
             }>) || []
           }
         />
+      );
+
+    case "certificates":
+      return (
+        <CertificateRenderer codeData={codeData} />
       );
 
     case "benefit_card":
@@ -238,6 +251,38 @@ function ModuleRenderer({
         </div>
       );
 
+    case "shop_redirect":
+      return (
+        <div className="px-4 mt-3">
+          <ShopRedirect
+            shops={
+              (config.shops as Array<{
+                platform: "taobao" | "jd" | "douyin" | "pdd" | "other";
+                name: string;
+                url: string;
+              }>) || []
+            }
+          />
+        </div>
+      );
+
+    case "lead_form":
+      return (
+        <div className="px-4 mt-3">
+          <LeadForm
+            publicId={publicId}
+            scanToken={scanToken}
+            title={config.title as string}
+            subtitle={config.subtitle as string}
+            submitLabel={config.submit_label as string}
+            fields={config.fields as string[]}
+          />
+        </div>
+      );
+
+    case "media_section":
+      return <MediaRenderer codeData={codeData} config={config} />;
+
     case "legal_terms":
       return (
         <div className="px-4 mt-3 mb-4">
@@ -250,6 +295,7 @@ function ModuleRenderer({
           {Boolean(config.show_privacy_policy) && (
             <PrivacyPolicy
               content={config.privacy_content as string}
+              publicId={publicId}
             />
           )}
         </div>
@@ -344,6 +390,94 @@ function ModuleRenderer({
   }
 }
 
+/* ─── 证书渲染（简化） ──────────────────────────── */
+
+function CertificateRenderer({ codeData }: { codeData: Record<string, unknown> }) {
+  const certs = codeData.certificates as Array<{
+    name: string;
+    issuer?: string;
+    valid_until?: string;
+    image_url?: string;
+    file_url?: string;
+  }> | undefined;
+
+  if (!certs?.length) return null;
+
+  return (
+    <div className="mx-4 mt-3 rounded-2xl bg-white p-4 shadow-sm">
+      <h2 className="text-base font-semibold text-gray-900">资质证书</h2>
+      <div className="mt-3 space-y-3">
+        {certs.map((cert, i) => (
+          <div key={i} className="flex items-start gap-3 rounded-xl border border-gray-100 p-3">
+            {cert.image_url && (
+              <img src={cert.image_url} alt={cert.name} className="h-16 w-16 rounded-lg object-cover shrink-0" />
+            )}
+            <div className="min-w-0">
+              <p className="text-sm font-medium text-gray-900">{cert.name}</p>
+              {cert.issuer && <p className="text-xs text-gray-500">颁发机构：{cert.issuer}</p>}
+              {cert.valid_until && <p className="text-xs text-gray-500">有效期至：{cert.valid_until}</p>}
+              {cert.file_url && (
+                <a href={cert.file_url} target="_blank" rel="noopener noreferrer"
+                  className="mt-1 inline-block text-xs text-blue-600 hover:underline">
+                  查看详情
+                </a>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/* ─── 视频/图文渲染 ──────────────────────────── */
+
+function MediaRenderer({
+  codeData,
+  config,
+}: {
+  codeData: Record<string, unknown>;
+  config: Record<string, unknown>;
+}) {
+  const items = (codeData.media_items || config.items) as Array<{
+    type: "video" | "image";
+    url: string;
+    poster_url?: string;
+    caption?: string;
+  }> | undefined;
+
+  if (!items?.length) return null;
+
+  return (
+    <div className="mx-4 mt-3 rounded-2xl bg-white p-4 shadow-sm">
+      <h2 className="text-base font-semibold text-gray-900">品牌故事</h2>
+      <div className="mt-3 space-y-3">
+        {items.map((item, i) =>
+          item.type === "video" ? (
+            <div key={i}>
+              <video
+                src={item.url}
+                poster={item.poster_url}
+                controls
+                playsInline
+                muted
+                preload="metadata"
+                className="w-full rounded-xl"
+              />
+              {item.caption && <p className="mt-1 text-xs text-gray-500">{item.caption}</p>}
+            </div>
+          ) : (
+            <div key={i}>
+              <img src={item.url} alt={item.caption || ""} className="w-full rounded-xl object-cover" />
+              {item.caption && <p className="mt-1 text-xs text-gray-500">{item.caption}</p>}
+            </div>
+          ),
+        )}
+      </div>
+    </div>
+  );
+}
+
 /* ─── 默认渲染（无 DSL 时） ────────────────────── */
 
 function DefaultRender({
@@ -376,163 +510,6 @@ function DefaultRender({
         <LeadForm publicId={publicId} scanToken={scanToken} />
       </div>
       <FooterSection branding={{ name: brandName, logo_url: brandLogo }} />
-    </div>
-  );
-}
-
-/* ─── 品牌头部 ──────────────────────────────────── */
-
-function BrandHeader({ name, logoUrl, primaryColor }: { name: string; logoUrl: string; primaryColor?: string }) {
-  const bgColor = primaryColor || "#2563eb";
-  return (
-    <div className="flex items-center gap-3 px-4 py-4 text-white" style={{ backgroundColor: bgColor }}>
-      {logoUrl ? (
-        <img src={logoUrl} alt={name} className="h-10 w-10 rounded-full border-2 border-white/30 object-cover" />
-      ) : (
-        <div className="flex h-10 w-10 items-center justify-center rounded-full bg-white/20 text-lg font-bold">
-          {name.charAt(0) || "Y"}
-        </div>
-      )}
-      <span className="text-lg font-semibold">{name || "一码通"}</span>
-    </div>
-  );
-}
-
-/* ─── 产品卡片 ──────────────────────────────────── */
-
-function ProductCard({ productName, description, imageUrl, showBadge }: {
-  productName: string; description: string; imageUrl?: string; showBadge?: boolean;
-}) {
-  return (
-    <div className="mx-4 mt-4 rounded-2xl bg-white p-4 shadow-sm">
-      {imageUrl && (
-        <img src={imageUrl} alt={productName} className="mb-3 h-48 w-full rounded-xl object-cover" />
-      )}
-      <h1 className="text-xl font-bold text-gray-900">{productName || "产品信息"}</h1>
-      {description && <p className="mt-1 text-sm text-gray-500 leading-relaxed">{description}</p>}
-      {showBadge && (
-        <div className="mt-2 flex items-center gap-2">
-          <span className="inline-flex items-center rounded-full bg-green-50 px-2.5 py-0.5 text-xs font-medium text-green-700">
-            正品保障
-          </span>
-          <span className="inline-flex items-center rounded-full bg-blue-50 px-2.5 py-0.5 text-xs font-medium text-blue-700">
-            已验证
-          </span>
-        </div>
-      )}
-    </div>
-  );
-}
-
-/* ─── 溯源信息 ──────────────────────────────────── */
-
-function TraceabilitySection({ codeData }: { codeData: Record<string, unknown> }) {
-  const batch = codeData?.batch as Record<string, unknown> | undefined;
-  const batchNo = (batch?.batch_no as string) || "";
-  const productionDate = (batch?.production_date as string) || "";
-  if (!batchNo && !productionDate) return null;
-
-  return (
-    <div className="mx-4 mt-3 rounded-2xl bg-white p-4 shadow-sm">
-      <h2 className="text-base font-semibold text-gray-900">溯源信息</h2>
-      <div className="mt-3 space-y-2">
-        {batchNo && <InfoRow label="生产批次" value={batchNo} />}
-        {productionDate && <InfoRow label="生产日期" value={productionDate} />}
-        <InfoRow label="码编号" value={codeData?.public_id as string || ""} />
-      </div>
-    </div>
-  );
-}
-
-/* ─── 留资表单 ──────────────────────────────────── */
-
-function LeadForm({ publicId, scanToken }: { publicId: string; scanToken?: string }) {
-  return (
-    <div className="mt-3 rounded-2xl bg-white p-4 shadow-sm">
-      <h2 className="text-base font-semibold text-gray-900">留下联系方式</h2>
-      <p className="mt-1 text-xs text-gray-400">品牌将通过此信息与您联系（选填）</p>
-      <form
-        className="mt-3 space-y-3"
-        onSubmit={async (e) => {
-          e.preventDefault();
-          const fd = new FormData(e.currentTarget);
-          const body = { name: fd.get("name"), phone: fd.get("phone"), public_id: publicId };
-          try {
-            const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-            await fetch(`${API_URL}/api/v1/consumers/lead-capture`, {
-              method: "POST",
-              headers: {
-                "Content-Type": "application/json",
-                ...(scanToken ? { Authorization: `Bearer ${scanToken}` } : {}),
-              },
-              body: JSON.stringify(body),
-            });
-          } catch { /* 留资失败不影响体验 */ }
-        }}
-      >
-        <div>
-          <label htmlFor="lead-name" className="block text-sm font-medium text-gray-700">姓名</label>
-          <input id="lead-name" name="name" type="text" placeholder="请输入姓名"
-            className="mt-1 block w-full rounded-xl border border-gray-200 px-3 py-2.5 text-sm text-gray-900 placeholder:text-gray-400 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 focus:outline-none" />
-        </div>
-        <div>
-          <label htmlFor="lead-phone" className="block text-sm font-medium text-gray-700">手机号</label>
-          <input id="lead-phone" name="phone" type="tel" placeholder="请输入手机号"
-            className="mt-1 block w-full rounded-xl border border-gray-200 px-3 py-2.5 text-sm text-gray-900 placeholder:text-gray-400 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 focus:outline-none" />
-        </div>
-        <button type="submit"
-          className="w-full rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-blue-700 active:bg-blue-800 transition-colors">
-          提交
-        </button>
-      </form>
-    </div>
-  );
-}
-
-/* ─── 底部 ──────────────────────────────────────── */
-
-function FooterSection({ branding }: { branding: { name?: string; logo_url?: string } | undefined }) {
-  return (
-    <div className="mx-4 mb-6 mt-3 rounded-2xl bg-white p-4 shadow-sm">
-      <div className="flex items-center gap-2">
-        {branding?.logo_url ? (
-          <img src={branding.logo_url} alt="" className="h-6 w-6 rounded object-cover" />
-        ) : (
-          <div className="flex h-6 w-6 items-center justify-center rounded bg-gray-100 text-xs font-bold text-gray-500">
-            {(branding?.name || "Y").charAt(0)}
-          </div>
-        )}
-        <span className="text-sm text-gray-500">由一码通提供技术支持</span>
-      </div>
-    </div>
-  );
-}
-
-/* ─── 兜底错误 ──────────────────────────────────── */
-
-function FallbackError() {
-  return (
-    <div className="flex min-h-screen flex-col items-center justify-center bg-gray-50 px-4">
-      <div className="rounded-2xl bg-white p-8 text-center shadow-sm">
-        <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-red-50">
-          <svg className="h-8 w-8 text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01M12 3a9 9 0 100 18 9 9 0 000-18z" />
-          </svg>
-        </div>
-        <h2 className="text-lg font-semibold text-gray-900">暂时无法加载</h2>
-        <p className="mt-1 text-sm text-gray-500">网络异常或服务暂不可用，请稍后重试</p>
-      </div>
-    </div>
-  );
-}
-
-/* ─── 工具 ──────────────────────────────────────── */
-
-function InfoRow({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="flex items-center justify-between text-sm">
-      <span className="text-gray-500">{label}</span>
-      <span className="font-medium text-gray-900">{value}</span>
     </div>
   );
 }

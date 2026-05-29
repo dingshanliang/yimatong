@@ -222,6 +222,22 @@ export interface ScanDetail {
 
 // ─── Code Resolution (H5) ────────────────────
 
+export interface Certificate {
+  name: string;
+  issuer?: string;
+  valid_until?: string;
+  cert_number?: string;
+  image_url?: string;
+  file_url?: string;
+}
+
+export interface MediaItem {
+  type: "video" | "image";
+  url: string;
+  poster_url?: string;
+  caption?: string;
+}
+
 export interface ResolveResponse {
   scan_token: string;
   code_data: {
@@ -233,7 +249,28 @@ export interface ResolveResponse {
     batch?: {
       batch_no: string;
       production_date?: string;
+      expiry_date?: string;
+      origin?: string;
     };
+    test_reports?: Array<{
+      id: string;
+      title: string;
+      summary?: string;
+      image_url?: string;
+      file_url?: string;
+      date?: string;
+    }>;
+    certificates?: Certificate[];
+    media_items?: MediaItem[];
+  };
+  scan_info?: {
+    is_first_scan: boolean;
+    scan_count: number;
+    first_scan_time?: string;
+  };
+  campaign?: {
+    name?: string;
+    rules?: Record<string, unknown>;
   };
   page_config?: Record<string, unknown>;
   tenant_branding?: {

@@ -19,6 +19,10 @@ export type ModuleType =
   | "test_reports"
   | "benefit_card"
   | "cta_group"
+  | "shop_redirect"
+  | "lead_form"
+  | "certificates"
+  | "media_section"
   | "legal_terms"
   | "custom_html"
   | "member_card"
@@ -51,8 +55,12 @@ export const MODULE_TYPE_LABELS: Record<ModuleType, string> = {
   verification_status: "验真状态",
   light_traceability: "溯源信息",
   test_reports: "检测报告",
+  certificates: "资质证书",
   benefit_card: "权益卡片",
   cta_group: "私域/跳转按钮",
+  shop_redirect: "购买渠道",
+  lead_form: "留资表单",
+  media_section: "视频/图文",
   legal_terms: "法律条款",
   custom_html: "自定义 HTML",
   member_card: "会员卡片",
