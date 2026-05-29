@@ -84,23 +84,38 @@ def upgrade() -> None:
     """)
 
     # 2. Enable RLS and create policies on each table
+    #    Use DO $$ block to skip tables/columns that don't exist yet
     for table in RLS_TABLES:
-        op.execute(f"ALTER TABLE {table} ENABLE ROW LEVEL SECURITY")
         op.execute(f"""
-            CREATE POLICY tenant_isolation ON {table}
-            USING (
-                tenant_id = current_tenant_id()
-                OR current_tenant_id() IS NULL
-            )
-            WITH CHECK (
-                tenant_id = current_tenant_id()
-                OR current_tenant_id() IS NULL
-            )
+        DO $$ BEGIN
+            IF EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_name = '{table}' AND column_name = 'tenant_id'
+            ) THEN
+                ALTER TABLE {table} ENABLE ROW LEVEL SECURITY;
+                DROP POLICY IF EXISTS tenant_isolation ON {table};
+                CREATE POLICY tenant_isolation ON {table}
+                USING (
+                    tenant_id = current_tenant_id()
+                    OR current_tenant_id() IS NULL
+                )
+                WITH CHECK (
+                    tenant_id = current_tenant_id()
+                    OR current_tenant_id() IS NULL
+                );
+            END IF;
+        END $$;
         """)
 
 
 def downgrade() -> None:
     for table in RLS_TABLES:
-        op.execute(f"DROP POLICY IF EXISTS tenant_isolation ON {table}")
-        op.execute(f"ALTER TABLE {table} DISABLE ROW LEVEL SECURITY")
+        op.execute(f"""
+        DO $$ BEGIN
+            DROP POLICY IF EXISTS tenant_isolation ON {table};
+            ALTER TABLE {table} DISABLE ROW LEVEL SECURITY;
+        EXCEPTION WHEN undefined_table THEN
+            NULL;
+        END $$;
+        """)
     op.execute("DROP FUNCTION IF EXISTS current_tenant_id()")

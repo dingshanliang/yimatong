@@ -16,8 +16,8 @@ depends_on = None
 def upgrade() -> None:
     op.create_table(
         "private_domain_configs",
-        sa.Column("id", sa.String(36), primary_key=True),
-        sa.Column("tenant_id", sa.String(36), nullable=False),
+        sa.Column("id", sa.Uuid(), primary_key=True),
+        sa.Column("tenant_id", sa.Uuid(), nullable=False),
         sa.Column("config_type", sa.String(30), nullable=False),
         sa.Column("name", sa.String(100), nullable=False),
         sa.Column("config", sa.JSON(), nullable=False, server_default="{}"),
@@ -40,11 +40,17 @@ def upgrade() -> None:
         ["tenant_id"],
     )
 
-    # RLS
+    # RLS — split into separate op.execute() calls to avoid asyncpg
+    # "cannot insert multiple commands into a prepared statement" error
+    op.execute(
+        "ALTER TABLE private_domain_configs ENABLE ROW LEVEL SECURITY"
+    )
     op.execute("""
-        ALTER TABLE private_domain_configs ENABLE ROW LEVEL SECURITY;
-        CREATE POLICY private_domain_configs_tenant_isolation ON private_domain_configs
-            USING (tenant_id = current_tenant_id());
+        DO $$ BEGIN
+            DROP POLICY IF EXISTS private_domain_configs_tenant_isolation ON private_domain_configs;
+            CREATE POLICY private_domain_configs_tenant_isolation ON private_domain_configs
+                USING (tenant_id = current_tenant_id());
+        END $$;
     """)
 
 

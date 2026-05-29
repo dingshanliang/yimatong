@@ -17,11 +17,11 @@ def upgrade() -> None:
     # 1. export_logs 表
     op.create_table(
         "export_logs",
-        sa.Column("id", sa.String(36), primary_key=True),
-        sa.Column("tenant_id", sa.String(36), nullable=False),
-        sa.Column("account_id", sa.String(36), nullable=False),
+        sa.Column("id", sa.Uuid(), primary_key=True),
+        sa.Column("tenant_id", sa.Uuid(), nullable=False),
+        sa.Column("account_id", sa.Uuid(), nullable=False),
         sa.Column("export_type", sa.String(50), nullable=False),
-        sa.Column("resource_id", sa.String(36), nullable=True),
+        sa.Column("resource_id", sa.Uuid(), nullable=True),
         sa.Column("file_name", sa.String(255), nullable=True),
         sa.Column("row_count", sa.Integer(), nullable=False, server_default="0"),
         sa.Column("status", sa.String(20), nullable=False, server_default="completed"),
@@ -43,9 +43,9 @@ def upgrade() -> None:
     # 2. consent_records 表
     op.create_table(
         "consent_records",
-        sa.Column("id", sa.String(36), primary_key=True),
-        sa.Column("tenant_id", sa.String(36), nullable=False),
-        sa.Column("consumer_id", sa.String(36), nullable=True),
+        sa.Column("id", sa.Uuid(), primary_key=True),
+        sa.Column("tenant_id", sa.Uuid(), nullable=False),
+        sa.Column("consumer_id", sa.Uuid(), nullable=True),
         sa.Column("consent_type", sa.String(30), nullable=False),
         sa.Column("status", sa.String(20), nullable=False, server_default="granted"),
         sa.Column("public_id", sa.String(20), nullable=True),
@@ -131,8 +131,8 @@ def upgrade() -> None:
                 INSERT INTO scan_events SELECT * FROM scan_events_old;
 
                 -- 迁移索引
-                CREATE INDEX ix_scan_events_tenant_id ON scan_events (tenant_id);
-                CREATE INDEX ix_scan_events_public_id ON scan_events (public_id);
+                CREATE INDEX IF NOT EXISTS ix_scan_events_tenant_id ON scan_events (tenant_id);
+                CREATE INDEX IF NOT EXISTS ix_scan_events_public_id ON scan_events (public_id);
 
                 -- 删除旧表
                 DROP TABLE scan_events_old;
@@ -157,15 +157,21 @@ def upgrade() -> None:
     """)
 
     # 7. RLS 策略（新表）
+    op.execute("ALTER TABLE export_logs ENABLE ROW LEVEL SECURITY")
     op.execute("""
-        ALTER TABLE export_logs ENABLE ROW LEVEL SECURITY;
-        CREATE POLICY export_logs_tenant_isolation ON export_logs
-            USING (tenant_id = current_tenant_id());
+        DO $$ BEGIN
+            DROP POLICY IF EXISTS export_logs_tenant_isolation ON export_logs;
+            CREATE POLICY export_logs_tenant_isolation ON export_logs
+                USING (tenant_id = current_tenant_id());
+        END $$;
     """)
+    op.execute("ALTER TABLE consent_records ENABLE ROW LEVEL SECURITY")
     op.execute("""
-        ALTER TABLE consent_records ENABLE ROW LEVEL SECURITY;
-        CREATE POLICY consent_records_tenant_isolation ON consent_records
-            USING (tenant_id = current_tenant_id());
+        DO $$ BEGIN
+            DROP POLICY IF EXISTS consent_records_tenant_isolation ON consent_records;
+            CREATE POLICY consent_records_tenant_isolation ON consent_records
+                USING (tenant_id = current_tenant_id());
+        END $$;
     """)
 
     # 8. scan_events RLS（分区表需要单独处理）
