@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import {
   Table,
   Button,
@@ -17,6 +17,7 @@ import {
 import { PlusOutlined, SearchOutlined } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
 import api from "@/lib/api";
+import { usePaginatedList } from "@/lib/hooks";
 
 const { Title } = Typography;
 const { TextArea } = Input;
@@ -35,29 +36,21 @@ const STATUS_MAP: Record<string, { label: string; color: string }> = {
 };
 
 export default function CampaignsPage() {
-  const [campaigns, setCampaigns] = useState<Record<string, unknown>[]>([]);
-  const [total, setTotal] = useState(0);
-  const [page, setPage] = useState(1);
-  const [loading, setLoading] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
   const [form] = Form.useForm();
 
-  const fetchCampaigns = async () => {
-    setLoading(true);
-    try {
-      const { data } = await api.get("/campaigns", { params: { page, page_size: 20 } });
-      setCampaigns(data.items || []);
-      setTotal(data.total || 0);
-    } catch {
-      message.error("加载活动列表失败");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    fetchCampaigns();
-  }, [page]);
+  const { items: campaigns, total, page, loading, setPage, refresh } = usePaginatedList<Record<string, unknown>>(
+    async ({ page, page_size }) => {
+      try {
+        const { data } = await api.get("/campaigns", { params: { page, page_size } });
+        return { items: data.items || [], total: data.total || 0 };
+      } catch {
+        message.error("加载活动列表失败");
+        return { items: [], total: 0 };
+      }
+    },
+    []
+  );
 
   const handleCreate = async (values: Record<string, unknown>) => {
     try {
@@ -76,7 +69,7 @@ export default function CampaignsPage() {
       setCreateOpen(false);
       form.resetFields();
       setPage(1);
-      fetchCampaigns();
+      refresh();
     } catch (e: unknown) {
       const err = e as { response?: { data?: { detail?: string } } };
       message.error(err.response?.data?.detail || "创建失败");
@@ -87,7 +80,7 @@ export default function CampaignsPage() {
     try {
       await api.post(`/campaigns/${id}/status`, { status: "active" });
       message.success("活动已上线");
-      fetchCampaigns();
+      refresh();
     } catch {
       message.error("操作失败");
     }
@@ -131,7 +124,7 @@ export default function CampaignsPage() {
               onConfirm={async () => {
                 await api.post(`/campaigns/${record.id as string}/status`, { status: "paused" });
                 message.success("已暂停");
-                fetchCampaigns();
+                refresh();
               }}
             >
               <Button size="small">暂停</Button>
@@ -143,7 +136,7 @@ export default function CampaignsPage() {
               onConfirm={async () => {
                 await api.delete(`/campaigns/${record.id as string}`);
                 message.success("已删除");
-                fetchCampaigns();
+                refresh();
               }}
             >
               <Button size="small" danger>删除</Button>

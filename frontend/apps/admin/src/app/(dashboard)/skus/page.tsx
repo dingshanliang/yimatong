@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
+import { usePaginatedList } from "@/lib/hooks";
 import {
   Table, Button, Space, Modal, Form, Input, Select, Tag, Typography, message,
 } from "antd";
@@ -25,30 +26,26 @@ interface Product {
 }
 
 export default function SKUsPage() {
-  const [skus, setSKUs] = useState<SKU[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
-  const [total, setTotal] = useState(0);
-  const [page, setPage] = useState(1);
-  const [loading, setLoading] = useState(false);
   const [filterProduct, setFilterProduct] = useState<string | undefined>(undefined);
   const [modalOpen, setModalOpen] = useState(false);
   const [editItem, setEditItem] = useState<SKU | null>(null);
   const [form] = Form.useForm();
 
-  const fetchSKUs = useCallback(async () => {
-    setLoading(true);
-    try {
-      const params: Record<string, string | number> = { page, page_size: 20 };
-      if (filterProduct) params.product_id = filterProduct;
-      const { data } = await api.get("/skus", { params });
-      setSKUs(data.items || []);
-      setTotal(data.total || 0);
-    } catch {
-      message.error("加载 SKU 列表失败");
-    } finally {
-      setLoading(false);
-    }
-  }, [page, filterProduct]);
+  const { items: skus, total, page, loading, setPage, refresh } = usePaginatedList<SKU>(
+    async ({ page, page_size }) => {
+      try {
+        const params: Record<string, string | number> = { page, page_size };
+        if (filterProduct) params.product_id = filterProduct;
+        const { data } = await api.get("/skus", { params });
+        return { items: data.items || [], total: data.total || 0 };
+      } catch {
+        message.error("加载 SKU 列表失败");
+        return { items: [], total: 0 };
+      }
+    },
+    [filterProduct]
+  );
 
   const fetchProducts = useCallback(async () => {
     try {
@@ -57,7 +54,6 @@ export default function SKUsPage() {
     } catch { /* ignore */ }
   }, []);
 
-  useEffect(() => { fetchSKUs(); }, [fetchSKUs]);
   useEffect(() => { fetchProducts(); }, [fetchProducts]);
 
   const openCreate = () => {
@@ -89,7 +85,7 @@ export default function SKUsPage() {
       setModalOpen(false);
       form.resetFields();
       setPage(1);
-      fetchSKUs();
+      refresh();
     } catch {
       message.error(editItem ? "更新失败" : "创建失败");
     }

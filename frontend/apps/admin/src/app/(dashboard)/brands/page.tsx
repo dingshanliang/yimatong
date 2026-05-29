@@ -1,12 +1,13 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useState } from "react";
 import {
   Table, Button, Space, Input, Modal, Form, Tag, Typography, message,
 } from "antd";
 import { PlusOutlined, SearchOutlined } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
 import api from "@/lib/api";
+import { usePaginatedList } from "@/lib/hooks";
 
 const { Title } = Typography;
 
@@ -20,31 +21,25 @@ interface Brand {
 }
 
 export default function BrandsPage() {
-  const [brands, setBrands] = useState<Brand[]>([]);
-  const [total, setTotal] = useState(0);
-  const [page, setPage] = useState(1);
-  const [loading, setLoading] = useState(false);
   const [search, setSearch] = useState("");
   const [modalOpen, setModalOpen] = useState(false);
   const [editItem, setEditItem] = useState<Brand | null>(null);
   const [form] = Form.useForm();
 
-  const fetchBrands = useCallback(async () => {
-    setLoading(true);
-    try {
-      const params: Record<string, string | number> = { page, page_size: 20 };
-      if (search) params.name = search;
-      const { data } = await api.get("/brands", { params });
-      setBrands(data.items || []);
-      setTotal(data.total || 0);
-    } catch {
-      message.error("加载品牌列表失败");
-    } finally {
-      setLoading(false);
-    }
-  }, [page, search]);
-
-  useEffect(() => { fetchBrands(); }, [fetchBrands]);
+  const { items: brands, total, page, loading, setPage, refresh } = usePaginatedList<Brand>(
+    async ({ page, page_size }) => {
+      try {
+        const params: Record<string, string | number> = { page, page_size };
+        if (search) params.name = search;
+        const { data } = await api.get("/brands", { params });
+        return { items: data.items || [], total: data.total || 0 };
+      } catch {
+        message.error("加载品牌列表失败");
+        return { items: [], total: 0 };
+      }
+    },
+    [search]
+  );
 
   const openCreate = () => {
     setEditItem(null);
@@ -70,7 +65,7 @@ export default function BrandsPage() {
       setModalOpen(false);
       form.resetFields();
       setPage(1);
-      fetchBrands();
+      refresh();
     } catch {
       message.error(editItem ? "更新失败" : "创建失败");
     }

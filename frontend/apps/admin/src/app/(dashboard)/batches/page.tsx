@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
+import { usePaginatedList } from "@/lib/hooks";
 import {
   Table, Button, Space, Modal, Form, Input, Select, DatePicker, Tag, Typography, message,
 } from "antd";
@@ -39,31 +40,27 @@ const BATCH_STATUS_MAP: Record<string, { label: string; color: string }> = {
 };
 
 export default function BatchesPage() {
-  const [batches, setBatches] = useState<ProductionBatch[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [skus, setSKUs] = useState<SKU[]>([]);
-  const [total, setTotal] = useState(0);
-  const [page, setPage] = useState(1);
-  const [loading, setLoading] = useState(false);
   const [filterProduct, setFilterProduct] = useState<string | undefined>(undefined);
   const [modalOpen, setModalOpen] = useState(false);
   const [form] = Form.useForm();
   const [selectedProduct, setSelectedProduct] = useState<string | undefined>(undefined);
 
-  const fetchBatches = useCallback(async () => {
-    setLoading(true);
-    try {
-      const params: Record<string, string | number> = { page, page_size: 20 };
-      if (filterProduct) params.product_id = filterProduct;
-      const { data } = await api.get("/production-batches", { params });
-      setBatches(data.items || []);
-      setTotal(data.total || 0);
-    } catch {
-      message.error("加载生产批次列表失败");
-    } finally {
-      setLoading(false);
-    }
-  }, [page, filterProduct]);
+  const { items: batches, total, page, loading, setPage, refresh } = usePaginatedList<ProductionBatch>(
+    async ({ page, page_size }) => {
+      try {
+        const params: Record<string, string | number> = { page, page_size };
+        if (filterProduct) params.product_id = filterProduct;
+        const { data } = await api.get("/production-batches", { params });
+        return { items: data.items || [], total: data.total || 0 };
+      } catch {
+        message.error("加载生产批次列表失败");
+        return { items: [], total: 0 };
+      }
+    },
+    [filterProduct]
+  );
 
   const fetchProducts = useCallback(async () => {
     try {
@@ -80,7 +77,6 @@ export default function BatchesPage() {
     } catch { /* ignore */ }
   }, []);
 
-  useEffect(() => { fetchBatches(); }, [fetchBatches]);
   useEffect(() => { fetchProducts(); }, [fetchProducts]);
 
   const handleCreate = async (values: Record<string, unknown>) => {
@@ -96,7 +92,7 @@ export default function BatchesPage() {
       form.resetFields();
       setSelectedProduct(undefined);
       setPage(1);
-      fetchBatches();
+      refresh();
     } catch {
       message.error("创建失败");
     }

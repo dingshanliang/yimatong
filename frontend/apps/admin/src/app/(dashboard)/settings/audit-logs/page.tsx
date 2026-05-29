@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useState } from "react";
+import { usePaginatedList } from "@/lib/hooks";
 import {
   Table,
   DatePicker,
@@ -49,43 +50,38 @@ const ACTION_TYPE_MAP: Record<string, { label: string; color: string }> = {
 };
 
 export default function AuditLogsPage() {
-  const [logs, setLogs] = useState<AuditLog[]>([]);
-  const [total, setTotal] = useState(0);
-  const [page, setPage] = useState(1);
-  const [loading, setLoading] = useState(false);
   const [dateRange, setDateRange] = useState<[Dayjs, Dayjs] | null>(null);
   const [actionType, setActionType] = useState<string>("");
   const [keyword, setKeyword] = useState("");
 
-  const fetchLogs = useCallback(async () => {
-    setLoading(true);
-    try {
-      const params: Record<string, string | number> = { page, page_size: 20 };
-      if (dateRange) {
-        params.start_date = dateRange[0].format("YYYY-MM-DD");
-        params.end_date = dateRange[1].format("YYYY-MM-DD");
+  const {
+    items: logs,
+    total,
+    page,
+    loading,
+    setPage,
+  } = usePaginatedList<AuditLog>(
+    async ({ page, page_size }) => {
+      try {
+        const params: Record<string, string | number> = { page, page_size };
+        if (dateRange) {
+          params.start_date = dateRange[0].format("YYYY-MM-DD");
+          params.end_date = dateRange[1].format("YYYY-MM-DD");
+        }
+        if (actionType) {
+          params.action_type = actionType;
+        }
+        if (keyword) {
+          params.keyword = keyword;
+        }
+        const { data } = await api.get("/platform/audit-logs", { params });
+        return { items: data.items || [], total: data.total || 0 };
+      } catch {
+        return { items: [], total: 0 };
       }
-      if (actionType) {
-        params.action_type = actionType;
-      }
-      if (keyword) {
-        params.keyword = keyword;
-      }
-      const { data } = await api.get("/platform/audit-logs", { params });
-      setLogs(data.items || []);
-      setTotal(data.total || 0);
-    } catch {
-      // Backend API not yet implemented
-      setLogs([]);
-      setTotal(0);
-    } finally {
-      setLoading(false);
-    }
-  }, [page, dateRange, actionType, keyword]);
-
-  useEffect(() => {
-    fetchLogs();
-  }, [fetchLogs]);
+    },
+    [dateRange, actionType, keyword]
+  );
 
   const handleSearch = (value: string) => {
     setKeyword(value);

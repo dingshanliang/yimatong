@@ -25,6 +25,12 @@ export function usePaginatedList<T>(
           setTotal(result.total || 0);
         }
       })
+      .catch(() => {
+        if (!cancelled) {
+          setItems([]);
+          setTotal(0);
+        }
+      })
       .finally(() => {
         if (!cancelled) setLoading(false);
       });

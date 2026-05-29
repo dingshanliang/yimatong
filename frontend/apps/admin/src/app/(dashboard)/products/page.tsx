@@ -16,6 +16,7 @@ import {
 import { PlusOutlined, SearchOutlined } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
 import api from "@/lib/api";
+import { usePaginatedList } from "@/lib/hooks";
 
 const { Title } = Typography;
 
@@ -35,30 +36,26 @@ interface Brand {
 }
 
 export default function ProductsPage() {
-  const [products, setProducts] = useState<Product[]>([]);
   const [brands, setBrands] = useState<Brand[]>([]);
-  const [total, setTotal] = useState(0);
-  const [page, setPage] = useState(1);
-  const [loading, setLoading] = useState(false);
   const [search, setSearch] = useState("");
   const [modalOpen, setModalOpen] = useState(false);
   const [editItem, setEditItem] = useState<Product | null>(null);
   const [form] = Form.useForm();
 
-  const fetchProducts = async () => {
-    setLoading(true);
-    try {
-      const params: Record<string, string | number> = { page, page_size: 20 };
-      if (search) params.search = search;
-      const { data } = await api.get("/products", { params });
-      setProducts(data.items || []);
-      setTotal(data.total || 0);
-    } catch {
-      message.error("加载产品列表失败");
-    } finally {
-      setLoading(false);
-    }
-  };
+  const { items: products, total, page, loading, setPage, refresh } = usePaginatedList<Product>(
+    async ({ page, page_size }) => {
+      try {
+        const params: Record<string, string | number> = { page, page_size };
+        if (search) params.search = search;
+        const { data } = await api.get("/products", { params });
+        return { items: data.items || [], total: data.total || 0 };
+      } catch {
+        message.error("加载产品列表失败");
+        return { items: [], total: 0 };
+      }
+    },
+    [search]
+  );
 
   const fetchBrands = async () => {
     try {
@@ -72,10 +69,6 @@ export default function ProductsPage() {
   useEffect(() => {
     fetchBrands();
   }, []);
-
-  useEffect(() => {
-    fetchProducts();
-  }, [page, search]);
 
   const openCreate = () => {
     setEditItem(null);
@@ -101,7 +94,7 @@ export default function ProductsPage() {
       setModalOpen(false);
       form.resetFields();
       setPage(1);
-      fetchProducts();
+      refresh();
     } catch {
       message.error(editItem ? "更新失败" : "创建失败");
     }

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { usePaginatedList } from "@/lib/hooks";
 import {
   Table,
   Button,
@@ -162,25 +163,17 @@ function RulesTab() {
 /* ---------- Interceptions Tab ---------- */
 
 function InterceptionsTab() {
-  const [items, setItems] = useState<Record<string, unknown>[]>([]);
-  const [total, setTotal] = useState(0);
-  const [page, setPage] = useState(1);
-  const [loading, setLoading] = useState(false);
-
-  const fetch = async () => {
-    setLoading(true);
-    try {
-      const { data } = await api.get("/risk-rules/interceptions", { params: { page, page_size: 20 } });
-      setItems(data.items || []);
-      setTotal(data.total || 0);
-    } catch {
-      message.error("加载拦截记录失败");
-    } finally {
-      setLoading(false);
+  const { items, total, page, loading, setPage } = usePaginatedList<Record<string, unknown>>(
+    async ({ page, page_size }) => {
+      try {
+        const { data } = await api.get("/risk-rules/interceptions", { params: { page, page_size } });
+        return { items: data.items || [], total: data.total || 0 };
+      } catch {
+        message.error("加载拦截记录失败");
+        return { items: [], total: 0 };
+      }
     }
-  };
-
-  useEffect(() => { fetch(); }, [page]);
+  );
 
   const columns: ColumnsType<Record<string, unknown>> = [
     { title: "规则 ID", dataIndex: "risk_rule_id", key: "risk_rule_id", render: (v: string) => v?.slice(0, 8) + "..." },
@@ -208,25 +201,17 @@ function InterceptionsTab() {
 /* ---------- Alerts Tab ---------- */
 
 function AlertsTab() {
-  const [items, setItems] = useState<Record<string, unknown>[]>([]);
-  const [total, setTotal] = useState(0);
-  const [page, setPage] = useState(1);
-  const [loading, setLoading] = useState(false);
-
-  const fetch = async () => {
-    setLoading(true);
-    try {
-      const { data } = await api.get("/risk-alerts", { params: { page, page_size: 20 } });
-      setItems(data.items || []);
-      setTotal(data.total || 0);
-    } catch {
-      message.error("加载预警列表失败");
-    } finally {
-      setLoading(false);
+  const { items, total, page, loading, setPage, refresh } = usePaginatedList<Record<string, unknown>>(
+    async ({ page, page_size }) => {
+      try {
+        const { data } = await api.get("/risk-alerts", { params: { page, page_size } });
+        return { items: data.items || [], total: data.total || 0 };
+      } catch {
+        message.error("加载预警列表失败");
+        return { items: [], total: 0 };
+      }
     }
-  };
-
-  useEffect(() => { fetch(); }, [page]);
+  );
 
   const columns: ColumnsType<Record<string, unknown>> = [
     { title: "码 ID", dataIndex: "public_id", key: "public_id" },
@@ -253,7 +238,7 @@ function AlertsTab() {
             onConfirm={async () => {
               await api.post(`/risk-alerts/${record.id as string}/resolve`);
               message.success("已处理");
-              fetch();
+              refresh();
             }}
           >
             <Button size="small" type="link">处理</Button>

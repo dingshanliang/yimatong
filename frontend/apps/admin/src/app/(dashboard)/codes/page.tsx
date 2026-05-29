@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
+import { usePaginatedList } from "@/lib/hooks";
 import {
   Table, Select, Space, Tag, Typography, Empty, Button, Modal, Form,
   InputNumber, Input, message, Popconfirm,
@@ -46,29 +47,25 @@ const CODE_TYPE_OPTIONS = [
 ];
 
 export default function CodesPage() {
-  const [batches, setBatches] = useState<CodeBatch[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
-  const [total, setTotal] = useState(0);
-  const [page, setPage] = useState(1);
   const [status, setStatus] = useState<string | undefined>(undefined);
-  const [loading, setLoading] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
   const [form] = Form.useForm();
 
-  const fetchBatches = useCallback(async () => {
-    setLoading(true);
-    try {
-      const params: Record<string, string | number> = { page, page_size: 20 };
-      if (status) params.status = status;
-      const { data } = await api.get("/code-batches", { params });
-      setBatches(data.items || []);
-      setTotal(data.total || 0);
-    } catch {
-      message.error("加载码批次列表失败");
-    } finally {
-      setLoading(false);
-    }
-  }, [page, status]);
+  const { items: batches, total, page, loading, setPage, refresh } = usePaginatedList<CodeBatch>(
+    async ({ page, page_size }) => {
+      try {
+        const params: Record<string, string | number> = { page, page_size };
+        if (status) params.status = status;
+        const { data } = await api.get("/code-batches", { params });
+        return { items: data.items || [], total: data.total || 0 };
+      } catch {
+        message.error("加载码批次列表失败");
+        return { items: [], total: 0 };
+      }
+    },
+    [status]
+  );
 
   const fetchProducts = useCallback(async () => {
     try {
@@ -77,7 +74,6 @@ export default function CodesPage() {
     } catch { /* ignore */ }
   }, []);
 
-  useEffect(() => { fetchBatches(); }, [fetchBatches]);
   useEffect(() => { fetchProducts(); }, [fetchProducts]);
 
   const handleCreate = async (values: Record<string, unknown>) => {
@@ -87,7 +83,7 @@ export default function CodesPage() {
       setCreateOpen(false);
       form.resetFields();
       setPage(1);
-      fetchBatches();
+      refresh();
     } catch {
       message.error("创建失败");
     }
@@ -97,7 +93,7 @@ export default function CodesPage() {
     try {
       await api.post(`/code-batches/${id}/activate`);
       message.success("码批次已激活");
-      fetchBatches();
+      refresh();
     } catch {
       message.error("激活失败");
     }

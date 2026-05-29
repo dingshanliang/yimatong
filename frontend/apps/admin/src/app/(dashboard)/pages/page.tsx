@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useState, useEffect } from "react";
+import { usePaginatedList } from "@/lib/hooks";
 import {
   Table, Button, Space, Modal, Form, Input, InputNumber, Select, Tag, Typography,
   message, Popconfirm, Drawer, Tabs, Switch, DatePicker, Tooltip,
@@ -13,7 +14,7 @@ import type { ColumnsType } from "antd/es/table";
 import api from "@/lib/api";
 import {
   validateDSL, createEmptyDSL, createDefaultModules,
-  MODULE_TYPES, MODULE_TYPE_LABELS,
+  MODULE_TYPES,
   type PageDSL, type ModuleConfig, type ModuleType,
 } from "@/lib/page-dsl";
 import dayjs from "dayjs";
@@ -54,10 +55,24 @@ const VERSION_STATUS_MAP: Record<string, { label: string; color: string }> = {
 };
 
 export default function PagesPage() {
-  const [templates, setTemplates] = useState<PageTemplate[]>([]);
-  const [total, setTotal] = useState(0);
-  const [page, setPage] = useState(1);
-  const [loading, setLoading] = useState(false);
+  const {
+    items: templates,
+    total,
+    page,
+    loading,
+    setPage,
+    refresh: refreshTemplates,
+  } = usePaginatedList<PageTemplate>(
+    async ({ page, page_size }) => {
+      try {
+        const { data } = await api.get("/page-templates", { params: { page, page_size } });
+        return { items: data.items || [], total: data.total || 0 };
+      } catch {
+        message.error("加载页面列表失败");
+        return { items: [], total: 0 };
+      }
+    }
+  );
   const [createOpen, setCreateOpen] = useState(false);
   const [industryOpen, setIndustryOpen] = useState(false);
   const [industryTemplates, setIndustryTemplates] = useState<Record<string, unknown>[]>([]);
@@ -73,23 +88,6 @@ export default function PagesPage() {
 
   // ─── 模板列表 ───────────────────────────────────
 
-  const fetchTemplates = useCallback(async () => {
-    setLoading(true);
-    try {
-      const { data } = await api.get("/page-templates", {
-        params: { page, page_size: 20 },
-      });
-      setTemplates(data.items || []);
-      setTotal(data.total || 0);
-    } catch {
-      message.error("加载页面列表失败");
-    } finally {
-      setLoading(false);
-    }
-  }, [page]);
-
-  useEffect(() => { fetchTemplates(); }, [fetchTemplates]);
-
   // ─── 创建模板 ───────────────────────────────────
 
   const handleCreate = async (values: Record<string, string>) => {
@@ -104,7 +102,7 @@ export default function PagesPage() {
       message.success("页面模板创建成功，已生成初始草稿");
       setCreateOpen(false);
       form.resetFields();
-      fetchTemplates();
+      refreshTemplates();
     } catch {
       message.error("创建失败");
     }
@@ -124,7 +122,7 @@ export default function PagesPage() {
       await api.post(`/page-templates/industry-templates/${index}/clone`);
       message.success("模板复制成功");
       setIndustryOpen(false);
-      fetchTemplates();
+      refreshTemplates();
     } catch {
       message.error("复制失败");
     }
@@ -158,7 +156,7 @@ export default function PagesPage() {
       await api.post(`/page-versions/${versionId}/publish`);
       message.success("发布成功");
       refreshVersions();
-      fetchTemplates();
+      refreshTemplates();
     } catch {
       message.error("发布失败");
     }
@@ -169,7 +167,7 @@ export default function PagesPage() {
       await api.post(`/page-versions/${versionId}/archive`);
       message.success("已下线");
       refreshVersions();
-      fetchTemplates();
+      refreshTemplates();
     } catch {
       message.error("下线失败");
     }
@@ -180,7 +178,7 @@ export default function PagesPage() {
       await api.post(`/page-templates/${templateId}/versions/${versionId}/rollback`);
       message.success("已回滚，创建了新草稿版本");
       refreshVersions();
-      fetchTemplates();
+      refreshTemplates();
     } catch {
       message.error("回滚失败");
     }

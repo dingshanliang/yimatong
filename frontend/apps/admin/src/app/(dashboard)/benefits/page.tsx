@@ -4,7 +4,6 @@ import { useEffect, useState, useCallback } from "react";
 import {
   Table,
   Button,
-  Space,
   Modal,
   Form,
   Input,
@@ -18,6 +17,7 @@ import {
 import { PlusOutlined } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
 import api from "@/lib/api";
+import { usePaginatedList } from "@/lib/hooks";
 
 const { Title } = Typography;
 
@@ -61,50 +61,40 @@ const CLAIM_STATUS_MAP: Record<string, { label: string; color: string }> = {
 };
 
 export default function BenefitsPage() {
-  const [benefits, setBenefits] = useState<Benefit[]>([]);
-  const [benefitsTotal, setBenefitsTotal] = useState(0);
-  const [benefitsPage, setBenefitsPage] = useState(1);
-  const [benefitsLoading, setBenefitsLoading] = useState(false);
+  const {
+    items: benefits, total: benefitsTotal, page: benefitsPage, loading: benefitsLoading,
+    setPage: setBenefitsPage, refresh: refreshBenefits,
+  } = usePaginatedList<Benefit>(
+    async ({ page, page_size }) => {
+      try {
+        const { data } = await api.get("/benefits", { params: { page, page_size } });
+        return { items: data.items || [], total: data.total || 0 };
+      } catch {
+        message.error("加载权益列表失败");
+        return { items: [], total: 0 };
+      }
+    }
+  );
 
-  const [claims, setClaims] = useState<BenefitClaim[]>([]);
-  const [claimsTotal, setClaimsTotal] = useState(0);
-  const [claimsPage, setClaimsPage] = useState(1);
-  const [claimsLoading, setClaimsLoading] = useState(false);
+  const {
+    items: claims, total: claimsTotal, page: claimsPage, loading: claimsLoading,
+    setPage: setClaimsPage, refresh: refreshClaims,
+  } = usePaginatedList<BenefitClaim>(
+    async ({ page, page_size }) => {
+      try {
+        const { data } = await api.get("/benefit-claims", { params: { page, page_size } });
+        return { items: data.items || [], total: data.total || 0 };
+      } catch {
+        message.error("加载领取记录失败");
+        return { items: [], total: 0 };
+      }
+    }
+  );
 
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [createOpen, setCreateOpen] = useState(false);
   const [form] = Form.useForm();
   const [activeTab, setActiveTab] = useState("benefits");
-
-  const fetchBenefits = useCallback(async () => {
-    setBenefitsLoading(true);
-    try {
-      const { data } = await api.get("/benefits", {
-        params: { page: benefitsPage, page_size: 20 },
-      });
-      setBenefits(data.items || []);
-      setBenefitsTotal(data.total || 0);
-    } catch {
-      message.error("加载权益列表失败");
-    } finally {
-      setBenefitsLoading(false);
-    }
-  }, [benefitsPage]);
-
-  const fetchClaims = useCallback(async () => {
-    setClaimsLoading(true);
-    try {
-      const { data } = await api.get("/benefit-claims", {
-        params: { page: claimsPage, page_size: 20 },
-      });
-      setClaims(data.items || []);
-      setClaimsTotal(data.total || 0);
-    } catch {
-      message.error("加载领取记录失败");
-    } finally {
-      setClaimsLoading(false);
-    }
-  }, [claimsPage]);
 
   const fetchCampaigns = useCallback(async () => {
     try {
@@ -114,16 +104,6 @@ export default function BenefitsPage() {
       /* ignore */
     }
   }, []);
-
-  useEffect(() => {
-    fetchBenefits();
-  }, [fetchBenefits]);
-
-  useEffect(() => {
-    if (activeTab === "claims") {
-      fetchClaims();
-    }
-  }, [fetchClaims, activeTab]);
 
   useEffect(() => {
     fetchCampaigns();
@@ -136,7 +116,7 @@ export default function BenefitsPage() {
       setCreateOpen(false);
       form.resetFields();
       setBenefitsPage(1);
-      fetchBenefits();
+      refreshBenefits();
     } catch {
       message.error("创建权益失败");
     }

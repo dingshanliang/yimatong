@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useState } from "react";
+import { usePaginatedList } from "@/lib/hooks";
 import {
   Table,
   Button,
@@ -62,33 +63,28 @@ const PERMISSION_LABEL_MAP: Record<string, string> = {
 };
 
 export default function RolesPage() {
-  const [roles, setRoles] = useState<Role[]>([]);
-  const [total, setTotal] = useState(0);
-  const [page, setPage] = useState(1);
-  const [loading, setLoading] = useState(false);
+  const {
+    items: roles,
+    total,
+    page,
+    loading,
+    setPage,
+    refresh: refreshRoles,
+  } = usePaginatedList<Role>(
+    async ({ page, page_size }) => {
+      try {
+        const { data } = await api.get("/roles", { params: { page, page_size } });
+        return { items: data.items || [], total: data.total || 0 };
+      } catch {
+        message.error("加载角色列表失败");
+        return { items: [], total: 0 };
+      }
+    }
+  );
   const [modalOpen, setModalOpen] = useState(false);
   const [editingRole, setEditingRole] = useState<Role | null>(null);
   const [form] = Form.useForm();
   const [saving, setSaving] = useState(false);
-
-  const fetchRoles = useCallback(async () => {
-    setLoading(true);
-    try {
-      const { data } = await api.get("/roles", {
-        params: { page, page_size: 20 },
-      });
-      setRoles(data.items || []);
-      setTotal(data.total || 0);
-    } catch {
-      message.error("加载角色列表失败");
-    } finally {
-      setLoading(false);
-    }
-  }, [page]);
-
-  useEffect(() => {
-    fetchRoles();
-  }, [fetchRoles]);
 
   const openCreateModal = () => {
     setEditingRole(null);
@@ -123,7 +119,7 @@ export default function RolesPage() {
       setModalOpen(false);
       form.resetFields();
       setEditingRole(null);
-      fetchRoles();
+      refreshRoles();
     } catch {
       message.error(editingRole ? "更新失败" : "创建失败");
     } finally {
@@ -135,7 +131,7 @@ export default function RolesPage() {
     try {
       await api.delete(`/roles/${roleId}`);
       message.success("角色已删除");
-      fetchRoles();
+      refreshRoles();
     } catch {
       message.error("删除失败");
     }
@@ -147,7 +143,7 @@ export default function RolesPage() {
         is_active: !role.is_active,
       });
       message.success(role.is_active ? "角色已禁用" : "角色已启用");
-      fetchRoles();
+      refreshRoles();
     } catch {
       message.error("操作失败");
     }

@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
+import { usePaginatedList } from "@/lib/hooks";
 import {
   Table,
   Button,
@@ -35,27 +36,19 @@ const distColumns: ColumnsType<Record<string, unknown>> = [
 ];
 
 function DistributorTab() {
-  const [items, setItems] = useState<Record<string, unknown>[]>([]);
-  const [total, setTotal] = useState(0);
-  const [page, setPage] = useState(1);
-  const [loading, setLoading] = useState(false);
+  const { items, total, page, loading, setPage, refresh } = usePaginatedList<Record<string, unknown>>(
+    async ({ page, page_size }) => {
+      try {
+        const { data } = await api.get("/channels/distributors", { params: { page, page_size } });
+        return { items: data.items || [], total: data.total || 0 };
+      } catch {
+        message.error("加载经销商列表失败");
+        return { items: [], total: 0 };
+      }
+    }
+  );
   const [open, setOpen] = useState(false);
   const [form] = Form.useForm();
-
-  const fetch = async () => {
-    setLoading(true);
-    try {
-      const { data } = await api.get("/channels/distributors", { params: { page, page_size: 20 } });
-      setItems(data.items || []);
-      setTotal(data.total || 0);
-    } catch {
-      message.error("加载经销商列表失败");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  useEffect(() => { fetch(); }, [page]);
 
   const handleCreate = async (values: Record<string, unknown>) => {
     try {
@@ -64,7 +57,7 @@ function DistributorTab() {
       setOpen(false);
       form.resetFields();
       setPage(1);
-      fetch();
+      refresh();
     } catch (e: unknown) {
       const err = e as { response?: { data?: { detail?: string } } };
       message.error(err.response?.data?.detail || "创建失败");
@@ -108,27 +101,19 @@ function DistributorTab() {
 /* ---------- Regions ---------- */
 
 function RegionTab() {
-  const [items, setItems] = useState<Record<string, unknown>[]>([]);
-  const [total, setTotal] = useState(0);
-  const [page, setPage] = useState(1);
-  const [loading, setLoading] = useState(false);
+  const { items, total, page, loading, setPage, refresh } = usePaginatedList<Record<string, unknown>>(
+    async ({ page, page_size }) => {
+      try {
+        const { data } = await api.get("/channels/regions", { params: { page, page_size } });
+        return { items: data.items || [], total: data.total || 0 };
+      } catch {
+        message.error("加载区域列表失败");
+        return { items: [], total: 0 };
+      }
+    }
+  );
   const [open, setOpen] = useState(false);
   const [form] = Form.useForm();
-
-  const fetch = async () => {
-    setLoading(true);
-    try {
-      const { data } = await api.get("/channels/regions", { params: { page, page_size: 20 } });
-      setItems(data.items || []);
-      setTotal(data.total || 0);
-    } catch {
-      message.error("加载区域列表失败");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  useEffect(() => { fetch(); }, [page]);
 
   const handleCreate = async (values: Record<string, unknown>) => {
     try {
@@ -137,7 +122,7 @@ function RegionTab() {
       setOpen(false);
       form.resetFields();
       setPage(1);
-      fetch();
+      refresh();
     } catch (e: unknown) {
       const err = e as { response?: { data?: { detail?: string } } };
       message.error(err.response?.data?.detail || "创建失败");
@@ -187,27 +172,19 @@ function RegionTab() {
 /* ---------- Stores ---------- */
 
 function StoreTab() {
-  const [items, setItems] = useState<Record<string, unknown>[]>([]);
-  const [total, setTotal] = useState(0);
-  const [page, setPage] = useState(1);
-  const [loading, setLoading] = useState(false);
+  const { items, total, page, loading, setPage, refresh } = usePaginatedList<Record<string, unknown>>(
+    async ({ page, page_size }) => {
+      try {
+        const { data } = await api.get("/channels/stores", { params: { page, page_size } });
+        return { items: data.items || [], total: data.total || 0 };
+      } catch {
+        message.error("加载门店列表失败");
+        return { items: [], total: 0 };
+      }
+    }
+  );
   const [open, setOpen] = useState(false);
   const [form] = Form.useForm();
-
-  const fetch = async () => {
-    setLoading(true);
-    try {
-      const { data } = await api.get("/channels/stores", { params: { page, page_size: 20 } });
-      setItems(data.items || []);
-      setTotal(data.total || 0);
-    } catch {
-      message.error("加载门店列表失败");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  useEffect(() => { fetch(); }, [page]);
 
   const handleCreate = async (values: Record<string, unknown>) => {
     try {
@@ -216,7 +193,7 @@ function StoreTab() {
       setOpen(false);
       form.resetFields();
       setPage(1);
-      fetch();
+      refresh();
     } catch (e: unknown) {
       const err = e as { response?: { data?: { detail?: string } } };
       message.error(err.response?.data?.detail || "创建失败");
@@ -263,28 +240,20 @@ function StoreTab() {
 /* ---------- Batch Assignment ---------- */
 
 function AssignTab() {
-  const [batches, setBatches] = useState<Record<string, unknown>[]>([]);
-  const [batchPage, setBatchPage] = useState(1);
-  const [batchTotal, setBatchTotal] = useState(0);
-  const [loading, setLoading] = useState(false);
+  const { items: batches, total: batchTotal, page: batchPage, loading, setPage: setBatchPage, refresh } = usePaginatedList<Record<string, unknown>>(
+    async ({ page, page_size }) => {
+      try {
+        const { data } = await api.get("/code-batches", { params: { page, page_size } });
+        return { items: data.items || [], total: data.total || 0 };
+      } catch {
+        message.error("加载码批次失败");
+        return { items: [], total: 0 };
+      }
+    }
+  );
   const [assignOpen, setAssignOpen] = useState(false);
   const [selectedBatch, setSelectedBatch] = useState<string | null>(null);
   const [form] = Form.useForm();
-
-  const fetchBatches = async () => {
-    setLoading(true);
-    try {
-      const { data } = await api.get("/code-batches", { params: { page: batchPage, page_size: 20 } });
-      setBatches(data.items || []);
-      setBatchTotal(data.total || 0);
-    } catch {
-      message.error("加载码批次失败");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  useEffect(() => { fetchBatches(); }, [batchPage]);
 
   const handleAssign = async (values: Record<string, unknown>) => {
     if (!selectedBatch) return;
@@ -293,7 +262,7 @@ function AssignTab() {
       message.success("码段分配成功");
       setAssignOpen(false);
       form.resetFields();
-      fetchBatches();
+      refresh();
     } catch (e: unknown) {
       const err = e as { response?: { data?: { detail?: string } } };
       message.error(err.response?.data?.detail || "分配失败");
@@ -341,25 +310,17 @@ function AssignTab() {
 /* ---------- Diversion Clues ---------- */
 
 function DiversionTab() {
-  const [items, setItems] = useState<Record<string, unknown>[]>([]);
-  const [total, setTotal] = useState(0);
-  const [page, setPage] = useState(1);
-  const [loading, setLoading] = useState(false);
-
-  const fetch = async () => {
-    setLoading(true);
-    try {
-      const { data } = await api.get("/channels/diversion-clues", { params: { page, page_size: 20 } });
-      setItems(data.items || []);
-      setTotal(data.total || 0);
-    } catch {
-      message.error("加载窜货线索失败");
-    } finally {
-      setLoading(false);
+  const { items, total, page, loading, setPage } = usePaginatedList<Record<string, unknown>>(
+    async ({ page, page_size }) => {
+      try {
+        const { data } = await api.get("/channels/diversion-clues", { params: { page, page_size } });
+        return { items: data.items || [], total: data.total || 0 };
+      } catch {
+        message.error("加载窜货线索失败");
+        return { items: [], total: 0 };
+      }
     }
-  };
-
-  useEffect(() => { fetch(); }, [page]);
+  );
 
   const columns: ColumnsType<Record<string, unknown>> = [
     { title: "码 ID", dataIndex: "public_id", key: "public_id" },

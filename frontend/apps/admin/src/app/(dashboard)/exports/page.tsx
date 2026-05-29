@@ -1,19 +1,18 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useState } from "react";
 import {
   Table,
   Tabs,
   Tag,
   Button,
-  Space,
   Typography,
   message,
-  Empty,
 } from "antd";
 import { DownloadOutlined } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
 import api from "@/lib/api";
+import { usePaginatedList } from "@/lib/hooks";
 
 const { Title } = Typography;
 
@@ -44,54 +43,44 @@ const BATCH_STATUS_MAP: Record<string, { label: string; color: string }> = {
 };
 
 export default function ExportsPage() {
-  const [batches, setBatches] = useState<CodeBatch[]>([]);
-  const [batchTotal, setBatchTotal] = useState(0);
-  const [batchPage, setBatchPage] = useState(1);
-  const [batchLoading, setBatchLoading] = useState(false);
+  const {
+    items: batches, total: batchTotal, page: batchPage, loading: batchLoading,
+    setPage: setBatchPage, refresh: refreshBatches,
+  } = usePaginatedList<CodeBatch>(
+    async ({ page, page_size }) => {
+      try {
+        const { data } = await api.get("/code-batches", { params: { page, page_size } });
+        return { items: data.items || [], total: data.total || 0 };
+      } catch {
+        message.error("加载码批次列表失败");
+        return { items: [], total: 0 };
+      }
+    }
+  );
 
-  const [exports, setExports] = useState<ExportLog[]>([]);
-  const [exportTotal, setExportTotal] = useState(0);
-  const [exportPage, setExportPage] = useState(1);
-  const [exportLoading, setExportLoading] = useState(false);
+  const {
+    items: exports, total: exportTotal, page: exportPage, loading: exportLoading,
+    setPage: setExportPage, refresh: refreshExports,
+  } = usePaginatedList<ExportLog>(
+    async ({ page, page_size }) => {
+      try {
+        const { data } = await api.get("/analytics/exports", { params: { page, page_size } });
+        return { items: data.items || [], total: data.total || 0 };
+      } catch {
+        return { items: [], total: 0 };
+      }
+    }
+  );
+
   const [exportingId, setExportingId] = useState<string | null>(null);
-
-  const fetchBatches = useCallback(async () => {
-    setBatchLoading(true);
-    try {
-      const { data } = await api.get("/code-batches", { params: { page: batchPage, page_size: 20 } });
-      setBatches(data.items || []);
-      setBatchTotal(data.total || 0);
-    } catch {
-      message.error("加载码批次列表失败");
-    } finally {
-      setBatchLoading(false);
-    }
-  }, [batchPage]);
-
-  const fetchExports = useCallback(async () => {
-    setExportLoading(true);
-    try {
-      const { data } = await api.get("/analytics/exports", { params: { page: exportPage, page_size: 20 } });
-      setExports(data.items || []);
-      setExportTotal(data.total || 0);
-    } catch {
-      setExports([]);
-      setExportTotal(0);
-    } finally {
-      setExportLoading(false);
-    }
-  }, [exportPage]);
-
-  useEffect(() => { fetchBatches(); }, [fetchBatches]);
-  useEffect(() => { fetchExports(); }, [fetchExports]);
 
   const handleExport = async (batchId: string) => {
     setExportingId(batchId);
     try {
       await api.post(`/code-batches/${batchId}/export`);
       message.success("导出任务已提交");
-      fetchBatches();
-      fetchExports();
+      refreshBatches();
+      refreshExports();
     } catch {
       message.error("导出失败");
     } finally {

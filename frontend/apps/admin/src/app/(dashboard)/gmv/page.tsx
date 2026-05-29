@@ -1,10 +1,10 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { usePaginatedList } from "@/lib/hooks";
 import {
   Table,
   Button,
-  Space,
   Modal,
   Form,
   Input,
@@ -15,10 +15,9 @@ import {
   Statistic,
   Tag,
   Typography,
-  Upload,
   message,
 } from "antd";
-import { UploadOutlined, SearchOutlined } from "@ant-design/icons";
+import { UploadOutlined } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
 import api from "@/lib/api";
 
@@ -65,27 +64,19 @@ function DashboardTab() {
 /* ---------- Orders Tab ---------- */
 
 function OrdersTab() {
-  const [items, setItems] = useState<Record<string, unknown>[]>([]);
-  const [total, setTotal] = useState(0);
-  const [page, setPage] = useState(1);
-  const [loading, setLoading] = useState(false);
+  const { items, total, page, loading, setPage, refresh } = usePaginatedList<Record<string, unknown>>(
+    async ({ page, page_size }) => {
+      try {
+        const { data } = await api.get("/gmv/orders", { params: { page, page_size } });
+        return { items: data.items || [], total: data.total || 0 };
+      } catch {
+        message.error("加载订单列表失败");
+        return { items: [], total: 0 };
+      }
+    }
+  );
   const [importOpen, setImportOpen] = useState(false);
   const [form] = Form.useForm();
-
-  const fetch = async () => {
-    setLoading(true);
-    try {
-      const { data } = await api.get("/gmv/orders", { params: { page, page_size: 20 } });
-      setItems(data.items || []);
-      setTotal(data.total || 0);
-    } catch {
-      message.error("加载订单列表失败");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  useEffect(() => { fetch(); }, [page]);
 
   const handleImport = async (values: Record<string, unknown>) => {
     try {
@@ -97,7 +88,7 @@ function OrdersTab() {
       setImportOpen(false);
       form.resetFields();
       setPage(1);
-      fetch();
+      refresh();
     } catch (e: unknown) {
       const err = e as { response?: { data?: { detail?: string } } };
       message.error(err.response?.data?.detail || "导入失败");
@@ -139,25 +130,17 @@ function OrdersTab() {
 /* ---------- Attributions Tab ---------- */
 
 function AttributionsTab() {
-  const [items, setItems] = useState<Record<string, unknown>[]>([]);
-  const [total, setTotal] = useState(0);
-  const [page, setPage] = useState(1);
-  const [loading, setLoading] = useState(false);
-
-  const fetch = async () => {
-    setLoading(true);
-    try {
-      const { data } = await api.get("/gmv/attributions", { params: { page, page_size: 20 } });
-      setItems(data.items || []);
-      setTotal(data.total || 0);
-    } catch {
-      message.error("加载归因数据失败");
-    } finally {
-      setLoading(false);
+  const { items, total, page, loading, setPage } = usePaginatedList<Record<string, unknown>>(
+    async ({ page, page_size }) => {
+      try {
+        const { data } = await api.get("/gmv/attributions", { params: { page, page_size } });
+        return { items: data.items || [], total: data.total || 0 };
+      } catch {
+        message.error("加载归因数据失败");
+        return { items: [], total: 0 };
+      }
     }
-  };
-
-  useEffect(() => { fetch(); }, [page]);
+  );
 
   const columns: ColumnsType<Record<string, unknown>> = [
     { title: "订单 ID", dataIndex: "order_id", key: "order_id", render: (v: string) => v?.slice(0, 8) + "..." },
