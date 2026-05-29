@@ -65,7 +65,12 @@ jobs:
       - name: Typecheck
         run: pnpm --filter @yimatong/admin exec tsc --noEmit
 
-      - name: Build
-        run: pnpm build
+      - name: Build admin
+        run: pnpm build:admin
+        env:
+          NEXT_PUBLIC_API_URL: http://localhost:8000
+
+      - name: Build h5
+        run: pnpm build:h5
         env:
           NEXT_PUBLIC_API_URL: http://localhost:8000
