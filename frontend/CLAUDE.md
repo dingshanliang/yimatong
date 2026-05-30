@@ -18,6 +18,11 @@ pnpm dev:h5         # 启动 H5 开发服务器
 pnpm build          # 构建全部
 pnpm build:admin    # 只构建 Admin
 pnpm build:h5       # 只构建 H5
+pnpm build:shared   # 只构建共享包（admin/h5 依赖此包）
+pnpm lint:admin     # Lint Admin
+pnpm lint:h5        # Lint H5
+pnpm test:e2e       # Playwright E2E 测试
+pnpm test:e2e:ui    # E2E 测试（带 UI）
 ```
 
 ## 技术约束

@@ -32,6 +32,11 @@ pnpm dev:h5         # 启动 H5 开发服务器（端口 3001）
 pnpm build:admin    # 只构建 Admin
 pnpm build:h5       # 只构建 H5
 pnpm build          # 构建全部
+pnpm lint:admin     # Lint Admin
+pnpm lint:h5        # Lint H5
+pnpm test:e2e       # Playwright E2E 测试
+pnpm test:e2e:ui    # E2E 测试（带 UI）
+pnpm test:e2e:debug # E2E 测试（调试模式）
 ```
 
 ### Docker 本地环境
@@ -59,11 +64,12 @@ backend/
     tasks/           Arq 异步任务
     templates/       Jinja2 页面模板
     utils/           工具函数（security、crypto、i18n）
+  scripts/           开发脚本（seed、数据迁移等）
   tests/
     unit/            单元测试
     integration/     集成测试
     test_middleware/  中间件测试
-  alembic/           数据库迁移（0001-0009）
+  alembic/           数据库迁移（0001-0019+）
   docker-compose.dev.yml  完整本地环境
 
 frontend/
@@ -82,7 +88,10 @@ frontend/
 docs/
   01_product/        PRD、路线图、信息架构
   02_tech/           技术架构、数据模型、API 设计、任务拆解
+  03_delivery/       交付相关文档
+  04_marketing_sales/ 营销销售文档
   05_samples/        DSL 配置示例、租户配置示例
+  superpowers/       开发策略规范文档
 ```
 
 ## 技术栈
@@ -141,6 +150,17 @@ schemas/   → Pydantic V2 请求/响应模型
 
 - `scan_events` 按月分区表，追加写入，不可频繁更新
 - 双层幂等：Redis 缓存（体验优化）+ 数据库唯一约束（最终一致）
+
+## 环境变量
+
+后端配置通过 `backend/.env` 管理（参考 `backend/.env.example`）。关键变量：
+
+- `DATABASE_URL`: PostgreSQL 连接串
+- `REDIS_URL`: Redis 连接串
+- `SECRET_KEY`: JWT 签名密钥
+- `S3_ENDPOINT` / `S3_ACCESS_KEY` / `S3_SECRET_KEY`: 对象存储配置
+
+前端：`NEXT_PUBLIC_API_URL` 环境变量指定后端 API 地址（默认 http://localhost:8000）。
 
 ## 关键设计约束
 
