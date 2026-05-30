@@ -54,6 +54,9 @@ async def on_claim_created(event_type: str, data: dict, tenant_id: str) -> None:
         return
 
     async with async_session_factory() as db:
+        from sqlalchemy import text
+
+        await db.execute(text("SET LOCAL app.bypass_rls = 'true'"))
         # 查询权益
         benefit_result = await db.execute(
             select(Benefit).where(Benefit.id == uuid.UUID(benefit_id))

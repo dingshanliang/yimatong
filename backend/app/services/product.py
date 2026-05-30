@@ -12,6 +12,7 @@ from app.models.product import (
     ProductStatus,
     SKUStatus,
 )
+from app.utils import escape_like_pattern
 
 
 async def create_brand(
@@ -50,7 +51,7 @@ async def list_brands(
     count_stmt = select(func.count()).select_from(Brand).where(Brand.tenant_id == tenant_id)
 
     if name:
-        escaped = name.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        escaped = escape_like_pattern(name)
         stmt = stmt.where(Brand.name.ilike(f"%{escaped}%", escape="\\"))
         count_stmt = count_stmt.where(Brand.name.ilike(f"%{escaped}%", escape="\\"))
 

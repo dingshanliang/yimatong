@@ -10,6 +10,7 @@ from app.models.tenant import Tenant
 from app.schemas.common import PaginatedResponse
 from app.schemas.tenant import TenantCreate, TenantRead, TenantUpdate
 from app.services.tenant import create_tenant, get_tenant, soft_delete_tenant, update_tenant
+from app.utils import escape_like_pattern
 
 router = APIRouter(prefix="/api/v1/tenants", tags=["tenants"])
 
@@ -40,7 +41,7 @@ async def list_tenants_endpoint(
     count_query = select(func.count()).select_from(Tenant).where(Tenant.status != "terminated")
 
     if q:
-        escaped = q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        escaped = escape_like_pattern(q)
         query = query.where(Tenant.name.ilike(f"%{escaped}%", escape="\\"))
         count_query = count_query.where(Tenant.name.ilike(f"%{escaped}%", escape="\\"))
 

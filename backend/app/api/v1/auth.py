@@ -1,5 +1,5 @@
 import uuid
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
@@ -10,8 +10,9 @@ from app.core.config import settings
 from app.core.database import get_db
 from app.core.dependencies import get_current_account_id
 from app.models.tenant import Account
+from app.services.redis_cache import RedisCache
 from app.utils import utcnow
-from app.utils.security import create_access_token, create_refresh_token, verify_password
+from app.utils.security import create_access_token, create_refresh_token, decode_token, verify_password
 
 router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
 
@@ -121,21 +122,25 @@ async def me(
 async def logout(request: Request):
     """登出端点：将当前 access token 的 jti 加入黑名单"""
     auth_header = request.headers.get("Authorization", "")
-    if auth_header.startswith("Bearer "):
-        from app.utils.security import decode_token
+    if not auth_header.startswith("Bearer "):
+        return {"status": "ok"}
 
-        try:
-            payload = decode_token(auth_header[7:])
-            jti = payload.get("jti")
-            exp = payload.get("exp", 0)
-            if jti:
-                from datetime import UTC, datetime
+    try:
+        payload = decode_token(auth_header[7:])
+    except Exception:
+        # Token malformed — already unusable, return ok to client
+        return {"status": "ok"}
 
-                remaining = max(1, int(exp - datetime.now(UTC).timestamp()))
-                from app.services.redis_cache import RedisCache
+    jti = payload.get("jti")
+    if not jti:
+        return {"status": "ok"}
 
-                cache = RedisCache()
-                cache.revoke_token(jti, ttl=remaining)
-        except Exception:
-            pass
+    exp = payload.get("exp")
+    if exp:
+        remaining = max(1, int(exp - datetime.now(UTC).timestamp()))
+    else:
+        remaining = settings.access_token_expire_minutes * 60
+
+    cache = RedisCache()
+    cache.revoke_token(jti, ttl=remaining)
     return {"status": "ok"}
