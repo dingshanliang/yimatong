@@ -265,11 +265,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.add_middleware(TenantScopeMiddleware)
 app.add_middleware(LoggingMiddleware)
+app.add_middleware(TenantScopeMiddleware)
 app.add_middleware(RequestIDMiddleware)
 
-register_exception_handlers(app)
+register_exception_handlers(app, debug=app.debug)
 app.include_router(tenants_router)
 app.include_router(orgs_router)
 app.include_router(auth_router)

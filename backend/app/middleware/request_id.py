@@ -1,5 +1,6 @@
 """Request ID middleware — generate or accept X-Request-ID for tracing."""
 
+import re
 import uuid
 
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -8,12 +9,13 @@ from starlette.responses import Response
 
 from app.core.request_id import get_request_id, set_request_id
 
+_SAFE_REQUEST_ID = re.compile(r"[^A-Za-z0-9\-._~]")
+
 
 class RequestIDMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next) -> Response:
-        request_id = request.headers.get("X-Request-ID", "").strip()[:64]
-        if not request_id:
-            request_id = uuid.uuid4().hex[:32]
+        raw = request.headers.get("X-Request-ID", "").strip()[:64]
+        request_id = _SAFE_REQUEST_ID.sub("", raw) if raw else uuid.uuid4().hex[:32]
 
         set_request_id(request_id)
         try:

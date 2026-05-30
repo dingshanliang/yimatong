@@ -47,15 +47,16 @@ async def http_exception_handler(
 ) -> JSONResponse:
     request_id = get_request_id()
     error_code = f"HTTP_{exc.status_code}"
+    detail = exc.detail if isinstance(exc.detail, str) else str(exc.detail)
     logger.info(
         "HTTPException: %s detail=%s path=%s",
         error_code,
-        exc.detail,
+        detail,
         request.url.path,
     )
     return JSONResponse(
         status_code=exc.status_code,
-        content=_error_body(error_code, exc.detail, request_id),
+        content=_error_body(error_code, detail, request_id),
     )
 
 
@@ -94,9 +95,14 @@ async def unhandled_exception_handler(
     )
 
 
-def register_exception_handlers(app: FastAPI) -> None:
-    """Register all global exception handlers on the FastAPI app."""
+def register_exception_handlers(app: FastAPI, *, debug: bool = False) -> None:
+    """Register all global exception handlers on the FastAPI app.
+
+    In debug mode, the catch-all Exception handler is skipped so that
+    Starlette's ServerErrorMiddleware can render interactive tracebacks.
+    """
     app.add_exception_handler(AppException, app_exception_handler)
     app.add_exception_handler(StarletteHTTPException, http_exception_handler)
     app.add_exception_handler(RequestValidationError, validation_exception_handler)
-    app.add_exception_handler(Exception, unhandled_exception_handler)
+    if not debug:
+        app.add_exception_handler(Exception, unhandled_exception_handler)

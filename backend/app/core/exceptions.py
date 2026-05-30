@@ -11,8 +11,8 @@ def _class_to_error_code(cls_name: str) -> str:
     """Convert CamelCase class name to UPPER_SNAKE_CASE error code."""
     # Insert underscore before uppercase letters that follow lowercase/digits
     s = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", "_", cls_name)
-    # Remove trailing "Error" suffix for brevity
-    s = re.sub(r"_?Error$", "", s)
+    # Remove trailing "Error" or "Exception" suffix for brevity
+    s = re.sub(r"_?(Error|Exception)$", "", s)
     return s.upper()
 
 
@@ -24,12 +24,8 @@ class AppException(Exception):
 
     def __init__(self, detail: str, *, error_code: str | None = None) -> None:
         self.detail = detail
-        self._error_code = error_code
+        self.error_code = error_code or _class_to_error_code(type(self).__name__)
         super().__init__(detail)
-
-    @property
-    def error_code(self) -> str:
-        return self._error_code or _class_to_error_code(type(self).__name__)
 
 
 class NotFoundError(AppException):
