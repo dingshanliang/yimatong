@@ -48,3 +48,8 @@ const resolverClient = axios.create({
 });
 
 export { apiClient, resolverClient, API_BASE };
+
+export function getConsumerId(): string | null {
+  if (typeof window === "undefined") return null;
+  return localStorage.getItem("consumer_id");
+}

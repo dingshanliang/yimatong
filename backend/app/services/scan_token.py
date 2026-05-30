@@ -7,7 +7,7 @@ import jwt
 from app.core.config import settings
 
 
-def create_scan_token(public_id: str, ip_hash: str, expires_in: int = 300) -> str:
+def create_scan_token(public_id: str, ip_hash: str, expires_in: int = 1800) -> str:
     """颁发 scan_token（短期 JWT，默认 5 分钟）"""
     payload = {
         "public_id": public_id,

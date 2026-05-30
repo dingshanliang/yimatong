@@ -43,9 +43,12 @@ export function LeadForm({
     }
 
     try {
-      await apiClient.post("/consumers/lead-capture", body, {
+      const res = await apiClient.post("/consumers/lead-capture", body, {
         headers: scanToken ? { Authorization: `Bearer ${scanToken}` } : {},
       });
+      if (res.data?.consumer_id && typeof window !== "undefined") {
+        localStorage.setItem("consumer_id", res.data.consumer_id);
+      }
       setSubmitted(true);
     } catch {
       setError("提交失败，请稍后重试");

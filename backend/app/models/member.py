@@ -3,7 +3,7 @@
 import uuid
 from enum import StrEnum
 
-from sqlalchemy import Index, String, Text, UniqueConstraint
+from sqlalchemy import JSON, Index, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 from uuid6 import uuid7
 
@@ -32,6 +32,7 @@ class ConsumerProfile(Base):
     )
     tags: Mapped[str | None] = mapped_column(String(500), nullable=True)
     total_points: Mapped[int] = mapped_column(nullable=False, default=0)
+    extra_data: Mapped[dict | None] = mapped_column(JSON, nullable=True, default=dict)
 
     __table_args__ = (
         UniqueConstraint("phone_hash"),

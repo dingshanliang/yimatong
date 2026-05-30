@@ -16,6 +16,8 @@ consumer_router = APIRouter(prefix="/api/v1/consumers", tags=["consumers"])
 class LeadCaptureRequest(BaseModel):
     name: str | None = None
     phone: str | None = None
+    region: str | None = None
+    intention: str | None = None
     public_id: str
 
 
@@ -56,6 +58,12 @@ async def lead_capture(
             raise HTTPException(status_code=404, detail="code not found")
         tenant_id = uuid.UUID(code_data["tenant_id"])
 
+        extra = {}
+        if body.region:
+            extra["region"] = body.region
+        if body.intention:
+            extra["intention"] = body.intention
+
         result = await db.execute(
             select(ConsumerProfile)
             .where(
@@ -71,9 +79,80 @@ async def lead_capture(
                 tenant_id=tenant_id,
                 phone_hash=phone_hash,
                 phone_encrypted=encrypted_phone,
-                display_name=body.name,
+                nickname=body.name,
+                extra_data=extra or None,
             )
             db.add(profile)
-            await db.commit()
+        else:
+            if body.name:
+                profile.nickname = body.name
+            if extra:
+                existing = profile.extra_data or {}
+                existing.update(extra)
+                profile.extra_data = existing
+        await db.commit()
 
-    return {"status": "ok"}
+        await db.flush()
+
+    return {"status": "ok", "consumer_id": str(profile.id) if phone_hash and profile else None}
+
+
+@consumer_router.get("/me")
+async def get_consumer_me(
+    request: Request,
+    consumer_id: str | None = None,
+    db: AsyncSession = Depends(get_db),
+):
+    """查询当前消费者信息（积分、等级），通过 scan_token 或 consumer_id 鉴权"""
+    auth_header = request.headers.get("Authorization", "")
+    token = None
+    if auth_header.startswith("Bearer "):
+        token = auth_header[7:]
+
+    if not token and not consumer_id:
+        raise HTTPException(status_code=401, detail="scan_token or consumer_id required")
+
+    # 优先用 consumer_id 直接查
+    if consumer_id:
+        try:
+            cid = uuid.UUID(consumer_id)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="invalid consumer_id")
+
+        from app.models.member import ConsumerProfile
+
+        result = await db.execute(select(ConsumerProfile).where(ConsumerProfile.id == cid))
+        profile = result.scalar_one_or_none()
+        if not profile:
+            raise HTTPException(status_code=404, detail="consumer not found")
+
+        return {
+            "consumer_id": str(profile.id),
+            "member_level": profile.member_level,
+            "total_points": profile.total_points,
+            "nickname": profile.nickname,
+        }
+
+    # 通过 scan_token + public_id 查（需传 public_id query param）
+    if token:
+        import jwt
+
+        from app.core.config import settings
+
+        try:
+            payload = jwt.decode(token, settings.secret_key, algorithms=["HS256"])
+        except jwt.exceptions.DecodeError:
+            raise HTTPException(status_code=401, detail="invalid token")
+        except jwt.exceptions.ExpiredSignatureError:
+            raise HTTPException(status_code=401, detail="token expired")
+
+        if payload.get("type") != "scan_token":
+            raise HTTPException(status_code=401, detail="invalid token type")
+
+        return {
+            "consumer_id": None,
+            "member_level": "normal",
+            "total_points": 0,
+        }
+
+    raise HTTPException(status_code=401, detail="unauthorized")

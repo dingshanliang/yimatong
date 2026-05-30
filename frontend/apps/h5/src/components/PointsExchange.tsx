@@ -30,6 +30,7 @@ export function PointsExchange({
     try {
       await apiClient.post("/benefit-claims", {
         benefit_id: benefitId,
+        scan_token: scanToken,
         claim_type: "points_exchange",
       });
       setExchanged(true);

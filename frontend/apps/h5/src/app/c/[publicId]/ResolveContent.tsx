@@ -319,7 +319,6 @@ function ModuleRenderer({
             consumerId={(config.consumer_id as string) || ""}
             memberLevel={config.member_level as string}
             totalPoints={config.total_points as number}
-            scanToken={scanToken}
           />
         </div>
       );

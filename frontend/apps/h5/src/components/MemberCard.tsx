@@ -1,30 +1,66 @@
 "use client";
 
-import { useState } from "react";
-import { apiClient } from "@/lib/api";
+import { useEffect, useState } from "react";
+import { apiClient, getConsumerId } from "@/lib/api";
 
 interface MemberCardProps {
-  consumerId: string;
+  consumerId?: string;
   memberLevel?: string;
   totalPoints?: number;
-  scanToken?: string;
 }
 
-export function MemberCard({ consumerId, memberLevel, totalPoints, scanToken }: MemberCardProps) {
-  const [profile, setProfile] = useState<Record<string, unknown> | null>(null);
+const LEVEL_STYLES: Record<string, { icon: string; bg: string; text: string; label: string }> = {
+  normal: { icon: "🥉", bg: "bg-amber-50", text: "text-amber-700", label: "普通会员" },
+  silver: { icon: "🥈", bg: "bg-gray-50", text: "text-gray-700", label: "银卡会员" },
+  gold: { icon: "🥇", bg: "bg-yellow-50", text: "text-yellow-700", label: "金卡会员" },
+  platinum: { icon: "💎", bg: "bg-blue-50", text: "text-blue-700", label: "白金会员" },
+};
+
+export function MemberCard({
+  consumerId: propConsumerId,
+  memberLevel: fallbackLevel,
+  totalPoints: fallbackPoints,
+}: MemberCardProps) {
+  const consumerId = propConsumerId || getConsumerId() || undefined;
+  const [profile, setProfile] = useState<{
+    member_level: string;
+    total_points: number;
+    nickname?: string;
+  } | null>(null);
   const [loading, setLoading] = useState(false);
-  const [expanded, setExpanded] = useState(false);
 
-  const level = (profile?.member_level as string) || memberLevel || "普通会员";
-  const points = (profile?.total_points as number) ?? totalPoints ?? 0;
+  useEffect(() => {
+    if (!consumerId) return;
+    setLoading(true);
+    apiClient
+      .get("/consumers/me", { params: { consumer_id: consumerId } })
+      .then((res) => setProfile(res.data))
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, [consumerId]);
 
-  const LEVEL_STYLES: Record<string, { icon: string; bg: string; text: string }> = {
-    bronze: { icon: "🥉", bg: "bg-amber-50", text: "text-amber-700" },
-    silver: { icon: "🥈", bg: "bg-gray-50", text: "text-gray-700" },
-    gold: { icon: "🥇", bg: "bg-yellow-50", text: "text-yellow-700" },
-    diamond: { icon: "💎", bg: "bg-blue-50", text: "text-blue-700" },
-  };
-  const style = LEVEL_STYLES[level] || LEVEL_STYLES.bronze;
+  const level = profile?.member_level || fallbackLevel || "normal";
+  const points = profile?.total_points ?? fallbackPoints ?? 0;
+  const style = LEVEL_STYLES[level] || LEVEL_STYLES.normal;
+
+  if (loading && !profile) {
+    return (
+      <div className="rounded-2xl bg-white p-4 shadow-sm animate-pulse">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="h-8 w-8 rounded-full bg-gray-200" />
+            <div>
+              <div className="h-4 w-16 rounded bg-gray-200" />
+              <div className="mt-1 h-3 w-24 rounded bg-gray-200" />
+            </div>
+          </div>
+          <div className="text-right">
+            <div className="h-6 w-12 rounded bg-gray-200" />
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="rounded-2xl bg-white p-4 shadow-sm">
@@ -32,8 +68,10 @@ export function MemberCard({ consumerId, memberLevel, totalPoints, scanToken }: 
         <div className="flex items-center gap-3">
           <span className="text-2xl">{style.icon}</span>
           <div>
-            <p className="text-sm font-semibold text-gray-900">{level}</p>
-            <p className="text-xs text-gray-500">{consumerId.slice(0, 8)}...</p>
+            <p className="text-sm font-semibold text-gray-900">{style.label}</p>
+            <p className="text-xs text-gray-500">
+              {profile?.nickname || (consumerId ? `${consumerId.slice(0, 8)}...` : "游客")}
+            </p>
           </div>
         </div>
         <div className="text-right">
