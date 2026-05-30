@@ -240,102 +240,25 @@ async def oauth_callback(
         raise HTTPException(status_code=429, detail="已达到今日领取上限")
 
     # 自动执行红包领取
-    from app.services.redpacket_amount import calc_amount, validate_config
+    from app.services.redpacket import claim_red_packet
 
-    # FOR UPDATE 读取最新 stock_total 和 config_json（避免陈旧读）
-    from app.models.campaign import Benefit as BenefitModel
+    try:
+        result = await claim_red_packet(
+            db=db,
+            benefit_id=benefit_id,
+            tenant_id=benefit.tenant_id,
+            connector_id=connector.id,
+            consumer_id=str(consumer.id),
+            openid=openid,
+            total_count=total_count,
+        )
+    except (RuntimeError, ValueError) as e:
+        status_code = 400 if isinstance(e, ValueError) else 410
+        raise HTTPException(status_code=status_code, detail=str(e))
 
-    fresh = await db.execute(
-        select(BenefitModel).where(BenefitModel.id == benefit_id).with_for_update()
-    )
-    benefit_fresh = fresh.scalar_one_or_none()
-    if not benefit_fresh or benefit_fresh.stock_total <= 0:
-        raise HTTPException(status_code=410, detail="红包已抢光")
-
-    config = benefit_fresh.config_json
-    valid, msg = validate_config(config)
-    if not valid:
-        raise HTTPException(status_code=400, detail=f"Invalid red packet config: {msg}")
-
-    # 计算金额
-    claimed_budget = config.get("claimed_budget", 0)
-    budget = config.get("budget", 0)
-    remaining = budget - claimed_budget
-
-    if remaining <= 0:
-        raise HTTPException(status_code=410, detail="红包预算已用尽")
-
-    if config.get("amount_type") == "lucky":
-        remaining_count = benefit_fresh.stock_total
-        amount = calc_amount(config, remaining_budget=remaining, remaining_count=remaining_count)
-    else:
-        amount = calc_amount(config)
-
-    if amount > remaining:
-        amount = remaining
-
-    # 乐观锁扣减预算
-    from sqlalchemy import text
-
-    result = await db.execute(
-        text("""
-            UPDATE benefits
-            SET config_json = jsonb_set(
-                config_json, '{claimed_budget}',
-                (COALESCE((config_json->>'claimed_budget')::int, 0) + :amount)::text::jsonb
-            ),
-            stock_total = GREATEST(stock_total - 1, 0)
-            WHERE id = :benefit_id
-            AND (COALESCE((config_json->>'claimed_budget')::int, 0) + :amount) <= (config_json->>'budget')::int
-        """),
-        {"benefit_id": benefit_id, "amount": amount},
-    )
-    if result.rowcount == 0:
-        raise HTTPException(status_code=410, detail="红包已抢光")
-
-    # 创建 BenefitClaim
-    from app.models.campaign import BenefitClaim
-
-    idempotency_key = f"rp:{consumer.id}:{benefit_id}:{total_count}"
-    claim = BenefitClaim(
-        tenant_id=benefit.tenant_id,
-        benefit_id=benefit_id,
-        campaign_id=benefit.campaign_id,
-        consumer_id=str(consumer.id),
-        idempotency_key=idempotency_key,
-        status="claimed",
-    )
-    db.add(claim)
-
-    # 触发微信转账（通过 BenefitDelivery）
-    from app.models.connector import BenefitDelivery
-
-    delivery = BenefitDelivery(
-        tenant_id=benefit.tenant_id,
-        connector_id=connector.id,
-        consumer_id=str(consumer.id),
-        benefit_type="cash_red_packet",
-        benefit_config={
-            "amount": amount,
-            "openid": openid,
-            "out_bill_no": str(claim.id),
-            "transfer_remark": config.get("transfer_remark", "扫码领红包"),
-        },
-        status="pending",
-    )
-    db.add(delivery)
-    await db.flush()
-
-    # 执行转账
-    from app.services.connectors.registry import get_adapter
-
-    adapter = get_adapter(connector)
-    delivery_result = await adapter.deliver(connector, str(consumer.id), delivery.benefit_config)
-
-    delivery.status = delivery_result.status
-    delivery.external_data = delivery_result.external_data
-    if delivery_result.status == "success":
-        claim.status = "delivered"
+    amount = result["amount"]
+    claim_id = result["claim_id"]
+    delivery_status = result["status"]
 
     await db.commit()
 
@@ -346,7 +269,7 @@ async def oauth_callback(
     redirect_url = (
         f"{h5_base}/redpacket/result"
         f"?amount={amount}"
-        f"&status={delivery_result.status}"
-        f"&claim_id={claim.id}"
+        f"&status={delivery_status}"
+        f"&claim_id={claim_id}"
     )
     return RedirectResponse(url=redirect_url)

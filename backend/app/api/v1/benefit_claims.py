@@ -171,30 +171,17 @@ async def _handle_cash_red_packet_claim(
         }
 
     # 有 OpenID，直接执行红包领取
-    from app.services.redpacket_amount import calc_amount, validate_config
+    from app.services.redpacket import claim_red_packet
 
-    # FOR UPDATE 读取最新 stock_total 和 config_json（避免陈旧读）
-    fresh = await db.execute(
-        select(Benefit).where(Benefit.id == benefit.id).with_for_update()
-    )
-    benefit_fresh = fresh.scalar_one_or_none()
-    if not benefit_fresh or benefit_fresh.stock_total <= 0:
-        raise HTTPException(status_code=410, detail="红包已抢光")
-
-    config = benefit_fresh.config_json
-    valid, msg = validate_config(config)
-    if not valid:
-        raise HTTPException(status_code=400, detail=f"Invalid red packet config: {msg}")
-
-    # 检查限领
+    # 检查限领（在调用 claim_red_packet 前完成）
     from sqlalchemy import func
 
     from app.models.campaign import BenefitClaim
 
-    daily_limit = config.get("daily_limit_per_user", 3)
-    total_limit = config.get("total_limit_per_user", 10)
+    rp_config = benefit.config_json
+    daily_limit = rp_config.get("daily_limit_per_user", 3)
+    total_limit = rp_config.get("total_limit_per_user", 10)
 
-    # 总领取次数
     total_count_result = await db.execute(
         select(func.count()).select_from(BenefitClaim).where(
             BenefitClaim.benefit_id == benefit.id,
@@ -205,7 +192,6 @@ async def _handle_cash_red_packet_claim(
     if total_count >= total_limit:
         raise HTTPException(status_code=429, detail="已达到总领取上限")
 
-    # 今日领取次数
     from datetime import UTC, datetime
 
     today_start = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
@@ -220,89 +206,25 @@ async def _handle_cash_red_packet_claim(
     if daily_count >= daily_limit:
         raise HTTPException(status_code=429, detail="已达到今日领取上限")
 
-    # 计算金额
-    claimed_budget = config.get("claimed_budget", 0)
-    budget = config.get("budget", 0)
-    remaining = budget - claimed_budget
-
-    if remaining <= 0:
-        raise HTTPException(status_code=410, detail="红包预算已用尽")
-
-    if config.get("amount_type") == "lucky":
-        remaining_count = benefit_fresh.stock_total
-        amount = calc_amount(config, remaining_budget=remaining, remaining_count=remaining_count)
-    else:
-        amount = calc_amount(config)
-
-    if amount > remaining:
-        amount = remaining
-
-    # 乐观锁扣减预算
-    from sqlalchemy import text
-
-    result = await db.execute(
-        text("""
-            UPDATE benefits
-            SET config_json = jsonb_set(
-                config_json, '{claimed_budget}',
-                (COALESCE((config_json->>'claimed_budget')::int, 0) + :amount)::text::jsonb
-            ),
-            stock_total = GREATEST(stock_total - 1, 0)
-            WHERE id = :benefit_id
-            AND (COALESCE((config_json->>'claimed_budget')::int, 0) + :amount) <= (config_json->>'budget')::int
-        """),
-        {"benefit_id": benefit.id, "amount": amount},
-    )
-    if result.rowcount == 0:
-        raise HTTPException(status_code=410, detail="红包已抢光")
-
-    # 创建 claim 记录
-    idempotency_key = f"rp:{consumer.id}:{benefit.id}:{total_count}"
-    claim = BenefitClaim(
-        tenant_id=tenant_id,
-        benefit_id=benefit.id,
-        campaign_id=benefit.campaign_id,
-        consumer_id=str(consumer.id),
-        idempotency_key=idempotency_key,
-        status="claimed",
-    )
-    db.add(claim)
-
-    # 创建 delivery 记录
-    from app.models.connector import BenefitDelivery
-
-    delivery = BenefitDelivery(
-        tenant_id=tenant_id,
-        connector_id=connector.id,
-        consumer_id=str(consumer.id),
-        benefit_type="cash_red_packet",
-        benefit_config={
-            "amount": amount,
-            "openid": consumer.wechat_openid,
-            "out_bill_no": str(claim.id),
-            "transfer_remark": config.get("transfer_remark", "扫码领红包"),
-        },
-        status="pending",
-    )
-    db.add(delivery)
-    await db.flush()
-
-    # 执行微信转账
-    from app.services.connectors.registry import get_adapter
-
-    adapter = get_adapter(connector)
-    delivery_result = await adapter.deliver(connector, str(consumer.id), delivery.benefit_config)
-
-    delivery.status = delivery_result.status
-    delivery.external_data = delivery_result.external_data
-    if delivery_result.status == "success":
-        claim.status = "delivered"
+    try:
+        result = await claim_red_packet(
+            db=db,
+            benefit_id=benefit.id,
+            tenant_id=tenant_id,
+            connector_id=connector.id,
+            consumer_id=str(consumer.id),
+            openid=consumer.wechat_openid,
+            total_count=total_count,
+        )
+    except (RuntimeError, ValueError) as e:
+        status_code = 400 if isinstance(e, ValueError) else 410
+        raise HTTPException(status_code=status_code, detail=str(e))
 
     await db.commit()
 
     return {
-        "status": delivery_result.status,
+        "status": result["status"],
         "benefit_id": str(benefit.id),
-        "amount": amount,
-        "claim_id": str(claim.id),
+        "amount": result["amount"],
+        "claim_id": str(result["claim_id"]),
     }
