@@ -123,10 +123,11 @@ export default function CampaignAnalyticsPage() {
     { total_scans: 0, uv: 0, first_scans: 0, rescans: 0 }
   );
 
-  const handleExportCSV = async () => {
+  const handleExport = async () => {
     try {
       const params: Record<string, string> = {
         export_type: "campaign_dashboard",
+        format: "xlsx",
       };
       if (dateRange[0] && dateRange[1]) {
         params.start_date = dateRange[0].format("YYYY-MM-DD");
@@ -136,11 +137,13 @@ export default function CampaignAnalyticsPage() {
         params,
         responseType: "blob",
       });
-      const blob = new Blob([response.data], { type: "text/csv" });
+      const blob = new Blob([response.data], {
+        type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      });
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `活动看板_${dateRange[0].format("YYYYMMDD")}-${dateRange[1].format("YYYYMMDD")}.csv`;
+      a.download = `活动看板_${dateRange[0].format("YYYYMMDD")}-${dateRange[1].format("YYYYMMDD")}.xlsx`;
       document.body.appendChild(a);
       a.click();
       a.remove();
@@ -183,8 +186,8 @@ export default function CampaignAnalyticsPage() {
               }
             }}
           />
-          <Button icon={<DownloadOutlined />} onClick={handleExportCSV}>
-            导出 CSV
+          <Button icon={<DownloadOutlined />} onClick={handleExport}>
+            导出 Excel
           </Button>
         </Space>
       </div>

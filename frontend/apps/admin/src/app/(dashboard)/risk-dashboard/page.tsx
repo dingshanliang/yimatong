@@ -129,15 +129,18 @@ export default function RiskDashboardPage() {
 
   const handleExport = async (dataType: string) => {
     try {
-      const response = await api.get("/risk-dashboard/export", {
-        params: { data_type: dataType },
+      const exportType = dataType === "alerts" ? "risk_dashboard" : "regional_dashboard";
+      const response = await api.post("/analytics/exports", null, {
+        params: { export_type: exportType, format: "xlsx" },
         responseType: "blob",
       });
-      const blob = new Blob([response.data], { type: "text/csv" });
+      const blob = new Blob([response.data], {
+        type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      });
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `risk_${dataType}.csv`;
+      a.download = `risk_${dataType}.xlsx`;
       document.body.appendChild(a);
       a.click();
       a.remove();
@@ -153,8 +156,8 @@ export default function RiskDashboardPage() {
       <div className="mb-4 flex items-center justify-between">
         <Title level={4} className="!mb-0">风控看板</Title>
         <Space>
-          <Button icon={<DownloadOutlined />} onClick={() => handleExport("alerts")}>导出预警</Button>
-          <Button icon={<DownloadOutlined />} onClick={() => handleExport("diversions")}>导出窜货</Button>
+          <Button icon={<DownloadOutlined />} onClick={() => handleExport("alerts")}>导出预警 Excel</Button>
+          <Button icon={<DownloadOutlined />} onClick={() => handleExport("diversions")}>导出窜货 Excel</Button>
         </Space>
       </div>
       <Row gutter={[16, 16]}>

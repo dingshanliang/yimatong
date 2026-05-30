@@ -200,14 +200,16 @@ function DashboardTab() {
   const handleExport = async () => {
     try {
       const response = await api.post("/analytics/exports", null, {
-        params: { export_type: "regional_dashboard" },
+        params: { export_type: "regional_dashboard", format: "xlsx" },
         responseType: "blob",
       });
-      const blob = new Blob([response.data], { type: "text/csv" });
+      const blob = new Blob([response.data], {
+        type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      });
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = "regional-dashboard.csv";
+      a.download = "regional-dashboard.xlsx";
       document.body.appendChild(a);
       a.click();
       a.remove();
@@ -223,7 +225,7 @@ function DashboardTab() {
       <Space className="mb-4">
         <Input placeholder="输入组织 ID" value={orgId} onChange={(e) => setOrgId(e.target.value)} style={{ width: 300 }} />
         <Button type="primary" onClick={fetch}>查看数据</Button>
-        <Button onClick={handleExport}>导出 CSV</Button>
+        <Button onClick={handleExport}>导出 Excel</Button>
       </Space>
       <Row gutter={[16, 16]}>
         <Col span={8}>

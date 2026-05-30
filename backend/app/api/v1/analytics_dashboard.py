@@ -1,12 +1,13 @@
 """数据看板 API（活动看板、风控看板、区域看板、导出）"""
 
-import csv
 import io
 import uuid
 from datetime import UTC, date, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
+from openpyxl import Workbook
+from openpyxl.styles import Font
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -182,9 +183,25 @@ async def list_exports(
     }
 
 
+def _build_xlsx(headers: list[str], rows: list[list], sheet_name: str = "Sheet1") -> bytes:
+    """用 openpyxl 生成 xlsx 字节流，表头加粗。"""
+    wb = Workbook()
+    ws = wb.active
+    ws.title = sheet_name
+    ws.append(headers)
+    for cell in ws[1]:
+        cell.font = Font(bold=True)
+    for row in rows:
+        ws.append(row)
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
 @dashboard_router.post("/exports")
 async def create_export(
     export_type: str = Query(...),
+    format: str = Query("xlsx", description="导出格式: xlsx"),
     start_date: date | None = Query(None),
     end_date: date | None = Query(None),
     db: AsyncSession = Depends(get_db),
@@ -192,7 +209,7 @@ async def create_export(
     account_id: uuid.UUID = Depends(get_current_account_id),
     _: None = Depends(require_admin),
 ):
-    """数据导出（仅管理员）"""
+    """数据导出（仅管理员），支持 xlsx 格式"""
     from app.services.export_audit import log_export
 
     if export_type == "scan_events":
@@ -206,73 +223,56 @@ async def create_export(
         result = await db.execute(stmt)
         events = result.scalars().all()
 
-        output = io.StringIO()
-        writer = csv.DictWriter(
-            output,
-            fieldnames=[
-                "public_id",
-                "scan_time",
-                "is_first_scan",
-                "environment",
-            ],
-        )
-        writer.writeheader()
-        for e in events:
-            writer.writerow(
-                {
-                    "public_id": e.public_id,
-                    "scan_time": e.scan_time.isoformat() if e.scan_time else "",
-                    "is_first_scan": e.is_first_scan,
-                    "environment": e.environment or "",
-                }
-            )
+        headers = ["码 ID", "扫码时间", "是否首扫", "环境"]
+        rows = [
+            [
+                e.public_id,
+                e.scan_time.isoformat() if e.scan_time else "",
+                "是" if e.is_first_scan else "否",
+                e.environment or "",
+            ]
+            for e in events
+        ]
 
-        csv_content = output.getvalue()
-        row_count = len(events)
+        xlsx_bytes = _build_xlsx(headers, rows, sheet_name="扫码事件")
+        file_name = f"scan-events-{tenant_id.hex[:8]}.xlsx"
+        download_name = "scan-events.xlsx"
 
         await log_export(
-            db,
-            tenant_id,
-            account_id,
-            "scan_events_csv",
-            file_name=f"scan-events-{tenant_id.hex[:8]}.csv",
-            row_count=row_count,
+            db, tenant_id, account_id, "scan_events_xlsx",
+            file_name=file_name, row_count=len(events),
         )
         await db.commit()
 
         return StreamingResponse(
-            io.StringIO(csv_content),
-            media_type="text/csv",
-            headers={"Content-Disposition": "attachment; filename=scan-events.csv"},
+            io.BytesIO(xlsx_bytes),
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": f"attachment; filename={download_name}"},
         )
 
     if export_type == "campaign_dashboard":
         items, _ = await _get_campaign_stats(db, tenant_id, start_date=start_date, end_date=end_date)
 
-        output = io.StringIO()
-        writer = csv.DictWriter(
-            output,
-            fieldnames=["campaign_id", "campaign_name", "status", "claim_count", "scan_count"],
-        )
-        writer.writeheader()
-        for item in items:
-            writer.writerow(item)
+        headers = ["活动 ID", "活动名称", "状态", "领取数", "扫码数"]
+        rows = [
+            [item["campaign_id"], item["campaign_name"], item["status"], item["claim_count"], item["scan_count"]]
+            for item in items
+        ]
 
-        csv_content = output.getvalue()
+        xlsx_bytes = _build_xlsx(headers, rows, sheet_name="活动看板")
+        file_name = f"campaign-dashboard-{tenant_id.hex[:8]}.xlsx"
+        download_name = "campaign-dashboard.xlsx"
+
         await log_export(
-            db,
-            tenant_id,
-            account_id,
-            "campaign_dashboard_csv",
-            file_name=f"campaign-dashboard-{tenant_id.hex[:8]}.csv",
-            row_count=len(items),
+            db, tenant_id, account_id, "campaign_dashboard_xlsx",
+            file_name=file_name, row_count=len(items),
         )
         await db.commit()
 
         return StreamingResponse(
-            io.StringIO(csv_content),
-            media_type="text/csv",
-            headers={"Content-Disposition": "attachment; filename=campaign-dashboard.csv"},
+            io.BytesIO(xlsx_bytes),
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": f"attachment; filename={download_name}"},
         )
 
     if export_type == "risk_dashboard":
@@ -282,38 +282,26 @@ async def create_export(
         result = await db.execute(stmt)
         alerts = result.scalars().all()
 
-        output = io.StringIO()
-        writer = csv.DictWriter(
-            output,
-            fieldnames=["id", "alert_type", "public_id", "detail", "resolved"],
-        )
-        writer.writeheader()
-        for alert in alerts:
-            writer.writerow({
-                "id": str(alert.id),
-                "alert_type": alert.alert_type,
-                "public_id": alert.public_id,
-                "detail": alert.detail,
-                "resolved": alert.resolved,
-            })
+        headers = ["预警 ID", "预警类型", "码 ID", "详情", "已处理"]
+        rows = [
+            [str(a.id), a.alert_type, a.public_id, a.detail or "", "是" if a.resolved else "否"]
+            for a in alerts
+        ]
 
-        csv_content = output.getvalue()
-        row_count = len(alerts)
+        xlsx_bytes = _build_xlsx(headers, rows, sheet_name="风控看板")
+        file_name = f"risk-dashboard-{tenant_id.hex[:8]}.xlsx"
+        download_name = "risk-dashboard.xlsx"
 
         await log_export(
-            db,
-            tenant_id,
-            account_id,
-            "risk_dashboard_csv",
-            file_name=f"risk-dashboard-{tenant_id.hex[:8]}.csv",
-            row_count=row_count,
+            db, tenant_id, account_id, "risk_dashboard_xlsx",
+            file_name=file_name, row_count=len(alerts),
         )
         await db.commit()
 
         return StreamingResponse(
-            io.StringIO(csv_content),
-            media_type="text/csv",
-            headers={"Content-Disposition": "attachment; filename=risk-dashboard.csv"},
+            io.BytesIO(xlsx_bytes),
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": f"attachment; filename={download_name}"},
         )
 
     if export_type == "regional_dashboard":
@@ -323,38 +311,26 @@ async def create_export(
         result = await db.execute(stmt)
         clues = result.scalars().all()
 
-        output = io.StringIO()
-        writer = csv.DictWriter(
-            output,
-            fieldnames=["id", "public_id", "expected_region", "detected_city", "resolved"],
-        )
-        writer.writeheader()
-        for clue in clues:
-            writer.writerow({
-                "id": str(clue.id),
-                "public_id": clue.public_id,
-                "expected_region": clue.expected_region or "",
-                "detected_city": clue.detected_city or "",
-                "resolved": clue.resolved,
-            })
+        headers = ["线索 ID", "码 ID", "预期区域", "实际城市", "已处理"]
+        rows = [
+            [str(c.id), c.public_id, c.expected_region or "", c.detected_city or "", "是" if c.resolved else "否"]
+            for c in clues
+        ]
 
-        csv_content = output.getvalue()
-        row_count = len(clues)
+        xlsx_bytes = _build_xlsx(headers, rows, sheet_name="区域看板")
+        file_name = f"regional-dashboard-{tenant_id.hex[:8]}.xlsx"
+        download_name = "regional-dashboard.xlsx"
 
         await log_export(
-            db,
-            tenant_id,
-            account_id,
-            "regional_dashboard_csv",
-            file_name=f"regional-dashboard-{tenant_id.hex[:8]}.csv",
-            row_count=row_count,
+            db, tenant_id, account_id, "regional_dashboard_xlsx",
+            file_name=file_name, row_count=len(clues),
         )
         await db.commit()
 
         return StreamingResponse(
-            io.StringIO(csv_content),
-            media_type="text/csv",
-            headers={"Content-Disposition": "attachment; filename=regional-dashboard.csv"},
+            io.BytesIO(xlsx_bytes),
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": f"attachment; filename={download_name}"},
         )
 
     raise HTTPException(status_code=400, detail=f"Export type '{export_type}' not supported")
