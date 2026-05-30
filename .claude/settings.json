@@ -21,5 +21,29 @@
       "Bash(find *)",
       "Bash(wc *)"
     ]
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "file=\"$CLAUDE_FILE_PATH\"; if [[ \"$file\" == *.py ]]; then cd /Users/ericding/code/agriculture/yimatong/backend && ruff format \"$file\" 2>/dev/null && ruff check --fix \"$file\" 2>/dev/null; fi"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "file=\"$CLAUDE_FILE_PATH\"; if [[ \"$file\" == *.env && \"$file\" != *.env.example ]]; then echo 'BLOCK: Direct .env file edits are not allowed. Use environment variable management instead.' >&2; exit 1; fi"
+          }
+        ]
+      }
+    ]
   }
 }
