@@ -318,28 +318,35 @@ async def delivery_callback_endpoint(
     conn_id: uuid.UUID,
     request: Request,
     db: AsyncSession = Depends(get_db),
-    tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
-    connector = await _get_connector_or_404(db, tenant_id, conn_id)
+    """外部系统回调端点 — 不走 JWT 认证，由适配器签名验证保护。"""
+    conn_result = await db.execute(
+        select(Connector).where(Connector.id == conn_id)
+    )
+    connector = conn_result.scalar_one_or_none()
+    if not connector:
+        raise HTTPException(status_code=404, detail="Connector not found")
+
     adapter = get_adapter(connector)
 
     body = await request.body()
     headers = dict(request.headers)
 
-    # 验证回调签名
+    # 验证回调签名（必须由适配器实现）
     if not await adapter.verify_callback(connector, body, headers):
         raise HTTPException(status_code=403, detail="Invalid callback signature")
 
     # 解析回调
     result = await adapter.parse_callback(connector, body, headers)
 
-    # 查找匹配的 BenefitDelivery 并更新状态
+    # 查找匹配的 BenefitDelivery 并更新状态（使用 connector 的 tenant_id 过滤）
     if result.external_id:
         from app.models.connector import BenefitDelivery
 
         delivery_stmt = (
             select(BenefitDelivery)
             .where(
+                BenefitDelivery.tenant_id == connector.tenant_id,
                 BenefitDelivery.connector_id == conn_id,
                 BenefitDelivery.status == "pending",
             )

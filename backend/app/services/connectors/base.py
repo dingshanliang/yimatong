@@ -65,5 +65,5 @@ class BaseConnectorAdapter(ABC):
         request_body: bytes,
         headers: dict,
     ) -> bool:
-        """验证回调请求的签名/来源。默认返回 True，子类可覆盖。"""
-        return True
+        """验证回调请求的签名/来源。默认拒绝，子类必须覆盖以启用回调。"""
+        return False
