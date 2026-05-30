@@ -71,7 +71,7 @@ class CodeItemRead(BaseModel):
     model_config = {"from_attributes": True}
 
 
-@code_batch_router.post("", status_code=201)
+@code_batch_router.post("", status_code=201, summary="创建 码批次")
 async def create_code_batch_endpoint(
     body: CodeBatchCreateRequest,
     db: AsyncSession = Depends(get_db),
@@ -100,7 +100,7 @@ async def create_code_batch_endpoint(
     )
 
 
-@code_batch_router.get("")
+@code_batch_router.get("", summary="码批次 列表")
 async def list_code_batches_endpoint(
     product_id: uuid.UUID | None = Query(None),
     status: str | None = Query(None),
@@ -125,7 +125,7 @@ async def list_code_batches_endpoint(
     )
 
 
-@code_batch_router.get("/{batch_id}")
+@code_batch_router.get("/{batch_id}", summary="获取 码批次")
 async def get_code_batch_endpoint(
     batch_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
@@ -151,7 +151,7 @@ async def activate_batch_endpoint(
         raise HTTPException(status_code=409, detail=str(e))
 
 
-@code_batch_router.post("/{batch_id}/export")
+@code_batch_router.post("/{batch_id}/export", summary="导出 码批次")
 async def export_code_batch_endpoint(
     batch_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
@@ -183,7 +183,7 @@ class CodeBatchUpdateRequest(BaseModel):
     batch_code: str | None = None
 
 
-@code_batch_router.patch("/{batch_id}")
+@code_batch_router.patch("/{batch_id}", summary="更新 码批次")
 async def update_code_batch_endpoint(
     batch_id: uuid.UUID,
     body: CodeBatchUpdateRequest,
@@ -220,7 +220,7 @@ async def void_batch_endpoint(
     return await void_batch(db, tenant_id, batch_id)
 
 
-@code_item_router.get("/public/{public_id}")
+@code_item_router.get("/public/{public_id}", summary="解析 code by public id")
 async def resolve_code_by_public_id_endpoint(
     public_id: str,
     db: AsyncSession = Depends(get_db),
@@ -238,7 +238,7 @@ class CodeItemUpdateRequest(BaseModel):
     status: str | None = None
 
 
-@code_item_router.patch("/{item_id}", response_model=CodeItemRead)
+@code_item_router.patch("/{item_id}", response_model=CodeItemRead, summary="更新 码项")
 async def update_code_item_endpoint(
     item_id: uuid.UUID,
     body: CodeItemUpdateRequest,
@@ -251,7 +251,7 @@ async def update_code_item_endpoint(
     return CodeItemRead.model_validate(item)
 
 
-@code_item_router.get("/{item_id}")
+@code_item_router.get("/{item_id}", summary="获取 码项")
 async def get_code_item_endpoint(
     item_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
@@ -263,7 +263,7 @@ async def get_code_item_endpoint(
     return CodeItemRead.model_validate(item)
 
 
-@code_item_router.get("/{item_id}/pair")
+@code_item_router.get("/{item_id}/pair", summary="获取 pair")
 async def get_pair_endpoint(
     item_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
@@ -320,7 +320,7 @@ async def bind_code_item_endpoint(
         raise HTTPException(status_code=409, detail=str(e))
 
 
-@code_item_router.get("")
+@code_item_router.get("", summary="码项 列表")
 async def list_code_items_endpoint(
     code_batch_id: uuid.UUID | None = Query(None),
     status: str | None = Query(None),

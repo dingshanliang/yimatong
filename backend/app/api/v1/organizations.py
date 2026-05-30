@@ -17,7 +17,7 @@ from app.services.organization import (
 router = APIRouter(prefix="/api/v1", tags=["organizations", "accounts"])
 
 
-@router.post("/organizations", response_model=OrganizationRead, status_code=201)
+@router.post("/organizations", response_model=OrganizationRead, status_code=201, summary="创建 org")
 async def create_org_endpoint(
     body: OrganizationCreate,
     db: AsyncSession = Depends(get_db),
@@ -27,7 +27,7 @@ async def create_org_endpoint(
     return org
 
 
-@router.get("/organizations", response_model=list[OrganizationRead])
+@router.get("/organizations", response_model=list[OrganizationRead], summary="orgs 列表")
 async def list_orgs_endpoint(
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
@@ -35,7 +35,7 @@ async def list_orgs_endpoint(
     return await list_organizations(db, tenant_id=tenant_id)
 
 
-@router.post("/accounts", response_model=AccountRead, status_code=201)
+@router.post("/accounts", response_model=AccountRead, status_code=201, summary="创建 账号")
 async def create_account_endpoint(
     body: AccountCreate,
     db: AsyncSession = Depends(get_db),
@@ -53,7 +53,7 @@ async def create_account_endpoint(
     return account
 
 
-@router.get("/accounts", response_model=list[AccountRead])
+@router.get("/accounts", response_model=list[AccountRead], summary="账号 列表")
 async def list_accounts_endpoint(
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
@@ -61,7 +61,7 @@ async def list_accounts_endpoint(
     return await list_accounts(db, tenant_id=tenant_id)
 
 
-@router.patch("/accounts/{account_id}", response_model=AccountRead)
+@router.patch("/accounts/{account_id}", response_model=AccountRead, summary="更新 账号")
 async def update_account_endpoint(
     account_id: uuid.UUID,
     body: AccountUpdate,

@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.core.dependencies import get_current_tenant
-from app.schemas.common import PaginatedResponse
+from app.schemas.common import ErrorDetail, NOT_FOUND_EXAMPLE, PaginatedResponse
 from app.services.campaign import (
     change_campaign_status,
     claim_benefit,
@@ -77,7 +77,7 @@ class ClaimRequest(BaseModel):
     idempotency_key: str
 
 
-@campaign_router.post("", status_code=201)
+@campaign_router.post("", status_code=201, summary="创建活动")
 async def create_campaign_endpoint(
     body: CampaignCreateRequest,
     db: AsyncSession = Depends(get_db),
@@ -95,7 +95,7 @@ async def create_campaign_endpoint(
     )
 
 
-@campaign_router.get("")
+@campaign_router.get("", summary="活动列表")
 async def list_campaigns_endpoint(
     status: str | None = Query(None),
     campaign_type: str | None = Query(None),
@@ -115,7 +115,7 @@ async def list_campaigns_endpoint(
     return PaginatedResponse(items=items, total=total, page=page, page_size=page_size)
 
 
-@campaign_router.get("/{campaign_id}")
+@campaign_router.get("/{campaign_id}", summary="获取活动详情")
 async def get_campaign_endpoint(
     campaign_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
@@ -127,7 +127,7 @@ async def get_campaign_endpoint(
     return data
 
 
-@campaign_router.patch("/{campaign_id}")
+@campaign_router.patch("/{campaign_id}", summary="更新活动")
 async def update_campaign_endpoint(
     campaign_id: uuid.UUID,
     body: CampaignUpdateRequest,
@@ -145,7 +145,7 @@ async def update_campaign_endpoint(
     return data
 
 
-@campaign_router.post("/{campaign_id}/status")
+@campaign_router.post("/{campaign_id}/status", summary="修改活动状态")
 async def change_campaign_status_endpoint(
     campaign_id: uuid.UUID,
     body: CampaignStatusRequest,
@@ -158,7 +158,7 @@ async def change_campaign_status_endpoint(
     return data
 
 
-@campaign_router.delete("/{campaign_id}")
+@campaign_router.delete("/{campaign_id}", summary="删除活动")
 async def delete_campaign_endpoint(
     campaign_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
@@ -173,7 +173,7 @@ async def delete_campaign_endpoint(
 # --- Benefits ---
 
 
-@campaign_router.post("/{campaign_id}/benefits", status_code=201)
+@campaign_router.post("/{campaign_id}/benefits", status_code=201, summary="创建权益")
 async def create_benefit_endpoint(
     campaign_id: uuid.UUID,
     body: BenefitCreateRequest,
@@ -193,7 +193,7 @@ async def create_benefit_endpoint(
     )
 
 
-@campaign_router.get("/{campaign_id}/benefits")
+@campaign_router.get("/{campaign_id}/benefits", summary="权益列表")
 async def list_benefits_endpoint(
     campaign_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
@@ -205,7 +205,7 @@ async def list_benefits_endpoint(
 # --- Claim ---
 
 
-@campaign_router.post("/benefits/{benefit_id}/claim")
+@campaign_router.post("/benefits/{benefit_id}/claim", summary="领取权益")
 async def claim_benefit_endpoint(
     benefit_id: uuid.UUID,
     body: ClaimRequest,
@@ -231,7 +231,7 @@ async def claim_benefit_endpoint(
 # --- Analytics ---
 
 
-@campaign_router.get("/analytics/funnel")
+@campaign_router.get("/analytics/funnel", summary="活动漏斗分析", response_description="漏斗数据")
 async def campaign_funnel_endpoint(
     campaign_id: uuid.UUID = Query(...),
     db: AsyncSession = Depends(get_db),
@@ -243,7 +243,7 @@ async def campaign_funnel_endpoint(
     return data
 
 
-@campaign_router.get("/analytics/comparison")
+@campaign_router.get("/analytics/comparison", summary="活动对比分析", response_description="对比数据")
 async def campaign_comparison_endpoint(
     campaign_ids: str = Query(..., description="逗号分隔的活动ID"),
     db: AsyncSession = Depends(get_db),

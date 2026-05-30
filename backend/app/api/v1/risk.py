@@ -28,7 +28,7 @@ class RiskAlertRead(BaseModel):
     model_config = {"from_attributes": True}
 
 
-@risk_router.get("")
+@risk_router.get("", summary="risk alerts 列表")
 async def list_risk_alerts_endpoint(
     alert_type: str | None = Query(None),
     resolved: bool | None = Query(None),
@@ -53,7 +53,7 @@ async def list_risk_alerts_endpoint(
     )
 
 
-@risk_router.post("/{alert_id}/resolve")
+@risk_router.post("/{alert_id}/resolve", summary="解析 alert")
 async def resolve_alert_endpoint(
     alert_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),

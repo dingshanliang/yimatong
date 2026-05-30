@@ -30,7 +30,7 @@ from app.services.scan_token import create_scan_token
 resolver_router = APIRouter(tags=["resolver"])
 
 
-@resolver_router.get("/c/{public_id}")
+@resolver_router.get("/c/{public_id}", summary="解析 码")
 async def resolve_code_endpoint(
     public_id: str,
     request: Request,

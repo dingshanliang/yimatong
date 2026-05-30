@@ -26,7 +26,7 @@ class CustomerSyncRequest(BaseModel):
     customers: list[dict]
 
 
-@integration_router.post("/batch-import")
+@integration_router.post("/batch-import", summary="批量 import")
 async def batch_import_endpoint(
     body: BatchImportRequest,
     db: AsyncSession = Depends(get_db),

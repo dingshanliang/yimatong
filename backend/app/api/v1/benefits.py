@@ -30,7 +30,7 @@ class BenefitUpdateRequest(BaseModel):
     connector_id: uuid.UUID | None = None
 
 
-@benefit_router.get("")
+@benefit_router.get("", summary="权益 列表")
 async def list_benefits_endpoint(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
@@ -46,7 +46,7 @@ async def list_benefits_endpoint(
     return PaginatedResponse(items=items, total=total, page=page, page_size=page_size)
 
 
-@benefit_router.get("/{benefit_id}")
+@benefit_router.get("/{benefit_id}", summary="获取 权益")
 async def get_benefit_endpoint(
     benefit_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
@@ -58,7 +58,7 @@ async def get_benefit_endpoint(
     return data
 
 
-@benefit_router.patch("/{benefit_id}")
+@benefit_router.patch("/{benefit_id}", summary="更新 权益")
 async def update_benefit_endpoint(
     benefit_id: uuid.UUID,
     body: BenefitUpdateRequest,
@@ -76,7 +76,7 @@ async def update_benefit_endpoint(
     return data
 
 
-@benefit_router.delete("/{benefit_id}")
+@benefit_router.delete("/{benefit_id}", summary="删除 权益")
 async def delete_benefit_endpoint(
     benefit_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
@@ -91,7 +91,7 @@ async def delete_benefit_endpoint(
 # --- Admin benefit claims ---
 
 
-@benefit_router.get("/admin/claims")
+@benefit_router.get("/admin/claims", summary="benefit claims admin 列表")
 async def list_benefit_claims_admin_endpoint(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),

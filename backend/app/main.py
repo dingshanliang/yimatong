@@ -47,6 +47,96 @@ from app.api.v1.wechat_oauth import wechat_oauth_router
 from app.core.config import settings
 from app.middleware.tenant import TenantScopeMiddleware
 
+OPENAPI_TAGS = [
+    {"name": "auth", "description": "认证与授权：登录、刷新 Token、登出、获取当前用户信息"},
+    {"name": "tenants", "description": "租户管理：创建、查询、更新租户信息"},
+    {"name": "organizations", "description": "组织管理：企业组织架构维护"},
+    {"name": "accounts", "description": "账号管理：平台账号创建与维护"},
+    {"name": "platform", "description": "平台管理：平台级配置与运营操作"},
+    {"name": "roles", "description": "角色与权限：角色定义、权限分配"},
+    {"name": "members", "description": "成员管理：租户成员邀请、激活、管理"},
+    {"name": "brands", "description": "品牌管理：品牌创建、查询、更新"},
+    {"name": "products", "description": "产品管理：产品定义、属性维护"},
+    {"name": "skus", "description": "SKU 管理：产品规格与 SKU 维护"},
+    {"name": "production-batches", "description": "生产批次管理：批次创建与查询"},
+    {"name": "code-batches", "description": "码批次管理：批量生码、码规则配置"},
+    {"name": "code-items", "description": "码项管理：单个码的查询与状态管理"},
+    {"name": "resolver", "description": "码解析：消费者扫码公开接口，返回页面或 JSON 数据"},
+    {"name": "campaigns", "description": "营销活动：活动创建、配置、上下线"},
+    {"name": "benefits", "description": "权益管理：权益定义、库存、发放规则"},
+    {"name": "benefit-claims", "description": "权益领取：消费者领取权益接口"},
+    {"name": "page-templates", "description": "页面模板：H5 页面模板管理"},
+    {"name": "page-versions", "description": "页面版本：模板版本发布、预览、回滚"},
+    {"name": "public-pages", "description": "公开页面：消费者端页面配置与渲染"},
+    {"name": "industry-templates", "description": "行业模板：预设行业页面与配置模板"},
+    {"name": "consumers", "description": "消费者管理：消费者档案、画像、标签"},
+    {"name": "scan-events", "description": "扫码事件：扫码记录查询与分析"},
+    {"name": "consents", "description": "同意书管理：隐私协议、用户授权记录"},
+    {"name": "analytics", "description": "数据分析：扫码统计、活动效果分析"},
+    {"name": "analytics-dashboards", "description": "分析仪表盘：可视化报表与数据看板"},
+    {"name": "gmv", "description": "GMV 统计：交易金额与订单统计"},
+    {"name": "connectors", "description": "连接器：外部系统集成适配器配置"},
+    {"name": "webhooks", "description": "Webhook：事件订阅与推送管理"},
+    {"name": "integration", "description": "系统集成：第三方平台对接配置"},
+    {"name": "open-api", "description": "开放 API：对外提供的标准 API 接口（API Key 认证）"},
+    {"name": "wechat-oauth", "description": "微信 OAuth：微信授权登录与用户信息获取"},
+    {"name": "imports", "description": "数据导入：批量导入产品与码数据"},
+    {"name": "files", "description": "文件管理：上传、存储、获取文件"},
+    {"name": "ai", "description": "AI 服务：智能文案生成、内容优化"},
+    {"name": "i18n", "description": "国际化：多语言内容管理"},
+    {"name": "regional", "description": "区域管理：地理区域与渠道区域配置"},
+    {"name": "risk", "description": "风控管理：风险规则与风险事件处理"},
+    {"name": "risk-rules", "description": "风控规则：规则定义与配置"},
+    {"name": "risk-evaluate", "description": "风控评估：风险评分与评估接口"},
+    {"name": "risk-dashboard", "description": "风控仪表盘：风险数据可视化"},
+    {"name": "risk-alerts", "description": "风控告警：风险告警与通知"},
+    {"name": "tasks", "description": "异步任务：后台任务管理与状态查询"},
+    {"name": "ops", "description": "运维任务：平台运维与租户运营任务"},
+    {"name": "channels", "description": "渠道管理：营销渠道配置与管理"},
+    {"name": "password", "description": "密码管理：密码重置与修改"},
+    {"name": "private-domain", "description": "私域管理：私域流量运营工具"},
+    {"name": "prd-compat", "description": "PRD 兼容：产品需求文档兼容接口"},
+    {"name": "redpacket", "description": "红包活动：微信红包发放与管理"},
+]
+
+APP_DESCRIPTION = """
+一码通（yimatong）面向食品、农产品及消费品品牌方提供包装扫码增长 SaaS 服务。
+
+## 认证方式
+
+### JWT Bearer Token（管理后台 / 大部分接口）
+1. 调用 `POST /api/v1/auth/login` 获取 access_token 和 refresh_token
+2. 在后续请求的 `Authorization` Header 中携带 `Bearer {access_token}`
+3. Token 过期后使用 `POST /api/v1/auth/refresh` 换取新的 access_token
+
+### API Key（开放 API）
+1. 部分对外接口使用 `X-Api-Key` Header 认证
+2. 适用于第三方系统服务器间调用
+
+## 多租户说明
+
+所有业务接口均基于**租户隔离**运行。JWT Token 中已包含 tenant_id，服务端会自动注入到数据库会话中（PostgreSQL RLS）。
+
+## 错误格式
+
+业务错误统一返回 JSON：
+```json
+{
+  "detail": "错误描述信息"
+}
+```
+
+状态码遵循 HTTP 语义：
+- `400` 请求参数错误
+- `401` 未认证或 Token 无效
+- `403` 权限不足
+- `404` 资源不存在
+- `409` 资源冲突
+- `422` 请求体校验失败
+- `429` 请求过于频繁
+- `500` 服务器内部错误
+"""
+
 
 @asynccontextmanager
 async def lifespan(app):
@@ -90,7 +180,56 @@ async def lifespan(app):
     yield
 
 
-app = FastAPI(title="一码通", version="0.1.0", lifespan=lifespan)
+app = FastAPI(
+    title="一码通 API",
+    description=APP_DESCRIPTION,
+    version="0.1.0",
+    openapi_tags=OPENAPI_TAGS,
+    contact={
+        "name": "一码通技术支持",
+        "email": "support@yimatong.cn",
+    },
+    license_info={
+        "name": "专有软件",
+    },
+    terms_of_service="https://yimatong.cn/terms",
+    lifespan=lifespan,
+    swagger_ui_parameters={"persistAuthorization": True},
+)
+
+
+# 自定义 OpenAPI：注入全局 Security Schemes（Bearer JWT + API Key）
+def custom_openapi():
+    if app.openapi_schema:
+        return app.openapi_schema
+    from fastapi.openapi.utils import get_openapi
+
+    openapi_schema = get_openapi(
+        title=app.title,
+        version=app.version,
+        description=app.description,
+        routes=app.routes,
+        openapi_version="3.1.0",
+    )
+    openapi_schema.setdefault("components", {})
+    openapi_schema["components"].setdefault("securitySchemes", {})
+    openapi_schema["components"]["securitySchemes"]["Bearer"] = {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT",
+        "description": "JWT access_token，通过 `/api/v1/auth/login` 获取",
+    }
+    openapi_schema["components"]["securitySchemes"]["ApiKey"] = {
+        "type": "apiKey",
+        "in": "header",
+        "name": "X-Api-Key",
+        "description": "开放 API 密钥，通过平台管理后台创建",
+    }
+    app.openapi_schema = openapi_schema
+    return app.openapi_schema
+
+
+app.openapi = custom_openapi
 
 # CORS — 生产环境禁止通配符
 import os as _os

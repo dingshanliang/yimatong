@@ -37,7 +37,7 @@ class MatchRequest(BaseModel):
     value: str
 
 
-@gmv_router.post("/orders/import")
+@gmv_router.post("/orders/import", summary="导入 订单")
 async def import_orders_endpoint(
     body: OrderImportRequest,
     db: AsyncSession = Depends(get_db),
@@ -48,7 +48,7 @@ async def import_orders_endpoint(
     return {"imported": count}
 
 
-@gmv_router.get("/orders")
+@gmv_router.get("/orders", summary="订单 列表")
 async def list_orders_endpoint(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
@@ -91,7 +91,7 @@ async def dashboard_endpoint(
     return await get_gmv_dashboard(db, tenant_id, group_by=group_by)
 
 
-@gmv_router.get("/attributions")
+@gmv_router.get("/attributions", summary="attributions 列表")
 async def list_attributions_endpoint(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),

@@ -47,7 +47,7 @@ class ProductAuthCreate(BaseModel):
     tenant_id: str
 
 
-@regional_router.post("/orgs", status_code=201)
+@regional_router.post("/orgs", status_code=201, summary="创建 org")
 async def create_org_endpoint(
     body: RegionalOrgCreate,
     db: AsyncSession = Depends(get_db),
@@ -62,7 +62,7 @@ async def create_org_endpoint(
     }
 
 
-@regional_router.get("/orgs")
+@regional_router.get("/orgs", summary="orgs 列表")
 async def list_orgs_endpoint(
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
@@ -88,7 +88,7 @@ async def add_member_endpoint(
     }
 
 
-@regional_router.get("/orgs/{org_id}/members")
+@regional_router.get("/orgs/{org_id}/members", summary="成员 列表")
 async def list_members_endpoint(
     org_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
@@ -107,7 +107,7 @@ async def list_members_endpoint(
     ]
 
 
-@regional_router.post("/orgs/{org_id}/templates", status_code=201)
+@regional_router.post("/orgs/{org_id}/templates", status_code=201, summary="创建 模板")
 async def create_template_endpoint(
     org_id: uuid.UUID,
     body: TemplateCreate,
@@ -123,7 +123,7 @@ async def create_template_endpoint(
     }
 
 
-@regional_router.get("/orgs/{org_id}/templates")
+@regional_router.get("/orgs/{org_id}/templates", summary="模板 列表")
 async def list_templates_endpoint(
     org_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
@@ -173,7 +173,7 @@ class WhitelabelUpdate(BaseModel):
     primary_color: str = "#000000"
 
 
-@regional_router.post("/orgs/{org_id}/code-rules", status_code=201)
+@regional_router.post("/orgs/{org_id}/code-rules", status_code=201, summary="创建 code rule")
 async def create_code_rule_endpoint(
     org_id: uuid.UUID,
     body: CodeRuleCreate,
@@ -190,7 +190,7 @@ async def create_code_rule_endpoint(
     }
 
 
-@regional_router.get("/orgs/{org_id}/code-rules")
+@regional_router.get("/orgs/{org_id}/code-rules", summary="code rules 列表")
 async def list_code_rules_endpoint(
     org_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
@@ -226,7 +226,7 @@ async def set_whitelabel_endpoint(
     }
 
 
-@regional_router.get("/orgs/{org_id}/whitelabel")
+@regional_router.get("/orgs/{org_id}/whitelabel", summary="获取 whitelabel")
 async def get_whitelabel_endpoint(
     org_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),

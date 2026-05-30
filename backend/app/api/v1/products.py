@@ -45,7 +45,7 @@ batch_router = APIRouter(prefix="/api/v1/production-batches", tags=["production-
 # --- Brand endpoints ---
 
 
-@brand_router.post("", response_model=BrandRead, status_code=201)
+@brand_router.post("", response_model=BrandRead, status_code=201, summary="创建 品牌")
 async def create_brand_endpoint(
     body: BrandCreate,
     db: AsyncSession = Depends(get_db),
@@ -54,7 +54,7 @@ async def create_brand_endpoint(
     return await create_brand(db, tenant_id, body.name, body.logo_url, body.description)
 
 
-@brand_router.get("")
+@brand_router.get("", summary="品牌 列表")
 async def list_brands_endpoint(
     name: str | None = Query(None),
     page: int = Query(1, ge=1),
@@ -71,7 +71,7 @@ async def list_brands_endpoint(
     )
 
 
-@brand_router.patch("/{brand_id}", response_model=BrandRead)
+@brand_router.patch("/{brand_id}", response_model=BrandRead, summary="更新 品牌")
 async def update_brand_endpoint(
     brand_id: uuid.UUID,
     body: BrandUpdate,
@@ -115,7 +115,7 @@ async def list_brand_products(
     )
 
 
-@brand_router.delete("/{brand_id}", status_code=204)
+@brand_router.delete("/{brand_id}", status_code=204, summary="删除 品牌")
 async def delete_brand_endpoint(
     brand_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
@@ -129,7 +129,7 @@ async def delete_brand_endpoint(
 # --- Product endpoints ---
 
 
-@product_router.post("", response_model=ProductRead, status_code=201)
+@product_router.post("", response_model=ProductRead, status_code=201, summary="创建 产品")
 async def create_product_endpoint(
     body: ProductCreate,
     db: AsyncSession = Depends(get_db),
@@ -138,7 +138,7 @@ async def create_product_endpoint(
     return await create_product(db, tenant_id, body.brand_id, body.name, body.category, body.description)
 
 
-@product_router.get("")
+@product_router.get("", summary="产品 列表")
 async def list_products_endpoint(
     brand_id: uuid.UUID | None = Query(None),
     category: str | None = Query(None),
@@ -163,7 +163,7 @@ async def list_products_endpoint(
     )
 
 
-@product_router.patch("/{product_id}", response_model=ProductRead)
+@product_router.patch("/{product_id}", response_model=ProductRead, summary="更新 产品")
 async def update_product_endpoint(
     product_id: uuid.UUID,
     body: ProductUpdate,
@@ -233,7 +233,7 @@ async def list_product_batches(
 # --- SKU endpoints ---
 
 
-@sku_router.post("", response_model=SKURead, status_code=201)
+@sku_router.post("", response_model=SKURead, status_code=201, summary="创建 SKU")
 async def create_sku_endpoint(
     body: SKUCreate,
     db: AsyncSession = Depends(get_db),
@@ -249,7 +249,7 @@ async def create_sku_endpoint(
     )
 
 
-@sku_router.get("")
+@sku_router.get("", summary="SKU 列表")
 async def list_skus_endpoint(
     product_id: uuid.UUID | None = Query(None),
     page: int = Query(1, ge=1),
@@ -272,7 +272,7 @@ async def list_skus_endpoint(
     )
 
 
-@sku_router.patch("/{sku_id}", response_model=SKURead)
+@sku_router.patch("/{sku_id}", response_model=SKURead, summary="更新 SKU")
 async def update_sku_endpoint(
     sku_id: uuid.UUID,
     body: SKUUpdate,
@@ -296,7 +296,7 @@ async def update_sku_endpoint(
 # --- ProductionBatch endpoints ---
 
 
-@batch_router.post("", response_model=ProductionBatchRead, status_code=201)
+@batch_router.post("", response_model=ProductionBatchRead, status_code=201, summary="创建 批次")
 async def create_batch_endpoint(
     body: ProductionBatchCreate,
     db: AsyncSession = Depends(get_db),
@@ -313,7 +313,7 @@ async def create_batch_endpoint(
     )
 
 
-@batch_router.get("")
+@batch_router.get("", summary="批次 列表")
 async def list_batches_endpoint(
     product_id: uuid.UUID | None = Query(None),
     page: int = Query(1, ge=1),
@@ -336,7 +336,7 @@ async def list_batches_endpoint(
     )
 
 
-@batch_router.post("/import-csv", response_model=CSVImportResult)
+@batch_router.post("/import-csv", response_model=CSVImportResult, summary="导入 csv")
 async def import_csv_endpoint(
     product_id: str = Form(...),
     sku_id: str = Form(...),

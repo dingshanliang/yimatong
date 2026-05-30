@@ -46,7 +46,7 @@ class PointRuleCreate(BaseModel):
     points: int
 
 
-@member_router.post("/consumers", status_code=201)
+@member_router.post("/consumers", status_code=201, summary="创建 消费者")
 async def create_consumer_endpoint(
     body: ConsumerCreateRequest,
     db: AsyncSession = Depends(get_db),
@@ -60,7 +60,7 @@ async def create_consumer_endpoint(
     }
 
 
-@member_router.get("/consumers/{consumer_id}")
+@member_router.get("/consumers/{consumer_id}", summary="获取 消费者")
 async def get_consumer_endpoint(
     consumer_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
@@ -122,7 +122,7 @@ async def spend_points_endpoint(
         raise HTTPException(status_code=400, detail=str(e))
 
 
-@member_router.get("/consumers/{consumer_id}/transactions")
+@member_router.get("/consumers/{consumer_id}/transactions", summary="transactions 列表")
 async def list_transactions_endpoint(
     consumer_id: uuid.UUID,
     page: int = Query(1, ge=1),
@@ -154,7 +154,7 @@ async def list_transactions_endpoint(
     )
 
 
-@member_router.get("/point-rules")
+@member_router.get("/point-rules", summary="point rules 列表")
 async def list_point_rules_endpoint(
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
@@ -163,7 +163,7 @@ async def list_point_rules_endpoint(
     return [{"id": str(r.id), "rule_type": r.rule_type, "points": r.points} for r in rules]
 
 
-@member_router.post("/point-rules", status_code=201)
+@member_router.post("/point-rules", status_code=201, summary="创建 point rule")
 async def create_point_rule_endpoint(
     body: PointRuleCreate,
     db: AsyncSession = Depends(get_db),

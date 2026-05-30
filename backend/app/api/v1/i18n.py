@@ -32,7 +32,7 @@ class DetectRequest(BaseModel):
     accept_language: str
 
 
-@i18n_router.post("/translations", status_code=201)
+@i18n_router.post("/translations", status_code=201, summary="创建 translation")
 async def create_translation_endpoint(
     body: TranslationCreate,
     db: AsyncSession = Depends(get_db),
@@ -42,7 +42,7 @@ async def create_translation_endpoint(
     return {"id": str(t.id), "key": t.key, "locale": t.locale, "value": t.value}
 
 
-@i18n_router.get("/translations")
+@i18n_router.get("/translations", summary="translations 列表")
 async def list_translations_endpoint(
     locale: str | None = Query(None),
     db: AsyncSession = Depends(get_db),

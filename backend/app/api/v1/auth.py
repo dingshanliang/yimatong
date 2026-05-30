@@ -13,30 +13,41 @@ from app.models.tenant import Account
 from app.services.redis_cache import RedisCache
 from app.utils import utcnow
 from app.utils.security import create_access_token, create_refresh_token, decode_token, verify_password
+from app.schemas.common import ErrorDetail, UNAUTHORIZED_EXAMPLE
 
 router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
+
+# 认证相关通用响应
+AUTH_RESPONSES = {
+    401: {"model": ErrorDetail, "description": "认证失败", "content": {"application/json": {"example": UNAUTHORIZED_EXAMPLE}}},
+}
 
 MAX_FAILED_ATTEMPTS = 5
 LOCK_DURATION_MINUTES = 15
 
 
 class LoginRequest(BaseModel):
-    email: str = Field(..., max_length=255)
-    password: str = Field(..., min_length=1)
+    email: str = Field(..., max_length=255, description="登录邮箱", examples=["admin@example.com"])
+    password: str = Field(..., min_length=1, description="密码", examples=["SecurePass123!"])
 
 
 class TokenResponse(BaseModel):
-    access_token: str
-    refresh_token: str
-    token_type: str = "bearer"
-    expires_in: int = 900
+    access_token: str = Field(..., description="JWT 访问令牌")
+    refresh_token: str = Field(..., description="JWT 刷新令牌")
+    token_type: str = Field("bearer", description="令牌类型")
+    expires_in: int = Field(900, description="access_token 有效时间（秒）")
 
 
 class RefreshRequest(BaseModel):
-    refresh_token: str
+    refresh_token: str = Field(..., description="刷新令牌", examples=["eyJhbGciOiJIUzI1NiIs..."])
 
 
-@router.post("/login", response_model=TokenResponse)
+@router.post(
+    "/login",
+    response_model=TokenResponse,
+    summary="账号登录",
+    response_description="登录成功，返回 JWT 令牌",
+)
 async def login(body: LoginRequest, db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(Account).where(Account.email == body.email))
     account = result.scalar_one_or_none()
@@ -68,7 +79,12 @@ async def login(body: LoginRequest, db: AsyncSession = Depends(get_db)):
     )
 
 
-@router.post("/refresh", response_model=TokenResponse)
+@router.post(
+    "/refresh",
+    response_model=TokenResponse,
+    summary="刷新 Token",
+    response_description="刷新成功，返回新的 JWT 令牌",
+)
 async def refresh(body: RefreshRequest, db: AsyncSession = Depends(get_db)):
     from app.utils.security import verify_refresh_token
 
@@ -90,15 +106,23 @@ async def refresh(body: RefreshRequest, db: AsyncSession = Depends(get_db)):
 
 
 class MeResponse(BaseModel):
-    id: str
-    email: str
-    name: str
-    tenant_id: str
-    organization_id: str | None = None
-    role: str
+    id: str = Field(..., description="账号 ID")
+    email: str = Field(..., description="邮箱")
+    name: str = Field(..., description="姓名")
+    tenant_id: str = Field(..., description="租户 ID")
+    organization_id: str | None = Field(None, description="组织 ID")
+    role: str = Field(..., description="角色")
 
 
-@router.get("/me", response_model=MeResponse)
+@router.get(
+    "/me",
+    response_model=MeResponse,
+    summary="获取当前用户信息",
+    response_description="当前登录账号的详细信息",
+    responses={
+        401: {"model": ErrorDetail, "description": "未认证或 Token 无效", "content": {"application/json": {"example": UNAUTHORIZED_EXAMPLE}}},
+    },
+)
 async def me(
     request: Request,
     db: AsyncSession = Depends(get_db),
@@ -118,7 +142,11 @@ async def me(
     )
 
 
-@router.post("/logout")
+@router.post(
+    "/logout",
+    summary="登出",
+    response_description="登出成功，当前 access_token 加入黑名单",
+)
 async def logout(request: Request):
     """登出端点：将当前 access token 的 jti 加入黑名单"""
     auth_header = request.headers.get("Authorization", "")

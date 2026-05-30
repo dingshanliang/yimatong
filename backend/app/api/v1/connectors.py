@@ -119,7 +119,7 @@ def _delivery_to_dict(delivery) -> dict:
 # ---------------------------------------------------------------------------
 
 
-@connector_router.post("/coupon-pools", status_code=201)
+@connector_router.post("/coupon-pools", status_code=201, summary="创建 pool")
 async def create_pool_endpoint(
     body: CouponPoolCreate,
     db: AsyncSession = Depends(get_db),
@@ -160,7 +160,7 @@ async def distribute_endpoint(
 # ---------------------------------------------------------------------------
 
 
-@connector_router.post("/connectors", status_code=201)
+@connector_router.post("/connectors", status_code=201, summary="创建 连接器")
 async def create_connector_endpoint(
     body: ConnectorCreate,
     db: AsyncSession = Depends(get_db),
@@ -188,7 +188,7 @@ async def create_connector_endpoint(
     return _connector_to_dict(conn, include_secrets=True)
 
 
-@connector_router.get("/connectors")
+@connector_router.get("/connectors", summary="连接器 列表")
 async def list_connectors_endpoint(
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
@@ -199,14 +199,14 @@ async def list_connectors_endpoint(
     return [_connector_to_dict(c, include_secrets=True) for c in conns]
 
 
-@connector_router.get("/connectors/types")
+@connector_router.get("/connectors/types", summary="connector types 列表")
 async def list_connector_types_endpoint():
     """返回系统支持的所有连接器类型。"""
     from app.services.connectors.registry import list_adapter_types
     return {"types": list_adapter_types()}
 
 
-@connector_router.get("/connectors/{conn_id}")
+@connector_router.get("/connectors/{conn_id}", summary="获取 连接器")
 async def get_connector_endpoint(
     conn_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
@@ -228,7 +228,7 @@ async def test_connection_endpoint(
     return await test_connection(connector)
 
 
-@connector_router.patch("/connectors/{conn_id}")
+@connector_router.patch("/connectors/{conn_id}", summary="更新 连接器")
 async def update_connector_endpoint(
     conn_id: uuid.UUID,
     body: ConnectorUpdate,

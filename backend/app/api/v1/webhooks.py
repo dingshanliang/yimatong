@@ -190,7 +190,7 @@ async def revoke_key(
     return {"revoked": True}
 
 
-@webhook_router.get("/deliveries")
+@webhook_router.get("/deliveries", summary="deliveries 列表")
 async def list_deliveries_endpoint(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),

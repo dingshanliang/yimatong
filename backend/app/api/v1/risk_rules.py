@@ -52,7 +52,7 @@ class CampaignEvaluateRequest(BaseModel):
 # --- 静态路径必须放在 /{rule_id} 之前 ---
 
 
-@risk_rule_router.post("", status_code=201)
+@risk_rule_router.post("", status_code=201, summary="创建 风控规则")
 async def create_risk_rule_endpoint(
     body: RiskRuleCreate,
     db: AsyncSession = Depends(get_db),
@@ -76,7 +76,7 @@ async def create_risk_rule_endpoint(
     }
 
 
-@risk_rule_router.get("")
+@risk_rule_router.get("", summary="风控规则 列表")
 async def list_risk_rules_endpoint(
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
@@ -116,7 +116,7 @@ async def evaluate_campaign_endpoint(
     return result
 
 
-@risk_rule_router.get("/interceptions")
+@risk_rule_router.get("/interceptions", summary="interceptions 列表")
 async def list_interceptions_endpoint(
     action: str | None = Query(None),
     page: int = Query(1, ge=1),
@@ -146,7 +146,7 @@ async def list_interceptions_endpoint(
 # --- 动态路径放在最后 ---
 
 
-@risk_rule_router.get("/{rule_id}")
+@risk_rule_router.get("/{rule_id}", summary="获取 风控规则")
 async def get_risk_rule_endpoint(
     rule_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
@@ -165,7 +165,7 @@ async def get_risk_rule_endpoint(
     }
 
 
-@risk_rule_router.patch("/{rule_id}")
+@risk_rule_router.patch("/{rule_id}", summary="更新 风控规则")
 async def update_risk_rule_endpoint(
     rule_id: uuid.UUID,
     body: RiskRuleUpdate,
@@ -187,7 +187,7 @@ async def update_risk_rule_endpoint(
     }
 
 
-@risk_rule_router.delete("/{rule_id}")
+@risk_rule_router.delete("/{rule_id}", summary="删除 风控规则")
 async def delete_risk_rule_endpoint(
     rule_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),

@@ -53,7 +53,7 @@ class BatchAssign(BaseModel):
 # --- Distributor ---
 
 
-@channel_router.post("/distributors", status_code=201)
+@channel_router.post("/distributors", status_code=201, summary="创建 distributor")
 async def create_distributor_endpoint(
     body: DistributorCreate,
     db: AsyncSession = Depends(get_db),
@@ -70,7 +70,7 @@ async def create_distributor_endpoint(
     return {"id": str(dist.id), "name": dist.name, "code": dist.code}
 
 
-@channel_router.get("/distributors")
+@channel_router.get("/distributors", summary="distributors 列表")
 async def list_distributors_endpoint(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
@@ -89,7 +89,7 @@ async def list_distributors_endpoint(
 # --- Region ---
 
 
-@channel_router.post("/regions", status_code=201)
+@channel_router.post("/regions", status_code=201, summary="创建 region")
 async def create_region_endpoint(
     body: RegionCreate,
     db: AsyncSession = Depends(get_db),
@@ -107,7 +107,7 @@ async def create_region_endpoint(
     return {"id": str(region.id), "name": region.name, "code": region.code, "city": region.city}
 
 
-@channel_router.get("/regions")
+@channel_router.get("/regions", summary="regions 列表")
 async def list_regions_endpoint(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
@@ -126,7 +126,7 @@ async def list_regions_endpoint(
 # --- Store ---
 
 
-@channel_router.post("/stores", status_code=201)
+@channel_router.post("/stores", status_code=201, summary="创建 store")
 async def create_store_endpoint(
     body: StoreCreate,
     db: AsyncSession = Depends(get_db),
@@ -169,7 +169,7 @@ async def assign_batch_endpoint(
 # --- Diversion Clues ---
 
 
-@channel_router.get("/diversion-clues")
+@channel_router.get("/diversion-clues", summary="diversion clues 列表")
 async def list_diversion_clues_endpoint(
     resolved: bool | None = Query(None),
     page: int = Query(1, ge=1),

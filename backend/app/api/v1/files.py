@@ -12,7 +12,7 @@ from app.services.storage import get_file_info, upload_file
 file_router = APIRouter(prefix="/api/v1/files", tags=["files"])
 
 
-@file_router.post("/upload", status_code=201)
+@file_router.post("/upload", status_code=201, summary="上传 文件")
 async def upload_file_endpoint(
     file: UploadFile = File(...),
     module: str = Form("general"),
@@ -30,7 +30,7 @@ async def upload_file_endpoint(
     return result
 
 
-@file_router.get("/{file_id}")
+@file_router.get("/{file_id}", summary="获取 文件")
 async def get_file_endpoint(
     file_id: str,
     db: AsyncSession = Depends(get_db),

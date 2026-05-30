@@ -25,7 +25,7 @@ async def get_client_status(
     return await get_tenant_status(db, tenant_id)
 
 
-@ops_router.get("/clients/{tenant_id}/launch-checklist")
+@ops_router.get("/clients/{tenant_id}/launch-checklist", summary="获取 launch checklist")
 async def get_launch_checklist_endpoint(
     tenant_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
@@ -34,7 +34,7 @@ async def get_launch_checklist_endpoint(
     return await get_launch_checklist(db, tenant_id)
 
 
-@ops_router.post("/tasks", response_model=OpsTaskRead, status_code=201)
+@ops_router.post("/tasks", response_model=OpsTaskRead, status_code=201, summary="创建 任务")
 async def create_task_endpoint(
     body: OpsTaskCreate,
     db: AsyncSession = Depends(get_db),
@@ -52,7 +52,7 @@ async def create_task_endpoint(
     return task
 
 
-@ops_router.get("/tasks", response_model=PaginatedResponse)
+@ops_router.get("/tasks", response_model=PaginatedResponse, summary="任务 列表")
 async def list_tasks_endpoint(
     tenant_id: uuid.UUID | None = Query(None, description="按客户筛选"),
     status: str | None = Query(None, description="按状态筛选"),
@@ -86,7 +86,7 @@ async def list_tasks_endpoint(
     )
 
 
-@ops_router.get("/tasks/{task_id}", response_model=OpsTaskRead)
+@ops_router.get("/tasks/{task_id}", response_model=OpsTaskRead, summary="获取 任务")
 async def get_task_endpoint(
     task_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
@@ -98,7 +98,7 @@ async def get_task_endpoint(
     return task
 
 
-@ops_router.patch("/tasks/{task_id}", response_model=OpsTaskRead)
+@ops_router.patch("/tasks/{task_id}", response_model=OpsTaskRead, summary="更新 任务")
 async def update_task_endpoint(
     task_id: uuid.UUID,
     body: OpsTaskUpdate,
@@ -125,7 +125,7 @@ async def update_task_endpoint(
     return task
 
 
-@ops_router.delete("/tasks/{task_id}", status_code=204)
+@ops_router.delete("/tasks/{task_id}", status_code=204, summary="删除 任务")
 async def delete_task_endpoint(
     task_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),

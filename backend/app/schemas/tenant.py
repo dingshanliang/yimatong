@@ -5,12 +5,19 @@ from pydantic import BaseModel, Field
 
 
 class TenantCreate(BaseModel):
-    name: str = Field(..., min_length=1, max_length=100)
-    slug: str | None = Field(None, min_length=1, max_length=50, pattern=r"^[a-z0-9-]+$")
-    plan: str = "free"
-    admin_email: str = Field(..., max_length=255)
-    admin_name: str = Field(..., max_length=100)
-    admin_password: str = Field(..., min_length=8)
+    name: str = Field(..., min_length=1, max_length=100, description="租户名称", examples=["示例食品公司"])
+    slug: str | None = Field(
+        None,
+        min_length=1,
+        max_length=50,
+        pattern=r"^[a-z0-9-]+$",
+        description="租户唯一标识（URL 友好）",
+        examples=["example-food"],
+    )
+    plan: str = Field("free", description="订阅计划", examples=["free", "pro", "enterprise"])
+    admin_email: str = Field(..., max_length=255, description="管理员邮箱", examples=["admin@example.com"])
+    admin_name: str = Field(..., max_length=100, description="管理员姓名", examples=["张三"])
+    admin_password: str = Field(..., min_length=8, description="管理员密码", examples=["SecurePass123!"])
 
 
 class TenantUpdate(BaseModel):
@@ -23,17 +30,17 @@ class TenantUpdate(BaseModel):
 
 
 class TenantRead(BaseModel):
-    id: uuid.UUID
-    name: str
-    slug: str
-    status: str
-    plan: str
-    plan_expires_at: datetime | None = None
-    quota: dict | None = None
-    compliance_settings: dict | None = None
-    onboarding_progress: dict | None = None
-    enabled_features: dict | None = None
-    created_at: datetime | None = None
+    id: uuid.UUID = Field(..., description="租户 ID")
+    name: str = Field(..., description="租户名称")
+    slug: str = Field(..., description="租户唯一标识")
+    status: str = Field(..., description="租户状态")
+    plan: str = Field(..., description="订阅计划")
+    plan_expires_at: datetime | None = Field(None, description="计划过期时间")
+    quota: dict | None = Field(None, description="配额配置")
+    compliance_settings: dict | None = Field(None, description="合规设置")
+    onboarding_progress: dict | None = Field(None, description=" onboarding 进度")
+    enabled_features: dict | None = Field(None, description="已启用功能")
+    created_at: datetime | None = Field(None, description="创建时间")
 
     model_config = {"from_attributes": True}
 

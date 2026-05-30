@@ -84,7 +84,7 @@ async def clone_industry_template(
     return {"template": template, "version": version}
 
 
-@page_template_router.post("", status_code=201)
+@page_template_router.post("", status_code=201, summary="创建 页面模板")
 async def create_page_template_endpoint(
     body: PageTemplateCreateRequest,
     db: AsyncSession = Depends(get_db),
@@ -100,7 +100,7 @@ async def create_page_template_endpoint(
     )
 
 
-@page_template_router.get("")
+@page_template_router.get("", summary="页面模板 列表")
 async def list_page_templates_endpoint(
     template_type: str | None = Query(None),
     status: str | None = Query(None),
@@ -120,7 +120,7 @@ async def list_page_templates_endpoint(
     return PaginatedResponse(items=items, total=total, page=page, page_size=page_size)
 
 
-@page_template_router.get("/{template_id}")
+@page_template_router.get("/{template_id}", summary="获取 页面模板")
 async def get_page_template_endpoint(
     template_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
@@ -132,7 +132,7 @@ async def get_page_template_endpoint(
     return data
 
 
-@page_template_router.patch("/{template_id}")
+@page_template_router.patch("/{template_id}", summary="更新 页面模板")
 async def update_page_template_endpoint(
     template_id: uuid.UUID,
     body: PageTemplateUpdateRequest,
@@ -151,7 +151,7 @@ async def update_page_template_endpoint(
     return data
 
 
-@page_template_router.delete("/{template_id}")
+@page_template_router.delete("/{template_id}", summary="删除 页面模板")
 async def delete_page_template_endpoint(
     template_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
@@ -179,7 +179,7 @@ async def preview_page_template_endpoint(
     return HTMLResponse(content=html)
 
 
-@page_template_router.post("/{template_id}/versions", status_code=201)
+@page_template_router.post("/{template_id}/versions", status_code=201, summary="创建 页面版本")
 async def create_page_version_endpoint(
     template_id: uuid.UUID,
     body: PageVersionCreateRequest,
@@ -196,7 +196,7 @@ async def create_page_version_endpoint(
     )
 
 
-@page_template_router.get("/{template_id}/versions")
+@page_template_router.get("/{template_id}/versions", summary="页面版本 列表")
 async def list_page_versions_endpoint(
     template_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
@@ -205,7 +205,7 @@ async def list_page_versions_endpoint(
     return await list_page_versions(db, tenant_id, template_id)
 
 
-@page_version_router.patch("/{version_id}")
+@page_version_router.patch("/{version_id}", summary="更新 页面版本")
 async def update_page_version_endpoint(
     version_id: uuid.UUID,
     body: PageVersionUpdateRequest,
