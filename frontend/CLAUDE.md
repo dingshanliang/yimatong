@@ -33,6 +33,24 @@ pnpm test:e2e:ui    # E2E 测试（带 UI）
 - 共享包 `@yimatong/shared` 使用 `workspace:*` 协议
 - 后端 API 地址：`NEXT_PUBLIC_API_URL` 环境变量（默认 http://localhost:8000）
 
+## Admin 路由模块
+
+`(dashboard)/` 下共 27 个业务模块：accounts, agency, ai-assistant, batches, benefits, brands, campaign-analytics, campaigns, channels, codes, connectors, crm-sync, exports, gmv, imports, integrations, launch-checklist, members, pages, products, regional, risk, risk-dashboard, settings, skus, stats
+
+## 关键文件
+
+| 文件 | 用途 |
+|------|------|
+| `apps/admin/src/lib/api.ts` | Axios 实例（Bearer token 拦截器） |
+| `apps/admin/src/lib/auth.ts` | Zustand auth store（localStorage + cookie 双写） |
+| `apps/admin/src/lib/theme.ts` | Ant Design 主题配置 |
+| `apps/admin/src/middleware.ts` | Admin 路由守卫（cookie 检查） |
+| `apps/h5/src/middleware.ts` | H5 路由守卫 |
+
+## E2E 测试
+
+测试文件位于 `tests/e2e/`，使用 Playwright。配置见 `playwright.config.ts`。
+
 ## AGENTS.md
 
 @AGENTS.md

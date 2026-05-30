@@ -42,9 +42,9 @@ pnpm test:e2e:debug # E2E 测试（调试模式）
 ### Docker 本地环境
 
 ```bash
-docker compose -f docker-compose.dev.yml up -d   # 启动全部服务
-docker compose -f docker-compose.dev.yml logs backend --tail 50  # 查看后端日志
-docker compose -f docker-compose.dev.yml exec backend /app/.venv/bin/python -c "..."  # 容器内执行 Python
+docker compose -f backend/docker-compose.dev.yml up -d   # 启动全部服务
+docker compose -f backend/docker-compose.dev.yml logs backend --tail 50  # 查看后端日志
+docker compose -f backend/docker-compose.dev.yml exec backend /app/.venv/bin/python -c "..."  # 容器内执行 Python
 ```
 
 **注意**：如果本地已有 PostgreSQL 占用 5432 端口，`localhost:5432` 连接的是本地 PG 而非 Docker PG。Docker 容器内的后端通过 `postgres:5432`（Docker 内部网络）连接。
@@ -59,6 +59,7 @@ backend/
     core/            配置、数据库连接、依赖注入
     middleware/      中间件（tenant scope、CORS）
     models/          SQLAlchemy 2.0 模型（按领域分文件）
+    prompts/         LLM 提示词模板
     schemas/         Pydantic V2 schema
     services/        业务逻辑层
     tasks/           Arq 异步任务
@@ -68,7 +69,13 @@ backend/
   tests/
     unit/            单元测试
     integration/     集成测试
+    test_api/        API 端点测试
+    test_auth/       认证模块测试
+    test_cli/        CLI 工具测试
     test_middleware/  中间件测试
+    test_models/     模型测试
+    test_services/   服务层测试
+    test_tasks/      异步任务测试
   alembic/           数据库迁移（0001-0019+）
   docker-compose.dev.yml  完整本地环境
 
