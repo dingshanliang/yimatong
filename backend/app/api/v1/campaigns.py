@@ -83,8 +83,14 @@ async def create_campaign_endpoint(
     tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
     return await create_campaign(
-        db, tenant_id, body.name, body.campaign_type,
-        body.start_at, body.end_at, body.rules_json, body.description,
+        db,
+        tenant_id,
+        body.name,
+        body.campaign_type,
+        body.start_at,
+        body.end_at,
+        body.rules_json,
+        body.description,
     )
 
 
@@ -98,8 +104,12 @@ async def list_campaigns_endpoint(
     tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
     items, total = await list_campaigns(
-        db, tenant_id, status=status, campaign_type=campaign_type,
-        page=page, page_size=page_size,
+        db,
+        tenant_id,
+        status=status,
+        campaign_type=campaign_type,
+        page=page,
+        page_size=page_size,
     )
     return PaginatedResponse(items=items, total=total, page=page, page_size=page_size)
 
@@ -124,7 +134,9 @@ async def update_campaign_endpoint(
     tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
     data = await update_campaign(
-        db, tenant_id, campaign_id,
+        db,
+        tenant_id,
+        campaign_id,
         **body.model_dump(exclude_none=True),
     )
     if not data:
@@ -159,6 +171,7 @@ async def delete_campaign_endpoint(
 
 # --- Benefits ---
 
+
 @campaign_router.post("/{campaign_id}/benefits", status_code=201)
 async def create_benefit_endpoint(
     campaign_id: uuid.UUID,
@@ -167,8 +180,14 @@ async def create_benefit_endpoint(
     tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
     return await create_benefit(
-        db, tenant_id, campaign_id, body.name, body.benefit_type,
-        body.config_json, body.stock_total, body.per_person_limit,
+        db,
+        tenant_id,
+        campaign_id,
+        body.name,
+        body.benefit_type,
+        body.config_json,
+        body.stock_total,
+        body.per_person_limit,
     )
 
 
@@ -183,6 +202,7 @@ async def list_benefits_endpoint(
 
 # --- Claim ---
 
+
 @campaign_router.post("/benefits/{benefit_id}/claim")
 async def claim_benefit_endpoint(
     benefit_id: uuid.UUID,
@@ -191,7 +211,11 @@ async def claim_benefit_endpoint(
     tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
     result = await claim_benefit(
-        db, tenant_id, benefit_id, body.consumer_id, body.idempotency_key,
+        db,
+        tenant_id,
+        benefit_id,
+        body.consumer_id,
+        body.idempotency_key,
     )
     if result["status"] == "not_found":
         raise HTTPException(status_code=404, detail="Benefit not found")
@@ -203,6 +227,7 @@ async def claim_benefit_endpoint(
 
 
 # --- Analytics ---
+
 
 @campaign_router.get("/analytics/funnel")
 async def campaign_funnel_endpoint(

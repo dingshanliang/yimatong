@@ -1,6 +1,5 @@
 """码解析服务"""
 
-
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -9,12 +8,11 @@ from app.models.page import PageTemplate
 
 
 async def resolve_public_code(
-    db: AsyncSession, public_id: str,
+    db: AsyncSession,
+    public_id: str,
 ) -> dict | None:
     """解析公开码，返回码信息+关联数据"""
-    result = await db.execute(
-        select(CodeItem).where(CodeItem.public_id == public_id)
-    )
+    result = await db.execute(select(CodeItem).where(CodeItem.public_id == public_id))
     item = result.scalar_one_or_none()
     if not item:
         return None
@@ -29,9 +27,7 @@ async def resolve_public_code(
     }
 
     # 获取批次和产品信息
-    batch_result = await db.execute(
-        select(CodeBatch).where(CodeBatch.id == item.code_batch_id)
-    )
+    batch_result = await db.execute(select(CodeBatch).where(CodeBatch.id == item.code_batch_id))
     batch = batch_result.scalar_one_or_none()
     if batch:
         data["product_id"] = str(batch.product_id)
@@ -39,11 +35,13 @@ async def resolve_public_code(
 
         # 查找产品关联的页面模板
         tmpl_result = await db.execute(
-            select(PageTemplate).where(
+            select(PageTemplate)
+            .where(
                 PageTemplate.tenant_id == item.tenant_id,
                 PageTemplate.product_id == batch.product_id,
                 PageTemplate.status == "active",
-            ).limit(1)
+            )
+            .limit(1)
         )
         template = tmpl_result.scalar_one_or_none()
         if template:

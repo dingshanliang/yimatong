@@ -48,9 +48,7 @@ async def setup_tenant(client: AsyncClient):
 
 class TestLaunchChecklist:
     @pytest.mark.anyio
-    async def test_empty_checklist(
-        self, client: AsyncClient, setup_tenant
-    ):
+    async def test_empty_checklist(self, client: AsyncClient, setup_tenant):
         tid, headers = setup_tenant
         resp = await client.get(
             f"/api/v1/ops/clients/{tid}/launch-checklist",
@@ -62,9 +60,7 @@ class TestLaunchChecklist:
         assert data["passed_count"] == 0
 
     @pytest.mark.anyio
-    async def test_checklist_after_product(
-        self, client: AsyncClient, setup_tenant
-    ):
+    async def test_checklist_after_product(self, client: AsyncClient, setup_tenant):
         tid, headers = setup_tenant
         # 创建品牌和产品
         brand = await client.post(
@@ -89,9 +85,7 @@ class TestLaunchChecklist:
         assert product_check["passed"] is True
 
     @pytest.mark.anyio
-    async def test_tenant_status(
-        self, client: AsyncClient, setup_tenant
-    ):
+    async def test_tenant_status(self, client: AsyncClient, setup_tenant):
         tid, headers = setup_tenant
         resp = await client.get(
             f"/api/v1/ops/clients/{tid}/status",

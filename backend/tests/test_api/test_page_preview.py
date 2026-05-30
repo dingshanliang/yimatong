@@ -48,9 +48,7 @@ async def auth_setup(client: AsyncClient):
 
 class TestPagePreview:
     @pytest.mark.anyio
-    async def test_preview_with_published_version(
-        self, client: AsyncClient, auth_setup
-    ):
+    async def test_preview_with_published_version(self, client: AsyncClient, auth_setup):
         # 创建模板
         tmpl = await client.post(
             "/api/v1/page-templates",
@@ -62,29 +60,31 @@ class TestPagePreview:
         # 创建版本并发布
         ver = await client.post(
             f"/api/v1/page-templates/{tid}/versions",
-            json={"config_json": {
-                "brand_name": "预览品牌",
-                "product_name": "预览产品",
-            }},
+            json={
+                "config_json": {
+                    "brand_name": "预览品牌",
+                    "product_name": "预览产品",
+                }
+            },
             headers=auth_setup,
         )
         vid = ver.json()["id"]
         await client.post(
-            f"/api/v1/page-versions/{vid}/publish", headers=auth_setup,
+            f"/api/v1/page-versions/{vid}/publish",
+            headers=auth_setup,
         )
 
         # 预览
         resp = await client.get(
-            f"/api/v1/page-templates/{tid}/preview", headers=auth_setup,
+            f"/api/v1/page-templates/{tid}/preview",
+            headers=auth_setup,
         )
         assert resp.status_code == 200
         assert "预览品牌" in resp.text
         assert "预览产品" in resp.text
 
     @pytest.mark.anyio
-    async def test_preview_no_published_version(
-        self, client: AsyncClient, auth_setup
-    ):
+    async def test_preview_no_published_version(self, client: AsyncClient, auth_setup):
         tmpl = await client.post(
             "/api/v1/page-templates",
             json={"name": "空模板", "template_type": "product_info"},
@@ -93,14 +93,13 @@ class TestPagePreview:
         tid = tmpl.json()["id"]
 
         resp = await client.get(
-            f"/api/v1/page-templates/{tid}/preview", headers=auth_setup,
+            f"/api/v1/page-templates/{tid}/preview",
+            headers=auth_setup,
         )
         assert resp.status_code == 404
 
     @pytest.mark.anyio
-    async def test_preview_with_mock_data(
-        self, client: AsyncClient, auth_setup
-    ):
+    async def test_preview_with_mock_data(self, client: AsyncClient, auth_setup):
         tmpl = await client.post(
             "/api/v1/page-templates",
             json={"name": "Mock模板", "template_type": "product_info"},
@@ -115,7 +114,8 @@ class TestPagePreview:
         )
         vid = ver.json()["id"]
         await client.post(
-            f"/api/v1/page-versions/{vid}/publish", headers=auth_setup,
+            f"/api/v1/page-versions/{vid}/publish",
+            headers=auth_setup,
         )
 
         # 带 mock 数据预览
@@ -128,9 +128,7 @@ class TestPagePreview:
 
 class TestPagePublishFlow:
     @pytest.mark.anyio
-    async def test_end_to_end_flow(
-        self, client: AsyncClient, auth_setup
-    ):
+    async def test_end_to_end_flow(self, client: AsyncClient, auth_setup):
         """端到端：创建模板 -> 填充数据 -> 发布 -> 渲染"""
         # 1. 创建模板
         tmpl = await client.post(
@@ -148,11 +146,13 @@ class TestPagePublishFlow:
         # 2. 创建版本
         ver = await client.post(
             f"/api/v1/page-templates/{tid}/versions",
-            json={"config_json": {
-                "brand_name": "E2E品牌",
-                "product_name": "E2E有机苹果",
-                "specifications": {"weight": "500g"},
-            }},
+            json={
+                "config_json": {
+                    "brand_name": "E2E品牌",
+                    "product_name": "E2E有机苹果",
+                    "specifications": {"weight": "500g"},
+                }
+            },
             headers=auth_setup,
         )
         assert ver.status_code == 201
@@ -160,20 +160,23 @@ class TestPagePublishFlow:
         # 3. 发布版本
         vid = ver.json()["id"]
         pub = await client.post(
-            f"/api/v1/page-versions/{vid}/publish", headers=auth_setup,
+            f"/api/v1/page-versions/{vid}/publish",
+            headers=auth_setup,
         )
         assert pub.status_code == 200
         assert pub.json()["status"] == "published"
 
         # 4. 获取模板详情，确认发布版本存在
         detail = await client.get(
-            f"/api/v1/page-templates/{tid}", headers=auth_setup,
+            f"/api/v1/page-templates/{tid}",
+            headers=auth_setup,
         )
         assert detail.json()["published_version"] is not None
 
         # 5. 渲染预览
         preview = await client.get(
-            f"/api/v1/page-templates/{tid}/preview", headers=auth_setup,
+            f"/api/v1/page-templates/{tid}/preview",
+            headers=auth_setup,
         )
         assert preview.status_code == 200
         assert "E2E品牌" in preview.text

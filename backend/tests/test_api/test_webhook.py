@@ -126,7 +126,8 @@ class TestApiKey:
         key_id = create_resp.json()["id"]
 
         resp = await client.delete(
-            f"/api/v1/webhooks/api-keys/{key_id}", headers=headers,
+            f"/api/v1/webhooks/api-keys/{key_id}",
+            headers=headers,
         )
         assert resp.status_code == 200
 
@@ -138,6 +139,7 @@ class TestEventDelivery:
     async def test_list_deliveries(self, client: AsyncClient, setup_tenant):
         tid, headers = setup_tenant
         resp = await client.get(
-            "/api/v1/webhooks/deliveries", headers=headers,
+            "/api/v1/webhooks/deliveries",
+            headers=headers,
         )
         assert resp.status_code == 200

@@ -212,38 +212,38 @@ export default function CampaignsPage() {
       >
         <Form form={form} layout="vertical" onFinish={handleSubmit}>
           <Form.Item name="name" label="活动名称" rules={[{ required: true }]}>
-            <Input />
+            <Input data-testid="campaign-name-input" />
           </Form.Item>
           <Form.Item name="campaign_type" label="活动类型" rules={[{ required: true }]}>
-            <Select options={TYPE_OPTIONS} />
+            <Select options={TYPE_OPTIONS} data-testid="campaign-type-select" />
           </Form.Item>
           <Space className="w-full" direction="vertical">
             <div className="grid grid-cols-2 gap-4">
               <Form.Item name="start_at" label="开始时间" rules={[{ required: true }]}>
-                <Input placeholder="2026-06-01T00:00:00" />
+                <Input placeholder="2026-06-01T00:00:00" data-testid="campaign-start-input" />
               </Form.Item>
               <Form.Item name="end_at" label="结束时间" rules={[{ required: true }]}>
-                <Input placeholder="2026-06-30T23:59:59" />
+                <Input placeholder="2026-06-30T23:59:59" data-testid="campaign-end-input" />
               </Form.Item>
             </div>
           </Space>
           <Form.Item name="description" label="活动描述">
-            <TextArea rows={2} />
+            <TextArea rows={2} data-testid="campaign-description-input" />
           </Form.Item>
           <Form.Item name="participation_conditions" label="参与条件">
-            <TextArea rows={2} />
+            <TextArea rows={2} data-testid="campaign-conditions-input" />
           </Form.Item>
           <Form.Item name="claim_limits" label="领取限制">
-            <Input placeholder="每人限领1次" />
+            <Input placeholder="每人限领1次" data-testid="campaign-claim-limits-input" />
           </Form.Item>
           <Form.Item name="validity_period" label="有效期">
-            <Input placeholder="领取后7天有效" />
+            <Input placeholder="领取后7天有效" data-testid="campaign-validity-input" />
           </Form.Item>
           <Form.Item name="disclaimer" label="免责声明">
-            <TextArea rows={2} />
+            <TextArea rows={2} data-testid="campaign-disclaimer-input" />
           </Form.Item>
           <Form.Item name="customer_service_contact" label="客服联系方式">
-            <Input placeholder="400-123-4567" />
+            <Input placeholder="400-123-4567" data-testid="campaign-contact-input" />
           </Form.Item>
         </Form>
       </Modal>

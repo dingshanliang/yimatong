@@ -1,5 +1,6 @@
 import re
 import uuid
+from datetime import datetime
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -70,6 +71,8 @@ async def update_tenant(
     name: str | None = None,
     quota: dict | None = None,
     compliance_settings: dict | None = None,
+    plan_expires_at: datetime | None = None,
+    onboarding_progress: dict | None = None,
 ) -> Tenant | None:
     tenant = await get_tenant(db, tenant_id)
     if not tenant:
@@ -80,6 +83,10 @@ async def update_tenant(
         tenant.quota = quota
     if compliance_settings is not None:
         tenant.compliance_settings = compliance_settings
+    if plan_expires_at is not None:
+        tenant.plan_expires_at = plan_expires_at
+    if onboarding_progress is not None:
+        tenant.onboarding_progress = onboarding_progress
     await db.flush()
     await db.refresh(tenant)
     return tenant

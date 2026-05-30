@@ -41,6 +41,7 @@ class TestResolveCache:
     def test_idempotent_key(self):
         """幂等键测试"""
         import uuid as _uuid
+
         cache = RedisCache(prefix=f"test-{_uuid.uuid4().hex[:8]}", default_ttl=60)
         assert cache.set_idempotent("claim:123") is True
         assert cache.set_idempotent("claim:123") is False

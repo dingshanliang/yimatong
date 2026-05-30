@@ -29,7 +29,5 @@ def can_transition(
     if target in valid:
         return True
     if raise_on_invalid:
-        raise InvalidStateTransitionError(
-            f"Cannot transition from '{current.value}' to '{target.value}'"
-        )
+        raise InvalidStateTransitionError(f"Cannot transition from '{current.value}' to '{target.value}'")
     return False

@@ -41,6 +41,7 @@ async def claim_benefit_h5(
     import jwt
 
     from app.core.config import settings
+
     try:
         payload = jwt.decode(token, settings.secret_key, algorithms=["HS256"])
     except jwt.exceptions.DecodeError:
@@ -53,6 +54,7 @@ async def claim_benefit_h5(
 
     # 2. 查找权益
     from app.models.campaign import Benefit
+
     try:
         benefit_id = uuid.UUID(body.benefit_id)
     except ValueError:
@@ -74,6 +76,7 @@ async def claim_benefit_h5(
         raise HTTPException(status_code=409, detail="already claimed")
 
     from app.models.campaign import BenefitClaim
+
     existing = await db.execute(
         select(BenefitClaim).where(
             BenefitClaim.benefit_id == benefit_id,

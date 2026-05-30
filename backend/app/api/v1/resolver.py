@@ -140,7 +140,10 @@ async def resolve_code_endpoint(
 
 
 async def _build_json_response(
-    db: AsyncSession, data: dict, scan_token: str, scan_info: dict,
+    db: AsyncSession,
+    data: dict,
+    scan_token: str,
+    scan_info: dict,
 ) -> dict:
     """构建 H5 前端所需的 JSON 响应"""
     uuid.UUID(data["tenant_id"])
@@ -159,6 +162,7 @@ async def _build_json_response(
     # 查询品牌信息
     if product_id:
         from app.models.product import Brand, Product
+
         prod_result = await db.execute(select(Product).where(Product.id == uuid.UUID(product_id)))
         product = prod_result.scalar_one_or_none()
         if product:
@@ -177,10 +181,12 @@ async def _build_json_response(
     template_id = data.get("template_id")
     if template_id:
         ver_result = await db.execute(
-            select(PageVersion).where(
+            select(PageVersion)
+            .where(
                 PageVersion.page_template_id == uuid.UUID(template_id),
                 PageVersion.status == PageVersionStatus.published,
-            ).limit(1)
+            )
+            .limit(1)
         )
         version = ver_result.scalar_one_or_none()
         if version:
@@ -204,8 +210,8 @@ body {{ font-family: sans-serif; margin: 0; padding: 16px; }}
 <body>
 <h2>产品信息</h2>
 <div class="info">
-<p>码编号: {data['public_id']}</p>
-<p>状态: {data['status']}</p>
+<p>码编号: {data["public_id"]}</p>
+<p>状态: {data["status"]}</p>
 </div>
 </body>
 </html>"""

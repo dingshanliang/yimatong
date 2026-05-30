@@ -43,6 +43,7 @@ async def report_scan_event(
 
     # 解析码数据获取 tenant_id
     from app.services.resolver import resolve_public_code
+
     data = await resolve_public_code(db, body.public_id)
     if not data:
         return {"status": "ignored", "reason": "code_not_found"}

@@ -10,7 +10,11 @@ from app.models.webhook import ApiKey, WebhookDelivery, WebhookEndpoint
 
 
 async def create_webhook_endpoint(
-    db: AsyncSession, tenant_id: uuid.UUID, url: str, events: list[str], secret: str,
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    url: str,
+    events: list[str],
+    secret: str,
 ) -> WebhookEndpoint:
     ep = WebhookEndpoint(tenant_id=tenant_id, url=url, events=events, secret=secret)
     db.add(ep)
@@ -20,7 +24,8 @@ async def create_webhook_endpoint(
 
 
 async def list_webhook_endpoints(
-    db: AsyncSession, tenant_id: uuid.UUID,
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
 ) -> list[WebhookEndpoint]:
     result = await db.execute(
         select(WebhookEndpoint).where(WebhookEndpoint.tenant_id == tenant_id).order_by(WebhookEndpoint.id.desc())
@@ -29,7 +34,10 @@ async def list_webhook_endpoints(
 
 
 async def create_api_key(
-    db: AsyncSession, tenant_id: uuid.UUID, name: str, permissions: list[str],
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    name: str,
+    permissions: list[str],
 ) -> ApiKey:
     key_str = f"ymt_{secrets.token_hex(24)}"
     api_key = ApiKey(
@@ -45,7 +53,8 @@ async def create_api_key(
 
 
 async def list_api_keys(
-    db: AsyncSession, tenant_id: uuid.UUID,
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
 ) -> list[ApiKey]:
     result = await db.execute(
         select(ApiKey).where(ApiKey.tenant_id == tenant_id, ApiKey.revoked.is_(False)).order_by(ApiKey.id.desc())
@@ -54,11 +63,11 @@ async def list_api_keys(
 
 
 async def revoke_api_key(
-    db: AsyncSession, tenant_id: uuid.UUID, key_id: uuid.UUID,
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    key_id: uuid.UUID,
 ) -> bool:
-    result = await db.execute(
-        select(ApiKey).where(ApiKey.id == key_id, ApiKey.tenant_id == tenant_id)
-    )
+    result = await db.execute(select(ApiKey).where(ApiKey.id == key_id, ApiKey.tenant_id == tenant_id))
     key = result.scalar_one_or_none()
     if not key:
         raise ValueError("API key not found")
@@ -68,10 +77,17 @@ async def revoke_api_key(
 
 
 async def list_deliveries(
-    db: AsyncSession, tenant_id: uuid.UUID, page: int = 1, page_size: int = 20,
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    page: int = 1,
+    page_size: int = 20,
 ) -> tuple[list[WebhookDelivery], int]:
-    count_stmt = select(func.count()).select_from(WebhookDelivery).where(
-        WebhookDelivery.tenant_id == tenant_id,
+    count_stmt = (
+        select(func.count())
+        .select_from(WebhookDelivery)
+        .where(
+            WebhookDelivery.tenant_id == tenant_id,
+        )
     )
     total_result = await db.execute(count_stmt)
     total = total_result.scalar() or 0

@@ -57,7 +57,10 @@ class TestRepeatScanStats:
 
     @pytest.mark.anyio
     async def test_repeat_scan_stats(
-        self, client: AsyncClient, setup_tenant, db_session: AsyncSession,
+        self,
+        client: AsyncClient,
+        setup_tenant,
+        db_session: AsyncSession,
     ):
         tid, headers = setup_tenant
 
@@ -73,7 +76,8 @@ class TestRepeatScanStats:
         await db_session.commit()
 
         resp = await client.get(
-            "/api/v1/risk-dashboard/repeat-scans", headers=headers,
+            "/api/v1/risk-dashboard/repeat-scans",
+            headers=headers,
         )
         assert resp.status_code == 200
         data = resp.json()
@@ -84,7 +88,10 @@ class TestRepeatScanStats:
 
     @pytest.mark.anyio
     async def test_repeat_scan_with_threshold(
-        self, client: AsyncClient, setup_tenant, db_session: AsyncSession,
+        self,
+        client: AsyncClient,
+        setup_tenant,
+        db_session: AsyncSession,
     ):
         tid, headers = setup_tenant
 
@@ -114,7 +121,10 @@ class TestCrossRegionStats:
 
     @pytest.mark.anyio
     async def test_cross_region_stats(
-        self, client: AsyncClient, setup_tenant, db_session: AsyncSession,
+        self,
+        client: AsyncClient,
+        setup_tenant,
+        db_session: AsyncSession,
     ):
         tid, headers = setup_tenant
 
@@ -124,8 +134,12 @@ class TestCrossRegionStats:
         await db_session.flush()
 
         region = Region(
-            tenant_id=UUID(tid), name="上海", code="R001",
-            province="上海", city="上海", distributor_id=dist.id,
+            tenant_id=UUID(tid),
+            name="上海",
+            code="R001",
+            province="上海",
+            city="上海",
+            distributor_id=dist.id,
         )
         db_session.add(region)
         await db_session.flush()
@@ -145,7 +159,8 @@ class TestCrossRegionStats:
         await db_session.commit()
 
         resp = await client.get(
-            "/api/v1/risk-dashboard/cross-region", headers=headers,
+            "/api/v1/risk-dashboard/cross-region",
+            headers=headers,
         )
         assert resp.status_code == 200
         data = resp.json()
@@ -158,7 +173,10 @@ class TestDiversionSummary:
 
     @pytest.mark.anyio
     async def test_diversion_summary(
-        self, client: AsyncClient, setup_tenant, db_session: AsyncSession,
+        self,
+        client: AsyncClient,
+        setup_tenant,
+        db_session: AsyncSession,
     ):
         tid, headers = setup_tenant
 
@@ -181,7 +199,8 @@ class TestDiversionSummary:
         await db_session.commit()
 
         resp = await client.get(
-            "/api/v1/risk-dashboard/diversion-summary", headers=headers,
+            "/api/v1/risk-dashboard/diversion-summary",
+            headers=headers,
         )
         assert resp.status_code == 200
         data = resp.json()
@@ -190,7 +209,10 @@ class TestDiversionSummary:
 
     @pytest.mark.anyio
     async def test_diversion_unresolved_count(
-        self, client: AsyncClient, setup_tenant, db_session: AsyncSession,
+        self,
+        client: AsyncClient,
+        setup_tenant,
+        db_session: AsyncSession,
     ):
         tid, headers = setup_tenant
 
@@ -223,7 +245,10 @@ class TestRiskExport:
 
     @pytest.mark.anyio
     async def test_export_risk_alerts_csv(
-        self, client: AsyncClient, setup_tenant, db_session: AsyncSession,
+        self,
+        client: AsyncClient,
+        setup_tenant,
+        db_session: AsyncSession,
     ):
         tid, headers = setup_tenant
 
@@ -248,7 +273,10 @@ class TestRiskExport:
 
     @pytest.mark.anyio
     async def test_export_diversion_csv(
-        self, client: AsyncClient, setup_tenant, db_session: AsyncSession,
+        self,
+        client: AsyncClient,
+        setup_tenant,
+        db_session: AsyncSession,
     ):
         tid, headers = setup_tenant
 

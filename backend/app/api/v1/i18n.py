@@ -49,10 +49,7 @@ async def list_translations_endpoint(
     tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
     translations = await list_translations(db, tenant_id, locale=locale)
-    return [
-        {"id": str(t.id), "key": t.key, "locale": t.locale, "value": t.value}
-        for t in translations
-    ]
+    return [{"id": str(t.id), "key": t.key, "locale": t.locale, "value": t.value} for t in translations]
 
 
 @i18n_router.post("/translations/batch")

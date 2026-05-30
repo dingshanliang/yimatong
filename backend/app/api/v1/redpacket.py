@@ -61,7 +61,8 @@ async def create_rule_endpoint(
     tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
     rule = await create_rule(
-        db, tenant_id,
+        db,
+        tenant_id,
         name=body.name,
         total_budget=body.total_budget,
         min_amount=body.min_amount,
@@ -172,10 +173,7 @@ async def list_withdrawals_endpoint(
     tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
     withdrawals = await list_withdrawals(db, tenant_id)
-    return [
-        {"id": str(w.id), "amount": w.amount, "status": w.status}
-        for w in withdrawals
-    ]
+    return [{"id": str(w.id), "amount": w.amount, "status": w.status} for w in withdrawals]
 
 
 @redpacket_router.post("/risk-check")

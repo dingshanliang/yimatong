@@ -60,8 +60,12 @@ async def create_distributor_endpoint(
     tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
     dist = await create_distributor(
-        db, tenant_id, body.name, body.code,
-        contact_name=body.contact_name, contact_phone=body.contact_phone,
+        db,
+        tenant_id,
+        body.name,
+        body.code,
+        contact_name=body.contact_name,
+        contact_phone=body.contact_phone,
     )
     return {"id": str(dist.id), "name": dist.name, "code": dist.code}
 
@@ -76,7 +80,9 @@ async def list_distributors_endpoint(
     dists, total = await list_distributors(db, tenant_id, page=page, page_size=page_size)
     return PaginatedResponse(
         items=[{"id": str(d.id), "name": d.name, "code": d.code, "status": d.status} for d in dists],
-        total=total, page=page, page_size=page_size,
+        total=total,
+        page=page,
+        page_size=page_size,
     )
 
 
@@ -90,8 +96,12 @@ async def create_region_endpoint(
     tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
     region = await create_region(
-        db, tenant_id, body.name, body.code,
-        province=body.province, city=body.city,
+        db,
+        tenant_id,
+        body.name,
+        body.code,
+        province=body.province,
+        city=body.city,
         distributor_id=body.distributor_id,
     )
     return {"id": str(region.id), "name": region.name, "code": region.code, "city": region.city}
@@ -107,7 +117,9 @@ async def list_regions_endpoint(
     regions, total = await list_regions(db, tenant_id, page=page, page_size=page_size)
     return PaginatedResponse(
         items=[{"id": str(r.id), "name": r.name, "code": r.code, "city": r.city} for r in regions],
-        total=total, page=page, page_size=page_size,
+        total=total,
+        page=page,
+        page_size=page_size,
     )
 
 
@@ -121,8 +133,12 @@ async def create_store_endpoint(
     tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
     store = await create_store(
-        db, tenant_id, body.name, body.code,
-        region_id=body.region_id, distributor_id=body.distributor_id,
+        db,
+        tenant_id,
+        body.name,
+        body.code,
+        region_id=body.region_id,
+        distributor_id=body.distributor_id,
         address=body.address,
     )
     return {"id": str(store.id), "name": store.name, "code": store.code}
@@ -139,8 +155,11 @@ async def assign_batch_endpoint(
     tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
     result = await assign_batch_to_channel(
-        db, tenant_id, batch_id,
-        distributor_id=body.distributor_id, region_id=body.region_id,
+        db,
+        tenant_id,
+        batch_id,
+        distributor_id=body.distributor_id,
+        region_id=body.region_id,
     )
     if not result:
         raise HTTPException(status_code=404, detail="Code batch not found")
@@ -159,15 +178,24 @@ async def list_diversion_clues_endpoint(
     tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
     clues, total = await list_diversion_clues(
-        db, tenant_id, resolved=resolved, page=page, page_size=page_size,
+        db,
+        tenant_id,
+        resolved=resolved,
+        page=page,
+        page_size=page_size,
     )
     return PaginatedResponse(
-        items=[{
-            "id": str(c.id),
-            "public_id": c.public_id,
-            "expected_region": c.expected_region,
-            "detected_city": c.detected_city,
-            "resolved": c.resolved,
-        } for c in clues],
-        total=total, page=page, page_size=page_size,
+        items=[
+            {
+                "id": str(c.id),
+                "public_id": c.public_id,
+                "expected_region": c.expected_region,
+                "detected_city": c.detected_city,
+                "resolved": c.resolved,
+            }
+            for c in clues
+        ],
+        total=total,
+        page=page,
+        page_size=page_size,
     )

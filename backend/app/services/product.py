@@ -21,9 +21,7 @@ async def create_brand(
     logo_url: str | None = None,
     description: str | None = None,
 ) -> Brand:
-    existing = await db.execute(
-        select(Brand).where(Brand.tenant_id == tenant_id, Brand.name == name)
-    )
+    existing = await db.execute(select(Brand).where(Brand.tenant_id == tenant_id, Brand.name == name))
     if existing.scalar_one_or_none():
         from fastapi import HTTPException
 
@@ -73,9 +71,7 @@ async def update_brand(
     description: str | None = None,
     status: BrandStatus | None = None,
 ) -> Brand | None:
-    result = await db.execute(
-        select(Brand).where(Brand.id == brand_id, Brand.tenant_id == tenant_id)
-    )
+    result = await db.execute(select(Brand).where(Brand.id == brand_id, Brand.tenant_id == tenant_id))
     brand = result.scalar_one_or_none()
     if not brand:
         return None
@@ -158,9 +154,7 @@ async def update_product(
     description: str | None = None,
     status: ProductStatus | None = None,
 ) -> Product | None:
-    result = await db.execute(
-        select(Product).where(Product.id == product_id, Product.tenant_id == tenant_id)
-    )
+    result = await db.execute(select(Product).where(Product.id == product_id, Product.tenant_id == tenant_id))
     product = result.scalar_one_or_none()
     if not product:
         return None
@@ -187,11 +181,7 @@ async def create_sku(
     name: str,
     specifications: dict | None = None,
 ) -> SKU:
-    existing = await db.execute(
-        select(SKU).where(
-            SKU.product_id == product_id, SKU.code == code
-        )
-    )
+    existing = await db.execute(select(SKU).where(SKU.product_id == product_id, SKU.code == code))
     if existing.scalar_one_or_none():
         from fastapi import HTTPException
 
@@ -241,9 +231,7 @@ async def update_sku(
     specifications: dict | None = None,
     status: SKUStatus | None = None,
 ) -> SKU | None:
-    result = await db.execute(
-        select(SKU).where(SKU.id == sku_id, SKU.tenant_id == tenant_id)
-    )
+    result = await db.execute(select(SKU).where(SKU.id == sku_id, SKU.tenant_id == tenant_id))
     sku = result.scalar_one_or_none()
     if not sku:
         return None
@@ -283,9 +271,7 @@ async def create_production_batch(
     expiry_date,
 ) -> ProductionBatch:
     existing = await db.execute(
-        select(ProductionBatch).where(
-            ProductionBatch.tenant_id == tenant_id, ProductionBatch.batch_code == batch_code
-        )
+        select(ProductionBatch).where(ProductionBatch.tenant_id == tenant_id, ProductionBatch.batch_code == batch_code)
     )
     if existing.scalar_one_or_none():
         from fastapi import HTTPException
@@ -314,9 +300,7 @@ async def list_production_batches(
     page_size: int = 20,
 ) -> tuple[list[ProductionBatch], int]:
     stmt = select(ProductionBatch).where(ProductionBatch.tenant_id == tenant_id)
-    count_stmt = select(func.count()).select_from(ProductionBatch).where(
-        ProductionBatch.tenant_id == tenant_id
-    )
+    count_stmt = select(func.count()).select_from(ProductionBatch).where(ProductionBatch.tenant_id == tenant_id)
 
     if product_id:
         stmt = stmt.where(ProductionBatch.product_id == product_id)
@@ -382,12 +366,8 @@ async def import_batches_csv(
     return imported, errors
 
 
-async def check_brand_has_products(
-    db: AsyncSession, tenant_id: uuid.UUID, brand_id: uuid.UUID
-) -> bool:
+async def check_brand_has_products(db: AsyncSession, tenant_id: uuid.UUID, brand_id: uuid.UUID) -> bool:
     result = await db.execute(
-        select(func.count()).select_from(Product).where(
-            Product.tenant_id == tenant_id, Product.brand_id == brand_id
-        )
+        select(func.count()).select_from(Product).where(Product.tenant_id == tenant_id, Product.brand_id == brand_id)
     )
     return (result.scalar() or 0) > 0

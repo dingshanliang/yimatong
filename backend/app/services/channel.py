@@ -11,22 +11,30 @@ from app.models.code import CodeBatch, CodeItem
 
 def _resolve_ip(ip: str) -> str | None:
     from app.services.geoip import resolve_ip_to_city
+
     return resolve_ip_to_city(ip)
 
 
 async def create_distributor(
-    db: AsyncSession, tenant_id: uuid.UUID, name: str, code: str,
-    contact_name: str | None = None, contact_phone: str | None = None,
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    name: str,
+    code: str,
+    contact_name: str | None = None,
+    contact_phone: str | None = None,
 ) -> Distributor:
     phone_encrypted = None
     phone_hash = None
     if contact_phone:
         from app.utils.crypto import encrypt_phone, hash_phone
+
         phone_encrypted = encrypt_phone(contact_phone)
         phone_hash = hash_phone(contact_phone)
 
     dist = Distributor(
-        tenant_id=tenant_id, name=name, code=code,
+        tenant_id=tenant_id,
+        name=name,
+        code=code,
         contact_name=contact_name,
         contact_phone_encrypted=phone_encrypted,
         contact_phone_hash=phone_hash,
@@ -38,7 +46,10 @@ async def create_distributor(
 
 
 async def list_distributors(
-    db: AsyncSession, tenant_id: uuid.UUID, page: int = 1, page_size: int = 20,
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    page: int = 1,
+    page_size: int = 20,
 ) -> tuple[list[Distributor], int]:
     stmt = select(Distributor).where(Distributor.tenant_id == tenant_id)
     count_stmt = select(func.count()).select_from(Distributor).where(Distributor.tenant_id == tenant_id)
@@ -52,13 +63,21 @@ async def list_distributors(
 
 
 async def create_region(
-    db: AsyncSession, tenant_id: uuid.UUID, name: str, code: str,
-    province: str | None = None, city: str | None = None,
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    name: str,
+    code: str,
+    province: str | None = None,
+    city: str | None = None,
     distributor_id: uuid.UUID | None = None,
 ) -> Region:
     region = Region(
-        tenant_id=tenant_id, name=name, code=code,
-        province=province, city=city, distributor_id=distributor_id,
+        tenant_id=tenant_id,
+        name=name,
+        code=code,
+        province=province,
+        city=city,
+        distributor_id=distributor_id,
     )
     db.add(region)
     await db.flush()
@@ -67,7 +86,10 @@ async def create_region(
 
 
 async def list_regions(
-    db: AsyncSession, tenant_id: uuid.UUID, page: int = 1, page_size: int = 20,
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    page: int = 1,
+    page_size: int = 20,
 ) -> tuple[list[Region], int]:
     stmt = select(Region).where(Region.tenant_id == tenant_id)
     count_stmt = select(func.count()).select_from(Region).where(Region.tenant_id == tenant_id)
@@ -81,13 +103,20 @@ async def list_regions(
 
 
 async def create_store(
-    db: AsyncSession, tenant_id: uuid.UUID, name: str, code: str,
-    region_id: uuid.UUID | None = None, distributor_id: uuid.UUID | None = None,
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    name: str,
+    code: str,
+    region_id: uuid.UUID | None = None,
+    distributor_id: uuid.UUID | None = None,
     address: str | None = None,
 ) -> Store:
     store = Store(
-        tenant_id=tenant_id, name=name, code=code,
-        region_id=region_id, distributor_id=distributor_id,
+        tenant_id=tenant_id,
+        name=name,
+        code=code,
+        region_id=region_id,
+        distributor_id=distributor_id,
         address=address,
     )
     db.add(store)
@@ -97,13 +126,14 @@ async def create_store(
 
 
 async def assign_batch_to_channel(
-    db: AsyncSession, tenant_id: uuid.UUID, batch_id: uuid.UUID,
-    distributor_id: uuid.UUID | None = None, region_id: uuid.UUID | None = None,
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    batch_id: uuid.UUID,
+    distributor_id: uuid.UUID | None = None,
+    region_id: uuid.UUID | None = None,
 ) -> dict | None:
     """将码批次分配给经销商/区域"""
-    result = await db.execute(
-        select(CodeBatch).where(CodeBatch.id == batch_id, CodeBatch.tenant_id == tenant_id)
-    )
+    result = await db.execute(select(CodeBatch).where(CodeBatch.id == batch_id, CodeBatch.tenant_id == tenant_id))
     batch = result.scalar_one_or_none()
     if not batch:
         return None
@@ -123,25 +153,25 @@ async def assign_batch_to_channel(
 
 
 async def get_batch_expected_region(
-    db: AsyncSession, batch_id: uuid.UUID,
+    db: AsyncSession,
+    batch_id: uuid.UUID,
 ) -> str | None:
     """获取批次分配的区域城市"""
-    result = await db.execute(
-        select(CodeBatch).where(CodeBatch.id == batch_id)
-    )
+    result = await db.execute(select(CodeBatch).where(CodeBatch.id == batch_id))
     batch = result.scalar_one_or_none()
     if not batch or not batch.region_id:
         return None
 
-    region_result = await db.execute(
-        select(Region).where(Region.id == batch.region_id)
-    )
+    region_result = await db.execute(select(Region).where(Region.id == batch.region_id))
     region = region_result.scalar_one_or_none()
     return region.city if region else None
 
 
 async def check_diversion(
-    db: AsyncSession, tenant_id: uuid.UUID, public_id: str, ip: str,
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    public_id: str,
+    ip: str,
 ) -> DiversionClue | None:
     """检测窜货：扫码 IP 城市与批次分配区域不匹配"""
     detected_city = _resolve_ip(ip)
@@ -149,9 +179,7 @@ async def check_diversion(
         return None
 
     # 获取码项和批次
-    item_result = await db.execute(
-        select(CodeItem).where(CodeItem.public_id == public_id)
-    )
+    item_result = await db.execute(select(CodeItem).where(CodeItem.public_id == public_id))
     item = item_result.scalar_one_or_none()
     if not item or not item.code_batch_id:
         return None
@@ -165,9 +193,7 @@ async def check_diversion(
         return None
 
     # 生成窜货线索
-    batch_result = await db.execute(
-        select(CodeBatch).where(CodeBatch.id == item.code_batch_id)
-    )
+    batch_result = await db.execute(select(CodeBatch).where(CodeBatch.id == item.code_batch_id))
     batch = batch_result.scalar_one_or_none()
 
     clue = DiversionClue(
@@ -185,14 +211,14 @@ async def check_diversion(
 
 
 async def list_diversion_clues(
-    db: AsyncSession, tenant_id: uuid.UUID,
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
     resolved: bool | None = None,
-    page: int = 1, page_size: int = 20,
+    page: int = 1,
+    page_size: int = 20,
 ) -> tuple[list[DiversionClue], int]:
     stmt = select(DiversionClue).where(DiversionClue.tenant_id == tenant_id)
-    count_stmt = select(func.count()).select_from(DiversionClue).where(
-        DiversionClue.tenant_id == tenant_id
-    )
+    count_stmt = select(func.count()).select_from(DiversionClue).where(DiversionClue.tenant_id == tenant_id)
 
     if resolved is not None:
         stmt = stmt.where(DiversionClue.resolved == resolved)

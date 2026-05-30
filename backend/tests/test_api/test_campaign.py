@@ -57,9 +57,7 @@ async def auth_setup(client: AsyncClient):
 
 class TestCampaignCRUD:
     @pytest.mark.anyio
-    async def test_create_campaign(
-        self, client: AsyncClient, auth_setup
-    ):
+    async def test_create_campaign(self, client: AsyncClient, auth_setup):
         _, headers = auth_setup
         resp = await client.post(
             "/api/v1/campaigns",
@@ -78,9 +76,7 @@ class TestCampaignCRUD:
         assert data["status"] == "draft"
 
     @pytest.mark.anyio
-    async def test_create_campaign_missing_rules(
-        self, client: AsyncClient, auth_setup
-    ):
+    async def test_create_campaign_missing_rules(self, client: AsyncClient, auth_setup):
         _, headers = auth_setup
         resp = await client.post(
             "/api/v1/campaigns",
@@ -96,9 +92,7 @@ class TestCampaignCRUD:
         assert resp.status_code == 422
 
     @pytest.mark.anyio
-    async def test_list_campaigns(
-        self, client: AsyncClient, auth_setup
-    ):
+    async def test_list_campaigns(self, client: AsyncClient, auth_setup):
         _, headers = auth_setup
         await client.post(
             "/api/v1/campaigns",
@@ -116,9 +110,7 @@ class TestCampaignCRUD:
         assert resp.json()["total"] >= 1
 
     @pytest.mark.anyio
-    async def test_campaign_status_change(
-        self, client: AsyncClient, auth_setup
-    ):
+    async def test_campaign_status_change(self, client: AsyncClient, auth_setup):
         _, headers = auth_setup
         create = await client.post(
             "/api/v1/campaigns",
@@ -141,9 +133,7 @@ class TestCampaignCRUD:
         assert resp.json()["status"] == "active"
 
     @pytest.mark.anyio
-    async def test_delete_draft_campaign(
-        self, client: AsyncClient, auth_setup
-    ):
+    async def test_delete_draft_campaign(self, client: AsyncClient, auth_setup):
         _, headers = auth_setup
         create = await client.post(
             "/api/v1/campaigns",
@@ -163,9 +153,7 @@ class TestCampaignCRUD:
 
 class TestBenefitAndClaim:
     @pytest.mark.anyio
-    async def test_create_benefit(
-        self, client: AsyncClient, auth_setup
-    ):
+    async def test_create_benefit(self, client: AsyncClient, auth_setup):
         _, headers = auth_setup
         campaign = await client.post(
             "/api/v1/campaigns",
@@ -195,9 +183,7 @@ class TestBenefitAndClaim:
         assert resp.json()["stock_used"] == 0
 
     @pytest.mark.anyio
-    async def test_claim_benefit_success(
-        self, client: AsyncClient, auth_setup
-    ):
+    async def test_claim_benefit_success(self, client: AsyncClient, auth_setup):
         _, headers = auth_setup
         campaign = await client.post(
             "/api/v1/campaigns",
@@ -232,9 +218,7 @@ class TestBenefitAndClaim:
         assert resp.json()["status"] == "success"
 
     @pytest.mark.anyio
-    async def test_claim_idempotent(
-        self, client: AsyncClient, auth_setup
-    ):
+    async def test_claim_idempotent(self, client: AsyncClient, auth_setup):
         _, headers = auth_setup
         campaign = await client.post(
             "/api/v1/campaigns",
@@ -276,9 +260,7 @@ class TestBenefitAndClaim:
         assert resp.json()["status"] == "idempotent"
 
     @pytest.mark.anyio
-    async def test_claim_out_of_stock(
-        self, client: AsyncClient, auth_setup
-    ):
+    async def test_claim_out_of_stock(self, client: AsyncClient, auth_setup):
         _, headers = auth_setup
         campaign = await client.post(
             "/api/v1/campaigns",
@@ -319,9 +301,7 @@ class TestBenefitAndClaim:
         assert resp.status_code == 410
 
     @pytest.mark.anyio
-    async def test_claim_per_person_limit(
-        self, client: AsyncClient, auth_setup
-    ):
+    async def test_claim_per_person_limit(self, client: AsyncClient, auth_setup):
         _, headers = auth_setup
         campaign = await client.post(
             "/api/v1/campaigns",

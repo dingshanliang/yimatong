@@ -11,9 +11,7 @@ from app.models.base import Base
 
 class DailyScanStats(Base):
     __tablename__ = "daily_scan_stats"
-    __table_args__ = (
-        UniqueConstraint("tenant_id", "date", name="uq_tenant_date"),
-    )
+    __table_args__ = (UniqueConstraint("tenant_id", "date", name="uq_tenant_date"),)
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     tenant_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)

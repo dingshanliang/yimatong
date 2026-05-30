@@ -49,9 +49,7 @@ class CodeBatch(Base):
     distributor_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True, index=True)
     region_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True, index=True)
 
-    __table_args__ = (
-        Index("ix_code_batches_tenant_batch", "tenant_id", "batch_code"),
-    )
+    __table_args__ = (Index("ix_code_batches_tenant_batch", "tenant_id", "batch_code"),)
 
 
 class CodeItem(Base):
@@ -59,13 +57,9 @@ class CodeItem(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid7)
     tenant_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
-    code_batch_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("code_batches.id"), nullable=False, index=True
-    )
+    code_batch_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("code_batches.id"), nullable=False, index=True)
     public_id: Mapped[str] = mapped_column(String(20), nullable=False, unique=True)
-    status: Mapped[CodeItemStatus] = mapped_column(
-        default=CodeItemStatus.created, nullable=False
-    )
+    status: Mapped[CodeItemStatus] = mapped_column(default=CodeItemStatus.created, nullable=False)
     code_type: Mapped[str] = mapped_column(String(20), nullable=False, default=CodeType.single)
     pair_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True, index=True)
     activated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

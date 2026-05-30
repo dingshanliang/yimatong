@@ -9,3 +9,7 @@ npm-debug.log*
 .pnpm-debug.log*
 .vercel
 *.tsbuildinfo
+/test-results/
+/playwright-report/
+/playwright/.cache/
+/e2e/.auth/

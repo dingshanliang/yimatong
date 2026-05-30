@@ -68,10 +68,18 @@ async def clone_industry_template(
         raise HTTPException(status_code=404, detail="Template not found")
     tpl = ALL_TEMPLATES[index]
     template = await create_page_template(
-        db, tenant_id, tpl["name"], tpl["template_type"], tpl["description"],
+        db,
+        tenant_id,
+        tpl["name"],
+        tpl["template_type"],
+        tpl["description"],
     )
     version = await create_page_version(
-        db, tenant_id, uuid.UUID(template["id"]), tpl["config_json"], account_id,
+        db,
+        tenant_id,
+        uuid.UUID(template["id"]),
+        tpl["config_json"],
+        account_id,
     )
     return {"template": template, "version": version}
 
@@ -83,7 +91,12 @@ async def create_page_template_endpoint(
     tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
     return await create_page_template(
-        db, tenant_id, body.name, body.template_type, body.description, body.product_id,
+        db,
+        tenant_id,
+        body.name,
+        body.template_type,
+        body.description,
+        body.product_id,
     )
 
 
@@ -97,8 +110,12 @@ async def list_page_templates_endpoint(
     tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
     items, total = await list_page_templates(
-        db, tenant_id, template_type=template_type, status=status,
-        page=page, page_size=page_size,
+        db,
+        tenant_id,
+        template_type=template_type,
+        status=status,
+        page=page,
+        page_size=page_size,
     )
     return PaginatedResponse(items=items, total=total, page=page, page_size=page_size)
 
@@ -123,7 +140,11 @@ async def update_page_template_endpoint(
     tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
     data = await update_page_template(
-        db, tenant_id, template_id, name=body.name, description=body.description,
+        db,
+        tenant_id,
+        template_id,
+        name=body.name,
+        description=body.description,
     )
     if not data:
         raise HTTPException(status_code=404, detail="Page template not found")
@@ -167,7 +188,11 @@ async def create_page_version_endpoint(
     account_id: uuid.UUID = Depends(get_current_account_id),
 ):
     return await create_page_version(
-        db, tenant_id, template_id, body.config_json, account_id,
+        db,
+        tenant_id,
+        template_id,
+        body.config_json,
+        account_id,
     )
 
 
@@ -203,6 +228,7 @@ async def publish_page_version_endpoint(
     if not data:
         raise HTTPException(status_code=404, detail="Page version not found")
     from app.services.page_render import invalidate_cache
+
     invalidate_cache(uuid.UUID(data["page_template_id"]))
     return data
 
@@ -217,6 +243,7 @@ async def archive_page_version_endpoint(
     if not data:
         raise HTTPException(status_code=404, detail="Page version not found")
     from app.services.page_render import invalidate_cache
+
     invalidate_cache(uuid.UUID(data["page_template_id"]))
     return data
 
@@ -230,10 +257,15 @@ async def rollback_page_version_endpoint(
     account_id: uuid.UUID = Depends(get_current_account_id),
 ):
     data = await rollback_page_version(
-        db, tenant_id, template_id, version_id, account_id,
+        db,
+        tenant_id,
+        template_id,
+        version_id,
+        account_id,
     )
     if not data:
         raise HTTPException(status_code=404, detail="Target version not found")
     from app.services.page_render import invalidate_cache
+
     invalidate_cache(template_id)
     return data

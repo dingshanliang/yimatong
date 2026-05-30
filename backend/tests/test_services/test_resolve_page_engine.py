@@ -88,10 +88,12 @@ async def full_setup(client: AsyncClient):
     # 创建版本并发布
     ver = await client.post(
         f"/api/v1/page-templates/{template_id}/versions",
-        json={"config_json": {
-            "brand_name": "引擎品牌",
-            "product_name": "引擎产品",
-        }},
+        json={
+            "config_json": {
+                "brand_name": "引擎品牌",
+                "product_name": "引擎产品",
+            }
+        },
         headers=headers,
     )
     vid = ver.json()["id"]
@@ -120,9 +122,7 @@ class TestResolvePageEngine:
         assert "引擎产品" in resp.text
 
     @pytest.mark.anyio
-    async def test_resolve_no_template_returns_default(
-        self, client: AsyncClient
-    ):
+    async def test_resolve_no_template_returns_default(self, client: AsyncClient):
         """没有关联模板时返回默认页面"""
         resp = await client.post(
             "/api/v1/tenants",
@@ -159,7 +159,8 @@ class TestResolvePageEngine:
             headers=headers,
         )
         await client.post(
-            f"/api/v1/code-batches/{batch.json()['id']}/activate", headers=headers,
+            f"/api/v1/code-batches/{batch.json()['id']}/activate",
+            headers=headers,
         )
         items = await client.get(
             f"/api/v1/code-items?code_batch_id={batch.json()['id']}",

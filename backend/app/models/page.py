@@ -2,7 +2,7 @@
 
 import uuid
 
-from sqlalchemy import JSON, String
+from sqlalchemy import JSON, Index, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base
@@ -34,7 +34,9 @@ class PageTemplate(Base):
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     template_type: Mapped[str] = mapped_column(String(50), nullable=False)
     status: Mapped[str] = mapped_column(
-        String(20), nullable=False, default=PageTemplateStatus.active,
+        String(20),
+        nullable=False,
+        default=PageTemplateStatus.active,
     )
     description: Mapped[str | None] = mapped_column(String(500), nullable=True)
 
@@ -45,11 +47,16 @@ class PageVersion(Base):
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     tenant_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
     page_template_id: Mapped[uuid.UUID] = mapped_column(
-        nullable=False, index=True,
+        nullable=False,
+        index=True,
     )
     version: Mapped[int] = mapped_column(nullable=False)
     config_json: Mapped[dict] = mapped_column(JSON, nullable=False)
     status: Mapped[str] = mapped_column(
-        String(20), nullable=False, default=PageVersionStatus.draft,
+        String(20),
+        nullable=False,
+        default=PageVersionStatus.draft,
     )
     created_by: Mapped[uuid.UUID] = mapped_column(nullable=False)
+
+    __table_args__ = (Index("ix_page_versions_template_status", "page_template_id", "status"),)

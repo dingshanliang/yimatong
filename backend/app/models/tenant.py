@@ -1,5 +1,5 @@
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import StrEnum
 
 from sqlalchemy import JSON, Column, DateTime, ForeignKey, String, Table
@@ -45,8 +45,11 @@ class Tenant(Base):
     slug: Mapped[str] = mapped_column(String(50), unique=True, nullable=False)
     status: Mapped[TenantStatus] = mapped_column(SQLEnum(TenantStatus), default=TenantStatus.active, nullable=False)
     plan: Mapped[TenantPlan] = mapped_column(SQLEnum(TenantPlan), default=TenantPlan.free, nullable=False)
+    plan_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     quota: Mapped[dict | None] = mapped_column(JSON, default=dict, nullable=True)
     compliance_settings: Mapped[dict | None] = mapped_column(JSON, default=dict, nullable=True)
+    onboarding_progress: Mapped[dict | None] = mapped_column(JSON, default=dict, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
 
     organizations = relationship("Organization", back_populates="tenant", lazy="selectin")
 
@@ -101,3 +104,35 @@ class Permission(Base):
     description: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
     roles = relationship("Role", secondary="role_permissions", back_populates="permissions", lazy="selectin")
+
+
+class OpsTaskStatus(StrEnum):
+    pending = "pending"
+    in_progress = "in_progress"
+    completed = "completed"
+    cancelled = "cancelled"
+
+
+class OpsTaskPriority(StrEnum):
+    low = "low"
+    medium = "medium"
+    high = "high"
+
+
+class OpsTask(Base):
+    __tablename__ = "ops_tasks"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid7)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("tenants.id"), nullable=False, index=True)
+    title: Mapped[str] = mapped_column(String(200), nullable=False)
+    description: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    status: Mapped[OpsTaskStatus] = mapped_column(SQLEnum(OpsTaskStatus), default=OpsTaskStatus.pending, nullable=False)
+    priority: Mapped[OpsTaskPriority] = mapped_column(SQLEnum(OpsTaskPriority), default=OpsTaskPriority.medium, nullable=False)
+    due_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )

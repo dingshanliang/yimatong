@@ -53,6 +53,7 @@ async def lifespan(app):
 
     if settings.secret_key == "dev-secret-key-change-in-production":
         import os
+
         if os.getenv("ENVIRONMENT", "development") != "development":
             raise RuntimeError(
                 "SECRET_KEY must be changed from default value in non-development environments. "
@@ -61,8 +62,7 @@ async def lifespan(app):
 
     if not settings.aes_master_key_v1 or not settings.hmac_pepper:
         raise RuntimeError(
-            "AES_MASTER_KEY_V1 and HMAC_PEPPER must be configured. "
-            "Crypto module cannot start without encryption keys."
+            "AES_MASTER_KEY_V1 and HMAC_PEPPER must be configured. Crypto module cannot start without encryption keys."
         )
     init_crypto(EnvKeyProvider())
 

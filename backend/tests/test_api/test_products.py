@@ -86,19 +86,21 @@ class TestProductCRUD:
         assert len(data["items"]) <= 2
 
     @pytest.mark.anyio
-    async def test_list_products_filter_by_brand(
-        self, client: AsyncClient, tenant_with_auth, brand_id
-    ):
+    async def test_list_products_filter_by_brand(self, client: AsyncClient, tenant_with_auth, brand_id):
         _, headers = tenant_with_auth
         # Create second brand
         resp2 = await client.post("/api/v1/brands", json={"name": "品牌2"}, headers=headers)
         brand2_id = resp2.json()["id"]
 
         await client.post(
-            "/api/v1/products", json={"brand_id": brand_id, "name": "A产品"}, headers=headers,
+            "/api/v1/products",
+            json={"brand_id": brand_id, "name": "A产品"},
+            headers=headers,
         )
         await client.post(
-            "/api/v1/products", json={"brand_id": brand2_id, "name": "B产品"}, headers=headers,
+            "/api/v1/products",
+            json={"brand_id": brand2_id, "name": "B产品"},
+            headers=headers,
         )
 
         resp = await client.get(f"/api/v1/products?brand_id={brand_id}", headers=headers)
@@ -126,9 +128,7 @@ class TestProductCRUD:
         assert resp.json()["category"] == "新分类"
 
     @pytest.mark.anyio
-    async def test_list_products_filter_by_category(
-        self, client: AsyncClient, tenant_with_auth, brand_id
-    ):
+    async def test_list_products_filter_by_category(self, client: AsyncClient, tenant_with_auth, brand_id):
         _, headers = tenant_with_auth
         await client.post(
             "/api/v1/products",

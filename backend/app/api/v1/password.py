@@ -57,9 +57,7 @@ async def reset_password(
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
-    result = await db.execute(
-        select(Account).where(Account.id == body.account_id, Account.tenant_id == tenant_id)
-    )
+    result = await db.execute(select(Account).where(Account.id == body.account_id, Account.tenant_id == tenant_id))
     account = result.scalar_one_or_none()
     if not account:
         raise HTTPException(status_code=404, detail="Account not found")

@@ -90,8 +90,14 @@ class TestCodeItemModel:
         mapper = inspect(CodeItem)
         col_names = {c.key for c in mapper.mapper.column_attrs}
         required = {
-            "id", "tenant_id", "code_batch_id", "public_id", "status",
-            "activated_at", "bound_at", "revoked_at",
+            "id",
+            "tenant_id",
+            "code_batch_id",
+            "public_id",
+            "status",
+            "activated_at",
+            "bound_at",
+            "revoked_at",
         }
         assert required.issubset(col_names)
 
@@ -103,4 +109,5 @@ class TestCodeItemModel:
 
 def uuid():
     from uuid6 import uuid7
+
     return uuid7()

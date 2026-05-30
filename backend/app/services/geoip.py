@@ -24,6 +24,7 @@ def _init_reader():
     )
     try:
         import geoip2.database
+
         _reader = geoip2.database.Reader(db_path)
         return True
     except ImportError:

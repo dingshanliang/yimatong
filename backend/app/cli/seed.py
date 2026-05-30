@@ -108,9 +108,7 @@ def code(
 
 
 async def create_brand_if_needed(db: AsyncSession, tenant_id: uuid.UUID, name: str) -> Brand:
-    result = await db.execute(
-        select(Brand).where(Brand.tenant_id == tenant_id, Brand.name == name)
-    )
+    result = await db.execute(select(Brand).where(Brand.tenant_id == tenant_id, Brand.name == name))
     existing = result.scalar_one_or_none()
     if existing:
         return existing
@@ -119,12 +117,8 @@ async def create_brand_if_needed(db: AsyncSession, tenant_id: uuid.UUID, name: s
     return await _create_brand(db, tenant_id, name)
 
 
-async def create_product_if_needed(
-    db: AsyncSession, tenant_id: uuid.UUID, brand_id: uuid.UUID, name: str
-) -> Product:
-    result = await db.execute(
-        select(Product).where(Product.tenant_id == tenant_id, Product.name == name)
-    )
+async def create_product_if_needed(db: AsyncSession, tenant_id: uuid.UUID, brand_id: uuid.UUID, name: str) -> Product:
+    result = await db.execute(select(Product).where(Product.tenant_id == tenant_id, Product.name == name))
     existing = result.scalar_one_or_none()
     if existing:
         return existing
@@ -136,9 +130,7 @@ async def create_product_if_needed(
 async def create_sku_if_needed(
     db: AsyncSession, tenant_id: uuid.UUID, product_id: uuid.UUID, code: str, name: str
 ) -> SKU:
-    result = await db.execute(
-        select(SKU).where(SKU.product_id == product_id, SKU.code == code)
-    )
+    result = await db.execute(select(SKU).where(SKU.product_id == product_id, SKU.code == code))
     existing = result.scalar_one_or_none()
     if existing:
         return existing

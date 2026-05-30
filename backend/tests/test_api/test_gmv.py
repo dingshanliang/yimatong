@@ -112,7 +112,10 @@ class TestMatching:
 
     @pytest.mark.anyio
     async def test_match_by_phone(
-        self, client: AsyncClient, setup_tenant, db_session: AsyncSession,
+        self,
+        client: AsyncClient,
+        setup_tenant,
+        db_session: AsyncSession,
     ):
         tid, headers = setup_tenant
 

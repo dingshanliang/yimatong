@@ -395,13 +395,13 @@ export default function PagesPage() {
       >
         <Form form={form} layout="vertical" onFinish={handleCreate}>
           <Form.Item name="name" label="模板名称" rules={[{ required: true }]}>
-            <Input />
+            <Input data-testid="page-template-name-input" />
           </Form.Item>
           <Form.Item name="template_type" label="类型" rules={[{ required: true }]}>
-            <Select options={Object.entries(TYPE_LABELS).map(([value, label]) => ({ value, label }))} />
+            <Select options={Object.entries(TYPE_LABELS).map(([value, label]) => ({ value, label }))} data-testid="page-template-type-select" />
           </Form.Item>
           <Form.Item name="description" label="描述">
-            <TextArea rows={2} />
+            <TextArea rows={2} data-testid="page-template-description-input" />
           </Form.Item>
         </Form>
       </Modal>

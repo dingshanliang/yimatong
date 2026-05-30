@@ -85,7 +85,8 @@ async def e2e_setup(client: AsyncClient):
         headers=headers,
     )
     await client.post(
-        f"/api/v1/page-versions/{ver.json()['id']}/publish", headers=headers,
+        f"/api/v1/page-versions/{ver.json()['id']}/publish",
+        headers=headers,
     )
 
     # 激活码
@@ -100,9 +101,7 @@ async def e2e_setup(client: AsyncClient):
 
 class TestE2EScanFlow:
     @pytest.mark.anyio
-    async def test_scan_returns_page_content(
-        self, client: AsyncClient, e2e_setup
-    ):
+    async def test_scan_returns_page_content(self, client: AsyncClient, e2e_setup):
         _, _, public_ids = e2e_setup
         resp = await client.get(f"/c/{public_ids[0]}")
         assert resp.status_code == 200
@@ -110,9 +109,7 @@ class TestE2EScanFlow:
         assert "E2E产品" in resp.text
 
     @pytest.mark.anyio
-    async def test_scan_with_wechat_ua(
-        self, client: AsyncClient, e2e_setup
-    ):
+    async def test_scan_with_wechat_ua(self, client: AsyncClient, e2e_setup):
         _, _, public_ids = e2e_setup
         resp = await client.get(
             f"/c/{public_ids[0]}",
@@ -122,9 +119,7 @@ class TestE2EScanFlow:
         assert "E2E品牌" in resp.text
 
     @pytest.mark.anyio
-    async def test_repeated_scan_works(
-        self, client: AsyncClient, e2e_setup
-    ):
+    async def test_repeated_scan_works(self, client: AsyncClient, e2e_setup):
         _, _, public_ids = e2e_setup
         # 多次扫码
         for _ in range(3):
@@ -132,9 +127,7 @@ class TestE2EScanFlow:
             assert resp.status_code == 200
 
     @pytest.mark.anyio
-    async def test_different_codes_resolve_independently(
-        self, client: AsyncClient, e2e_setup
-    ):
+    async def test_different_codes_resolve_independently(self, client: AsyncClient, e2e_setup):
         _, _, public_ids = e2e_setup
         r1 = await client.get(f"/c/{public_ids[0]}")
         r2 = await client.get(f"/c/{public_ids[1]}")

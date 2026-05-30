@@ -83,10 +83,12 @@ class RiskRuleCreateCompat(BaseModel):
     action: str
     config: dict
 
+
 class RiskRuleUpdateCompat(BaseModel):
     name: str | None = None
     action: str | None = None
     config: dict | None = None
+
 
 @prd_compat_router.get("/api/v1/risk/rules")
 async def list_risk_rules_compat(

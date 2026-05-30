@@ -31,7 +31,8 @@ class TestSeedCode:
         mock_gen.return_value = 100
 
         result = runner.invoke(
-            app, ["code", "--tenant", "test", "--batch-code", "BATCH001", "--count", "100"],
+            app,
+            ["code", "--tenant", "test", "--batch-code", "BATCH001", "--count", "100"],
         )
         assert result.exit_code == 0
         assert "100" in result.output

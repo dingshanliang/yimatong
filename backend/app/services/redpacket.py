@@ -43,9 +43,7 @@ async def create_rule(
 
 async def list_rules(db: AsyncSession, tenant_id: uuid.UUID) -> list[RedPacketRule]:
     result = await db.execute(
-        select(RedPacketRule)
-        .where(RedPacketRule.tenant_id == tenant_id)
-        .order_by(RedPacketRule.created_at.desc())
+        select(RedPacketRule).where(RedPacketRule.tenant_id == tenant_id).order_by(RedPacketRule.created_at.desc())
     )
     return list(result.scalars().all())
 
@@ -59,6 +57,7 @@ async def submit_kyc(
     phone: str,
 ) -> KYCRecord:
     from app.utils.crypto import encrypt_phone, hash_phone
+
     phone_encrypted = encrypt_phone(phone)
     phone_hash = hash_phone(phone)
 
@@ -77,7 +76,9 @@ async def submit_kyc(
 
 
 async def get_kyc_status(
-    db: AsyncSession, tenant_id: uuid.UUID, account_id: uuid.UUID,
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    account_id: uuid.UUID,
 ) -> KYCRecord | None:
     result = await db.execute(
         select(KYCRecord)
@@ -106,7 +107,9 @@ async def claim_redpacket(
     # 风控：检查日领取次数
     today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
     daily_count_result = await db.execute(
-        select(func.count()).select_from(RedPacketClaim).where(
+        select(func.count())
+        .select_from(RedPacketClaim)
+        .where(
             RedPacketClaim.tenant_id == tenant_id,
             RedPacketClaim.rule_id == rule_id,
             RedPacketClaim.account_id == account_id,
@@ -119,7 +122,9 @@ async def claim_redpacket(
 
     # 风控：检查总领取次数
     total_count_result = await db.execute(
-        select(func.count()).select_from(RedPacketClaim).where(
+        select(func.count())
+        .select_from(RedPacketClaim)
+        .where(
             RedPacketClaim.tenant_id == tenant_id,
             RedPacketClaim.rule_id == rule_id,
             RedPacketClaim.account_id == account_id,
@@ -168,12 +173,11 @@ async def request_withdrawal(
 
 
 async def list_withdrawals(
-    db: AsyncSession, tenant_id: uuid.UUID,
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
 ) -> list[Withdrawal]:
     result = await db.execute(
-        select(Withdrawal)
-        .where(Withdrawal.tenant_id == tenant_id)
-        .order_by(Withdrawal.created_at.desc())
+        select(Withdrawal).where(Withdrawal.tenant_id == tenant_id).order_by(Withdrawal.created_at.desc())
     )
     return list(result.scalars().all())
 

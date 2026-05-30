@@ -82,9 +82,7 @@ async def setup_campaigns(client: AsyncClient):
 
 class TestCampaignAnalytics:
     @pytest.mark.anyio
-    async def test_campaign_funnel(
-        self, client: AsyncClient, setup_campaigns
-    ):
+    async def test_campaign_funnel(self, client: AsyncClient, setup_campaigns):
         _, headers, c1_id, _ = setup_campaigns
         resp = await client.get(
             f"/api/v1/campaigns/analytics/funnel?campaign_id={c1_id}",
@@ -96,9 +94,7 @@ class TestCampaignAnalytics:
         assert len(data["steps"]) >= 2
 
     @pytest.mark.anyio
-    async def test_campaign_funnel_not_found(
-        self, client: AsyncClient, setup_campaigns
-    ):
+    async def test_campaign_funnel_not_found(self, client: AsyncClient, setup_campaigns):
         _, headers, _, _ = setup_campaigns
         resp = await client.get(
             "/api/v1/campaigns/analytics/funnel?campaign_id=00000000-0000-0000-0000-000000000099",
@@ -107,9 +103,7 @@ class TestCampaignAnalytics:
         assert resp.status_code == 404
 
     @pytest.mark.anyio
-    async def test_campaign_comparison(
-        self, client: AsyncClient, setup_campaigns
-    ):
+    async def test_campaign_comparison(self, client: AsyncClient, setup_campaigns):
         _, headers, c1_id, c2_id = setup_campaigns
         resp = await client.get(
             f"/api/v1/campaigns/analytics/comparison?campaign_ids={c1_id},{c2_id}",

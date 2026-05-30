@@ -18,6 +18,4 @@ class Translation(Base):
     locale: Mapped[str] = mapped_column(String(10), nullable=False)
     value: Mapped[str] = mapped_column(String(1000), nullable=False)
 
-    __table_args__ = (
-        Index("ix_translations_tenant_key_locale", "tenant_id", "key", "locale", unique=True),
-    )
+    __table_args__ = (Index("ix_translations_tenant_key_locale", "tenant_id", "key", "locale", unique=True),)

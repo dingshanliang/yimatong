@@ -146,7 +146,8 @@ class TestMemberManagement:
         )
 
         resp = await client.get(
-            f"/api/v1/regional/orgs/{org_id}/members", headers=org_headers,
+            f"/api/v1/regional/orgs/{org_id}/members",
+            headers=org_headers,
         )
         assert resp.status_code == 200
         assert len(resp.json()) >= 2
@@ -190,7 +191,8 @@ class TestSharedTemplate:
         )
 
         resp = await client.get(
-            f"/api/v1/regional/orgs/{org_id}/templates", headers=org_headers,
+            f"/api/v1/regional/orgs/{org_id}/templates",
+            headers=org_headers,
         )
         assert resp.status_code == 200
         assert len(resp.json()) >= 1
@@ -258,7 +260,8 @@ class TestRegionalDashboard:
         )
 
         resp = await client.get(
-            f"/api/v1/regional/orgs/{org_id}/dashboard", headers=org_headers,
+            f"/api/v1/regional/orgs/{org_id}/dashboard",
+            headers=org_headers,
         )
         assert resp.status_code == 200
         data = resp.json()

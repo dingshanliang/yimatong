@@ -73,7 +73,8 @@ async def _create_and_activate_batch(client, headers, product_id, sku_id, batch_
     batch_id = batch.json()["id"]
     await client.post(f"/api/v1/code-batches/{batch_id}/activate", headers=headers)
     items_resp = await client.get(
-        f"/api/v1/code-items?code_batch_id={batch_id}", headers=headers,
+        f"/api/v1/code-items?code_batch_id={batch_id}",
+        headers=headers,
     )
     return items_resp.json()["items"]
 
@@ -83,7 +84,10 @@ class TestMultiLocationAlert:
 
     @pytest.mark.anyio
     async def test_multi_location_creates_alert(
-        self, client: AsyncClient, setup_tenant, db_session: AsyncSession,
+        self,
+        client: AsyncClient,
+        setup_tenant,
+        db_session: AsyncSession,
     ):
         tid, headers, product_id, sku_id = setup_tenant
         from app.services.risk import check_multi_location
@@ -106,7 +110,10 @@ class TestMultiLocationAlert:
 
     @pytest.mark.anyio
     async def test_single_location_no_alert(
-        self, client: AsyncClient, setup_tenant, db_session: AsyncSession,
+        self,
+        client: AsyncClient,
+        setup_tenant,
+        db_session: AsyncSession,
     ):
         tid, headers, product_id, sku_id = setup_tenant
         from app.services.risk import check_multi_location
@@ -131,7 +138,10 @@ class TestSuspectedCopyAlert:
 
     @pytest.mark.anyio
     async def test_high_frequency_creates_alert(
-        self, client: AsyncClient, setup_tenant, db_session: AsyncSession,
+        self,
+        client: AsyncClient,
+        setup_tenant,
+        db_session: AsyncSession,
     ):
         tid, headers, product_id, sku_id = setup_tenant
         from app.services.risk import check_suspected_copy
@@ -158,7 +168,9 @@ class TestFreezeCode:
 
     @pytest.mark.anyio
     async def test_freeze_activated_code(
-        self, client: AsyncClient, setup_tenant,
+        self,
+        client: AsyncClient,
+        setup_tenant,
     ):
         tid, headers, product_id, sku_id = setup_tenant
         items = await _create_and_activate_batch(client, headers, product_id, sku_id, "FREEZE-001")
@@ -174,7 +186,9 @@ class TestFreezeCode:
 
     @pytest.mark.anyio
     async def test_frozen_code_shows_warning_page(
-        self, client: AsyncClient, setup_tenant,
+        self,
+        client: AsyncClient,
+        setup_tenant,
     ):
         tid, headers, product_id, sku_id = setup_tenant
         items = await _create_and_activate_batch(client, headers, product_id, sku_id, "FREEZE-002")
@@ -191,7 +205,9 @@ class TestFreezeCode:
 
     @pytest.mark.anyio
     async def test_unfreeze_code(
-        self, client: AsyncClient, setup_tenant,
+        self,
+        client: AsyncClient,
+        setup_tenant,
     ):
         tid, headers, product_id, sku_id = setup_tenant
         items = await _create_and_activate_batch(client, headers, product_id, sku_id, "FREEZE-003")
@@ -211,7 +227,10 @@ class TestRiskAlertAPI:
 
     @pytest.mark.anyio
     async def test_list_alerts(
-        self, client: AsyncClient, setup_tenant, db_session: AsyncSession,
+        self,
+        client: AsyncClient,
+        setup_tenant,
+        db_session: AsyncSession,
     ):
         tid, headers, product_id, sku_id = setup_tenant
 
@@ -235,7 +254,10 @@ class TestRiskAlertAPI:
 
     @pytest.mark.anyio
     async def test_resolve_alert(
-        self, client: AsyncClient, setup_tenant, db_session: AsyncSession,
+        self,
+        client: AsyncClient,
+        setup_tenant,
+        db_session: AsyncSession,
     ):
         tid, headers, product_id, sku_id = setup_tenant
 
@@ -259,7 +281,10 @@ class TestRiskAlertAPI:
 
     @pytest.mark.anyio
     async def test_filter_by_type(
-        self, client: AsyncClient, setup_tenant, db_session: AsyncSession,
+        self,
+        client: AsyncClient,
+        setup_tenant,
+        db_session: AsyncSession,
     ):
         tid, headers, product_id, sku_id = setup_tenant
 

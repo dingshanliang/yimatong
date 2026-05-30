@@ -3,7 +3,7 @@
 import uuid
 from enum import StrEnum
 
-from sqlalchemy import Index, String, Text
+from sqlalchemy import Index, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 from uuid6 import uuid7
 
@@ -26,14 +26,16 @@ class ConsumerProfile(Base):
     phone_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
     nickname: Mapped[str | None] = mapped_column(String(100), nullable=True)
     member_level: Mapped[str] = mapped_column(
-        String(20), nullable=False, default=MemberLevel.normal,
+        String(20),
+        nullable=False,
+        default=MemberLevel.normal,
     )
     tags: Mapped[str | None] = mapped_column(String(500), nullable=True)
     total_points: Mapped[int] = mapped_column(nullable=False, default=0)
 
     __table_args__ = (
+        UniqueConstraint("phone_hash"),
         Index("ix_consumer_profiles_tenant", "tenant_id"),
-        Index("ix_consumer_profiles_tenant_phone", "tenant_id", "phone_hash", unique=True),
     )
 
 
@@ -54,13 +56,12 @@ class PointTransaction(Base):
     reason: Mapped[str] = mapped_column(String(200), nullable=False, default="")
     reference_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
 
-    __table_args__ = (
-        Index("ix_point_transactions_consumer", "tenant_id", "consumer_id"),
-    )
+    __table_args__ = (Index("ix_point_transactions_consumer", "tenant_id", "consumer_id"),)
 
 
 class PointRule(Base):
     """积分规则配置"""
+
     __tablename__ = "point_rules"
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid7)
@@ -69,6 +70,4 @@ class PointRule(Base):
     points: Mapped[int] = mapped_column(nullable=False)
     enabled: Mapped[bool] = mapped_column(default=True, nullable=False)
 
-    __table_args__ = (
-        Index("ix_point_rules_tenant_type", "tenant_id", "rule_type", unique=True),
-    )
+    __table_args__ = (Index("ix_point_rules_tenant_type", "tenant_id", "rule_type", unique=True),)

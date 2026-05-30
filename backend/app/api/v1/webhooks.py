@@ -53,10 +53,7 @@ async def list_endpoints(
     tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
     eps = await list_webhook_endpoints(db, tenant_id)
-    return [
-        {"id": str(e.id), "url": e.url, "events": e.events, "enabled": e.enabled}
-        for e in eps
-    ]
+    return [{"id": str(e.id), "url": e.url, "events": e.events, "enabled": e.enabled} for e in eps]
 
 
 @webhook_router.post("/api-keys", status_code=201)
@@ -80,10 +77,7 @@ async def list_keys(
     tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
     keys = await list_api_keys(db, tenant_id)
-    return [
-        {"id": str(k.id), "name": k.name, "permissions": k.permissions, "revoked": k.revoked}
-        for k in keys
-    ]
+    return [{"id": str(k.id), "name": k.name, "permissions": k.permissions, "revoked": k.revoked} for k in keys]
 
 
 @webhook_router.delete("/api-keys/{key_id}")

@@ -21,9 +21,7 @@ class Distributor(Base):
     contact_phone_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="active")
 
-    __table_args__ = (
-        Index("ix_distributors_tenant_code", "tenant_id", "code", unique=True),
-    )
+    __table_args__ = (Index("ix_distributors_tenant_code", "tenant_id", "code", unique=True),)
 
 
 class Region(Base):
@@ -36,12 +34,12 @@ class Region(Base):
     province: Mapped[str | None] = mapped_column(String(50), nullable=True)
     city: Mapped[str | None] = mapped_column(String(50), nullable=True)
     distributor_id: Mapped[uuid.UUID | None] = mapped_column(
-        ForeignKey("distributors.id"), nullable=True, index=True,
+        ForeignKey("distributors.id"),
+        nullable=True,
+        index=True,
     )
 
-    __table_args__ = (
-        Index("ix_regions_tenant_code", "tenant_id", "code", unique=True),
-    )
+    __table_args__ = (Index("ix_regions_tenant_code", "tenant_id", "code", unique=True),)
 
 
 class Store(Base):
@@ -52,21 +50,24 @@ class Store(Base):
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     code: Mapped[str] = mapped_column(String(50), nullable=False)
     region_id: Mapped[uuid.UUID | None] = mapped_column(
-        ForeignKey("regions.id"), nullable=True, index=True,
+        ForeignKey("regions.id"),
+        nullable=True,
+        index=True,
     )
     distributor_id: Mapped[uuid.UUID | None] = mapped_column(
-        ForeignKey("distributors.id"), nullable=True, index=True,
+        ForeignKey("distributors.id"),
+        nullable=True,
+        index=True,
     )
     address: Mapped[str | None] = mapped_column(String(500), nullable=True)
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="active")
 
-    __table_args__ = (
-        Index("ix_stores_tenant_code", "tenant_id", "code", unique=True),
-    )
+    __table_args__ = (Index("ix_stores_tenant_code", "tenant_id", "code", unique=True),)
 
 
 class DiversionClue(Base):
     """窜货线索"""
+
     __tablename__ = "diversion_clues"
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid7)
@@ -79,6 +80,4 @@ class DiversionClue(Base):
     ip_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     resolved: Mapped[bool] = mapped_column(default=False, nullable=False)
 
-    __table_args__ = (
-        Index("ix_diversion_clues_tenant_resolved", "tenant_id", "resolved"),
-    )
+    __table_args__ = (Index("ix_diversion_clues_tenant_resolved", "tenant_id", "resolved"),)

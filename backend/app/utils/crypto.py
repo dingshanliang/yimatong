@@ -131,7 +131,9 @@ def hash_phone(phone: str) -> str:
     """HMAC-SHA256 哈希，返回 64 字符 hex"""
     provider = _get_provider()
     return hmac.new(
-        provider.get_pepper(), phone.encode("utf-8"), hashlib.sha256,
+        provider.get_pepper(),
+        phone.encode("utf-8"),
+        hashlib.sha256,
     ).hexdigest()
 
 

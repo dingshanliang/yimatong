@@ -13,8 +13,12 @@ from app.models.risk import (
 
 
 async def create_risk_rule(
-    db: AsyncSession, tenant_id: uuid.UUID, name: str, rule_type: str,
-    action: str, config: dict,
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    name: str,
+    rule_type: str,
+    action: str,
+    config: dict,
 ) -> RiskRule:
     rule = RiskRule(
         tenant_id=tenant_id,
@@ -30,25 +34,26 @@ async def create_risk_rule(
 
 
 async def list_risk_rules(
-    db: AsyncSession, tenant_id: uuid.UUID,
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
 ) -> list[RiskRule]:
-    result = await db.execute(
-        select(RiskRule).where(RiskRule.tenant_id == tenant_id).order_by(RiskRule.id.desc())
-    )
+    result = await db.execute(select(RiskRule).where(RiskRule.tenant_id == tenant_id).order_by(RiskRule.id.desc()))
     return list(result.scalars().all())
 
 
 async def get_risk_rule(
-    db: AsyncSession, tenant_id: uuid.UUID, rule_id: uuid.UUID,
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    rule_id: uuid.UUID,
 ) -> RiskRule | None:
-    result = await db.execute(
-        select(RiskRule).where(RiskRule.id == rule_id, RiskRule.tenant_id == tenant_id)
-    )
+    result = await db.execute(select(RiskRule).where(RiskRule.id == rule_id, RiskRule.tenant_id == tenant_id))
     return result.scalar_one_or_none()
 
 
 async def update_risk_rule(
-    db: AsyncSession, tenant_id: uuid.UUID, rule_id: uuid.UUID,
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    rule_id: uuid.UUID,
     **updates,
 ) -> RiskRule:
     rule = await get_risk_rule(db, tenant_id, rule_id)
@@ -62,7 +67,9 @@ async def update_risk_rule(
 
 
 async def delete_risk_rule(
-    db: AsyncSession, tenant_id: uuid.UUID, rule_id: uuid.UUID,
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    rule_id: uuid.UUID,
 ) -> bool:
     rule = await get_risk_rule(db, tenant_id, rule_id)
     if not rule:
@@ -99,7 +106,10 @@ def _evaluate_rule(rule: RiskRule, context: dict) -> bool:
 
 
 async def evaluate_rule(
-    db: AsyncSession, tenant_id: uuid.UUID, rule_type: str, context: dict,
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    rule_type: str,
+    context: dict,
     consumer_id: str | None = None,
 ) -> dict:
     """评估指定类型的所有启用规则"""
@@ -136,7 +146,10 @@ async def evaluate_rule(
 
 
 async def attach_rule_to_campaign(
-    db: AsyncSession, tenant_id: uuid.UUID, rule_id: uuid.UUID, campaign_id: uuid.UUID,
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    rule_id: uuid.UUID,
+    campaign_id: uuid.UUID,
 ) -> CampaignRiskRule:
     link = CampaignRiskRule(
         tenant_id=tenant_id,
@@ -150,7 +163,10 @@ async def attach_rule_to_campaign(
 
 
 async def evaluate_campaign_rules(
-    db: AsyncSession, tenant_id: uuid.UUID, campaign_id: uuid.UUID, context: dict,
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    campaign_id: uuid.UUID,
+    context: dict,
 ) -> dict:
     """评估活动关联的所有启用规则"""
     result = await db.execute(
@@ -198,15 +214,21 @@ async def evaluate_campaign_rules(
 
 
 async def list_interceptions(
-    db: AsyncSession, tenant_id: uuid.UUID,
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
     action: str | None = None,
-    page: int = 1, page_size: int = 20,
+    page: int = 1,
+    page_size: int = 20,
 ) -> tuple[list[InterceptionRecord], int]:
     stmt = select(InterceptionRecord).where(
         InterceptionRecord.tenant_id == tenant_id,
     )
-    count_stmt = select(func.count()).select_from(InterceptionRecord).where(
-        InterceptionRecord.tenant_id == tenant_id,
+    count_stmt = (
+        select(func.count())
+        .select_from(InterceptionRecord)
+        .where(
+            InterceptionRecord.tenant_id == tenant_id,
+        )
     )
 
     if action:

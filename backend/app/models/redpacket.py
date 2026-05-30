@@ -28,9 +28,7 @@ class RedPacketRule(Base):
     claimed_budget: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
-    __table_args__ = (
-        Index("ix_redpacket_rules_tenant", "tenant_id"),
-    )
+    __table_args__ = (Index("ix_redpacket_rules_tenant", "tenant_id"),)
 
 
 class KYCRecord(Base):
@@ -46,9 +44,7 @@ class KYCRecord(Base):
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
-    __table_args__ = (
-        Index("ix_kyc_tenant_account", "tenant_id", "account_id"),
-    )
+    __table_args__ = (Index("ix_kyc_tenant_account", "tenant_id", "account_id"),)
 
 
 class RedPacketClaim(Base):
@@ -62,9 +58,7 @@ class RedPacketClaim(Base):
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="claimed")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
-    __table_args__ = (
-        Index("ix_redpacket_claims_rule_account", "rule_id", "account_id"),
-    )
+    __table_args__ = (Index("ix_redpacket_claims_rule_account", "rule_id", "account_id"),)
 
 
 class Withdrawal(Base):
@@ -77,6 +71,4 @@ class Withdrawal(Base):
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
-    __table_args__ = (
-        Index("ix_withdrawals_tenant_account", "tenant_id", "account_id"),
-    )
+    __table_args__ = (Index("ix_withdrawals_tenant_account", "tenant_id", "account_id"),)

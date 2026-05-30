@@ -48,7 +48,9 @@ async def batch_with_codes(client: AsyncClient):
     brand = await client.post("/api/v1/brands", json={"name": "S品牌"}, headers=headers)
     brand_id = brand.json()["id"]
     prod = await client.post(
-        "/api/v1/products", json={"brand_id": brand_id, "name": "S产品"}, headers=headers,
+        "/api/v1/products",
+        json={"brand_id": brand_id, "name": "S产品"},
+        headers=headers,
     )
     product_id = prod.json()["id"]
     sku = await client.post(
@@ -61,8 +63,10 @@ async def batch_with_codes(client: AsyncClient):
     batch = await client.post(
         "/api/v1/code-batches",
         json={
-            "product_id": product_id, "sku_id": sku_id,
-            "batch_code": "SB-001", "quantity": 5,
+            "product_id": product_id,
+            "sku_id": sku_id,
+            "batch_code": "SB-001",
+            "quantity": 5,
         },
         headers=headers,
     )
@@ -75,7 +79,8 @@ class TestCodeStateTransitions:
     async def test_activate_batch(self, client: AsyncClient, batch_with_codes):
         _, headers, batch_id = batch_with_codes
         resp = await client.post(
-            f"/api/v1/code-batches/{batch_id}/activate", headers=headers,
+            f"/api/v1/code-batches/{batch_id}/activate",
+            headers=headers,
         )
         assert resp.status_code == 200
         assert resp.json()["activated"] == 5
@@ -88,12 +93,14 @@ class TestCodeStateTransitions:
 
         # Get a code item
         items_resp = await client.get(
-            f"/api/v1/code-items?code_batch_id={batch_id}&page_size=1", headers=headers,
+            f"/api/v1/code-items?code_batch_id={batch_id}&page_size=1",
+            headers=headers,
         )
         item_id = items_resp.json()["items"][0]["id"]
 
         resp = await client.post(
-            f"/api/v1/code-items/{item_id}/revoke", headers=headers,
+            f"/api/v1/code-items/{item_id}/revoke",
+            headers=headers,
         )
         assert resp.status_code == 200
         assert resp.json()["status"] == "revoked"
@@ -103,11 +110,13 @@ class TestCodeStateTransitions:
         _, headers, batch_id = batch_with_codes
         # Try to bind without activating (created -> bound is invalid)
         items_resp = await client.get(
-            f"/api/v1/code-items?code_batch_id={batch_id}&page_size=1", headers=headers,
+            f"/api/v1/code-items?code_batch_id={batch_id}&page_size=1",
+            headers=headers,
         )
         item_id = items_resp.json()["items"][0]["id"]
 
         resp = await client.post(
-            f"/api/v1/code-items/{item_id}/bind", headers=headers,
+            f"/api/v1/code-items/{item_id}/bind",
+            headers=headers,
         )
         assert resp.status_code == 409

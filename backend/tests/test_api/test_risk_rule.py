@@ -127,7 +127,8 @@ class TestRiskRuleCRUD:
         rule_id = create_resp.json()["id"]
 
         resp = await client.delete(
-            f"/api/v1/risk-rules/{rule_id}", headers=headers,
+            f"/api/v1/risk-rules/{rule_id}",
+            headers=headers,
         )
         assert resp.status_code == 200
 
@@ -141,7 +142,9 @@ class TestRuleEvaluation:
 
     @pytest.mark.anyio
     async def test_evaluate_block_action(
-        self, client: AsyncClient, setup_tenant,
+        self,
+        client: AsyncClient,
+        setup_tenant,
     ):
         tid, headers = setup_tenant
         # 创建一个拦截规则
@@ -172,7 +175,9 @@ class TestRuleEvaluation:
 
     @pytest.mark.anyio
     async def test_evaluate_no_trigger(
-        self, client: AsyncClient, setup_tenant,
+        self,
+        client: AsyncClient,
+        setup_tenant,
     ):
         tid, headers = setup_tenant
         await client.post(
@@ -204,7 +209,9 @@ class TestInterceptionRecord:
 
     @pytest.mark.anyio
     async def test_interception_record_created_on_block(
-        self, client: AsyncClient, setup_tenant,
+        self,
+        client: AsyncClient,
+        setup_tenant,
     ):
         tid, headers = setup_tenant
         await client.post(
@@ -230,7 +237,8 @@ class TestInterceptionRecord:
 
         # 查询拦截记录
         resp = await client.get(
-            "/api/v1/risk-rules/interceptions", headers=headers,
+            "/api/v1/risk-rules/interceptions",
+            headers=headers,
         )
         assert resp.status_code == 200
         data = resp.json()
@@ -239,7 +247,9 @@ class TestInterceptionRecord:
 
     @pytest.mark.anyio
     async def test_list_interceptions_with_filter(
-        self, client: AsyncClient, setup_tenant,
+        self,
+        client: AsyncClient,
+        setup_tenant,
     ):
         tid, headers = setup_tenant
 
@@ -256,7 +266,9 @@ class TestCampaignRiskRules:
 
     @pytest.mark.anyio
     async def test_attach_rule_to_campaign(
-        self, client: AsyncClient, setup_tenant,
+        self,
+        client: AsyncClient,
+        setup_tenant,
     ):
         tid, headers = setup_tenant
         # 创建活动
@@ -303,7 +315,9 @@ class TestCampaignRiskRules:
 
     @pytest.mark.anyio
     async def test_evaluate_campaign_rules(
-        self, client: AsyncClient, setup_tenant,
+        self,
+        client: AsyncClient,
+        setup_tenant,
     ):
         tid, headers = setup_tenant
         campaign_resp = await client.post(
@@ -406,7 +420,8 @@ class TestRiskRuleConfig:
         rule_id = create_resp.json()["id"]
 
         resp = await client.get(
-            f"/api/v1/risk-rules/{rule_id}", headers=headers,
+            f"/api/v1/risk-rules/{rule_id}",
+            headers=headers,
         )
         assert resp.status_code == 200
         assert resp.json()["name"] == "详情查询"

@@ -9,7 +9,11 @@ from app.models.i18n import Translation
 
 
 async def create_translation(
-    db: AsyncSession, tenant_id: uuid.UUID, key: str, locale: str, value: str,
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    key: str,
+    locale: str,
+    value: str,
 ) -> Translation:
     t = Translation(tenant_id=tenant_id, key=key, locale=locale, value=value)
     db.add(t)
@@ -19,7 +23,9 @@ async def create_translation(
 
 
 async def list_translations(
-    db: AsyncSession, tenant_id: uuid.UUID, locale: str | None = None,
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    locale: str | None = None,
 ) -> list[Translation]:
     stmt = select(Translation).where(Translation.tenant_id == tenant_id)
     if locale:
@@ -29,7 +35,9 @@ async def list_translations(
 
 
 async def batch_update_translations(
-    db: AsyncSession, tenant_id: uuid.UUID, translations: list[dict],
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    translations: list[dict],
 ) -> int:
     count = 0
     for t in translations:
@@ -44,9 +52,14 @@ async def batch_update_translations(
         if existing:
             existing.value = t["value"]
         else:
-            db.add(Translation(
-                tenant_id=tenant_id, key=t["key"], locale=t["locale"], value=t["value"],
-            ))
+            db.add(
+                Translation(
+                    tenant_id=tenant_id,
+                    key=t["key"],
+                    locale=t["locale"],
+                    value=t["value"],
+                )
+            )
         count += 1
     await db.flush()
     return count

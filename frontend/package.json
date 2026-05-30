@@ -9,6 +9,13 @@
     "build:shared": "pnpm --filter @yimatong/shared build",
     "build": "pnpm build:shared && pnpm build:admin && pnpm build:h5",
     "lint:admin": "pnpm --filter @yimatong/admin lint",
-    "lint:h5": "pnpm --filter @yimatong/h5 lint"
+    "lint:h5": "pnpm --filter @yimatong/h5 lint",
+    "test:e2e": "playwright test",
+    "test:e2e:ui": "playwright test --ui",
+    "test:e2e:debug": "playwright test --debug"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.52.0",
+    "@types/node": "^20"
   }
 }

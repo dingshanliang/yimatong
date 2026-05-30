@@ -21,8 +21,11 @@ from app.models.audit import PlatformAuditLog  # noqa: F401
 from app.models.campaign import Benefit, BenefitClaim, Campaign  # noqa: F401
 from app.models.channel import Distributor, Region, Store, DiversionClue  # noqa: F401
 from app.models.code import CodeBatch, CodeItem  # noqa: F401
-from app.models.connector import Connector, CouponPool, CouponCode  # noqa: F401
+from app.models.consent import ConsentRecord  # noqa: F401
+from app.models.connector import Connector, CouponPool, CouponCode, BenefitDelivery  # noqa: F401
+from app.models.export_log import ExportLog  # noqa: F401
 from app.models.gmv import ExternalOrder, GmvAttribution  # noqa: F401
+from app.models.private_domain import PrivateDomainConfig  # noqa: F401
 from app.models.i18n import Translation  # noqa: F401
 from app.models.integration import SyncRecord  # noqa: F401
 from app.models.member import ConsumerProfile, PointTransaction, PointRule  # noqa: F401

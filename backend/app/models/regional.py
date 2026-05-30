@@ -18,9 +18,7 @@ class RegionalOrg(Base):
     org_type: Mapped[str] = mapped_column(String(50), nullable=False, default="association")
     config: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
 
-    __table_args__ = (
-        Index("ix_regional_orgs_tenant", "tenant_id"),
-    )
+    __table_args__ = (Index("ix_regional_orgs_tenant", "tenant_id"),)
 
 
 class RegionalOrgMember(Base):
@@ -32,9 +30,7 @@ class RegionalOrgMember(Base):
     member_name: Mapped[str] = mapped_column(String(200), nullable=False)
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="active")
 
-    __table_args__ = (
-        Index("ix_regional_org_member_unique", "org_id", "tenant_id", unique=True),
-    )
+    __table_args__ = (Index("ix_regional_org_member_unique", "org_id", "tenant_id", unique=True),)
 
 
 class RegionalTemplate(Base):
@@ -54,9 +50,7 @@ class RegionalProductAuth(Base):
     product_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
     tenant_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
 
-    __table_args__ = (
-        Index("ix_regional_product_auth_unique", "org_id", "product_id", "tenant_id", unique=True),
-    )
+    __table_args__ = (Index("ix_regional_product_auth_unique", "org_id", "product_id", "tenant_id", unique=True),)
 
 
 class RegionalCodeRule(Base):

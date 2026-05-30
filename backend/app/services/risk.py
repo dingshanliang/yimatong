@@ -21,13 +21,15 @@ SUSPECTED_COPY_SCAN_THRESHOLD = 10
 
 
 async def check_multi_location(
-    db: AsyncSession, tenant_id: uuid.UUID, public_id: str, ip_hash: str,
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    public_id: str,
+    ip_hash: str,
 ) -> RiskAlert | None:
     """检测同一码短时间内从不同 IP 扫描"""
     since = utcnow() - timedelta(minutes=MULTI_LOCATION_WINDOW_MINUTES)
     result = await db.execute(
-        select(func.count(func.distinct(ScanEvent.ip_hash)))
-        .where(
+        select(func.count(func.distinct(ScanEvent.ip_hash))).where(
             ScanEvent.public_id == public_id,
             ScanEvent.tenant_id == tenant_id,
             ScanEvent.scan_time >= since,
@@ -37,9 +39,7 @@ async def check_multi_location(
     distinct_ips = result.scalar() or 0
 
     if distinct_ips >= MULTI_LOCATION_IP_THRESHOLD:
-        code_result = await db.execute(
-            select(CodeItem).where(CodeItem.public_id == public_id)
-        )
+        code_result = await db.execute(select(CodeItem).where(CodeItem.public_id == public_id))
         item = code_result.scalar_one_or_none()
 
         alert = RiskAlert(
@@ -57,7 +57,10 @@ async def check_multi_location(
 
 
 async def check_suspected_copy(
-    db: AsyncSession, tenant_id: uuid.UUID, public_id: str, ip_hash: str,
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    public_id: str,
+    ip_hash: str,
 ) -> RiskAlert | None:
     """检测同一码短时间内高频扫码（疑似复制码）"""
     since = utcnow() - timedelta(minutes=SUSPECTED_COPY_WINDOW_MINUTES)
@@ -73,9 +76,7 @@ async def check_suspected_copy(
     scan_count = result.scalar() or 0
 
     if scan_count >= SUSPECTED_COPY_SCAN_THRESHOLD:
-        code_result = await db.execute(
-            select(CodeItem).where(CodeItem.public_id == public_id)
-        )
+        code_result = await db.execute(select(CodeItem).where(CodeItem.public_id == public_id))
         item = code_result.scalar_one_or_none()
 
         alert = RiskAlert(
@@ -93,17 +94,18 @@ async def check_suspected_copy(
 
 
 async def freeze_code_item(
-    db: AsyncSession, tenant_id: uuid.UUID, item_id: uuid.UUID,
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    item_id: uuid.UUID,
 ) -> CodeItem:
     """冻结码项"""
     from app.services.code_state import can_transition
 
-    result = await db.execute(
-        select(CodeItem).where(CodeItem.id == item_id, CodeItem.tenant_id == tenant_id)
-    )
+    result = await db.execute(select(CodeItem).where(CodeItem.id == item_id, CodeItem.tenant_id == tenant_id))
     item = result.scalar_one_or_none()
     if not item:
         from fastapi import HTTPException
+
         raise HTTPException(status_code=404, detail="Code item not found")
 
     can_transition(item.status, CodeItemStatus.frozen, raise_on_invalid=True)
@@ -124,19 +126,21 @@ async def freeze_code_item(
 
 
 async def unfreeze_code_item(
-    db: AsyncSession, tenant_id: uuid.UUID, item_id: uuid.UUID,
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    item_id: uuid.UUID,
 ) -> CodeItem:
     """解冻码项，恢复为 activated 状态"""
-    result = await db.execute(
-        select(CodeItem).where(CodeItem.id == item_id, CodeItem.tenant_id == tenant_id)
-    )
+    result = await db.execute(select(CodeItem).where(CodeItem.id == item_id, CodeItem.tenant_id == tenant_id))
     item = result.scalar_one_or_none()
     if not item:
         from fastapi import HTTPException
+
         raise HTTPException(status_code=404, detail="Code item not found")
 
     if item.status != CodeItemStatus.frozen:
         from fastapi import HTTPException
+
         raise HTTPException(status_code=409, detail="Code item is not frozen")
 
     item.status = CodeItemStatus.activated

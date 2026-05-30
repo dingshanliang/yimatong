@@ -9,7 +9,10 @@ from app.models.connector import Connector, CouponCode, CouponPool
 
 
 async def create_coupon_pool(
-    db: AsyncSession, tenant_id: uuid.UUID, name: str, codes: list[str],
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    name: str,
+    codes: list[str],
 ) -> CouponPool:
     pool = CouponPool(
         tenant_id=tenant_id,
@@ -29,13 +32,18 @@ async def create_coupon_pool(
 
 
 async def distribute_coupon(
-    db: AsyncSession, pool_id: uuid.UUID, consumer_id: str,
+    db: AsyncSession,
+    pool_id: uuid.UUID,
+    consumer_id: str,
 ) -> CouponCode | None:
     result = await db.execute(
-        select(CouponCode).where(
+        select(CouponCode)
+        .where(
             CouponCode.pool_id == pool_id,
             CouponCode.distributed.is_(False),
-        ).order_by(CouponCode.id).limit(1)
+        )
+        .order_by(CouponCode.id)
+        .limit(1)
     )
     code = result.scalar_one_or_none()
     if not code:
@@ -44,9 +52,7 @@ async def distribute_coupon(
     code.consumer_id = consumer_id
     code.distributed = True
 
-    pool_result = await db.execute(
-        select(CouponPool).where(CouponPool.id == pool_id)
-    )
+    pool_result = await db.execute(select(CouponPool).where(CouponPool.id == pool_id))
     pool = pool_result.scalar_one()
     pool.remaining -= 1
 
@@ -56,7 +62,11 @@ async def distribute_coupon(
 
 
 async def create_connector(
-    db: AsyncSession, tenant_id: uuid.UUID, name: str, connector_type: str, config: dict,
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    name: str,
+    connector_type: str,
+    config: dict,
 ) -> Connector:
     conn = Connector(
         tenant_id=tenant_id,
@@ -71,25 +81,27 @@ async def create_connector(
 
 
 async def list_connectors(
-    db: AsyncSession, tenant_id: uuid.UUID,
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
 ) -> list[Connector]:
-    result = await db.execute(
-        select(Connector).where(Connector.tenant_id == tenant_id).order_by(Connector.id.desc())
-    )
+    result = await db.execute(select(Connector).where(Connector.tenant_id == tenant_id).order_by(Connector.id.desc()))
     return list(result.scalars().all())
 
 
 async def get_connector(
-    db: AsyncSession, tenant_id: uuid.UUID, conn_id: uuid.UUID,
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    conn_id: uuid.UUID,
 ) -> Connector | None:
-    result = await db.execute(
-        select(Connector).where(Connector.id == conn_id, Connector.tenant_id == tenant_id)
-    )
+    result = await db.execute(select(Connector).where(Connector.id == conn_id, Connector.tenant_id == tenant_id))
     return result.scalar_one_or_none()
 
 
 async def update_connector(
-    db: AsyncSession, tenant_id: uuid.UUID, conn_id: uuid.UUID, **updates,
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    conn_id: uuid.UUID,
+    **updates,
 ) -> Connector:
     conn = await get_connector(db, tenant_id, conn_id)
     if not conn:

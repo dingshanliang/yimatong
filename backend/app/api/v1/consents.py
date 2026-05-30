@@ -36,6 +36,7 @@ async def create_consent(
 
     if not tenant_id:
         from app.services.resolver import resolve_public_code
+
         if body.public_id:
             data = await resolve_public_code(db, body.public_id)
             if data:
@@ -74,6 +75,7 @@ async def withdraw_consent_endpoint(
     if auth_header.startswith("Bearer "):
         token = auth_header[7:]
         from app.services.scan_token import verify_scan_token
+
         payload = verify_scan_token(token)
         if payload:
             tenant_id = payload.get("tenant_id")

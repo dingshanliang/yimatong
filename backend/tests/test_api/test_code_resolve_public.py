@@ -84,7 +84,8 @@ async def setup_activated_code(client: AsyncClient):
 
     # 激活
     await client.post(
-        f"/api/v1/code-batches/{batch_id}/activate", headers=headers,
+        f"/api/v1/code-batches/{batch_id}/activate",
+        headers=headers,
     )
 
     return tid, headers, batch_id, item_id, public_id
@@ -92,9 +93,7 @@ async def setup_activated_code(client: AsyncClient):
 
 class TestPublicResolve:
     @pytest.mark.anyio
-    async def test_resolve_activated_code(
-        self, client: AsyncClient, setup_activated_code
-    ):
+    async def test_resolve_activated_code(self, client: AsyncClient, setup_activated_code):
         _, _, _, _, public_id = setup_activated_code
         resp = await client.get(f"/c/{public_id}")
         assert resp.status_code == 200
@@ -102,30 +101,25 @@ class TestPublicResolve:
         assert "text/html" in resp.headers.get("content-type", "")
 
     @pytest.mark.anyio
-    async def test_resolve_nonexistent_code(
-        self, client: AsyncClient, setup_activated_code
-    ):
+    async def test_resolve_nonexistent_code(self, client: AsyncClient, setup_activated_code):
         resp = await client.get("/c/NONEXISTENT123")
         assert resp.status_code == 404
         assert "text/html" in resp.headers.get("content-type", "")
 
     @pytest.mark.anyio
-    async def test_resolve_revoked_code(
-        self, client: AsyncClient, setup_activated_code
-    ):
+    async def test_resolve_revoked_code(self, client: AsyncClient, setup_activated_code):
         _, headers, _, item_id, public_id = setup_activated_code
         # 作废码
         await client.post(
-            f"/api/v1/code-items/{item_id}/revoke", headers=headers,
+            f"/api/v1/code-items/{item_id}/revoke",
+            headers=headers,
         )
         resp = await client.get(f"/c/{public_id}")
         assert resp.status_code == 410
         assert "text/html" in resp.headers.get("content-type", "")
 
     @pytest.mark.anyio
-    async def test_resolve_created_code(
-        self, client: AsyncClient, setup_activated_code
-    ):
+    async def test_resolve_created_code(self, client: AsyncClient, setup_activated_code):
         """未激活的码返回提示页"""
         # 创建新码但不激活
         _, headers, batch_id, _, _ = setup_activated_code
@@ -143,9 +137,7 @@ class TestPublicResolve:
                 break
 
     @pytest.mark.anyio
-    async def test_no_auth_required(
-        self, client: AsyncClient, setup_activated_code
-    ):
+    async def test_no_auth_required(self, client: AsyncClient, setup_activated_code):
         """公开路由不需要认证"""
         _, _, _, _, public_id = setup_activated_code
         resp = await client.get(f"/c/{public_id}")

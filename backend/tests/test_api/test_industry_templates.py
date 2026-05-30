@@ -48,12 +48,11 @@ async def auth_setup(client: AsyncClient):
 
 class TestIndustryTemplates:
     @pytest.mark.anyio
-    async def test_list_industry_templates(
-        self, client: AsyncClient, auth_setup
-    ):
+    async def test_list_industry_templates(self, client: AsyncClient, auth_setup):
         _, headers = auth_setup
         resp = await client.get(
-            "/api/v1/page-templates/industry-templates", headers=headers,
+            "/api/v1/page-templates/industry-templates",
+            headers=headers,
         )
         assert resp.status_code == 200
         data = resp.json()
@@ -64,9 +63,7 @@ class TestIndustryTemplates:
         assert "礼盒页" in names
 
     @pytest.mark.anyio
-    async def test_clone_industry_template(
-        self, client: AsyncClient, auth_setup
-    ):
+    async def test_clone_industry_template(self, client: AsyncClient, auth_setup):
         _, headers = auth_setup
         resp = await client.post(
             "/api/v1/page-templates/industry-templates/0/clone",
@@ -79,9 +76,7 @@ class TestIndustryTemplates:
         assert data["version"]["config_json"]["dsl_version"] == "1.0"
 
     @pytest.mark.anyio
-    async def test_clone_invalid_index_404(
-        self, client: AsyncClient, auth_setup
-    ):
+    async def test_clone_invalid_index_404(self, client: AsyncClient, auth_setup):
         _, headers = auth_setup
         resp = await client.post(
             "/api/v1/page-templates/industry-templates/99/clone",
@@ -90,12 +85,11 @@ class TestIndustryTemplates:
         assert resp.status_code == 404
 
     @pytest.mark.anyio
-    async def test_food_template_has_required_modules(
-        self, client: AsyncClient, auth_setup
-    ):
+    async def test_food_template_has_required_modules(self, client: AsyncClient, auth_setup):
         _, headers = auth_setup
         resp = await client.get(
-            "/api/v1/page-templates/industry-templates", headers=headers,
+            "/api/v1/page-templates/industry-templates",
+            headers=headers,
         )
         food = resp.json()[0]
         module_types = [m["type"] for m in food["config_json"]["modules"]]

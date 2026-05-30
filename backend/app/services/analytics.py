@@ -50,9 +50,13 @@ async def get_code_stats(
     code_batch_id: uuid.UUID | None = None,
 ) -> dict:
     """获取码状态统计"""
-    stmt = select(CodeItem.status, func.count()).where(
-        CodeItem.tenant_id == tenant_id,
-    ).group_by(CodeItem.status)
+    stmt = (
+        select(CodeItem.status, func.count())
+        .where(
+            CodeItem.tenant_id == tenant_id,
+        )
+        .group_by(CodeItem.status)
+    )
 
     if code_batch_id:
         stmt = stmt.where(CodeItem.code_batch_id == code_batch_id)

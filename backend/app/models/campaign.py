@@ -50,7 +50,9 @@ class Benefit(Base):
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     tenant_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
     campaign_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("campaigns.id"), nullable=False, index=True,
+        ForeignKey("campaigns.id"),
+        nullable=False,
+        index=True,
     )
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     benefit_type: Mapped[str] = mapped_column(String(50), nullable=False)
@@ -60,6 +62,8 @@ class Benefit(Base):
     per_person_limit: Mapped[int] = mapped_column(nullable=False, default=1)
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="active")
 
+    __table_args__ = (Index("ix_benefits_stock", "stock_total", "stock_used"),)
+
 
 class BenefitClaim(Base):
     __tablename__ = "benefit_claims"
@@ -67,10 +71,14 @@ class BenefitClaim(Base):
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     tenant_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
     benefit_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("benefits.id"), nullable=False, index=True,
+        ForeignKey("benefits.id"),
+        nullable=False,
+        index=True,
     )
     campaign_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("campaigns.id"), nullable=False, index=True,
+        ForeignKey("campaigns.id"),
+        nullable=False,
+        index=True,
     )
     consumer_id: Mapped[str] = mapped_column(String(100), nullable=False)
     idempotency_key: Mapped[str] = mapped_column(String(100), nullable=False)

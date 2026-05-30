@@ -108,18 +108,14 @@ class TestProductionBatchCRUD:
                 headers=headers,
             )
 
-        resp = await client.get(
-            "/api/v1/production-batches?page=1&page_size=2", headers=headers
-        )
+        resp = await client.get("/api/v1/production-batches?page=1&page_size=2", headers=headers)
         assert resp.status_code == 200
         data = resp.json()
         assert data["total"] >= 3
         assert len(data["items"]) <= 2
 
     @pytest.mark.anyio
-    async def test_list_batches_filter_by_product(
-        self, client: AsyncClient, tenant_with_auth, sku_id
-    ):
+    async def test_list_batches_filter_by_product(self, client: AsyncClient, tenant_with_auth, sku_id):
         product_id, sid = sku_id
         _, headers = tenant_with_auth
         # Create second product + sku
@@ -141,8 +137,10 @@ class TestProductionBatchCRUD:
         await client.post(
             "/api/v1/production-batches",
             json={
-                "product_id": product_id, "sku_id": sid,
-                "batch_code": "BATCH-A", "production_date": "2026-01-01",
+                "product_id": product_id,
+                "sku_id": sid,
+                "batch_code": "BATCH-A",
+                "production_date": "2026-01-01",
                 "expiry_date": "2027-01-01",
             },
             headers=headers,
@@ -150,31 +148,31 @@ class TestProductionBatchCRUD:
         await client.post(
             "/api/v1/production-batches",
             json={
-                "product_id": product2_id, "sku_id": sku2_id,
-                "batch_code": "BATCH-B", "production_date": "2026-02-01",
+                "product_id": product2_id,
+                "sku_id": sku2_id,
+                "batch_code": "BATCH-B",
+                "production_date": "2026-02-01",
                 "expiry_date": "2027-02-01",
             },
             headers=headers,
         )
 
-        resp = await client.get(
-            f"/api/v1/production-batches?product_id={product_id}", headers=headers
-        )
+        resp = await client.get(f"/api/v1/production-batches?product_id={product_id}", headers=headers)
         assert resp.status_code == 200
         data = resp.json()
         assert all(item["product_id"] == product_id for item in data["items"])
 
     @pytest.mark.anyio
-    async def test_batch_code_unique_per_tenant(
-        self, client: AsyncClient, tenant_with_auth, sku_id
-    ):
+    async def test_batch_code_unique_per_tenant(self, client: AsyncClient, tenant_with_auth, sku_id):
         product_id, sid = sku_id
         _, headers = tenant_with_auth
         await client.post(
             "/api/v1/production-batches",
             json={
-                "product_id": product_id, "sku_id": sid,
-                "batch_code": "DUP-BATCH", "production_date": "2026-01-01",
+                "product_id": product_id,
+                "sku_id": sid,
+                "batch_code": "DUP-BATCH",
+                "production_date": "2026-01-01",
                 "expiry_date": "2027-01-01",
             },
             headers=headers,
@@ -182,8 +180,10 @@ class TestProductionBatchCRUD:
         resp = await client.post(
             "/api/v1/production-batches",
             json={
-                "product_id": product_id, "sku_id": sid,
-                "batch_code": "DUP-BATCH", "production_date": "2026-02-01",
+                "product_id": product_id,
+                "sku_id": sid,
+                "batch_code": "DUP-BATCH",
+                "production_date": "2026-02-01",
                 "expiry_date": "2027-02-01",
             },
             headers=headers,
@@ -196,9 +196,7 @@ class TestProductionBatchCRUD:
         product_id, sid = sku_id
         _, headers = tenant_with_auth
         csv_content = (
-            "batch_code,production_date,expiry_date\n"
-            "CSV-001,2026-03-01,2027-03-01\n"
-            "CSV-002,2026-04-01,2027-04-01\n"
+            "batch_code,production_date,expiry_date\nCSV-001,2026-03-01,2027-03-01\nCSV-002,2026-04-01,2027-04-01\n"
         )
         files = {"file": ("batches.csv", io.BytesIO(csv_content.encode()), "text/csv")}
         resp = await client.post(

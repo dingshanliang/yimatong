@@ -41,6 +41,7 @@ async def apply_industry_template(
     product_id = body.get("product_id") if body else None
 
     from app.models.page import PageTemplate
+
     tmpl = PageTemplate(
         tenant_id=tenant_id,
         name=template_def["name"],
@@ -54,6 +55,7 @@ async def apply_industry_template(
 
     # 创建初始版本
     from app.models.page import PageVersion, PageVersionStatus
+
     version = PageVersion(
         tenant_id=tenant_id,
         page_template_id=tmpl.id,

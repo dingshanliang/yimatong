@@ -12,7 +12,9 @@ from app.utils.crypto import hash_phone
 
 
 async def import_orders(
-    db: AsyncSession, tenant_id: uuid.UUID, orders: list[dict],
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    orders: list[dict],
 ) -> int:
     """批量导入外部订单"""
     count = 0
@@ -32,12 +34,18 @@ async def import_orders(
 
 
 async def list_orders(
-    db: AsyncSession, tenant_id: uuid.UUID,
-    page: int = 1, page_size: int = 20,
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    page: int = 1,
+    page_size: int = 20,
 ) -> tuple[list[ExternalOrder], int]:
     """查询外部订单"""
-    count_stmt = select(func.count()).select_from(ExternalOrder).where(
-        ExternalOrder.tenant_id == tenant_id,
+    count_stmt = (
+        select(func.count())
+        .select_from(ExternalOrder)
+        .where(
+            ExternalOrder.tenant_id == tenant_id,
+        )
     )
     total_result = await db.execute(count_stmt)
     total = total_result.scalar() or 0
@@ -54,7 +62,10 @@ async def list_orders(
 
 
 async def match_order(
-    db: AsyncSession, tenant_id: uuid.UUID, match_by: str, value: str,
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    match_by: str,
+    value: str,
 ) -> dict:
     """按匹配规则关联订单与消费者/扫码"""
     if match_by == "phone":
@@ -91,7 +102,9 @@ async def match_order(
 
 
 async def get_gmv_dashboard(
-    db: AsyncSession, tenant_id: uuid.UUID, group_by: str | None = None,
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    group_by: str | None = None,
 ) -> dict:
     """GMV 归因看板"""
     total_gmv_result = await db.execute(
@@ -102,14 +115,18 @@ async def get_gmv_dashboard(
     total_gmv = float(total_gmv_result.scalar() or 0)
 
     matched_result = await db.execute(
-        select(func.count()).select_from(GmvAttribution).where(
+        select(func.count())
+        .select_from(GmvAttribution)
+        .where(
             GmvAttribution.tenant_id == tenant_id,
         )
     )
     matched_orders = matched_result.scalar() or 0
 
     total_orders_result = await db.execute(
-        select(func.count()).select_from(ExternalOrder).where(
+        select(func.count())
+        .select_from(ExternalOrder)
+        .where(
             ExternalOrder.tenant_id == tenant_id,
         )
     )
@@ -132,20 +149,25 @@ async def get_gmv_dashboard(
             .group_by(GmvAttribution.public_id)
         )
         result["by_public_id"] = [
-            {"public_id": row.public_id, "gmv": float(row.gmv), "orders": row.orders}
-            for row in by_code_result.all()
+            {"public_id": row.public_id, "gmv": float(row.gmv), "orders": row.orders} for row in by_code_result.all()
         ]
 
     return result
 
 
 async def list_attributions(
-    db: AsyncSession, tenant_id: uuid.UUID,
-    page: int = 1, page_size: int = 20,
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    page: int = 1,
+    page_size: int = 20,
 ) -> tuple[list[GmvAttribution], int]:
     """查询归因记录"""
-    count_stmt = select(func.count()).select_from(GmvAttribution).where(
-        GmvAttribution.tenant_id == tenant_id,
+    count_stmt = (
+        select(func.count())
+        .select_from(GmvAttribution)
+        .where(
+            GmvAttribution.tenant_id == tenant_id,
+        )
     )
     total_result = await db.execute(count_stmt)
     total = total_result.scalar() or 0

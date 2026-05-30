@@ -66,9 +66,7 @@ def _auth_headers(tenant_id: str, account_id: str) -> dict:
 
 class TestChangePassword:
     @pytest.mark.anyio
-    async def test_change_password_success(
-        self, client: AsyncClient, db_session: AsyncSession, seeded_account
-    ):
+    async def test_change_password_success(self, client: AsyncClient, db_session: AsyncSession, seeded_account):
         headers = _auth_headers(str(seeded_account.tenant_id), str(seeded_account.id))
         resp = await client.post(
             "/api/v1/auth/change-password",
@@ -83,9 +81,7 @@ class TestChangePassword:
         assert verify_password("NewPass34", account.hashed_password)
 
     @pytest.mark.anyio
-    async def test_change_password_wrong_old(
-        self, client: AsyncClient, seeded_account
-    ):
+    async def test_change_password_wrong_old(self, client: AsyncClient, seeded_account):
         headers = _auth_headers(str(seeded_account.tenant_id), str(seeded_account.id))
         resp = await client.post(
             "/api/v1/auth/change-password",
@@ -97,9 +93,7 @@ class TestChangePassword:
 
 class TestResetPassword:
     @pytest.mark.anyio
-    async def test_reset_password_by_admin(
-        self, client: AsyncClient, db_session: AsyncSession, seeded_account
-    ):
+    async def test_reset_password_by_admin(self, client: AsyncClient, db_session: AsyncSession, seeded_account):
         headers = _auth_headers(str(seeded_account.tenant_id), str(seeded_account.id))
         resp = await client.post(
             "/api/v1/auth/reset-password",
@@ -115,9 +109,7 @@ class TestResetPassword:
 
 class TestPasswordStrength:
     @pytest.mark.anyio
-    async def test_password_too_short(
-        self, client: AsyncClient, seeded_account
-    ):
+    async def test_password_too_short(self, client: AsyncClient, seeded_account):
         headers = _auth_headers(str(seeded_account.tenant_id), str(seeded_account.id))
         resp = await client.post(
             "/api/v1/auth/change-password",
@@ -127,9 +119,7 @@ class TestPasswordStrength:
         assert resp.status_code == 422
 
     @pytest.mark.anyio
-    async def test_password_no_digit(
-        self, client: AsyncClient, seeded_account
-    ):
+    async def test_password_no_digit(self, client: AsyncClient, seeded_account):
         headers = _auth_headers(str(seeded_account.tenant_id), str(seeded_account.id))
         resp = await client.post(
             "/api/v1/auth/change-password",
@@ -139,9 +129,7 @@ class TestPasswordStrength:
         assert resp.status_code == 422
 
     @pytest.mark.anyio
-    async def test_password_no_letter(
-        self, client: AsyncClient, seeded_account
-    ):
+    async def test_password_no_letter(self, client: AsyncClient, seeded_account):
         headers = _auth_headers(str(seeded_account.tenant_id), str(seeded_account.id))
         resp = await client.post(
             "/api/v1/auth/change-password",

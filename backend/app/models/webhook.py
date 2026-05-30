@@ -19,9 +19,7 @@ class WebhookEndpoint(Base):
     secret: Mapped[str] = mapped_column(String(100), nullable=False)
     enabled: Mapped[bool] = mapped_column(default=True, nullable=False)
 
-    __table_args__ = (
-        Index("ix_webhook_endpoints_tenant", "tenant_id"),
-    )
+    __table_args__ = (Index("ix_webhook_endpoints_tenant", "tenant_id"),)
 
 
 class ApiKey(Base):
@@ -34,9 +32,7 @@ class ApiKey(Base):
     permissions: Mapped[dict] = mapped_column(JSON, nullable=False, default=list)
     revoked: Mapped[bool] = mapped_column(default=False, nullable=False)
 
-    __table_args__ = (
-        Index("ix_api_keys_tenant", "tenant_id"),
-    )
+    __table_args__ = (Index("ix_api_keys_tenant", "tenant_id"),)
 
 
 class WebhookDelivery(Base):
@@ -49,6 +45,4 @@ class WebhookDelivery(Base):
     payload: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending")
 
-    __table_args__ = (
-        Index("ix_webhook_deliveries_tenant", "tenant_id"),
-    )
+    __table_args__ = (Index("ix_webhook_deliveries_tenant", "tenant_id"),)

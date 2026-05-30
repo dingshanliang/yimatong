@@ -63,8 +63,10 @@ async def batch_with_codes(client: AsyncClient):
     batch = await client.post(
         "/api/v1/code-batches",
         json={
-            "product_id": product_id, "sku_id": sku_id,
-            "batch_code": "EXP-001", "quantity": 5,
+            "product_id": product_id,
+            "sku_id": sku_id,
+            "batch_code": "EXP-001",
+            "quantity": 5,
         },
         headers=headers,
     )
@@ -74,24 +76,22 @@ async def batch_with_codes(client: AsyncClient):
 
 class TestCodeExport:
     @pytest.mark.anyio
-    async def test_trigger_export_returns_csv(
-        self, client: AsyncClient, batch_with_codes
-    ):
+    async def test_trigger_export_returns_csv(self, client: AsyncClient, batch_with_codes):
         _, headers, batch_id = batch_with_codes
         resp = await client.post(
-            f"/api/v1/code-batches/{batch_id}/export", headers=headers,
+            f"/api/v1/code-batches/{batch_id}/export",
+            headers=headers,
         )
         assert resp.status_code == 200
         assert "text/csv" in resp.headers.get("content-type", "")
         assert "public_id" in resp.text
 
     @pytest.mark.anyio
-    async def test_export_contains_code_url(
-        self, client: AsyncClient, batch_with_codes
-    ):
+    async def test_export_contains_code_url(self, client: AsyncClient, batch_with_codes):
         _, headers, batch_id = batch_with_codes
         resp = await client.post(
-            f"/api/v1/code-batches/{batch_id}/export", headers=headers,
+            f"/api/v1/code-batches/{batch_id}/export",
+            headers=headers,
         )
         assert resp.status_code == 200
         assert "qr.yimatong.cn" in resp.text

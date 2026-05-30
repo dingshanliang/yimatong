@@ -2,12 +2,12 @@
 
 import uuid
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import PlainTextResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
-from app.core.dependencies import get_current_tenant
+from app.core.dependencies import get_current_account_id, get_current_tenant
 from app.schemas.common import PaginatedResponse
 from app.services.risk_dashboard import (
     export_risk_data,
@@ -17,6 +17,12 @@ from app.services.risk_dashboard import (
 )
 
 risk_dashboard_router = APIRouter(prefix="/api/v1/risk-dashboard", tags=["risk-dashboard"])
+
+
+def require_admin(request: Request) -> None:
+    role = getattr(request.state, "role", None)
+    if role != "admin":
+        raise HTTPException(status_code=403, detail="Admin permission required")
 
 
 @risk_dashboard_router.get("/repeat-scans")
@@ -55,8 +61,23 @@ async def export_endpoint(
     data_type: str = Query("alerts", pattern="^(alerts|diversions)$"),
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
+    account_id: uuid.UUID = Depends(get_current_account_id),
+    _: None = Depends(require_admin),
 ):
     csv_data = await export_risk_data(db, tenant_id, data_type)
+
+    from app.services.export_audit import log_export
+
+    await log_export(
+        db,
+        tenant_id,
+        account_id,
+        f"risk_{data_type}_csv",
+        file_name=f"risk_{data_type}.csv",
+        row_count=csv_data.count("\n") - 1 if csv_data else 0,
+    )
+    await db.commit()
+
     return PlainTextResponse(
         content=csv_data,
         media_type="text/csv",

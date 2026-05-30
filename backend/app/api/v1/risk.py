@@ -38,8 +38,12 @@ async def list_risk_alerts_endpoint(
     tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
     alerts, total = await list_risk_alerts(
-        db, tenant_id, alert_type=alert_type, resolved=resolved,
-        page=page, page_size=page_size,
+        db,
+        tenant_id,
+        alert_type=alert_type,
+        resolved=resolved,
+        page=page,
+        page_size=page_size,
     )
     return PaginatedResponse(
         items=[RiskAlertRead.model_validate(a) for a in alerts],
@@ -57,9 +61,7 @@ async def resolve_alert_endpoint(
 ):
     from sqlalchemy import select
 
-    result = await db.execute(
-        select(RiskAlert).where(RiskAlert.id == alert_id, RiskAlert.tenant_id == tenant_id)
-    )
+    result = await db.execute(select(RiskAlert).where(RiskAlert.id == alert_id, RiskAlert.tenant_id == tenant_id))
     alert = result.scalar_one_or_none()
     if not alert:
         raise HTTPException(status_code=404, detail="Risk alert not found")

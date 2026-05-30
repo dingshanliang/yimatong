@@ -36,9 +36,13 @@ async def evaluate_risk(
     risk_score = 0
 
     # 扫码频率检查
-    scan_count_stmt = select(func.count()).select_from(ScanEvent).where(
-        ScanEvent.tenant_id == tenant_id,
-        ScanEvent.public_id == body.public_id,
+    scan_count_stmt = (
+        select(func.count())
+        .select_from(ScanEvent)
+        .where(
+            ScanEvent.tenant_id == tenant_id,
+            ScanEvent.public_id == body.public_id,
+        )
     )
     result = await db.execute(scan_count_stmt)
     scan_count = result.scalar() or 0

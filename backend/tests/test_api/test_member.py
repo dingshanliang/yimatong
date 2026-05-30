@@ -89,7 +89,9 @@ class TestPointsAward:
     async def test_award_points(self, client: AsyncClient, setup_tenant):
         tid, headers = setup_tenant
         consumer = await client.post(
-            "/api/v1/members/consumers", json={}, headers=headers,
+            "/api/v1/members/consumers",
+            json={},
+            headers=headers,
         )
         cid = consumer.json()["id"]
 
@@ -104,11 +106,15 @@ class TestPointsAward:
 
     @pytest.mark.anyio
     async def test_award_points_accumulates(
-        self, client: AsyncClient, setup_tenant,
+        self,
+        client: AsyncClient,
+        setup_tenant,
     ):
         tid, headers = setup_tenant
         consumer = await client.post(
-            "/api/v1/members/consumers", json={}, headers=headers,
+            "/api/v1/members/consumers",
+            json={},
+            headers=headers,
         )
         cid = consumer.json()["id"]
 
@@ -126,11 +132,15 @@ class TestPointsAward:
 
     @pytest.mark.anyio
     async def test_member_level_upgrade(
-        self, client: AsyncClient, setup_tenant,
+        self,
+        client: AsyncClient,
+        setup_tenant,
     ):
         tid, headers = setup_tenant
         consumer = await client.post(
-            "/api/v1/members/consumers", json={}, headers=headers,
+            "/api/v1/members/consumers",
+            json={},
+            headers=headers,
         )
         cid = consumer.json()["id"]
 
@@ -142,7 +152,8 @@ class TestPointsAward:
         )
 
         profile = await client.get(
-            f"/api/v1/members/consumers/{cid}", headers=headers,
+            f"/api/v1/members/consumers/{cid}",
+            headers=headers,
         )
         assert profile.json()["member_level"] == "silver"
 
@@ -154,7 +165,9 @@ class TestPointsSpend:
     async def test_spend_points(self, client: AsyncClient, setup_tenant):
         tid, headers = setup_tenant
         consumer = await client.post(
-            "/api/v1/members/consumers", json={}, headers=headers,
+            "/api/v1/members/consumers",
+            json={},
+            headers=headers,
         )
         cid = consumer.json()["id"]
 
@@ -175,11 +188,15 @@ class TestPointsSpend:
 
     @pytest.mark.anyio
     async def test_spend_insufficient_points(
-        self, client: AsyncClient, setup_tenant,
+        self,
+        client: AsyncClient,
+        setup_tenant,
     ):
         tid, headers = setup_tenant
         consumer = await client.post(
-            "/api/v1/members/consumers", json={}, headers=headers,
+            "/api/v1/members/consumers",
+            json={},
+            headers=headers,
         )
         cid = consumer.json()["id"]
 
@@ -224,11 +241,15 @@ class TestTransactions:
 
     @pytest.mark.anyio
     async def test_list_transactions(
-        self, client: AsyncClient, setup_tenant,
+        self,
+        client: AsyncClient,
+        setup_tenant,
     ):
         tid, headers = setup_tenant
         consumer = await client.post(
-            "/api/v1/members/consumers", json={}, headers=headers,
+            "/api/v1/members/consumers",
+            json={},
+            headers=headers,
         )
         cid = consumer.json()["id"]
 

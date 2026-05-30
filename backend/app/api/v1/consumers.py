@@ -40,6 +40,7 @@ async def lead_capture(
     phone_hash = None
     if body.phone:
         from app.utils.crypto import encrypt_phone, hash_phone
+
         encrypted_phone = encrypt_phone(body.phone)
         phone_hash = hash_phone(body.phone)
 
@@ -49,16 +50,19 @@ async def lead_capture(
 
         # scan_token 不含 tenant_id，通过 public_id 反查码数据获取
         from app.services.resolver import resolve_public_code
+
         code_data = await resolve_public_code(db, body.public_id)
         if not code_data:
             raise HTTPException(status_code=404, detail="code not found")
         tenant_id = uuid.UUID(code_data["tenant_id"])
 
         result = await db.execute(
-            select(ConsumerProfile).where(
+            select(ConsumerProfile)
+            .where(
                 ConsumerProfile.tenant_id == tenant_id,
                 ConsumerProfile.phone_hash == phone_hash,
-            ).limit(1)
+            )
+            .limit(1)
         )
         profile = result.scalar_one_or_none()
         if not profile:

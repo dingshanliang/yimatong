@@ -51,6 +51,7 @@ class CampaignEvaluateRequest(BaseModel):
 
 # --- 静态路径必须放在 /{rule_id} 之前 ---
 
+
 @risk_rule_router.post("", status_code=201)
 async def create_risk_rule_endpoint(
     body: RiskRuleCreate,
@@ -58,7 +59,12 @@ async def create_risk_rule_endpoint(
     tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
     rule = await create_risk_rule(
-        db, tenant_id, body.name, body.rule_type, body.action, body.config,
+        db,
+        tenant_id,
+        body.name,
+        body.rule_type,
+        body.action,
+        body.config,
     )
     return {
         "id": str(rule.id),
@@ -138,6 +144,7 @@ async def list_interceptions_endpoint(
 
 
 # --- 动态路径放在最后 ---
+
 
 @risk_rule_router.get("/{rule_id}")
 async def get_risk_rule_endpoint(

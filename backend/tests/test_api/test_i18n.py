@@ -34,7 +34,12 @@ async def client(db_session: AsyncSession):
 async def setup_tenant(client: AsyncClient):
     resp = await client.post(
         "/api/v1/tenants",
-        json={"name": "多语言测试租户", "admin_email": "i18n@test.com", "admin_name": "Admin", "admin_password": "Pass1234"},
+        json={
+            "name": "多语言测试租户",
+            "admin_email": "i18n@test.com",
+            "admin_name": "Admin",
+            "admin_password": "Pass1234",
+        },
     )
     tid = resp.json()["id"]
     token = create_access_token(tid, "00000000-0000-0000-0000-000000000001", "admin")

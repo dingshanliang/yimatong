@@ -18,6 +18,4 @@ class SyncRecord(Base):
     external_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
     data: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
 
-    __table_args__ = (
-        Index("ix_sync_records_tenant_type", "tenant_id", "sync_type"),
-    )
+    __table_args__ = (Index("ix_sync_records_tenant_type", "tenant_id", "sync_type"),)

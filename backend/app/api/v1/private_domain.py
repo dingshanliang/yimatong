@@ -4,25 +4,14 @@ import uuid
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
-from sqlalchemy import JSON, String, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.database import get_db
 from app.core.dependencies import get_current_tenant
-from app.models.base import Base
+from app.models.private_domain import PrivateDomainConfig
 
 private_domain_router = APIRouter(prefix="/api/v1/private-domain-configs", tags=["private-domain"])
-
-
-class PrivateDomainConfig(Base):
-    __tablename__ = "private_domain_configs"
-
-    id: Mapped[uuid.UUID] = mapped_column(primary_key=True)
-    tenant_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
-    config_type: Mapped[str] = mapped_column(String(30), nullable=False)
-    name: Mapped[str] = mapped_column(String(100), nullable=False)
-    config: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
 
 
 class PrivateDomainConfigCreate(BaseModel):
@@ -41,9 +30,7 @@ async def list_configs(
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
-    result = await db.execute(
-        select(PrivateDomainConfig).where(PrivateDomainConfig.tenant_id == tenant_id)
-    )
+    result = await db.execute(select(PrivateDomainConfig).where(PrivateDomainConfig.tenant_id == tenant_id))
     configs = result.scalars().all()
     return {
         "items": [

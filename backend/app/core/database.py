@@ -16,9 +16,9 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
         if tenant_id:
             from sqlalchemy import text
 
-            await session.begin()
+            # Use driver-native SQL to avoid parameter binding issues with SET LOCAL
             await session.execute(
-                text("SET LOCAL app.tenant_id = :tid").bindparams(tenant_id=str(tenant_id)),
+                text(f"SET LOCAL app.tenant_id = '{str(tenant_id)}'")
             )
         try:
             yield session

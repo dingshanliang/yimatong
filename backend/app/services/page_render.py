@@ -34,20 +34,20 @@ async def render_page(
 
     # 获取已发布版本
     ver_result = await db.execute(
-        select(PageVersion).where(
+        select(PageVersion)
+        .where(
             PageVersion.page_template_id == template_id,
             PageVersion.tenant_id == tenant_id,
             PageVersion.status == PageVersionStatus.published,
-        ).limit(1)
+        )
+        .limit(1)
     )
     version = ver_result.scalar_one_or_none()
     if not version:
         return None
 
     # 获取模板信息
-    tmpl_result = await db.execute(
-        select(PageTemplate).where(PageTemplate.id == template_id)
-    )
+    tmpl_result = await db.execute(select(PageTemplate).where(PageTemplate.id == template_id))
     template = tmpl_result.scalar_one_or_none()
     if not template:
         return None

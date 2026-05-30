@@ -44,11 +44,15 @@ async def _setup_published_template(db: AsyncSession, template_type: str, config
 class TestPageRender:
     @pytest.mark.anyio
     async def test_render_product_info(self, db: AsyncSession):
-        tid, tmpl_id, _ = await _setup_published_template(db, "product_info", {
-            "brand_name": "测试品牌",
-            "product_name": "有机苹果",
-            "specifications": {"weight": "500g", "origin": "山东"},
-        })
+        tid, tmpl_id, _ = await _setup_published_template(
+            db,
+            "product_info",
+            {
+                "brand_name": "测试品牌",
+                "product_name": "有机苹果",
+                "specifications": {"weight": "500g", "origin": "山东"},
+            },
+        )
         html = await render_page(db, tid, tmpl_id)
         assert html is not None
         assert "测试品牌" in html
@@ -57,13 +61,17 @@ class TestPageRender:
 
     @pytest.mark.anyio
     async def test_render_traceability(self, db: AsyncSession):
-        tid, tmpl_id, _ = await _setup_published_template(db, "traceability", {
-            "brand_name": "溯源品牌",
-            "product_name": "溯源产品",
-            "trace_nodes": [
-                {"name": "种植", "location": "山东", "date": "2026-01"},
-            ],
-        })
+        tid, tmpl_id, _ = await _setup_published_template(
+            db,
+            "traceability",
+            {
+                "brand_name": "溯源品牌",
+                "product_name": "溯源产品",
+                "trace_nodes": [
+                    {"name": "种植", "location": "山东", "date": "2026-01"},
+                ],
+            },
+        )
         html = await render_page(db, tid, tmpl_id)
         assert html is not None
         assert "溯源品牌" in html
@@ -71,11 +79,15 @@ class TestPageRender:
 
     @pytest.mark.anyio
     async def test_render_brand_story(self, db: AsyncSession):
-        tid, tmpl_id, _ = await _setup_published_template(db, "brand_story", {
-            "brand_name": "故事品牌",
-            "story_title": "我们的故事",
-            "story_content": "从田间到餐桌的旅程",
-        })
+        tid, tmpl_id, _ = await _setup_published_template(
+            db,
+            "brand_story",
+            {
+                "brand_name": "故事品牌",
+                "story_title": "我们的故事",
+                "story_content": "从田间到餐桌的旅程",
+            },
+        )
         html = await render_page(db, tid, tmpl_id)
         assert html is not None
         assert "故事品牌" in html
@@ -98,10 +110,14 @@ class TestPageRender:
 
     @pytest.mark.anyio
     async def test_render_caches_result(self, db: AsyncSession):
-        tid, tmpl_id, _ = await _setup_published_template(db, "product_info", {
-            "brand_name": "缓存品牌",
-            "product_name": "缓存产品",
-        })
+        tid, tmpl_id, _ = await _setup_published_template(
+            db,
+            "product_info",
+            {
+                "brand_name": "缓存品牌",
+                "product_name": "缓存产品",
+            },
+        )
         html1 = await render_page(db, tid, tmpl_id)
         html2 = await render_page(db, tid, tmpl_id)
         assert html1 == html2
@@ -109,10 +125,14 @@ class TestPageRender:
 
     @pytest.mark.anyio
     async def test_invalidate_cache(self, db: AsyncSession):
-        tid, tmpl_id, _ = await _setup_published_template(db, "product_info", {
-            "brand_name": "缓存品牌",
-            "product_name": "缓存产品",
-        })
+        tid, tmpl_id, _ = await _setup_published_template(
+            db,
+            "product_info",
+            {
+                "brand_name": "缓存品牌",
+                "product_name": "缓存产品",
+            },
+        )
         await render_page(db, tid, tmpl_id)
         assert f"page:{tmpl_id}" in _render_cache
 
@@ -121,12 +141,19 @@ class TestPageRender:
 
     @pytest.mark.anyio
     async def test_render_with_extra_context(self, db: AsyncSession):
-        tid, tmpl_id, _ = await _setup_published_template(db, "product_info", {
-            "brand_name": "品牌",
-            "product_name": "产品",
-        })
+        tid, tmpl_id, _ = await _setup_published_template(
+            db,
+            "product_info",
+            {
+                "brand_name": "品牌",
+                "product_name": "产品",
+            },
+        )
         html = await render_page(
-            db, tid, tmpl_id, context={"extra_key": "extra_value"},
+            db,
+            tid,
+            tmpl_id,
+            context={"extra_key": "extra_value"},
         )
         assert html is not None
         assert "品牌" in html

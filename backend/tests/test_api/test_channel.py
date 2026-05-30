@@ -140,7 +140,9 @@ class TestBatchAssignment:
 
     @pytest.mark.anyio
     async def test_assign_batch_to_region(
-        self, client: AsyncClient, setup_tenant,
+        self,
+        client: AsyncClient,
+        setup_tenant,
     ):
         tid, headers, product_id, sku_id = setup_tenant
 
@@ -193,7 +195,10 @@ class TestDiversionDetection:
 
     @pytest.mark.anyio
     async def test_diversion_creates_clue(
-        self, client: AsyncClient, setup_tenant, db_session: AsyncSession,
+        self,
+        client: AsyncClient,
+        setup_tenant,
+        db_session: AsyncSession,
     ):
         tid, headers, product_id, sku_id = setup_tenant
 
@@ -221,7 +226,8 @@ class TestDiversionDetection:
 
         # 获取一个码
         items_resp = await client.get(
-            f"/api/v1/code-items?code_batch_id={batch_id}", headers=headers,
+            f"/api/v1/code-items?code_batch_id={batch_id}",
+            headers=headers,
         )
         public_id = items_resp.json()["items"][0]["public_id"]
 
@@ -236,7 +242,10 @@ class TestDiversionDetection:
 
     @pytest.mark.anyio
     async def test_no_diversion_same_city(
-        self, client: AsyncClient, setup_tenant, db_session: AsyncSession,
+        self,
+        client: AsyncClient,
+        setup_tenant,
+        db_session: AsyncSession,
     ):
         tid, headers, product_id, sku_id = setup_tenant
 
@@ -261,7 +270,8 @@ class TestDiversionDetection:
         await client.post(f"/api/v1/code-batches/{batch_id}/activate", headers=headers)
 
         items_resp = await client.get(
-            f"/api/v1/code-items?code_batch_id={batch_id}", headers=headers,
+            f"/api/v1/code-items?code_batch_id={batch_id}",
+            headers=headers,
         )
         public_id = items_resp.json()["items"][0]["public_id"]
 
@@ -272,7 +282,9 @@ class TestDiversionDetection:
 
     @pytest.mark.anyio
     async def test_list_diversion_clues(
-        self, client: AsyncClient, setup_tenant,
+        self,
+        client: AsyncClient,
+        setup_tenant,
     ):
         tid, headers, *_ = setup_tenant
         resp = await client.get(

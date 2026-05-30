@@ -30,19 +30,14 @@ async def list_roles(
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
-    result = await db.execute(
-        select(Role).where(Role.tenant_id == tenant_id)
-    )
+    result = await db.execute(select(Role).where(Role.tenant_id == tenant_id))
     roles = result.scalars().all()
     return [
         {
             "id": str(r.id),
             "name": r.name,
             "description": r.description,
-            "permissions": [
-                {"id": str(p.id), "code": p.code, "description": p.description}
-                for p in r.permissions
-            ],
+            "permissions": [{"id": str(p.id), "code": p.code, "description": p.description} for p in r.permissions],
         }
         for r in roles
     ]
@@ -54,9 +49,7 @@ async def create_role(
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
-    existing = await db.execute(
-        select(Role).where(Role.tenant_id == tenant_id, Role.name == body.name)
-    )
+    existing = await db.execute(select(Role).where(Role.tenant_id == tenant_id, Role.name == body.name))
     if existing.scalar_one_or_none():
         raise HTTPException(status_code=409, detail="Role name already exists")
 
@@ -77,14 +70,9 @@ async def list_permissions(
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
-    result = await db.execute(
-        select(Permission).where(Permission.tenant_id == tenant_id)
-    )
+    result = await db.execute(select(Permission).where(Permission.tenant_id == tenant_id))
     perms = result.scalars().all()
-    return [
-        {"id": str(p.id), "code": p.code, "description": p.description}
-        for p in perms
-    ]
+    return [{"id": str(p.id), "code": p.code, "description": p.description} for p in perms]
 
 
 @router.post("/permissions", status_code=201)
@@ -121,9 +109,7 @@ async def assign_permission(
         raise HTTPException(status_code=404, detail="Permission not found")
 
     try:
-        await db.execute(
-            role_permissions.insert().values(role_id=role_id, permission_id=permission_id)
-        )
+        await db.execute(role_permissions.insert().values(role_id=role_id, permission_id=permission_id))
         await db.commit()
     except IntegrityError:
         raise HTTPException(status_code=409, detail="Permission already assigned to this role")

@@ -31,6 +31,7 @@ from app.models.i18n import Translation  # noqa: E402, F401
 from app.models.integration import SyncRecord  # noqa: E402, F401
 from app.models.member import ConsumerProfile, PointRule, PointTransaction  # noqa: E402, F401
 from app.models.page import PageTemplate, PageVersion  # noqa: E402, F401
+from app.models.private_domain import PrivateDomainConfig  # noqa: E402, F401
 from app.models.product import SKU, Brand, Product, ProductionBatch  # noqa: E402, F401
 from app.models.redpacket import KYCRecord, RedPacketClaim, RedPacketRule, Withdrawal  # noqa: E402, F401
 from app.models.regional import (  # noqa: E402, F401

@@ -77,12 +77,11 @@ async def setup_batch_with_codes(client: AsyncClient):
 
 class TestCodeBatchList:
     @pytest.mark.anyio
-    async def test_list_batches_with_pagination(
-        self, client: AsyncClient, setup_batch_with_codes
-    ):
+    async def test_list_batches_with_pagination(self, client: AsyncClient, setup_batch_with_codes):
         _, headers, _ = setup_batch_with_codes
         resp = await client.get(
-            "/api/v1/code-batches?page=1&page_size=10", headers=headers,
+            "/api/v1/code-batches?page=1&page_size=10",
+            headers=headers,
         )
         assert resp.status_code == 200
         data = resp.json()
@@ -93,18 +92,18 @@ class TestCodeBatchList:
         assert data["total"] >= 1
 
     @pytest.mark.anyio
-    async def test_list_batches_filter_by_product(
-        self, client: AsyncClient, setup_batch_with_codes
-    ):
+    async def test_list_batches_filter_by_product(self, client: AsyncClient, setup_batch_with_codes):
         _, headers, batch_id = setup_batch_with_codes
         # 先获取批次信息拿到 product_id
         detail = await client.get(
-            f"/api/v1/code-batches/{batch_id}", headers=headers,
+            f"/api/v1/code-batches/{batch_id}",
+            headers=headers,
         )
         product_id = detail.json()["product_id"]
 
         resp = await client.get(
-            f"/api/v1/code-batches?product_id={product_id}", headers=headers,
+            f"/api/v1/code-batches?product_id={product_id}",
+            headers=headers,
         )
         assert resp.status_code == 200
         assert resp.json()["total"] >= 1
@@ -112,12 +111,11 @@ class TestCodeBatchList:
 
 class TestCodeBatchDetail:
     @pytest.mark.anyio
-    async def test_get_batch_detail(
-        self, client: AsyncClient, setup_batch_with_codes
-    ):
+    async def test_get_batch_detail(self, client: AsyncClient, setup_batch_with_codes):
         _, headers, batch_id = setup_batch_with_codes
         resp = await client.get(
-            f"/api/v1/code-batches/{batch_id}", headers=headers,
+            f"/api/v1/code-batches/{batch_id}",
+            headers=headers,
         )
         assert resp.status_code == 200
         data = resp.json()
@@ -129,22 +127,19 @@ class TestCodeBatchDetail:
         assert "created" in data["stats"]
 
     @pytest.mark.anyio
-    async def test_get_batch_detail_not_found(
-        self, client: AsyncClient, setup_batch_with_codes
-    ):
+    async def test_get_batch_detail_not_found(self, client: AsyncClient, setup_batch_with_codes):
         _, headers, _ = setup_batch_with_codes
         fake_id = "00000000-0000-0000-0000-000000000999"
         resp = await client.get(
-            f"/api/v1/code-batches/{fake_id}", headers=headers,
+            f"/api/v1/code-batches/{fake_id}",
+            headers=headers,
         )
         assert resp.status_code == 404
 
 
 class TestCodeItemDetail:
     @pytest.mark.anyio
-    async def test_get_code_item_detail(
-        self, client: AsyncClient, setup_batch_with_codes
-    ):
+    async def test_get_code_item_detail(self, client: AsyncClient, setup_batch_with_codes):
         _, headers, batch_id = setup_batch_with_codes
         # 先列出码项
         items_resp = await client.get(
@@ -154,7 +149,8 @@ class TestCodeItemDetail:
         item_id = items_resp.json()["items"][0]["id"]
 
         resp = await client.get(
-            f"/api/v1/code-items/{item_id}", headers=headers,
+            f"/api/v1/code-items/{item_id}",
+            headers=headers,
         )
         assert resp.status_code == 200
         data = resp.json()
@@ -163,39 +159,39 @@ class TestCodeItemDetail:
         assert "public_id" in data
 
     @pytest.mark.anyio
-    async def test_get_code_item_not_found(
-        self, client: AsyncClient, setup_batch_with_codes
-    ):
+    async def test_get_code_item_not_found(self, client: AsyncClient, setup_batch_with_codes):
         _, headers, _ = setup_batch_with_codes
         fake_id = "00000000-0000-0000-0000-000000000999"
         resp = await client.get(
-            f"/api/v1/code-items/{fake_id}", headers=headers,
+            f"/api/v1/code-items/{fake_id}",
+            headers=headers,
         )
         assert resp.status_code == 404
 
 
 class TestCodeBatchStats:
     @pytest.mark.anyio
-    async def test_batch_stats_after_activate(
-        self, client: AsyncClient, setup_batch_with_codes
-    ):
+    async def test_batch_stats_after_activate(self, client: AsyncClient, setup_batch_with_codes):
         _, headers, batch_id = setup_batch_with_codes
 
         # 激活前：全部 created
         detail = await client.get(
-            f"/api/v1/code-batches/{batch_id}", headers=headers,
+            f"/api/v1/code-batches/{batch_id}",
+            headers=headers,
         )
         stats = detail.json()["stats"]
         assert stats["created"] == 5
 
         # 激活批次
         await client.post(
-            f"/api/v1/code-batches/{batch_id}/activate", headers=headers,
+            f"/api/v1/code-batches/{batch_id}/activate",
+            headers=headers,
         )
 
         # 激活后：全部 activated
         detail = await client.get(
-            f"/api/v1/code-batches/{batch_id}", headers=headers,
+            f"/api/v1/code-batches/{batch_id}",
+            headers=headers,
         )
         stats = detail.json()["stats"]
         assert stats["activated"] == 5

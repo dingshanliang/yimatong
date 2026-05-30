@@ -9,12 +9,16 @@ import {
   Table,
   Typography,
   Tag,
+  Button,
+  Space,
+  message,
 } from "antd";
 import {
   ScanOutlined,
   TeamOutlined,
   RocketOutlined,
   RiseOutlined,
+  DownloadOutlined,
 } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
 import dayjs from "dayjs";
@@ -176,7 +180,38 @@ export default function DashboardPage() {
 
   return (
     <div>
-      <Title level={4}>工作台</Title>
+      <div className="mb-4 flex items-center justify-between">
+        <Title level={4} className="!mb-0">工作台</Title>
+        <Space>
+          <Button
+            icon={<DownloadOutlined />}
+            onClick={async () => {
+              try {
+                const end = dayjs().format("YYYY-MM-DD");
+                const start = dayjs().subtract(6, "day").format("YYYY-MM-DD");
+                const response = await api.post("/analytics/exports", null, {
+                  params: { export_type: "scan_events", start_date: start, end_date: end },
+                  responseType: "blob",
+                });
+                const blob = new Blob([response.data], { type: "text/csv" });
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement("a");
+                a.href = url;
+                a.download = `scan-events-${start}-${end}.csv`;
+                document.body.appendChild(a);
+                a.click();
+                a.remove();
+                window.URL.revokeObjectURL(url);
+                message.success("导出成功");
+              } catch {
+                message.error("导出失败，请确认您有管理员权限");
+              }
+            }}
+          >
+            导出扫码数据
+          </Button>
+        </Space>
+      </div>
       <Row gutter={[16, 16]} className="mb-6">
         <Col xs={24} sm={12} lg={6}>
           <Card loading={loading}>

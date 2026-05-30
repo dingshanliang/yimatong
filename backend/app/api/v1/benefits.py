@@ -37,7 +37,10 @@ async def list_benefits_endpoint(
     tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
     items, total = await list_all_benefits(
-        db, tenant_id, page=page, page_size=page_size,
+        db,
+        tenant_id,
+        page=page,
+        page_size=page_size,
     )
     return PaginatedResponse(items=items, total=total, page=page, page_size=page_size)
 
@@ -62,7 +65,9 @@ async def update_benefit_endpoint(
     tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
     data = await update_benefit(
-        db, tenant_id, benefit_id,
+        db,
+        tenant_id,
+        benefit_id,
         **body.model_dump(exclude_none=True),
     )
     if not data:
@@ -84,6 +89,7 @@ async def delete_benefit_endpoint(
 
 # --- Admin benefit claims ---
 
+
 @benefit_router.get("/admin/claims")
 async def list_benefit_claims_admin_endpoint(
     page: int = Query(1, ge=1),
@@ -92,6 +98,9 @@ async def list_benefit_claims_admin_endpoint(
     tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
     items, total = await list_benefit_claims_admin(
-        db, tenant_id, page=page, page_size=page_size,
+        db,
+        tenant_id,
+        page=page,
+        page_size=page_size,
     )
     return PaginatedResponse(items=items, total=total, page=page, page_size=page_size)

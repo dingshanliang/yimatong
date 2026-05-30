@@ -386,7 +386,7 @@ export default function BenefitsPage() {
             label="权益名称"
             rules={[{ required: true, message: "请输入权益名称" }]}
           >
-            <Input />
+            <Input data-testid="benefit-name-input" />
           </Form.Item>
           <Form.Item
             name="benefit_type"
@@ -398,6 +398,7 @@ export default function BenefitsPage() {
                 value,
                 label,
               }))}
+              data-testid="benefit-type-select"
             />
           </Form.Item>
           <Form.Item
@@ -410,6 +411,7 @@ export default function BenefitsPage() {
               options={campaigns.map((c) => ({ value: c.id, label: c.name }))}
               showSearch
               optionFilterProp="label"
+              data-testid="benefit-campaign-select"
             />
           </Form.Item>
           <div className="grid grid-cols-2 gap-4">
@@ -418,14 +420,14 @@ export default function BenefitsPage() {
               label="总库存"
               rules={[{ required: true, message: "请输入总库存" }]}
             >
-              <InputNumber min={1} className="w-full" />
+              <InputNumber min={1} className="w-full" data-testid="benefit-stock-input" />
             </Form.Item>
             <Form.Item
               name="per_person_limit"
               label="每人限领"
               rules={[{ required: true, message: "请输入每人限领数量" }]}
             >
-              <InputNumber min={1} className="w-full" />
+              <InputNumber min={1} className="w-full" data-testid="benefit-limit-input" />
             </Form.Item>
           </div>
           <BenefitConfigFields benefitType={benefitType} />

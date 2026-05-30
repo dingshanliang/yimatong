@@ -80,8 +80,12 @@ async def award_points_endpoint(
 ):
     try:
         txn = await award_points(
-            db, tenant_id, body.consumer_id, body.points,
-            body.reason, body.reference_id,
+            db,
+            tenant_id,
+            body.consumer_id,
+            body.points,
+            body.reason,
+            body.reference_id,
         )
         return {
             "id": str(txn.id),
@@ -101,8 +105,12 @@ async def spend_points_endpoint(
 ):
     try:
         txn = await spend_points(
-            db, tenant_id, body.consumer_id, body.points,
-            body.reason, body.reference_id,
+            db,
+            tenant_id,
+            body.consumer_id,
+            body.points,
+            body.reason,
+            body.reference_id,
         )
         return {
             "id": str(txn.id),
@@ -123,17 +131,26 @@ async def list_transactions_endpoint(
     tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
     txns, total = await list_point_transactions(
-        db, tenant_id, consumer_id, page=page, page_size=page_size,
+        db,
+        tenant_id,
+        consumer_id,
+        page=page,
+        page_size=page_size,
     )
     return PaginatedResponse(
-        items=[{
-            "id": str(t.id),
-            "amount": t.amount,
-            "balance_after": t.balance_after,
-            "txn_type": t.txn_type,
-            "reason": t.reason,
-        } for t in txns],
-        total=total, page=page, page_size=page_size,
+        items=[
+            {
+                "id": str(t.id),
+                "amount": t.amount,
+                "balance_after": t.balance_after,
+                "txn_type": t.txn_type,
+                "reason": t.reason,
+            }
+            for t in txns
+        ],
+        total=total,
+        page=page,
+        page_size=page_size,
     )
 
 
@@ -143,10 +160,7 @@ async def list_point_rules_endpoint(
     tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
     rules = await get_point_rules(db, tenant_id)
-    return [
-        {"id": str(r.id), "rule_type": r.rule_type, "points": r.points}
-        for r in rules
-    ]
+    return [{"id": str(r.id), "rule_type": r.rule_type, "points": r.points} for r in rules]
 
 
 @member_router.post("/point-rules", status_code=201)

@@ -38,6 +38,7 @@ async def import_products(
 
             # 查找或创建品牌
             from sqlalchemy import select
+
             result = await db.execute(
                 select(Brand).where(
                     Brand.tenant_id == tenant_id,

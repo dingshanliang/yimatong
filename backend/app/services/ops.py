@@ -12,24 +12,25 @@ from app.models.product import Brand, Product
 
 
 async def get_tenant_status(
-    db: AsyncSession, tenant_id: uuid.UUID,
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
 ) -> dict:
     """获取租户开通状态和初始化进度"""
+    from app.models.tenant import Tenant
+
     # 产品数
-    products_count = await db.execute(
-        select(func.count()).select_from(Product).where(Product.tenant_id == tenant_id)
-    )
+    products_count = await db.execute(select(func.count()).select_from(Product).where(Product.tenant_id == tenant_id))
     products = products_count.scalar() or 0
 
     # 品牌数
-    brands_count = await db.execute(
-        select(func.count()).select_from(Brand).where(Brand.tenant_id == tenant_id)
-    )
+    brands_count = await db.execute(select(func.count()).select_from(Brand).where(Brand.tenant_id == tenant_id))
     brands = brands_count.scalar() or 0
 
     # 已发布页面数
     published_pages = await db.execute(
-        select(func.count()).select_from(PageVersion).where(
+        select(func.count())
+        .select_from(PageVersion)
+        .where(
             PageVersion.tenant_id == tenant_id,
             PageVersion.status == PageVersionStatus.published,
         )
@@ -38,8 +39,11 @@ async def get_tenant_status(
 
     # 已激活码批次数
     from app.models.code import CodeBatchStatus
+
     activated_batches = await db.execute(
-        select(func.count()).select_from(CodeBatch).where(
+        select(func.count())
+        .select_from(CodeBatch)
+        .where(
             CodeBatch.tenant_id == tenant_id,
             CodeBatch.status == CodeBatchStatus.completed,
         )
@@ -48,12 +52,27 @@ async def get_tenant_status(
 
     # 已上线活动数
     active_campaigns = await db.execute(
-        select(func.count()).select_from(Campaign).where(
+        select(func.count())
+        .select_from(Campaign)
+        .where(
             Campaign.tenant_id == tenant_id,
             Campaign.status == CampaignStatus.ACTIVE,
         )
     )
     campaigns = active_campaigns.scalar() or 0
+
+    # 获取租户 onboarding_progress
+    tenant_result = await db.execute(select(Tenant).where(Tenant.id == tenant_id))
+    tenant = tenant_result.scalar_one_or_none()
+    onboarding_progress = tenant.onboarding_progress if tenant else {}
+    if not onboarding_progress:
+        onboarding_progress = {
+            "brand_configured": brands >= 1,
+            "product_created": products >= 1,
+            "page_published": pages >= 1,
+            "code_batch_activated": activated >= 1,
+            "campaign_active": campaigns >= 1,
+        }
 
     return {
         "tenant_id": str(tenant_id),
@@ -62,11 +81,13 @@ async def get_tenant_status(
         "published_pages": pages,
         "activated_batches": activated,
         "active_campaigns": campaigns,
+        "onboarding_progress": onboarding_progress,
     }
 
 
 async def get_launch_checklist(
-    db: AsyncSession, tenant_id: uuid.UUID,
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
 ) -> dict:
     """获取上线检查清单"""
     status = await get_tenant_status(db, tenant_id)

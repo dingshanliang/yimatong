@@ -89,8 +89,13 @@ async def create_code_batch_endpoint(
             raise HTTPException(status_code=429, detail=str(e))
 
     return await create_code_batch(
-        db, tenant_id, body.product_id, body.sku_id,
-        body.batch_code, body.quantity, account_id,
+        db,
+        tenant_id,
+        body.product_id,
+        body.sku_id,
+        body.batch_code,
+        body.quantity,
+        account_id,
         code_type=body.code_type,
     )
 
@@ -105,7 +110,12 @@ async def list_code_batches_endpoint(
     tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
     batches, total = await list_code_batches(
-        db, tenant_id, product_id=product_id, status=status, page=page, page_size=page_size,
+        db,
+        tenant_id,
+        product_id=product_id,
+        status=status,
+        page=page,
+        page_size=page_size,
     )
     return PaginatedResponse(
         items=[CodeBatchRead.model_validate(b) for b in batches],
@@ -151,8 +161,12 @@ async def export_code_batch_endpoint(
     csv_content = await generate_code_csv(db, tenant_id, batch_id)
     # 记录导出审计日志
     from app.services.export_audit import log_export
+
     await log_export(
-        db, tenant_id, account_id, "code_csv",
+        db,
+        tenant_id,
+        account_id,
+        "code_csv",
         resource_id=str(batch_id),
         file_name=f"codes-{batch_id}.csv",
         row_count=csv_content.count("\n") - 1,
@@ -178,7 +192,9 @@ async def update_code_batch_endpoint(
 ):
 
     result = await update_batch(
-        db, tenant_id, batch_id,
+        db,
+        tenant_id,
+        batch_id,
         batch_code=body.batch_code,
     )
     if not result:
@@ -314,7 +330,12 @@ async def list_code_items_endpoint(
     tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
     items, total = await list_code_items(
-        db, tenant_id, code_batch_id=code_batch_id, status=status, page=page, page_size=page_size,
+        db,
+        tenant_id,
+        code_batch_id=code_batch_id,
+        status=status,
+        page=page,
+        page_size=page_size,
     )
     return PaginatedResponse(
         items=[CodeItemRead.model_validate(i) for i in items],

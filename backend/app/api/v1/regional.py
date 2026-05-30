@@ -68,10 +68,7 @@ async def list_orgs_endpoint(
     tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
     orgs = await list_regional_orgs(db, tenant_id)
-    return [
-        {"id": str(o.id), "name": o.name, "org_type": o.org_type, "config": o.config}
-        for o in orgs
-    ]
+    return [{"id": str(o.id), "name": o.name, "org_type": o.org_type, "config": o.config} for o in orgs]
 
 
 @regional_router.post("/orgs/{org_id}/members", status_code=201)
@@ -133,10 +130,7 @@ async def list_templates_endpoint(
     tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
     templates = await list_shared_templates(db, org_id)
-    return [
-        {"id": str(t.id), "org_id": str(t.org_id), "name": t.name, "config": t.config}
-        for t in templates
-    ]
+    return [{"id": str(t.id), "org_id": str(t.org_id), "name": t.name, "config": t.config} for t in templates]
 
 
 @regional_router.post("/orgs/{org_id}/products", status_code=201)
@@ -165,6 +159,7 @@ async def dashboard_endpoint(
 
 
 # W21: 区域品牌高级能力
+
 
 class CodeRuleCreate(BaseModel):
     rule_name: str
@@ -202,10 +197,7 @@ async def list_code_rules_endpoint(
     tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
     rules = await list_code_rules(db, org_id)
-    return [
-        {"id": str(r.id), "rule_name": r.rule_name, "pattern": r.pattern, "prefix": r.prefix}
-        for r in rules
-    ]
+    return [{"id": str(r.id), "rule_name": r.rule_name, "pattern": r.pattern, "prefix": r.prefix} for r in rules]
 
 
 @regional_router.get("/orgs/{org_id}/advanced-dashboard")

@@ -1,0 +1,125 @@
+name: E2E Tests
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+    branches: [main, dev]
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: yimatong
+          POSTGRES_PASSWORD: yimatong
+          POSTGRES_DB: yimatong_dev
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6380:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Install backend dependencies
+        working-directory: ./backend
+        run: uv sync --frozen --no-dev
+
+      - name: Run database migrations
+        working-directory: ./backend
+        env:
+          database_url: postgresql+asyncpg://yimatong:yimatong@localhost:5432/yimatong_dev
+          redis_url: redis://localhost:6380/0
+          secret_key: ci-secret-key-for-e2e
+          AES_MASTER_KEY_V1: f18d81c3b455f9a5a01db6a8546fc5acc242b51cbc4ae70ec99654e091f38a4b
+          HMAC_PEPPER: 7c9cade78554566742f263539bd4ff404493e9b9ed6939168da7ad5ceb3813cd
+        run: uv run alembic upgrade head
+
+      - name: Start backend
+        working-directory: ./backend
+        env:
+          database_url: postgresql+asyncpg://yimatong:yimatong@localhost:5432/yimatong_dev
+          redis_url: redis://localhost:6380/0
+          secret_key: ci-secret-key-for-e2e
+          AES_MASTER_KEY_V1: f18d81c3b455f9a5a01db6a8546fc5acc242b51cbc4ae70ec99654e091f38a4b
+          HMAC_PEPPER: 7c9cade78554566742f263539bd4ff404493e9b9ed6939168da7ad5ceb3813cd
+          cors_origins: "*"
+        run: |
+          uv run uvicorn app.main:app --host 0.0.0.0 --port 8000 &
+          echo $! > /tmp/backend.pid
+          # Wait for backend to be ready
+          for i in {1..30}; do
+            curl -sf http://localhost:8000/health && break
+            sleep 1
+          done
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Install frontend dependencies
+        working-directory: ./frontend
+        run: pnpm install
+
+      - name: Install Playwright browsers
+        working-directory: ./frontend
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Build shared package
+        working-directory: ./frontend
+        run: pnpm build:shared
+
+      - name: Run E2E tests
+        working-directory: ./frontend
+        env:
+          API_BASE_URL: http://localhost:8000
+          CI: true
+        run: pnpm test:e2e
+
+      - name: Upload Playwright report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: frontend/playwright-report/
+          retention-days: 7
+
+      - name: Stop backend
+        if: always()
+        run: |
+          if [ -f /tmp/backend.pid ]; then
+            kill $(cat /tmp/backend.pid) || true
+          fi

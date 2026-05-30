@@ -1,0 +1,55 @@
+import { defineConfig, devices } from "@playwright/test";
+
+/**
+ * Playwright E2E configuration for 一码通 (yimatong)
+ *
+ * Targets:
+ * - Admin: http://localhost:3000
+ * - H5:    http://localhost:3003  (3001 is occupied by mock-sms in docker-compose)
+ * - API:   http://localhost:8000
+ */
+
+export default defineConfig({
+  testDir: "./e2e",
+  fullyParallel: false, // core flow tests must run serially
+  forbidOnly: !!process.env.CI,
+  retries: process.env.CI ? 2 : 0,
+  workers: 1, // serial execution for shared backend state
+  reporter: process.env.CI
+    ? [["html", { open: "never" }], ["list"]]
+    : [["html", { open: "on-failure" }], ["list"]],
+
+  use: {
+    baseURL: "http://localhost:3000",
+    trace: "on-first-retry",
+    screenshot: "only-on-failure",
+    video: "on-first-retry",
+  },
+
+  globalSetup: require.resolve("./e2e/global-setup"),
+
+  projects: [
+    {
+      name: "chromium",
+      use: {
+        ...devices["Desktop Chrome"],
+        viewport: { width: 1280, height: 720 },
+      },
+    },
+  ],
+
+  webServer: [
+    {
+      command: "pnpm dev:admin",
+      url: "http://localhost:3000/login",
+      reuseExistingServer: !process.env.CI,
+      timeout: 120_000,
+    },
+    {
+      command: "cd apps/h5 && PORT=3003 pnpm dev",
+      url: "http://localhost:3003",
+      reuseExistingServer: !process.env.CI,
+      timeout: 120_000,
+    },
+  ],
+});

@@ -13,8 +13,12 @@ from app.models.scan import ScanEvent
 
 
 async def get_repeat_scan_stats(
-    db: AsyncSession, tenant_id: uuid.UUID, min_count: int = 2,
-    page: int = 1, page_size: int = 20, days_back: int = 30,
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    min_count: int = 2,
+    page: int = 1,
+    page_size: int = 20,
+    days_back: int = 30,
 ) -> tuple[list[dict], int]:
     """按码统计重复扫码次数"""
     from datetime import UTC, date, datetime, timedelta
@@ -51,11 +55,16 @@ async def get_repeat_scan_stats(
 
 
 async def get_cross_region_stats(
-    db: AsyncSession, tenant_id: uuid.UUID,
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
 ) -> dict:
     """跨区扫码统计"""
-    total_stmt = select(func.count()).select_from(DiversionClue).where(
-        DiversionClue.tenant_id == tenant_id,
+    total_stmt = (
+        select(func.count())
+        .select_from(DiversionClue)
+        .where(
+            DiversionClue.tenant_id == tenant_id,
+        )
     )
     total_result = await db.execute(total_stmt)
     total_clues = total_result.scalar() or 0
@@ -66,22 +75,26 @@ async def get_cross_region_stats(
         .group_by(DiversionClue.expected_region)
     )
     region_result = await db.execute(by_region_stmt)
-    by_region = [
-        {"region": row.expected_region, "count": row.cnt}
-        for row in region_result.all()
-    ]
+    by_region = [{"region": row.expected_region, "count": row.cnt} for row in region_result.all()]
 
     return {"total_clues": total_clues, "by_region": by_region}
 
 
 async def get_diversion_summary(
-    db: AsyncSession, tenant_id: uuid.UUID, resolved: bool | None = None,
-    page: int = 1, page_size: int = 20,
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    resolved: bool | None = None,
+    page: int = 1,
+    page_size: int = 20,
 ) -> dict:
     """窜货线索汇总"""
     stmt = select(DiversionClue).where(DiversionClue.tenant_id == tenant_id)
-    count_stmt = select(func.count()).select_from(DiversionClue).where(
-        DiversionClue.tenant_id == tenant_id,
+    count_stmt = (
+        select(func.count())
+        .select_from(DiversionClue)
+        .where(
+            DiversionClue.tenant_id == tenant_id,
+        )
     )
 
     if resolved is not None:
@@ -109,9 +122,7 @@ async def get_diversion_summary(
     dist_ids = [row.distributor_id for row in dist_rows if row.distributor_id]
     by_distributor = []
     if dist_ids:
-        dists_result = await db.execute(
-            select(Distributor).where(Distributor.id.in_(dist_ids))
-        )
+        dists_result = await db.execute(select(Distributor).where(Distributor.id.in_(dist_ids)))
         dists = {d.id: d.name for d in dists_result.scalars().all()}
         by_distributor = [
             {"distributor_id": str(did), "name": dists.get(did, "未知"), "count": cnt}
@@ -139,7 +150,9 @@ async def get_diversion_summary(
 
 
 async def export_risk_data(
-    db: AsyncSession, tenant_id: uuid.UUID, data_type: str,
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    data_type: str,
 ) -> str:
     """导出风控数据为 CSV"""
     output = io.StringIO()

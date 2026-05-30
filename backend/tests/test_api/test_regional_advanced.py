@@ -34,7 +34,12 @@ async def client(db_session: AsyncSession):
 async def setup_regional(client: AsyncClient):
     resp = await client.post(
         "/api/v1/tenants",
-        json={"name": "高级区域品牌", "admin_email": "adv@test.com", "admin_name": "Admin", "admin_password": "Pass1234"},
+        json={
+            "name": "高级区域品牌",
+            "admin_email": "adv@test.com",
+            "admin_name": "Admin",
+            "admin_password": "Pass1234",
+        },
     )
     tid = resp.json()["id"]
     token = create_access_token(tid, "00000000-0000-0000-0000-000000000001", "admin")
@@ -72,7 +77,8 @@ class TestCodeRules:
             headers=headers,
         )
         resp = await client.get(
-            f"/api/v1/regional/orgs/{org_id}/code-rules", headers=headers,
+            f"/api/v1/regional/orgs/{org_id}/code-rules",
+            headers=headers,
         )
         assert resp.status_code == 200
         assert len(resp.json()) >= 1
@@ -118,7 +124,8 @@ class TestWhitelabel:
             headers=headers,
         )
         resp = await client.get(
-            f"/api/v1/regional/orgs/{org_id}/whitelabel", headers=headers,
+            f"/api/v1/regional/orgs/{org_id}/whitelabel",
+            headers=headers,
         )
         assert resp.status_code == 200
         assert resp.json()["brand_name"] == "获取测试"

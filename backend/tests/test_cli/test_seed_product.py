@@ -24,9 +24,7 @@ class TestSeedProduct:
     @patch("app.cli.seed.create_brand_if_needed", new_callable=AsyncMock)
     @patch("app.cli.seed._get_tenant_by_slug", new_callable=AsyncMock)
     @patch("app.cli.seed.async_session")
-    def test_seed_product_chain(
-        self, mock_session, mock_get_tenant, mock_brand, mock_product, mock_sku
-    ):
+    def test_seed_product_chain(self, mock_session, mock_get_tenant, mock_brand, mock_product, mock_sku):
         mock_db = AsyncMock()
         mock_session.return_value.__aenter__ = AsyncMock(return_value=mock_db)
         mock_session.return_value.__aexit__ = AsyncMock(return_value=None)

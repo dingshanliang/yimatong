@@ -37,9 +37,7 @@ async def record_scan_event(
 
 async def _check_first_scan(db: AsyncSession, public_id: str) -> bool:
     """检查是否首扫"""
-    result = await db.execute(
-        select(ScanEvent).where(ScanEvent.public_id == public_id).limit(1)
-    )
+    result = await db.execute(select(ScanEvent).where(ScanEvent.public_id == public_id).limit(1))
     return result.scalar_one_or_none() is None
 
 

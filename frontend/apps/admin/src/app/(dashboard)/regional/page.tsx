@@ -213,11 +213,33 @@ function DashboardTab() {
     }
   };
 
+  const handleExport = async () => {
+    try {
+      const response = await api.post("/analytics/exports", null, {
+        params: { export_type: "regional_dashboard" },
+        responseType: "blob",
+      });
+      const blob = new Blob([response.data], { type: "text/csv" });
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "regional-dashboard.csv";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+      message.success("导出成功");
+    } catch {
+      message.error("导出失败，请确认您有管理员权限");
+    }
+  };
+
   return (
     <>
       <Space className="mb-4">
         <Input placeholder="输入组织 ID" value={orgId} onChange={(e) => setOrgId(e.target.value)} style={{ width: 300 }} />
         <Button type="primary" onClick={fetch}>查看数据</Button>
+        <Button onClick={handleExport}>导出 CSV</Button>
       </Space>
       <Row gutter={[16, 16]}>
         <Col span={8}>

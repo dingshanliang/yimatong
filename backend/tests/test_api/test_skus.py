@@ -102,9 +102,7 @@ class TestSKUCRUD:
         assert len(data["items"]) <= 2
 
     @pytest.mark.anyio
-    async def test_list_skus_filter_by_product(
-        self, client: AsyncClient, tenant_with_auth, product_id
-    ):
+    async def test_list_skus_filter_by_product(self, client: AsyncClient, tenant_with_auth, product_id):
         _, headers = tenant_with_auth
         # Create second product
         brand_resp = await client.post("/api/v1/brands", json={"name": "品牌B"}, headers=headers)
@@ -133,9 +131,7 @@ class TestSKUCRUD:
         assert all(item["product_id"] == product_id for item in data["items"])
 
     @pytest.mark.anyio
-    async def test_sku_code_unique_per_product(
-        self, client: AsyncClient, tenant_with_auth, product_id
-    ):
+    async def test_sku_code_unique_per_product(self, client: AsyncClient, tenant_with_auth, product_id):
         _, headers = tenant_with_auth
         await client.post(
             "/api/v1/skus",

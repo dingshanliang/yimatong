@@ -50,9 +50,7 @@ class RiskRule(Base):
     config: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     enabled: Mapped[bool] = mapped_column(default=True, nullable=False)
 
-    __table_args__ = (
-        Index("ix_risk_rules_tenant_type", "tenant_id", "rule_type"),
-    )
+    __table_args__ = (Index("ix_risk_rules_tenant_type", "tenant_id", "rule_type"),)
 
 
 class CampaignRiskRule(Base):
@@ -63,9 +61,7 @@ class CampaignRiskRule(Base):
     campaign_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
     risk_rule_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
 
-    __table_args__ = (
-        Index("ix_campaign_risk_rules_unique", "campaign_id", "risk_rule_id", unique=True),
-    )
+    __table_args__ = (Index("ix_campaign_risk_rules_unique", "campaign_id", "risk_rule_id", unique=True),)
 
 
 class InterceptionRecord(Base):
@@ -79,6 +75,4 @@ class InterceptionRecord(Base):
     context: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     consumer_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
 
-    __table_args__ = (
-        Index("ix_interceptions_tenant_rule", "tenant_id", "risk_rule_id"),
-    )
+    __table_args__ = (Index("ix_interceptions_tenant_rule", "tenant_id", "risk_rule_id"),)

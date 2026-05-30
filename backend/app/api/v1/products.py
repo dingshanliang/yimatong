@@ -79,9 +79,13 @@ async def update_brand_endpoint(
     tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
     brand = await update_brand(
-        db, tenant_id, brand_id,
-        name=body.name, logo_url=body.logo_url,
-        description=body.description, status=body.status,
+        db,
+        tenant_id,
+        brand_id,
+        name=body.name,
+        logo_url=body.logo_url,
+        description=body.description,
+        status=body.status,
     )
     if not brand:
         raise HTTPException(status_code=404, detail="Brand not found")
@@ -97,7 +101,11 @@ async def list_brand_products(
     tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
     products, total = await list_products(
-        db, tenant_id, brand_id=brand_id, page=page, page_size=page_size,
+        db,
+        tenant_id,
+        brand_id=brand_id,
+        page=page,
+        page_size=page_size,
     )
     return PaginatedResponse(
         items=[ProductRead.model_validate(p) for p in products],
@@ -140,7 +148,12 @@ async def list_products_endpoint(
     tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
     products, total = await list_products(
-        db, tenant_id, brand_id=brand_id, category=category, page=page, page_size=page_size,
+        db,
+        tenant_id,
+        brand_id=brand_id,
+        category=category,
+        page=page,
+        page_size=page_size,
     )
     return PaginatedResponse(
         items=[ProductRead.model_validate(p) for p in products],
@@ -158,9 +171,13 @@ async def update_product_endpoint(
     tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
     product = await update_product(
-        db, tenant_id, product_id,
-        name=body.name, category=body.category,
-        description=body.description, status=body.status,
+        db,
+        tenant_id,
+        product_id,
+        name=body.name,
+        category=body.category,
+        description=body.description,
+        status=body.status,
     )
     if not product:
         raise HTTPException(status_code=404, detail="Product not found")
@@ -176,7 +193,11 @@ async def list_product_skus(
     tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
     skus, total = await list_skus(
-        db, tenant_id, product_id=product_id, page=page, page_size=page_size,
+        db,
+        tenant_id,
+        product_id=product_id,
+        page=page,
+        page_size=page_size,
     )
     return PaginatedResponse(
         items=[SKURead.model_validate(s) for s in skus],
@@ -195,7 +216,11 @@ async def list_product_batches(
     tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
     batches, total = await list_production_batches(
-        db, tenant_id, product_id=product_id, page=page, page_size=page_size,
+        db,
+        tenant_id,
+        product_id=product_id,
+        page=page,
+        page_size=page_size,
     )
     return PaginatedResponse(
         items=[ProductionBatchRead.model_validate(b) for b in batches],
@@ -215,7 +240,12 @@ async def create_sku_endpoint(
     tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
     return await create_sku(
-        db, tenant_id, body.product_id, body.code, body.name, body.specifications,
+        db,
+        tenant_id,
+        body.product_id,
+        body.code,
+        body.name,
+        body.specifications,
     )
 
 
@@ -228,7 +258,11 @@ async def list_skus_endpoint(
     tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
     skus, total = await list_skus(
-        db, tenant_id, product_id=product_id, page=page, page_size=page_size,
+        db,
+        tenant_id,
+        product_id=product_id,
+        page=page,
+        page_size=page_size,
     )
     return PaginatedResponse(
         items=[SKURead.model_validate(s) for s in skus],
@@ -246,9 +280,13 @@ async def update_sku_endpoint(
     tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
     sku = await update_sku(
-        db, tenant_id, sku_id,
-        code=body.code, name=body.name,
-        specifications=body.specifications, status=body.status,
+        db,
+        tenant_id,
+        sku_id,
+        code=body.code,
+        name=body.name,
+        specifications=body.specifications,
+        status=body.status,
     )
     if not sku:
         raise HTTPException(status_code=404, detail="SKU not found")
@@ -265,8 +303,13 @@ async def create_batch_endpoint(
     tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
     return await create_production_batch(
-        db, tenant_id, body.product_id, body.sku_id,
-        body.batch_code, body.production_date, body.expiry_date,
+        db,
+        tenant_id,
+        body.product_id,
+        body.sku_id,
+        body.batch_code,
+        body.production_date,
+        body.expiry_date,
     )
 
 
@@ -279,7 +322,11 @@ async def list_batches_endpoint(
     tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
     batches, total = await list_production_batches(
-        db, tenant_id, product_id=product_id, page=page, page_size=page_size,
+        db,
+        tenant_id,
+        product_id=product_id,
+        page=page,
+        page_size=page_size,
     )
     return PaginatedResponse(
         items=[ProductionBatchRead.model_validate(b) for b in batches],
@@ -299,6 +346,10 @@ async def import_csv_endpoint(
 ):
     content = (await file.read()).decode("utf-8")
     imported, errors = await import_batches_csv(
-        db, tenant_id, uuid.UUID(product_id), uuid.UUID(sku_id), content,
+        db,
+        tenant_id,
+        uuid.UUID(product_id),
+        uuid.UUID(sku_id),
+        content,
     )
     return CSVImportResult(imported=imported, errors=errors)

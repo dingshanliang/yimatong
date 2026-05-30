@@ -90,7 +90,8 @@ class TestPageTemplateCRUD:
             headers=auth_setup,
         )
         resp = await client.get(
-            "/api/v1/page-templates?template_type=product_info", headers=auth_setup,
+            "/api/v1/page-templates?template_type=product_info",
+            headers=auth_setup,
         )
         assert resp.status_code == 200
         for item in resp.json()["items"]:
@@ -134,13 +135,15 @@ class TestPageTemplateCRUD:
         )
         tid = create.json()["id"]
         resp = await client.delete(
-            f"/api/v1/page-templates/{tid}", headers=auth_setup,
+            f"/api/v1/page-templates/{tid}",
+            headers=auth_setup,
         )
         assert resp.status_code == 200
 
         # 验证软删除：列表中默认过滤 archived
         detail = await client.get(
-            f"/api/v1/page-templates/{tid}", headers=auth_setup,
+            f"/api/v1/page-templates/{tid}",
+            headers=auth_setup,
         )
         assert detail.json()["status"] == "archived"
 
@@ -148,7 +151,8 @@ class TestPageTemplateCRUD:
     async def test_get_template_not_found(self, client: AsyncClient, auth_setup):
         fake_id = "00000000-0000-0000-0000-000000000999"
         resp = await client.get(
-            f"/api/v1/page-templates/{fake_id}", headers=auth_setup,
+            f"/api/v1/page-templates/{fake_id}",
+            headers=auth_setup,
         )
         assert resp.status_code == 404
 
@@ -231,7 +235,8 @@ class TestPageVersionManagement:
         )
         vid = ver.json()["id"]
         resp = await client.post(
-            f"/api/v1/page-versions/{vid}/publish", headers=auth_setup,
+            f"/api/v1/page-versions/{vid}/publish",
+            headers=auth_setup,
         )
         assert resp.status_code == 200
         assert resp.json()["status"] == "published"
@@ -259,16 +264,19 @@ class TestPageVersionManagement:
 
         # 发布 v1
         await client.post(
-            f"/api/v1/page-versions/{v1.json()['id']}/publish", headers=auth_setup,
+            f"/api/v1/page-versions/{v1.json()['id']}/publish",
+            headers=auth_setup,
         )
         # 发布 v2（自动归档 v1）
         await client.post(
-            f"/api/v1/page-versions/{v2.json()['id']}/publish", headers=auth_setup,
+            f"/api/v1/page-versions/{v2.json()['id']}/publish",
+            headers=auth_setup,
         )
 
         # v1 应该被自动归档
         versions = await client.get(
-            f"/api/v1/page-templates/{tid}/versions", headers=auth_setup,
+            f"/api/v1/page-templates/{tid}/versions",
+            headers=auth_setup,
         )
         statuses = {v["version"]: v["status"] for v in versions.json()}
         assert statuses[1] == "archived"
@@ -292,15 +300,14 @@ class TestPageVersionManagement:
         # 先发布再归档
         await client.post(f"/api/v1/page-versions/{vid}/publish", headers=auth_setup)
         resp = await client.post(
-            f"/api/v1/page-versions/{vid}/archive", headers=auth_setup,
+            f"/api/v1/page-versions/{vid}/archive",
+            headers=auth_setup,
         )
         assert resp.status_code == 200
         assert resp.json()["status"] == "archived"
 
     @pytest.mark.anyio
-    async def test_template_detail_with_published_version(
-        self, client: AsyncClient, auth_setup
-    ):
+    async def test_template_detail_with_published_version(self, client: AsyncClient, auth_setup):
         create = await client.post(
             "/api/v1/page-templates",
             json={"name": "发布详情", "template_type": "product_info"},
@@ -316,7 +323,8 @@ class TestPageVersionManagement:
         await client.post(f"/api/v1/page-versions/{vid}/publish", headers=auth_setup)
 
         detail = await client.get(
-            f"/api/v1/page-templates/{tid}", headers=auth_setup,
+            f"/api/v1/page-templates/{tid}",
+            headers=auth_setup,
         )
         assert detail.json()["published_version"] is not None
         assert detail.json()["published_version"]["status"] == "published"
@@ -340,7 +348,8 @@ class TestPageVersionManagement:
             headers=auth_setup,
         )
         resp = await client.get(
-            f"/api/v1/page-templates/{tid}/versions", headers=auth_setup,
+            f"/api/v1/page-templates/{tid}/versions",
+            headers=auth_setup,
         )
         assert resp.status_code == 200
         assert len(resp.json()) == 2

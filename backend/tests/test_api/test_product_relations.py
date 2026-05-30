@@ -67,9 +67,7 @@ async def brand_with_products(client: AsyncClient, tenant_with_auth):
 
 class TestProductRelations:
     @pytest.mark.anyio
-    async def test_brand_products(
-        self, client: AsyncClient, tenant_with_auth, brand_with_products
-    ):
+    async def test_brand_products(self, client: AsyncClient, tenant_with_auth, brand_with_products):
         brand_id, product_ids = brand_with_products
         _, headers = tenant_with_auth
 
@@ -80,9 +78,7 @@ class TestProductRelations:
         assert all(p["brand_id"] == brand_id for p in data["items"])
 
     @pytest.mark.anyio
-    async def test_product_skus(
-        self, client: AsyncClient, tenant_with_auth, brand_with_products
-    ):
+    async def test_product_skus(self, client: AsyncClient, tenant_with_auth, brand_with_products):
         _, product_ids = brand_with_products
         _, headers = tenant_with_auth
         product_id = product_ids[0]
@@ -105,9 +101,7 @@ class TestProductRelations:
         assert all(s["product_id"] == product_id for s in data["items"])
 
     @pytest.mark.anyio
-    async def test_product_batches(
-        self, client: AsyncClient, tenant_with_auth, brand_with_products
-    ):
+    async def test_product_batches(self, client: AsyncClient, tenant_with_auth, brand_with_products):
         _, product_ids = brand_with_products
         _, headers = tenant_with_auth
         product_id = product_ids[0]
@@ -123,8 +117,10 @@ class TestProductRelations:
         await client.post(
             "/api/v1/production-batches",
             json={
-                "product_id": product_id, "sku_id": sku_id,
-                "batch_code": "BATCH-R1", "production_date": "2026-01-01",
+                "product_id": product_id,
+                "sku_id": sku_id,
+                "batch_code": "BATCH-R1",
+                "production_date": "2026-01-01",
                 "expiry_date": "2027-01-01",
             },
             headers=headers,
@@ -137,9 +133,7 @@ class TestProductRelations:
         assert all(b["product_id"] == product_id for b in data["items"])
 
     @pytest.mark.anyio
-    async def test_relation_tenant_isolation(
-        self, client: AsyncClient, tenant_with_auth, brand_with_products
-    ):
+    async def test_relation_tenant_isolation(self, client: AsyncClient, tenant_with_auth, brand_with_products):
         brand_id, _ = brand_with_products
         _, headers = tenant_with_auth
 
@@ -164,9 +158,7 @@ class TestProductRelations:
             assert len(resp.json()["items"]) == 0
 
     @pytest.mark.anyio
-    async def test_delete_brand_with_products_blocked(
-        self, client: AsyncClient, tenant_with_auth, brand_with_products
-    ):
+    async def test_delete_brand_with_products_blocked(self, client: AsyncClient, tenant_with_auth, brand_with_products):
         brand_id, _ = brand_with_products
         _, headers = tenant_with_auth
 

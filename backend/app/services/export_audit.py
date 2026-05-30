@@ -20,7 +20,7 @@ async def log_export(
         tenant_id=tenant_id,
         account_id=account_id,
         export_type=export_type,
-        resource_id=resource_id,
+        resource_id=uuid.UUID(resource_id) if resource_id else None,
         file_name=file_name,
         row_count=row_count,
     )

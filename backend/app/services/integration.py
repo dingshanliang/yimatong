@@ -9,7 +9,9 @@ from app.models.product import Product
 
 
 async def batch_import_products(
-    db: AsyncSession, tenant_id: uuid.UUID, items: list[dict],
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    items: list[dict],
 ) -> int:
     count = 0
     for item in items:
@@ -26,7 +28,9 @@ async def batch_import_products(
 
 
 async def sync_inventory(
-    db: AsyncSession, tenant_id: uuid.UUID, records: list[dict],
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    records: list[dict],
 ) -> int:
     count = 0
     for rec in records:
@@ -42,7 +46,9 @@ async def sync_inventory(
 
 
 async def sync_customers(
-    db: AsyncSession, tenant_id: uuid.UUID, customers: list[dict],
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    customers: list[dict],
 ) -> int:
     count = 0
     for cust in customers:

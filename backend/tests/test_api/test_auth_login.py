@@ -127,9 +127,7 @@ class TestLogin:
 
 class TestAccountLocking:
     @pytest.mark.anyio
-    async def test_account_locked_after_5_failures(
-        self, client: AsyncClient, db_session: AsyncSession, seeded_account
-    ):
+    async def test_account_locked_after_5_failures(self, client: AsyncClient, db_session: AsyncSession, seeded_account):
         for _ in range(5):
             resp = await client.post(
                 "/api/v1/auth/login",

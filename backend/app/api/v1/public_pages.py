@@ -18,9 +18,7 @@ async def get_public_page(
     db: AsyncSession = Depends(get_db),
 ):
     """H5 获取页面配置 DSL（公开端点，无需认证）"""
-    result = await db.execute(
-        select(PageVersion).where(PageVersion.id == version_id)
-    )
+    result = await db.execute(select(PageVersion).where(PageVersion.id == version_id))
     version = result.scalar_one_or_none()
     if not version:
         raise HTTPException(status_code=404, detail="Page version not found")

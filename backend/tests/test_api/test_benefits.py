@@ -87,9 +87,7 @@ async def campaign_and_benefit(client: AsyncClient, auth_setup):
 
 class TestBenefitsList:
     @pytest.mark.anyio
-    async def test_list_benefits_paginated(
-        self, client: AsyncClient, campaign_and_benefit
-    ):
+    async def test_list_benefits_paginated(self, client: AsyncClient, campaign_and_benefit):
         _, _, headers = campaign_and_benefit
         resp = await client.get("/api/v1/benefits", headers=headers)
         assert resp.status_code == 200
@@ -100,9 +98,7 @@ class TestBenefitsList:
         assert len(data["items"]) >= 1
 
     @pytest.mark.anyio
-    async def test_list_benefits_with_pagination(
-        self, client: AsyncClient, campaign_and_benefit
-    ):
+    async def test_list_benefits_with_pagination(self, client: AsyncClient, campaign_and_benefit):
         _, _, headers = campaign_and_benefit
         resp = await client.get("/api/v1/benefits?page=1&page_size=10", headers=headers)
         assert resp.status_code == 200
@@ -113,9 +109,7 @@ class TestBenefitsList:
 
 class TestBenefitDetail:
     @pytest.mark.anyio
-    async def test_get_benefit_by_id(
-        self, client: AsyncClient, campaign_and_benefit
-    ):
+    async def test_get_benefit_by_id(self, client: AsyncClient, campaign_and_benefit):
         _, bid, headers = campaign_and_benefit
         resp = await client.get(f"/api/v1/benefits/{bid}", headers=headers)
         assert resp.status_code == 200
@@ -129,21 +123,15 @@ class TestBenefitDetail:
         assert data["config_json"]["amount"] == 10
 
     @pytest.mark.anyio
-    async def test_get_benefit_not_found(
-        self, client: AsyncClient, campaign_and_benefit
-    ):
+    async def test_get_benefit_not_found(self, client: AsyncClient, campaign_and_benefit):
         _, _, headers = campaign_and_benefit
-        resp = await client.get(
-            "/api/v1/benefits/00000000-0000-0000-0000-000000000099", headers=headers
-        )
+        resp = await client.get("/api/v1/benefits/00000000-0000-0000-0000-000000000099", headers=headers)
         assert resp.status_code == 404
 
 
 class TestBenefitUpdate:
     @pytest.mark.anyio
-    async def test_update_benefit_name_and_stock(
-        self, client: AsyncClient, campaign_and_benefit
-    ):
+    async def test_update_benefit_name_and_stock(self, client: AsyncClient, campaign_and_benefit):
         _, bid, headers = campaign_and_benefit
         resp = await client.patch(
             f"/api/v1/benefits/{bid}",
@@ -156,9 +144,7 @@ class TestBenefitUpdate:
         assert data["stock_total"] == 200
 
     @pytest.mark.anyio
-    async def test_update_benefit_config_json(
-        self, client: AsyncClient, campaign_and_benefit
-    ):
+    async def test_update_benefit_config_json(self, client: AsyncClient, campaign_and_benefit):
         _, bid, headers = campaign_and_benefit
         resp = await client.patch(
             f"/api/v1/benefits/{bid}",
@@ -171,9 +157,7 @@ class TestBenefitUpdate:
         assert data["config_json"]["min_order"] == 100
 
     @pytest.mark.anyio
-    async def test_update_benefit_not_found(
-        self, client: AsyncClient, campaign_and_benefit
-    ):
+    async def test_update_benefit_not_found(self, client: AsyncClient, campaign_and_benefit):
         _, _, headers = campaign_and_benefit
         resp = await client.patch(
             "/api/v1/benefits/00000000-0000-0000-0000-000000000099",
@@ -185,9 +169,7 @@ class TestBenefitUpdate:
 
 class TestBenefitDelete:
     @pytest.mark.anyio
-    async def test_delete_benefit(
-        self, client: AsyncClient, campaign_and_benefit
-    ):
+    async def test_delete_benefit(self, client: AsyncClient, campaign_and_benefit):
         _, bid, headers = campaign_and_benefit
         resp = await client.delete(f"/api/v1/benefits/{bid}", headers=headers)
         assert resp.status_code == 200
@@ -198,21 +180,15 @@ class TestBenefitDelete:
         assert resp2.status_code == 404
 
     @pytest.mark.anyio
-    async def test_delete_benefit_not_found(
-        self, client: AsyncClient, campaign_and_benefit
-    ):
+    async def test_delete_benefit_not_found(self, client: AsyncClient, campaign_and_benefit):
         _, _, headers = campaign_and_benefit
-        resp = await client.delete(
-            "/api/v1/benefits/00000000-0000-0000-0000-000000000099", headers=headers
-        )
+        resp = await client.delete("/api/v1/benefits/00000000-0000-0000-0000-000000000099", headers=headers)
         assert resp.status_code == 404
 
 
 class TestBenefitClaimsAdmin:
     @pytest.mark.anyio
-    async def test_list_benefit_claims_admin(
-        self, client: AsyncClient, campaign_and_benefit
-    ):
+    async def test_list_benefit_claims_admin(self, client: AsyncClient, campaign_and_benefit):
         cid, bid, headers = campaign_and_benefit
         # Create a claim first
         await client.post(
@@ -233,9 +209,7 @@ class TestBenefitClaimsAdmin:
         assert claim["consumer_id"] == "user-001"
 
     @pytest.mark.anyio
-    async def test_list_benefit_claims_admin_pagination(
-        self, client: AsyncClient, campaign_and_benefit
-    ):
+    async def test_list_benefit_claims_admin_pagination(self, client: AsyncClient, campaign_and_benefit):
         _, bid, headers = campaign_and_benefit
         await client.post(
             f"/api/v1/campaigns/benefits/{bid}/claim",
@@ -243,9 +217,7 @@ class TestBenefitClaimsAdmin:
             headers=headers,
         )
 
-        resp = await client.get(
-            "/api/v1/benefits/admin/claims?page=1&page_size=5", headers=headers
-        )
+        resp = await client.get("/api/v1/benefits/admin/claims?page=1&page_size=5", headers=headers)
         assert resp.status_code == 200
         data = resp.json()
         assert data["page"] == 1

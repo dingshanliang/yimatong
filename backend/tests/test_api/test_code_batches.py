@@ -89,9 +89,7 @@ class TestCodeBatchCreate:
         assert data["status"] == "completed"
 
     @pytest.mark.anyio
-    async def test_batch_creates_code_items(
-        self, client: AsyncClient, tenant_with_auth, sku_with_auth
-    ):
+    async def test_batch_creates_code_items(self, client: AsyncClient, tenant_with_auth, sku_with_auth):
         _, headers = tenant_with_auth
         product_id, sku_id = sku_with_auth
         resp = await client.post(
@@ -108,15 +106,14 @@ class TestCodeBatchCreate:
 
         # Check code items were created
         items_resp = await client.get(
-            f"/api/v1/code-items?code_batch_id={batch_id}", headers=headers,
+            f"/api/v1/code-items?code_batch_id={batch_id}",
+            headers=headers,
         )
         assert items_resp.status_code == 200
         assert items_resp.json()["total"] == 5
 
     @pytest.mark.anyio
-    async def test_code_items_have_unique_public_ids(
-        self, client: AsyncClient, tenant_with_auth, sku_with_auth
-    ):
+    async def test_code_items_have_unique_public_ids(self, client: AsyncClient, tenant_with_auth, sku_with_auth):
         _, headers = tenant_with_auth
         product_id, sku_id = sku_with_auth
         resp = await client.post(

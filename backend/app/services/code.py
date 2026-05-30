@@ -145,20 +145,18 @@ async def list_code_items(
 
 
 async def get_code_batch(
-    db: AsyncSession, tenant_id: uuid.UUID, batch_id: uuid.UUID,
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    batch_id: uuid.UUID,
 ) -> dict | None:
-    result = await db.execute(
-        select(CodeBatch).where(CodeBatch.id == batch_id, CodeBatch.tenant_id == tenant_id)
-    )
+    result = await db.execute(select(CodeBatch).where(CodeBatch.id == batch_id, CodeBatch.tenant_id == tenant_id))
     batch = result.scalar_one_or_none()
     if not batch:
         return None
 
     # 各状态码数量统计
     stats_result = await db.execute(
-        select(CodeItem.status, func.count())
-        .where(CodeItem.code_batch_id == batch_id)
-        .group_by(CodeItem.status)
+        select(CodeItem.status, func.count()).where(CodeItem.code_batch_id == batch_id).group_by(CodeItem.status)
     )
     stats = {str(status): count for status, count in stats_result.all()}
 
@@ -177,16 +175,18 @@ async def get_code_batch(
 
 
 async def get_code_item(
-    db: AsyncSession, tenant_id: uuid.UUID, item_id: uuid.UUID,
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    item_id: uuid.UUID,
 ) -> CodeItem | None:
-    result = await db.execute(
-        select(CodeItem).where(CodeItem.id == item_id, CodeItem.tenant_id == tenant_id)
-    )
+    result = await db.execute(select(CodeItem).where(CodeItem.id == item_id, CodeItem.tenant_id == tenant_id))
     return result.scalar_one_or_none()
 
 
 async def resolve_code_by_public_id(
-    db: AsyncSession, tenant_id: uuid.UUID, public_id: str,
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    public_id: str,
 ) -> dict | None:
     result = await db.execute(
         select(CodeItem).where(
@@ -199,9 +199,7 @@ async def resolve_code_by_public_id(
         return None
 
     # 获取关联的批次信息以提取 product_id / sku_id
-    batch_result = await db.execute(
-        select(CodeBatch).where(CodeBatch.id == item.code_batch_id)
-    )
+    batch_result = await db.execute(select(CodeBatch).where(CodeBatch.id == item.code_batch_id))
     batch = batch_result.scalar_one_or_none()
 
     return {
@@ -214,20 +212,20 @@ async def resolve_code_by_public_id(
     }
 
 
-async def activate_batch(
-    db: AsyncSession, tenant_id: uuid.UUID, batch_id: uuid.UUID
-) -> dict:
+async def activate_batch(db: AsyncSession, tenant_id: uuid.UUID, batch_id: uuid.UUID) -> dict:
     from sqlalchemy import update as sa_update
 
     from app.services.code_state import can_transition
 
     # Validate current state with a lightweight count query
     result = await db.execute(
-        select(CodeItem.status).where(
+        select(CodeItem.status)
+        .where(
             CodeItem.tenant_id == tenant_id,
             CodeItem.code_batch_id == batch_id,
             CodeItem.status == CodeItemStatus.created,
-        ).limit(1)
+        )
+        .limit(1)
     )
     sample = result.scalar_one_or_none()
     if sample is not None:
@@ -248,15 +246,11 @@ async def activate_batch(
     return {"activated": r.rowcount}
 
 
-async def revoke_code_item(
-    db: AsyncSession, tenant_id: uuid.UUID, item_id: uuid.UUID
-) -> CodeItem:
+async def revoke_code_item(db: AsyncSession, tenant_id: uuid.UUID, item_id: uuid.UUID) -> CodeItem:
 
     from app.services.code_state import can_transition
 
-    result = await db.execute(
-        select(CodeItem).where(CodeItem.id == item_id, CodeItem.tenant_id == tenant_id)
-    )
+    result = await db.execute(select(CodeItem).where(CodeItem.id == item_id, CodeItem.tenant_id == tenant_id))
     item = result.scalar_one_or_none()
     if not item:
         from fastapi import HTTPException
@@ -270,15 +264,11 @@ async def revoke_code_item(
     return item
 
 
-async def bind_code_item(
-    db: AsyncSession, tenant_id: uuid.UUID, item_id: uuid.UUID
-) -> CodeItem:
+async def bind_code_item(db: AsyncSession, tenant_id: uuid.UUID, item_id: uuid.UUID) -> CodeItem:
 
     from app.services.code_state import can_transition
 
-    result = await db.execute(
-        select(CodeItem).where(CodeItem.id == item_id, CodeItem.tenant_id == tenant_id)
-    )
+    result = await db.execute(select(CodeItem).where(CodeItem.id == item_id, CodeItem.tenant_id == tenant_id))
     item = result.scalar_one_or_none()
     if not item:
         from fastapi import HTTPException
@@ -292,20 +282,20 @@ async def bind_code_item(
     return item
 
 
-async def freeze_batch(
-    db: AsyncSession, tenant_id: uuid.UUID, batch_id: uuid.UUID
-) -> dict:
+async def freeze_batch(db: AsyncSession, tenant_id: uuid.UUID, batch_id: uuid.UUID) -> dict:
     from sqlalchemy import update as sa_update
 
     from app.services.code_state import can_transition
 
     # Validate current state before bulk update
     sample_result = await db.execute(
-        select(CodeItem.status).where(
+        select(CodeItem.status)
+        .where(
             CodeItem.tenant_id == tenant_id,
             CodeItem.code_batch_id == batch_id,
             CodeItem.status.in_([CodeItemStatus.activated, CodeItemStatus.bound]),
-        ).limit(1)
+        )
+        .limit(1)
     )
     sample = sample_result.scalar_one_or_none()
     if sample is not None:
@@ -326,9 +316,7 @@ async def freeze_batch(
     return {"frozen": r.rowcount}
 
 
-async def void_batch(
-    db: AsyncSession, tenant_id: uuid.UUID, batch_id: uuid.UUID
-) -> dict:
+async def void_batch(db: AsyncSession, tenant_id: uuid.UUID, batch_id: uuid.UUID) -> dict:
     from sqlalchemy import update as sa_update
 
     now = utcnow()
@@ -350,14 +338,15 @@ _BATCH_ALLOWED_FIELDS = {"batch_code"}
 
 
 async def update_batch(
-    db: AsyncSession, tenant_id: uuid.UUID, batch_id: uuid.UUID, **kwargs,
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    batch_id: uuid.UUID,
+    **kwargs,
 ) -> dict | None:
     batch = await get_code_batch(db, tenant_id, batch_id)
     if not batch:
         return None
-    result = await db.execute(
-        select(CodeBatch).where(CodeBatch.id == batch_id, CodeBatch.tenant_id == tenant_id)
-    )
+    result = await db.execute(select(CodeBatch).where(CodeBatch.id == batch_id, CodeBatch.tenant_id == tenant_id))
     obj = result.scalar_one_or_none()
     if not obj:
         return None
@@ -372,11 +361,12 @@ _ITEM_ALLOWED_FIELDS = {"status"}
 
 
 async def update_code_item(
-    db: AsyncSession, tenant_id: uuid.UUID, item_id: uuid.UUID, **kwargs,
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    item_id: uuid.UUID,
+    **kwargs,
 ) -> CodeItem | None:
-    result = await db.execute(
-        select(CodeItem).where(CodeItem.id == item_id, CodeItem.tenant_id == tenant_id)
-    )
+    result = await db.execute(select(CodeItem).where(CodeItem.id == item_id, CodeItem.tenant_id == tenant_id))
     item = result.scalar_one_or_none()
     if not item:
         return None

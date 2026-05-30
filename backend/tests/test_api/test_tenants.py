@@ -112,9 +112,7 @@ class TestGetTenant:
     @pytest.mark.anyio
     async def test_get_nonexistent_tenant(self, client: AsyncClient):
         headers = _auth_headers("00000000-0000-0000-0000-000000000000")
-        resp = await client.get(
-            "/api/v1/tenants/00000000-0000-0000-0000-000000000000", headers=headers
-        )
+        resp = await client.get("/api/v1/tenants/00000000-0000-0000-0000-000000000000", headers=headers)
         assert resp.status_code == 404
 
 

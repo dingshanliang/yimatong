@@ -94,9 +94,7 @@ class TestDualCodeModel:
         assert data["generated_count"] == 10
 
     @pytest.mark.anyio
-    async def test_code_item_has_type_and_pair(
-        self, client: AsyncClient, setup_tenant, db_session: AsyncSession
-    ):
+    async def test_code_item_has_type_and_pair(self, client: AsyncClient, setup_tenant, db_session: AsyncSession):
         """码项应包含 code_type(outer/inner) 和 pair_id 字段"""
         tid, headers, brand_id, product_id, sku_id = setup_tenant
         resp = await client.post(
@@ -131,9 +129,7 @@ class TestDualCodeModel:
         assert outer_pair_ids == inner_pair_ids
 
     @pytest.mark.anyio
-    async def test_single_code_batch_still_works(
-        self, client: AsyncClient, setup_tenant
-    ):
+    async def test_single_code_batch_still_works(self, client: AsyncClient, setup_tenant):
         """非配对批次（默认 single 类型）仍正常工作"""
         tid, headers, brand_id, product_id, sku_id = setup_tenant
         resp = await client.post(
@@ -156,9 +152,7 @@ class TestOuterCodeResolve:
     """W9-003: 外码解析 — 引流页"""
 
     @pytest.mark.anyio
-    async def test_outer_code_shows_landing_page(
-        self, client: AsyncClient, setup_tenant
-    ):
+    async def test_outer_code_shows_landing_page(self, client: AsyncClient, setup_tenant):
         """外码扫码展示引流页"""
         tid, headers, brand_id, product_id, sku_id = setup_tenant
         # 创建配对码批次并激活
@@ -197,9 +191,7 @@ class TestInnerCodeResolve:
     """W9-004: 内码解析 — 验真+领奖"""
 
     @pytest.mark.anyio
-    async def test_inner_code_verifies_authentic(
-        self, client: AsyncClient, setup_tenant
-    ):
+    async def test_inner_code_verifies_authentic(self, client: AsyncClient, setup_tenant):
         """内码扫码展示验真结果"""
         tid, headers, brand_id, product_id, sku_id = setup_tenant
         batch = await client.post(

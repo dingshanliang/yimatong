@@ -68,19 +68,19 @@ async def auth_with_codes(client: AsyncClient):
     )
     # 激活码
     await client.post(
-        f"/api/v1/code-batches/{batch.json()['id']}/activate", headers=headers,
+        f"/api/v1/code-batches/{batch.json()['id']}/activate",
+        headers=headers,
     )
     return tid, headers, batch.json()["id"]
 
 
 class TestCodeStatsAPI:
     @pytest.mark.anyio
-    async def test_code_stats(
-        self, client: AsyncClient, auth_with_codes
-    ):
+    async def test_code_stats(self, client: AsyncClient, auth_with_codes):
         _, headers, _ = auth_with_codes
         resp = await client.get(
-            "/api/v1/analytics/code-stats", headers=headers,
+            "/api/v1/analytics/code-stats",
+            headers=headers,
         )
         assert resp.status_code == 200
         data = resp.json()
@@ -88,9 +88,7 @@ class TestCodeStatsAPI:
         assert "activated" in data["by_status"]
 
     @pytest.mark.anyio
-    async def test_code_stats_by_batch(
-        self, client: AsyncClient, auth_with_codes
-    ):
+    async def test_code_stats_by_batch(self, client: AsyncClient, auth_with_codes):
         _, headers, batch_id = auth_with_codes
         resp = await client.get(
             f"/api/v1/analytics/code-stats?code_batch_id={batch_id}",

@@ -38,8 +38,12 @@ async def list_page_templates(
     page_size: int = 20,
 ) -> tuple[list[dict], int]:
     stmt = select(PageTemplate).where(PageTemplate.tenant_id == tenant_id)
-    count_stmt = select(func.count()).select_from(PageTemplate).where(
-        PageTemplate.tenant_id == tenant_id,
+    count_stmt = (
+        select(func.count())
+        .select_from(PageTemplate)
+        .where(
+            PageTemplate.tenant_id == tenant_id,
+        )
     )
 
     if template_type:
@@ -59,11 +63,14 @@ async def list_page_templates(
 
 
 async def get_page_template(
-    db: AsyncSession, tenant_id: uuid.UUID, template_id: uuid.UUID,
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    template_id: uuid.UUID,
 ) -> dict | None:
     result = await db.execute(
         select(PageTemplate).where(
-            PageTemplate.id == template_id, PageTemplate.tenant_id == tenant_id,
+            PageTemplate.id == template_id,
+            PageTemplate.tenant_id == tenant_id,
         ),
     )
     t = result.scalar_one_or_none()
@@ -99,7 +106,8 @@ async def update_page_template(
 ) -> dict | None:
     result = await db.execute(
         select(PageTemplate).where(
-            PageTemplate.id == template_id, PageTemplate.tenant_id == tenant_id,
+            PageTemplate.id == template_id,
+            PageTemplate.tenant_id == tenant_id,
         ),
     )
     t = result.scalar_one_or_none()
@@ -115,11 +123,14 @@ async def update_page_template(
 
 
 async def delete_page_template(
-    db: AsyncSession, tenant_id: uuid.UUID, template_id: uuid.UUID,
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    template_id: uuid.UUID,
 ) -> bool:
     result = await db.execute(
         select(PageTemplate).where(
-            PageTemplate.id == template_id, PageTemplate.tenant_id == tenant_id,
+            PageTemplate.id == template_id,
+            PageTemplate.tenant_id == tenant_id,
         ),
     )
     t = result.scalar_one_or_none()
@@ -166,7 +177,8 @@ async def update_page_version(
 ) -> dict | None:
     result = await db.execute(
         select(PageVersion).where(
-            PageVersion.id == version_id, PageVersion.tenant_id == tenant_id,
+            PageVersion.id == version_id,
+            PageVersion.tenant_id == tenant_id,
         ),
     )
     v = result.scalar_one_or_none()
@@ -185,7 +197,8 @@ async def publish_page_version(
 ) -> dict | None:
     result = await db.execute(
         select(PageVersion).where(
-            PageVersion.id == version_id, PageVersion.tenant_id == tenant_id,
+            PageVersion.id == version_id,
+            PageVersion.tenant_id == tenant_id,
         ),
     )
     v = result.scalar_one_or_none()
@@ -215,7 +228,8 @@ async def archive_page_version(
 ) -> dict | None:
     result = await db.execute(
         select(PageVersion).where(
-            PageVersion.id == version_id, PageVersion.tenant_id == tenant_id,
+            PageVersion.id == version_id,
+            PageVersion.tenant_id == tenant_id,
         ),
     )
     v = result.scalar_one_or_none()
@@ -247,7 +261,11 @@ async def rollback_page_version(
         return None
 
     return await create_page_version(
-        db, tenant_id, template_id, dict(target_ver.config_json), created_by,
+        db,
+        tenant_id,
+        template_id,
+        dict(target_ver.config_json),
+        created_by,
     )
 
 

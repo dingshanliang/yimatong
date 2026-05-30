@@ -69,7 +69,9 @@ class TestCopywriting:
 
     @pytest.mark.anyio
     async def test_generate_product_selling_points(
-        self, client: AsyncClient, setup_tenant,
+        self,
+        client: AsyncClient,
+        setup_tenant,
     ):
         tid, headers = setup_tenant
         resp = await client.post(

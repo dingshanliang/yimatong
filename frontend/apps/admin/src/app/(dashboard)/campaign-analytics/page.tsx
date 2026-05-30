@@ -135,26 +135,32 @@ export default function CampaignAnalyticsPage() {
     { total_scans: 0, uv: 0, first_scans: 0, rescans: 0 }
   );
 
-  const handleExportCSV = () => {
-    if (trend.length === 0) {
-      message.warning("暂无数据可导出");
-      return;
+  const handleExportCSV = async () => {
+    try {
+      const params: Record<string, string> = {
+        export_type: "campaign_dashboard",
+      };
+      if (dateRange[0] && dateRange[1]) {
+        params.start_date = dateRange[0].format("YYYY-MM-DD");
+        params.end_date = dateRange[1].format("YYYY-MM-DD");
+      }
+      const response = await api.post("/analytics/exports", null, {
+        params,
+        responseType: "blob",
+      });
+      const blob = new Blob([response.data], { type: "text/csv" });
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `活动看板_${dateRange[0].format("YYYYMMDD")}-${dateRange[1].format("YYYYMMDD")}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+      message.success("导出成功");
+    } catch {
+      message.error("导出失败，请确认您有管理员权限");
     }
-    const header = "日期,总扫码,UV,首扫,复扫";
-    const rows = trend.map(
-      (r) =>
-        `${r.date},${r.total_scans},${r.uv},${r.first_scans},${r.rescans}`
-    );
-    const csv = [header, ...rows].join("\n");
-    const BOM = "﻿";
-    const blob = new Blob([BOM + csv], { type: "text/csv;charset=utf-8;" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `活动看板_${dateRange[0].format("YYYYMMDD")}-${dateRange[1].format("YYYYMMDD")}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
-    message.success("导出成功");
   };
 
   const trendColumns: ColumnsType<ScanTrendRow> = [

@@ -11,24 +11,32 @@ from app.services.tenant import create_tenant
 @pytest.fixture
 async def tenant_a(db: AsyncSession) -> Tenant:
     return await create_tenant(
-        db, name="租户A", slug=None, plan="free",
-        admin_email="a@test.com", admin_name="A", admin_password="Pass1234",
+        db,
+        name="租户A",
+        slug=None,
+        plan="free",
+        admin_email="a@test.com",
+        admin_name="A",
+        admin_password="Pass1234",
     )
 
 
 @pytest.fixture
 async def tenant_b(db: AsyncSession) -> Tenant:
     return await create_tenant(
-        db, name="租户B", slug=None, plan="free",
-        admin_email="b@test.com", admin_name="B", admin_password="Pass1234",
+        db,
+        name="租户B",
+        slug=None,
+        plan="free",
+        admin_email="b@test.com",
+        admin_name="B",
+        admin_password="Pass1234",
     )
 
 
 class TestOrganizationAutoFilter:
     @pytest.mark.anyio
-    async def test_list_only_own_tenant_orgs(
-        self, db: AsyncSession, tenant_a: Tenant, tenant_b: Tenant
-    ):
+    async def test_list_only_own_tenant_orgs(self, db: AsyncSession, tenant_a: Tenant, tenant_b: Tenant):
         await create_organization(db, tenant_a.id, "A部门", None)
         await create_organization(db, tenant_b.id, "B部门", None)
 
@@ -40,9 +48,7 @@ class TestOrganizationAutoFilter:
 
 class TestAccountAutoFilter:
     @pytest.mark.anyio
-    async def test_list_only_own_tenant_accounts(
-        self, db: AsyncSession, tenant_a: Tenant, tenant_b: Tenant
-    ):
+    async def test_list_only_own_tenant_accounts(self, db: AsyncSession, tenant_a: Tenant, tenant_b: Tenant):
         org_a = await create_organization(db, tenant_a.id, "A部门", None)
         org_b = await create_organization(db, tenant_b.id, "B部门", None)
 

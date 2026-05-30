@@ -1,6 +1,5 @@
 """A3-005: 存储服务单元测试"""
 
-
 from app.services.storage import (
     MAX_FILE_SIZE,
     build_file_key,

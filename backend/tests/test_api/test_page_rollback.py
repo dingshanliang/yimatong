@@ -60,7 +60,8 @@ async def setup_template_with_versions(client: AsyncClient):
     )
     v1_id = v1.json()["id"]
     await client.post(
-        f"/api/v1/page-versions/{v1_id}/publish", headers=headers,
+        f"/api/v1/page-versions/{v1_id}/publish",
+        headers=headers,
     )
 
     # 创建 v2 并发布
@@ -71,7 +72,8 @@ async def setup_template_with_versions(client: AsyncClient):
     )
     v2_id = v2.json()["id"]
     await client.post(
-        f"/api/v1/page-versions/{v2_id}/publish", headers=headers,
+        f"/api/v1/page-versions/{v2_id}/publish",
+        headers=headers,
     )
 
     # 创建 v3 (draft)
@@ -86,9 +88,7 @@ async def setup_template_with_versions(client: AsyncClient):
 
 class TestPageRollback:
     @pytest.mark.anyio
-    async def test_rollback_creates_new_version(
-        self, client: AsyncClient, setup_template_with_versions
-    ):
+    async def test_rollback_creates_new_version(self, client: AsyncClient, setup_template_with_versions):
         _, headers, template_id, v1_id = setup_template_with_versions
 
         resp = await client.post(
@@ -102,9 +102,7 @@ class TestPageRollback:
         assert data["version"] == 4
 
     @pytest.mark.anyio
-    async def test_rollback_preserves_history(
-        self, client: AsyncClient, setup_template_with_versions
-    ):
+    async def test_rollback_preserves_history(self, client: AsyncClient, setup_template_with_versions):
         _, headers, template_id, v1_id = setup_template_with_versions
 
         versions_resp = await client.get(
@@ -125,9 +123,7 @@ class TestPageRollback:
         assert len(versions_resp.json()) == original_count + 1
 
     @pytest.mark.anyio
-    async def test_rollback_nonexistent_version_404(
-        self, client: AsyncClient, setup_template_with_versions
-    ):
+    async def test_rollback_nonexistent_version_404(self, client: AsyncClient, setup_template_with_versions):
         _, headers, template_id, _ = setup_template_with_versions
 
         resp = await client.post(

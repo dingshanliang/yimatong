@@ -26,17 +26,29 @@ class TestSQLIsolation:
     @pytest.mark.anyio
     async def test_sql_query_filtered_by_tenant_id(self, db: AsyncSession):
         """场景2：直接 SQL 查询（应用层）按 tenant_id 过滤"""
-        tenant_a = await create_tenant(db, name="SQL租户A", slug=None, plan="free",
-                                       admin_email="sql-a@test.com", admin_name="A", admin_password="Pass1234")
-        tenant_b = await create_tenant(db, name="SQL租户B", slug=None, plan="free",
-                                       admin_email="sql-b@test.com", admin_name="B", admin_password="Pass1234")
+        tenant_a = await create_tenant(
+            db,
+            name="SQL租户A",
+            slug=None,
+            plan="free",
+            admin_email="sql-a@test.com",
+            admin_name="A",
+            admin_password="Pass1234",
+        )
+        tenant_b = await create_tenant(
+            db,
+            name="SQL租户B",
+            slug=None,
+            plan="free",
+            admin_email="sql-b@test.com",
+            admin_name="B",
+            admin_password="Pass1234",
+        )
 
         await create_organization(db, tenant_a.id, "A机密部门", None)
         await create_organization(db, tenant_b.id, "B部门", None)
 
-        result = await db.execute(
-            select(Organization).where(Organization.tenant_id == tenant_a.id)
-        )
+        result = await db.execute(select(Organization).where(Organization.tenant_id == tenant_a.id))
         orgs = list(result.scalars().all())
         names = [o.name for o in orgs]
         assert "B部门" not in names

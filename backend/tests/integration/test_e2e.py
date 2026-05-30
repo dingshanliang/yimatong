@@ -2,6 +2,7 @@
 一码通集成测试 — 9 条场景验证完整链路
 使用 in-process ASGI client，无需启动外部服务。
 """
+
 import uuid
 
 import pytest
@@ -45,7 +46,9 @@ async def auth_ctx(client: AsyncClient):
         brand_id = items[0]["id"] if isinstance(items, list) and items else None
 
     # Product
-    r = await client.post(f"{BASE}/products", json={"name": "有机苹果", "brand_id": brand_id, "category": "水果"}, headers=h)
+    r = await client.post(
+        f"{BASE}/products", json={"name": "有机苹果", "brand_id": brand_id, "category": "水果"}, headers=h
+    )
     if r.status_code == 201:
         product_id = r.json()["id"]
     else:
@@ -54,7 +57,9 @@ async def auth_ctx(client: AsyncClient):
         product_id = items[0]["id"] if isinstance(items, list) and items else None
 
     # SKU
-    r = await client.post(f"{BASE}/skus", json={"product_id": product_id, "code": "SKU-APPLE-500", "name": "500g装"}, headers=h)
+    r = await client.post(
+        f"{BASE}/skus", json={"product_id": product_id, "code": "SKU-APPLE-500", "name": "500g装"}, headers=h
+    )
     if r.status_code == 201:
         sku_id = r.json()["id"]
     else:
@@ -64,17 +69,31 @@ async def auth_ctx(client: AsyncClient):
 
     # Production batch
     suffix = uuid.uuid4().hex[:8]
-    await client.post(f"{BASE}/production-batches", json={
-        "product_id": product_id, "sku_id": sku_id,
-        "batch_code": f"PB-ITEST-{suffix}", "production_date": "2026-05-01", "expiry_date": "2026-12-01"
-    }, headers=h)
+    await client.post(
+        f"{BASE}/production-batches",
+        json={
+            "product_id": product_id,
+            "sku_id": sku_id,
+            "batch_code": f"PB-ITEST-{suffix}",
+            "production_date": "2026-05-01",
+            "expiry_date": "2026-12-01",
+        },
+        headers=h,
+    )
 
     # Code batch
-    r = await client.post(f"{BASE}/code-batches", json={
-        "batch_no": f"CB-ITEST-{suffix}", "batch_code": f"CB-ITEST-{suffix}",
-        "code_type": "single", "quantity": 10,
-        "product_id": product_id, "sku_id": sku_id
-    }, headers=h)
+    r = await client.post(
+        f"{BASE}/code-batches",
+        json={
+            "batch_no": f"CB-ITEST-{suffix}",
+            "batch_code": f"CB-ITEST-{suffix}",
+            "code_type": "single",
+            "quantity": 10,
+            "product_id": product_id,
+            "sku_id": sku_id,
+        },
+        headers=h,
+    )
     if r.status_code == 201:
         cb_id = r.json()["id"]
     else:
@@ -116,7 +135,9 @@ async def test_1_admin_full_flow(client: AsyncClient):
         report("创建品牌", brand_id is not None, f"brand_id={brand_id}")
 
         # 产品
-        r = await client.post(f"{BASE}/products", json={"name": "有机苹果", "brand_id": brand_id, "category": "水果"}, headers=h)
+        r = await client.post(
+            f"{BASE}/products", json={"name": "有机苹果", "brand_id": brand_id, "category": "水果"}, headers=h
+        )
         if r.status_code == 201:
             product_id = r.json()["id"]
         else:
@@ -127,7 +148,9 @@ async def test_1_admin_full_flow(client: AsyncClient):
         report("创建产品", product_id is not None, f"product_id={product_id}")
 
         # SKU
-        r = await client.post(f"{BASE}/skus", json={"product_id": product_id, "code": "SKU-APPLE-500", "name": "500g装"}, headers=h)
+        r = await client.post(
+            f"{BASE}/skus", json={"product_id": product_id, "code": "SKU-APPLE-500", "name": "500g装"}, headers=h
+        )
         if r.status_code == 201:
             sku_id = r.json()["id"]
         else:
@@ -139,19 +162,37 @@ async def test_1_admin_full_flow(client: AsyncClient):
 
         # 生产批次
         unique_suffix = uuid.uuid4().hex[:8]
-        r = await client.post(f"{BASE}/production-batches", json={
-            "product_id": product_id, "sku_id": sku_id,
-            "batch_code": f"PB-ITEST-{unique_suffix}", "production_date": "2026-05-01", "expiry_date": "2026-12-01"
-        }, headers=h)
+        r = await client.post(
+            f"{BASE}/production-batches",
+            json={
+                "product_id": product_id,
+                "sku_id": sku_id,
+                "batch_code": f"PB-ITEST-{unique_suffix}",
+                "production_date": "2026-05-01",
+                "expiry_date": "2026-12-01",
+            },
+            headers=h,
+        )
         batch_ok = r.status_code == 201
-        report("创建生产批次", batch_ok, f"status={r.status_code}" + (f" id={r.json().get('id')}" if batch_ok else f" detail={r.text[:80]}"))
+        report(
+            "创建生产批次",
+            batch_ok,
+            f"status={r.status_code}" + (f" id={r.json().get('id')}" if batch_ok else f" detail={r.text[:80]}"),
+        )
 
         # 码批次
-        r = await client.post(f"{BASE}/code-batches", json={
-            "batch_no": f"CB-ITEST-{unique_suffix}", "batch_code": f"CB-ITEST-{unique_suffix}",
-            "code_type": "single", "quantity": 10,
-            "product_id": product_id, "sku_id": sku_id
-        }, headers=h)
+        r = await client.post(
+            f"{BASE}/code-batches",
+            json={
+                "batch_no": f"CB-ITEST-{unique_suffix}",
+                "batch_code": f"CB-ITEST-{unique_suffix}",
+                "code_type": "single",
+                "quantity": 10,
+                "product_id": product_id,
+                "sku_id": sku_id,
+            },
+            headers=h,
+        )
         if r.status_code == 201:
             cb_id = r.json()["id"]
         else:
@@ -165,7 +206,9 @@ async def test_1_admin_full_flow(client: AsyncClient):
         if cb_id:
             r = await client.post(f"{BASE}/code-batches/{cb_id}/activate", headers=h)
             activated = r.status_code == 200
-            report("激活码批次", activated, f"status={r.status_code}" + (f" err={r.text[:80]}" if not activated else ""))
+            report(
+                "激活码批次", activated, f"status={r.status_code}" + (f" err={r.text[:80]}" if not activated else "")
+            )
 
         # 统计
         r = await client.get(f"{BASE}/analytics/dashboard", headers=h)
@@ -185,17 +228,21 @@ async def test_2_page_publish(client: AsyncClient, auth_ctx: dict):
     h = auth_headers(token)
     try:
         # 创建页面模板
-        r = await client.post(f"{BASE}/page-templates", json={
-            "name": "产品展示页", "template_type": "product_info", "description": "测试页面"
-        }, headers=h)
+        r = await client.post(
+            f"{BASE}/page-templates",
+            json={"name": "产品展示页", "template_type": "product_info", "description": "测试页面"},
+            headers=h,
+        )
         tpl_id = r.json()["id"] if r.status_code == 201 else None
         report("创建页面模板", r.status_code == 201, f"template_id={tpl_id}")
 
         # 创建版本
-        dsl = {"modules": [
-            {"id": "hero", "type": "product_hero", "enabled": True, "config": {"show_verify_badge": True}},
-            {"id": "trace", "type": "light_traceability", "enabled": True}
-        ]}
+        dsl = {
+            "modules": [
+                {"id": "hero", "type": "product_hero", "enabled": True, "config": {"show_verify_badge": True}},
+                {"id": "trace", "type": "light_traceability", "enabled": True},
+            ]
+        }
         r = await client.post(f"{BASE}/page-templates/{tpl_id}/versions", json={"config_json": dsl}, headers=h)
         ver_id = r.json()["id"] if r.status_code == 201 else None
         report("创建DSL版本", r.status_code == 201, f"version_id={ver_id}")
@@ -207,7 +254,7 @@ async def test_2_page_publish(client: AsyncClient, auth_ctx: dict):
 
         # 预览
         r = await client.get(f"{BASE}/page-templates/{tpl_id}/preview", headers=h)
-        report("页面预览", r.status_code == 200, f"content_type={r.headers.get('content-type','')}")
+        report("页面预览", r.status_code == 200, f"content_type={r.headers.get('content-type', '')}")
 
         # 列出版本
         r = await client.get(f"{BASE}/page-templates/{tpl_id}/versions", headers=h)
@@ -233,21 +280,34 @@ async def test_3_campaign_flow(client: AsyncClient, auth_ctx: dict):
             "validity_period": "活动期间有效",
             "disclaimer": "最终解释权归品牌方所有",
             "minor_notice": "未成年人需在监护人陪同下参与",
-            "customer_service_contact": "400-123-4567"
+            "customer_service_contact": "400-123-4567",
         }
-        r = await client.post(f"{BASE}/campaigns", json={
-            "name": "春季促销", "campaign_type": "coupon",
-            "start_at": "2026-06-01T00:00:00Z", "end_at": "2026-06-30T23:59:59Z",
-            "rules_json": rules
-        }, headers=h)
+        r = await client.post(
+            f"{BASE}/campaigns",
+            json={
+                "name": "春季促销",
+                "campaign_type": "coupon",
+                "start_at": "2026-06-01T00:00:00Z",
+                "end_at": "2026-06-30T23:59:59Z",
+                "rules_json": rules,
+            },
+            headers=h,
+        )
         campaign_id = r.json()["id"] if r.status_code == 201 else None
         report("创建活动", r.status_code == 201, f"campaign_id={campaign_id}")
 
         if campaign_id:
-            r = await client.post(f"{BASE}/campaigns/{campaign_id}/benefits", json={
-                "name": "10元优惠券", "benefit_type": "coupon",
-                "config_json": {"discount": 10}, "stock_total": 100, "per_person_limit": 1
-            }, headers=h)
+            r = await client.post(
+                f"{BASE}/campaigns/{campaign_id}/benefits",
+                json={
+                    "name": "10元优惠券",
+                    "benefit_type": "coupon",
+                    "config_json": {"discount": 10},
+                    "stock_total": 100,
+                    "per_person_limit": 1,
+                },
+                headers=h,
+            )
             report("创建权益", r.status_code == 201, f"benefit_id={r.json().get('id')}")
 
         r = await client.get(f"{BASE}/analytics/scan-stats", headers=h)
@@ -321,7 +381,11 @@ async def test_5_h5_resolve(client: AsyncClient, auth_ctx: dict):
         # 码解析（公开接口）
         r = await client.get(f"/c/{public_id}", headers={"Accept": "application/json"})
         ok = r.status_code in (200, 302, 307)
-        report("H5码解析请求", ok, f"public_id={public_id}, status={r.status_code}, content_type={r.headers.get('content-type','')}")
+        report(
+            "H5码解析请求",
+            ok,
+            f"public_id={public_id}, status={r.status_code}, content_type={r.headers.get('content-type', '')}",
+        )
 
     except Exception as e:
         report("H5核心链路", False, str(e))
@@ -381,11 +445,26 @@ async def test_7_h5_error_codes(client: AsyncClient):
 async def test_8_frontend_routes(client: AsyncClient):
     """前端路由验证：需要 Admin (3000) + H5 (3001) dev server 运行"""
     admin_routes = [
-        "/login", "/", "/brands", "/products", "/skus", "/batches",
-        "/codes", "/pages", "/campaigns", "/benefits", "/stats",
-        "/campaign-analytics", "/exports", "/accounts",
-        "/settings/roles", "/settings/compliance", "/settings/tenant",
-        "/settings/audit-logs", "/agency", "/launch-checklist"
+        "/login",
+        "/",
+        "/brands",
+        "/products",
+        "/skus",
+        "/batches",
+        "/codes",
+        "/pages",
+        "/campaigns",
+        "/benefits",
+        "/stats",
+        "/campaign-analytics",
+        "/exports",
+        "/accounts",
+        "/settings/roles",
+        "/settings/compliance",
+        "/settings/tenant",
+        "/settings/audit-logs",
+        "/agency",
+        "/launch-checklist",
     ]
     h5_routes = ["/", "/c/test123"]
 

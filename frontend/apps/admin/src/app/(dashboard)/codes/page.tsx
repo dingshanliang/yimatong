@@ -28,6 +28,12 @@ interface Product {
   name: string;
 }
 
+interface SKU {
+  id: string;
+  name: string;
+  product_id: string;
+}
+
 const STATUS_MAP: Record<string, { label: string; color: string }> = {
   pending: { label: "待生成", color: "default" },
   generating: { label: "生成中", color: "blue" },
@@ -48,9 +54,11 @@ const CODE_TYPE_OPTIONS = [
 
 export default function CodesPage() {
   const [products, setProducts] = useState<Product[]>([]);
+  const [skus, setSKUs] = useState<SKU[]>([]);
   const [status, setStatus] = useState<string | undefined>(undefined);
   const [createOpen, setCreateOpen] = useState(false);
   const [form] = Form.useForm();
+  const [selectedProduct, setSelectedProduct] = useState<string | undefined>(undefined);
 
   const { items: batches, total, page, loading, setPage, refresh } = usePaginatedList<CodeBatch>(
     async ({ page, page_size }) => {
@@ -74,6 +82,14 @@ export default function CodesPage() {
     } catch { /* ignore */ }
   }, []);
 
+  const fetchSKUs = useCallback(async (productId?: string) => {
+    if (!productId) { setSKUs([]); return; }
+    try {
+      const { data } = await api.get("/skus", { params: { product_id: productId, page_size: 100 } });
+      setSKUs(data.items || []);
+    } catch { /* ignore */ }
+  }, []);
+
   useEffect(() => { fetchProducts(); }, [fetchProducts]);
 
   const handleCreate = async (values: Record<string, unknown>) => {
@@ -82,6 +98,8 @@ export default function CodesPage() {
       message.success("码批次创建成功");
       setCreateOpen(false);
       form.resetFields();
+      setSelectedProduct(undefined);
+      setSKUs([]);
       setPage(1);
       refresh();
     } catch {
@@ -190,7 +208,7 @@ export default function CodesPage() {
       <Modal
         title="生成码批次"
         open={createOpen}
-        onCancel={() => setCreateOpen(false)}
+        onCancel={() => { setCreateOpen(false); setSelectedProduct(undefined); setSKUs([]); }}
         onOk={() => form.submit()}
         width={500}
       >
@@ -201,16 +219,28 @@ export default function CodesPage() {
               options={products.map((p) => ({ value: p.id, label: p.name }))}
               showSearch
               optionFilterProp="label"
+              onChange={(v) => { setSelectedProduct(v); fetchSKUs(v); form.setFieldValue("sku_id", undefined); }}
+              data-testid="code-batch-product-select"
+            />
+          </Form.Item>
+          <Form.Item name="sku_id" label="关联 SKU" rules={[{ required: true, message: "请选择 SKU" }]}>
+            <Select
+              placeholder="选择 SKU"
+              options={skus.map((s) => ({ value: s.id, label: s.name }))}
+              showSearch
+              optionFilterProp="label"
+              disabled={!selectedProduct}
+              data-testid="code-batch-sku-select"
             />
           </Form.Item>
           <Form.Item name="batch_code" label="批次号" rules={[{ required: true, message: "请输入批次号" }]}>
-            <Input placeholder="例如 PB-2026-001" />
+            <Input placeholder="例如 PB-2026-001" data-testid="code-batch-code-input" />
           </Form.Item>
           <Form.Item name="quantity" label="生成数量" rules={[{ required: true, message: "请输入数量" }]}>
-            <InputNumber min={1} max={100000} style={{ width: "100%" }} placeholder="1-100000" />
+            <InputNumber min={1} max={100000} style={{ width: "100%" }} placeholder="1-100000" data-testid="code-batch-quantity-input" />
           </Form.Item>
           <Form.Item name="code_type" label="码类型" initialValue="single">
-            <Select options={CODE_TYPE_OPTIONS} />
+            <Select options={CODE_TYPE_OPTIONS} data-testid="code-batch-type-select" />
           </Form.Item>
         </Form>
       </Modal>

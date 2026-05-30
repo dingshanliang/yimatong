@@ -122,8 +122,27 @@ function DiversionCard() {
 
 /* ---------- Export ---------- */
 
-function handleExport(dataType: string) {
-  window.open(`${process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"}/api/v1/risk-dashboard/export?data_type=${dataType}`, "_blank");
+import { message } from "antd";
+
+async function handleExport(dataType: string) {
+  try {
+    const response = await api.get("/risk-dashboard/export", {
+      params: { data_type: dataType },
+      responseType: "blob",
+    });
+    const blob = new Blob([response.data], { type: "text/csv" });
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `risk_${dataType}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    window.URL.revokeObjectURL(url);
+    message.success("导出成功");
+  } catch {
+    message.error("导出失败，请确认您有管理员权限");
+  }
 }
 
 /* ---------- Main ---------- */

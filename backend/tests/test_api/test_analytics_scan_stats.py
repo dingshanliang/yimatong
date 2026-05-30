@@ -67,9 +67,7 @@ async def auth_setup(client: AsyncClient, db_session: AsyncSession):
 
 class TestScanStatsAPI:
     @pytest.mark.anyio
-    async def test_get_scan_stats(
-        self, client: AsyncClient, auth_setup
-    ):
+    async def test_get_scan_stats(self, client: AsyncClient, auth_setup):
         _, headers = auth_setup
         resp = await client.get(
             "/api/v1/analytics/scan-stats?start_date=2026-05-25&end_date=2026-05-27",
@@ -81,9 +79,7 @@ class TestScanStatsAPI:
         assert data[0]["total_scans"] == 100
 
     @pytest.mark.anyio
-    async def test_default_date_range(
-        self, client: AsyncClient, auth_setup
-    ):
+    async def test_default_date_range(self, client: AsyncClient, auth_setup):
         _, headers = auth_setup
         resp = await client.get(
             "/api/v1/analytics/scan-stats",

@@ -84,12 +84,11 @@ async def setup_codes(client: AsyncClient):
 
 class TestCodeResolveAdmin:
     @pytest.mark.anyio
-    async def test_resolve_by_public_id(
-        self, client: AsyncClient, setup_codes
-    ):
+    async def test_resolve_by_public_id(self, client: AsyncClient, setup_codes):
         _, headers, item_id, public_id, _ = setup_codes
         resp = await client.get(
-            f"/api/v1/code-items/public/{public_id}", headers=headers,
+            f"/api/v1/code-items/public/{public_id}",
+            headers=headers,
         )
         assert resp.status_code == 200
         data = resp.json()
@@ -99,42 +98,40 @@ class TestCodeResolveAdmin:
         assert "sku_id" in data
 
     @pytest.mark.anyio
-    async def test_resolve_not_found(
-        self, client: AsyncClient, setup_codes
-    ):
+    async def test_resolve_not_found(self, client: AsyncClient, setup_codes):
         _, headers, _, _, _ = setup_codes
         resp = await client.get(
-            "/api/v1/code-items/public/NONEXISTENT", headers=headers,
+            "/api/v1/code-items/public/NONEXISTENT",
+            headers=headers,
         )
         assert resp.status_code == 404
 
     @pytest.mark.anyio
-    async def test_resolve_revoked_returns_gone(
-        self, client: AsyncClient, setup_codes
-    ):
+    async def test_resolve_revoked_returns_gone(self, client: AsyncClient, setup_codes):
         _, headers, item_id, _, _ = setup_codes
         # 先激活再作废
         await client.post(
-            f"/api/v1/code-items/{item_id}/revoke", headers=headers,
+            f"/api/v1/code-items/{item_id}/revoke",
+            headers=headers,
         )
         # 此时码已经 revoked
 
         # 需要通过 public_id 获取，先从详情拿到 public_id
         detail = await client.get(
-            f"/api/v1/code-items/{item_id}", headers=headers,
+            f"/api/v1/code-items/{item_id}",
+            headers=headers,
         )
         public_id = detail.json()["public_id"]
 
         resp = await client.get(
-            f"/api/v1/code-items/public/{public_id}", headers=headers,
+            f"/api/v1/code-items/public/{public_id}",
+            headers=headers,
         )
         assert resp.status_code == 410
         assert "revoked" in resp.json()["detail"].lower() or "gone" in resp.json()["detail"].lower()
 
     @pytest.mark.anyio
-    async def test_resolve_requires_auth(
-        self, client: AsyncClient, setup_codes
-    ):
+    async def test_resolve_requires_auth(self, client: AsyncClient, setup_codes):
         _, _, _, public_id, _ = setup_codes
         resp = await client.get(
             f"/api/v1/code-items/public/{public_id}",

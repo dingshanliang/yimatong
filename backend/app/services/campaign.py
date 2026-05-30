@@ -42,8 +42,12 @@ async def list_campaigns(
     page_size: int = 20,
 ) -> tuple[list[dict], int]:
     stmt = select(Campaign).where(Campaign.tenant_id == tenant_id)
-    count_stmt = select(func.count()).select_from(Campaign).where(
-        Campaign.tenant_id == tenant_id,
+    count_stmt = (
+        select(func.count())
+        .select_from(Campaign)
+        .where(
+            Campaign.tenant_id == tenant_id,
+        )
     )
     if status:
         stmt = stmt.where(Campaign.status == status)
@@ -59,7 +63,9 @@ async def list_campaigns(
 
 
 async def get_campaign(
-    db: AsyncSession, tenant_id: uuid.UUID, campaign_id: uuid.UUID,
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    campaign_id: uuid.UUID,
 ) -> dict | None:
     result = await db.execute(
         select(Campaign).where(Campaign.id == campaign_id, Campaign.tenant_id == tenant_id),
@@ -107,7 +113,9 @@ async def change_campaign_status(
 
 
 async def delete_campaign(
-    db: AsyncSession, tenant_id: uuid.UUID, campaign_id: uuid.UUID,
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    campaign_id: uuid.UUID,
 ) -> bool:
     result = await db.execute(
         select(Campaign).where(
@@ -125,6 +133,7 @@ async def delete_campaign(
 
 
 # --- Benefits ---
+
 
 async def create_benefit(
     db: AsyncSession,
@@ -152,12 +161,17 @@ async def create_benefit(
 
 
 async def list_benefits(
-    db: AsyncSession, tenant_id: uuid.UUID, campaign_id: uuid.UUID,
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    campaign_id: uuid.UUID,
 ) -> list[dict]:
     result = await db.execute(
-        select(Benefit).where(
-            Benefit.tenant_id == tenant_id, Benefit.campaign_id == campaign_id,
-        ).order_by(Benefit.id.desc())
+        select(Benefit)
+        .where(
+            Benefit.tenant_id == tenant_id,
+            Benefit.campaign_id == campaign_id,
+        )
+        .order_by(Benefit.id.desc())
     )
     return [_benefit_to_dict(b) for b in result.scalars().all()]
 
@@ -169,8 +183,12 @@ async def list_all_benefits(
     page_size: int = 20,
 ) -> tuple[list[dict], int]:
     stmt = select(Benefit).where(Benefit.tenant_id == tenant_id)
-    count_stmt = select(func.count()).select_from(Benefit).where(
-        Benefit.tenant_id == tenant_id,
+    count_stmt = (
+        select(func.count())
+        .select_from(Benefit)
+        .where(
+            Benefit.tenant_id == tenant_id,
+        )
     )
     total = (await db.execute(count_stmt)).scalar() or 0
     stmt = stmt.order_by(Benefit.id.desc()).offset((page - 1) * page_size).limit(page_size)
@@ -179,7 +197,9 @@ async def list_all_benefits(
 
 
 async def get_benefit(
-    db: AsyncSession, tenant_id: uuid.UUID, benefit_id: uuid.UUID,
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    benefit_id: uuid.UUID,
 ) -> dict | None:
     result = await db.execute(
         select(Benefit).where(Benefit.id == benefit_id, Benefit.tenant_id == tenant_id),
@@ -209,7 +229,9 @@ async def update_benefit(
 
 
 async def delete_benefit(
-    db: AsyncSession, tenant_id: uuid.UUID, benefit_id: uuid.UUID,
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    benefit_id: uuid.UUID,
 ) -> bool:
     result = await db.execute(
         select(Benefit).where(Benefit.id == benefit_id, Benefit.tenant_id == tenant_id),
@@ -229,8 +251,12 @@ async def list_benefit_claims_admin(
     page_size: int = 20,
 ) -> tuple[list[dict], int]:
     stmt = select(BenefitClaim).where(BenefitClaim.tenant_id == tenant_id)
-    count_stmt = select(func.count()).select_from(BenefitClaim).where(
-        BenefitClaim.tenant_id == tenant_id,
+    count_stmt = (
+        select(func.count())
+        .select_from(BenefitClaim)
+        .where(
+            BenefitClaim.tenant_id == tenant_id,
+        )
     )
     total = (await db.execute(count_stmt)).scalar() or 0
     stmt = stmt.order_by(BenefitClaim.id.desc()).offset((page - 1) * page_size).limit(page_size)
@@ -272,7 +298,9 @@ async def claim_benefit(
 
     # 每人限额检查
     count_result = await db.execute(
-        select(func.count()).select_from(BenefitClaim).where(
+        select(func.count())
+        .select_from(BenefitClaim)
+        .where(
             BenefitClaim.benefit_id == benefit_id,
             BenefitClaim.consumer_id == consumer_id,
         )
@@ -282,11 +310,7 @@ async def claim_benefit(
         return {"status": "limit_reached"}
 
     # 扣减库存
-    await db.execute(
-        update(Benefit)
-        .where(Benefit.id == benefit_id)
-        .values(stock_used=Benefit.stock_used + 1)
-    )
+    await db.execute(update(Benefit).where(Benefit.id == benefit_id).values(stock_used=Benefit.stock_used + 1))
 
     # 创建领取记录
     claim = BenefitClaim(

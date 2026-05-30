@@ -22,9 +22,7 @@ class ExternalOrder(Base):
     order_time: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     matched: Mapped[bool] = mapped_column(default=False, nullable=False)
 
-    __table_args__ = (
-        Index("ix_ext_orders_tenant_ext_id", "tenant_id", "external_id"),
-    )
+    __table_args__ = (Index("ix_ext_orders_tenant_ext_id", "tenant_id", "external_id"),)
 
 
 class GmvAttribution(Base):
@@ -37,6 +35,4 @@ class GmvAttribution(Base):
     amount: Mapped[float] = mapped_column(nullable=False)
     match_type: Mapped[str] = mapped_column(String(30), nullable=False)
 
-    __table_args__ = (
-        Index("ix_gmv_attr_tenant_order", "tenant_id", "external_order_id"),
-    )
+    __table_args__ = (Index("ix_gmv_attr_tenant_order", "tenant_id", "external_order_id"),)

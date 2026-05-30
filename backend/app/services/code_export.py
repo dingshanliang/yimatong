@@ -28,15 +28,23 @@ async def generate_code_csv(
     items = result.scalars().all()
 
     output = io.StringIO()
-    writer = csv.DictWriter(output, fieldnames=[
-        "public_id", "status", "code_type", "code_url",
-    ])
+    writer = csv.DictWriter(
+        output,
+        fieldnames=[
+            "public_id",
+            "status",
+            "code_type",
+            "code_url",
+        ],
+    )
     writer.writeheader()
     for item in items:
-        writer.writerow({
-            "public_id": item.public_id,
-            "status": item.status,
-            "code_type": item.code_type,
-            "code_url": f"https://qr.yimatong.cn/c/{item.public_id}",
-        })
+        writer.writerow(
+            {
+                "public_id": item.public_id,
+                "status": item.status,
+                "code_type": item.code_type,
+                "code_url": f"https://qr.yimatong.cn/c/{item.public_id}",
+            }
+        )
     return output.getvalue()
