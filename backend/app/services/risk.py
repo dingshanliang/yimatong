@@ -26,6 +26,7 @@ async def check_multi_location(
     tenant_id: uuid.UUID,
     public_id: str,
     ip_hash: str,
+    code_item_id: uuid.UUID | None = None,
 ) -> RiskAlert | None:
     """检测同一码短时间内从不同 IP 扫描"""
     since = utcnow() - timedelta(minutes=MULTI_LOCATION_WINDOW_MINUTES)
@@ -40,14 +41,16 @@ async def check_multi_location(
     distinct_ips = result.scalar() or 0
 
     if distinct_ips >= MULTI_LOCATION_IP_THRESHOLD:
-        code_result = await db.execute(select(CodeItem).where(CodeItem.public_id == public_id))
-        item = code_result.scalar_one_or_none()
+        if code_item_id is None:
+            code_result = await db.execute(select(CodeItem).where(CodeItem.public_id == public_id))
+            item = code_result.scalar_one_or_none()
+            code_item_id = item.id if item else uuid.uuid4()
 
         alert = RiskAlert(
             tenant_id=tenant_id,
             alert_type=RiskAlertType.multi_location,
             public_id=public_id,
-            code_item_id=item.id if item else uuid.uuid4(),
+            code_item_id=code_item_id,
             detail=f"同一码在{MULTI_LOCATION_WINDOW_MINUTES}分钟内从{distinct_ips}个不同IP扫描",
             ip_hash=ip_hash,
         )
@@ -67,6 +70,7 @@ async def check_suspected_copy(
     tenant_id: uuid.UUID,
     public_id: str,
     ip_hash: str,
+    code_item_id: uuid.UUID | None = None,
 ) -> RiskAlert | None:
     """检测同一码短时间内高频扫码（疑似复制码）"""
     since = utcnow() - timedelta(minutes=SUSPECTED_COPY_WINDOW_MINUTES)
@@ -82,14 +86,16 @@ async def check_suspected_copy(
     scan_count = result.scalar() or 0
 
     if scan_count >= SUSPECTED_COPY_SCAN_THRESHOLD:
-        code_result = await db.execute(select(CodeItem).where(CodeItem.public_id == public_id))
-        item = code_result.scalar_one_or_none()
+        if code_item_id is None:
+            code_result = await db.execute(select(CodeItem).where(CodeItem.public_id == public_id))
+            item = code_result.scalar_one_or_none()
+            code_item_id = item.id if item else uuid.uuid4()
 
         alert = RiskAlert(
             tenant_id=tenant_id,
             alert_type=RiskAlertType.suspected_copy,
             public_id=public_id,
-            code_item_id=item.id if item else uuid.uuid4(),
+            code_item_id=code_item_id,
             detail=f"同一码在{SUSPECTED_COPY_WINDOW_MINUTES}分钟内被扫描{scan_count}次",
             ip_hash=ip_hash,
         )

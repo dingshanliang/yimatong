@@ -8,6 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.page import PageTemplate, PageVersion, PageVersionStatus
+from app.services.redis_cache import AsyncRedisCache
 
 TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "templates" / "pages"
 
@@ -16,8 +17,7 @@ _jinja_env = Environment(
     autoescape=select_autoescape(["html"]),
 )
 
-# 简单内存缓存（生产环境用 Redis）
-_render_cache: dict[str, str] = {}
+_render_cache = AsyncRedisCache(prefix="pagerender", default_ttl=600)
 
 
 async def render_page(
@@ -29,8 +29,10 @@ async def render_page(
     """渲染页面模板为 HTML"""
     # 检查缓存
     cache_key = f"page:{template_id}"
-    if context is None and cache_key in _render_cache:
-        return _render_cache[cache_key]
+    if context is None:
+        cached = await _render_cache.get(cache_key)
+        if cached:
+            return cached["html"]
 
     # 获取已发布版本
     ver_result = await db.execute(
@@ -68,15 +70,15 @@ async def render_page(
 
     # 缓存（无自定义上下文时）
     if context is None:
-        _render_cache[cache_key] = html
+        await _render_cache.set(cache_key, {"html": html})
 
     return html
 
 
-def invalidate_cache(template_id: uuid.UUID) -> None:
+async def invalidate_cache(template_id: uuid.UUID) -> None:
     """模板变更后失效缓存"""
     cache_key = f"page:{template_id}"
-    _render_cache.pop(cache_key, None)
+    await _render_cache.invalidate(cache_key)
 
 
 async def _build_context(
