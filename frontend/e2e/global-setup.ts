@@ -110,7 +110,25 @@ async function apiPatch(
   return json;
 }
 
+async function waitForBackend(maxRetries = 30, delayMs = 1000): Promise<void> {
+  for (let i = 0; i < maxRetries; i++) {
+    try {
+      const res = await fetch(`${API_BASE}/health`);
+      if (res.ok) {
+        console.log(`[global-setup] Backend ready after ${i + 1} attempts`);
+        return;
+      }
+    } catch {
+      // Backend not up yet
+    }
+    await new Promise((r) => setTimeout(r, delayMs));
+  }
+  throw new Error(`Backend not ready after ${maxRetries} attempts`);
+}
+
 export default async function globalSetup() {
+  console.log("[global-setup] Waiting for backend...");
+  await waitForBackend();
   console.log("[global-setup] Seeding E2E test data...");
 
   const TEST_EMAIL = generateUniqueEmail();
