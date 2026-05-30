@@ -1,0 +1,173 @@
+<h2>页面编辑器布局方案</h2>
+<p class="subtitle">两种分屏布局方式，左右 vs 上下</p>
+
+<div class="split">
+  <!-- 方案 A：左右分屏 -->
+  <div class="mockup">
+    <div class="mockup-header">方案 A：左右分屏（编辑器 | 手机预览）</div>
+    <div class="mockup-body" style="display:flex; gap:16px; min-height:380px;">
+      <!-- 左侧编辑区 -->
+      <div style="flex:1; display:flex; flex-direction:column; gap:8px;">
+        <div class="mock-nav" style="font-size:11px;">
+          ← 返回 &nbsp;|&nbsp; 页面名称 &nbsp;|&nbsp; 草稿 v3 &nbsp;|&nbsp; 💾保存 &nbsp; 📤发布
+        </div>
+        <div style="display:flex; gap:6px; margin-bottom:4px;">
+          <button class="mock-button" style="font-size:10px; background:#e0e0e0;">模块排序</button>
+          <button class="mock-button" style="font-size:10px;">活动期配置</button>
+          <button class="mock-button" style="font-size:10px;">JSON 编辑</button>
+        </div>
+        <!-- 模块列表 -->
+        <div style="border:1px dashed #ccc; border-radius:6px; padding:8px; flex:1;">
+          <div style="background:#e3f2fd; border-radius:4px; padding:8px; margin-bottom:6px; border-left:3px solid #1976d2;">
+            <div style="display:flex; justify-content:space-between; align-items:center;">
+              <span style="font-size:11px; font-weight:600;">≡ 产品展示</span>
+              <span style="font-size:9px; color:#666;">已启用</span>
+            </div>
+          </div>
+          <div style="background:#e8f5e9; border-radius:4px; padding:8px; margin-bottom:6px; border-left:3px solid #388e3c;">
+            <div style="display:flex; justify-content:space-between; align-items:center;">
+              <span style="font-size:11px; font-weight:600;">≡ 验真状态</span>
+              <span style="font-size:9px; color:#666;">已启用</span>
+            </div>
+          </div>
+          <div style="background:#fff3e0; border-radius:4px; padding:8px; margin-bottom:6px; border-left:3px solid #f57c00;">
+            <div style="display:flex; justify-content:space-between; align-items:center;">
+              <span style="font-size:11px; font-weight:600;">≡ 溯源信息</span>
+              <span style="font-size:9px; color:#999;">已禁用</span>
+            </div>
+          </div>
+          <div style="background:#fce4ec; border-radius:4px; padding:8px; border-left:3px solid #d32f2f;">
+            <div style="display:flex; justify-content:space-between; align-items:center;">
+              <span style="font-size:11px; font-weight:600;">≡ 权益卡片</span>
+              <span style="font-size:9px; color:#666;">已启用</span>
+            </div>
+          </div>
+          <div style="border:1px dashed #bbb; border-radius:4px; padding:8px; text-align:center; color:#999; font-size:10px;">
+            + 添加模块
+          </div>
+        </div>
+      </div>
+      <!-- 右侧手机预览 -->
+      <div style="width:180px; display:flex; flex-direction:column; align-items:center;">
+        <div style="width:160px; border:3px solid #333; border-radius:20px; padding:8px; background:#fff;">
+          <div style="background:#f5f5f5; border-radius:8px; padding:6px; margin-bottom:4px;">
+            <div style="height:60px; background:linear-gradient(135deg,#667eea,#764ba2); border-radius:4px;"></div>
+            <div style="font-size:8px; margin-top:3px; font-weight:600;">产品名称</div>
+            <div style="font-size:6px; color:#666;">品牌 · 规格 · 产地</div>
+          </div>
+          <div style="background:#e8f5e9; border-radius:8px; padding:4px; margin-bottom:4px; text-align:center;">
+            <div style="font-size:10px;">✅</div>
+            <div style="font-size:6px;">首次扫码 · 验证通过</div>
+          </div>
+          <div style="background:#fff3e0; border-radius:8px; padding:4px; margin-bottom:4px;">
+            <div style="font-size:7px; color:#999;">溯源信息 (已禁用)</div>
+          </div>
+          <div style="background:#fce4ec; border-radius:8px; padding:4px; text-align:center;">
+            <div style="font-size:8px; font-weight:600;">🎁 领取优惠券</div>
+            <div style="font-size:6px; color:#666;">满100减20</div>
+          </div>
+        </div>
+        <div style="font-size:9px; color:#999; margin-top:4px;">iPhone 15 预览</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 方案 B：上下分屏 -->
+  <div class="mockup">
+    <div class="mockup-header">方案 B：上下分屏（模块列表 | 手机预览并排）</div>
+    <div class="mockup-body" style="display:flex; flex-direction:column; gap:8px; min-height:380px;">
+      <div class="mock-nav" style="font-size:11px;">
+        ← 返回 &nbsp;|&nbsp; 页面名称 &nbsp;|&nbsp; 草稿 v3 &nbsp;|&nbsp; 💾保存 &nbsp; 📤发布
+      </div>
+      <div style="display:flex; gap:12px; flex:1;">
+        <!-- 左侧 -->
+        <div style="flex:1; display:flex; flex-direction:column; gap:6px;">
+          <div style="display:flex; gap:4px;">
+            <button class="mock-button" style="font-size:10px; background:#e0e0e0;">模块排序</button>
+            <button class="mock-button" style="font-size:10px;">活动期配置</button>
+            <button class="mock-button" style="font-size:10px;">JSON 编辑</button>
+          </div>
+          <!-- 拖拽模块列表 + 选中模块的配置表单 -->
+          <div style="display:flex; gap:8px; flex:1;">
+            <div style="width:200px; border:1px solid #ddd; border-radius:6px; padding:6px;">
+              <div style="font-size:9px; color:#999; margin-bottom:4px;">模块顺序（拖拽排序）</div>
+              <div style="background:#e3f2fd; padding:4px 6px; border-radius:3px; margin-bottom:3px; font-size:9px; border-left:2px solid #1976d2;">≡ 产品展示</div>
+              <div style="background:#e8f5e9; padding:4px 6px; border-radius:3px; margin-bottom:3px; font-size:9px; border-left:2px solid #388e3c;">≡ 验真状态</div>
+              <div style="background:#fff3e0; padding:4px 6px; border-radius:3px; margin-bottom:3px; font-size:9px; opacity:0.5;">≡ 溯源信息</div>
+              <div style="background:#fce4ec; padding:4px 6px; border-radius:3px; font-size:9px; border-left:2px solid #d32f2f;">≡ 权益卡片</div>
+            </div>
+            <div style="flex:1; border:1px solid #ddd; border-radius:6px; padding:8px;">
+              <div style="font-size:9px; color:#999; margin-bottom:6px;">模块属性：产品展示</div>
+              <div style="display:flex; align-items:center; gap:4px; margin-bottom:4px;">
+                <span style="font-size:8px;">显示验真徽章</span>
+                <div style="width:24px; height:12px; background:#4caf50; border-radius:6px;"></div>
+              </div>
+              <div style="margin-bottom:3px;">
+                <div style="font-size:8px; color:#999;">标题模板</div>
+                <div style="border:1px solid #ddd; border-radius:2px; padding:2px 4px; font-size:8px;">{{product.name}}</div>
+              </div>
+              <div style="margin-bottom:3px;">
+                <div style="font-size:8px; color:#999;">产品图片 URL</div>
+                <div style="border:1px solid #ddd; border-radius:2px; padding:2px 4px; font-size:8px; color:#ccc;">留空使用产品数据</div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <!-- 右侧手机预览 -->
+        <div style="width:140px; display:flex; flex-direction:column; align-items:center;">
+          <div style="width:120px; border:2px solid #333; border-radius:16px; padding:6px; background:#fff;">
+            <div style="height:40px; background:linear-gradient(135deg,#667eea,#764ba2); border-radius:4px;"></div>
+            <div style="font-size:7px; margin-top:2px; font-weight:600;">产品名称</div>
+            <div style="background:#e8f5e9; border-radius:4px; padding:2px; margin-top:3px; text-align:center;">
+              <div style="font-size:8px;">✅</div>
+            </div>
+            <div style="background:#fce4ec; border-radius:4px; padding:2px; margin-top:3px; text-align:center;">
+              <div style="font-size:7px;">🎁 领取优惠券</div>
+            </div>
+          </div>
+          <div style="font-size:8px; color:#999; margin-top:3px;">实时预览</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="section" style="margin-top:16px;">
+  <h3>方案对比</h3>
+  <div class="pros-cons">
+    <div class="pros">
+      <h4>方案 A 优点</h4>
+      <ul>
+        <li>编辑区和预览区视觉平衡</li>
+        <li>适合宽屏显示器</li>
+        <li>模块列表可直接拖拽，操作直觉</li>
+        <li>实现复杂度适中</li>
+      </ul>
+    </div>
+    <div class="cons">
+      <h4>方案 A 缺点</h4>
+      <ul>
+        <li>窄屏时手机预览可能太小</li>
+        <li>模块属性编辑空间有限</li>
+      </ul>
+    </div>
+  </div>
+  <div class="pros-cons" style="margin-top:8px;">
+    <div class="pros">
+      <h4>方案 B 优点</h4>
+      <ul>
+        <li>模块排序和属性编辑分离，更清晰</li>
+        <li>属性编辑区有更多空间</li>
+        <li>适合属性较多的模块</li>
+      </ul>
+    </div>
+    <div class="cons">
+      <h4>方案 B 缺点</h4>
+      <ul>
+        <li>布局更复杂，实现成本高</li>
+        <li>三列布局在窄屏体验差</li>
+        <li>模块切换需要点击操作</li>
+      </ul>
+    </div>
+  </div>
+</div>
