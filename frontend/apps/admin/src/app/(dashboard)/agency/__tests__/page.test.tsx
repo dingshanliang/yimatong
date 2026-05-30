@@ -118,7 +118,7 @@ describe("AgencyPage", () => {
 
     expect(screen.getByText("客户总数")).toBeInTheDocument();
     expect(screen.getByText("活跃客户")).toBeInTheDocument();
-    expect(screen.getByText("配置中")).toBeInTheDocument();
+    expect(screen.getByText("配置中客户")).toBeInTheDocument();
     expect(screen.getByText("待办任务")).toBeInTheDocument();
   });
 
