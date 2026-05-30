@@ -9,6 +9,13 @@ from uuid6 import uuid7
 from app.models.base import Base
 
 
+class ExternalRefMixin:
+    """为 ERP 导入提供外部系统引用的混入字段"""
+
+    external_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    source_system: Mapped[str | None] = mapped_column(String(50), nullable=True)
+
+
 class BrandStatus(StrEnum):
     active = "active"
     inactive = "inactive"
@@ -31,7 +38,7 @@ class BatchStatus(StrEnum):
     expired = "expired"
 
 
-class Brand(Base):
+class Brand(Base, ExternalRefMixin):
     __tablename__ = "brands"
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid7)
@@ -44,7 +51,7 @@ class Brand(Base):
     products = relationship("Product", back_populates="brand", lazy="selectin")
 
 
-class Product(Base):
+class Product(Base, ExternalRefMixin):
     __tablename__ = "products"
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid7)
@@ -59,7 +66,7 @@ class Product(Base):
     skus = relationship("SKU", back_populates="product", lazy="selectin")
 
 
-class SKU(Base):
+class SKU(Base, ExternalRefMixin):
     __tablename__ = "skus"
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid7)
@@ -73,7 +80,7 @@ class SKU(Base):
     product = relationship("Product", back_populates="skus")
 
 
-class ProductionBatch(Base):
+class ProductionBatch(Base, ExternalRefMixin):
     __tablename__ = "production_batches"
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid7)

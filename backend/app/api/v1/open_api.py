@@ -283,3 +283,394 @@ async def update_campaign_status(
     if not result:
         raise HTTPException(status_code=404, detail="Campaign not found")
     return result
+
+
+# --- Products / SKU / Batch CRUD (ERP integration) ---
+
+
+class ProductCreateRequest(BaseModel):
+    name: str
+    brand_name: str | None = None
+    category: str | None = None
+    description: str | None = None
+    external_id: str | None = None
+
+
+class ProductUpdateRequest(BaseModel):
+    name: str | None = None
+    category: str | None = None
+    description: str | None = None
+
+
+class SkuCreateRequest(BaseModel):
+    product_name: str
+    code: str
+    name: str
+    specifications: dict | None = None
+    external_id: str | None = None
+
+
+class SkuUpdateRequest(BaseModel):
+    name: str | None = None
+    specifications: dict | None = None
+
+
+class BatchCreateRequest(BaseModel):
+    sku_code: str
+    batch_code: str
+    production_date: str
+    expiry_date: str
+    external_id: str | None = None
+
+
+@open_api_router.get("/products")
+async def open_list_products(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    db: AsyncSession = Depends(get_db),
+    tenant_id: uuid.UUID = Depends(get_current_tenant),
+    _: None = Depends(require_permission("product:list")),
+):
+    from app.models.product import Product
+
+    total_result = await db.execute(
+        select(func.count()).select_from(Product).where(Product.tenant_id == tenant_id)
+    )
+    total = total_result.scalar() or 0
+
+    result = await db.execute(
+        select(Product)
+        .where(Product.tenant_id == tenant_id)
+        .order_by(Product.id.desc())
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+    )
+    items = [
+        {
+            "id": str(p.id),
+            "name": p.name,
+            "category": p.category,
+            "description": p.description,
+            "external_id": p.external_id,
+            "source_system": p.source_system,
+            "status": p.status,
+        }
+        for p in result.scalars().all()
+    ]
+    return PaginatedResponse(items=items, total=total, page=page, page_size=page_size)
+
+
+@open_api_router.post("/products", status_code=201)
+async def open_create_product(
+    body: ProductCreateRequest,
+    db: AsyncSession = Depends(get_db),
+    tenant_id: uuid.UUID = Depends(get_current_tenant),
+    _: None = Depends(require_permission("product:create")),
+):
+    from app.models.product import Brand, Product
+
+    brand_id = None
+    if body.brand_name:
+        bresult = await db.execute(
+            select(Brand).where(Brand.tenant_id == tenant_id, Brand.name == body.brand_name)
+        )
+        brand = bresult.scalar_one_or_none()
+        if not brand:
+            raise HTTPException(status_code=400, detail=f"品牌 '{body.brand_name}' 不存在")
+        brand_id = brand.id
+
+    existing = None
+    if body.external_id:
+        eresult = await db.execute(
+            select(Product).where(
+                Product.tenant_id == tenant_id,
+                Product.source_system == "open_api",
+                Product.external_id == body.external_id,
+            )
+        )
+        existing = eresult.scalar_one_or_none()
+
+    if existing:
+        if body.name is not None:
+            existing.name = body.name
+        if body.category is not None:
+            existing.category = body.category
+        if body.description is not None:
+            existing.description = body.description
+        await db.commit()
+        return {
+            "id": str(existing.id),
+            "name": existing.name,
+            "external_id": existing.external_id,
+            "action": "updated",
+        }
+
+    product = Product(
+        tenant_id=tenant_id,
+        brand_id=brand_id,
+        name=body.name,
+        category=body.category,
+        description=body.description,
+        external_id=body.external_id,
+        source_system="open_api" if body.external_id else None,
+    )
+    db.add(product)
+    await db.commit()
+    await db.refresh(product)
+    return {
+        "id": str(product.id),
+        "name": product.name,
+        "external_id": product.external_id,
+        "action": "created",
+    }
+
+
+@open_api_router.patch("/products/{product_id}")
+async def open_update_product(
+    product_id: uuid.UUID,
+    body: ProductUpdateRequest,
+    db: AsyncSession = Depends(get_db),
+    tenant_id: uuid.UUID = Depends(get_current_tenant),
+    _: None = Depends(require_permission("product:update")),
+):
+    from app.models.product import Product
+
+    result = await db.execute(
+        select(Product).where(Product.id == product_id, Product.tenant_id == tenant_id)
+    )
+    product = result.scalar_one_or_none()
+    if not product:
+        raise HTTPException(status_code=404, detail="产品不存在")
+
+    if body.name is not None:
+        product.name = body.name
+    if body.category is not None:
+        product.category = body.category
+    if body.description is not None:
+        product.description = body.description
+    await db.commit()
+    return {"id": str(product.id), "name": product.name}
+
+
+@open_api_router.get("/skus")
+async def open_list_skus(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    db: AsyncSession = Depends(get_db),
+    tenant_id: uuid.UUID = Depends(get_current_tenant),
+    _: None = Depends(require_permission("product:list")),
+):
+    from app.models.product import SKU
+
+    total_result = await db.execute(
+        select(func.count()).select_from(SKU).where(SKU.tenant_id == tenant_id)
+    )
+    total = total_result.scalar() or 0
+
+    result = await db.execute(
+        select(SKU)
+        .where(SKU.tenant_id == tenant_id)
+        .order_by(SKU.id.desc())
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+    )
+    items = [
+        {
+            "id": str(s.id),
+            "product_id": str(s.product_id),
+            "code": s.code,
+            "name": s.name,
+            "specifications": s.specifications,
+            "external_id": s.external_id,
+            "source_system": s.source_system,
+        }
+        for s in result.scalars().all()
+    ]
+    return PaginatedResponse(items=items, total=total, page=page, page_size=page_size)
+
+
+@open_api_router.post("/skus", status_code=201)
+async def open_create_sku(
+    body: SkuCreateRequest,
+    db: AsyncSession = Depends(get_db),
+    tenant_id: uuid.UUID = Depends(get_current_tenant),
+    _: None = Depends(require_permission("product:create")),
+):
+    from app.models.product import Product, SKU
+
+    presult = await db.execute(
+        select(Product).where(Product.tenant_id == tenant_id, Product.name == body.product_name)
+    )
+    product = presult.scalar_one_or_none()
+    if not product:
+        raise HTTPException(status_code=400, detail=f"产品 '{body.product_name}' 不存在")
+
+    existing = None
+    if body.external_id:
+        eresult = await db.execute(
+            select(SKU).where(
+                SKU.tenant_id == tenant_id,
+                SKU.source_system == "open_api",
+                SKU.external_id == body.external_id,
+            )
+        )
+        existing = eresult.scalar_one_or_none()
+
+    if existing:
+        if body.name is not None:
+            existing.name = body.name
+        if body.specifications is not None:
+            existing.specifications = body.specifications
+        await db.commit()
+        return {
+            "id": str(existing.id),
+            "code": existing.code,
+            "external_id": existing.external_id,
+            "action": "updated",
+        }
+
+    sku = SKU(
+        tenant_id=tenant_id,
+        product_id=product.id,
+        code=body.code,
+        name=body.name,
+        specifications=body.specifications,
+        external_id=body.external_id,
+        source_system="open_api" if body.external_id else None,
+    )
+    db.add(sku)
+    await db.commit()
+    await db.refresh(sku)
+    return {
+        "id": str(sku.id),
+        "code": sku.code,
+        "external_id": sku.external_id,
+        "action": "created",
+    }
+
+
+@open_api_router.patch("/skus/{sku_id}")
+async def open_update_sku(
+    sku_id: uuid.UUID,
+    body: SkuUpdateRequest,
+    db: AsyncSession = Depends(get_db),
+    tenant_id: uuid.UUID = Depends(get_current_tenant),
+    _: None = Depends(require_permission("product:update")),
+):
+    from app.models.product import SKU
+
+    result = await db.execute(
+        select(SKU).where(SKU.id == sku_id, SKU.tenant_id == tenant_id)
+    )
+    sku = result.scalar_one_or_none()
+    if not sku:
+        raise HTTPException(status_code=404, detail="SKU 不存在")
+
+    if body.name is not None:
+        sku.name = body.name
+    if body.specifications is not None:
+        sku.specifications = body.specifications
+    await db.commit()
+    return {"id": str(sku.id), "code": sku.code}
+
+
+@open_api_router.get("/batches")
+async def open_list_batches(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    db: AsyncSession = Depends(get_db),
+    tenant_id: uuid.UUID = Depends(get_current_tenant),
+    _: None = Depends(require_permission("product:list")),
+):
+    from app.models.product import ProductionBatch
+
+    total_result = await db.execute(
+        select(func.count())
+        .select_from(ProductionBatch)
+        .where(ProductionBatch.tenant_id == tenant_id)
+    )
+    total = total_result.scalar() or 0
+
+    result = await db.execute(
+        select(ProductionBatch)
+        .where(ProductionBatch.tenant_id == tenant_id)
+        .order_by(ProductionBatch.id.desc())
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+    )
+    items = [
+        {
+            "id": str(b.id),
+            "product_id": str(b.product_id),
+            "sku_id": str(b.sku_id),
+            "batch_code": b.batch_code,
+            "production_date": str(b.production_date),
+            "expiry_date": str(b.expiry_date),
+            "external_id": b.external_id,
+            "source_system": b.source_system,
+        }
+        for b in result.scalars().all()
+    ]
+    return PaginatedResponse(items=items, total=total, page=page, page_size=page_size)
+
+
+@open_api_router.post("/batches", status_code=201)
+async def open_create_batch(
+    body: BatchCreateRequest,
+    db: AsyncSession = Depends(get_db),
+    tenant_id: uuid.UUID = Depends(get_current_tenant),
+    _: None = Depends(require_permission("product:create")),
+):
+    from datetime import date as date_type
+
+    from app.models.product import ProductionBatch, SKU
+
+    sresult = await db.execute(
+        select(SKU).where(SKU.tenant_id == tenant_id, SKU.code == body.sku_code)
+    )
+    sku = sresult.scalar_one_or_none()
+    if not sku:
+        raise HTTPException(status_code=400, detail=f"SKU 编码 '{body.sku_code}' 不存在")
+
+    existing = None
+    if body.external_id:
+        eresult = await db.execute(
+            select(ProductionBatch).where(
+                ProductionBatch.tenant_id == tenant_id,
+                ProductionBatch.source_system == "open_api",
+                ProductionBatch.external_id == body.external_id,
+            )
+        )
+        existing = eresult.scalar_one_or_none()
+
+    if existing:
+        existing.batch_code = body.batch_code
+        existing.production_date = date_type.fromisoformat(body.production_date)
+        existing.expiry_date = date_type.fromisoformat(body.expiry_date)
+        await db.commit()
+        return {
+            "id": str(existing.id),
+            "batch_code": existing.batch_code,
+            "external_id": existing.external_id,
+            "action": "updated",
+        }
+
+    batch = ProductionBatch(
+        tenant_id=tenant_id,
+        product_id=sku.product_id,
+        sku_id=sku.id,
+        batch_code=body.batch_code,
+        production_date=date_type.fromisoformat(body.production_date),
+        expiry_date=date_type.fromisoformat(body.expiry_date),
+        external_id=body.external_id,
+        source_system="open_api" if body.external_id else None,
+    )
+    db.add(batch)
+    await db.commit()
+    await db.refresh(batch)
+    return {
+        "id": str(batch.id),
+        "batch_code": batch.batch_code,
+        "external_id": batch.external_id,
+        "action": "created",
+    }
