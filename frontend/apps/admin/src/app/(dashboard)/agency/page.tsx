@@ -1,27 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import {
-  Card,
-  Col,
-  Row,
-  Statistic,
-  Table,
-  Button,
-  Modal,
-  Steps,
-  Form,
-  Input,
-  Select,
-  Typography,
-  Tag,
-  message,
-  Checkbox,
-  DatePicker,
-  Space,
-  List,
-  Progress,
-} from "antd";
+import { App, Button, Card, Checkbox, Col, DatePicker, Form, Input, List, Modal, Progress, Row, Select, Space, Statistic, Steps, Table, Tag, Typography } from "antd";
 import {
   TeamOutlined,
   UserOutlined,
@@ -80,6 +60,7 @@ const TASK_STATUS_MAP: Record<string, { label: string; color: string }> = {
 };
 
 export default function AgencyPage() {
+  const { message } = App.useApp();
   const [clients, setClients] = useState<Client[]>([]);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [loading, setLoading] = useState(false);

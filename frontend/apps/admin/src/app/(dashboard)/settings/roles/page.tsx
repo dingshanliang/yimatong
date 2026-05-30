@@ -2,20 +2,7 @@
 
 import { useState } from "react";
 import { usePaginatedList } from "@/lib/hooks";
-import {
-  Table,
-  Button,
-  Space,
-  Modal,
-  Form,
-  Input,
-  Checkbox,
-  Switch,
-  Popconfirm,
-  Typography,
-  Tag,
-  message,
-} from "antd";
+import { App, Button, Checkbox, Form, Input, Modal, Popconfirm, Space, Switch, Table, Tag, Typography } from "antd";
 import { PlusOutlined } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
 import api from "@/lib/api";
@@ -63,6 +50,7 @@ const PERMISSION_LABEL_MAP: Record<string, string> = {
 };
 
 export default function RolesPage() {
+  const { message } = App.useApp();
   const {
     items: roles,
     total,

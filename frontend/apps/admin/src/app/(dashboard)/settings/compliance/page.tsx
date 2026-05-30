@@ -1,17 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import {
-  Tabs,
-  Form,
-  Input,
-  InputNumber,
-  Switch,
-  Button,
-  Typography,
-  Space,
-  message,
-} from "antd";
+import { App, Button, Form, Input, InputNumber, Space, Switch, Tabs, Typography } from "antd";
 import { SaveOutlined } from "@ant-design/icons";
 import api from "@/lib/api";
 
@@ -19,6 +9,7 @@ const { Title } = Typography;
 const { TextArea } = Input;
 
 export default function CompliancePage() {
+  const { message } = App.useApp();
   const [privacyForm] = Form.useForm();
   const [retentionForm] = Form.useForm();
   const [saving, setSaving] = useState(false);

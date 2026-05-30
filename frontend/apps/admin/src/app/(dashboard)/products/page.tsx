@@ -1,24 +1,7 @@
 "use client";
 
 import { useEffect, useState, useRef } from "react";
-import {
-  Table,
-  Button,
-  Space,
-  Input,
-  Modal,
-  Form,
-  Select,
-  message,
-  Tag,
-  Typography,
-  Upload,
-  Drawer,
-  Spin,
-  Divider,
-  Alert,
-  List,
-} from "antd";
+import { App, Alert, Button, Divider, Drawer, Form, Input, List, Modal, Select, Space, Spin, Table, Tag, Typography, Upload } from "antd";
 import {
   PlusOutlined,
   SearchOutlined,
@@ -58,6 +41,7 @@ interface Brand {
 }
 
 export default function ProductsPage() {
+  const { message } = App.useApp();
   const [brands, setBrands] = useState<Brand[]>([]);
   const [search, setSearch] = useState("");
   const [modalOpen, setModalOpen] = useState(false);
@@ -322,7 +306,7 @@ export default function ProductsPage() {
         }
         open={aiDrawerOpen}
         onClose={() => setAiDrawerOpen(false)}
-        width={640}
+        size="large"
       >
         <div className="space-y-6">
           {/* 方式一：上传图片 */}

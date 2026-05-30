@@ -2,21 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { usePaginatedList } from "@/lib/hooks";
-import {
-  Table,
-  Button,
-  Modal,
-  Form,
-  Input,
-  Tabs,
-  Card,
-  Row,
-  Col,
-  Statistic,
-  Tag,
-  Typography,
-  message,
-} from "antd";
+import { App, Button, Card, Col, Form, Input, Modal, Row, Statistic, Table, Tabs, Tag, Typography } from "antd";
 import { UploadOutlined } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
 import api from "@/lib/api";
@@ -169,6 +155,7 @@ const tabItems = [
 ];
 
 export default function GmvPage() {
+  const { message } = App.useApp();
   return (
     <div>
       <Title level={4} className="!mb-4">GMV 归因</Title>

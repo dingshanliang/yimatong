@@ -1,9 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
-import {
-  Table, Button, Space, Modal, Form, Input, Select, Tabs, Typography, message, Card,
-} from "antd";
+import { App, Button, Card, Form, Input, Modal, Select, Space, Table, Tabs, Typography } from "antd";
 import { PlusOutlined } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
 import api from "@/lib/api";
@@ -25,6 +23,7 @@ interface Account {
 }
 
 export default function AccountsPage() {
+  const { message } = App.useApp();
   const [activeTab, setActiveTab] = useState("orgs");
   const [orgs, setOrgs] = useState<Organization[]>([]);
   const [accounts, setAccounts] = useState<Account[]>([]);

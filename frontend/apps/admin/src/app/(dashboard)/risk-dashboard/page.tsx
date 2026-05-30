@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Card, Col, Row, Space, Statistic, Table, Typography, Button, Tag } from "antd";
+import { App, Card, Col, Row, Space, Statistic, Table, Typography, Button, Tag } from "antd";
 import { DownloadOutlined } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
 import api from "@/lib/api";
@@ -122,32 +122,32 @@ function DiversionCard() {
 
 /* ---------- Export ---------- */
 
-import { message } from "antd";
-
-async function handleExport(dataType: string) {
-  try {
-    const response = await api.get("/risk-dashboard/export", {
-      params: { data_type: dataType },
-      responseType: "blob",
-    });
-    const blob = new Blob([response.data], { type: "text/csv" });
-    const url = window.URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `risk_${dataType}.csv`;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    window.URL.revokeObjectURL(url);
-    message.success("导出成功");
-  } catch {
-    message.error("导出失败，请确认您有管理员权限");
-  }
-}
-
 /* ---------- Main ---------- */
 
 export default function RiskDashboardPage() {
+  const { message } = App.useApp();
+
+  const handleExport = async (dataType: string) => {
+    try {
+      const response = await api.get("/risk-dashboard/export", {
+        params: { data_type: dataType },
+        responseType: "blob",
+      });
+      const blob = new Blob([response.data], { type: "text/csv" });
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `risk_${dataType}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+      message.success("导出成功");
+    } catch {
+      message.error("导出失败，请确认您有管理员权限");
+    }
+  };
+
   return (
     <div>
       <div className="mb-4 flex items-center justify-between">

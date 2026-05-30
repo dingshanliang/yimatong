@@ -2,10 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { usePaginatedList } from "@/lib/hooks";
-import {
-  Table, Button, Space, Modal, Form, Input, InputNumber, Select, Tag, Typography,
-  message, Popconfirm, Drawer, Tabs, Switch, DatePicker, Tooltip,
-} from "antd";
+import { App, Button, DatePicker, Drawer, Form, Input, InputNumber, Modal, Popconfirm, Select, Space, Switch, Table, Tabs, Tag, Tooltip, Typography } from "antd";
 import {
   PlusOutlined, EyeOutlined, SendOutlined, RollbackOutlined,
   EditOutlined, StopOutlined, CodeOutlined, CheckCircleOutlined,
@@ -55,6 +52,7 @@ const VERSION_STATUS_MAP: Record<string, { label: string; color: string }> = {
 };
 
 export default function PagesPage() {
+  const { message } = App.useApp();
   const {
     items: templates,
     total,
@@ -463,7 +461,7 @@ export default function PagesPage() {
         }
         open={dslDrawerOpen}
         onClose={() => setDslDrawerOpen(false)}
-        width={720}
+        size="large"
         extra={
           <Space>
             <Button onClick={() => setDslDrawerOpen(false)}>取消</Button>

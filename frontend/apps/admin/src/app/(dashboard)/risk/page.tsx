@@ -2,21 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { usePaginatedList } from "@/lib/hooks";
-import {
-  Table,
-  Button,
-  Space,
-  Modal,
-  Form,
-  Input,
-  Select,
-  Tag,
-  Typography,
-  message,
-  Popconfirm,
-  Switch,
-  Tabs,
-} from "antd";
+import { App, Button, Form, Input, Modal, Popconfirm, Select, Space, Switch, Table, Tabs, Tag, Typography } from "antd";
 import { PlusOutlined } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
 import api from "@/lib/api";
@@ -40,6 +26,7 @@ const ACTIONS = [
 /* ---------- Risk Rules Tab ---------- */
 
 function RulesTab() {
+  const { message } = App.useApp();
   const [items, setItems] = useState<Record<string, unknown>[]>([]);
   const [loading, setLoading] = useState(false);
   const [open, setOpen] = useState(false);
@@ -141,7 +128,7 @@ function RulesTab() {
           <Form.Item name="name" label="规则名称" rules={[{ required: true }]}>
             <Input />
           </Form.Item>
-          <Space className="w-full" direction="vertical">
+          <Space className="w-full" orientation="vertical">
             <div className="grid grid-cols-2 gap-4">
               <Form.Item name="rule_type" label="规则类型" rules={[{ required: true }]}>
                 <Select options={RULE_TYPES} />
@@ -163,6 +150,7 @@ function RulesTab() {
 /* ---------- Interceptions Tab ---------- */
 
 function InterceptionsTab() {
+  const { message } = App.useApp();
   const { items, total, page, loading, setPage } = usePaginatedList<Record<string, unknown>>(
     async ({ page, page_size }) => {
       try {
@@ -201,6 +189,7 @@ function InterceptionsTab() {
 /* ---------- Alerts Tab ---------- */
 
 function AlertsTab() {
+  const { message } = App.useApp();
   const { items, total, page, loading, setPage, refresh } = usePaginatedList<Record<string, unknown>>(
     async ({ page, page_size }) => {
       try {

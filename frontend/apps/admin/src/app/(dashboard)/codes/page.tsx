@@ -2,10 +2,7 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { usePaginatedList } from "@/lib/hooks";
-import {
-  Table, Select, Space, Tag, Typography, Empty, Button, Modal, Form,
-  InputNumber, Input, message, Popconfirm,
-} from "antd";
+import { App, Button, Empty, Form, Input, InputNumber, Modal, Popconfirm, Select, Space, Table, Tag, Typography } from "antd";
 import { QrcodeOutlined, PlusOutlined, DownloadOutlined } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
 import api from "@/lib/api";
@@ -53,6 +50,7 @@ const CODE_TYPE_OPTIONS = [
 ];
 
 export default function CodesPage() {
+  const { message } = App.useApp();
   const [products, setProducts] = useState<Product[]>([]);
   const [skus, setSKUs] = useState<SKU[]>([]);
   const [status, setStatus] = useState<string | undefined>(undefined);

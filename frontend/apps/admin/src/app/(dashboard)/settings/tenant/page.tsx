@@ -1,16 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
-import {
-  Descriptions,
-  Button,
-  Form,
-  Input,
-  Typography,
-  Space,
-  message,
-  Spin,
-} from "antd";
+import { App, Button, Descriptions, Form, Input, Space, Spin, Typography } from "antd";
 import { EditOutlined, SaveOutlined } from "@ant-design/icons";
 import { useAuthStore } from "@/lib/auth";
 import api from "@/lib/api";
@@ -34,6 +25,7 @@ const PLAN_MAP: Record<string, string> = {
 };
 
 export default function TenantSettingsPage() {
+  const { message } = App.useApp();
   const { user } = useAuthStore();
   const tenantId = user?.tenant_id;
 

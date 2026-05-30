@@ -1,18 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
-import {
-  Card,
-  Col,
-  Row,
-  Statistic,
-  Table,
-  Typography,
-  Tag,
-  Button,
-  Space,
-  message,
-} from "antd";
+import { App, Button, Card, Col, Row, Space, Statistic, Table, Tag, Typography } from "antd";
 import {
   ScanOutlined,
   TeamOutlined,
@@ -75,6 +64,7 @@ const CAMPAIGN_TYPE_MAP: Record<string, string> = {
 };
 
 export default function DashboardPage() {
+  const { message } = App.useApp();
   const [data, setData] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
   const [trend, setTrend] = useState<TrendRow[]>([]);

@@ -1,9 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import {
-  Table, Button, Space, Input, Modal, Form, Tag, Typography, message,
-} from "antd";
+import { App, Button, Form, Input, Modal, Space, Table, Tag, Typography } from "antd";
 import { PlusOutlined, SearchOutlined } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
 import api from "@/lib/api";
@@ -21,6 +19,7 @@ interface Brand {
 }
 
 export default function BrandsPage() {
+  const { message } = App.useApp();
   const [search, setSearch] = useState("");
   const [modalOpen, setModalOpen] = useState(false);
   const [editItem, setEditItem] = useState<Brand | null>(null);

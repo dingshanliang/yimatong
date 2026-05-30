@@ -2,9 +2,7 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { usePaginatedList } from "@/lib/hooks";
-import {
-  Table, Button, Space, Modal, Form, Input, Select, DatePicker, Tag, Typography, message,
-} from "antd";
+import { App, Button, DatePicker, Form, Input, Modal, Select, Space, Table, Tag, Typography } from "antd";
 import { PlusOutlined, UploadOutlined } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
 import api from "@/lib/api";
@@ -40,6 +38,7 @@ const BATCH_STATUS_MAP: Record<string, { label: string; color: string }> = {
 };
 
 export default function BatchesPage() {
+  const { message } = App.useApp();
   const [products, setProducts] = useState<Product[]>([]);
   const [skus, setSKUs] = useState<SKU[]>([]);
   const [filterProduct, setFilterProduct] = useState<string | undefined>(undefined);

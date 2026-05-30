@@ -1,21 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
-import {
-  Table,
-  Button,
-  Space,
-  Modal,
-  Form,
-  Input,
-  InputNumber,
-  Select,
-  Tag,
-  Typography,
-  Tabs,
-  message,
-  Popconfirm,
-} from "antd";
+import { App, Button, Form, Input, InputNumber, Modal, Popconfirm, Select, Space, Table, Tabs, Tag, Typography } from "antd";
 import { PlusOutlined } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
 import api from "@/lib/api";
@@ -125,6 +111,7 @@ function BenefitConfigFields({ benefitType }: { benefitType: string }) {
 }
 
 export default function BenefitsPage() {
+  const { message } = App.useApp();
   const {
     items: benefits, total: benefitsTotal, page: benefitsPage, loading: benefitsLoading,
     setPage: setBenefitsPage, refresh: refreshBenefits,

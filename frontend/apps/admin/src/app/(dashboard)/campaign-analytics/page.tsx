@@ -1,20 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
-import {
-  Card,
-  Col,
-  Row,
-  Statistic,
-  Table,
-  DatePicker,
-  Select,
-  Progress,
-  Button,
-  Space,
-  Typography,
-  message,
-} from "antd";
+import { App, Button, Card, Col, DatePicker, Progress, Row, Select, Space, Statistic, Table, Typography } from "antd";
 import {
   ScanOutlined,
   UserOutlined,
@@ -52,6 +39,7 @@ interface CodeBatch {
 }
 
 export default function CampaignAnalyticsPage() {
+  const { message } = App.useApp();
   const [dateRange, setDateRange] = useState<[Dayjs, Dayjs]>([
     dayjs().subtract(30, "day"),
     dayjs(),

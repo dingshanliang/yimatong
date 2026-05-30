@@ -1,19 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import {
-  Table,
-  Button,
-  Space,
-  Modal,
-  Form,
-  Input,
-  Select,
-  Tag,
-  Typography,
-  message,
-  Popconfirm,
-} from "antd";
+import { App, Button, Form, Input, Modal, Popconfirm, Select, Space, Table, Tag, Typography } from "antd";
 import { PlusOutlined } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
 import api from "@/lib/api";
@@ -36,6 +24,7 @@ const STATUS_MAP: Record<string, { label: string; color: string }> = {
 };
 
 export default function CampaignsPage() {
+  const { message } = App.useApp();
   const [modalOpen, setModalOpen] = useState(false);
   const [editItem, setEditItem] = useState<Record<string, unknown> | null>(null);
   const [form] = Form.useForm();
@@ -217,7 +206,7 @@ export default function CampaignsPage() {
           <Form.Item name="campaign_type" label="活动类型" rules={[{ required: true }]}>
             <Select options={TYPE_OPTIONS} data-testid="campaign-type-select" />
           </Form.Item>
-          <Space className="w-full" direction="vertical">
+          <Space className="w-full" orientation="vertical">
             <div className="grid grid-cols-2 gap-4">
               <Form.Item name="start_at" label="开始时间" rules={[{ required: true }]}>
                 <Input placeholder="2026-06-01T00:00:00" data-testid="campaign-start-input" />

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Table, DatePicker, Card, Row, Col, Statistic, Typography, Button, message, Space } from "antd";
+import { App, Button, Card, Col, DatePicker, Row, Space, Statistic, Table, Typography } from "antd";
 import {
   ScanOutlined,
   UserOutlined,
@@ -25,6 +25,7 @@ interface ScanStatsRow {
 }
 
 export default function StatsPage() {
+  const { message } = App.useApp();
   const [data, setData] = useState<ScanStatsRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [dateRange, setDateRange] = useState<[Dayjs, Dayjs]>([

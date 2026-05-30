@@ -1,6 +1,6 @@
 "use client";
 
-import { Button, Card, Form, Input, message, Typography } from "antd";
+import { App, Button, Card, Form, Input, Typography } from "antd";
 import { LockOutlined, MailOutlined } from "@ant-design/icons";
 import { useRouter } from "next/navigation";
 import { useAuthStore } from "@/lib/auth";
@@ -11,6 +11,7 @@ const { Title, Text } = Typography;
 export default function LoginPage() {
   const router = useRouter();
   const login = useAuthStore((s) => s.login);
+  const { message } = App.useApp();
   const [loading, setLoading] = useState(false);
 
   const onFinish = async (values: { email: string; password: string }) => {
@@ -28,7 +29,7 @@ export default function LoginPage() {
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-gray-50">
-      <Card className="w-full max-w-md shadow-lg" bordered={false}>
+      <Card className="w-full max-w-md shadow-lg" variant="borderless">
         <div className="mb-8 text-center">
           <Title level={2}>一码通</Title>
           <Text type="secondary">包装扫码增长 SaaS 管理后台</Text>

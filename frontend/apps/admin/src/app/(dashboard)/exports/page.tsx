@@ -1,14 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import {
-  Table,
-  Tabs,
-  Tag,
-  Button,
-  Typography,
-  message,
-} from "antd";
+import { App, Button, Table, Tabs, Tag, Typography } from "antd";
 import { DownloadOutlined } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
 import api from "@/lib/api";
@@ -43,6 +36,7 @@ const BATCH_STATUS_MAP: Record<string, { label: string; color: string }> = {
 };
 
 export default function ExportsPage() {
+  const { message } = App.useApp();
   const {
     items: batches, total: batchTotal, page: batchPage, loading: batchLoading,
     setPage: setBatchPage, refresh: refreshBatches,

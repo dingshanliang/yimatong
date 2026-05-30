@@ -2,9 +2,7 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { usePaginatedList } from "@/lib/hooks";
-import {
-  Table, Button, Space, Modal, Form, Input, Select, Tag, Typography, message,
-} from "antd";
+import { App, Button, Form, Input, Modal, Select, Space, Table, Tag, Typography } from "antd";
 import { PlusOutlined } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
 import api from "@/lib/api";
@@ -26,6 +24,7 @@ interface Product {
 }
 
 export default function SKUsPage() {
+  const { message } = App.useApp();
   const [products, setProducts] = useState<Product[]>([]);
   const [filterProduct, setFilterProduct] = useState<string | undefined>(undefined);
   const [modalOpen, setModalOpen] = useState(false);
