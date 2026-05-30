@@ -22,6 +22,7 @@ from app.api.v1.imports import import_router
 from app.api.v1.industry_templates import template_router
 from app.api.v1.integration import integration_router
 from app.api.v1.members import member_router
+from app.api.v1.open_api import open_api_router
 from app.api.v1.ops import ops_router
 from app.api.v1.organizations import router as orgs_router
 from app.api.v1.page_templates import page_template_router, page_version_router
@@ -71,6 +72,11 @@ async def lifespan(app):
 
     init_pool()
 
+    # 初始化 Webhook 事件调度器
+    from app.services.webhook_dispatcher import init_webhook_dispatcher
+
+    init_webhook_dispatcher()
+
     yield
 
 
@@ -117,6 +123,7 @@ app.include_router(gmv_router)
 app.include_router(ai_router)
 app.include_router(connector_router)
 app.include_router(webhook_router)
+app.include_router(open_api_router)
 app.include_router(integration_router)
 app.include_router(i18n_router)
 app.include_router(template_router)

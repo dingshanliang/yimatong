@@ -5,6 +5,7 @@ import uuid
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.event_bus import event_bus
 from app.models.scan import ScanEvent
 from app.utils import utcnow
 
@@ -32,6 +33,12 @@ async def record_scan_event(
     db.add(event)
     await db.flush()
     await db.refresh(event)
+
+    await event_bus.emit(
+        "scan.created",
+        {"public_id": public_id, "is_first_scan": is_first, "environment": environment},
+        str(tenant_id),
+    )
     return event
 
 

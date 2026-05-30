@@ -5,6 +5,7 @@ import uuid
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.event_bus import event_bus
 from app.models.campaign import Benefit, BenefitClaim, Campaign, CampaignStatus
 
 
@@ -109,6 +110,12 @@ async def change_campaign_status(
     c.status = new_status
     await db.flush()
     await db.refresh(c)
+    event_name = "campaign.started" if new_status in ("ACTIVE", "active") else "campaign.ended"
+    await event_bus.emit(
+        event_name,
+        {"campaign_id": str(campaign_id), "status": new_status},
+        str(tenant_id),
+    )
     return _campaign_to_dict(c)
 
 
@@ -324,6 +331,11 @@ async def claim_benefit(
     await db.flush()
     await db.refresh(claim)
 
+    await event_bus.emit(
+        "claim.created",
+        {"claim_id": str(claim.id), "benefit_id": str(benefit_id), "consumer_id": consumer_id},
+        str(tenant_id),
+    )
     return {"status": "success", "claim": _claim_to_dict(claim)}
 
 

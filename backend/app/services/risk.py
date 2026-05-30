@@ -6,6 +6,7 @@ from datetime import timedelta
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.event_bus import event_bus
 from app.models.code import CodeItem, CodeItemStatus
 from app.models.risk import RiskAlert, RiskAlertType
 from app.models.scan import ScanEvent
@@ -52,6 +53,11 @@ async def check_multi_location(
         )
         db.add(alert)
         await db.flush()
+        await event_bus.emit(
+            "risk.alert",
+            {"alert_type": "multi_location", "public_id": public_id, "detail": alert.detail},
+            str(tenant_id),
+        )
         return alert
     return None
 
@@ -89,6 +95,11 @@ async def check_suspected_copy(
         )
         db.add(alert)
         await db.flush()
+        await event_bus.emit(
+            "risk.alert",
+            {"alert_type": "suspected_copy", "public_id": public_id, "detail": alert.detail},
+            str(tenant_id),
+        )
         return alert
     return None
 

@@ -57,15 +57,21 @@ class TestWebhookManagement:
             "/api/v1/webhooks/endpoints",
             json={
                 "url": "https://example.com/webhook",
-                "events": ["scan", "claim"],
-                "secret": "wh_secret_123",
+                "events": ["scan.created", "claim.created"],
+                "description": "测试端点",
+                "batch_mode": False,
+                "batch_size": 100,
             },
             headers=headers,
         )
         assert resp.status_code == 201
         data = resp.json()
         assert data["url"] == "https://example.com/webhook"
-        assert "scan" in data["events"]
+        assert "scan.created" in data["events"]
+        assert "secret" in data
+        assert data["secret"].startswith("whsec_")
+        assert data["batch_mode"] is False
+        assert data["batch_size"] == 100
 
     @pytest.mark.anyio
     async def test_list_webhooks(self, client: AsyncClient, setup_tenant):
@@ -74,53 +80,108 @@ class TestWebhookManagement:
             "/api/v1/webhooks/endpoints",
             json={
                 "url": "https://example.com/wh2",
-                "events": ["risk_alert"],
-                "secret": "secret2",
+                "events": ["risk.alert"],
             },
             headers=headers,
         )
 
         resp = await client.get("/api/v1/webhooks/endpoints", headers=headers)
         assert resp.status_code == 200
-        assert len(resp.json()) >= 1
+        items = resp.json()
+        assert len(items) >= 1
+
+    @pytest.mark.anyio
+    async def test_update_webhook(self, client: AsyncClient, setup_tenant):
+        tid, headers = setup_tenant
+        create_resp = await client.post(
+            "/api/v1/webhooks/endpoints",
+            json={
+                "url": "https://example.com/wh3",
+                "events": ["scan.created"],
+            },
+            headers=headers,
+        )
+        endpoint_id = create_resp.json()["id"]
+
+        resp = await client.patch(
+            f"/api/v1/webhooks/endpoints/{endpoint_id}",
+            json={"enabled": False, "description": "已禁用"},
+            headers=headers,
+        )
+        assert resp.status_code == 200
+        assert resp.json()["enabled"] is False
+        assert resp.json()["description"] == "已禁用"
+
+    @pytest.mark.anyio
+    async def test_delete_webhook(self, client: AsyncClient, setup_tenant):
+        tid, headers = setup_tenant
+        create_resp = await client.post(
+            "/api/v1/webhooks/endpoints",
+            json={
+                "url": "https://example.com/wh4",
+                "events": ["scan.created"],
+            },
+            headers=headers,
+        )
+        endpoint_id = create_resp.json()["id"]
+
+        resp = await client.delete(
+            f"/api/v1/webhooks/endpoints/{endpoint_id}",
+            headers=headers,
+        )
+        assert resp.status_code == 200
+        assert resp.json()["deleted"] is True
 
 
 class TestApiKey:
     """W19-002: API Key 认证"""
 
     @pytest.mark.anyio
-    async def test_create_api_key(self, client: AsyncClient, setup_tenant):
+    async def test_create_api_key_with_role(self, client: AsyncClient, setup_tenant):
         tid, headers = setup_tenant
         resp = await client.post(
             "/api/v1/webhooks/api-keys",
-            json={"name": "外部系统密钥", "permissions": ["read:scans", "read:products"]},
+            json={"name": "外部系统密钥", "role": "data_reader"},
             headers=headers,
         )
         assert resp.status_code == 201
         data = resp.json()
         assert data["name"] == "外部系统密钥"
-        assert "key" in data
-        assert len(data["key"]) > 0
+        assert data["key"].startswith("ymt_")
+        assert data["role"] == "data_reader"
+        assert "scan:list" in data["permissions"]
+
+    @pytest.mark.anyio
+    async def test_create_api_key_invalid_role(self, client: AsyncClient, setup_tenant):
+        tid, headers = setup_tenant
+        resp = await client.post(
+            "/api/v1/webhooks/api-keys",
+            json={"name": "无效角色", "role": "super_admin"},
+            headers=headers,
+        )
+        assert resp.status_code == 400
 
     @pytest.mark.anyio
     async def test_list_api_keys(self, client: AsyncClient, setup_tenant):
         tid, headers = setup_tenant
         await client.post(
             "/api/v1/webhooks/api-keys",
-            json={"name": "列表测试密钥", "permissions": ["read:scans"]},
+            json={"name": "列表测试密钥", "role": "coupon_operator"},
             headers=headers,
         )
 
         resp = await client.get("/api/v1/webhooks/api-keys", headers=headers)
         assert resp.status_code == 200
-        assert len(resp.json()) >= 1
+        items = resp.json()
+        assert len(items) >= 1
+        assert items[0]["role"] == "coupon_operator"
 
     @pytest.mark.anyio
     async def test_revoke_api_key(self, client: AsyncClient, setup_tenant):
         tid, headers = setup_tenant
         create_resp = await client.post(
             "/api/v1/webhooks/api-keys",
-            json={"name": "待吊销密钥", "permissions": ["read:scans"]},
+            json={"name": "待吊销密钥", "role": "data_reader"},
             headers=headers,
         )
         key_id = create_resp.json()["id"]
@@ -140,6 +201,15 @@ class TestEventDelivery:
         tid, headers = setup_tenant
         resp = await client.get(
             "/api/v1/webhooks/deliveries",
+            headers=headers,
+        )
+        assert resp.status_code == 200
+
+    @pytest.mark.anyio
+    async def test_list_deliveries_with_status_filter(self, client: AsyncClient, setup_tenant):
+        tid, headers = setup_tenant
+        resp = await client.get(
+            "/api/v1/webhooks/deliveries?status=failed",
             headers=headers,
         )
         assert resp.status_code == 200

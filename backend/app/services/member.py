@@ -5,6 +5,7 @@ import uuid
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.event_bus import event_bus
 from app.models.member import (
     ConsumerProfile,
     MemberLevel,
@@ -40,10 +41,12 @@ async def get_or_create_consumer(
         phone_encrypted=encrypt_phone(phone) if phone else None,
     )
     db.add(consumer)
+    is_new = True
     try:
         async with db.begin_nested():
             await db.flush()
     except Exception:
+        is_new = False
         if phone_h:
             result = await db.execute(
                 select(ConsumerProfile).where(
@@ -56,6 +59,13 @@ async def get_or_create_consumer(
                 return consumer
         raise
     await db.refresh(consumer)
+
+    if is_new:
+        await event_bus.emit(
+            "consumer.created",
+            {"consumer_id": str(consumer.id), "has_phone": phone is not None},
+            str(tenant_id),
+        )
     return consumer
 
 
