@@ -30,7 +30,8 @@ export type ModuleType =
   | "points_exchange"
   | "outer_code_guide"
   | "risk_alert"
-  | "dual_code_verify";
+  | "dual_code_verify"
+  | "points_history";
 
 export interface CampaignPeriod {
   campaign_id?: string;
@@ -69,6 +70,7 @@ export const MODULE_TYPE_LABELS: Record<ModuleType, string> = {
   outer_code_guide: "外码引导",
   risk_alert: "风险预警",
   dual_code_verify: "双码验真",
+  points_history: "积分明细",
 };
 
 export const MODULE_TYPES = Object.entries(MODULE_TYPE_LABELS).map(
