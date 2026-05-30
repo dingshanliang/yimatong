@@ -88,34 +88,19 @@ export default function DashboardLayout({
 }) {
   const router = useRouter();
   const pathname = usePathname();
-  const storeUser = useAuthStore((s) => s.user);
-  const hydrate = useAuthStore((s) => s.hydrate);
-  const logout = useAuthStore((s) => s.logout);
+  const { user, hydrate, logout } = useAuthStore();
 
-  // 同步初始化：lazy initializer 在首次渲染时同步读取 localStorage，
-  // 避免 useEffect 异步竞争导致的误判重定向
-  const [ready] = useState(() => {
-    if (typeof window === "undefined") return false;
-    return !!localStorage.getItem("access_token");
-  });
-  const [localUser] = useState(() => {
-    if (typeof window === "undefined") return null;
-    const stored = localStorage.getItem("auth_store");
-    if (stored) {
-      try { return JSON.parse(stored); } catch { /* ignore */ }
-    }
-    return null;
-  });
-
-  const user = storeUser ?? localUser;
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => {
+    hydrate();
+    setMounted(true);
+  }, [hydrate]);
 
   useEffect(() => {
-    if (!ready) {
+    if (mounted && !localStorage.getItem("access_token")) {
       router.replace("/login");
-      return;
     }
-    hydrate();
-  }, [ready, hydrate, router]);
+  }, [mounted, router]);
 
   // 从 pathname 提取选中的菜单 key
   const selectedKeys = [pathname];
@@ -132,7 +117,16 @@ export default function DashboardLayout({
     openKeys.push("settings-group");
   }
 
-  if (!ready || !user) {
+  if (!mounted) {
+    return (
+      <div className="flex min-h-screen items-center justify-center">
+        <Spin size="large" />
+      </div>
+    );
+  }
+
+  if (!user) {
+    router.replace("/login");
     return (
       <div className="flex min-h-screen items-center justify-center">
         <Spin size="large" />
