@@ -4,8 +4,7 @@ import { useState } from "react";
 import { App, Button, Form, Input, Modal, Space, Table, Tag, Typography } from "antd";
 import { PlusOutlined, SearchOutlined } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
-import api from "@/lib/api";
-import { usePaginatedList } from "@/lib/hooks";
+import { useCrud } from "@/lib/hooks";
 
 const { Title } = Typography;
 
@@ -25,20 +24,15 @@ export default function BrandsPage() {
   const [editItem, setEditItem] = useState<Brand | null>(null);
   const [form] = Form.useForm();
 
-  const { items: brands, total, page, loading, setPage, refresh } = usePaginatedList<Brand>(
-    async ({ page, page_size }) => {
-      try {
-        const params: Record<string, string | number> = { page, page_size };
-        if (search) params.name = search;
-        const { data } = await api.get("/brands", { params });
-        return { items: data.items || [], total: data.total || 0 };
-      } catch {
-        message.error("加载品牌列表失败");
-        return { items: [], total: 0 };
-      }
-    },
-    [search]
-  );
+  const {
+    items: brands, total, page, loading, setPage,
+    setFilter, create, update,
+  } = useCrud<Brand>("/brands");
+
+  const handleSearch = (value: string) => {
+    setSearch(value);
+    setFilter(value ? { name: value } : {});
+  };
 
   const openCreate = () => {
     setEditItem(null);
@@ -55,16 +49,14 @@ export default function BrandsPage() {
   const handleSubmit = async (values: Record<string, string>) => {
     try {
       if (editItem) {
-        await api.patch(`/brands/${editItem.id}`, values);
+        await update(editItem.id, values);
         message.success("品牌更新成功");
       } else {
-        await api.post("/brands", values);
+        await create(values);
         message.success("品牌创建成功");
       }
       setModalOpen(false);
       form.resetFields();
-      setPage(1);
-      refresh();
     } catch {
       message.error(editItem ? "更新失败" : "创建失败");
     }
@@ -105,7 +97,7 @@ export default function BrandsPage() {
             placeholder="搜索品牌名称"
             prefix={<SearchOutlined />}
             value={search}
-            onChange={(e) => { setSearch(e.target.value); setPage(1); }}
+            onChange={(e) => handleSearch(e.target.value)}
             allowClear
           />
           <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>

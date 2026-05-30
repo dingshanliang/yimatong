@@ -3,6 +3,7 @@ import { AntdRegistry } from "@ant-design/nextjs-registry";
 import { App, ConfigProvider } from "antd";
 import zhCN from "antd/locale/zh_CN";
 import theme from "@/lib/theme";
+import { SWRProvider } from "@/lib/swr-provider";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -20,7 +21,9 @@ export default function RootLayout({
       <body className="min-h-full">
         <AntdRegistry>
           <ConfigProvider theme={theme} locale={zhCN}>
-            <App>{children}</App>
+            <SWRProvider>
+              <App>{children}</App>
+            </SWRProvider>
           </ConfigProvider>
         </AntdRegistry>
       </body>
