@@ -63,27 +63,7 @@ async function antdPopconfirmConfirm(page: any) {
 test.describe("核心用户流程", () => {
   test("已登录状态访问工作台", async ({ page }) => {
     // storageState 已预设 cookie + localStorage，直接验证 dashboard 可访问
-    const consoleMessages: string[] = [];
-    page.on("console", (msg) => consoleMessages.push(`[${msg.type()}] ${msg.text()}`));
-
     await page.goto("/");
-    // Debug: dump page content after navigation
-    const bodyText = await page.locator("body").textContent({ timeout: 5000 }).catch(() => "BODY_TIMEOUT");
-    const htmlSnippet = await page.evaluate(() => document.body.innerHTML.substring(0, 2000));
-
-    // Check if Spin is showing (auth guard issue)
-    const spinVisible = await page.locator(".ant-spin").isVisible().catch(() => false);
-    const headingVisible = await page.getByRole("heading", { name: "工作台" }).isVisible().catch(() => false);
-    const currentUrl = page.url();
-
-    if (!headingVisible) {
-      console.error("DEBUG: url=", currentUrl);
-      console.error("DEBUG: spinVisible=", spinVisible);
-      console.error("DEBUG: bodyText=", bodyText?.substring(0, 500));
-      console.error("DEBUG: html=", htmlSnippet?.substring(0, 500));
-      console.error("DEBUG: console=", consoleMessages.slice(-10).join("\n"));
-    }
-
     await expect(page.getByRole("heading", { name: "工作台" })).toBeVisible({ timeout: 10000 });
   });
 
