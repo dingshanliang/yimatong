@@ -35,7 +35,10 @@ def upgrade() -> None:
     op.create_index(op.f('ix_ops_tasks_tenant_id'), 'ops_tasks', ['tenant_id'], unique=False)
     op.add_column('tenants', sa.Column('plan_expires_at', sa.DateTime(timezone=True), nullable=True))
     op.add_column('tenants', sa.Column('onboarding_progress', sa.JSON(), nullable=True))
-    op.add_column('tenants', sa.Column('created_at', sa.DateTime(timezone=True), nullable=False))
+    op.add_column('tenants', sa.Column(
+        'created_at', sa.DateTime(timezone=True),
+        server_default=sa.text('now()'), nullable=False,
+    ))
 
 
 def downgrade() -> None:
