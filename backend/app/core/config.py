@@ -32,6 +32,10 @@ class Settings(BaseSettings):
     deepseek_model_advanced: str = "deepseek-v4-pro"
     ai_daily_limit_per_tenant: int = 100
 
+    # Logging
+    log_level: str = "INFO"
+    log_format: str = "human"  # "human" | "json"
+
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 
 

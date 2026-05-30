@@ -45,6 +45,10 @@ from app.api.v1.tenants import router as tenants_router
 from app.api.v1.webhooks import webhook_router
 from app.api.v1.wechat_oauth import wechat_oauth_router
 from app.core.config import settings
+from app.core.error_handlers import register_exception_handlers
+from app.core.logging import setup_logging
+from app.middleware.logging import LoggingMiddleware
+from app.middleware.request_id import RequestIDMiddleware
 from app.middleware.tenant import TenantScopeMiddleware
 
 OPENAPI_TAGS = [
@@ -122,9 +126,16 @@ APP_DESCRIPTION = """
 业务错误统一返回 JSON：
 ```json
 {
-  "detail": "错误描述信息"
+  "error_code": "NOT_FOUND",
+  "detail": "错误描述信息",
+  "request_id": "a1b2c3d4e5f6"
 }
 ```
+
+字段说明：
+- `error_code`：机器可读错误标识（如 `NOT_FOUND`、`VALIDATION_ERROR`、`HTTP_401`）
+- `detail`：人类可读错误信息（验证错误时为数组）
+- `request_id`：请求追踪 ID，与响应头 `X-Request-ID` 一致
 
 状态码遵循 HTTP 语义：
 - `400` 请求参数错误
@@ -140,6 +151,8 @@ APP_DESCRIPTION = """
 
 @asynccontextmanager
 async def lifespan(app):
+    setup_logging(json_logs=(settings.log_format == "json"), level=settings.log_level)
+
     from app.utils.crypto import EnvKeyProvider, init_crypto
 
     if settings.secret_key == "dev-secret-key-change-in-production":
@@ -253,6 +266,10 @@ app.add_middleware(
 )
 
 app.add_middleware(TenantScopeMiddleware)
+app.add_middleware(LoggingMiddleware)
+app.add_middleware(RequestIDMiddleware)
+
+register_exception_handlers(app)
 app.include_router(tenants_router)
 app.include_router(orgs_router)
 app.include_router(auth_router)
