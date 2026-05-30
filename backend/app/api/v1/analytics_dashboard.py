@@ -24,6 +24,63 @@ def require_admin(request: Request) -> None:
         raise HTTPException(status_code=403, detail="Admin permission required")
 
 
+async def _get_campaign_stats(
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    campaign_id: uuid.UUID | None = None,
+    start_date: date | None = None,
+    end_date: date | None = None,
+) -> tuple[list[dict], int]:
+    """批量获取活动看板数据（3 次查询，无 N+1）"""
+    campaign_stmt = select(Campaign).where(Campaign.tenant_id == tenant_id)
+    if campaign_id:
+        campaign_stmt = campaign_stmt.where(Campaign.id == campaign_id)
+    result = await db.execute(campaign_stmt)
+    campaigns = result.scalars().all()
+
+    if not campaigns:
+        return [], 0
+
+    campaign_ids = [c.id for c in campaigns]
+
+    # 批量领取数（1 次 GROUP BY 查询）
+    claim_stmt = (
+        select(BenefitClaim.campaign_id, func.count())
+        .where(
+            BenefitClaim.tenant_id == tenant_id,
+            BenefitClaim.campaign_id.in_(campaign_ids),
+        )
+        .group_by(BenefitClaim.campaign_id)
+    )
+    claim_result = await db.execute(claim_stmt)
+    claim_map: dict[uuid.UUID, int] = dict(claim_result.all())
+
+    # 总扫码数（1 次查询，日期范围过滤）
+    cutoff = datetime.combine(start_date or (date.today() - timedelta(days=30)), datetime.min.time(), tzinfo=UTC)
+    scan_stmt = (
+        select(func.count())
+        .select_from(ScanEvent)
+        .where(ScanEvent.tenant_id == tenant_id, ScanEvent.scan_time >= cutoff)
+    )
+    if end_date:
+        end_dt = datetime(end_date.year, end_date.month, end_date.day, tzinfo=UTC) + timedelta(days=1)
+        scan_stmt = scan_stmt.where(ScanEvent.scan_time < end_dt)
+    scan_result = await db.execute(scan_stmt)
+    scan_count = scan_result.scalar() or 0
+
+    items = [
+        {
+            "campaign_id": str(c.id),
+            "campaign_name": c.name,
+            "status": c.status,
+            "claim_count": claim_map.get(c.id, 0),
+            "scan_count": scan_count,
+        }
+        for c in campaigns
+    ]
+    return items, len(items)
+
+
 @dashboard_router.get("/campaign-dashboard")
 async def campaign_dashboard(
     campaign_id: uuid.UUID | None = Query(None),
@@ -33,54 +90,8 @@ async def campaign_dashboard(
     tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
     """活动看板数据"""
-    # 活动列表 + 基础统计
-    campaign_stmt = select(Campaign).where(Campaign.tenant_id == tenant_id)
-    if campaign_id:
-        campaign_stmt = campaign_stmt.where(Campaign.id == campaign_id)
-    result = await db.execute(campaign_stmt)
-    campaigns = result.scalars().all()
-
-    items = []
-    for c in campaigns:
-        # 每个活动的领取数
-        claim_count_stmt = (
-            select(func.count())
-            .select_from(BenefitClaim)
-            .where(
-                BenefitClaim.tenant_id == tenant_id,
-                BenefitClaim.campaign_id == c.id,
-            )
-        )
-        claim_result = await db.execute(claim_count_stmt)
-        claim_count = claim_result.scalar() or 0
-
-        # 每个活动的扫码数
-        cutoff = datetime.combine(start_date or (date.today() - timedelta(days=30)), datetime.min.time(), tzinfo=UTC)
-        scan_count_stmt = (
-            select(func.count())
-            .select_from(ScanEvent)
-            .where(
-                ScanEvent.tenant_id == tenant_id,
-                ScanEvent.scan_time >= cutoff,
-            )
-        )
-        if end_date:
-            end_dt = datetime(end_date.year, end_date.month, end_date.day, tzinfo=UTC) + timedelta(days=1)
-            scan_count_stmt = scan_count_stmt.where(ScanEvent.scan_time < end_dt)
-        scan_result = await db.execute(scan_count_stmt)
-        scan_count = scan_result.scalar() or 0
-
-        items.append(
-            {
-                "campaign_id": str(c.id),
-                "campaign_name": c.name,
-                "status": c.status,
-                "claim_count": claim_count,
-                "scan_count": scan_count,
-            }
-        )
-
-    return {"items": items, "total": len(items)}
+    items, total = await _get_campaign_stats(db, tenant_id, campaign_id, start_date, end_date)
+    return {"items": items, "total": total}
 
 
 @dashboard_router.get("/risk-dashboard")
@@ -236,9 +247,7 @@ async def create_export(
         )
 
     if export_type == "campaign_dashboard":
-        campaign_stmt = select(Campaign).where(Campaign.tenant_id == tenant_id)
-        result = await db.execute(campaign_stmt)
-        campaigns = result.scalars().all()
+        items, _ = await _get_campaign_stats(db, tenant_id, start_date=start_date, end_date=end_date)
 
         output = io.StringIO()
         writer = csv.DictWriter(
@@ -246,42 +255,8 @@ async def create_export(
             fieldnames=["campaign_id", "campaign_name", "status", "claim_count", "scan_count"],
         )
         writer.writeheader()
-        row_count = 0
-        for c in campaigns:
-            claim_count_stmt = (
-                select(func.count())
-                .select_from(BenefitClaim)
-                .where(
-                    BenefitClaim.tenant_id == tenant_id,
-                    BenefitClaim.campaign_id == c.id,
-                )
-            )
-            claim_result = await db.execute(claim_count_stmt)
-            claim_count = claim_result.scalar() or 0
-
-            cutoff = datetime.combine(start_date or (date.today() - timedelta(days=30)), datetime.min.time(), tzinfo=UTC)
-            scan_count_stmt = (
-                select(func.count())
-                .select_from(ScanEvent)
-                .where(
-                    ScanEvent.tenant_id == tenant_id,
-                    ScanEvent.scan_time >= cutoff,
-                )
-            )
-            if end_date:
-                end_dt = datetime(end_date.year, end_date.month, end_date.day, tzinfo=UTC) + timedelta(days=1)
-                scan_count_stmt = scan_count_stmt.where(ScanEvent.scan_time < end_dt)
-            scan_result = await db.execute(scan_count_stmt)
-            scan_count = scan_result.scalar() or 0
-
-            writer.writerow({
-                "campaign_id": str(c.id),
-                "campaign_name": c.name,
-                "status": c.status,
-                "claim_count": claim_count,
-                "scan_count": scan_count,
-            })
-            row_count += 1
+        for item in items:
+            writer.writerow(item)
 
         csv_content = output.getvalue()
         await log_export(
@@ -290,7 +265,7 @@ async def create_export(
             account_id,
             "campaign_dashboard_csv",
             file_name=f"campaign-dashboard-{tenant_id.hex[:8]}.csv",
-            row_count=row_count,
+            row_count=len(items),
         )
         await db.commit()
 
