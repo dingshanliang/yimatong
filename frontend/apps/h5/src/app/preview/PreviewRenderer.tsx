@@ -232,6 +232,15 @@ function PreviewModule({ module }: { module: ModuleConfig }) {
           <DualCodeVerify publicId="preview" codeType="standard" isFirstScan scanCount={1} />
         </div>
       );
+    case "points_history":
+      return (
+        <div className="px-4 mt-3">
+          <div className="rounded-2xl bg-white p-4 shadow-sm">
+            <h3 className="text-sm font-semibold text-gray-900">积分明细</h3>
+            <p className="mt-2 text-sm text-gray-400">预览模式下显示占位内容</p>
+          </div>
+        </div>
+      );
     default:
       return (
         <div className="mx-4 mt-3 rounded-2xl bg-white p-4 shadow-sm text-center text-gray-400">

@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { apiClient, getConsumerId } from "@/lib/api";
+import { PointsHistory } from "@/components/PointsHistory";
 
 interface PointsBalanceProps {
   points?: number;
@@ -15,13 +16,18 @@ export function PointsBalance({
   const consumerId = propConsumerId || getConsumerId() || undefined;
   const [points, setPoints] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
+  const [showHistory, setShowHistory] = useState(false);
+  const [resolvedConsumerId, setResolvedConsumerId] = useState<string | null>(null);
 
   useEffect(() => {
     if (!consumerId) return;
     setLoading(true);
     apiClient
       .get("/consumers/me", { params: { consumer_id: consumerId } })
-      .then((res) => setPoints(res.data.total_points ?? 0))
+      .then((res) => {
+        setPoints(res.data.total_points ?? 0);
+        setResolvedConsumerId(res.data.consumer_id || consumerId);
+      })
       .catch(() => {})
       .finally(() => setLoading(false));
   }, [consumerId]);
@@ -53,8 +59,21 @@ export function PointsBalance({
           <span className="text-2xl">⭐</span>
         </div>
       </div>
-      {consumerId && (
-        <p className="mt-2 text-xs text-blue-100">积分可用于兑换权益</p>
+      <p className="mt-2 text-xs text-blue-100">积分可用于兑换权益</p>
+
+      {resolvedConsumerId && (
+        <button
+          onClick={() => setShowHistory(!showHistory)}
+          className="mt-3 w-full rounded-xl bg-white/15 py-2 text-xs font-medium text-white backdrop-blur-sm active:bg-white/25"
+        >
+          {showHistory ? "收起明细" : "查看明细"}
+        </button>
+      )}
+
+      {showHistory && resolvedConsumerId && (
+        <div className="mt-3 max-h-60 overflow-y-auto rounded-xl bg-white/10 p-3 backdrop-blur-sm">
+          <PointsHistory consumerId={resolvedConsumerId} />
+        </div>
       )}
     </div>
   );

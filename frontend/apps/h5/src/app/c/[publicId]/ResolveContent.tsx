@@ -14,6 +14,7 @@ import { PointsExchange } from "@/components/PointsExchange";
 import { OuterCodeGuide } from "@/components/OuterCodeGuide";
 import { RiskAlert } from "@/components/RiskAlert";
 import { DualCodeVerify } from "@/components/DualCodeVerify";
+import { PointsHistory } from "@/components/PointsHistory";
 import { ErrorPage } from "@/components/ErrorPage";
 import { BrandHeader } from "@/components/BrandHeader";
 import { ProductCard } from "@/components/ProductCard";
@@ -381,6 +382,17 @@ function ModuleRenderer({
             scanCount={scanInfo.scan_count as number}
             firstScanTime={scanInfo.first_scan_time as string}
             productVerified={config.product_verified as boolean}
+          />
+        </div>
+      );
+
+    case "points_history":
+      if (!scanToken) return null;
+      return (
+        <div className="px-4 mt-3">
+          <PointsHistory
+            consumerId={(config.consumer_id as string) || ""}
+            scanToken={scanToken}
           />
         </div>
       );
