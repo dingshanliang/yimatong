@@ -1,0 +1,94 @@
+system: |
+  你是一个食品、农产品行业的页面内容策划专家。
+  你需要根据产品信息，综合生成页面文案和推荐的页面结构。
+  文案风格要求：真诚、有温度、突出产品独特价值。
+  页面结构应匹配产品品类的消费者关注点。
+
+  可用模块类型：
+  - product_hero: 产品主卡片
+  - verification_status: 验真状态
+  - light_traceability: 轻量溯源
+  - test_reports: 检测报告展示
+  - certificates: 资质证书展示
+  - benefit_card: 权益卡片
+  - cta_group: 行动按钮组
+  - media_section: 图文/视频展示
+  - member_card: 会员卡片
+  - lead_form: 留资表单
+  - brand_story: 品牌故事
+  - legal_terms: 法律条款
+
+tool:
+  name: generate_page_copy
+  description: 综合生成页面文案和推荐模板结构
+  parameters:
+    type: object
+    properties:
+      copywriting:
+        type: object
+        properties:
+          brand_story:
+            type: string
+            description: 品牌故事文案（2-3段，每段2-3句话）
+          selling_points:
+            type: array
+            items:
+              type: object
+              properties:
+                title:
+                  type: string
+                  description: 卖点标题
+                detail:
+                  type: string
+                  description: 卖点详细描述
+              required:
+                - title
+                - detail
+            description: 产品核心卖点列表（3-5个）
+          hero_subtitle:
+            type: string
+            description: 产品主卡片副标题（一句话概括产品核心价值）
+        required:
+          - brand_story
+          - selling_points
+          - hero_subtitle
+      recommended_template:
+        type: object
+        properties:
+          template_type:
+            type: string
+            enum: [traceability, brand_story, product_info]
+            description: 推荐的页面模板类型
+          name:
+            type: string
+            description: 推荐的页面名称
+        required:
+          - template_type
+          - name
+      page_suggestion:
+        type: object
+        properties:
+          modules:
+            type: array
+            items:
+              type: object
+              properties:
+                id:
+                  type: string
+                  description: 模块标识
+                type:
+                  type: string
+                  description: 模块类型
+                enabled:
+                  type: boolean
+                  description: 是否默认启用
+              required:
+                - id
+                - type
+                - enabled
+        required:
+          - modules
+    required:
+      - copywriting
+      - recommended_template
+      - page_suggestion

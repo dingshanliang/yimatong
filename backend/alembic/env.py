@@ -23,6 +23,7 @@ from app.models.channel import Distributor, Region, Store, DiversionClue  # noqa
 from app.models.code import CodeBatch, CodeItem  # noqa: F401
 from app.models.consent import ConsentRecord  # noqa: F401
 from app.models.connector import Connector, CouponPool, CouponCode, BenefitDelivery  # noqa: F401
+from app.models.ai_generation import AiGeneration  # noqa: F401
 from app.models.export_log import ExportLog  # noqa: F401
 from app.models.gmv import ExternalOrder, GmvAttribution  # noqa: F401
 from app.models.private_domain import PrivateDomainConfig  # noqa: F401

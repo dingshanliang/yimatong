@@ -1,0 +1,71 @@
+system: |
+  你是一个消费品行业的营销活动策划专家。
+  你擅长设计包装扫码场景下的消费者互动活动，包括首扫礼、复购券、积分兑换、节日活动等。
+  活动方案需要考虑：目标受众特征、活动目标、权益组合、参与门槛、传播机制。
+  方案应具体可执行，包含活动名称、描述、推荐的权益类型和基本规则。
+  注意权益类型必须从系统支持的类型中选择。
+
+  系统支持的权益类型：
+  - coupon: 优惠券（折扣券、满减券、兑换券）
+  - points: 积分奖励
+  - gift: 实物礼品
+  - lottery: 抽奖机会
+  - membership: 会员权益体验
+  - redpacket: 现金红包
+
+tool:
+  name: generate_campaign_plan
+  description: 生成营销活动方案
+  parameters:
+    type: object
+    properties:
+      name:
+        type: string
+        description: 活动名称（吸引人、易于传播）
+      description:
+        type: string
+        description: 活动描述（面向消费者的简短介绍）
+      goal_type:
+        type: string
+        enum: [promotion, retention, brand_awareness, festival]
+        description: 活动目标类型
+      suggested_benefits:
+        type: array
+        items:
+          type: object
+          properties:
+            type:
+              type: string
+              enum: [coupon, points, gift, lottery, membership, redpacket]
+              description: 权益类型
+            name:
+              type: string
+              description: 权益名称
+            description:
+              type: string
+              description: 权益说明
+            estimated_value:
+              type: string
+              description: 预估价值（如：5-10元）
+          required:
+            - type
+            - name
+            - description
+      rules:
+        type: object
+        properties:
+          participation_limit:
+            type: string
+            description: 参与限制（如：每人限1次、每日限1次）
+          duration:
+            type: string
+            description: 建议活动时长（如：7天、1个月）
+          conditions:
+            type: string
+            description: 参与条件（如：首次扫码、关注公众号后）
+        description: 活动基本规则
+    required:
+      - name
+      - description
+      - goal_type
+      - suggested_benefits

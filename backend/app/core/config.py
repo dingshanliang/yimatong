@@ -18,6 +18,13 @@ class Settings(BaseSettings):
     # CORS 配置（逗号分隔的前端域名）
     cors_origins: str = "http://localhost:3000,http://localhost:3001"
 
+    # DeepSeek AI 配置
+    deepseek_api_keys: str = ""  # 逗号分隔的多个 API key
+    deepseek_base_url: str = "https://api.deepseek.com"
+    deepseek_model_default: str = "deepseek-v4-flash"
+    deepseek_model_advanced: str = "deepseek-v4-pro"
+    ai_daily_limit_per_tenant: int = 100
+
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 
 

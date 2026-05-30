@@ -53,7 +53,7 @@ export default function ProductsPage() {
   const [aiRecognizing, setAiRecognizing] = useState(false);
   const [aiGenerating, setAiGenerating] = useState(false);
   const [aiExtractedFields, setAiExtractedFields] = useState<ExtractedFields | null>(null);
-  const [aiPageCopy, setAiPageCopy] = useState<PageCopyResult | null>(null);
+  const [aiPageCopy, setAiPageCopy] = useState<PageCopyResult["result"] | null>(null);
   const [aiTextInput, setAiTextInput] = useState("");
 
   const { items: products, total, page, loading, setPage, refresh } = usePaginatedList<Product>(
@@ -119,7 +119,7 @@ export default function ProductsPage() {
   const handleImageRecognize = async (file: File) => {
     setAiRecognizing(true);
     try {
-      const result = await recognizeImage(file);
+      const result = await recognizeImage(file as unknown as string, "image.jpg");
       setAiExtractedFields(result.fields);
       message.success("AI 识别完成，请查看识别结果");
     } catch {
@@ -159,7 +159,7 @@ export default function ProductsPage() {
         aiExtractedFields.category || "其他",
         aiExtractedFields.origin ? [aiExtractedFields.origin] : [],
       );
-      setAiPageCopy(result);
+      setAiPageCopy(result.result);
       message.success("页面文案生成完成");
     } catch {
       message.error("文案生成失败");

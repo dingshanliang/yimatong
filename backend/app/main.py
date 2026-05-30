@@ -66,6 +66,11 @@ async def lifespan(app):
         )
     init_crypto(EnvKeyProvider())
 
+    # 初始化 LLM Key Pool
+    from app.services.llm_pool import init_pool
+
+    init_pool()
+
     yield
 
 

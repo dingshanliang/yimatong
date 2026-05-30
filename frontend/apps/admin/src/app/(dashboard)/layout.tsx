@@ -23,6 +23,7 @@ import {
   UserAddOutlined,
   ShopOutlined,
   CheckSquareOutlined,
+  RobotOutlined,
 } from "@ant-design/icons";
 import type { MenuProps } from "antd";
 import { useAuthStore } from "@/lib/auth";
@@ -37,6 +38,7 @@ const menuItems: MenuProps["items"] = [
   { key: "/batches", icon: <DatabaseOutlined />, label: "生产批次" },
   { key: "/codes", icon: <QrcodeOutlined />, label: "码管理" },
   { key: "/pages", icon: <FileTextOutlined />, label: "页面管理" },
+  { key: "/ai-assistant", icon: <RobotOutlined />, label: "AI 助手" },
   { key: "/campaigns", icon: <GiftOutlined />, label: "活动管理" },
   { key: "/benefits", icon: <SafetyCertificateOutlined />, label: "权益管理" },
   {
