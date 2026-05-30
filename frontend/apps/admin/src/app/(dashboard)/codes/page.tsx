@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
-import { usePaginatedList } from "@/lib/hooks";
+import { useCrud } from "@/lib/hooks";
 import { App, Button, Empty, Form, Input, InputNumber, Modal, Popconfirm, Select, Space, Table, Tag, Typography } from "antd";
 import { QrcodeOutlined, PlusOutlined, DownloadOutlined } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
@@ -58,20 +58,7 @@ export default function CodesPage() {
   const [form] = Form.useForm();
   const [selectedProduct, setSelectedProduct] = useState<string | undefined>(undefined);
 
-  const { items: batches, total, page, loading, setPage, refresh } = usePaginatedList<CodeBatch>(
-    async ({ page, page_size }) => {
-      try {
-        const params: Record<string, string | number> = { page, page_size };
-        if (status) params.status = status;
-        const { data } = await api.get("/code-batches", { params });
-        return { items: data.items || [], total: data.total || 0 };
-      } catch {
-        message.error("加载码批次列表失败");
-        return { items: [], total: 0 };
-      }
-    },
-    [status]
-  );
+  const { items: batches, total, page, loading, setPage, setFilter, mutate, create } = useCrud<CodeBatch>("/code-batches");
 
   const fetchProducts = useCallback(async () => {
     try {
@@ -94,14 +81,12 @@ export default function CodesPage() {
 
   const handleCreate = async (values: Record<string, unknown>) => {
     try {
-      await api.post("/code-batches", values);
+      await create(values);
       message.success("码批次创建成功");
       setCreateOpen(false);
       form.resetFields();
       setSelectedProduct(undefined);
       setSKUs([]);
-      setPage(1);
-      refresh();
     } catch {
       message.error("创建失败");
     }
@@ -111,7 +96,7 @@ export default function CodesPage() {
     try {
       await api.post(`/code-batches/${id}/activate`);
       message.success("码批次已激活");
-      refresh();
+      mutate();
     } catch {
       message.error("激活失败");
     }
@@ -180,7 +165,7 @@ export default function CodesPage() {
             allowClear
             style={{ width: 150 }}
             value={status}
-            onChange={(v) => { setStatus(v); setPage(1); }}
+            onChange={(v) => { setStatus(v); setFilter(v ? { status: v } : {}); }}
             options={Object.entries(STATUS_MAP).map(([value, { label }]) => ({ value, label }))}
           />
           <Button type="primary" icon={<PlusOutlined />} onClick={() => setCreateOpen(true)}>

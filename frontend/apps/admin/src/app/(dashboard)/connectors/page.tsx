@@ -10,7 +10,7 @@ import {
   SendOutlined, EyeOutlined,
 } from "@ant-design/icons";
 import api, { extractErrorMessage } from "@/lib/api";
-import { usePaginatedList } from "@/lib/hooks";
+import { useCrud, usePaginatedList } from "@/lib/hooks";
 
 interface Connector {
   id: string;
@@ -76,19 +76,8 @@ export default function ConnectorsPage() {
   const [selectedPool, setSelectedPool] = useState<Pool | null>(null);
 
   const {
-    items: pools, loading: poolsLoading, refresh: refreshPools,
-  } = usePaginatedList<Pool>(
-    async () => {
-      try {
-        const { data } = await api.get("/connectors/coupon-pools");
-        return { items: data.items || [], total: data.total || 0 };
-      } catch {
-        message.error("加载券码池失败");
-        return { items: [], total: 0 };
-      }
-    },
-    []
-  );
+    items: pools, loading: poolsLoading, mutate: mutatePools,
+  } = useCrud<Pool>("/connectors/coupon-pools");
 
   const {
     items: poolCodes, total: poolCodesTotal, loading: poolCodesLoading,
@@ -260,7 +249,7 @@ export default function ConnectorsPage() {
       message.success(`券码池创建成功，共 ${codes.length} 个券码`);
       setPoolModalOpen(false);
       poolForm.resetFields();
-      refreshPools();
+      mutatePools();
     } catch (err) {
       const axiosErr = err as Parameters<typeof extractErrorMessage>[0];
       if (axiosErr && typeof axiosErr === "object" && "response" in axiosErr) {
@@ -493,7 +482,7 @@ export default function ConnectorsPage() {
             >
               创建券码池
             </Button>
-            <Button icon={<ReloadOutlined />} onClick={() => refreshPools()} style={{ marginLeft: 8 }}>
+            <Button icon={<ReloadOutlined />} onClick={() => mutatePools()} style={{ marginLeft: 8 }}>
               刷新
             </Button>
           </div>

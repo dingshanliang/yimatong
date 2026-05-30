@@ -13,7 +13,7 @@ import {
 } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
 import api from "@/lib/api";
-import { usePaginatedList } from "@/lib/hooks";
+import { useCrud } from "@/lib/hooks";
 import {
   extractFromText,
   recognizeImage,
@@ -56,20 +56,7 @@ export default function ProductsPage() {
   const [aiPageCopy, setAiPageCopy] = useState<PageCopyResult["result"] | null>(null);
   const [aiTextInput, setAiTextInput] = useState("");
 
-  const { items: products, total, page, loading, setPage, refresh } = usePaginatedList<Product>(
-    async ({ page, page_size }) => {
-      try {
-        const params: Record<string, string | number> = { page, page_size };
-        if (search) params.search = search;
-        const { data } = await api.get("/products", { params });
-        return { items: data.items || [], total: data.total || 0 };
-      } catch {
-        message.error("加载产品列表失败");
-        return { items: [], total: 0 };
-      }
-    },
-    [search]
-  );
+  const { items: products, total, page, loading, setPage, setFilter, create, update } = useCrud<Product>("/products");
 
   const fetchBrands = async () => {
     try {
@@ -99,16 +86,14 @@ export default function ProductsPage() {
   const handleCreate = async (values: Record<string, string>) => {
     try {
       if (editItem) {
-        await api.patch(`/products/${editItem.id}`, values);
+        await update(editItem.id, values);
         message.success("产品更新成功");
       } else {
-        await api.post("/products", values);
+        await create(values);
         message.success("产品创建成功");
       }
       setModalOpen(false);
       form.resetFields();
-      setPage(1);
-      refresh();
     } catch {
       message.error(editItem ? "更新失败" : "创建失败");
     }
@@ -224,8 +209,9 @@ export default function ProductsPage() {
             prefix={<SearchOutlined />}
             value={search}
             onChange={(e) => {
-              setSearch(e.target.value);
-              setPage(1);
+              const val = e.target.value;
+              setSearch(val);
+              setFilter(val ? { search: val } : {});
             }}
             allowClear
           />

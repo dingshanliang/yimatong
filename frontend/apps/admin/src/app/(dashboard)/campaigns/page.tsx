@@ -5,7 +5,7 @@ import { App, Button, Form, Input, Modal, Popconfirm, Select, Space, Table, Tag,
 import { PlusOutlined } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
 import api from "@/lib/api";
-import { usePaginatedList } from "@/lib/hooks";
+import { useCrud } from "@/lib/hooks";
 
 const { Title } = Typography;
 const { TextArea } = Input;
@@ -29,18 +29,7 @@ export default function CampaignsPage() {
   const [editItem, setEditItem] = useState<Record<string, unknown> | null>(null);
   const [form] = Form.useForm();
 
-  const { items: campaigns, total, page, loading, setPage, refresh } = usePaginatedList<Record<string, unknown>>(
-    async ({ page, page_size }) => {
-      try {
-        const { data } = await api.get("/campaigns", { params: { page, page_size } });
-        return { items: data.items || [], total: data.total || 0 };
-      } catch {
-        message.error("加载活动列表失败");
-        return { items: [], total: 0 };
-      }
-    },
-    []
-  );
+  const { items: campaigns, total, page, loading, setPage, mutate, create, update, remove } = useCrud<Record<string, unknown> & { id: string }>("/campaigns");
 
   const openCreate = () => {
     setEditItem(null);
@@ -81,16 +70,14 @@ export default function CampaignsPage() {
         },
       };
       if (editItem) {
-        await api.patch(`/campaigns/${editItem.id as string}`, payload);
+        await update(editItem.id as string, payload);
         message.success("活动更新成功");
       } else {
-        await api.post("/campaigns", payload);
+        await create(payload);
         message.success("活动创建成功");
       }
       setModalOpen(false);
       form.resetFields();
-      setPage(1);
-      refresh();
     } catch (e: unknown) {
       const err = e as { response?: { data?: { detail?: string } } };
       message.error(err.response?.data?.detail || (editItem ? "更新失败" : "创建失败"));
@@ -101,7 +88,7 @@ export default function CampaignsPage() {
     try {
       await api.post(`/campaigns/${id}/status`, { status: "active" });
       message.success("活动已上线");
-      refresh();
+      mutate();
     } catch {
       message.error("操作失败");
     }
@@ -146,7 +133,7 @@ export default function CampaignsPage() {
               onConfirm={async () => {
                 await api.post(`/campaigns/${record.id as string}/status`, { status: "paused" });
                 message.success("已暂停");
-                refresh();
+                mutate();
               }}
             >
               <Button size="small">暂停</Button>
@@ -156,9 +143,8 @@ export default function CampaignsPage() {
             <Popconfirm
               title="确认删除活动？"
               onConfirm={async () => {
-                await api.delete(`/campaigns/${record.id as string}`);
+                await remove(record.id as string);
                 message.success("已删除");
-                refresh();
               }}
             >
               <Button size="small" danger>删除</Button>

@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { usePaginatedList } from "@/lib/hooks";
+import { useCrud } from "@/lib/hooks";
 import { App, Button, Form, Input, Modal, Select, Space, Table, Tag } from "antd";
 import { PlusOutlined } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
@@ -36,20 +36,8 @@ export default function PagesPage() {
     page,
     loading,
     setPage,
-    refresh: refreshTemplates,
-  } = usePaginatedList<PageTemplate>(
-    async ({ page, page_size }) => {
-      try {
-        const { data } = await api.get("/page-templates", {
-          params: { page, page_size },
-        });
-        return { items: data.items || [], total: data.total || 0 };
-      } catch {
-        message.error("加载页面列表失败");
-        return { items: [], total: 0 };
-      }
-    }
-  );
+    mutate: mutateTemplates,
+  } = useCrud<PageTemplate>("/page-templates");
 
   const [createOpen, setCreateOpen] = useState(false);
   const [industryOpen, setIndustryOpen] = useState(false);
@@ -69,7 +57,7 @@ export default function PagesPage() {
       message.success("页面模板创建成功，已生成初始草稿");
       setCreateOpen(false);
       form.resetFields();
-      refreshTemplates();
+      mutateTemplates();
     } catch {
       message.error("创建失败");
     }
@@ -89,7 +77,7 @@ export default function PagesPage() {
       await api.post(`/page-templates/industry-templates/${index}/clone`);
       message.success("模板复制成功");
       setIndustryOpen(false);
-      refreshTemplates();
+      mutateTemplates();
     } catch {
       message.error("复制失败");
     }

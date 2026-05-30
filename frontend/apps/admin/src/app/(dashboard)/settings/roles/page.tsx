@@ -1,11 +1,10 @@
 "use client";
 
 import { useState } from "react";
-import { usePaginatedList } from "@/lib/hooks";
+import { useCrud } from "@/lib/hooks";
 import { App, Button, Checkbox, Form, Input, Modal, Popconfirm, Space, Switch, Table, Tag, Typography } from "antd";
 import { PlusOutlined } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
-import api from "@/lib/api";
 
 const { Title } = Typography;
 
@@ -57,18 +56,10 @@ export default function RolesPage() {
     page,
     loading,
     setPage,
-    refresh: refreshRoles,
-  } = usePaginatedList<Role>(
-    async ({ page, page_size }) => {
-      try {
-        const { data } = await api.get("/roles", { params: { page, page_size } });
-        return { items: data.items || [], total: data.total || 0 };
-      } catch {
-        message.error("加载角色列表失败");
-        return { items: [], total: 0 };
-      }
-    }
-  );
+    create: createRole,
+    update: updateRole,
+    remove: removeRole,
+  } = useCrud<Role>("/roles");
   const [modalOpen, setModalOpen] = useState(false);
   const [editingRole, setEditingRole] = useState<Role | null>(null);
   const [form] = Form.useForm();
@@ -98,16 +89,15 @@ export default function RolesPage() {
     setSaving(true);
     try {
       if (editingRole) {
-        await api.patch(`/roles/${editingRole.id}`, values);
+        await updateRole(editingRole.id, values);
         message.success("角色更新成功");
       } else {
-        await api.post("/roles", values);
+        await createRole(values);
         message.success("角色创建成功");
       }
       setModalOpen(false);
       form.resetFields();
       setEditingRole(null);
-      refreshRoles();
     } catch {
       message.error(editingRole ? "更新失败" : "创建失败");
     } finally {
@@ -117,9 +107,8 @@ export default function RolesPage() {
 
   const handleDelete = async (roleId: string) => {
     try {
-      await api.delete(`/roles/${roleId}`);
+      await removeRole(roleId);
       message.success("角色已删除");
-      refreshRoles();
     } catch {
       message.error("删除失败");
     }
@@ -127,11 +116,8 @@ export default function RolesPage() {
 
   const handleToggleActive = async (role: Role) => {
     try {
-      await api.patch(`/roles/${role.id}`, {
-        is_active: !role.is_active,
-      });
+      await updateRole(role.id, { is_active: !role.is_active });
       message.success(role.is_active ? "角色已禁用" : "角色已启用");
-      refreshRoles();
     } catch {
       message.error("操作失败");
     }

@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { usePaginatedList } from "@/lib/hooks";
+import { useState } from "react";
+import { useCrud } from "@/lib/hooks";
 import { App, Button, Form, Input, Modal, Popconfirm, Select, Space, Switch, Table, Tabs, Tag, Typography } from "antd";
 import { PlusOutlined } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
@@ -27,35 +27,22 @@ const ACTIONS = [
 
 function RulesTab() {
   const { message } = App.useApp();
-  const [items, setItems] = useState<Record<string, unknown>[]>([]);
-  const [loading, setLoading] = useState(false);
+  const {
+    items, total, page, loading, setPage,
+    create, update, remove,
+  } = useCrud<Record<string, unknown> & { id: string }>("/risk-rules");
   const [open, setOpen] = useState(false);
   const [form] = Form.useForm();
-
-  const fetch = async () => {
-    setLoading(true);
-    try {
-      const { data } = await api.get("/risk-rules");
-      setItems(Array.isArray(data) ? data : []);
-    } catch {
-      message.error("加载风控规则失败");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  useEffect(() => { fetch(); }, []);
 
   const handleCreate = async (values: Record<string, unknown>) => {
     try {
       const config = values.config_json
         ? JSON.parse(values.config_json as string)
         : {};
-      await api.post("/risk-rules", { ...values, config });
+      await create({ ...values, config });
       message.success("规则创建成功");
       setOpen(false);
       form.resetFields();
-      fetch();
     } catch (e: unknown) {
       const err = e as { response?: { data?: { detail?: string } } };
       message.error(err.response?.data?.detail || "创建失败");
@@ -64,9 +51,8 @@ function RulesTab() {
 
   const toggleEnabled = async (id: string, enabled: boolean) => {
     try {
-      await api.patch(`/risk-rules/${id}`, { enabled });
+      await update(id, { enabled });
       message.success(enabled ? "已启用" : "已禁用");
-      fetch();
     } catch {
       message.error("操作失败");
     }
@@ -104,9 +90,8 @@ function RulesTab() {
         <Popconfirm
           title="确认删除此规则？"
           onConfirm={async () => {
-            await api.delete(`/risk-rules/${record.id as string}`);
+            await remove(record.id as string);
             message.success("已删除");
-            fetch();
           }}
         >
           <Button size="small" danger>删除</Button>
@@ -122,7 +107,9 @@ function RulesTab() {
           新建规则
         </Button>
       </div>
-      <Table columns={columns} dataSource={items} rowKey="id" loading={loading} pagination={false} />
+      <Table columns={columns} dataSource={items} rowKey="id" loading={loading}
+        pagination={{ current: page, total, pageSize: 20, onChange: setPage, showTotal: (t) => `共 ${t} 条` }}
+      />
       <Modal title="新建风控规则" open={open} onCancel={() => setOpen(false)} onOk={() => form.submit()} width={550}>
         <Form form={form} layout="vertical" onFinish={handleCreate}>
           <Form.Item name="name" label="规则名称" rules={[{ required: true }]}>
@@ -150,18 +137,7 @@ function RulesTab() {
 /* ---------- Interceptions Tab ---------- */
 
 function InterceptionsTab() {
-  const { message } = App.useApp();
-  const { items, total, page, loading, setPage } = usePaginatedList<Record<string, unknown>>(
-    async ({ page, page_size }) => {
-      try {
-        const { data } = await api.get("/risk-rules/interceptions", { params: { page, page_size } });
-        return { items: data.items || [], total: data.total || 0 };
-      } catch {
-        message.error("加载拦截记录失败");
-        return { items: [], total: 0 };
-      }
-    }
-  );
+  const { items, total, page, loading, setPage } = useCrud<Record<string, unknown> & { id: string }>("/risk-rules/interceptions");
 
   const columns: ColumnsType<Record<string, unknown>> = [
     { title: "规则 ID", dataIndex: "risk_rule_id", key: "risk_rule_id", render: (v: string) => v?.slice(0, 8) + "..." },
@@ -190,17 +166,7 @@ function InterceptionsTab() {
 
 function AlertsTab() {
   const { message } = App.useApp();
-  const { items, total, page, loading, setPage, refresh } = usePaginatedList<Record<string, unknown>>(
-    async ({ page, page_size }) => {
-      try {
-        const { data } = await api.get("/risk-alerts", { params: { page, page_size } });
-        return { items: data.items || [], total: data.total || 0 };
-      } catch {
-        message.error("加载预警列表失败");
-        return { items: [], total: 0 };
-      }
-    }
-  );
+  const { items, total, page, loading, setPage, mutate } = useCrud<Record<string, unknown> & { id: string }>("/risk-alerts");
 
   const columns: ColumnsType<Record<string, unknown>> = [
     { title: "码 ID", dataIndex: "public_id", key: "public_id" },
@@ -227,7 +193,7 @@ function AlertsTab() {
             onConfirm={async () => {
               await api.post(`/risk-alerts/${record.id as string}/resolve`);
               message.success("已处理");
-              refresh();
+              mutate();
             }}
           >
             <Button size="small" type="link">处理</Button>

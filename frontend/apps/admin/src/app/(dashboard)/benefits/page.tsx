@@ -9,7 +9,7 @@ import {
 import { PlusOutlined, SendOutlined } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
 import api from "@/lib/api";
-import { usePaginatedList } from "@/lib/hooks";
+import { useCrud } from "@/lib/hooks";
 
 const { Title } = Typography;
 
@@ -368,33 +368,13 @@ export default function BenefitsPage() {
   const { message } = App.useApp();
   const {
     items: benefits, total: benefitsTotal, page: benefitsPage, loading: benefitsLoading,
-    setPage: setBenefitsPage, refresh: refreshBenefits,
-  } = usePaginatedList<Benefit>(
-    async ({ page, page_size }) => {
-      try {
-        const { data } = await api.get("/benefits", { params: { page, page_size } });
-        return { items: data.items || [], total: data.total || 0 };
-      } catch {
-        message.error("加载权益列表失败");
-        return { items: [], total: 0 };
-      }
-    }
-  );
+    setPage: setBenefitsPage, update: updateBenefit, remove: removeBenefit,
+  } = useCrud<Benefit>("/benefits");
 
   const {
     items: claims, total: claimsTotal, page: claimsPage, loading: claimsLoading,
     setPage: setClaimsPage,
-  } = usePaginatedList<BenefitClaim>(
-    async ({ page, page_size }) => {
-      try {
-        const { data } = await api.get("/benefits/admin/claims", { params: { page, page_size } });
-        return { items: data.items || [], total: data.total || 0 };
-      } catch {
-        message.error("加载领取记录失败");
-        return { items: [], total: 0 };
-      }
-    }
-  );
+  } = useCrud<BenefitClaim>("/benefits/admin/claims");
 
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [allConnectors, setAllConnectors] = useState<Connector[]>([]);
@@ -511,7 +491,7 @@ export default function BenefitsPage() {
       };
 
       if (editItem) {
-        await api.patch(`/benefits/${editItem.id}`, benefitPayload);
+        await updateBenefit(editItem.id, benefitPayload);
         message.success("权益更新成功");
       } else {
         await api.post(`/campaigns/${payload.campaign_id}/benefits`, benefitPayload);
@@ -519,8 +499,6 @@ export default function BenefitsPage() {
       }
       setModalOpen(false);
       form.resetFields();
-      setBenefitsPage(1);
-      refreshBenefits();
     } catch (e: unknown) {
       const err = e as { response?: { data?: { detail?: string } } };
       message.error(err.response?.data?.detail || (editItem ? "更新权益失败" : "创建权益失败"));
@@ -529,9 +507,8 @@ export default function BenefitsPage() {
 
   const handleDelete = async (id: string) => {
     try {
-      await api.delete(`/benefits/${id}`);
+      await removeBenefit(id);
       message.success("权益已删除");
-      refreshBenefits();
     } catch {
       message.error("删除失败");
     }
@@ -540,9 +517,8 @@ export default function BenefitsPage() {
   const handleToggleStatus = async (record: Benefit) => {
     const newStatus = record.status === "active" ? "inactive" : "active";
     try {
-      await api.patch(`/benefits/${record.id}`, { status: newStatus });
+      await updateBenefit(record.id, { status: newStatus });
       message.success(newStatus === "active" ? "已启用" : "已停用");
-      refreshBenefits();
     } catch {
       message.error("操作失败");
     }

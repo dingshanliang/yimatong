@@ -1,9 +1,9 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
-import { usePaginatedList } from "@/lib/hooks";
+import { useCrud } from "@/lib/hooks";
 import { App, Button, DatePicker, Form, Input, Modal, Select, Space, Table, Tag, Typography } from "antd";
-import { PlusOutlined, UploadOutlined } from "@ant-design/icons";
+import { PlusOutlined } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
 import api from "@/lib/api";
 import dayjs from "dayjs";
@@ -41,25 +41,11 @@ export default function BatchesPage() {
   const { message } = App.useApp();
   const [products, setProducts] = useState<Product[]>([]);
   const [skus, setSKUs] = useState<SKU[]>([]);
-  const [filterProduct, setFilterProduct] = useState<string | undefined>(undefined);
   const [modalOpen, setModalOpen] = useState(false);
   const [form] = Form.useForm();
   const [selectedProduct, setSelectedProduct] = useState<string | undefined>(undefined);
 
-  const { items: batches, total, page, loading, setPage, refresh } = usePaginatedList<ProductionBatch>(
-    async ({ page, page_size }) => {
-      try {
-        const params: Record<string, string | number> = { page, page_size };
-        if (filterProduct) params.product_id = filterProduct;
-        const { data } = await api.get("/production-batches", { params });
-        return { items: data.items || [], total: data.total || 0 };
-      } catch {
-        message.error("加载生产批次列表失败");
-        return { items: [], total: 0 };
-      }
-    },
-    [filterProduct]
-  );
+  const { items: batches, total, page, loading, setPage, setFilter, create } = useCrud<ProductionBatch>("/production-batches");
 
   const fetchProducts = useCallback(async () => {
     try {
@@ -85,13 +71,11 @@ export default function BatchesPage() {
         production_date: (values.production_date as dayjs.Dayjs).format("YYYY-MM-DD"),
         expiry_date: (values.expiry_date as dayjs.Dayjs).format("YYYY-MM-DD"),
       };
-      await api.post("/production-batches", payload);
+      await create(payload);
       message.success("生产批次创建成功");
       setModalOpen(false);
       form.resetFields();
       setSelectedProduct(undefined);
-      setPage(1);
-      refresh();
     } catch {
       message.error("创建失败");
     }
@@ -121,8 +105,7 @@ export default function BatchesPage() {
             placeholder="按产品筛选"
             allowClear
             style={{ width: 200 }}
-            value={filterProduct}
-            onChange={(v) => { setFilterProduct(v); setPage(1); }}
+            onChange={(v) => setFilter(v ? { product_id: v } : {})}
             options={products.map((p) => ({ value: p.id, label: p.name }))}
             showSearch
             optionFilterProp="label"

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
-import { usePaginatedList } from "@/lib/hooks";
+import { useCrud } from "@/lib/hooks";
 import { App, Button, Form, Input, Modal, Select, Space, Table, Tag, Typography } from "antd";
 import { PlusOutlined } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
@@ -26,25 +26,14 @@ interface Product {
 export default function SKUsPage() {
   const { message } = App.useApp();
   const [products, setProducts] = useState<Product[]>([]);
-  const [filterProduct, setFilterProduct] = useState<string | undefined>(undefined);
   const [modalOpen, setModalOpen] = useState(false);
   const [editItem, setEditItem] = useState<SKU | null>(null);
   const [form] = Form.useForm();
 
-  const { items: skus, total, page, loading, setPage, refresh } = usePaginatedList<SKU>(
-    async ({ page, page_size }) => {
-      try {
-        const params: Record<string, string | number> = { page, page_size };
-        if (filterProduct) params.product_id = filterProduct;
-        const { data } = await api.get("/skus", { params });
-        return { items: data.items || [], total: data.total || 0 };
-      } catch {
-        message.error("加载 SKU 列表失败");
-        return { items: [], total: 0 };
-      }
-    },
-    [filterProduct]
-  );
+  const {
+    items: skus, total, page, loading, setPage,
+    setFilter, create, update,
+  } = useCrud<SKU>("/skus");
 
   const fetchProducts = useCallback(async () => {
     try {
@@ -75,16 +64,14 @@ export default function SKUsPage() {
         catch { /* keep as string if not valid JSON */ }
       }
       if (editItem) {
-        await api.patch(`/skus/${editItem.id}`, payload);
+        await update(editItem.id, payload);
         message.success("SKU 更新成功");
       } else {
-        await api.post("/skus", payload);
+        await create(payload);
         message.success("SKU 创建成功");
       }
       setModalOpen(false);
       form.resetFields();
-      setPage(1);
-      refresh();
     } catch {
       message.error(editItem ? "更新失败" : "创建失败");
     }
@@ -125,8 +112,8 @@ export default function SKUsPage() {
             placeholder="按产品筛选"
             allowClear
             style={{ width: 200 }}
-            value={filterProduct}
-            onChange={(v) => { setFilterProduct(v); setPage(1); }}
+            value={undefined}
+            onChange={(v) => { setFilter(v ? { product_id: v } : {}); }}
             options={products.map((p) => ({ value: p.id, label: p.name }))}
             showSearch
             optionFilterProp="label"

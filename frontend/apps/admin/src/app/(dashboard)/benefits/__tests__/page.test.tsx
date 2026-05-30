@@ -30,54 +30,40 @@ vi.mock("@/lib/api", () => ({
 }));
 
 // Mock hooks
-const mockRefresh = vi.fn();
-const mockSetPage = vi.fn();
-
-let callCount = 0;
-
 vi.mock("@/lib/hooks", () => ({
-  usePaginatedList: vi.fn((fetcher) => {
-    callCount++;
-    // Simulate calling the fetcher to verify endpoint URLs
-    fetcher({ page: 1, page_size: 20 }).catch(() => {});
-    if (callCount === 1) {
-      return {
-        items: [
-          {
-            id: "b1",
-            name: "测试权益",
-            benefit_type: "platform_coupon",
-            stock_total: 100,
-            stock_used: 10,
-            per_person_limit: 2,
-            campaign_id: "c1",
-            status: "active",
-            created_at: "2026-05-29T10:00:00Z",
-            config_json: { amount: 10, min_order: 50 },
-          },
-        ],
-        total: 1,
-        page: 1,
-        loading: false,
-        setPage: mockSetPage,
-        refresh: mockRefresh,
-      };
-    }
-    return {
-      items: [],
-      total: 0,
-      page: 1,
-      loading: false,
-      setPage: mockSetPage,
-      refresh: mockRefresh,
-    };
-  }),
+  useCrud: vi.fn(() => ({
+    items: [
+      {
+        id: "b1",
+        name: "测试权益",
+        benefit_type: "platform_coupon",
+        stock_total: 100,
+        stock_used: 10,
+        per_person_limit: 2,
+        campaign_id: "c1",
+        status: "active",
+        created_at: "2026-05-29T10:00:00Z",
+        config_json: { amount: 10, min_order: 50 },
+      },
+    ],
+    total: 1,
+    page: 1,
+    pageSize: 20,
+    loading: false,
+    filters: {},
+    setPage: vi.fn(),
+    setFilter: vi.fn(),
+    resetFilters: vi.fn(),
+    mutate: vi.fn(),
+    create: vi.fn(),
+    update: vi.fn(),
+    remove: vi.fn(),
+  })),
 }));
 
 describe("BenefitsPage", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    callCount = 0;
     mockGet.mockResolvedValue({ data: { items: [], total: 0 } });
   });
 

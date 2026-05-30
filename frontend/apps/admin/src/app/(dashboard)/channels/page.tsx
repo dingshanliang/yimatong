@@ -1,8 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import { usePaginatedList } from "@/lib/hooks";
-import { App, Button, Form, Input, message, Modal, Popconfirm, Select, Space, Table, Tabs, Tag, Typography } from "antd";
+import { useCrud } from "@/lib/hooks";
+import { Button, Form, Input, message, Modal, Table, Tabs, Tag, Typography } from "antd";
 import { PlusOutlined } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
 import api from "@/lib/api";
@@ -11,7 +11,7 @@ const { Title } = Typography;
 
 /* ---------- Distributors ---------- */
 
-const distColumns: ColumnsType<Record<string, unknown>> = [
+const distColumns: ColumnsType<Record<string, unknown> & { id: string }> = [
   { title: "名称", dataIndex: "name", key: "name" },
   { title: "编码", dataIndex: "code", key: "code" },
   {
@@ -23,28 +23,16 @@ const distColumns: ColumnsType<Record<string, unknown>> = [
 ];
 
 function DistributorTab() {
-  const { items, total, page, loading, setPage, refresh } = usePaginatedList<Record<string, unknown>>(
-    async ({ page, page_size }) => {
-      try {
-        const { data } = await api.get("/channels/distributors", { params: { page, page_size } });
-        return { items: data.items || [], total: data.total || 0 };
-      } catch {
-        message.error("加载经销商列表失败");
-        return { items: [], total: 0 };
-      }
-    }
-  );
+  const { items, total, page, loading, setPage, create } = useCrud<Record<string, unknown> & { id: string }>("/channels/distributors");
   const [open, setOpen] = useState(false);
   const [form] = Form.useForm();
 
-  const handleCreate = async (values: Record<string, unknown>) => {
+  const handleCreate = async (values: Record<string, unknown> & { id: string }) => {
     try {
-      await api.post("/channels/distributors", values);
+      await create(values);
       message.success("经销商创建成功");
       setOpen(false);
       form.resetFields();
-      setPage(1);
-      refresh();
     } catch (e: unknown) {
       const err = e as { response?: { data?: { detail?: string } } };
       message.error(err.response?.data?.detail || "创建失败");
@@ -88,35 +76,23 @@ function DistributorTab() {
 /* ---------- Regions ---------- */
 
 function RegionTab() {
-  const { items, total, page, loading, setPage, refresh } = usePaginatedList<Record<string, unknown>>(
-    async ({ page, page_size }) => {
-      try {
-        const { data } = await api.get("/channels/regions", { params: { page, page_size } });
-        return { items: data.items || [], total: data.total || 0 };
-      } catch {
-        message.error("加载区域列表失败");
-        return { items: [], total: 0 };
-      }
-    }
-  );
+  const { items, total, page, loading, setPage, create } = useCrud<Record<string, unknown> & { id: string }>("/channels/regions");
   const [open, setOpen] = useState(false);
   const [form] = Form.useForm();
 
-  const handleCreate = async (values: Record<string, unknown>) => {
+  const handleCreate = async (values: Record<string, unknown> & { id: string }) => {
     try {
-      await api.post("/channels/regions", values);
+      await create(values);
       message.success("区域创建成功");
       setOpen(false);
       form.resetFields();
-      setPage(1);
-      refresh();
     } catch (e: unknown) {
       const err = e as { response?: { data?: { detail?: string } } };
       message.error(err.response?.data?.detail || "创建失败");
     }
   };
 
-  const columns: ColumnsType<Record<string, unknown>> = [
+  const columns: ColumnsType<Record<string, unknown> & { id: string }> = [
     { title: "名称", dataIndex: "name", key: "name" },
     { title: "编码", dataIndex: "code", key: "code" },
     { title: "城市", dataIndex: "city", key: "city" },
@@ -159,35 +135,23 @@ function RegionTab() {
 /* ---------- Stores ---------- */
 
 function StoreTab() {
-  const { items, total, page, loading, setPage, refresh } = usePaginatedList<Record<string, unknown>>(
-    async ({ page, page_size }) => {
-      try {
-        const { data } = await api.get("/channels/stores", { params: { page, page_size } });
-        return { items: data.items || [], total: data.total || 0 };
-      } catch {
-        message.error("加载门店列表失败");
-        return { items: [], total: 0 };
-      }
-    }
-  );
+  const { items, total, page, loading, setPage, create } = useCrud<Record<string, unknown> & { id: string }>("/channels/stores");
   const [open, setOpen] = useState(false);
   const [form] = Form.useForm();
 
-  const handleCreate = async (values: Record<string, unknown>) => {
+  const handleCreate = async (values: Record<string, unknown> & { id: string }) => {
     try {
-      await api.post("/channels/stores", values);
+      await create(values);
       message.success("门店创建成功");
       setOpen(false);
       form.resetFields();
-      setPage(1);
-      refresh();
     } catch (e: unknown) {
       const err = e as { response?: { data?: { detail?: string } } };
       message.error(err.response?.data?.detail || "创建失败");
     }
   };
 
-  const columns: ColumnsType<Record<string, unknown>> = [
+  const columns: ColumnsType<Record<string, unknown> & { id: string }> = [
     { title: "名称", dataIndex: "name", key: "name" },
     { title: "编码", dataIndex: "code", key: "code" },
     { title: "地址", dataIndex: "address", key: "address" },
@@ -227,43 +191,33 @@ function StoreTab() {
 /* ---------- Batch Assignment ---------- */
 
 function AssignTab() {
-  const { items: batches, total: batchTotal, page: batchPage, loading, setPage: setBatchPage, refresh } = usePaginatedList<Record<string, unknown>>(
-    async ({ page, page_size }) => {
-      try {
-        const { data } = await api.get("/code-batches", { params: { page, page_size } });
-        return { items: data.items || [], total: data.total || 0 };
-      } catch {
-        message.error("加载码批次失败");
-        return { items: [], total: 0 };
-      }
-    }
-  );
+  const { items: batches, total: batchTotal, page: batchPage, loading, setPage: setBatchPage, mutate } = useCrud<Record<string, unknown> & { id: string }>("/code-batches");
   const [assignOpen, setAssignOpen] = useState(false);
   const [selectedBatch, setSelectedBatch] = useState<string | null>(null);
   const [form] = Form.useForm();
 
-  const handleAssign = async (values: Record<string, unknown>) => {
+  const handleAssign = async (values: Record<string, unknown> & { id: string }) => {
     if (!selectedBatch) return;
     try {
       await api.post(`/channels/code-batches/${selectedBatch}/assign`, values);
       message.success("码段分配成功");
       setAssignOpen(false);
       form.resetFields();
-      refresh();
+      mutate();
     } catch (e: unknown) {
       const err = e as { response?: { data?: { detail?: string } } };
       message.error(err.response?.data?.detail || "分配失败");
     }
   };
 
-  const columns: ColumnsType<Record<string, unknown>> = [
+  const columns: ColumnsType<Record<string, unknown> & { id: string }> = [
     { title: "批次名称", dataIndex: "name", key: "name" },
     { title: "码数量", dataIndex: "quantity", key: "quantity" },
     { title: "状态", dataIndex: "status", key: "status" },
     {
       title: "操作",
       key: "actions",
-      render: (_: unknown, record: Record<string, unknown>) => (
+      render: (_: unknown, record: Record<string, unknown> & { id: string }) => (
         <Button size="small" onClick={() => { setSelectedBatch(record.id as string); setAssignOpen(true); }}>
           分配渠道
         </Button>
@@ -297,19 +251,9 @@ function AssignTab() {
 /* ---------- Diversion Clues ---------- */
 
 function DiversionTab() {
-  const { items, total, page, loading, setPage } = usePaginatedList<Record<string, unknown>>(
-    async ({ page, page_size }) => {
-      try {
-        const { data } = await api.get("/channels/diversion-clues", { params: { page, page_size } });
-        return { items: data.items || [], total: data.total || 0 };
-      } catch {
-        message.error("加载窜货线索失败");
-        return { items: [], total: 0 };
-      }
-    }
-  );
+  const { items, total, page, loading, setPage } = useCrud<Record<string, unknown> & { id: string }>("/channels/diversion-clues");
 
-  const columns: ColumnsType<Record<string, unknown>> = [
+  const columns: ColumnsType<Record<string, unknown> & { id: string }> = [
     { title: "码 ID", dataIndex: "public_id", key: "public_id" },
     { title: "预期区域", dataIndex: "expected_region", key: "expected_region" },
     { title: "实际城市", dataIndex: "detected_city", key: "detected_city" },
@@ -343,7 +287,6 @@ const tabItems = [
 ];
 
 export default function ChannelsPage() {
-  const { message } = App.useApp();
   return (
     <div>
       <Title level={4} className="!mb-4">渠道管理</Title>

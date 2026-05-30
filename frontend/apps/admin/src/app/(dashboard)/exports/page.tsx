@@ -5,7 +5,7 @@ import { App, Button, Table, Tabs, Tag, Typography } from "antd";
 import { DownloadOutlined } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
 import api from "@/lib/api";
-import { usePaginatedList } from "@/lib/hooks";
+import { useCrud } from "@/lib/hooks";
 
 const { Title } = Typography;
 
@@ -39,32 +39,13 @@ export default function ExportsPage() {
   const { message } = App.useApp();
   const {
     items: batches, total: batchTotal, page: batchPage, loading: batchLoading,
-    setPage: setBatchPage, refresh: refreshBatches,
-  } = usePaginatedList<CodeBatch>(
-    async ({ page, page_size }) => {
-      try {
-        const { data } = await api.get("/code-batches", { params: { page, page_size } });
-        return { items: data.items || [], total: data.total || 0 };
-      } catch {
-        message.error("加载码批次列表失败");
-        return { items: [], total: 0 };
-      }
-    }
-  );
+    setPage: setBatchPage, mutate: mutateBatches,
+  } = useCrud<CodeBatch>("/code-batches");
 
   const {
     items: exports, total: exportTotal, page: exportPage, loading: exportLoading,
-    setPage: setExportPage, refresh: refreshExports,
-  } = usePaginatedList<ExportLog>(
-    async ({ page, page_size }) => {
-      try {
-        const { data } = await api.get("/analytics/exports", { params: { page, page_size } });
-        return { items: data.items || [], total: data.total || 0 };
-      } catch {
-        return { items: [], total: 0 };
-      }
-    }
-  );
+    setPage: setExportPage, mutate: mutateExports,
+  } = useCrud<ExportLog>("/analytics/exports");
 
   const [exportingId, setExportingId] = useState<string | null>(null);
 
@@ -73,8 +54,8 @@ export default function ExportsPage() {
     try {
       await api.post(`/code-batches/${batchId}/export`);
       message.success("导出任务已提交");
-      refreshBatches();
-      refreshExports();
+      mutateBatches();
+      mutateExports();
     } catch {
       message.error("导出失败");
     } finally {

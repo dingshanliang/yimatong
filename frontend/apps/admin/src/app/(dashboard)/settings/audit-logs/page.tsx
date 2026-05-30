@@ -1,7 +1,7 @@
 "use client";
 
-import { useState } from "react";
-import { usePaginatedList } from "@/lib/hooks";
+import { useState, useCallback } from "react";
+import { useCrud } from "@/lib/hooks";
 import {
   Table,
   DatePicker,
@@ -13,8 +13,7 @@ import {
   Tag,
 } from "antd";
 import type { ColumnsType } from "antd/es/table";
-import dayjs, { type Dayjs } from "dayjs";
-import api from "@/lib/api";
+import { type Dayjs } from "dayjs";
 
 const { Title } = Typography;
 const { RangePicker } = DatePicker;
@@ -51,8 +50,6 @@ const ACTION_TYPE_MAP: Record<string, { label: string; color: string }> = {
 
 export default function AuditLogsPage() {
   const [dateRange, setDateRange] = useState<[Dayjs, Dayjs] | null>(null);
-  const [actionType, setActionType] = useState<string>("");
-  const [keyword, setKeyword] = useState("");
 
   const {
     items: logs,
@@ -60,32 +57,32 @@ export default function AuditLogsPage() {
     page,
     loading,
     setPage,
-  } = usePaginatedList<AuditLog>(
-    async ({ page, page_size }) => {
-      try {
-        const params: Record<string, string | number> = { page, page_size };
-        if (dateRange) {
-          params.start_date = dateRange[0].format("YYYY-MM-DD");
-          params.end_date = dateRange[1].format("YYYY-MM-DD");
-        }
-        if (actionType) {
-          params.action_type = actionType;
-        }
-        if (keyword) {
-          params.keyword = keyword;
-        }
-        const { data } = await api.get("/platform/audit-logs", { params });
-        return { items: data.items || [], total: data.total || 0 };
-      } catch {
-        return { items: [], total: 0 };
-      }
+    setFilter,
+    resetFilters,
+  } = useCrud<AuditLog>("/platform/audit-logs");
+
+  // Build and apply all filters at once, replacing previous state entirely.
+  const applyFilters = useCallback(
+    (overrides: Record<string, string | number> = {}) => {
+      const params: Record<string, string | number> = {};
+      if (overrides.start_date) params.start_date = overrides.start_date;
+      if (overrides.end_date) params.end_date = overrides.end_date;
+      if (overrides.action_type) params.action_type = overrides.action_type;
+      if (overrides.keyword) params.keyword = overrides.keyword;
+      resetFilters();
+      if (Object.keys(params).length > 0) setFilter(params);
     },
-    [dateRange, actionType, keyword]
+    [resetFilters, setFilter],
   );
 
   const handleSearch = (value: string) => {
-    setKeyword(value);
-    setPage(1);
+    const overrides: Record<string, string | number> = {};
+    if (dateRange) {
+      overrides.start_date = dateRange[0].format("YYYY-MM-DD");
+      overrides.end_date = dateRange[1].format("YYYY-MM-DD");
+    }
+    if (value) overrides.keyword = value;
+    applyFilters(overrides);
   };
 
   const columns: ColumnsType<AuditLog> = [
@@ -147,27 +144,41 @@ export default function AuditLogsPage() {
           <RangePicker
             placeholder={["开始日期", "结束日期"]}
             onChange={(dates) => {
+              const overrides: Record<string, string | number> = {};
               if (dates && dates[0] && dates[1]) {
                 setDateRange([dates[0], dates[1]]);
+                overrides.start_date = dates[0].format("YYYY-MM-DD");
+                overrides.end_date = dates[1].format("YYYY-MM-DD");
               } else {
                 setDateRange(null);
               }
-              setPage(1);
+              applyFilters(overrides);
             }}
           />
           <Select
-            value={actionType}
+            value={undefined}
+            placeholder="全部类型"
             onChange={(v) => {
-              setActionType(v);
-              setPage(1);
+              const overrides: Record<string, string | number> = {};
+              if (dateRange) {
+                overrides.start_date = dateRange[0].format("YYYY-MM-DD");
+                overrides.end_date = dateRange[1].format("YYYY-MM-DD");
+              }
+              if (v) overrides.action_type = v;
+              applyFilters(overrides);
             }}
             options={ACTION_TYPE_OPTIONS}
             style={{ width: 140 }}
+            allowClear
           />
           <Search
             placeholder="搜索操作人或目标"
             allowClear
             onSearch={handleSearch}
+            onClear={() => applyFilters(dateRange ? {
+              start_date: dateRange[0].format("YYYY-MM-DD"),
+              end_date: dateRange[1].format("YYYY-MM-DD"),
+            } : {})}
             style={{ width: 240 }}
           />
         </Space>

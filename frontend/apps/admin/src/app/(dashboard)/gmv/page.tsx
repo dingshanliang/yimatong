@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { usePaginatedList } from "@/lib/hooks";
+import { useCrud } from "@/lib/hooks";
 import { App, Button, Card, Col, Form, Input, message, Modal, Row, Statistic, Table, Tabs, Tag, Typography } from "antd";
 import { UploadOutlined } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
@@ -50,17 +50,7 @@ function DashboardTab() {
 /* ---------- Orders Tab ---------- */
 
 function OrdersTab() {
-  const { items, total, page, loading, setPage, refresh } = usePaginatedList<Record<string, unknown>>(
-    async ({ page, page_size }) => {
-      try {
-        const { data } = await api.get("/gmv/orders", { params: { page, page_size } });
-        return { items: data.items || [], total: data.total || 0 };
-      } catch {
-        message.error("加载订单列表失败");
-        return { items: [], total: 0 };
-      }
-    }
-  );
+  const { items, total, page, loading, setPage, mutate } = useCrud<Record<string, unknown> & { id: string }>("/gmv/orders");
   const [importOpen, setImportOpen] = useState(false);
   const [form] = Form.useForm();
 
@@ -73,8 +63,7 @@ function OrdersTab() {
       message.success("导入成功");
       setImportOpen(false);
       form.resetFields();
-      setPage(1);
-      refresh();
+      mutate();
     } catch (e: unknown) {
       const err = e as { response?: { data?: { detail?: string } } };
       message.error(err.response?.data?.detail || "导入失败");
@@ -116,17 +105,7 @@ function OrdersTab() {
 /* ---------- Attributions Tab ---------- */
 
 function AttributionsTab() {
-  const { items, total, page, loading, setPage } = usePaginatedList<Record<string, unknown>>(
-    async ({ page, page_size }) => {
-      try {
-        const { data } = await api.get("/gmv/attributions", { params: { page, page_size } });
-        return { items: data.items || [], total: data.total || 0 };
-      } catch {
-        message.error("加载归因数据失败");
-        return { items: [], total: 0 };
-      }
-    }
-  );
+  const { items, total, page, loading, setPage } = useCrud<Record<string, unknown> & { id: string }>("/gmv/attributions");
 
   const columns: ColumnsType<Record<string, unknown>> = [
     { title: "订单 ID", dataIndex: "order_id", key: "order_id", render: (v: string) => v?.slice(0, 8) + "..." },

@@ -33,7 +33,7 @@ vi.mock("@/lib/api", () => ({
 
 // Mock hooks
 vi.mock("@/lib/hooks", () => ({
-  usePaginatedList: vi.fn(() => ({
+  useCrud: vi.fn(() => ({
     items: [
       {
         id: "tpl-1",
@@ -45,9 +45,16 @@ vi.mock("@/lib/hooks", () => ({
     ],
     total: 1,
     page: 1,
+    pageSize: 20,
     loading: false,
+    filters: {},
     setPage: vi.fn(),
-    refresh: vi.fn(),
+    setFilter: vi.fn(),
+    resetFilters: vi.fn(),
+    mutate: vi.fn(),
+    create: vi.fn(),
+    update: vi.fn(),
+    remove: vi.fn(),
   })),
 }));
 
