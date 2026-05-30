@@ -151,6 +151,7 @@ async def create_benefit(
     config_json: dict,
     stock_total: int,
     per_person_limit: int = 1,
+    connector_id: uuid.UUID | None = None,
 ) -> dict:
     b = Benefit(
         tenant_id=tenant_id,
@@ -160,6 +161,7 @@ async def create_benefit(
         config_json=config_json,
         stock_total=stock_total,
         per_person_limit=per_person_limit,
+        connector_id=connector_id,
     )
     db.add(b)
     await db.flush()
@@ -339,6 +341,19 @@ async def claim_benefit(
     return {"status": "success", "claim": _claim_to_dict(claim)}
 
 
+def _claim_to_dict(c: BenefitClaim) -> dict:
+    return {
+        "id": str(c.id),
+        "tenant_id": str(c.tenant_id),
+        "benefit_id": str(c.benefit_id),
+        "campaign_id": str(c.campaign_id),
+        "consumer_id": c.consumer_id,
+        "claim_type": c.claim_type,
+        "status": c.status,
+        "delivery_status": c.delivery_status,
+    }
+
+
 def _campaign_to_dict(c: Campaign) -> dict:
     return {
         "id": str(c.id),
@@ -361,20 +376,9 @@ def _benefit_to_dict(b: Benefit) -> dict:
         "name": b.name,
         "benefit_type": b.benefit_type,
         "config_json": b.config_json,
+        "connector_id": str(b.connector_id) if b.connector_id else None,
         "stock_total": b.stock_total,
         "stock_used": b.stock_used,
         "per_person_limit": b.per_person_limit,
         "status": b.status,
-    }
-
-
-def _claim_to_dict(c: BenefitClaim) -> dict:
-    return {
-        "id": str(c.id),
-        "tenant_id": str(c.tenant_id),
-        "benefit_id": str(c.benefit_id),
-        "campaign_id": str(c.campaign_id),
-        "consumer_id": c.consumer_id,
-        "claim_type": c.claim_type,
-        "status": c.status,
     }

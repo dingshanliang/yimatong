@@ -57,6 +57,11 @@ class Benefit(Base):
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     benefit_type: Mapped[str] = mapped_column(String(50), nullable=False)
     config_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    connector_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("connectors.id"),
+        nullable=True,
+        index=True,
+    )
     stock_total: Mapped[int] = mapped_column(nullable=False, default=0)
     stock_used: Mapped[int] = mapped_column(nullable=False, default=0)
     per_person_limit: Mapped[int] = mapped_column(nullable=False, default=1)
@@ -84,6 +89,9 @@ class BenefitClaim(Base):
     idempotency_key: Mapped[str] = mapped_column(String(100), nullable=False)
     claim_type: Mapped[str] = mapped_column(String(20), nullable=False, default="claim")
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="success")
+    delivery_status: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="not_required"
+    )
 
     __table_args__ = (
         UniqueConstraint("benefit_id", "consumer_id", "idempotency_key", name="uq_claim_idempotent"),

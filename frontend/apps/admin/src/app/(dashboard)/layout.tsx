@@ -42,6 +42,14 @@ const menuItems: MenuProps["items"] = [
   { key: "/campaigns", icon: <GiftOutlined />, label: "活动管理" },
   { key: "/benefits", icon: <SafetyCertificateOutlined />, label: "权益管理" },
   {
+    key: "integrations-group",
+    icon: <DatabaseOutlined />,
+    label: "集成管理",
+    children: [
+      { key: "/connectors", icon: <DatabaseOutlined />, label: "连接器" },
+    ],
+  },
+  {
     key: "analytics-group",
     icon: <BarChartOutlined />,
     label: "数据统计",
@@ -105,6 +113,9 @@ export default function DashboardLayout({
   const openKeys: string[] = [];
   if (pathname.startsWith("/stats") || pathname.startsWith("/campaign-analytics") || pathname.startsWith("/exports") || pathname.startsWith("/risk-dashboard")) {
     openKeys.push("analytics-group");
+  }
+  if (pathname.startsWith("/connectors")) {
+    openKeys.push("integrations-group");
   }
   if (pathname.startsWith("/settings")) {
     openKeys.push("settings-group");

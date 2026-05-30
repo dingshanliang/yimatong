@@ -3,7 +3,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import JSON, DateTime, Index, Integer, String, func
+from sqlalchemy import JSON, DateTime, Index, Integer, LargeBinary, String, func
 from sqlalchemy.orm import Mapped, mapped_column
 from uuid6 import uuid7
 
@@ -18,7 +18,12 @@ class Connector(Base):
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     connector_type: Mapped[str] = mapped_column(String(50), nullable=False)
     config: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    secrets_encrypted: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
     enabled: Mapped[bool] = mapped_column(default=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
 
     __table_args__ = (Index("ix_connectors_tenant_type", "tenant_id", "connector_type"),)
 

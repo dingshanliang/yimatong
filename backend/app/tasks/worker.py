@@ -2,6 +2,7 @@
 
 从 Redis List 队列取出 delivery_id，执行 HTTP 投递，记录结果。
 支持指数退避重试和数据清理。
+同时处理外部权益发放的重试轮询。
 """
 
 from __future__ import annotations
@@ -9,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import uuid
 from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import select, update
@@ -128,6 +130,70 @@ async def poll_pending_retries() -> int:
     return count
 
 
+async def poll_benefit_delivery_retries() -> int:
+    """查询到期的外部权益发放重试，执行重试。返回重试数量。"""
+    from app.core.database import async_session_factory
+
+    from app.models.connector import BenefitDelivery, Connector
+    from app.services.benefit_delivery_handler import (
+        DeliveryStatus,
+        _do_deliver,
+        _get_circuit_breaker,
+    )
+
+    RETRY_BACKOFF_BASE = 2
+
+    count = 0
+    async with async_session_factory() as db:
+        now = datetime.now(UTC)
+        result = await db.execute(
+            select(BenefitDelivery)
+            .where(
+                BenefitDelivery.status == DeliveryStatus.PENDING,
+                BenefitDelivery.retry_count < BenefitDelivery.max_retries,
+                BenefitDelivery.next_retry_at <= now,
+            )
+            .limit(100)
+        )
+        deliveries = list(result.scalars().all())
+
+        for d in deliveries:
+            conn_result = await db.execute(
+                select(Connector).where(Connector.id == d.connector_id)
+            )
+            connector = conn_result.scalar_one_or_none()
+            if not connector or not connector.enabled:
+                d.status = DeliveryStatus.FAILED
+                continue
+
+            cb = _get_circuit_breaker(connector)
+            if not cb.is_available():
+                d.retry_count += 1
+                backoff = RETRY_BACKOFF_BASE ** d.retry_count
+                d.next_retry_at = datetime.now(UTC) + timedelta(seconds=backoff)
+                continue
+
+            try:
+                await _do_deliver(db, d.tenant_id, connector, d.consumer_id, d.benefit_config)
+                # _do_deliver 会创建新的 delivery 记录，旧的标记完成
+                d.status = DeliveryStatus.SUCCESS if d.retry_count == 0 else d.status
+                count += 1
+            except Exception:
+                logger.exception("Benefit delivery retry %s failed", d.id)
+                d.retry_count += 1
+                if d.retry_count >= d.max_retries:
+                    d.status = DeliveryStatus.FAILED
+                    d.next_retry_at = None
+                else:
+                    backoff = RETRY_BACKOFF_BASE ** d.retry_count
+                    d.next_retry_at = datetime.now(UTC) + timedelta(seconds=backoff)
+
+        if deliveries:
+            await db.commit()
+
+    return count
+
+
 async def cleanup_old_deliveries() -> int:
     """清理过期的投递记录。返回删除数量。"""
     from app.core.database import async_session_factory
@@ -195,6 +261,7 @@ async def worker_loop() -> None:
         if cleanup_counter % 60 == 0:
             try:
                 await poll_pending_retries()
+                await poll_benefit_delivery_retries()
             except Exception:
                 logger.exception("Retry poll error")
 

@@ -77,6 +77,11 @@ async def lifespan(app):
 
     init_webhook_dispatcher()
 
+    # 注册连接器适配器 + 权益发放事件处理器
+    import app.services.connectors.generic_http  # noqa: F401
+    import app.services.connectors.coupon_pool  # noqa: F401
+    import app.services.benefit_delivery_handler  # noqa: F401
+
     yield
 
 
