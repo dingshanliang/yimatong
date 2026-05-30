@@ -72,7 +72,9 @@ async def recognize_image_endpoint(
     tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
     """上传产品图片，AI 自动识别产品信息"""
-    content = await file.read()
+    content = await file.read(10 * 1024 * 1024)  # 10MB limit
+    if len(content) >= 10 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="文件过大，最大支持 10MB")
     try:
         result = extract_product_from_image(
             filename=file.filename or "unknown.jpg",

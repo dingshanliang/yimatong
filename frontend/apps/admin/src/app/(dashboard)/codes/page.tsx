@@ -87,7 +87,9 @@ export default function CodesPage() {
     try {
       const { data } = await api.get("/skus", { params: { product_id: productId, page_size: 100 } });
       setSKUs(data.items || []);
-    } catch { /* ignore */ }
+    } catch {
+      setSKUs([]);
+    }
   }, []);
 
   useEffect(() => { fetchProducts(); }, [fetchProducts]);

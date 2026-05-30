@@ -16,7 +16,8 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
         if tenant_id:
             from sqlalchemy import text
 
-            # Use driver-native SQL to avoid parameter binding issues with SET LOCAL
+            # asyncpg does not support parameterized SET LOCAL, but UUID v7
+            # only contains [0-9a-f-] so f-string is safe here.
             await session.execute(
                 text(f"SET LOCAL app.tenant_id = '{str(tenant_id)}'")
             )
