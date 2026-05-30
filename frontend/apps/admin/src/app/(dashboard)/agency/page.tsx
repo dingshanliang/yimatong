@@ -10,7 +10,7 @@ import {
   PlusOutlined,
 } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
-import api from "@/lib/api";
+import api, { extractErrorMessage } from "@/lib/api";
 
 const { Title } = Typography;
 
@@ -166,8 +166,7 @@ export default function AgencyPage() {
       form.resetFields();
       fetchClients();
     } catch (e: unknown) {
-      const err = e as { response?: { data?: { detail?: string } } };
-      message.error(err.response?.data?.detail || "初始化失败");
+      message.error(extractErrorMessage(e, "初始化失败"));
     } finally {
       setSaving(false);
     }
@@ -194,11 +193,8 @@ export default function AgencyPage() {
       taskForm.resetFields();
       fetchTasks();
     } catch (e: unknown) {
-      const err = e as { response?: { data?: { detail?: string } } };
-      if (err.response?.data?.detail) {
-        message.error(err.response.data.detail);
-      } else if (!(e as { errorFields?: unknown }).errorFields) {
-        message.error("创建失败");
+      if (!(e as { errorFields?: unknown }).errorFields) {
+        message.error(extractErrorMessage(e, "创建失败"));
       }
     } finally {
       setTaskSaving(false);
@@ -211,8 +207,7 @@ export default function AgencyPage() {
       message.success("任务状态已更新");
       fetchTasks();
     } catch (e: unknown) {
-      const err = e as { response?: { data?: { detail?: string } } };
-      message.error(err.response?.data?.detail || "更新失败");
+      message.error(extractErrorMessage(e, "更新失败"));
     }
   };
 
@@ -222,8 +217,7 @@ export default function AgencyPage() {
       message.success("任务已删除");
       fetchTasks();
     } catch (e: unknown) {
-      const err = e as { response?: { data?: { detail?: string } } };
-      message.error(err.response?.data?.detail || "删除失败");
+      message.error(extractErrorMessage(e, "删除失败"));
     }
   };
 

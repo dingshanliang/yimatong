@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class TenantCreate(BaseModel):
@@ -71,6 +71,20 @@ class OpsTaskUpdate(BaseModel):
     status: str | None = None
     priority: str | None = None
     due_date: datetime | None = None
+
+    @field_validator("status")
+    @classmethod
+    def validate_status(cls, v: str | None) -> str | None:
+        if v is not None and v not in ("pending", "in_progress", "completed", "cancelled"):
+            raise ValueError(f"Invalid status: {v}")
+        return v
+
+    @field_validator("priority")
+    @classmethod
+    def validate_priority(cls, v: str | None) -> str | None:
+        if v is not None and v not in ("low", "medium", "high"):
+            raise ValueError(f"Invalid priority: {v}")
+        return v
 
 
 class OpsTaskRead(BaseModel):

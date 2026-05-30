@@ -343,6 +343,92 @@ describe("AgencyPage", () => {
     });
   });
 
+  it("calls PATCH /ops/tasks/:id with correct status when clicking start", async () => {
+    mockPatch.mockResolvedValue({ data: { id: "task1", status: "in_progress" } });
+    mockGet.mockImplementation((url: string) => {
+      if (url === "/tenants") {
+        return Promise.resolve({
+          data: { items: [{ id: "t1", name: "客户A", status: "active", plan: "pro", plan_expires_at: null, created_at: "2026-01-15T00:00:00Z" }], total: 1, page: 1, page_size: 20 },
+        });
+      }
+      if (url === "/ops/tasks") {
+        return Promise.resolve({
+          data: {
+            items: [{ id: "task1", tenant_id: "t1", title: "配置品牌", status: "pending", priority: "high", due_date: null }],
+            total: 1, page: 1, page_size: 20,
+          },
+        });
+      }
+      return Promise.resolve({ data: { items: [], total: 0 } });
+    });
+
+    render(<AgencyPage />);
+
+    const startBtn = await screen.findByText("开始");
+    fireEvent.click(startBtn);
+
+    await waitFor(() => {
+      expect(mockPatch).toHaveBeenCalledWith("/ops/tasks/task1", { status: "in_progress" });
+    });
+  });
+
+  it("calls PATCH with completed status when clicking complete on in_progress task", async () => {
+    mockPatch.mockResolvedValue({ data: { id: "task2", status: "completed" } });
+    mockGet.mockImplementation((url: string) => {
+      if (url === "/tenants") {
+        return Promise.resolve({ data: { items: [], total: 0, page: 1, page_size: 20 } });
+      }
+      if (url === "/ops/tasks") {
+        return Promise.resolve({
+          data: {
+            items: [{ id: "task2", tenant_id: "t1", title: "配置页面", status: "in_progress", priority: "medium", due_date: null }],
+            total: 1, page: 1, page_size: 20,
+          },
+        });
+      }
+      return Promise.resolve({ data: { items: [], total: 0 } });
+    });
+
+    render(<AgencyPage />);
+
+    const completeBtn = await screen.findByText("完成");
+    fireEvent.click(completeBtn);
+
+    await waitFor(() => {
+      expect(mockPatch).toHaveBeenCalledWith("/ops/tasks/task2", { status: "completed" });
+    });
+  });
+
+  it("calls DELETE /ops/tasks/:id when confirming delete on completed task", async () => {
+    mockDelete.mockResolvedValue({ status: 204 });
+    mockGet.mockImplementation((url: string) => {
+      if (url === "/tenants") {
+        return Promise.resolve({ data: { items: [], total: 0, page: 1, page_size: 20 } });
+      }
+      if (url === "/ops/tasks") {
+        return Promise.resolve({
+          data: {
+            items: [{ id: "task3", tenant_id: "t1", title: "已完成任务", status: "completed", priority: "low", due_date: null }],
+            total: 1, page: 1, page_size: 20,
+          },
+        });
+      }
+      return Promise.resolve({ data: { items: [], total: 0 } });
+    });
+
+    render(<AgencyPage />);
+
+    const deleteBtn = await screen.findByText("删除");
+    fireEvent.click(deleteBtn);
+
+    await waitFor(() => {
+      expect(mockConfirm).toHaveBeenCalled();
+    });
+    const onOk = mockConfirm.mock.calls[0][0].onOk;
+    await onOk();
+    expect(mockDelete).toHaveBeenCalledWith("/ops/tasks/task3");
+  });
+
   it("renders client search input and task filter selects", async () => {
     mockGet.mockResolvedValue({ data: { items: [], total: 0, page: 1, page_size: 20 } });
     render(<AgencyPage />);
