@@ -15,6 +15,7 @@ import path from "path";
 
 interface TestContext {
   token: string;
+  email: string;
   tenantId: string;
   brandId: string;
   productId: string;
@@ -61,9 +62,14 @@ async function antdPopconfirmConfirm(page: any) {
 
 test.describe("核心用户流程", () => {
   test("登录后跳转工作台", async ({ page }) => {
-    await page.goto("/");
-    await expect(page.getByText("E2E Admin")).toBeVisible();
-    await expect(page.getByRole("heading", { name: "工作台" })).toBeVisible();
+    await page.goto("/login");
+    await page.getByPlaceholder(/邮箱|email/i).fill(ctx.email);
+    await page.getByPlaceholder(/密码|password/i).fill("E2ETest1234");
+    await page.getByRole("button", { name: /登[录陆]/ }).click();
+
+    // Wait for redirect to dashboard
+    await page.waitForURL("/", { timeout: 10000 });
+    await expect(page.getByRole("heading", { name: "工作台" })).toBeVisible({ timeout: 10000 });
   });
 
   test("创建产品", async ({ page }) => {

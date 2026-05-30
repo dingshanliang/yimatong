@@ -27,6 +27,7 @@ function generateUniqueEmail(): string {
 
 interface TestContext {
   token: string;
+  email: string;
   tenantId: string;
   brandId: string;
   productId: string;
@@ -320,6 +321,7 @@ export default async function globalSetup() {
 
   const ctx: TestContext = {
     token,
+    email: TEST_EMAIL,
     tenantId,
     brandId,
     productId,
