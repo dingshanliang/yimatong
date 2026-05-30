@@ -88,7 +88,9 @@ export default function DashboardLayout({
 }) {
   const router = useRouter();
   const pathname = usePathname();
-  const { user, hydrate, logout } = useAuthStore();
+  const storeUser = useAuthStore((s) => s.user);
+  const hydrate = useAuthStore((s) => s.hydrate);
+  const logout = useAuthStore((s) => s.logout);
 
   // 同步初始化：lazy initializer 在首次渲染时同步读取 localStorage，
   // 避免 useEffect 异步竞争导致的误判重定向
@@ -96,13 +98,22 @@ export default function DashboardLayout({
     if (typeof window === "undefined") return false;
     return !!localStorage.getItem("access_token");
   });
+  const [localUser] = useState(() => {
+    if (typeof window === "undefined") return null;
+    const stored = localStorage.getItem("auth_store");
+    if (stored) {
+      try { return JSON.parse(stored); } catch { /* ignore */ }
+    }
+    return null;
+  });
+
+  const user = storeUser ?? localUser;
 
   useEffect(() => {
     if (!ready) {
       router.replace("/login");
       return;
     }
-    // 确保 store 已 hydrate（幂等操作）
     hydrate();
   }, [ready, hydrate, router]);
 
