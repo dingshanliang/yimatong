@@ -27,7 +27,12 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
             await session.execute(
                 text(f"SET LOCAL app.tenant_id = '{str(tenant_id)}'")
             )
-        yield session
+        try:
+            yield session
+            await session.commit()
+        except Exception:
+            await session.rollback()
+            raise
 
 
 async def get_db_with_bypass() -> AsyncGenerator[AsyncSession, None]:
@@ -36,4 +41,9 @@ async def get_db_with_bypass() -> AsyncGenerator[AsyncSession, None]:
         from sqlalchemy import text
 
         await session.execute(text("SET LOCAL app.bypass_rls = 'true'"))
-        yield session
+        try:
+            yield session
+            await session.commit()
+        except Exception:
+            await session.rollback()
+            raise
