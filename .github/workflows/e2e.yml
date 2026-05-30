@@ -72,13 +72,18 @@ jobs:
           HMAC_PEPPER: 7c9cade78554566742f263539bd4ff404493e9b9ed6939168da7ad5ceb3813cd
           cors_origins: "*"
         run: |
-          uv run uvicorn app.main:app --host 0.0.0.0 --port 8000 &
+          nohup uv run uvicorn app.main:app --host 0.0.0.0 --port 8000 > /tmp/backend.log 2>&1 &
           echo $! > /tmp/backend.pid
           # Wait for backend to be ready
-          for i in {1..30}; do
-            curl -sf http://localhost:8000/health && break
+          for i in {1..60}; do
+            if curl -sf http://localhost:8000/health > /dev/null 2>&1; then
+              echo "Backend ready after ${i}s"
+              break
+            fi
             sleep 1
           done
+          # Verify backend is actually running
+          curl -sf http://localhost:8000/health || (echo "Backend failed to start:"; cat /tmp/backend.log; exit 1)
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
