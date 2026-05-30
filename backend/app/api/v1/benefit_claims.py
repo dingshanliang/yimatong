@@ -173,7 +173,15 @@ async def _handle_cash_red_packet_claim(
     # 有 OpenID，直接执行红包领取
     from app.services.redpacket_amount import calc_amount, validate_config
 
-    config = benefit.config_json
+    # FOR UPDATE 读取最新 stock_total 和 config_json（避免陈旧读）
+    fresh = await db.execute(
+        select(Benefit).where(Benefit.id == benefit.id).with_for_update()
+    )
+    benefit_fresh = fresh.scalar_one_or_none()
+    if not benefit_fresh or benefit_fresh.stock_total <= 0:
+        raise HTTPException(status_code=410, detail="红包已抢光")
+
+    config = benefit_fresh.config_json
     valid, msg = validate_config(config)
     if not valid:
         raise HTTPException(status_code=400, detail=f"Invalid red packet config: {msg}")
@@ -221,7 +229,7 @@ async def _handle_cash_red_packet_claim(
         raise HTTPException(status_code=410, detail="红包预算已用尽")
 
     if config.get("amount_type") == "lucky":
-        remaining_count = benefit.stock_total
+        remaining_count = benefit_fresh.stock_total
         amount = calc_amount(config, remaining_budget=remaining, remaining_count=remaining_count)
     else:
         amount = calc_amount(config)
