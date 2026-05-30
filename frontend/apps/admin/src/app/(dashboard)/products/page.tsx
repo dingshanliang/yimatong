@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useState, useRef } from "react";
-import { App, Alert, Button, Divider, Drawer, Form, Input, List, Modal, Select, Space, Spin, Table, Tag, Typography, Upload } from "antd";
+import { useEffect, useState } from "react";
+import { App, Alert, Button, Divider, Drawer, Form, Input, List, Modal, Select, Space, Table, Tag, Typography, Upload } from "antd";
 import {
   PlusOutlined,
   SearchOutlined,
@@ -417,10 +417,11 @@ export default function ProductsPage() {
                     <List
                       className="mt-1"
                       size="small"
-                      dataSource={aiPageCopy.copywriting.selling_points.items}
+                      dataSource={aiPageCopy.copywriting.selling_points}
                       renderItem={(item) => (
                         <List.Item>
-                          <Text>{item}</Text>
+                          <Text strong>{item.title}</Text>
+                          <Text className="ml-2">{item.detail}</Text>
                         </List.Item>
                       )}
                     />
@@ -435,7 +436,7 @@ export default function ProductsPage() {
                     <Text strong>推荐页面模块：</Text>
                     <div className="mt-1 flex flex-wrap gap-1">
                       {aiPageCopy.page_suggestion.modules.map((mod) => (
-                        <Tag key={mod}>{mod}</Tag>
+                        <Tag key={mod.id}>{mod.type}</Tag>
                       ))}
                     </div>
                   </div>

@@ -26,19 +26,42 @@ branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
 
+def _column_exists(conn: sa.engine.Connection, table: str, column: str) -> bool:
+    """Check if a column already exists in a table (PostgreSQL)."""
+    result = conn.execute(
+        sa.text(
+            "SELECT 1 FROM information_schema.columns "
+            "WHERE table_name = :table AND column_name = :column"
+        ),
+        {"table": table, "column": column},
+    )
+    return result.fetchone() is not None
+
+
 def upgrade() -> None:
+    conn = op.get_bind()
+
     # --- tenants 新增列 ---
     op.add_column('tenants', sa.Column('enabled_features', sa.JSON(), nullable=True))
-    op.add_column('tenants', sa.Column('onboarding_progress', sa.JSON(), nullable=True))
-    op.add_column('tenants', sa.Column('plan_expires_at', sa.DateTime(timezone=True), nullable=True))
-    op.add_column('tenants', sa.Column(
-        'created_at', sa.DateTime(timezone=True),
-        server_default=sa.text('now()'), nullable=False,
-    ))
+
+    # onboarding_progress, plan_expires_at, created_at may already exist
+    # from migration e35952a10f5a (add_ops_tasks_table_and_tenant_columns)
+    if not _column_exists(conn, 'tenants', 'onboarding_progress'):
+        op.add_column('tenants', sa.Column('onboarding_progress', sa.JSON(), nullable=True))
+    if not _column_exists(conn, 'tenants', 'plan_expires_at'):
+        op.add_column('tenants', sa.Column('plan_expires_at', sa.DateTime(timezone=True), nullable=True))
+    if not _column_exists(conn, 'tenants', 'created_at'):
+        op.add_column('tenants', sa.Column(
+            'created_at', sa.DateTime(timezone=True),
+            server_default=sa.text('now()'), nullable=False,
+        ))
 
     # --- consumer_profiles 新增 wechat_openid ---
     op.add_column('consumer_profiles', sa.Column('wechat_openid', sa.String(length=128), nullable=True))
-    op.add_column('consumer_profiles', sa.Column('extra_data', sa.JSON(), nullable=True))
+
+    # extra_data may already exist from migration f1a2b3c4d5e6 (0010_consumer_profiles_extra_data)
+    if not _column_exists(conn, 'consumer_profiles', 'extra_data'):
+        op.add_column('consumer_profiles', sa.Column('extra_data', sa.JSON(), nullable=True))
 
     # --- consumer_profiles 唯一约束迁移 ---
     op.drop_constraint('consumer_profiles_phone_hash_key', 'consumer_profiles', type_='unique')
@@ -112,11 +135,15 @@ def downgrade() -> None:
     # --- consumer_profiles 回滚 ---
     op.drop_constraint('uq_consumer_tenant_openid', 'consumer_profiles', type_='unique')
     op.create_unique_constraint('consumer_profiles_phone_hash_key', 'consumer_profiles', ['phone_hash'])
-    op.drop_column('consumer_profiles', 'extra_data')
-    op.drop_column('consumer_profiles', 'wechat_openid')
+    # Only drop extra_data if THIS migration added it (not the earlier 0010 migration)
+    conn = op.get_bind()
+    if _column_exists(conn, 'consumer_profiles', 'wechat_openid'):
+        op.drop_column('consumer_profiles', 'wechat_openid')
+    # Note: extra_data is owned by migration f1a2b3c4d5e6 (0010), not this one.
+    # onboarding_progress, plan_expires_at, created_at are owned by e35952a10f5a, not this one.
 
     # --- tenants 回滚 ---
-    op.drop_column('tenants', 'created_at')
-    op.drop_column('tenants', 'enabled_features')
-    op.drop_column('tenants', 'onboarding_progress')
-    op.drop_column('tenants', 'plan_expires_at')
+    # Only drop enabled_features (owned by this migration).
+    # onboarding_progress, plan_expires_at, created_at are owned by e35952a10f5a.
+    if _column_exists(conn, 'tenants', 'enabled_features'):
+        op.drop_column('tenants', 'enabled_features')

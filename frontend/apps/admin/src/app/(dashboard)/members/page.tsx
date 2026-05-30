@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { App, Button, Descriptions, Form, Input, InputNumber, Modal, Select, Space, Table, Tabs, Tag, Typography } from "antd";
+import { App, Button, Descriptions, Form, Input, InputNumber, message, Modal, Select, Space, Table, Tabs, Tag, Typography } from "antd";
 import { PlusOutlined } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
 import api from "@/lib/api";

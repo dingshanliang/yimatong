@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { usePaginatedList } from "@/lib/hooks";
-import { App, Button, Card, Col, Form, Input, Modal, Row, Statistic, Table, Tabs, Tag, Typography } from "antd";
+import { App, Button, Card, Col, Form, Input, message, Modal, Row, Statistic, Table, Tabs, Tag, Typography } from "antd";
 import { UploadOutlined } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
 import api from "@/lib/api";
