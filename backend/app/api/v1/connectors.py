@@ -339,27 +339,64 @@ async def delivery_callback_endpoint(
     # 解析回调
     result = await adapter.parse_callback(connector, body, headers)
 
-    # 查找匹配的 BenefitDelivery 并更新状态（使用 connector 的 tenant_id 过滤）
+    # 查找匹配的 BenefitDelivery 并更新状态
     if result.external_id:
+        from sqlalchemy import func as sa_func
+
         from app.models.connector import BenefitDelivery
 
+        # 优先按 out_bill_no 精确匹配（适用于微信转账等带唯一单号的场景）
+        delivery = None
         delivery_stmt = (
             select(BenefitDelivery)
             .where(
                 BenefitDelivery.tenant_id == connector.tenant_id,
                 BenefitDelivery.connector_id == conn_id,
                 BenefitDelivery.status == "pending",
+                sa_func.jsonb_extract_path_text(BenefitDelivery.benefit_config, "out_bill_no") == result.external_id,
             )
-            .order_by(BenefitDelivery.created_at.desc())
-            .limit(1)
         )
         delivery_row = await db.execute(delivery_stmt)
         delivery = delivery_row.scalar_one_or_none()
+
+        # 回退：按最新 pending 匹配
+        if not delivery:
+            delivery_stmt = (
+                select(BenefitDelivery)
+                .where(
+                    BenefitDelivery.tenant_id == connector.tenant_id,
+                    BenefitDelivery.connector_id == conn_id,
+                    BenefitDelivery.status == "pending",
+                )
+                .order_by(BenefitDelivery.created_at.desc())
+                .limit(1)
+            )
+            delivery_row = await db.execute(delivery_stmt)
+            delivery = delivery_row.scalar_one_or_none()
+
         if delivery:
             delivery.status = result.status
             delivery.external_data = result.external_data
             if result.status == "success":
                 delivery.next_retry_at = None
+
+                # 同步更新关联 BenefitClaim 状态
+                from sqlalchemy import update as sa_update
+
+                from app.models.campaign import BenefitClaim
+
+                out_bill_no = delivery.benefit_config.get("out_bill_no") if delivery.benefit_config else None
+                if out_bill_no:
+                    try:
+                        claim_id = uuid.UUID(out_bill_no)
+                        await db.execute(
+                            sa_update(BenefitClaim)
+                            .where(BenefitClaim.id == claim_id)
+                            .values(status="delivered")
+                        )
+                    except ValueError:
+                        pass
+
             await db.flush()
 
     return {"status": "ok"}

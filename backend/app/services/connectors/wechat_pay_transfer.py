@@ -79,6 +79,10 @@ class WeChatPayTransferAdapter(BaseConnectorAdapter):
                         f"openid={bool(openid)}, amount={bool(amount)}",
             )
 
+        from app.core.config import settings
+
+        notify_url = f"{settings.base_url}/api/v1/connectors/connectors/{connector.id}/callback"
+
         body_dict = {
             "appid": oa_appid,
             "out_bill_no": out_bill_no,
@@ -86,7 +90,7 @@ class WeChatPayTransferAdapter(BaseConnectorAdapter):
             "openid": openid,
             "transfer_amount": amount,
             "transfer_remark": remark,
-            "notify_url": "",  # 可通过 connector.config 配置回调 URL
+            "notify_url": notify_url,
         }
         body_json = json.dumps(body_dict, ensure_ascii=False)
 

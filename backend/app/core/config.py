@@ -15,6 +15,9 @@ class Settings(BaseSettings):
     # HMAC-SHA256 pepper（hex 编码）
     hmac_pepper: str = ""
 
+    # 后端对外地址（用于构建回调 URL 等）
+    base_url: str = "http://localhost:8000"
+
     # CORS 配置（逗号分隔的前端域名）
     cors_origins: str = "http://localhost:3000,http://localhost:3001"
 
