@@ -79,7 +79,7 @@ export function PrivateDomainButtons({ buttons }: PrivateDomainButtonsProps) {
   if (!buttons.length) return null;
 
   const handleClick = (btn: PrivateDomainButton) => {
-    if (btn.url) {
+    if (btn.url && /^https?:\/\//i.test(btn.url)) {
       window.open(btn.url, "_blank", "noopener,noreferrer");
     }
   };

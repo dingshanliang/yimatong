@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { apiClient } from "@/lib/api";
+import { sanitizeHtml } from "@/lib/sanitize";
 
 interface PrivacyPolicyProps {
   /** 隐私政策内容（支持 HTML 富文本或纯文本） */
@@ -77,7 +78,7 @@ export function PrivacyPolicy({
         {content.trim().startsWith("<") ? (
           <div
             className="prose prose-sm max-w-none text-sm text-gray-600 [&_a]:text-blue-600 [&_a]:underline"
-            dangerouslySetInnerHTML={{ __html: content }}
+            dangerouslySetInnerHTML={{ __html: sanitizeHtml(content) }}
           />
         ) : (
           <p className="whitespace-pre-wrap text-sm leading-relaxed text-gray-600">

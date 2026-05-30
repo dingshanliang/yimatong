@@ -40,8 +40,9 @@ async def list_tenants_endpoint(
     count_query = select(func.count()).select_from(Tenant).where(Tenant.status != "terminated")
 
     if q:
-        query = query.where(Tenant.name.ilike(f"%{q}%"))
-        count_query = count_query.where(Tenant.name.ilike(f"%{q}%"))
+        escaped = q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        query = query.where(Tenant.name.ilike(f"%{escaped}%", escape="\\"))
+        count_query = count_query.where(Tenant.name.ilike(f"%{escaped}%", escape="\\"))
 
     total_result = await db.execute(count_query)
     total = total_result.scalar() or 0

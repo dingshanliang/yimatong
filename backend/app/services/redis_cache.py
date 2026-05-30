@@ -91,6 +91,14 @@ class RedisCache:
                 pass
         self._mem_store.pop(full_key, None)
 
+    def revoke_token(self, jti: str, ttl: int) -> None:
+        """Add a JWT jti to the revocation list."""
+        self.set(f"revoked:{jti}", {"revoked": True}, ttl=ttl)
+
+    def is_token_revoked(self, jti: str) -> bool:
+        """Check if a JWT jti has been revoked."""
+        return self.get(f"revoked:{jti}") is not None
+
     def set_idempotent(self, key: str, ttl: int = 60) -> bool:
         """设置幂等键，返回 True 表示首次设置，False 表示已存在"""
         full_key = self._key(f"idem:{key}")

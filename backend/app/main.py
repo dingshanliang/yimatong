@@ -60,6 +60,10 @@ async def lifespan(app):
                 "SECRET_KEY must be changed from default value in non-development environments. "
                 "Set the SECRET_KEY environment variable."
             )
+    elif len(settings.secret_key) < 32:
+        raise RuntimeError(
+            f"SECRET_KEY is too short ({len(settings.secret_key)} chars). Minimum 32 characters required."
+        )
 
     if not settings.aes_master_key_v1 or not settings.hmac_pepper:
         raise RuntimeError(
@@ -88,8 +92,19 @@ async def lifespan(app):
 
 app = FastAPI(title="一码通", version="0.1.0", lifespan=lifespan)
 
-# CORS — 开发环境默认允许所有，生产环境通过 CORS_ORIGINS 限制
-origins = [o.strip() for o in settings.cors_origins.split(",")] if settings.cors_origins != "*" else ["*"]
+# CORS — 生产环境禁止通配符
+import os as _os
+
+_cors_origins_str = settings.cors_origins.strip()
+if _cors_origins_str == "*":
+    if _os.getenv("ENVIRONMENT", "development") != "development":
+        raise RuntimeError(
+            "CORS_ORIGINS=* is not allowed in non-development environments. "
+            "Set CORS_ORIGINS to a comma-separated list of allowed origins."
+        )
+    origins = ["*"]
+else:
+    origins = [o.strip() for o in _cors_origins_str.split(",") if o.strip()]
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,

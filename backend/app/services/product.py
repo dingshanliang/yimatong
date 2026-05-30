@@ -50,8 +50,9 @@ async def list_brands(
     count_stmt = select(func.count()).select_from(Brand).where(Brand.tenant_id == tenant_id)
 
     if name:
-        stmt = stmt.where(Brand.name.ilike(f"%{name}%"))
-        count_stmt = count_stmt.where(Brand.name.ilike(f"%{name}%"))
+        escaped = name.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        stmt = stmt.where(Brand.name.ilike(f"%{escaped}%", escape="\\"))
+        count_stmt = count_stmt.where(Brand.name.ilike(f"%{escaped}%", escape="\\"))
 
     total_result = await db.execute(count_stmt)
     total = total_result.scalar() or 0

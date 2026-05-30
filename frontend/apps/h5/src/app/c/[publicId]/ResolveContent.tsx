@@ -21,6 +21,7 @@ import { TraceabilitySection } from "@/components/TraceabilitySection";
 import { LeadForm } from "@/components/LeadForm";
 import { FooterSection } from "@/components/FooterSection";
 import { FallbackError } from "@/components/FallbackError";
+import { sanitizeHtml } from "@/lib/sanitize";
 
 interface ResolveContentProps {
   mode: "json" | "html";
@@ -55,7 +56,7 @@ export function ResolveContent({
     return (
       <div
         className="mx-auto max-w-md min-h-screen"
-        dangerouslySetInnerHTML={{ __html: htmlContent }}
+        dangerouslySetInnerHTML={{ __html: sanitizeHtml(htmlContent) }}
       />
     );
   }
@@ -306,7 +307,7 @@ function ModuleRenderer({
         return (
           <div
             className="px-4 mt-3"
-            dangerouslySetInnerHTML={{ __html: config.html as string }}
+            dangerouslySetInnerHTML={{ __html: sanitizeHtml(config.html as string) }}
           />
         );
       }

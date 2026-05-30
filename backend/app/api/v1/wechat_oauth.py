@@ -171,7 +171,7 @@ async def oauth_callback(
     token_data = token_resp.json()
     openid = token_data.get("openid")
     if not openid:
-        logger.error("WeChat OAuth failed: %s", token_data)
+        logger.error("WeChat OAuth failed: errcode=%s", token_data.get("errcode", "unknown"))
         raise HTTPException(status_code=401, detail="Failed to get OpenID from WeChat")
 
     # 创建/查找 ConsumerProfile

@@ -78,7 +78,9 @@ export function ShopRedirect({ shops }: ShopRedirectProps) {
   const hasMore = shops.length > DEFAULT_VISIBLE_COUNT;
 
   const handleShopClick = (shop: ShopItem) => {
-    window.open(shop.url, "_blank", "noopener,noreferrer");
+    if (shop.url && /^https?:\/\//i.test(shop.url)) {
+      window.open(shop.url, "_blank", "noopener,noreferrer");
+    }
   };
 
   return (

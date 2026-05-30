@@ -41,7 +41,10 @@ class EnvKeyProvider:
             key_hex = os.environ.get(f"AES_MASTER_KEY_V{kid}", "")
             if not key_hex:
                 break
-            self._keys[kid] = bytes.fromhex(key_hex)
+            key_bytes = bytes.fromhex(key_hex)
+            if len(key_bytes) != 32:
+                raise CryptoError(f"AES_MASTER_KEY_V{kid} must be 32 bytes (64 hex chars), got {len(key_bytes)}")
+            self._keys[kid] = key_bytes
             self._current_kid = kid
             kid += 1
 
@@ -51,7 +54,10 @@ class EnvKeyProvider:
         pepper_hex = os.environ.get("HMAC_PEPPER", "")
         if not pepper_hex:
             raise CryptoError("HMAC_PEPPER not configured")
-        self._pepper = bytes.fromhex(pepper_hex)
+        pepper_bytes = bytes.fromhex(pepper_hex)
+        if len(pepper_bytes) < 32:
+            raise CryptoError(f"HMAC_PEPPER must be at least 32 bytes (64 hex chars), got {len(pepper_bytes)}")
+        self._pepper = pepper_bytes
 
     def get_current_kid(self) -> int:
         return self._current_kid

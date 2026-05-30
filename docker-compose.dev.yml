@@ -64,15 +64,13 @@ services:
       dockerfile: Dockerfile
     ports:
       - "8000:8000"
+    env_file: ./backend/.env
     environment:
       database_url: postgresql+asyncpg://yimatong:yimatong@postgres:5432/yimatong_dev
       redis_url: redis://redis:6379/0
       minio_endpoint: minio:9000
       minio_access_key: minioadmin
       minio_secret_key: minioadmin
-      secret_key: dev-secret-key-change-in-production
-      AES_MASTER_KEY_V1: f18d81c3b455f9a5a01db6a8546fc5acc242b51cbc4ae70ec99654e091f38a4b
-      HMAC_PEPPER: 7c9cade78554566742f263539bd4ff404493e9b9ed6939168da7ad5ceb3813cd
     depends_on:
       postgres:
         condition: service_healthy
@@ -97,12 +95,10 @@ services:
       context: ./backend
       dockerfile: Dockerfile
     command: ["uv", "run", "arq", "app.tasks.worker.WorkerSettings"]
+    env_file: ./backend/.env
     environment:
       database_url: postgresql+asyncpg://yimatong:yimatong@postgres:5432/yimatong_dev
       redis_url: redis://redis:6379/0
-      secret_key: dev-secret-key-change-in-production
-      AES_MASTER_KEY_V1: f18d81c3b455f9a5a01db6a8546fc5acc242b51cbc4ae70ec99654e091f38a4b
-      HMAC_PEPPER: 7c9cade78554566742f263539bd4ff404493e9b9ed6939168da7ad5ceb3813cd
     depends_on:
       redis:
         condition: service_healthy

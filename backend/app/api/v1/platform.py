@@ -1,19 +1,17 @@
-import uuid
 from datetime import datetime
+import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.database import get_db
+from app.core.config import settings
+from app.core.database import get_db_with_bypass
 from app.services.audit import query_audit_logs
 from app.utils.rbac import require_role
-from app.utils.security import create_access_token
+from app.utils.security import create_access_token, verify_password
 
 router = APIRouter(prefix="/api/v1/platform", tags=["platform"])
-
-PLATFORM_ADMIN_EMAIL = "platform@yimatong.cn"
-PLATFORM_ADMIN_PASSWORD_HASH = "$2b$12$LJ3tFv2Jq1GqD8K6mNzHROGvXeYwQbF5uITJz4sKCiVdA8pR2Hx3e"
 
 
 class PlatformLoginRequest(BaseModel):
@@ -40,8 +38,12 @@ class AuditLogRead(BaseModel):
 @router.post("/auth/login", response_model=PlatformTokenResponse)
 async def platform_login(body: PlatformLoginRequest):
     """平台管理员独立认证路径"""
-    # TODO: replace with proper platform admin credential check
-    if body.email != PLATFORM_ADMIN_EMAIL or body.password != "platform_admin_2026":
+    if not settings.platform_admin_password_hash:
+        raise HTTPException(status_code=500, detail="Platform admin not configured")
+    if (
+        body.email != settings.platform_admin_email
+        or not verify_password(body.password, settings.platform_admin_password_hash)
+    ):
         raise HTTPException(status_code=401, detail="Invalid credentials")
     token = create_access_token(
         tenant_id="platform",
@@ -53,7 +55,7 @@ async def platform_login(body: PlatformLoginRequest):
 
 @router.get("/audit-logs", response_model=list[AuditLogRead])
 async def list_audit_logs(
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db_with_bypass),
     start_time: datetime | None = Query(None),
     end_time: datetime | None = Query(None),
     _role: str = Depends(require_role("platform_admin")),

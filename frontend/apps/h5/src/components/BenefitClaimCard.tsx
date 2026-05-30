@@ -143,7 +143,7 @@ export function BenefitClaimCard({
           // 获取微信 OAuth 跳转地址
           const authRes = await apiClient.get(data.auth_url_path);
           const authData = authRes.data as { auth_url: string };
-          if (authData.auth_url) {
+          if (authData.auth_url && /^https:\/\//i.test(authData.auth_url)) {
             // 跳转到微信 OAuth 页面，授权后回调会重定向到结果页
             window.location.href = authData.auth_url;
             return;

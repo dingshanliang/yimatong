@@ -2,7 +2,7 @@ from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
-    database_url: str = "postgresql+asyncpg://yimatong:yimatong@localhost:5432/yimatong_dev"
+    database_url: str = "postgresql+asyncpg://yimatong:yimatong@localhost:5432/yimatong_dev?ssl=disable"
     redis_url: str = "redis://localhost:6379/0"
     secret_key: str = "dev-secret-key-change-in-production"
     access_token_expire_minutes: int = 15
@@ -20,6 +20,10 @@ class Settings(BaseSettings):
 
     # CORS 配置（逗号分隔的前端域名）
     cors_origins: str = "http://localhost:3000,http://localhost:3001"
+
+    # 平台管理员凭据
+    platform_admin_email: str = "platform@yimatong.cn"
+    platform_admin_password_hash: str = ""  # bcrypt hash
 
     # DeepSeek AI 配置
     deepseek_api_keys: str = ""  # 逗号分隔的多个 API key

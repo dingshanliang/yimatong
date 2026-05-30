@@ -51,6 +51,14 @@ def verify_access_token(token: str) -> dict | None:
         payload = decode_token(token)
         if payload.get("type") != "access":
             return None
+        # Check token revocation
+        jti = payload.get("jti")
+        if jti:
+            from app.services.redis_cache import RedisCache
+
+            cache = RedisCache()
+            if cache.is_token_revoked(jti):
+                return None
         return payload
     except JWTError:
         return None

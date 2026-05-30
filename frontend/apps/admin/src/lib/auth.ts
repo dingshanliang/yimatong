@@ -30,7 +30,8 @@ export const useAuthStore = create<AuthState>((set) => ({
       const { access_token, expires_in } = data;
       localStorage.setItem("access_token", access_token);
       // 同时写入 cookie，供 Next.js middleware 在 RSC 导航时读取
-      document.cookie = `access_token=${access_token}; path=/; max-age=${expires_in || 900}; SameSite=Lax`;
+      const secure = window.location.protocol === "https:" ? "; Secure" : "";
+      document.cookie = `access_token=${access_token}; path=/; max-age=${expires_in || 900}; SameSite=Lax${secure}`;
 
       // Decode JWT to extract user info
       const payload = JSON.parse(atob(access_token.split(".")[1]));

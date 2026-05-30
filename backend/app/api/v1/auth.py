@@ -118,6 +118,24 @@ async def me(
 
 
 @router.post("/logout")
-async def logout():
-    """登出端点（客户端清除 token 即可，服务端无状态）"""
+async def logout(request: Request):
+    """登出端点：将当前 access token 的 jti 加入黑名单"""
+    auth_header = request.headers.get("Authorization", "")
+    if auth_header.startswith("Bearer "):
+        from app.utils.security import decode_token
+
+        try:
+            payload = decode_token(auth_header[7:])
+            jti = payload.get("jti")
+            exp = payload.get("exp", 0)
+            if jti:
+                from datetime import UTC, datetime
+
+                remaining = max(1, int(exp - datetime.now(UTC).timestamp()))
+                from app.services.redis_cache import RedisCache
+
+                cache = RedisCache()
+                cache.revoke_token(jti, ttl=remaining)
+        except Exception:
+            pass
     return {"status": "ok"}
