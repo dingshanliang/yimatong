@@ -60,7 +60,7 @@ const TASK_STATUS_MAP: Record<string, { label: string; color: string }> = {
 };
 
 export default function AgencyPage() {
-  const { message } = App.useApp();
+  const { message, modal } = App.useApp();
   const [clients, setClients] = useState<Client[]>([]);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [loading, setLoading] = useState(false);
@@ -78,10 +78,14 @@ export default function AgencyPage() {
   const [checklistClientName, setChecklistClientName] = useState("");
   const [checklistLoading, setChecklistLoading] = useState(false);
 
-  const fetchClients = async () => {
+  const [taskFilter, setTaskFilter] = useState<{ tenant_id?: string; status?: string }>({});
+
+  const fetchClients = async (q?: string) => {
     setLoading(true);
     try {
-      const { data } = await api.get("/tenants", { params: { page: 1, page_size: 100 } });
+      const params: Record<string, unknown> = { page: 1, page_size: 100 };
+      if (q) params.q = q;
+      const { data } = await api.get("/tenants", { params });
       setClients(
         (data.items || []).map((t: Record<string, unknown>) => ({
           id: String(t.id),
@@ -99,9 +103,13 @@ export default function AgencyPage() {
     }
   };
 
-  const fetchTasks = async () => {
+  const fetchTasks = async (filter?: { tenant_id?: string; status?: string }) => {
     try {
-      const { data } = await api.get("/ops/tasks", { params: { page: 1, page_size: 100 } });
+      const params: Record<string, unknown> = { page: 1, page_size: 100 };
+      const f = filter || taskFilter;
+      if (f.tenant_id) params.tenant_id = f.tenant_id;
+      if (f.status) params.status = f.status;
+      const { data } = await api.get("/ops/tasks", { params });
       setTasks(
         (data.items || []).map((t: Record<string, unknown>) => ({
           id: String(t.id),
@@ -195,6 +203,38 @@ export default function AgencyPage() {
     } finally {
       setTaskSaving(false);
     }
+  };
+
+  const handleUpdateTaskStatus = async (taskId: string, newStatus: string) => {
+    try {
+      await api.patch(`/ops/tasks/${taskId}`, { status: newStatus });
+      message.success("任务状态已更新");
+      fetchTasks();
+    } catch (e: unknown) {
+      const err = e as { response?: { data?: { detail?: string } } };
+      message.error(err.response?.data?.detail || "更新失败");
+    }
+  };
+
+  const handleDeleteTask = async (taskId: string) => {
+    try {
+      await api.delete(`/ops/tasks/${taskId}`);
+      message.success("任务已删除");
+      fetchTasks();
+    } catch (e: unknown) {
+      const err = e as { response?: { data?: { detail?: string } } };
+      message.error(err.response?.data?.detail || "删除失败");
+    }
+  };
+
+  const confirmDeleteTask = (taskId: string, taskTitle: string) => {
+    modal.confirm({
+      title: "确认删除",
+      content: `确定删除任务"${taskTitle}"吗？`,
+      okText: "删除",
+      okButtonProps: { danger: true },
+      onOk: () => handleDeleteTask(taskId),
+    });
   };
 
   const handleOpenChecklist = async (clientId: string, clientName: string) => {
@@ -360,6 +400,15 @@ export default function AgencyPage() {
   const taskColumns: ColumnsType<Task> = [
     { title: "任务", dataIndex: "title", key: "title" },
     {
+      title: "关联客户",
+      dataIndex: "tenant_id",
+      key: "tenant_id",
+      render: (v: string) => {
+        const client = clients.find((c) => c.id === v);
+        return client ? client.name : v?.slice(0, 8) + "...";
+      },
+    },
+    {
       title: "优先级",
       dataIndex: "priority",
       key: "priority",
@@ -382,6 +431,36 @@ export default function AgencyPage() {
       dataIndex: "due_date",
       key: "due_date",
       render: (v: string | null) => v?.split("T")[0] || "—",
+    },
+    {
+      title: "操作",
+      key: "actions",
+      render: (_: unknown, record: Task) => {
+        if (record.status === "completed" || record.status === "cancelled") {
+          return (
+            <Button size="small" type="link" danger onClick={() => confirmDeleteTask(record.id, record.title)}>
+              删除
+            </Button>
+          );
+        }
+        return (
+          <Space size="small">
+            {record.status === "pending" && (
+              <Button size="small" type="link" onClick={() => handleUpdateTaskStatus(record.id, "in_progress")}>
+                开始
+              </Button>
+            )}
+            {record.status === "in_progress" && (
+              <Button size="small" type="link" onClick={() => handleUpdateTaskStatus(record.id, "completed")}>
+                完成
+              </Button>
+            )}
+            <Button size="small" type="link" onClick={() => handleUpdateTaskStatus(record.id, "cancelled")}>
+              取消
+            </Button>
+          </Space>
+        );
+      },
     },
   ];
 
@@ -448,6 +527,17 @@ export default function AgencyPage() {
       </Row>
 
       <Card title="客户列表" size="small" className="mb-6">
+        <div className="mb-4">
+          <Space>
+            <Input.Search
+              placeholder="搜索客户名称"
+              allowClear
+              style={{ width: 300 }}
+              onSearch={(v) => fetchClients(v)}
+              onChange={(e) => { if (!e.target.value) fetchClients(); }}
+            />
+          </Space>
+        </div>
         <Table
           columns={clientColumns}
           dataSource={clients}
@@ -459,6 +549,32 @@ export default function AgencyPage() {
       </Card>
 
       <Card title="任务列表" size="small">
+        <div className="mb-4">
+          <Space>
+            <Select
+              placeholder="按客户筛选"
+              allowClear
+              style={{ width: 200 }}
+              options={clients.map((c) => ({ value: c.id, label: c.name }))}
+              onChange={(v) => {
+                const newFilter = { ...taskFilter, tenant_id: v || undefined };
+                setTaskFilter(newFilter);
+                fetchTasks(newFilter);
+              }}
+            />
+            <Select
+              placeholder="按状态筛选"
+              allowClear
+              style={{ width: 150 }}
+              options={Object.entries(TASK_STATUS_MAP).map(([k, v]) => ({ value: k, label: v.label }))}
+              onChange={(v) => {
+                const newFilter = { ...taskFilter, status: v || undefined };
+                setTaskFilter(newFilter);
+                fetchTasks(newFilter);
+              }}
+            />
+          </Space>
+        </div>
         <Table
           columns={taskColumns}
           dataSource={tasks}
