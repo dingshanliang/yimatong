@@ -38,18 +38,19 @@ const ctx = loadContext();
 // Reuse the authenticated state from global-setup so we skip the login UI
 test.use({ storageState: path.join(__dirname, ".auth", "state.json") });
 
-/** Helper: reliably open an Ant Design Select dropdown and pick an option via keyboard */
+/** Helper: reliably open an Ant Design Select dropdown and pick an option */
 async function antdSelect(page: any, testId: string, optionText?: string) {
   const select = page.locator(`[data-testid="${testId}"]`).first();
   await select.click();
-  await page.waitForTimeout(300);
+  // Wait for dropdown to appear
+  await page.waitForSelector(".ant-select-dropdown:visible", { timeout: 3000 });
   const dropdown = page.locator(".ant-select-dropdown").filter({ visible: true });
   if (optionText) {
     await dropdown.getByText(optionText).first().click({ force: true });
   } else {
-    // Use keyboard navigation for better reliability
-    await page.keyboard.press("ArrowDown");
-    await page.keyboard.press("Enter");
+    // Pick the first option in the visible dropdown
+    const firstOption = dropdown.locator(".ant-select-item-option").first();
+    await firstOption.click({ force: true });
   }
   await page.waitForTimeout(200);
 }
@@ -136,17 +137,19 @@ test.describe("核心用户流程", () => {
     await expect(page.locator(".ant-modal-title").filter({ hasText: "新建页面模板" })).not.toBeVisible();
     await expect(page.getByText(pageName)).toBeVisible();
 
-    // Open version management
+    // Open version management (navigates to a separate page, not a modal)
     const row = page.locator("tr", { hasText: pageName });
     await row.getByRole("button", { name: "版本管理" }).click();
-    await expect(page.locator(".ant-modal-title").filter({ hasText: "版本管理" })).toBeVisible();
+
+    // Version management is a full page with heading "版本管理 — {pageName}"
+    await expect(page.getByRole("heading", { level: 2 }).filter({ hasText: "版本管理" })).toBeVisible({ timeout: 10000 });
 
     // Publish the draft version
     const publishBtn = page.getByRole("button", { name: "发布" }).first();
     await publishBtn.click();
     await antdPopconfirmConfirm(page);
 
-    // Verify status changes to "已发布" in the version modal
+    // Verify status changes to "已发布" in the version table
     await expect(page.locator("tr", { hasText: "v1" }).getByText("已发布")).toBeVisible({ timeout: 10000 });
   });
 

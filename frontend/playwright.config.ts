@@ -41,7 +41,7 @@ export default defineConfig({
 
   webServer: [
     {
-      command: "pnpm dev:admin",
+      command: "NEXT_PUBLIC_H5_URL=http://localhost:3003 pnpm dev:admin",
       url: "http://localhost:3000/login",
       reuseExistingServer: !process.env.CI,
       timeout: 120_000,

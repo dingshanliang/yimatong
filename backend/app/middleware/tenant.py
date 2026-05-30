@@ -10,6 +10,10 @@ OPEN_API_PREFIX = "/open/v1/"
 
 class TenantScopeMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
+        # CORS preflight requests must bypass authentication
+        if request.method == "OPTIONS":
+            return await call_next(request)
+
         # 公开路由跳过认证
         public_paths = {"/health", "/health/detail", "/docs", "/openapi.json", "/redoc"}
         public_auth_paths = {

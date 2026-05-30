@@ -173,7 +173,7 @@ export default function PagesPage() {
             label="模板名称"
             rules={[{ required: true }]}
           >
-            <Input />
+            <Input data-testid="page-template-name-input" />
           </Form.Item>
           <Form.Item
             name="template_type"
@@ -181,6 +181,7 @@ export default function PagesPage() {
             rules={[{ required: true }]}
           >
             <Select
+              data-testid="page-template-type-select"
               options={Object.entries(TYPE_LABELS).map(([value, label]) => ({
                 value,
                 label,

@@ -51,13 +51,21 @@ test.describe("页面编辑器预览集成", () => {
     const context = await browser.newContext({ bypassCSP: true });
     const page = await context.newPage();
     await page.goto(`/pages/${ctx.pageTemplateId}/edit`);
-    await page.waitForTimeout(5000);
+
+    // Wait for editor to finish loading (not "加载中...")
+    await expect(page.getByText("加载中...")).not.toBeVisible({ timeout: 15000 });
+    await page.waitForTimeout(2000);
 
     const bodyText = await page.locator("body").innerText();
     expect(bodyText.length).toBeGreaterThan(0);
 
-    const iframe = page.frame({ url: /\/preview/ });
-    expect(iframe).not.toBeNull();
+    // PreviewPanel renders an iframe; check by element presence
+    const iframeElement = page.locator("iframe").first();
+    await expect(iframeElement).toBeVisible({ timeout: 5000 });
+
+    // Verify the iframe has a src pointing to the preview page
+    const src = await iframeElement.getAttribute("src");
+    expect(src).toContain("preview");
 
     await context.close();
   });
@@ -166,8 +174,12 @@ test.describe("编辑器设备预览切换", () => {
     const context = await browser.newContext({ bypassCSP: true });
     const page = await context.newPage();
     await page.goto(`/pages/${ctx.pageTemplateId}/edit`);
-    await page.waitForTimeout(6000);
 
+    // Wait for editor to finish loading (not "加载中...")
+    await expect(page.getByText("加载中...")).not.toBeVisible({ timeout: 15000 });
+    await page.waitForTimeout(2000);
+
+    // The device preset select is inside PreviewPanel
     const selects = page.locator(".ant-select");
     const count = await selects.count();
     expect(count).toBeGreaterThan(0);
@@ -180,8 +192,9 @@ test.describe("编辑器设备预览切换", () => {
     }
 
     await page.waitForTimeout(2000);
-    const iframe = page.frame({ url: /\/preview/ });
-    expect(iframe).not.toBeNull();
+    // Verify iframe still visible after device switch
+    const iframeElement = page.locator("iframe").first();
+    await expect(iframeElement).toBeVisible();
 
     await context.close();
   });

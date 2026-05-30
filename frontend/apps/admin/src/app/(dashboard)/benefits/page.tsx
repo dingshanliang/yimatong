@@ -19,7 +19,7 @@ export default function BenefitsPage() {
   const { message } = App.useApp();
   const {
     items: benefits, total: benefitsTotal, page: benefitsPage, loading: benefitsLoading,
-    setPage: setBenefitsPage, update: updateBenefit, remove: removeBenefit,
+    setPage: setBenefitsPage, update: updateBenefit, remove: removeBenefit, mutate: mutateBenefits,
   } = useCrud<Benefit>("/benefits");
 
   const {
@@ -73,7 +73,7 @@ export default function BenefitsPage() {
       }
       const payload = { name: values.name, benefit_type: values.benefit_type, stock_total: values.stock_total, per_person_limit: values.per_person_limit, config_json: configJson, connector_id: values.connector_id || null };
       if (editItem) { await updateBenefit(editItem.id, payload); message.success("权益更新成功"); }
-      else { await api.post(`/campaigns/${values.campaign_id}/benefits`, payload); message.success("权益创建成功"); }
+      else { await api.post(`/campaigns/${values.campaign_id}/benefits`, payload); message.success("权益创建成功"); mutateBenefits(); }
       setModalOpen(false); form.resetFields();
     } catch (e: unknown) { const err = e as { response?: { data?: { detail?: string } } }; message.error(err.response?.data?.detail || (editItem ? "更新权益失败" : "创建权益失败")); }
   };
