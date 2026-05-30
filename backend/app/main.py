@@ -32,7 +32,6 @@ from app.api.v1.prd_compat import prd_compat_router
 from app.api.v1.private_domain import private_domain_router
 from app.api.v1.products import batch_router, brand_router, product_router, sku_router
 from app.api.v1.public_pages import public_page_router
-from app.api.v1.redpacket import redpacket_router
 from app.api.v1.regional import regional_router
 from app.api.v1.resolver import resolver_router
 from app.api.v1.risk import risk_router
@@ -44,6 +43,7 @@ from app.api.v1.scan_events import scan_event_router
 from app.api.v1.tasks import task_router
 from app.api.v1.tenants import router as tenants_router
 from app.api.v1.webhooks import webhook_router
+from app.api.v1.wechat_oauth import wechat_oauth_router
 from app.core.config import settings
 from app.middleware.tenant import TenantScopeMiddleware
 
@@ -78,9 +78,10 @@ async def lifespan(app):
     init_webhook_dispatcher()
 
     # 注册连接器适配器 + 权益发放事件处理器
-    import app.services.connectors.generic_http  # noqa: F401
-    import app.services.connectors.coupon_pool  # noqa: F401
     import app.services.benefit_delivery_handler  # noqa: F401
+    import app.services.connectors.coupon_pool  # noqa: F401
+    import app.services.connectors.generic_http  # noqa: F401
+    import app.services.connectors.wechat_pay_transfer  # noqa: F401
 
     yield
 
@@ -132,12 +133,13 @@ app.include_router(open_api_router)
 app.include_router(integration_router)
 app.include_router(i18n_router)
 app.include_router(template_router)
-app.include_router(redpacket_router)
+
 app.include_router(roles_router)
 app.include_router(scan_event_router)
 app.include_router(consumer_router)
 app.include_router(benefit_claim_router)
 app.include_router(consent_router)
+app.include_router(wechat_oauth_router)
 app.include_router(public_page_router)
 app.include_router(import_router)
 app.include_router(private_domain_router)

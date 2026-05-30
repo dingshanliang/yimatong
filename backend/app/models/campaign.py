@@ -42,6 +42,7 @@ class BenefitType:
     EXTERNAL_LINK = "external_link"
     PRIVATE_DOMAIN = "private_domain"
     FORM_BENEFIT = "form_benefit"
+    CASH_RED_PACKET = "cash_red_packet"
 
 
 class Benefit(Base):

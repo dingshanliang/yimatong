@@ -69,6 +69,7 @@ class BenefitCreateRequest(BaseModel):
     config_json: dict
     stock_total: int
     per_person_limit: int = 1
+    connector_id: uuid.UUID | None = None
 
 
 class ClaimRequest(BaseModel):
@@ -188,6 +189,7 @@ async def create_benefit_endpoint(
         body.config_json,
         body.stock_total,
         body.per_person_limit,
+        connector_id=body.connector_id,
     )
 
 

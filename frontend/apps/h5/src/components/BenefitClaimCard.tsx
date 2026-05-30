@@ -4,7 +4,12 @@ import { useState, useCallback } from "react";
 import { apiClient } from "@/lib/api";
 
 /** 权益类型 */
-type BenefitType = "coupon" | "points" | "lottery" | "gift";
+type BenefitType =
+  | "coupon"
+  | "points"
+  | "lottery"
+  | "gift"
+  | "cash_red_packet";
 
 interface BenefitClaimCardProps {
   /** 权益 ID */
@@ -54,14 +59,45 @@ const BENEFIT_STYLES: Record<
     border: "border-rose-200",
     label: "礼品",
   },
+  cash_red_packet: {
+    icon: "🧧",
+    bg: "bg-red-50",
+    text: "text-red-700",
+    border: "border-red-200",
+    label: "现金红包",
+  },
 };
+
+/** 按钮文案映射 */
+const CLAIM_BUTTON_TEXT: Record<BenefitType, string> = {
+  coupon: "立即领取",
+  points: "立即领取",
+  lottery: "立即抽奖",
+  gift: "立即领取",
+  cash_red_packet: "领取红包",
+};
+
+/**
+ * 将分转换为元的显示字符串
+ * 1 元 = 100 分
+ */
+function fenToYuan(fen: number): string {
+  const yuan = fen / 100;
+  // 如果是整数，不显示小数点
+  if (yuan === Math.floor(yuan)) {
+    return yuan.toFixed(0);
+  }
+  // 最多两位小数
+  return yuan.toFixed(2);
+}
 
 /**
  * 权益领取卡片
  *
- * 支持优惠券/积分/抽奖/礼品四种权益类型，
+ * 支持优惠券/积分/抽奖/礼品/现金红包五种权益类型，
  * 点击领取调用后端接口，领取后按钮变为灰色已领取状态。
  * 当后端返回 require_auth 时，弹出手机号授权弹窗。
+ * 当后端返回 require_wechat_auth 时，跳转微信 OAuth 授权。
  */
 export function BenefitClaimCard({
   benefitId,
@@ -76,8 +112,11 @@ export function BenefitClaimCard({
   const [error, setError] = useState<string | null>(null);
   const [showPhoneModal, setShowPhoneModal] = useState(false);
   const [phone, setPhone] = useState("");
+  // 红包领取成功后的金额展示（分）
+  const [redPacketAmount, setRedPacketAmount] = useState<number | null>(null);
 
   const style = BENEFIT_STYLES[benefitType] ?? BENEFIT_STYLES.gift;
+  const buttonText = CLAIM_BUTTON_TEXT[benefitType] ?? "立即领取";
 
   const handleClaim = useCallback(async () => {
     if (loading || claimed) return;
@@ -85,10 +124,49 @@ export function BenefitClaimCard({
     setError(null);
 
     try {
-      await apiClient.post("/benefit-claims", {
+      const res = await apiClient.post("/benefit-claims", {
         benefit_id: benefitId,
         scan_token: scanToken,
       });
+
+      const data = res.data as {
+        status: string;
+        benefit_id: string;
+        amount?: number;
+        claim_id?: string;
+        auth_url_path?: string;
+      };
+
+      // 现金红包需要微信 OAuth 授权
+      if (data.status === "require_wechat_auth" && data.auth_url_path) {
+        try {
+          // 获取微信 OAuth 跳转地址
+          const authRes = await apiClient.get(data.auth_url_path);
+          const authData = authRes.data as { auth_url: string };
+          if (authData.auth_url) {
+            // 跳转到微信 OAuth 页面，授权后回调会重定向到结果页
+            window.location.href = authData.auth_url;
+            return;
+          }
+        } catch {
+          setError("获取授权地址失败，请重试");
+          return;
+        }
+      }
+
+      // 红包领取成功（已有 OpenID 的情况）
+      if (
+        benefitType === "cash_red_packet" &&
+        (data.status === "success" || data.status === "delivered") &&
+        typeof data.amount === "number"
+      ) {
+        setRedPacketAmount(data.amount);
+        setClaimed(true);
+        onClaimed?.();
+        return;
+      }
+
+      // 通用领取成功
       setClaimed(true);
       onClaimed?.();
     } catch (err: unknown) {
@@ -117,7 +195,7 @@ export function BenefitClaimCard({
     } finally {
       setLoading(false);
     }
-  }, [benefitId, scanToken, loading, claimed, onClaimed]);
+  }, [benefitId, benefitType, scanToken, loading, claimed, onClaimed]);
 
   const handlePhoneSubmit = useCallback(async () => {
     if (!phone || phone.length < 11) return;
@@ -137,6 +215,27 @@ export function BenefitClaimCard({
       setLoading(false);
     }
   }, [benefitId, scanToken, phone, onClaimed]);
+
+  // 红包领取成功时显示金额
+  if (redPacketAmount !== null) {
+    return (
+      <div className="rounded-2xl border border-red-200 bg-gradient-to-b from-red-50 to-amber-50 p-5 shadow-sm">
+        <div className="text-center">
+          <span className="inline-flex h-14 w-14 items-center justify-center rounded-full bg-red-100 text-2xl">
+            🧧
+          </span>
+          <p className="mt-3 text-sm text-gray-600">恭喜领取</p>
+          <p className="mt-1 text-3xl font-bold text-red-600">
+            {fenToYuan(redPacketAmount)}
+            <span className="ml-1 text-base font-medium">元</span>
+          </p>
+          <p className="mt-2 text-xs text-gray-500">
+            红包已发放至微信零钱，请注意查收
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <>
@@ -183,10 +282,12 @@ export function BenefitClaimCard({
                 ? "cursor-default bg-gray-100 text-gray-400"
                 : loading
                   ? "cursor-wait bg-blue-400 text-white"
-                  : "bg-blue-600 text-white active:bg-blue-700"
+                  : benefitType === "cash_red_packet"
+                    ? "bg-red-600 text-white active:bg-red-700"
+                    : "bg-blue-600 text-white active:bg-blue-700"
             }`}
           >
-            {claimed ? "已领取" : loading ? "领取中..." : "立即领取"}
+            {claimed ? "已领取" : loading ? "领取中..." : buttonText}
           </button>
         </div>
       </div>

@@ -32,7 +32,6 @@ from app.models.integration import SyncRecord  # noqa: F401
 from app.models.member import ConsumerProfile, PointTransaction, PointRule  # noqa: F401
 from app.models.page import PageTemplate, PageVersion  # noqa: F401
 from app.models.product import Brand, Product, ProductionBatch, SKU  # noqa: F401
-from app.models.redpacket import KYCRecord, RedPacketClaim, RedPacketRule, Withdrawal  # noqa: F401
 from app.models.regional import (  # noqa: F401
     RegionalCodeRule,
     RegionalOrg,

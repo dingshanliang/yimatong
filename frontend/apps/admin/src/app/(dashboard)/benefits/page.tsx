@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
-import { App, Button, Form, Input, InputNumber, Modal, Popconfirm, Select, Space, Table, Tabs, Tag, Typography } from "antd";
+import { App, Button, Form, Input, InputNumber, Modal, Popconfirm, Select, Space, Table, Tabs, Tag, Typography, Radio, Divider, Alert } from "antd";
 import { PlusOutlined } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
 import api from "@/lib/api";
@@ -17,6 +17,7 @@ interface Benefit {
   stock_used: number;
   per_person_limit: number;
   campaign_id: string;
+  connector_id: string | null;
   status: string;
   created_at: string;
   config_json: Record<string, unknown>;
@@ -35,11 +36,32 @@ interface Campaign {
   name: string;
 }
 
+interface Connector {
+  id: string;
+  name: string;
+  connector_type: string;
+  enabled: boolean;
+}
+
+/** 金额（元）转分 */
+function yuanToFen(yuan: number): number {
+  return Math.round(yuan * 100);
+}
+
+/** 金额（分）转元 */
+function fenToYuan(fen: number): number {
+  return fen / 100;
+}
+
+/** 微信现金营销单笔上限 200 元 = 20000 分 */
+const WECHAT_MAX_FEN = 20000;
+
 const BENEFIT_TYPE_MAP: Record<string, { label: string; color: string }> = {
   platform_coupon: { label: "平台券", color: "blue" },
   external_link: { label: "外部链接", color: "green" },
   private_domain: { label: "私域", color: "orange" },
   form_benefit: { label: "表单", color: "purple" },
+  cash_red_packet: { label: "现金红包", color: "red" },
 };
 
 const CLAIM_STATUS_MAP: Record<string, { label: string; color: string }> = {
@@ -50,7 +72,204 @@ const CLAIM_STATUS_MAP: Record<string, { label: string; color: string }> = {
   cancelled: { label: "已取消", color: "red" },
 };
 
-function BenefitConfigFields({ benefitType }: { benefitType: string }) {
+const AMOUNT_TYPE_OPTIONS = [
+  { value: "fixed", label: "固定金额" },
+  { value: "random", label: "随机金额" },
+  { value: "lucky", label: "拼手气" },
+];
+
+/**
+ * 金额输入组件：以元为单位输入，以分为单位存储到 config_json。
+ * 使用 Form.Item 的 normalize / transform 模式。
+ */
+function YuanInput({
+  value = 0,
+  onChange,
+  ...rest
+}: {
+  value?: number;
+  onChange?: (val: number) => void;
+  min?: number;
+  max?: number;
+  placeholder?: string;
+  className?: string;
+  "data-testid"?: string;
+}) {
+  // value 来自 Form.Item（以分为单位），显示时转为元
+  const [display, setDisplay] = useState<number | null>(fenToYuan(value));
+
+  const handleChange = (val: number | null) => {
+    setDisplay(val);
+    if (onChange && val !== null && val !== undefined) {
+      onChange(yuanToFen(val));
+    }
+  };
+
+  return (
+    <InputNumber
+      value={display}
+      onChange={handleChange}
+      min={0.01}
+      step={0.01}
+      precision={2}
+      addonAfter="元"
+      {...rest}
+    />
+  );
+}
+
+/** 现金红包配置表单字段 */
+function CashRedPacketConfigFields({
+  form,
+  connectors,
+}: {
+  form: ReturnType<typeof Form.useForm>[0];
+  connectors: Connector[];
+}) {
+  const amountType = Form.useWatch(["config_json", "amount_type"], form) ?? "";
+
+  return (
+    <>
+      <Divider titlePlacement="left" plain>
+        红包金额设置
+      </Divider>
+
+      <Form.Item
+        name={["config_json", "amount_type"]}
+        label="金额类型"
+        rules={[{ required: true, message: "请选择金额类型" }]}
+      >
+        <Radio.Group options={AMOUNT_TYPE_OPTIONS} optionType="button" buttonStyle="solid" />
+      </Form.Item>
+
+      {amountType === "fixed" && (
+        <Form.Item
+          name={["config_json", "fixed_amount"]}
+          label="固定金额"
+          rules={[{ required: true, message: "请输入固定金额" }]}
+          extra="微信现金营销单笔上限 200 元"
+        >
+          <YuanInput max={200} />
+        </Form.Item>
+      )}
+
+      {amountType === "random" && (
+        <>
+          <Form.Item
+            name={["config_json", "min_amount"]}
+            label="最小金额"
+            rules={[{ required: true, message: "请输入最小金额" }]}
+          >
+            <YuanInput max={200} />
+          </Form.Item>
+          <Form.Item
+            name={["config_json", "max_amount"]}
+            label="最大金额"
+            rules={[{ required: true, message: "请输入最大金额" }]}
+          >
+            <YuanInput max={200} />
+          </Form.Item>
+        </>
+      )}
+
+      {amountType === "lucky" && (
+        <>
+          <Form.Item
+            name={["config_json", "lucky_total_count"]}
+            label="拼手气总份数"
+            rules={[{ required: true, message: "请输入拼手气总份数" }]}
+          >
+            <InputNumber min={2} max={100} className="w-full" addonAfter="份" />
+          </Form.Item>
+          <Form.Item
+            name={["config_json", "lucky_min_per"]}
+            label="每人最小金额"
+            rules={[{ required: true, message: "请输入每人最小金额" }]}
+          >
+            <YuanInput max={200} />
+          </Form.Item>
+        </>
+      )}
+
+      <Divider titlePlacement="left" plain>
+        预算与限制
+      </Divider>
+
+      <Form.Item
+        name={["config_json", "budget"]}
+        label="总预算"
+        rules={[{ required: true, message: "请输入总预算" }]}
+        extra="红包发放的总预算金额"
+      >
+        <YuanInput />
+      </Form.Item>
+
+      <div className="grid grid-cols-2 gap-4">
+        <Form.Item
+          name={["config_json", "daily_limit_per_user"]}
+          label="每用户每日限领"
+          initialValue={3}
+        >
+          <InputNumber min={1} max={100} className="w-full" addonAfter="次" />
+        </Form.Item>
+        <Form.Item
+          name={["config_json", "total_limit_per_user"]}
+          label="每用户总限领"
+          initialValue={10}
+        >
+          <InputNumber min={1} max={1000} className="w-full" addonAfter="次" />
+        </Form.Item>
+      </div>
+
+      <Form.Item
+        name={["config_json", "transfer_remark"]}
+        label="转账备注"
+        extra="微信转账到零钱时显示的备注（选填）"
+      >
+        <Input placeholder="扫码领红包" maxLength={32} />
+      </Form.Item>
+
+      <Divider titlePlacement="left" plain>
+        微信支付连接器
+      </Divider>
+
+      <Form.Item
+        name="connector_id"
+        label="微信支付转账连接器"
+        rules={[{ required: true, message: "请选择微信支付转账连接器" }]}
+        extra="用于调用微信支付商家转账到零钱 API"
+      >
+        <Select
+          placeholder="选择已配置的微信支付转账连接器"
+          showSearch
+          optionFilterProp="label"
+          notFoundContent={
+            connectors.length === 0
+              ? "暂无微信支付转账连接器，请先在连接器管理中创建"
+              : undefined
+          }
+          options={connectors.map((c) => ({
+            value: c.id,
+            label: `${c.name}${c.enabled ? "" : "（已禁用）"}`,
+          }))}
+        />
+      </Form.Item>
+    </>
+  );
+}
+
+function BenefitConfigFields({
+  benefitType,
+  form,
+  connectors,
+}: {
+  benefitType: string;
+  form: ReturnType<typeof Form.useForm>[0];
+  connectors: Connector[];
+}) {
+  if (benefitType === "cash_red_packet") {
+    return <CashRedPacketConfigFields form={form} connectors={connectors} />;
+  }
   if (benefitType === "platform_coupon") {
     return (
       <>
@@ -143,6 +362,7 @@ export default function BenefitsPage() {
   );
 
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
+  const [connectors, setConnectors] = useState<Connector[]>([]);
   const [modalOpen, setModalOpen] = useState(false);
   const [editItem, setEditItem] = useState<Benefit | null>(null);
   const [form] = Form.useForm();
@@ -158,9 +378,23 @@ export default function BenefitsPage() {
     }
   }, []);
 
+  const fetchWechatPayConnectors = useCallback(async () => {
+    try {
+      const { data } = await api.get("/connectors/connectors");
+      // 只保留 wechat_pay_transfer 类型的连接器
+      const wechatTransferConnectors = (Array.isArray(data) ? data : []).filter(
+        (c: Connector) => c.connector_type === "wechat_pay_transfer"
+      );
+      setConnectors(wechatTransferConnectors);
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
   useEffect(() => {
     fetchCampaigns();
-  }, [fetchCampaigns]);
+    fetchWechatPayConnectors();
+  }, [fetchCampaigns, fetchWechatPayConnectors]);
 
   const openCreate = () => {
     setEditItem(null);
@@ -172,6 +406,27 @@ export default function BenefitsPage() {
   const openEdit = (record: Benefit) => {
     setEditItem(record);
     setBenefitType(record.benefit_type);
+
+    // 对于现金红包，config_json 中的金额字段以分为单位存储，需要转换为元用于表单展示
+    const configJson = { ...record.config_json } as Record<string, unknown>;
+    if (record.benefit_type === "cash_red_packet") {
+      if (typeof configJson.fixed_amount === "number") {
+        configJson.fixed_amount = fenToYuan(configJson.fixed_amount as number);
+      }
+      if (typeof configJson.min_amount === "number") {
+        configJson.min_amount = fenToYuan(configJson.min_amount as number);
+      }
+      if (typeof configJson.max_amount === "number") {
+        configJson.max_amount = fenToYuan(configJson.max_amount as number);
+      }
+      if (typeof configJson.lucky_min_per === "number") {
+        configJson.lucky_min_per = fenToYuan(configJson.lucky_min_per as number);
+      }
+      if (typeof configJson.budget === "number") {
+        configJson.budget = fenToYuan(configJson.budget as number);
+      }
+    }
+
     form.setFieldsValue({
       name: record.name,
       benefit_type: record.benefit_type,
@@ -179,26 +434,51 @@ export default function BenefitsPage() {
       per_person_limit: record.per_person_limit,
       campaign_id: record.campaign_id,
       status: record.status,
-      config_json: record.config_json,
+      connector_id: record.connector_id,
+      config_json: configJson,
     });
     setModalOpen(true);
   };
 
+  /** 将表单中元的金额值转为分后提交 */
+  const transformValuesForSubmit = (values: Record<string, unknown>) => {
+    if (values.benefit_type !== "cash_red_packet") {
+      return values;
+    }
+
+    const configJson = { ...(values.config_json as Record<string, number>) };
+    const fenFields = ["fixed_amount", "min_amount", "max_amount", "lucky_min_per", "budget"];
+
+    for (const field of fenFields) {
+      if (typeof configJson[field] === "number") {
+        configJson[field] = yuanToFen(configJson[field]);
+      }
+    }
+
+    return {
+      ...values,
+      config_json: configJson,
+    };
+  };
+
   const handleSubmit = async (values: Record<string, unknown>) => {
     try {
-      const payload: Record<string, unknown> = {
-        name: values.name,
-        benefit_type: values.benefit_type,
-        stock_total: values.stock_total,
-        per_person_limit: values.per_person_limit,
-        campaign_id: values.campaign_id,
-        config_json: values.config_json || {},
+      const payload = transformValuesForSubmit(values) as Record<string, unknown>;
+
+      const benefitPayload: Record<string, unknown> = {
+        name: payload.name,
+        benefit_type: payload.benefit_type,
+        stock_total: payload.stock_total,
+        per_person_limit: payload.per_person_limit,
+        config_json: payload.config_json || {},
+        connector_id: payload.connector_id || null,
       };
+
       if (editItem) {
-        await api.patch(`/benefits/${editItem.id}`, payload);
+        await api.patch(`/benefits/${editItem.id}`, benefitPayload);
         message.success("权益更新成功");
       } else {
-        await api.post(`/campaigns/${values.campaign_id}/benefits`, payload);
+        await api.post(`/campaigns/${payload.campaign_id}/benefits`, benefitPayload);
         message.success("权益创建成功");
       }
       setModalOpen(false);
@@ -356,8 +636,18 @@ export default function BenefitsPage() {
         open={modalOpen}
         onCancel={() => setModalOpen(false)}
         onOk={() => form.submit()}
-        width={560}
+        width={640}
+        destroyOnClose
       >
+        {benefitType === "cash_red_packet" && (
+          <Alert
+            message="微信现金红包"
+            description="单笔转账上限 200 元，金额以元为单位输入，系统自动转换为分存储。请确保已配置微信支付转账连接器。"
+            type="info"
+            showIcon
+            className="mb-4"
+          />
+        )}
         <Form
           form={form}
           layout="vertical"
@@ -417,7 +707,11 @@ export default function BenefitsPage() {
               <InputNumber min={1} className="w-full" data-testid="benefit-limit-input" />
             </Form.Item>
           </div>
-          <BenefitConfigFields benefitType={benefitType} />
+          <BenefitConfigFields
+            benefitType={benefitType}
+            form={form}
+            connectors={connectors}
+          />
         </Form>
       </Modal>
     </div>

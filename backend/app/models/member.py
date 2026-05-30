@@ -22,6 +22,7 @@ class ConsumerProfile(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid7)
     tenant_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
+    wechat_openid: Mapped[str | None] = mapped_column(String(128), nullable=True)
     phone_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     phone_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
     nickname: Mapped[str | None] = mapped_column(String(100), nullable=True)
@@ -35,7 +36,7 @@ class ConsumerProfile(Base):
     extra_data: Mapped[dict | None] = mapped_column(JSON, nullable=True, default=dict)
 
     __table_args__ = (
-        UniqueConstraint("phone_hash"),
+        UniqueConstraint("tenant_id", "wechat_openid", name="uq_consumer_tenant_openid"),
         Index("ix_consumer_profiles_tenant", "tenant_id"),
     )
 

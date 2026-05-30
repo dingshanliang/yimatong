@@ -83,6 +83,7 @@ async def update_current_tenant_endpoint(
         compliance_settings=body.compliance_settings,
         plan_expires_at=body.plan_expires_at,
         onboarding_progress=body.onboarding_progress,
+        enabled_features=body.enabled_features,
     )
     if not tenant:
         raise HTTPException(status_code=404, detail="Tenant not found")
@@ -107,6 +108,7 @@ async def update_tenant_endpoint(tenant_id: uuid.UUID, body: TenantUpdate, db: A
         compliance_settings=body.compliance_settings,
         plan_expires_at=body.plan_expires_at,
         onboarding_progress=body.onboarding_progress,
+        enabled_features=body.enabled_features,
     )
     if not tenant:
         raise HTTPException(status_code=404, detail="Tenant not found")

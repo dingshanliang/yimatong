@@ -1,5 +1,5 @@
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from enum import StrEnum
 
 from sqlalchemy import JSON, Column, DateTime, ForeignKey, String, Table
@@ -49,7 +49,8 @@ class Tenant(Base):
     quota: Mapped[dict | None] = mapped_column(JSON, default=dict, nullable=True)
     compliance_settings: Mapped[dict | None] = mapped_column(JSON, default=dict, nullable=True)
     onboarding_progress: Mapped[dict | None] = mapped_column(JSON, default=dict, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
+    enabled_features: Mapped[dict | None] = mapped_column(JSON, default=dict, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False)
 
     organizations = relationship("Organization", back_populates="tenant", lazy="selectin")
 
@@ -129,10 +130,10 @@ class OpsTask(Base):
     status: Mapped[OpsTaskStatus] = mapped_column(SQLEnum(OpsTaskStatus), default=OpsTaskStatus.pending, nullable=False)
     priority: Mapped[OpsTaskPriority] = mapped_column(SQLEnum(OpsTaskPriority), default=OpsTaskPriority.medium, nullable=False)
     due_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
-        default=lambda: datetime.now(timezone.utc),
-        onupdate=lambda: datetime.now(timezone.utc),
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
         nullable=False,
     )

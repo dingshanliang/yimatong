@@ -19,6 +19,7 @@ class TenantUpdate(BaseModel):
     compliance_settings: dict | None = None
     plan_expires_at: datetime | None = None
     onboarding_progress: dict | None = None
+    enabled_features: dict | None = None
 
 
 class TenantRead(BaseModel):
@@ -31,6 +32,7 @@ class TenantRead(BaseModel):
     quota: dict | None = None
     compliance_settings: dict | None = None
     onboarding_progress: dict | None = None
+    enabled_features: dict | None = None
     created_at: datetime | None = None
 
     model_config = {"from_attributes": True}

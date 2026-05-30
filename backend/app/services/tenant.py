@@ -73,6 +73,7 @@ async def update_tenant(
     compliance_settings: dict | None = None,
     plan_expires_at: datetime | None = None,
     onboarding_progress: dict | None = None,
+    enabled_features: dict | None = None,
 ) -> Tenant | None:
     tenant = await get_tenant(db, tenant_id)
     if not tenant:
@@ -87,6 +88,8 @@ async def update_tenant(
         tenant.plan_expires_at = plan_expires_at
     if onboarding_progress is not None:
         tenant.onboarding_progress = onboarding_progress
+    if enabled_features is not None:
+        tenant.enabled_features = enabled_features
     await db.flush()
     await db.refresh(tenant)
     return tenant

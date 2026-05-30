@@ -227,7 +227,7 @@ function ModuleRenderer({
         <div className="px-4 mt-3">
           <BenefitClaimCard
             benefitId={(config.benefit_id as string) || ""}
-            benefitType={(config.benefit_type as "coupon" | "points" | "lottery" | "gift") || "coupon"}
+            benefitType={(config.benefit_type as "coupon" | "points" | "lottery" | "gift" | "cash_red_packet") || "coupon"}
             title={(config.title as string) || "领取权益"}
             description={config.description as string}
             scanToken={scanToken}

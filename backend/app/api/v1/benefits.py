@@ -27,6 +27,7 @@ class BenefitUpdateRequest(BaseModel):
     stock_total: int | None = None
     per_person_limit: int | None = None
     status: str | None = None
+    connector_id: uuid.UUID | None = None
 
 
 @benefit_router.get("")
