@@ -1,90 +1,33 @@
-"""外部权益连接器 L2-L4 单元测试
+"""外部权益连接器单元测试 — 适配器注册表架构
 
 测试范围:
-- 外部权益发放记录模型 (BenefitDelivery)
-- 同步库存 (sync_stock)
-- 发放状态回传 (deliver_benefit + callback)
-- 失败重试 (retry_delivery)
-- 熔断器集成
+- 适配器注册表 (registry)
+- GenericHttpAdapter (SSRF 防护、配置验证)
+- CouponPoolAdapter (配置验证)
+- BenefitDelivery 模型
+- 凭证加密/解密/脱敏
 """
 
+import os
 import uuid
-from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from app.models.connector import Connector, CouponPool
+from app.models.connector import Connector
 from app.services.circuit_breaker import CircuitBreaker
-from app.services.external_benefit import (
-    DeliveryStatus,
-    ExternalBenefitError,
-    deliver_benefit,
-    get_pending_retries,
-    retry_delivery,
-    sync_stock,
+from app.services.connectors import get_adapter, register_adapter
+from app.services.connectors.base import BaseConnectorAdapter, DeliveryResult
+from app.services.connectors.registry import list_adapter_types
+from app.services.connectors.secrets import (
+    decrypt_secrets,
+    encrypt_secrets,
+    mask_secrets,
 )
 
-
-# ---------------------------------------------------------------------------
-# fixtures
-# ---------------------------------------------------------------------------
-
-@pytest.fixture
-def tenant_id():
-    return uuid7()
-
-
-@pytest.fixture
-def connector(tenant_id):
-    return Connector(
-        id=uuid7(),
-        tenant_id=tenant_id,
-        name="测试优惠券连接器",
-        connector_type="coupon",
-        config={"api_url": "https://ext.example.com/api", "api_key": "sk-test"},
-        enabled=True,
-    )
-
-
-@pytest.fixture
-def redpacket_connector(tenant_id):
-    return Connector(
-        id=uuid7(),
-        tenant_id=tenant_id,
-        name="测试红包连接器",
-        connector_type="redpacket",
-        config={"api_url": "https://ext.example.com/redpacket", "api_key": "sk-test"},
-        enabled=True,
-    )
-
-
-@pytest.fixture
-def points_connector(tenant_id):
-    return Connector(
-        id=uuid7(),
-        tenant_id=tenant_id,
-        name="测试积分连接器",
-        connector_type="points",
-        config={"api_url": "https://ext.example.com/points", "api_key": "sk-test"},
-        enabled=True,
-    )
-
-
-@pytest.fixture
-def mock_db():
-    db = AsyncMock()
-    # flush and refresh are awaited in the service
-    db.flush = AsyncMock()
-    db.refresh = AsyncMock()
-    # db.add is synchronous in SQLAlchemy, override the AsyncMock
-    db.add = MagicMock()
-    return db
-
-
-@pytest.fixture
-def circuit_breaker():
-    return CircuitBreaker(threshold=3, reset_timeout=10)
+# 触发适配器自注册
+import app.services.connectors.generic_http  # noqa: F401
+import app.services.connectors.coupon_pool  # noqa: F401
 
 
 def uuid7():
@@ -92,436 +35,310 @@ def uuid7():
     return uuid7()
 
 
-# ---------------------------------------------------------------------------
-# 1. 同步库存 sync_stock
-# ---------------------------------------------------------------------------
+@pytest.fixture
+def tenant_id():
+    return uuid7()
 
-class TestSyncStock:
-    """L2: 从外部系统同步库存"""
 
-    @pytest.mark.asyncio
-    async def test_sync_coupon_stock(self, mock_db, connector, tenant_id):
-        """同步优惠券库存应更新 Connector 的 config.stock"""
-        mock_result = MagicMock()
-        mock_result.scalar_one_or_none.return_value = connector
-        # 第二次 execute 返回更新后的 connector
-        mock_db.execute.return_value = mock_result
-        mock_db.refresh.return_value = connector
+@pytest.fixture
+def generic_connector(tenant_id):
+    return Connector(
+        id=uuid7(),
+        tenant_id=tenant_id,
+        name="测试 HTTP 连接器",
+        connector_type="generic_http",
+        config={"api_url": "https://api.example.com", "api_key": "sk-test"},
+        enabled=True,
+    )
 
-        # 模拟外部 HTTP 返回库存
-        with patch("app.services.external_benefit._fetch_external_stock", new_callable=AsyncMock) as mock_fetch:
-            mock_fetch.return_value = {"stock": 500}
 
-            result = await sync_stock(mock_db, tenant_id, connector.id)
-
-        assert result["stock"] == 500
-        assert result["connector_id"] == str(connector.id)
-        mock_fetch.assert_awaited_once()
-
-    @pytest.mark.asyncio
-    async def test_sync_stock_connector_not_found(self, mock_db, tenant_id):
-        """连接器不存在应抛出异常"""
-        mock_result = MagicMock()
-        mock_result.scalar_one_or_none.return_value = None
-        mock_db.execute.return_value = mock_result
-
-        with pytest.raises(ExternalBenefitError, match="not found"):
-            await sync_stock(mock_db, tenant_id, uuid7())
-
-    @pytest.mark.asyncio
-    async def test_sync_stock_connector_disabled(self, mock_db, connector, tenant_id):
-        """禁用的连接器不应同步"""
-        connector.enabled = False
-        mock_result = MagicMock()
-        mock_result.scalar_one_or_none.return_value = connector
-        mock_db.execute.return_value = mock_result
-
-        with pytest.raises(ExternalBenefitError, match="disabled"):
-            await sync_stock(mock_db, tenant_id, connector.id)
-
-    @pytest.mark.asyncio
-    async def test_sync_stock_external_failure_with_circuit_breaker(
-        self, mock_db, connector, tenant_id, circuit_breaker
-    ):
-        """外部系统失败应记录失败并触发熔断"""
-        mock_result = MagicMock()
-        mock_result.scalar_one_or_none.return_value = connector
-        mock_db.execute.return_value = mock_result
-
-        with patch("app.services.external_benefit._fetch_external_stock", new_callable=AsyncMock) as mock_fetch:
-            mock_fetch.side_effect = Exception("Connection timeout")
-
-            with patch("app.services.external_benefit._get_circuit_breaker", return_value=circuit_breaker):
-                with pytest.raises(ExternalBenefitError, match="stock sync failed"):
-                    await sync_stock(mock_db, tenant_id, connector.id)
-
-        assert circuit_breaker._state.failure_count == 1
-        assert circuit_breaker.is_available()  # 还没到阈值
-
-    @pytest.mark.asyncio
-    async def test_sync_redpacket_stock(self, mock_db, redpacket_connector, tenant_id):
-        """红包类型连接器也应支持库存同步"""
-        mock_result = MagicMock()
-        mock_result.scalar_one_or_none.return_value = redpacket_connector
-        mock_db.execute.return_value = mock_result
-
-        with patch("app.services.external_benefit._fetch_external_stock", new_callable=AsyncMock) as mock_fetch:
-            mock_fetch.return_value = {"stock": 1000, "budget": 50000}
-
-            result = await sync_stock(mock_db, tenant_id, redpacket_connector.id)
-
-        assert result["stock"] == 1000
-        assert result["budget"] == 50000
-
-    @pytest.mark.asyncio
-    async def test_sync_points_stock(self, mock_db, points_connector, tenant_id):
-        """积分类型连接器应支持积分池同步"""
-        mock_result = MagicMock()
-        mock_result.scalar_one_or_none.return_value = points_connector
-        mock_db.execute.return_value = mock_result
-
-        with patch("app.services.external_benefit._fetch_external_stock", new_callable=AsyncMock) as mock_fetch:
-            mock_fetch.return_value = {"stock": 99999, "points_pool": "default"}
-
-            result = await sync_stock(mock_db, tenant_id, points_connector.id)
-
-        assert result["stock"] == 99999
+@pytest.fixture
+def pool_connector(tenant_id):
+    pool_id = uuid7()
+    return Connector(
+        id=uuid7(),
+        tenant_id=tenant_id,
+        name="测试券码池连接器",
+        connector_type="coupon_pool",
+        config={"pool_id": str(pool_id)},
+        enabled=True,
+    )
 
 
 # ---------------------------------------------------------------------------
-# 2. 发放状态回传 deliver_benefit
+# 1. 适配器注册表
 # ---------------------------------------------------------------------------
 
-class TestDeliverBenefit:
-    """L3: 向外部系统发放权益并回传状态"""
 
-    @pytest.mark.asyncio
-    async def test_deliver_coupon_success(self, mock_db, connector, tenant_id):
-        """成功发放优惠券"""
-        consumer_id = "consumer-001"
+class TestAdapterRegistry:
+    """适配器注册和查找"""
 
-        with patch("app.services.external_benefit._call_external_deliver", new_callable=AsyncMock) as mock_deliver:
-            mock_deliver.return_value = {"status": "success", "code": "COUPON-12345"}
+    def test_registered_types(self):
+        types = list_adapter_types()
+        assert "generic_http" in types
+        assert "coupon_pool" in types
 
-            result = await deliver_benefit(
-                mock_db, tenant_id, connector, consumer_id,
-                benefit_type="coupon",
-                benefit_config={"pool_id": "pool-001"},
-            )
+    def test_get_generic_http_adapter(self, generic_connector):
+        adapter = get_adapter(generic_connector)
+        assert adapter is not None
 
-        assert result["status"] == DeliveryStatus.SUCCESS
-        assert result["external_code"] == "COUPON-12345"
-        mock_db.add.assert_called_once()
-        mock_db.flush.assert_awaited()
+    def test_get_coupon_pool_adapter(self, pool_connector):
+        adapter = get_adapter(pool_connector)
+        assert adapter is not None
 
-    @pytest.mark.asyncio
-    async def test_deliver_redpacket_success(self, mock_db, redpacket_connector, tenant_id):
-        """成功发放红包"""
-        consumer_id = "consumer-002"
-
-        with patch("app.services.external_benefit._call_external_deliver", new_callable=AsyncMock) as mock_deliver:
-            mock_deliver.return_value = {"status": "success", "amount": 100}
-
-            result = await deliver_benefit(
-                mock_db, tenant_id, redpacket_connector, consumer_id,
-                benefit_type="redpacket",
-                benefit_config={"rule_id": "rule-001"},
-            )
-
-        assert result["status"] == DeliveryStatus.SUCCESS
-        assert result["external_data"]["amount"] == 100
-
-    @pytest.mark.asyncio
-    async def test_deliver_points_success(self, mock_db, points_connector, tenant_id):
-        """成功发放积分"""
-        consumer_id = "consumer-003"
-
-        with patch("app.services.external_benefit._call_external_deliver", new_callable=AsyncMock) as mock_deliver:
-            mock_deliver.return_value = {"status": "success", "points": 50}
-
-            result = await deliver_benefit(
-                mock_db, tenant_id, points_connector, consumer_id,
-                benefit_type="points",
-                benefit_config={"points": 50},
-            )
-
-        assert result["status"] == DeliveryStatus.SUCCESS
-        assert result["external_data"]["points"] == 50
-
-    @pytest.mark.asyncio
-    async def test_deliver_external_failure_records_retry(self, mock_db, connector, tenant_id):
-        """外部系统失败应记录为 pending 状态，等待重试"""
-        consumer_id = "consumer-004"
-
-        with patch("app.services.external_benefit._call_external_deliver", new_callable=AsyncMock) as mock_deliver:
-            mock_deliver.side_effect = Exception("External API error")
-
-            with patch("app.services.external_benefit._get_circuit_breaker", return_value=CircuitBreaker(threshold=3)):
-                result = await deliver_benefit(
-                    mock_db, tenant_id, connector, consumer_id,
-                    benefit_type="coupon",
-                    benefit_config={"pool_id": "pool-001"},
-                )
-
-        assert result["status"] == DeliveryStatus.PENDING
-        assert result["retry_count"] == 0
-        mock_db.add.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_deliver_circuit_breaker_open(self, mock_db, connector, tenant_id):
-        """熔断器开启时应直接标记为 pending，不调用外部"""
-        cb = CircuitBreaker(threshold=1, reset_timeout=60)
-        cb.record_failure()  # 触发熔断
-
-        consumer_id = "consumer-005"
-
-        with patch("app.services.external_benefit._get_circuit_breaker", return_value=cb):
-            with patch("app.services.external_benefit._call_external_deliver", new_callable=AsyncMock) as mock_deliver:
-                result = await deliver_benefit(
-                    mock_db, tenant_id, connector, consumer_id,
-                    benefit_type="coupon",
-                    benefit_config={},
-                )
-
-        # 熔断器打开，不调用外部API
-        mock_deliver.assert_not_awaited()
-        assert result["status"] == DeliveryStatus.PENDING
+    def test_unknown_type_raises(self, tenant_id):
+        unknown = Connector(
+            id=uuid7(), tenant_id=tenant_id, name="x",
+            connector_type="nonexistent", config={}, enabled=True,
+        )
+        with pytest.raises(ValueError, match="Unknown connector type"):
+            get_adapter(unknown)
 
 
 # ---------------------------------------------------------------------------
-# 3. 失败重试 retry_delivery
+# 2. GenericHttpAdapter
 # ---------------------------------------------------------------------------
 
-class TestRetryDelivery:
-    """L4: 失败重试机制"""
+
+class TestGenericHttpAdapter:
+    """通用 HTTP 适配器"""
 
     @pytest.mark.asyncio
-    async def test_retry_success(self, mock_db, tenant_id):
-        """重试成功应更新状态为 success"""
-        delivery_id = uuid7()
-
-        # mock delivery record
-        mock_delivery = MagicMock()
-        mock_delivery.id = delivery_id
-        mock_delivery.tenant_id = tenant_id
-        mock_delivery.status = DeliveryStatus.PENDING
-        mock_delivery.retry_count = 1
-        mock_delivery.connector_id = uuid7()
-        mock_delivery.consumer_id = "consumer-001"
-        mock_delivery.benefit_type = "coupon"
-        mock_delivery.benefit_config = {"pool_id": "p1"}
-
-        mock_result = MagicMock()
-        mock_result.scalar_one_or_none.return_value = mock_delivery
-        mock_db.execute.return_value = mock_result
-
-        with patch("app.services.external_benefit._call_external_deliver", new_callable=AsyncMock) as mock_deliver:
-            mock_deliver.return_value = {"status": "success", "code": "COUPON-RETRY"}
-
-            with patch("app.services.external_benefit._get_circuit_breaker", return_value=CircuitBreaker()):
-                result = await retry_delivery(mock_db, delivery_id, tenant_id)
-
-        assert result["status"] == DeliveryStatus.SUCCESS
+    async def test_validate_config_ok(self, generic_connector):
+        adapter = get_adapter(generic_connector)
+        is_valid, error = await adapter.validate_config(generic_connector.config)
+        assert is_valid
+        assert error == ""
 
     @pytest.mark.asyncio
-    async def test_retry_still_fails_increments_counter(self, mock_db, tenant_id):
-        """重试仍然失败应增加 retry_count"""
-        delivery_id = uuid7()
-
-        mock_delivery = MagicMock()
-        mock_delivery.id = delivery_id
-        mock_delivery.tenant_id = tenant_id
-        mock_delivery.status = DeliveryStatus.PENDING
-        mock_delivery.retry_count = 2
-        mock_delivery.max_retries = 5
-        mock_delivery.connector_id = uuid7()
-        mock_delivery.consumer_id = "consumer-001"
-        mock_delivery.benefit_type = "coupon"
-        mock_delivery.benefit_config = {}
-
-        mock_result = MagicMock()
-        mock_result.scalar_one_or_none.return_value = mock_delivery
-        mock_db.execute.return_value = mock_result
-
-        with patch("app.services.external_benefit._call_external_deliver", new_callable=AsyncMock) as mock_deliver:
-            mock_deliver.side_effect = Exception("Still failing")
-
-            with patch("app.services.external_benefit._get_circuit_breaker", return_value=CircuitBreaker()):
-                result = await retry_delivery(mock_db, delivery_id, tenant_id)
-
-        assert result["status"] == DeliveryStatus.PENDING
-        assert mock_delivery.retry_count == 3
+    async def test_validate_config_missing_url(self):
+        adapter = get_adapter(Connector(
+            id=uuid7(), tenant_id=uuid7(), name="x",
+            connector_type="generic_http", config={}, enabled=True,
+        ))
+        is_valid, error = await adapter.validate_config({})
+        assert not is_valid
+        assert "api_url" in error
 
     @pytest.mark.asyncio
-    async def test_retry_max_exhausted_marks_failed(self, mock_db, tenant_id):
-        """重试次数用尽应标记为 failed"""
-        delivery_id = uuid7()
-
-        mock_delivery = MagicMock()
-        mock_delivery.id = delivery_id
-        mock_delivery.tenant_id = tenant_id
-        mock_delivery.status = DeliveryStatus.PENDING
-        mock_delivery.retry_count = 4
-        mock_delivery.max_retries = 5
-        mock_delivery.connector_id = uuid7()
-        mock_delivery.consumer_id = "consumer-001"
-        mock_delivery.benefit_type = "coupon"
-        mock_delivery.benefit_config = {}
-
-        mock_result = MagicMock()
-        mock_result.scalar_one_or_none.return_value = mock_delivery
-        mock_db.execute.return_value = mock_result
-
-        with patch("app.services.external_benefit._call_external_deliver", new_callable=AsyncMock) as mock_deliver:
-            mock_deliver.side_effect = Exception("Final failure")
-
-            with patch("app.services.external_benefit._get_circuit_breaker", return_value=CircuitBreaker()):
-                result = await retry_delivery(mock_db, delivery_id, tenant_id)
-
-        assert result["status"] == DeliveryStatus.FAILED
+    async def test_validate_config_rejects_http(self):
+        adapter = get_adapter(Connector(
+            id=uuid7(), tenant_id=uuid7(), name="x",
+            connector_type="generic_http", config={}, enabled=True,
+        ))
+        is_valid, error = await adapter.validate_config({"api_url": "http://api.example.com"})
+        assert not is_valid
+        assert "HTTPS" in error
 
     @pytest.mark.asyncio
-    async def test_retry_already_success_is_noop(self, mock_db, tenant_id):
-        """已成功的记录不应重试"""
-        delivery_id = uuid7()
-
-        mock_delivery = MagicMock()
-        mock_delivery.id = delivery_id
-        mock_delivery.tenant_id = tenant_id
-        mock_delivery.status = DeliveryStatus.SUCCESS
-        mock_delivery.retry_count = 0
-
-        mock_result = MagicMock()
-        mock_result.scalar_one_or_none.return_value = mock_delivery
-        mock_db.execute.return_value = mock_result
-
-        result = await retry_delivery(mock_db, delivery_id, tenant_id)
-
-        assert result["status"] == DeliveryStatus.SUCCESS
-        mock_db.flush.assert_not_awaited()
+    async def test_validate_config_rejects_localhost(self):
+        adapter = get_adapter(Connector(
+            id=uuid7(), tenant_id=uuid7(), name="x",
+            connector_type="generic_http", config={}, enabled=True,
+        ))
+        is_valid, error = await adapter.validate_config({"api_url": "https://localhost"})
+        assert not is_valid
 
     @pytest.mark.asyncio
-    async def test_retry_not_found(self, mock_db, tenant_id):
-        """delivery 记录不存在应抛异常"""
-        mock_result = MagicMock()
-        mock_result.scalar_one_or_none.return_value = None
-        mock_db.execute.return_value = mock_result
+    async def test_validate_config_rejects_private_ip(self):
+        adapter = get_adapter(Connector(
+            id=uuid7(), tenant_id=uuid7(), name="x",
+            connector_type="generic_http", config={}, enabled=True,
+        ))
+        is_valid, error = await adapter.validate_config({"api_url": "https://192.168.1.1"})
+        assert not is_valid
 
-        with pytest.raises(ExternalBenefitError, match="not found"):
-            await retry_delivery(mock_db, uuid7(), tenant_id)
+    @pytest.mark.asyncio
+    async def test_verify_callback_default_deny(self, generic_connector):
+        adapter = get_adapter(generic_connector)
+        result = await adapter.verify_callback(generic_connector, b'{}', {})
+        assert result is False
+
+    @pytest.mark.asyncio
+    async def test_verify_callback_with_hmac(self):
+        import hashlib
+        import hmac
+
+        secret = "my-callback-secret"
+        body = b'{"status":"success"}'
+        expected_sig = hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
+
+        conn = Connector(
+            id=uuid7(), tenant_id=uuid7(), name="x",
+            connector_type="generic_http", config={"api_url": "https://api.example.com"},
+            secrets_encrypted=encrypt_secrets({"callback_secret": secret}),
+            enabled=True,
+        )
+        adapter = get_adapter(conn)
+
+        # 正确签名
+        result = await adapter.verify_callback(conn, body, {"X-Callback-Sig": expected_sig})
+        assert result is True
+
+        # 错误签名
+        result = await adapter.verify_callback(conn, body, {"X-Callback-Sig": "wrong"})
+        assert result is False
 
 
 # ---------------------------------------------------------------------------
-# 4. 获取待重试记录 get_pending_retries
+# 3. SSRF 防护
 # ---------------------------------------------------------------------------
 
-class TestGetPendingRetries:
-    """获取待重试的发放记录"""
+
+class TestSSRFProtection:
+    """URL 安全校验"""
+
+    def test_allows_https_public(self):
+        from app.services.connectors.generic_http import _is_url_safe
+        assert _is_url_safe("https://api.example.com") is True
+
+    def test_rejects_http(self):
+        from app.services.connectors.generic_http import _is_url_safe
+        assert _is_url_safe("http://api.example.com") is False
+
+    def test_rejects_localhost(self):
+        from app.services.connectors.generic_http import _is_url_safe
+        assert _is_url_safe("https://localhost") is False
+        assert _is_url_safe("https://127.0.0.1") is False
+
+    def test_rejects_private_ip(self):
+        from app.services.connectors.generic_http import _is_url_safe
+        assert _is_url_safe("https://10.0.0.1") is False
+        assert _is_url_safe("https://172.16.0.1") is False
+        assert _is_url_safe("https://192.168.1.1") is False
+
+    def test_rejects_empty(self):
+        from app.services.connectors.generic_http import _is_url_safe
+        assert _is_url_safe("") is False
+
+
+# ---------------------------------------------------------------------------
+# 4. CouponPoolAdapter
+# ---------------------------------------------------------------------------
+
+
+class TestCouponPoolAdapter:
+    """券码池适配器"""
 
     @pytest.mark.asyncio
-    async def test_get_pending_deliveries(self, mock_db, tenant_id):
-        """应返回所有 pending 且未超过最大重试次数的记录"""
-        mock_result = MagicMock()
-        mock_delivery = MagicMock()
-        mock_delivery.status = DeliveryStatus.PENDING
-        mock_delivery.retry_count = 2
-        mock_result.scalars.return_value.all.return_value = [mock_delivery]
-        mock_db.execute.return_value = mock_result
-
-        result = await get_pending_retries(mock_db, tenant_id)
-
-        assert len(result) == 1
-        assert result[0].status == DeliveryStatus.PENDING
+    async def test_validate_config_ok(self, pool_connector):
+        adapter = get_adapter(pool_connector)
+        is_valid, error = await adapter.validate_config(pool_connector.config)
+        assert is_valid
 
     @pytest.mark.asyncio
-    async def test_get_pending_empty(self, mock_db, tenant_id):
-        """没有待重试记录应返回空列表"""
-        mock_result = MagicMock()
-        mock_result.scalars.return_value.all.return_value = []
-        mock_db.execute.return_value = mock_result
+    async def test_validate_config_missing_pool_id(self):
+        adapter = get_adapter(Connector(
+            id=uuid7(), tenant_id=uuid7(), name="x",
+            connector_type="coupon_pool", config={}, enabled=True,
+        ))
+        is_valid, error = await adapter.validate_config({})
+        assert not is_valid
+        assert "pool_id" in error
 
-        result = await get_pending_retries(mock_db, tenant_id)
-
-        assert len(result) == 0
+    @pytest.mark.asyncio
+    async def test_validate_config_invalid_uuid(self):
+        adapter = get_adapter(Connector(
+            id=uuid7(), tenant_id=uuid7(), name="x",
+            connector_type="coupon_pool", config={}, enabled=True,
+        ))
+        is_valid, error = await adapter.validate_config({"pool_id": "not-a-uuid"})
+        assert not is_valid
 
 
 # ---------------------------------------------------------------------------
-# 5. BenefitDelivery model
+# 5. 凭证加密
 # ---------------------------------------------------------------------------
+
+
+class TestSecretsEncryption:
+    """AES-GCM 凭证加密/解密/脱敏"""
+
+    def setup_method(self):
+        os.environ["AES_MASTER_KEY_V1"] = "a" * 64
+
+    def test_encrypt_decrypt_roundtrip(self):
+        secrets = {"api_key": "sk_live_12345678", "api_secret": "secret123"}
+        encrypted = encrypt_secrets(secrets)
+        decrypted = decrypt_secrets(encrypted)
+        assert decrypted == secrets
+
+    def test_encrypt_empty_returns_empty(self):
+        assert encrypt_secrets({}) == b""
+        assert decrypt_secrets(b"") == {}
+
+    def test_mask_secrets(self):
+        secrets = {"api_key": "sk_live_12345678", "short": "abc"}
+        masked = mask_secrets(secrets)
+        assert "sk_" in masked["api_key"]
+        assert "678" in masked["api_key"]
+        assert "***" in masked["api_key"]
+        assert masked["short"] == "***"
+
+
+# ---------------------------------------------------------------------------
+# 6. BenefitDelivery 模型
+# ---------------------------------------------------------------------------
+
 
 class TestBenefitDeliveryModel:
-    """BenefitDelivery ORM 模型字段验证"""
+    """模型字段验证"""
 
     def test_model_fields(self):
-        """验证模型包含所有必要字段"""
         from app.models.connector import BenefitDelivery
-
-        assert hasattr(BenefitDelivery, "id")
-        assert hasattr(BenefitDelivery, "tenant_id")
-        assert hasattr(BenefitDelivery, "connector_id")
-        assert hasattr(BenefitDelivery, "consumer_id")
-        assert hasattr(BenefitDelivery, "benefit_type")
-        assert hasattr(BenefitDelivery, "benefit_config")
-        assert hasattr(BenefitDelivery, "status")
-        assert hasattr(BenefitDelivery, "retry_count")
-        assert hasattr(BenefitDelivery, "max_retries")
-        assert hasattr(BenefitDelivery, "external_data")
-        assert hasattr(BenefitDelivery, "next_retry_at")
-        assert hasattr(BenefitDelivery, "created_at")
-        assert hasattr(BenefitDelivery, "updated_at")
-
-    def test_delivery_status_values(self):
-        """验证状态枚举值"""
-        assert DeliveryStatus.PENDING == "pending"
-        assert DeliveryStatus.SUCCESS == "success"
-        assert DeliveryStatus.FAILED == "failed"
+        expected = [
+            "id", "tenant_id", "connector_id", "consumer_id",
+            "benefit_type", "benefit_config", "status",
+            "retry_count", "max_retries", "external_data",
+            "next_retry_at", "created_at", "updated_at",
+        ]
+        for field in expected:
+            assert hasattr(BenefitDelivery, field), f"Missing field: {field}"
 
 
 # ---------------------------------------------------------------------------
-# 6. 回调 callback
+# 7. Connector 模型新增字段
 # ---------------------------------------------------------------------------
 
-class TestDeliveryCallback:
-    """外部系统发放结果回调"""
 
-    @pytest.mark.asyncio
-    async def test_callback_updates_status(self, mock_db, tenant_id):
-        """回调应更新发放状态"""
-        delivery_id = uuid7()
+class TestConnectorModel:
+    """Connector 模型字段验证"""
 
-        mock_delivery = MagicMock()
-        mock_delivery.id = delivery_id
-        mock_delivery.tenant_id = tenant_id
-        mock_delivery.status = DeliveryStatus.PENDING
+    def test_secrets_encrypted_field(self):
+        assert hasattr(Connector, "secrets_encrypted")
 
-        mock_result = MagicMock()
-        mock_result.scalar_one_or_none.return_value = mock_delivery
-        mock_db.execute.return_value = mock_result
+    def test_created_updated_at_fields(self):
+        assert hasattr(Connector, "created_at")
+        assert hasattr(Connector, "updated_at")
 
-        from app.services.external_benefit import delivery_callback
 
-        result = await delivery_callback(
-            mock_db, tenant_id, delivery_id,
-            status="success",
-            external_data={"code": "COUPON-CB-001"},
-        )
+# ---------------------------------------------------------------------------
+# 8. 熔断器
+# ---------------------------------------------------------------------------
 
-        assert result["status"] == DeliveryStatus.SUCCESS
-        assert mock_delivery.status == DeliveryStatus.SUCCESS
-        assert mock_delivery.external_data == {"code": "COUPON-CB-001"}
 
-    @pytest.mark.asyncio
-    async def test_callback_not_found(self, mock_db, tenant_id):
-        """回调不存在的记录应报错"""
-        mock_result = MagicMock()
-        mock_result.scalar_one_or_none.return_value = None
-        mock_db.execute.return_value = mock_result
+class TestCircuitBreaker:
+    """熔断器集成"""
 
-        from app.services.external_benefit import delivery_callback
+    def test_opens_after_threshold(self):
+        cb = CircuitBreaker(threshold=3, reset_timeout=60)
+        cb.record_failure()
+        cb.record_failure()
+        assert cb.is_available()  # 还没到阈值
+        cb.record_failure()
+        assert not cb.is_available()  # 熔断
 
-        with pytest.raises(ExternalBenefitError, match="not found"):
-            await delivery_callback(
-                mock_db, tenant_id, uuid7(),
-                status="success",
-                external_data={},
-            )
+    def test_resets_after_timeout(self):
+        import time
+        cb = CircuitBreaker(threshold=1, reset_timeout=1)
+        cb.record_failure()
+        assert not cb.is_available()
+        time.sleep(1.1)
+        assert cb.is_available()  # 超时恢复
+
+    def test_success_resets_failures(self):
+        cb = CircuitBreaker(threshold=3, reset_timeout=60)
+        cb.record_failure()
+        cb.record_failure()
+        cb.record_success()
+        assert cb._state.failure_count == 0
