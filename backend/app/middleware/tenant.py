@@ -12,7 +12,12 @@ class TenantScopeMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         # 公开路由跳过认证
         public_paths = {"/health", "/health/detail", "/docs", "/openapi.json", "/redoc"}
-        public_auth_paths = {"/api/v1/auth/login", "/api/v1/auth/refresh"}
+        public_auth_paths = {
+            "/api/v1/auth/login",
+            "/api/v1/auth/refresh",
+            "/api/v1/consumers/lead-capture",
+            "/api/v1/consumers/me",
+        }
         if (
             request.url.path in public_paths
             or request.url.path in public_auth_paths
