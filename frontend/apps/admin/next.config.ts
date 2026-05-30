@@ -15,7 +15,7 @@ const securityHeaders = [
       "style-src 'self' 'unsafe-inline'",
       "img-src 'self' data: blob: https:",
       "font-src 'self'",
-      "connect-src 'self'",
+      `connect-src 'self'${process.env.NODE_ENV !== "production" ? " http://localhost:8000" : ""}`,
       "frame-ancestors 'none'",
       "base-uri 'self'",
       "form-action 'self'",
@@ -27,14 +27,6 @@ const nextConfig: NextConfig = {
   transpilePackages: ["@yimatong/shared"],
   async headers() {
     return [{ source: "/(.*)", headers: securityHeaders }];
-  },
-  async rewrites() {
-    return [
-      {
-        source: "/api/v1/:path*",
-        destination: "http://localhost:8000/api/v1/:path*",
-      },
-    ];
   },
 };
 
