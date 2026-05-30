@@ -28,37 +28,6 @@ def _build_signing_string(method: str, url: str, timestamp: str, nonce: str, bod
     return "\n".join(parts).encode("utf-8")
 
 
-def sign(
-    private_key_pem: str,
-    method: str,
-    url: str,
-    body: str = "",
-) -> dict[str, str]:
-    """生成微信支付 V3 请求签名，返回 Authorization header 所需字段。
-
-    Returns:
-        dict with keys: authorization, timestamp, nonce
-    """
-    timestamp = str(int(time.time()))
-    nonce = uuid.uuid4().hex
-    signing_string = _build_signing_string(method, url, timestamp, nonce, body)
-    private_key = _load_private_key(private_key_pem)
-    signature = private_key.sign(signing_string, padding.PKCS1v15(), hashes.SHA256())
-    signature_b64 = base64.b64encode(signature).decode("utf-8")
-    # serial_no 需要从证书中提取，此处返回签名即可
-    authorization = (
-        f'WECHATPAY2-SHA256-RSA2048 '
-        f'mchid="",nonce_str="{nonce}",'
-        f'timestamp="{timestamp}",serial_no="",'
-        f'signature="{signature_b64}"'
-    )
-    return {
-        "authorization": authorization,
-        "timestamp": timestamp,
-        "nonce": nonce,
-    }
-
-
 def sign_with_serial(
     private_key_pem: str,
     mch_id: str,

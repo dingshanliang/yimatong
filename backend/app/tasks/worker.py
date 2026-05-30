@@ -10,7 +10,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import uuid
 from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import select, update
@@ -133,7 +132,6 @@ async def poll_pending_retries() -> int:
 async def poll_benefit_delivery_retries() -> int:
     """查询到期的外部权益发放重试，执行重试。返回重试数量。"""
     from app.core.database import async_session_factory
-
     from app.models.connector import BenefitDelivery, Connector
     from app.services.benefit_delivery_handler import (
         DeliveryStatus,

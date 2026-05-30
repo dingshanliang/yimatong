@@ -44,8 +44,9 @@ class WeChatPayTransferAdapter(BaseConnectorAdapter):
 
     def _get_config(self, connector: Connector) -> dict:
         if connector.secrets_encrypted:
-            from app.utils.crypto import decrypt_json
-            secrets = decrypt_json(connector.secrets_encrypted)
+            from app.services.connectors.secrets import decrypt_secrets
+
+            secrets = decrypt_secrets(connector.secrets_encrypted)
             return {**connector.config, **secrets}
         return connector.config
 

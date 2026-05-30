@@ -23,6 +23,17 @@ from app.core.database import get_db
 
 logger = logging.getLogger(__name__)
 
+
+def _get_connector_config(connector) -> dict:
+    """解密并合并 connector 配置。"""
+    from app.services.connectors.secrets import decrypt_secrets
+
+    cfg = connector.config.copy() if connector.config else {}
+    if connector.secrets_encrypted:
+        secrets = decrypt_secrets(connector.secrets_encrypted)
+        cfg.update(secrets)
+    return cfg
+
 wechat_oauth_router = APIRouter(prefix="/api/v1/wechat", tags=["wechat-oauth"])
 
 OAUTH_URL = "https://open.weixin.qq.com/connect/oauth2/authorize"
@@ -71,11 +82,7 @@ async def get_auth_url(
         raise HTTPException(status_code=422, detail="No wechat_pay_transfer connector configured for this tenant")
 
     # 从 connector 获取 OA appid
-    cfg = connector.config.copy() if connector.config else {}
-    if connector.secrets_encrypted:
-        from app.utils.crypto import decrypt_json
-        secrets = decrypt_json(connector.secrets_encrypted)
-        cfg.update(secrets)
+    cfg = _get_connector_config(connector)
 
     oa_appid = cfg.get("oa_appid")
     if not oa_appid:
@@ -83,11 +90,13 @@ async def get_auth_url(
 
     # state 编码：base64(benefit_id:scan_token)
     import base64
+    from urllib.parse import quote
+
     state_str = f"{benefit_id}:{scan_token}"
     state = base64.urlsafe_b64encode(state_str.encode()).decode()
 
     # 回调地址
-    callback_url = f"{settings.base_url}/api/v1/wechat/oauth-callback"
+    callback_url = quote(f"{settings.base_url}/api/v1/wechat/oauth-callback", safe="")
 
     auth_url = (
         f"{OAUTH_URL}?appid={oa_appid}"
@@ -139,11 +148,7 @@ async def oauth_callback(
     if not connector:
         raise HTTPException(status_code=422, detail="No wechat_pay_transfer connector configured")
 
-    cfg = connector.config.copy() if connector.config else {}
-    if connector.secrets_encrypted:
-        from app.utils.crypto import decrypt_json
-        secrets = decrypt_json(connector.secrets_encrypted)
-        cfg.update(secrets)
+    cfg = _get_connector_config(connector)
 
     oa_appid = cfg.get("oa_appid")
     oa_appsecret = cfg.get("oa_appsecret")
@@ -170,6 +175,8 @@ async def oauth_callback(
         raise HTTPException(status_code=401, detail="Failed to get OpenID from WeChat")
 
     # 创建/查找 ConsumerProfile
+    from sqlalchemy.exc import IntegrityError
+
     from app.models.member import ConsumerProfile
 
     existing = await db.execute(
@@ -185,7 +192,52 @@ async def oauth_callback(
             wechat_openid=openid,
         )
         db.add(consumer)
-        await db.flush()
+        try:
+            await db.flush()
+        except IntegrityError:
+            await db.rollback()
+            existing = await db.execute(
+                select(ConsumerProfile).where(
+                    ConsumerProfile.tenant_id == benefit.tenant_id,
+                    ConsumerProfile.wechat_openid == openid,
+                )
+            )
+            consumer = existing.scalar_one_or_none()
+            if not consumer:
+                raise
+
+    # 检查每用户领取次数限制
+    from datetime import UTC, datetime
+
+    from sqlalchemy import func
+
+    from app.models.campaign import BenefitClaim
+
+    rp_config = benefit.config_json
+    daily_limit = rp_config.get("daily_limit_per_user", 3)
+    total_limit = rp_config.get("total_limit_per_user", 10)
+
+    total_count_result = await db.execute(
+        select(func.count()).select_from(BenefitClaim).where(
+            BenefitClaim.benefit_id == benefit_id,
+            BenefitClaim.consumer_id == str(consumer.id),
+        )
+    )
+    total_count = total_count_result.scalar() or 0
+    if total_count >= total_limit:
+        raise HTTPException(status_code=429, detail="已达到总领取上限")
+
+    today_start = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
+    daily_count_result = await db.execute(
+        select(func.count()).select_from(BenefitClaim).where(
+            BenefitClaim.benefit_id == benefit_id,
+            BenefitClaim.consumer_id == str(consumer.id),
+            BenefitClaim.created_at >= today_start,
+        )
+    )
+    daily_count = daily_count_result.scalar() or 0
+    if daily_count >= daily_limit:
+        raise HTTPException(status_code=429, detail="已达到今日领取上限")
 
     # 自动执行红包领取
     from app.services.redpacket_amount import calc_amount, validate_config
@@ -234,7 +286,7 @@ async def oauth_callback(
     # 创建 BenefitClaim
     from app.models.campaign import BenefitClaim
 
-    idempotency_key = f"rp:{consumer.id}:{benefit_id}"
+    idempotency_key = f"rp:{consumer.id}:{benefit_id}:{total_count}"
     claim = BenefitClaim(
         tenant_id=benefit.tenant_id,
         benefit_id=benefit_id,

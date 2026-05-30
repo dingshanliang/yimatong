@@ -7,7 +7,7 @@
 """
 
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -120,7 +120,7 @@ async def create_or_update_mapping(
 
     if mapping:
         mapping.local_entity_id = consumer_id
-        mapping.last_synced_at = datetime.now(timezone.utc)
+        mapping.last_synced_at = datetime.now(UTC)
         if external_phone_hash:
             mapping.external_phone_hash = external_phone_hash
     else:
@@ -132,7 +132,7 @@ async def create_or_update_mapping(
             external_id=external_id,
             external_phone_hash=external_phone_hash,
             sync_direction=sync_direction,
-            last_synced_at=datetime.now(timezone.utc),
+            last_synced_at=datetime.now(UTC),
         )
         db.add(mapping)
 

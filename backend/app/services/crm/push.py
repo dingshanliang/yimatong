@@ -14,14 +14,12 @@ from app.core.event_bus import event_bus
 from app.models.connector import Connector
 from app.models.integration import SyncRecord
 from app.models.member import ConsumerProfile
-from app.models.sync_mapping import SyncMapping
+from app.services.connectors.wecom_crm import WeChatWorkCrmAdapter
 from app.services.crm.matcher import (
-    MatchResult,
     create_or_update_mapping,
     decrypt_and_match_phone,
     match_by_external_id,
 )
-from app.services.connectors.wecom_crm import WeChatWorkCrmAdapter
 
 logger = logging.getLogger(__name__)
 

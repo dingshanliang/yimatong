@@ -13,10 +13,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.connector import Connector
 from app.models.integration import SyncRecord
 from app.models.member import ConsumerProfile, MemberLevel
-from app.models.sync_mapping import SyncMapping
+from app.services.connectors.wecom_crm import WeChatWorkCrmAdapter
 from app.services.crm.conflict import resolve_consumer_conflict
 from app.services.crm.matcher import create_or_update_mapping, match_by_external_id
-from app.services.connectors.wecom_crm import WeChatWorkCrmAdapter
 
 logger = logging.getLogger(__name__)
 

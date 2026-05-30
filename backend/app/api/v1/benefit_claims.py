@@ -249,7 +249,7 @@ async def _handle_cash_red_packet_claim(
         raise HTTPException(status_code=410, detail="红包已抢光")
 
     # 创建 claim 记录
-    idempotency_key = f"rp:{consumer.id}:{benefit.id}"
+    idempotency_key = f"rp:{consumer.id}:{benefit.id}:{total_count}"
     claim = BenefitClaim(
         tenant_id=tenant_id,
         benefit_id=benefit.id,

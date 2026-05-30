@@ -19,7 +19,6 @@ from app.models.campaign import Benefit, BenefitClaim
 from app.models.connector import BenefitDelivery, Connector
 from app.services.circuit_breaker import CircuitBreaker
 from app.services.connectors import get_adapter
-from app.services.connectors.base import DeliveryResult
 from app.services.connectors.coupon_pool import CouponPoolAdapter
 from app.services.connectors.secrets import decrypt_secrets
 

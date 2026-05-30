@@ -496,7 +496,7 @@ async def open_create_sku(
     tenant_id: uuid.UUID = Depends(get_current_tenant),
     _: None = Depends(require_permission("product:create")),
 ):
-    from app.models.product import Product, SKU
+    from app.models.product import SKU, Product
 
     presult = await db.execute(
         select(Product).where(Product.tenant_id == tenant_id, Product.name == body.product_name)
@@ -623,7 +623,7 @@ async def open_create_batch(
 ):
     from datetime import date as date_type
 
-    from app.models.product import ProductionBatch, SKU
+    from app.models.product import SKU, ProductionBatch
 
     sresult = await db.execute(
         select(SKU).where(SKU.tenant_id == tenant_id, SKU.code == body.sku_code)
