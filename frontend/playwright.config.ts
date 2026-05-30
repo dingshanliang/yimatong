@@ -14,6 +14,7 @@ export default defineConfig({
   fullyParallel: false, // core flow tests must run serially
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,
+  timeout: 60_000, // CI dev server compilation + hydration needs more time
   workers: 1, // serial execution for shared backend state
   reporter: process.env.CI
     ? [["html", { open: "never" }], ["list"]]

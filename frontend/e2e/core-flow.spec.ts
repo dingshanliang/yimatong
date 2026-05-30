@@ -61,20 +61,15 @@ async function antdPopconfirmConfirm(page: any) {
 }
 
 test.describe("核心用户流程", () => {
-  test("登录后跳转工作台", async ({ page }) => {
-    await page.goto("/login");
-    await page.getByPlaceholder(/邮箱|email/i).fill(ctx.email);
-    await page.getByPlaceholder(/密码|password/i).fill("E2ETest1234");
-    await page.getByRole("button", { name: /登[录陆]/ }).click();
-
-    // Wait for redirect to dashboard
-    await page.waitForURL("/", { timeout: 10000 });
+  test("已登录状态访问工作台", async ({ page }) => {
+    // storageState 已预设 cookie + localStorage，直接验证 dashboard 可访问
+    await page.goto("/");
     await expect(page.getByRole("heading", { name: "工作台" })).toBeVisible({ timeout: 10000 });
   });
 
   test("创建产品", async ({ page }) => {
     await page.goto("/products");
-    await expect(page.getByRole("heading", { name: "产品管理" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "产品管理" })).toBeVisible({ timeout: 15000 });
     await page.waitForTimeout(1500);
 
     await page.getByRole("button", { name: /新建产品/ }).click();
@@ -94,7 +89,7 @@ test.describe("核心用户流程", () => {
 
   test("生成码批次并激活", async ({ page }) => {
     await page.goto("/codes");
-    await expect(page.getByRole("heading", { name: "码管理" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "码管理" })).toBeVisible({ timeout: 15000 });
     await page.waitForTimeout(1500);
 
     await page.getByRole("button", { name: /生成码批次/ }).click();
@@ -125,7 +120,7 @@ test.describe("核心用户流程", () => {
 
   test("配置页面并发布", async ({ page }) => {
     await page.goto("/pages");
-    await expect(page.getByRole("heading", { name: "页面管理" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "页面管理" })).toBeVisible({ timeout: 15000 });
     await page.waitForTimeout(1500);
 
     await page.getByRole("button", { name: /新建页面/ }).click();
@@ -157,7 +152,7 @@ test.describe("核心用户流程", () => {
 
   test("创建活动", async ({ page }) => {
     await page.goto("/campaigns");
-    await expect(page.getByRole("heading", { name: "活动管理" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "活动管理" })).toBeVisible({ timeout: 15000 });
     await page.waitForTimeout(1500);
 
     await page.getByRole("button", { name: /新建活动/ }).click();
@@ -177,7 +172,7 @@ test.describe("核心用户流程", () => {
 
   test("创建权益", async ({ page }) => {
     await page.goto("/benefits");
-    await expect(page.getByRole("heading", { name: "权益管理" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "权益管理" })).toBeVisible({ timeout: 15000 });
     await page.waitForTimeout(1500);
 
     await page.getByRole("button", { name: /新建权益/ }).click();
