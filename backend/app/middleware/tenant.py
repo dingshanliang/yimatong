@@ -37,7 +37,7 @@ class TenantScopeMiddleware(BaseHTTPMiddleware):
             raise UnauthorizedError("Missing or invalid token")
 
         token = auth_header[7:]
-        payload = verify_access_token(token)
+        payload = await verify_access_token(token)
         if payload is None:
             raise UnauthorizedError("Invalid or expired token")
 

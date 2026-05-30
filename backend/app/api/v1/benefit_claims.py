@@ -8,11 +8,11 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
-from app.services.redis_cache import RedisCache
+from app.services.redis_cache import AsyncRedisCache
 
 benefit_claim_router = APIRouter(prefix="/api/v1", tags=["benefit-claims"])
 
-_claim_cache = RedisCache(prefix="claim", default_ttl=300)
+_claim_cache = AsyncRedisCache(prefix="claim", default_ttl=300)
 
 
 class BenefitClaimRequest(BaseModel):
@@ -75,7 +75,7 @@ async def claim_benefit_h5(
     # 5. 双层幂等：Redis 缓存层 + DB 唯一约束
     idempotency_key = f"claim:{token[:16]}:{benefit_id}"
 
-    if not _claim_cache.set_idempotent(idempotency_key, ttl=300):
+    if not await _claim_cache.set_idempotent(idempotency_key, ttl=300):
         raise HTTPException(status_code=409, detail="already claimed")
 
     from app.models.campaign import BenefitClaim
@@ -171,12 +171,11 @@ async def _handle_cash_red_packet_claim(
         }
 
     # 有 OpenID，直接执行红包领取
-    from app.services.redpacket import claim_red_packet
-
     # 检查限领（在调用 claim_red_packet 前完成）
     from sqlalchemy import func
 
     from app.models.campaign import BenefitClaim
+    from app.services.redpacket import claim_red_packet
 
     rp_config = benefit.config_json
     daily_limit = rp_config.get("daily_limit_per_user", 3)

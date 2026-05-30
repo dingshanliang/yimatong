@@ -1,5 +1,7 @@
 """A1-006: JWT 双 token 认证体系验收测试"""
 
+import pytest
+
 from app.utils.security import (
     create_access_token,
     create_refresh_token,
@@ -37,15 +39,15 @@ class TestAccessToken:
         assert "exp" in payload
         assert "jti" in payload
 
-    def test_verify_access_token_success(self):
+    async def test_verify_access_token_success(self):
         token = create_access_token("t-001", "a-001", "admin")
-        payload = verify_access_token(token)
+        payload = await verify_access_token(token)
         assert payload is not None
         assert payload["type"] == "access"
 
-    def test_verify_access_token_rejects_refresh(self):
+    async def test_verify_access_token_rejects_refresh(self):
         token = create_refresh_token("a-001")
-        result = verify_access_token(token)
+        result = await verify_access_token(token)
         assert result is None
 
     def test_access_token_has_jti(self):
@@ -81,12 +83,12 @@ class TestRefreshToken:
 
 
 class TestTokenSecurity:
-    def test_tampered_token_fails(self):
+    async def test_tampered_token_fails(self):
         token = create_access_token("t-001", "a-001", "admin")
         tampered = token[:-5] + "xxxxx"
-        result = verify_access_token(tampered)
+        result = await verify_access_token(tampered)
         assert result is None
 
-    def test_invalid_token_fails(self):
-        result = verify_access_token("not-a-token")
+    async def test_invalid_token_fails(self):
+        result = await verify_access_token("not-a-token")
         assert result is None

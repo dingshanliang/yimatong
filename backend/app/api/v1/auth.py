@@ -10,10 +10,10 @@ from app.core.config import settings
 from app.core.database import get_db
 from app.core.dependencies import get_current_account_id
 from app.models.tenant import Account
-from app.services.redis_cache import RedisCache
+from app.schemas.common import UNAUTHORIZED_EXAMPLE, ErrorDetail
+from app.services.redis_cache import AsyncRedisCache
 from app.utils import utcnow
 from app.utils.security import create_access_token, create_refresh_token, decode_token, verify_password
-from app.schemas.common import ErrorDetail, UNAUTHORIZED_EXAMPLE
 
 router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
 
@@ -169,6 +169,6 @@ async def logout(request: Request):
     else:
         remaining = settings.access_token_expire_minutes * 60
 
-    cache = RedisCache()
-    cache.revoke_token(jti, ttl=remaining)
+    cache = AsyncRedisCache()
+    await cache.revoke_token(jti, ttl=remaining)
     return {"status": "ok"}

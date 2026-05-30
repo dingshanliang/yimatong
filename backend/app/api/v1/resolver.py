@@ -14,6 +14,7 @@ from app.models.code import CodeItemStatus, CodeType
 from app.models.page import PageVersion, PageVersionStatus
 from app.services.page_render import render_page
 from app.services.public_id import validate_public_id
+from app.services.redis_cache import AsyncRedisCache
 from app.services.resolve_cache import resolve_cache
 from app.services.resolver import (
     INNER_VERIFY_PAGE,
@@ -28,6 +29,9 @@ from app.services.scan_event import parse_environment, record_scan_event
 from app.services.scan_token import create_scan_token
 
 resolver_router = APIRouter(tags=["resolver"])
+
+_product_cache = AsyncRedisCache(prefix="product", default_ttl=600)
+_page_config_cache = AsyncRedisCache(prefix="pagecfg", default_ttl=600)
 
 
 @resolver_router.get("/c/{public_id}", summary="解析 码")
@@ -56,13 +60,13 @@ async def resolve_code_endpoint(
         return HTMLResponse(content=NOT_FOUND_PAGE, status_code=404)
 
     # 3. 缓存查询
-    cached = resolve_cache.get(f"resolve:{public_id}")
+    cached = await resolve_cache.get(f"resolve:{public_id}")
     if cached:
         data = cached
     else:
         data = await resolve_public_code(db, public_id)
         if data:
-            resolve_cache.set(f"resolve:{public_id}", data)
+            await resolve_cache.set(f"resolve:{public_id}", data)
 
     if not data:
         if want_json:
@@ -159,38 +163,58 @@ async def _build_json_response(
         "scan_info": scan_info,
     }
 
-    # 查询品牌信息
+    # 查询品牌信息（缓存优先）
     if product_id:
         from app.models.product import Brand, Product
 
-        prod_result = await db.execute(select(Product).where(Product.id == uuid.UUID(product_id)))
-        product = prod_result.scalar_one_or_none()
-        if product:
-            result["code_data"]["product"] = {
-                "name": product.name,
-                "description": product.description,
-                "images": product.images if hasattr(product, "images") and product.images else [],
-            }
-            brand_result = await db.execute(select(Brand).where(Brand.id == product.brand_id))
-            brand = brand_result.scalar_one_or_none()
-            if brand:
-                result["brand"] = {"name": brand.name, "logo_url": brand.logo_url or ""}
-                result["tenant_branding"] = {"name": brand.name, "logo_url": brand.logo_url or ""}
+        cached_pb = await _product_cache.get(f"pb:{product_id}")
+        if cached_pb:
+            result["code_data"]["product"] = cached_pb["product"]
+            if cached_pb.get("brand"):
+                result["brand"] = cached_pb["brand"]
+                result["tenant_branding"] = cached_pb["brand"]
+        else:
+            prod_result = await db.execute(
+                select(Product, Brand)
+                .join(Brand, Product.brand_id == Brand.id)
+                .where(Product.id == uuid.UUID(product_id))
+            )
+            row = prod_result.one_or_none()
+            if row:
+                product, brand = row
+                product_data = {
+                    "name": product.name,
+                    "description": product.description,
+                    "images": product.images if hasattr(product, "images") and product.images else [],
+                }
+                brand_data = {"name": brand.name, "logo_url": brand.logo_url or ""}
+                await _product_cache.set(f"pb:{product_id}", {
+                    "product": product_data,
+                    "brand": brand_data,
+                })
+                result["code_data"]["product"] = product_data
+                result["brand"] = brand_data
+                result["tenant_branding"] = brand_data
 
-    # 查询页面配置（DSL）
+    # 查询页面配置（缓存优先）
     template_id = data.get("template_id")
     if template_id:
-        ver_result = await db.execute(
-            select(PageVersion)
-            .where(
-                PageVersion.page_template_id == uuid.UUID(template_id),
-                PageVersion.status == PageVersionStatus.published,
+        cached_config = await _page_config_cache.get(f"pv:{template_id}")
+        if cached_config:
+            result["page_config"] = cached_config
+        else:
+            ver_result = await db.execute(
+                select(PageVersion)
+                .where(
+                    PageVersion.page_template_id == uuid.UUID(template_id),
+                    PageVersion.status == PageVersionStatus.published,
+                )
+                .limit(1)
             )
-            .limit(1)
-        )
-        version = ver_result.scalar_one_or_none()
-        if version:
-            result["page_config"] = version.config_json
+            version = ver_result.scalar_one_or_none()
+            if version:
+                await _page_config_cache.set(f"pv:{template_id}", version.config_json)
+                result["page_config"] = version.config_json
 
     return result
 

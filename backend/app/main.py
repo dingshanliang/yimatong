@@ -192,6 +192,11 @@ async def lifespan(app):
 
     yield
 
+    # 清理 Redis 连接池
+    from app.services.redis_cache import close_redis_pool
+
+    await close_redis_pool()
+
 
 app = FastAPI(
     title="一码通 API",
