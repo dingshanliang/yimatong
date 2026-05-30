@@ -12,7 +12,7 @@ Platform admin and background workers must explicitly opt in.
 from alembic import op
 
 revision = "0011"
-down_revision = "0010"
+down_revision = "6c2dbc9c4bbf"
 branch_labels = None
 depends_on = None
 

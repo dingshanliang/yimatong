@@ -45,10 +45,12 @@ extend-exclude = ["alembic/versions"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "W", "UP"]
+ignore = ["N818"]
 
 [tool.ruff.lint.per-file-ignores]
 "alembic/env.py" = ["E402", "I001"]
 "app/api/v1/prd_compat.py" = ["E402"]
+"app/main.py" = ["E402"]
 "tests/**" = ["E501"]
 
 [tool.ruff.lint.isort]

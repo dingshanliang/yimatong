@@ -7,13 +7,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
 from app.core.dependencies import get_current_tenant
 from app.models.tenant import Tenant
-from app.schemas.common import ErrorDetail, NOT_FOUND_EXAMPLE, PaginatedResponse
+from app.schemas.common import NOT_FOUND_EXAMPLE, ErrorDetail, PaginatedResponse
 from app.schemas.tenant import TenantCreate, TenantRead, TenantUpdate
 from app.services.tenant import create_tenant, get_tenant, soft_delete_tenant, update_tenant
 from app.utils import escape_like_pattern
 
 TENANT_NOT_FOUND = {
-    404: {"model": ErrorDetail, "description": "租户不存在", "content": {"application/json": {"example": NOT_FOUND_EXAMPLE}}},
+    404: {
+        "model": ErrorDetail,
+        "description": "租户不存在",
+        "content": {"application/json": {"example": NOT_FOUND_EXAMPLE}},
+    },
 }
 
 router = APIRouter(prefix="/api/v1/tenants", tags=["tenants"])

@@ -33,6 +33,7 @@ from app.models.member import ConsumerProfile, PointRule, PointTransaction  # no
 from app.models.page import PageTemplate, PageVersion  # noqa: E402, F401
 from app.models.private_domain import PrivateDomainConfig  # noqa: E402, F401
 from app.models.product import SKU, Brand, Product, ProductionBatch  # noqa: E402, F401
+
 # redpacket models removed in EPIC-23 (red packet is now a benefit_type)
 from app.models.regional import (  # noqa: E402, F401
     RegionalCodeRule,

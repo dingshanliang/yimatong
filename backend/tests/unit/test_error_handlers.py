@@ -6,7 +6,6 @@ from fastapi.testclient import TestClient
 
 from app.core.error_handlers import register_exception_handlers
 from app.core.exceptions import (
-    AppException,
     BadRequestError,
     BusinessError,
     ConflictError,
@@ -16,7 +15,6 @@ from app.core.exceptions import (
     QuotaExceededError,
     UnauthorizedError,
 )
-from app.core.request_id import set_request_id
 
 
 @pytest.fixture

@@ -9,25 +9,22 @@
 """
 
 import os
-import uuid
-from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+import app.services.connectors.coupon_pool  # noqa: F401
+
+# 触发适配器自注册
+import app.services.connectors.generic_http  # noqa: F401
 from app.models.connector import Connector
 from app.services.circuit_breaker import CircuitBreaker
-from app.services.connectors import get_adapter, register_adapter
-from app.services.connectors.base import BaseConnectorAdapter, DeliveryResult
+from app.services.connectors import get_adapter
 from app.services.connectors.registry import list_adapter_types
 from app.services.connectors.secrets import (
     decrypt_secrets,
     encrypt_secrets,
     mask_secrets,
 )
-
-# 触发适配器自注册
-import app.services.connectors.generic_http  # noqa: F401
-import app.services.connectors.coupon_pool  # noqa: F401
 
 
 def uuid7():

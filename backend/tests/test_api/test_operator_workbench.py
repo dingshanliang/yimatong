@@ -1,7 +1,7 @@
 """yimatong-udt: 代运营工作台 API 验收测试"""
 
 from collections.abc import AsyncGenerator
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -128,7 +128,7 @@ class TestOpsTasks:
                 "title": "配置品牌信息",
                 "description": "为客户配置品牌 Logo 和简介",
                 "priority": "high",
-                "due_date": (datetime.now(timezone.utc) + timedelta(days=3)).isoformat(),
+                "due_date": (datetime.now(UTC) + timedelta(days=3)).isoformat(),
             },
         )
         assert resp.status_code == 201

@@ -1,6 +1,5 @@
 """A1-006: JWT 双 token 认证体系验收测试"""
 
-import pytest
 
 from app.utils.security import (
     create_access_token,

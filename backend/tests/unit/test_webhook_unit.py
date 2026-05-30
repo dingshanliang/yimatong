@@ -2,16 +2,15 @@
 
 import hashlib
 import hmac
-import json
 
 import pytest
 
 from app.core.event_bus import _EventBus
 from app.core.permissions import (
+    ROLE_PERMISSIONS,
     VALID_ROLES,
     get_permissions_for_role,
     role_has_permission,
-    ROLE_PERMISSIONS,
 )
 from app.services.webhook_sender import build_envelope, compute_signature, should_retry
 

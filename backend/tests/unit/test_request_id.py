@@ -1,6 +1,5 @@
 """Tests for Request ID middleware."""
 
-import uuid
 
 import pytest
 from fastapi import FastAPI

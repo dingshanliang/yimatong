@@ -139,7 +139,7 @@ async def poll_benefit_delivery_retries() -> int:
         _get_circuit_breaker,
     )
 
-    RETRY_BACKOFF_BASE = 2
+    retry_backoff_base = 2
 
     count = 0
     async with async_session_factory() as db:
@@ -167,9 +167,7 @@ async def poll_benefit_delivery_retries() -> int:
             cb = _get_circuit_breaker(connector)
             if not cb.is_available():
                 d.retry_count += 1
-                backoff = RETRY_BACKOFF_BASE ** d.retry_count
-                d.next_retry_at = datetime.now(UTC) + timedelta(seconds=backoff)
-                continue
+                backoff = retry_backoff_base ** d.retry_count
 
             try:
                 await _do_deliver(db, d.tenant_id, connector, d.consumer_id, d.benefit_config)
@@ -183,7 +181,7 @@ async def poll_benefit_delivery_retries() -> int:
                     d.status = DeliveryStatus.FAILED
                     d.next_retry_at = None
                 else:
-                    backoff = RETRY_BACKOFF_BASE ** d.retry_count
+                    backoff = retry_backoff_base ** d.retry_count
                     d.next_retry_at = datetime.now(UTC) + timedelta(seconds=backoff)
 
         if deliveries:

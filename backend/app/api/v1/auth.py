@@ -19,7 +19,11 @@ router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
 
 # 认证相关通用响应
 AUTH_RESPONSES = {
-    401: {"model": ErrorDetail, "description": "认证失败", "content": {"application/json": {"example": UNAUTHORIZED_EXAMPLE}}},
+    401: {
+        "model": ErrorDetail,
+        "description": "认证失败",
+        "content": {"application/json": {"example": UNAUTHORIZED_EXAMPLE}},
+    },
 }
 
 MAX_FAILED_ATTEMPTS = 5
@@ -120,7 +124,11 @@ class MeResponse(BaseModel):
     summary="获取当前用户信息",
     response_description="当前登录账号的详细信息",
     responses={
-        401: {"model": ErrorDetail, "description": "未认证或 Token 无效", "content": {"application/json": {"example": UNAUTHORIZED_EXAMPLE}}},
+        401: {
+            "model": ErrorDetail,
+            "description": "未认证或 Token 无效",
+            "content": {"application/json": {"example": UNAUTHORIZED_EXAMPLE}},
+        },
     },
 )
 async def me(

@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.core.dependencies import get_current_tenant
-from app.schemas.common import ErrorDetail, NOT_FOUND_EXAMPLE, PaginatedResponse
+from app.schemas.common import PaginatedResponse
 from app.services.campaign import (
     change_campaign_status,
     claim_benefit,

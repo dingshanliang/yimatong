@@ -1,6 +1,5 @@
 """CRM 冲突处理单元测试"""
 
-import pytest
 
 from app.services.crm.conflict import (
     _parse_tags,

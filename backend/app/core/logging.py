@@ -8,7 +8,7 @@ function called once at application startup.
 import json
 import logging
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from app.core.request_id import get_request_id
 
@@ -37,7 +37,7 @@ class JsonFormatter(logging.Formatter):
 
     def format(self, record: logging.LogRecord) -> str:
         log_entry: dict = {
-            "timestamp": datetime.fromtimestamp(record.created, tz=timezone.utc).isoformat(),
+            "timestamp": datetime.fromtimestamp(record.created, tz=UTC).isoformat(),
             "level": record.levelname,
             "logger": record.name,
             "request_id": getattr(record, "request_id", "-"),
@@ -65,7 +65,7 @@ class HumanFormatter(logging.Formatter):
     def format(self, record: logging.LogRecord) -> str:
         color = self.COLORS.get(record.levelname, "")
         request_id = getattr(record, "request_id", "-")
-        ts = datetime.fromtimestamp(record.created, tz=timezone.utc).strftime(
+        ts = datetime.fromtimestamp(record.created, tz=UTC).strftime(
             "%Y-%m-%d %H:%M:%S.%f"
         )[:-3]
         msg = f"{ts} {color}{record.levelname:<8}{self.RESET} [{request_id}] {record.name}: {record.getMessage()}"

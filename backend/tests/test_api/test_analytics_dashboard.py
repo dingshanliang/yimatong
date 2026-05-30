@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
 from app.main import app
 from app.models.analytics import DailyScanStats
-from app.models.campaign import Campaign, BenefitClaim
+from app.models.campaign import BenefitClaim, Campaign
 from app.models.channel import DiversionClue
 from app.models.export_log import ExportLog
 from app.models.risk import RiskAlert

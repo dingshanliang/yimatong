@@ -3,7 +3,6 @@
 import uuid
 
 import pytest
-from sqlalchemy import select
 
 from app.models.member import ConsumerProfile
 from app.models.sync_mapping import SyncMapping
@@ -63,7 +62,7 @@ class TestMatchByPhone:
         assert result is None
 
     async def test_found_by_hash(self, db, tenant_id):
-        consumer = await _create_consumer(db, tenant_id, phone_hash="hashed_13900001111")
+        await _create_consumer(db, tenant_id, phone_hash="hashed_13900001111")
         # Note: hash_phone("13900001111") won't match "hashed_13900001111"
         # This test validates the query structure
 
