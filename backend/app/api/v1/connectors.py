@@ -119,6 +119,28 @@ def _delivery_to_dict(delivery) -> dict:
 # ---------------------------------------------------------------------------
 
 
+@connector_router.get("/coupon-pools", summary="券码池列表")
+async def list_pools_endpoint(
+    db: AsyncSession = Depends(get_db),
+    tenant_id: uuid.UUID = Depends(get_current_tenant),
+):
+    from app.services.connector import list_coupon_pools
+
+    pools = await list_coupon_pools(db, tenant_id)
+    return {
+        "items": [
+            {
+                "id": str(p.id),
+                "name": p.name,
+                "total_codes": p.total_codes,
+                "remaining": p.remaining,
+            }
+            for p in pools
+        ],
+        "total": len(pools),
+    }
+
+
 @connector_router.post("/coupon-pools", status_code=201, summary="创建 pool")
 async def create_pool_endpoint(
     body: CouponPoolCreate,
@@ -133,6 +155,33 @@ async def create_pool_endpoint(
         "name": pool.name,
         "total_codes": pool.total_codes,
         "remaining": pool.remaining,
+    }
+
+
+@connector_router.get("/coupon-pools/{pool_id}/codes", summary="券码池码列表")
+async def list_pool_codes_endpoint(
+    pool_id: uuid.UUID,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=200),
+    db: AsyncSession = Depends(get_db),
+    tenant_id: uuid.UUID = Depends(get_current_tenant),
+):
+    from app.services.connector import list_pool_codes
+
+    codes, total = await list_pool_codes(db, pool_id, page=page, page_size=page_size)
+    return {
+        "items": [
+            {
+                "id": str(c.id),
+                "code": c.code,
+                "consumer_id": c.consumer_id,
+                "distributed": c.distributed,
+            }
+            for c in codes
+        ],
+        "total": total,
+        "page": page,
+        "page_size": page_size,
     }
 
 

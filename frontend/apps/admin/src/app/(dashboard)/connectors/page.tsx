@@ -2,31 +2,15 @@
 
 import { useCallback, useEffect, useState } from "react";
 import {
-  Table,
-  Button,
-  Modal,
-  Form,
-  Input,
-  Select,
-  Switch,
-  Tag,
-  Space,
-  message,
-  Popconfirm,
-  Card,
-  Statistic,
-  Row,
-  Col,
-  Tabs,
+  Table, Button, Modal, Form, Input, Select, Switch, Tag, Space, App,
+  Popconfirm, Card, Statistic, Row, Col, Tabs, Progress,
 } from "antd";
 import {
-  PlusOutlined,
-  ReloadOutlined,
-  ApiOutlined,
-  ExperimentOutlined,
-  SendOutlined,
+  PlusOutlined, ReloadOutlined, ExperimentOutlined,
+  SendOutlined, EyeOutlined,
 } from "@ant-design/icons";
 import api, { extractErrorMessage } from "@/lib/api";
+import { usePaginatedList } from "@/lib/hooks";
 
 interface Connector {
   id: string;
@@ -51,6 +35,20 @@ interface Delivery {
   next_retry_at: string | null;
 }
 
+interface Pool {
+  id: string;
+  name: string;
+  total_codes: number;
+  remaining: number;
+}
+
+interface PoolCode {
+  id: string;
+  code: string;
+  consumer_id: string | null;
+  distributed: boolean;
+}
+
 const TYPE_LABELS: Record<string, string> = {
   generic_http: "通用 HTTP",
   coupon_pool: "券码池",
@@ -60,6 +58,7 @@ const TYPE_LABELS: Record<string, string> = {
 };
 
 export default function ConnectorsPage() {
+  const { message } = App.useApp();
   const [connectors, setConnectors] = useState<Connector[]>([]);
   const [deliveries, setDeliveries] = useState<Delivery[]>([]);
   const [loading, setLoading] = useState(false);
@@ -69,6 +68,45 @@ export default function ConnectorsPage() {
   const [form] = Form.useForm();
   const [connectorTypes, setConnectorTypes] = useState<string[]>([]);
   const [activeTab, setActiveTab] = useState("connectors");
+
+  // Coupon pool state
+  const [poolModalOpen, setPoolModalOpen] = useState(false);
+  const [poolForm] = Form.useForm();
+  const [codeModalOpen, setCodeModalOpen] = useState(false);
+  const [selectedPool, setSelectedPool] = useState<Pool | null>(null);
+
+  const {
+    items: pools, loading: poolsLoading, refresh: refreshPools,
+  } = usePaginatedList<Pool>(
+    async () => {
+      try {
+        const { data } = await api.get("/connectors/coupon-pools");
+        return { items: data.items || [], total: data.total || 0 };
+      } catch {
+        message.error("加载券码池失败");
+        return { items: [], total: 0 };
+      }
+    },
+    []
+  );
+
+  const {
+    items: poolCodes, total: poolCodesTotal, loading: poolCodesLoading,
+    page: poolCodesPage, setPage: setPoolCodesPage,
+  } = usePaginatedList<PoolCode>(
+    async ({ page, page_size }) => {
+      if (!selectedPool) return { items: [], total: 0 };
+      try {
+        const { data } = await api.get(`/connectors/coupon-pools/${selectedPool.id}/codes`, {
+          params: { page, page_size },
+        });
+        return { items: data.items || [], total: data.total || 0 };
+      } catch {
+        return { items: [], total: 0 };
+      }
+    },
+    [selectedPool]
+  );
 
   const fetchConnectors = useCallback(async () => {
     setLoading(true);
@@ -99,7 +137,6 @@ export default function ConnectorsPage() {
       const { data } = await api.get("/connectors/connectors/types");
       setConnectorTypes(data.types || []);
     } catch {
-      // fallback to known types
       setConnectorTypes(["generic_http", "coupon_pool"]);
     }
   }, []);
@@ -152,11 +189,9 @@ export default function ConnectorsPage() {
       setModalOpen(false);
       fetchConnectors();
     } catch (err) {
-      if (err instanceof Error || (err as { errorFields?: unknown }).errorFields) {
-        const axiosErr = err as Parameters<typeof extractErrorMessage>[0];
-        if (axiosErr && typeof axiosErr === "object" && "response" in axiosErr) {
-          message.error(extractErrorMessage(axiosErr, "操作失败"));
-        }
+      const axiosErr = err as Parameters<typeof extractErrorMessage>[0];
+      if (axiosErr && typeof axiosErr === "object" && "response" in axiosErr) {
+        message.error(extractErrorMessage(axiosErr, "操作失败"));
       }
     }
   };
@@ -204,6 +239,39 @@ export default function ConnectorsPage() {
     } catch (err) {
       message.error(extractErrorMessage(err, "重试失败"));
     }
+  };
+
+  // Coupon pool handlers
+  const handleCreatePool = async () => {
+    try {
+      const values = await poolForm.validateFields();
+      const codes = (values.codes as string)
+        .split("\n")
+        .map((c: string) => c.trim())
+        .filter(Boolean);
+      if (codes.length === 0) {
+        message.error("请输入至少一个券码");
+        return;
+      }
+      await api.post("/connectors/coupon-pools", {
+        name: values.name,
+        codes,
+      });
+      message.success(`券码池创建成功，共 ${codes.length} 个券码`);
+      setPoolModalOpen(false);
+      poolForm.resetFields();
+      refreshPools();
+    } catch (err) {
+      const axiosErr = err as Parameters<typeof extractErrorMessage>[0];
+      if (axiosErr && typeof axiosErr === "object" && "response" in axiosErr) {
+        message.error(extractErrorMessage(axiosErr, "创建失败"));
+      }
+    }
+  };
+
+  const openCodeViewer = (pool: Pool) => {
+    setSelectedPool(pool);
+    setCodeModalOpen(true);
   };
 
   const enabledCount = connectors.filter((c) => c.enabled).length;
@@ -275,20 +343,14 @@ export default function ConnectorsPage() {
   const deliveryColumns = [
     { title: "ID", dataIndex: "id", key: "id", render: (v: string) => v.slice(0, 8) + "..." },
     { title: "消费者", dataIndex: "consumer_id", key: "consumer" },
-    {
-      title: "权益类型",
-      dataIndex: "benefit_type",
-      key: "type",
-    },
+    { title: "权益类型", dataIndex: "benefit_type", key: "type" },
     {
       title: "状态",
       dataIndex: "status",
       key: "status",
       render: (status: string) => {
         const colors: Record<string, string> = {
-          pending: "orange",
-          success: "green",
-          failed: "red",
+          pending: "orange", success: "green", failed: "red",
         };
         return <Tag color={colors[status] || "default"}>{status}</Tag>;
       },
@@ -320,28 +382,83 @@ export default function ConnectorsPage() {
     },
   ];
 
-  return (
-    <div>
-      <Row gutter={16} style={{ marginBottom: 16 }}>
-        <Col span={8}>
-          <Card>
-            <Statistic title="连接器总数" value={connectors.length} />
-          </Card>
-        </Col>
-        <Col span={8}>
-          <Card>
-            <Statistic title="已启用" value={enabledCount} valueStyle={{ color: "#3f8600" }} />
-          </Card>
-        </Col>
-        <Col span={8}>
-          <Card>
-            <Statistic title="待重试发放" value={pendingCount} valueStyle={{ color: pendingCount > 0 ? "#cf1322" : undefined }} />
-          </Card>
-        </Col>
-      </Row>
+  const poolColumns = [
+    { title: "池名称", dataIndex: "name", key: "name" },
+    {
+      title: "总数",
+      dataIndex: "total_codes",
+      key: "total_codes",
+    },
+    {
+      title: "剩余",
+      key: "remaining",
+      render: (_: unknown, record: Pool) => {
+        const used = record.total_codes - record.remaining;
+        const percent = record.total_codes > 0
+          ? Math.round((used / record.total_codes) * 100)
+          : 0;
+        return (
+          <div className="min-w-[100px]">
+            <div className="mb-1 text-xs text-gray-500">
+              {record.remaining} / {record.total_codes}
+            </div>
+            <Progress
+              percent={percent}
+              size="small"
+              status={record.remaining === 0 ? "exception" : undefined}
+            />
+          </div>
+        );
+      },
+    },
+    {
+      title: "状态",
+      key: "status",
+      render: (_: unknown, record: Pool) => (
+        <Tag color={record.remaining > 0 ? "green" : "red"}>
+          {record.remaining > 0 ? "有库存" : "已耗尽"}
+        </Tag>
+      ),
+    },
+    {
+      title: "操作",
+      key: "actions",
+      render: (_: unknown, record: Pool) => (
+        <Button
+          size="small"
+          icon={<EyeOutlined />}
+          onClick={() => openCodeViewer(record)}
+        >
+          查看码
+        </Button>
+      ),
+    },
+  ];
 
-      <Tabs activeKey={activeTab} onChange={handleTabChange}>
-        <Tabs.TabPane tab="连接器管理" key="connectors">
+  const poolCodeColumns = [
+    { title: "券码", dataIndex: "code", key: "code" },
+    {
+      title: "消费者",
+      dataIndex: "consumer_id",
+      key: "consumer_id",
+      render: (v: string | null) => v || "-",
+    },
+    {
+      title: "已分配",
+      dataIndex: "distributed",
+      key: "distributed",
+      render: (v: boolean) => (
+        <Tag color={v ? "blue" : "default"}>{v ? "是" : "否"}</Tag>
+      ),
+    },
+  ];
+
+  const tabItems = [
+    {
+      key: "connectors",
+      label: "连接器管理",
+      children: (
+        <>
           <div style={{ marginBottom: 16 }}>
             <Button type="primary" icon={<PlusOutlined />} onClick={handleCreate}>
               新建连接器
@@ -357,9 +474,44 @@ export default function ConnectorsPage() {
             loading={loading}
             pagination={false}
           />
-        </Tabs.TabPane>
-
-        <Tabs.TabPane tab="发放记录" key="deliveries">
+        </>
+      ),
+    },
+    {
+      key: "coupon-pools",
+      label: "券码池",
+      children: (
+        <>
+          <div style={{ marginBottom: 16 }}>
+            <Button
+              type="primary"
+              icon={<PlusOutlined />}
+              onClick={() => {
+                poolForm.resetFields();
+                setPoolModalOpen(true);
+              }}
+            >
+              创建券码池
+            </Button>
+            <Button icon={<ReloadOutlined />} onClick={() => refreshPools()} style={{ marginLeft: 8 }}>
+              刷新
+            </Button>
+          </div>
+          <Table
+            dataSource={pools}
+            columns={poolColumns}
+            rowKey="id"
+            loading={poolsLoading}
+            pagination={false}
+          />
+        </>
+      ),
+    },
+    {
+      key: "deliveries",
+      label: "发放记录",
+      children: (
+        <>
           <div style={{ marginBottom: 16 }}>
             <Button icon={<ReloadOutlined />} onClick={fetchDeliveries}>
               刷新
@@ -372,16 +524,44 @@ export default function ConnectorsPage() {
             loading={deliveryLoading}
             pagination={false}
           />
-        </Tabs.TabPane>
-      </Tabs>
+        </>
+      ),
+    },
+  ];
 
+  return (
+    <div>
+      <Row gutter={16} style={{ marginBottom: 16 }}>
+        <Col span={8}>
+          <Card>
+            <Statistic title="连接器总数" value={connectors.length} />
+          </Card>
+        </Col>
+        <Col span={8}>
+          <Card>
+            <Statistic title="已启用" value={enabledCount} valueStyle={{ color: "#3f8600" }} />
+          </Card>
+        </Col>
+        <Col span={8}>
+          <Card>
+            <Statistic
+              title="待重试发放"
+              value={pendingCount}
+              valueStyle={{ color: pendingCount > 0 ? "#cf1322" : undefined }}
+            />
+          </Card>
+        </Col>
+      </Row>
+
+      <Tabs activeKey={activeTab} onChange={handleTabChange} items={tabItems} />
+
+      {/* 连接器创建/编辑 Modal */}
       <Modal
         title={editing ? "编辑连接器" : "新建连接器"}
         open={modalOpen}
         onOk={handleSubmit}
         onCancel={() => setModalOpen(false)}
         okText="保存"
-        destroyOnClose
       >
         <Form form={form} layout="vertical">
           <Form.Item
@@ -410,6 +590,63 @@ export default function ConnectorsPage() {
             </Form.Item>
           )}
         </Form>
+      </Modal>
+
+      {/* 券码池创建 Modal */}
+      <Modal
+        title="创建券码池"
+        open={poolModalOpen}
+        onOk={handleCreatePool}
+        onCancel={() => setPoolModalOpen(false)}
+        okText="创建"
+      >
+        <Form form={poolForm} layout="vertical">
+          <Form.Item
+            name="name"
+            label="池名称"
+            rules={[{ required: true, message: "请输入池名称" }]}
+          >
+            <Input placeholder="如：2026年6月优惠券" />
+          </Form.Item>
+          <Form.Item
+            name="codes"
+            label="券码列表"
+            rules={[{ required: true, message: "请输入券码" }]}
+            extra="每行一个券码"
+          >
+            <Input.TextArea
+              rows={10}
+              placeholder={"COUPON001\nCOUPON002\nCOUPON003"}
+            />
+          </Form.Item>
+        </Form>
+      </Modal>
+
+      {/* 券码查看 Modal */}
+      <Modal
+        title={selectedPool ? `券码池：${selectedPool.name}` : "券码明细"}
+        open={codeModalOpen}
+        onCancel={() => {
+          setCodeModalOpen(false);
+          setSelectedPool(null);
+        }}
+        footer={null}
+        width={700}
+      >
+        <Table
+          dataSource={poolCodes}
+          columns={poolCodeColumns}
+          rowKey="id"
+          loading={poolCodesLoading}
+          size="small"
+          pagination={{
+            current: poolCodesPage,
+            total: poolCodesTotal,
+            pageSize: 50,
+            onChange: setPoolCodesPage,
+            showTotal: (t) => `共 ${t} 条`,
+          }}
+        />
       </Modal>
     </div>
   );

@@ -61,6 +61,41 @@ async def distribute_coupon(
     return code
 
 
+async def list_coupon_pools(
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+) -> list[CouponPool]:
+    result = await db.execute(
+        select(CouponPool)
+        .where(CouponPool.tenant_id == tenant_id)
+        .order_by(CouponPool.id.desc())
+    )
+    return list(result.scalars().all())
+
+
+async def list_pool_codes(
+    db: AsyncSession,
+    pool_id: uuid.UUID,
+    page: int = 1,
+    page_size: int = 50,
+) -> tuple[list[CouponCode], int]:
+    from sqlalchemy import func
+
+    count_result = await db.execute(
+        select(func.count()).select_from(CouponCode).where(CouponCode.pool_id == pool_id)
+    )
+    total = count_result.scalar() or 0
+
+    result = await db.execute(
+        select(CouponCode)
+        .where(CouponCode.pool_id == pool_id)
+        .order_by(CouponCode.id)
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+    )
+    return list(result.scalars().all()), total
+
+
 async def create_connector(
     db: AsyncSession,
     tenant_id: uuid.UUID,
