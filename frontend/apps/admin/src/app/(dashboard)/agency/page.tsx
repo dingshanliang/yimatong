@@ -198,7 +198,7 @@ export default function AgencyPage() {
         tenant_id: values.tenant_id,
         title: values.title,
         priority: values.priority || "medium",
-        due_date: values.due_date?.toISOString(),
+        ...(values.due_date ? { due_date: values.due_date.toISOString() } : {}),
       });
       message.success("任务创建成功");
       setTaskModalOpen(false);
@@ -208,6 +208,8 @@ export default function AgencyPage() {
       const err = e as { response?: { data?: { detail?: string } } };
       if (err.response?.data?.detail) {
         message.error(err.response.data.detail);
+      } else if (!(e as { errorFields?: unknown }).errorFields) {
+        message.error("创建失败");
       }
     } finally {
       setTaskSaving(false);
@@ -345,7 +347,9 @@ export default function AgencyPage() {
         const daysLeft = Math.ceil(
           (new Date(v).getTime() - Date.now()) / (1000 * 60 * 60 * 24)
         );
-        return daysLeft < 30 ? (
+        return daysLeft < 0 ? (
+          <Tag color="red">{date}（已过期）</Tag>
+        ) : daysLeft < 30 ? (
           <Tag color="red">{date}（剩余{daysLeft}天）</Tag>
         ) : (
           date
