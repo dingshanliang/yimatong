@@ -71,6 +71,41 @@ interface PageTemplate {
   published_version?: { version: number } | null;
 }
 
+interface PaginatedItems<T> {
+  items?: T[];
+}
+
+function getErrorStatus(err: unknown): number | undefined {
+  if (typeof err !== "object" || err === null || !("response" in err)) return undefined;
+
+  const response = (err as { response?: { status?: number } }).response;
+  return response?.status;
+}
+
+async function fetchProductDetail(productId: string): Promise<Product> {
+  try {
+    const { data } = await api.get<Product>(`/products/${productId}`);
+    return data;
+  } catch (err) {
+    const status = getErrorStatus(err);
+    if (status !== 404 && status !== 405) throw err;
+
+    const { data } = await api.get<PaginatedItems<Product>>("/products", { params: { page_size: 100 } });
+    const product = (data.items || []).find((item) => item.id === productId);
+    if (!product) throw err;
+    return product;
+  }
+}
+
+async function fetchOptionalItems<T>(request: Promise<{ data: PaginatedItems<T> }>): Promise<T[]> {
+  try {
+    const { data } = await request;
+    return data.items || [];
+  } catch {
+    return [];
+  }
+}
+
 export default function ProductWorkbenchPage() {
   const params = useParams<{ id: string }>();
   const router = useRouter();
@@ -101,20 +136,25 @@ export default function ProductWorkbenchPage() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [productResp, assetResp, skuResp, batchResp, pageResp] = await Promise.all([
-        api.get<Product>(`/products/${productId}`),
-        api.get(`/products/${productId}/assets`, { params: { page_size: 100 } }),
-        api.get(`/products/${productId}/skus`, { params: { page_size: 100 } }),
-        api.get(`/products/${productId}/batches`, { params: { page_size: 100 } }),
-        api.get("/page-templates", { params: { product_id: productId, page_size: 100 } }),
+      const productResp = await fetchProductDetail(productId);
+      const [assetItems, skuItems, batchItems, pageItems] = await Promise.all([
+        fetchOptionalItems<ProductAsset>(api.get(`/products/${productId}/assets`, { params: { page_size: 100 } })),
+        fetchOptionalItems<SKU>(api.get(`/products/${productId}/skus`, { params: { page_size: 100 } })),
+        fetchOptionalItems<ProductionBatch>(api.get(`/products/${productId}/batches`, { params: { page_size: 100 } })),
+        fetchOptionalItems<PageTemplate>(api.get("/page-templates", { params: { product_id: productId, page_size: 100 } })),
       ]);
-      setProduct(productResp.data);
-      setAssets(assetResp.data.items || []);
-      setSkus(skuResp.data.items || []);
-      setBatches(batchResp.data.items || []);
-      setPages(pageResp.data.items || []);
-      productForm.setFieldsValue(productResp.data);
+      setProduct(productResp);
+      setAssets(assetItems);
+      setSkus(skuItems);
+      setBatches(batchItems);
+      setPages(pageItems);
+      productForm.setFieldsValue(productResp);
     } catch (err) {
+      setProduct(null);
+      setAssets([]);
+      setSkus([]);
+      setBatches([]);
+      setPages([]);
       message.error(extractErrorMessage(err, "加载产品工作台失败"));
     } finally {
       setLoading(false);
