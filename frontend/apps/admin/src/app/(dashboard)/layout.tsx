@@ -44,7 +44,7 @@ const LOCALE_MAP: Record<string, Parameters<typeof ConfigProvider>[0]["locale"]>
 
 const MENU_OPEN_KEY_RULES = [
   { key: "catalog-group", prefixes: ["/brands", "/products", "/skus", "/batches"] },
-  { key: "traceability-group", prefixes: ["/codes", "/pages", "/ai-assistant"] },
+  { key: "traceability-group", prefixes: ["/codes", "/pages"] },
   { key: "growth-group", prefixes: ["/campaigns", "/benefits", "/members"] },
   { key: "channels-group", prefixes: ["/channels", "/regional", "/accounts", "/agency"] },
   { key: "analytics-group", prefixes: ["/stats", "/campaign-analytics", "/gmv", "/risk-dashboard", "/exports"] },
@@ -75,6 +75,7 @@ function DashboardInner({ children }: { children: React.ReactNode }) {
 
   const menuItems: MenuProps["items"] = [
     { key: "/", icon: <DashboardOutlined />, label: t("menu.dashboard") },
+    { key: "/ai-assistant", icon: <RobotOutlined />, label: t("menu.ai-assistant") },
     {
       key: "catalog-group",
       icon: <AppstoreOutlined />,
@@ -93,7 +94,6 @@ function DashboardInner({ children }: { children: React.ReactNode }) {
       children: [
         { key: "/codes", icon: <QrcodeOutlined />, label: t("menu.codes") },
         { key: "/pages", icon: <FileTextOutlined />, label: t("menu.pages") },
-        { key: "/ai-assistant", icon: <RobotOutlined />, label: t("menu.ai-assistant") },
       ],
     },
     {

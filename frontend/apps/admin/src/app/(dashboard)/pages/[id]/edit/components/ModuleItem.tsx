@@ -43,6 +43,11 @@ export function ModuleItem({
     transform: CSS.Transform.toString(transform),
     transition,
     opacity: isDragging ? 0.5 : 1,
+    background: selected
+      ? "color-mix(in srgb, var(--color-primary) 24%, var(--admin-bg-elevated))"
+      : "var(--admin-bg-elevated)",
+    borderColor: selected ? "var(--color-primary)" : "var(--admin-border)",
+    color: "var(--foreground)",
   };
 
   const typeLabel = MODULE_TYPES.find((type) => type.value === module.type)?.label || module.type;
@@ -52,9 +57,7 @@ export function ModuleItem({
     <div
       ref={setNodeRef}
       style={style}
-      className={`rounded border transition-colors ${
-        selected ? "border-blue-500 bg-blue-50" : "border-gray-200 bg-white"
-      } ${module.enabled === false ? "opacity-60" : ""}`}
+      className={`rounded border transition-colors ${module.enabled === false ? "opacity-60" : ""}`}
     >
       <div
         role="button"
@@ -91,7 +94,7 @@ export function ModuleItem({
             {status ? <Tag color={status.color}>{status.label}</Tag> : null}
             {readiness?.message ? (
               <Tooltip title={readiness.issues.join("；") || readiness.message}>
-                <span className="truncate text-xs text-gray-500">{readiness.message}</span>
+                <span className="truncate text-xs" style={{ color: "var(--admin-text-muted)" }}>{readiness.message}</span>
               </Tooltip>
             ) : null}
           </div>
@@ -122,7 +125,8 @@ export function ModuleItem({
           }}
         >
           <span
-            className="rounded px-2 py-1 text-gray-500 hover:bg-gray-100"
+            className="rounded px-2 py-1"
+            style={{ color: "var(--admin-text-muted)" }}
             onClick={(event) => event.stopPropagation()}
           >
             <MoreOutlined />
