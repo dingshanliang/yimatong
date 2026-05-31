@@ -26,12 +26,33 @@ async def list_translations(
     db: AsyncSession,
     tenant_id: uuid.UUID,
     locale: str | None = None,
+    key_prefix: str | None = None,
 ) -> list[Translation]:
     stmt = select(Translation).where(Translation.tenant_id == tenant_id)
     if locale:
         stmt = stmt.where(Translation.locale == locale)
+    if key_prefix:
+        stmt = stmt.where(Translation.key.startswith(key_prefix))
     result = await db.execute(stmt.order_by(Translation.key))
     return list(result.scalars().all())
+
+
+async def delete_translation(
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    translation_id: uuid.UUID,
+) -> bool:
+    result = await db.execute(
+        select(Translation).where(
+            Translation.id == translation_id, Translation.tenant_id == tenant_id
+        )
+    )
+    t = result.scalar_one_or_none()
+    if not t:
+        return False
+    await db.delete(t)
+    await db.flush()
+    return True
 
 
 async def batch_update_translations(

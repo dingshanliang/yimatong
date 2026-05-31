@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter, usePathname } from "next/navigation";
-import { Layout, Menu, Avatar, Dropdown, Spin } from "antd";
+import { ConfigProvider, Layout, Menu, Avatar, Dropdown, Select, Spin } from "antd";
 import {
   DashboardOutlined,
   AppstoreOutlined,
@@ -24,71 +24,26 @@ import {
   ShopOutlined,
   CheckSquareOutlined,
   RobotOutlined,
+  GlobalOutlined,
 } from "@ant-design/icons";
 import type { MenuProps } from "antd";
 import { useAuthStore } from "@/lib/auth";
+import { I18nProvider, useI18n } from "@/lib/i18n";
+import zhCN from "antd/locale/zh_CN";
+import enUS from "antd/locale/en_US";
 
 const { Header, Sider, Content } = Layout;
 
-const menuItems: MenuProps["items"] = [
-  { key: "/", icon: <DashboardOutlined />, label: "工作台" },
-  { key: "/brands", icon: <TagOutlined />, label: "品牌管理" },
-  { key: "/products", icon: <AppstoreOutlined />, label: "产品管理" },
-  { key: "/skus", icon: <ProfileOutlined />, label: "SKU 管理" },
-  { key: "/batches", icon: <DatabaseOutlined />, label: "生产批次" },
-  { key: "/codes", icon: <QrcodeOutlined />, label: "码管理" },
-  { key: "/pages", icon: <FileTextOutlined />, label: "页面管理" },
-  { key: "/ai-assistant", icon: <RobotOutlined />, label: "AI 助手" },
-  { key: "/campaigns", icon: <GiftOutlined />, label: "活动管理" },
-  { key: "/benefits", icon: <SafetyCertificateOutlined />, label: "权益管理" },
-  {
-    key: "integrations-group",
-    icon: <DatabaseOutlined />,
-    label: "集成管理",
-    children: [
-      { key: "/connectors", icon: <DatabaseOutlined />, label: "连接器" },
-    ],
-  },
-  {
-    key: "analytics-group",
-    icon: <BarChartOutlined />,
-    label: "数据统计",
-    children: [
-      { key: "/stats", icon: <BarChartOutlined />, label: "扫码统计" },
-      { key: "/campaign-analytics", icon: <LineChartOutlined />, label: "活动看板" },
-      { key: "/risk-dashboard", icon: <SafetyCertificateOutlined />, label: "风控看板" },
-      { key: "/exports", icon: <ExportOutlined />, label: "导出管理" },
-    ],
-  },
-  { key: "/channels", icon: <ShopOutlined />, label: "渠道管理" },
-  { key: "/risk", icon: <SafetyCertificateOutlined />, label: "风控中心" },
-  { key: "/members", icon: <UserOutlined />, label: "会员积分" },
-  { key: "/gmv", icon: <LineChartOutlined />, label: "GMV 归因" },
-  { key: "/regional", icon: <TeamOutlined />, label: "区域品牌" },
-  { key: "/accounts", icon: <TeamOutlined />, label: "组织账户" },
-  {
-    key: "settings-group",
-    icon: <SettingOutlined />,
-    label: "系统设置",
-    children: [
-      { key: "/settings/roles", icon: <UserAddOutlined />, label: "角色权限" },
-      { key: "/settings/compliance", icon: <SafetyCertificateOutlined />, label: "合规设置" },
-      { key: "/settings/tenant", icon: <ShopOutlined />, label: "租户设置" },
-      { key: "/settings/audit-logs", icon: <FileTextOutlined />, label: "操作日志" },
-    ],
-  },
-  { key: "/agency", icon: <TeamOutlined />, label: "代运营" },
-  { key: "/launch-checklist", icon: <CheckSquareOutlined />, label: "上线检查" },
-];
+const LOCALE_MAP: Record<string, Parameters<typeof ConfigProvider>[0]["locale"]> = {
+  "zh-CN": zhCN,
+  "en-US": enUS,
+};
 
-export default function DashboardLayout({
-  children,
-}: {
-  children: React.ReactNode;
-}) {
+function DashboardInner({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
   const { user, hydrate, logout } = useAuthStore();
+  const { locale, setLocale, t } = useI18n();
 
   const [mounted, setMounted] = useState(false);
   useEffect(() => {
@@ -102,10 +57,8 @@ export default function DashboardLayout({
     }
   }, [mounted, router]);
 
-  // 从 pathname 提取选中的菜单 key
   const selectedKeys = [pathname];
 
-  // 展开包含当前路径的子菜单
   const openKeys: string[] = [];
   if (pathname.startsWith("/stats") || pathname.startsWith("/campaign-analytics") || pathname.startsWith("/exports") || pathname.startsWith("/risk-dashboard")) {
     openKeys.push("analytics-group");
@@ -116,6 +69,58 @@ export default function DashboardLayout({
   if (pathname.startsWith("/settings")) {
     openKeys.push("settings-group");
   }
+
+  const menuItems: MenuProps["items"] = [
+    { key: "/", icon: <DashboardOutlined />, label: t("menu.dashboard") },
+    { key: "/brands", icon: <TagOutlined />, label: t("menu.brands") },
+    { key: "/products", icon: <AppstoreOutlined />, label: t("menu.products") },
+    { key: "/skus", icon: <ProfileOutlined />, label: t("menu.skus") },
+    { key: "/batches", icon: <DatabaseOutlined />, label: t("menu.batches") },
+    { key: "/codes", icon: <QrcodeOutlined />, label: t("menu.codes") },
+    { key: "/pages", icon: <FileTextOutlined />, label: t("menu.pages") },
+    { key: "/ai-assistant", icon: <RobotOutlined />, label: t("menu.ai-assistant") },
+    { key: "/campaigns", icon: <GiftOutlined />, label: t("menu.campaigns") },
+    { key: "/benefits", icon: <SafetyCertificateOutlined />, label: t("menu.benefits") },
+    {
+      key: "integrations-group",
+      icon: <DatabaseOutlined />,
+      label: t("menu.integrations"),
+      children: [
+        { key: "/connectors", icon: <DatabaseOutlined />, label: t("menu.connectors") },
+      ],
+    },
+    {
+      key: "analytics-group",
+      icon: <BarChartOutlined />,
+      label: t("menu.analytics"),
+      children: [
+        { key: "/stats", icon: <BarChartOutlined />, label: t("menu.stats") },
+        { key: "/campaign-analytics", icon: <LineChartOutlined />, label: t("menu.campaign-analytics") },
+        { key: "/risk-dashboard", icon: <SafetyCertificateOutlined />, label: t("menu.risk-dashboard") },
+        { key: "/exports", icon: <ExportOutlined />, label: t("menu.exports") },
+      ],
+    },
+    { key: "/channels", icon: <ShopOutlined />, label: t("menu.channels") },
+    { key: "/risk", icon: <SafetyCertificateOutlined />, label: t("menu.risk") },
+    { key: "/members", icon: <UserOutlined />, label: t("menu.members") },
+    { key: "/gmv", icon: <LineChartOutlined />, label: t("menu.gmv") },
+    { key: "/regional", icon: <TeamOutlined />, label: t("menu.regional") },
+    { key: "/accounts", icon: <TeamOutlined />, label: t("menu.accounts") },
+    {
+      key: "settings-group",
+      icon: <SettingOutlined />,
+      label: t("menu.settings"),
+      children: [
+        { key: "/settings/roles", icon: <UserAddOutlined />, label: t("menu.roles") },
+        { key: "/settings/compliance", icon: <SafetyCertificateOutlined />, label: t("menu.compliance") },
+        { key: "/settings/tenant", icon: <ShopOutlined />, label: t("menu.tenant") },
+        { key: "/settings/audit-logs", icon: <FileTextOutlined />, label: t("menu.audit-logs") },
+      ],
+    },
+    { key: "/agency", icon: <TeamOutlined />, label: t("menu.agency") },
+    { key: "/launch-checklist", icon: <CheckSquareOutlined />, label: t("menu.launch-checklist") },
+    { key: "/i18n", icon: <GlobalOutlined />, label: t("menu.i18n") },
+  ];
 
   if (!mounted) {
     return (
@@ -138,7 +143,7 @@ export default function DashboardLayout({
     {
       key: "logout",
       icon: <LogoutOutlined />,
-      label: "退出登录",
+      label: t("common.logout"),
       onClick: () => {
         logout();
         router.replace("/login");
@@ -147,35 +152,61 @@ export default function DashboardLayout({
   ];
 
   return (
-    <Layout className="min-h-screen">
-      <Sider breakpoint="lg" collapsedWidth={0} width={220}>
-        <div className="my-4 flex h-10 items-center justify-center">
-          <span className="text-lg font-bold text-white">一码通</span>
-        </div>
-        <Menu
-          theme="dark"
-          mode="inline"
-          selectedKeys={selectedKeys}
-          defaultOpenKeys={openKeys}
-          items={menuItems}
-          onClick={({ key }) => {
-            if (key.startsWith("/")) router.push(key);
-          }}
-        />
-      </Sider>
-      <Layout>
-        <Header className="flex items-center justify-end bg-white px-6 shadow-sm">
-          <Dropdown menu={{ items: userMenuItems }} placement="bottomRight">
-            <div className="flex cursor-pointer items-center gap-2">
-              <Avatar icon={<UserOutlined />} size="small" />
-              <span>{user.name || user.email}</span>
-            </div>
-          </Dropdown>
-        </Header>
-        <Content className="m-6 rounded-lg bg-white p-6 shadow-sm">
-          {children}
-        </Content>
+    <ConfigProvider locale={LOCALE_MAP[locale]}>
+      <Layout className="min-h-screen">
+        <Sider breakpoint="lg" collapsedWidth={0} width={220}>
+          <div className="my-4 flex h-10 items-center justify-center">
+            <span className="text-lg font-bold text-white">{t("common.brand")}</span>
+          </div>
+          <Menu
+            theme="dark"
+            mode="inline"
+            selectedKeys={selectedKeys}
+            defaultOpenKeys={openKeys}
+            items={menuItems}
+            onClick={({ key }) => {
+              if (key.startsWith("/")) router.push(key);
+            }}
+          />
+        </Sider>
+        <Layout>
+          <Header className="flex items-center justify-between bg-white px-6 shadow-sm">
+            <Select
+              value={locale}
+              onChange={setLocale}
+              size="small"
+              variant="borderless"
+              style={{ width: 110 }}
+              options={[
+                { value: "zh-CN", label: "中文" },
+                { value: "en-US", label: "English" },
+              ]}
+              suffixIcon={<GlobalOutlined />}
+            />
+            <Dropdown menu={{ items: userMenuItems }} placement="bottomRight">
+              <div className="flex cursor-pointer items-center gap-2">
+                <Avatar icon={<UserOutlined />} size="small" />
+                <span>{user.name || user.email}</span>
+              </div>
+            </Dropdown>
+          </Header>
+          <Content className="m-6 rounded-lg bg-white p-6 shadow-sm">
+            {children}
+          </Content>
+        </Layout>
       </Layout>
-    </Layout>
+    </ConfigProvider>
+  );
+}
+
+export default function DashboardLayout({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
+  return (
+    <I18nProvider>
+      <DashboardInner>{children}</DashboardInner>
+    </I18nProvider>
   );
 }

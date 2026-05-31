@@ -2,7 +2,7 @@
 
 import uuid
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -11,6 +11,7 @@ from app.core.dependencies import get_current_tenant
 from app.services.i18n import (
     batch_update_translations,
     create_translation,
+    delete_translation,
     detect_language,
     list_translations,
 )
@@ -45,11 +46,22 @@ async def create_translation_endpoint(
 @i18n_router.get("/translations", summary="translations 列表")
 async def list_translations_endpoint(
     locale: str | None = Query(None),
+    key: str | None = Query(None),
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
-    translations = await list_translations(db, tenant_id, locale=locale)
+    translations = await list_translations(db, tenant_id, locale=locale, key_prefix=key)
     return [{"id": str(t.id), "key": t.key, "locale": t.locale, "value": t.value} for t in translations]
+
+
+@i18n_router.delete("/translations/{translation_id}", status_code=204, summary="删除 translation")
+async def delete_translation_endpoint(
+    translation_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    tenant_id: uuid.UUID = Depends(get_current_tenant),
+):
+    if not await delete_translation(db, tenant_id, translation_id):
+        raise HTTPException(status_code=404, detail="Translation not found")
 
 
 @i18n_router.post("/translations/batch")
