@@ -17,9 +17,22 @@ from app.services.member import (
     get_point_rules,
     list_point_transactions,
     spend_points,
+    update_point_rule,
+    delete_point_rule,
+)
+from app.services.point_shop import (
+    create_point_product,
+    delete_point_product,
+    exchange_product,
+    get_point_product,
+    list_point_products,
+    update_point_product,
 )
 
 member_router = APIRouter(prefix="/api/v1/members", tags=["members"])
+
+
+# ─── Request/Response Schemas ───
 
 
 class ConsumerCreateRequest(BaseModel):
@@ -44,6 +57,45 @@ class SpendPointsRequest(BaseModel):
 class PointRuleCreate(BaseModel):
     rule_type: str
     points: int
+    daily_limit: int = 0
+    description: str | None = None
+    config: dict | None = None
+
+
+class PointRuleUpdate(BaseModel):
+    points: int | None = None
+    daily_limit: int | None = None
+    description: str | None = None
+    enabled: bool | None = None
+    config: dict | None = None
+
+
+class PointProductCreate(BaseModel):
+    name: str
+    description: str | None = None
+    image_url: str | None = None
+    points_cost: int
+    stock: int = 0
+    benefit_id: uuid.UUID | None = None
+    enabled: bool = True
+
+
+class PointProductUpdate(BaseModel):
+    name: str | None = None
+    description: str | None = None
+    image_url: str | None = None
+    points_cost: int | None = None
+    stock: int | None = None
+    benefit_id: uuid.UUID | None = None
+    enabled: bool | None = None
+
+
+class ExchangeRequest(BaseModel):
+    consumer_id: uuid.UUID
+    product_id: uuid.UUID
+
+
+# ─── Consumer Endpoints ───
 
 
 @member_router.post("/consumers", status_code=201, summary="创建 消费者")
@@ -72,6 +124,9 @@ async def get_consumer_endpoint(
     return profile
 
 
+# ─── Points Award / Spend ───
+
+
 @member_router.post("/points/award")
 async def award_points_endpoint(
     body: AwardPointsRequest,
@@ -80,12 +135,7 @@ async def award_points_endpoint(
 ):
     try:
         txn = await award_points(
-            db,
-            tenant_id,
-            body.consumer_id,
-            body.points,
-            body.reason,
-            body.reference_id,
+            db, tenant_id, body.consumer_id, body.points, body.reason, body.reference_id,
         )
         return {
             "id": str(txn.id),
@@ -105,12 +155,7 @@ async def spend_points_endpoint(
 ):
     try:
         txn = await spend_points(
-            db,
-            tenant_id,
-            body.consumer_id,
-            body.points,
-            body.reason,
-            body.reference_id,
+            db, tenant_id, body.consumer_id, body.points, body.reason, body.reference_id,
         )
         return {
             "id": str(txn.id),
@@ -131,11 +176,7 @@ async def list_transactions_endpoint(
     tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
     txns, total = await list_point_transactions(
-        db,
-        tenant_id,
-        consumer_id,
-        page=page,
-        page_size=page_size,
+        db, tenant_id, consumer_id, page=page, page_size=page_size,
     )
     return PaginatedResponse(
         items=[
@@ -145,6 +186,7 @@ async def list_transactions_endpoint(
                 "balance_after": t.balance_after,
                 "txn_type": t.txn_type,
                 "reason": t.reason,
+                "expires_at": t.expires_at.isoformat() if t.expires_at else None,
             }
             for t in txns
         ],
@@ -154,13 +196,27 @@ async def list_transactions_endpoint(
     )
 
 
+# ─── Point Rules CRUD ───
+
+
 @member_router.get("/point-rules", summary="point rules 列表")
 async def list_point_rules_endpoint(
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
     rules = await get_point_rules(db, tenant_id)
-    return [{"id": str(r.id), "rule_type": r.rule_type, "points": r.points} for r in rules]
+    return [
+        {
+            "id": str(r.id),
+            "rule_type": r.rule_type,
+            "points": r.points,
+            "daily_limit": r.daily_limit,
+            "description": r.description,
+            "enabled": r.enabled,
+            "config": r.config,
+        }
+        for r in rules
+    ]
 
 
 @member_router.post("/point-rules", status_code=201, summary="创建 point rule")
@@ -169,5 +225,133 @@ async def create_point_rule_endpoint(
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
-    rule = await create_point_rule(db, tenant_id, body.rule_type, body.points)
-    return {"id": str(rule.id), "rule_type": rule.rule_type, "points": rule.points}
+    rule = await create_point_rule(
+        db, tenant_id, body.rule_type, body.points,
+        daily_limit=body.daily_limit,
+        description=body.description,
+        config=body.config,
+    )
+    return {
+        "id": str(rule.id),
+        "rule_type": rule.rule_type,
+        "points": rule.points,
+        "daily_limit": rule.daily_limit,
+    }
+
+
+@member_router.put("/point-rules/{rule_id}", summary="更新 point rule")
+async def update_point_rule_endpoint(
+    rule_id: uuid.UUID,
+    body: PointRuleUpdate,
+    db: AsyncSession = Depends(get_db),
+    tenant_id: uuid.UUID = Depends(get_current_tenant),
+):
+    rule = await update_point_rule(db, tenant_id, rule_id, **body.model_dump(exclude_none=True))
+    if not rule:
+        raise HTTPException(status_code=404, detail="Rule not found")
+    return {
+        "id": str(rule.id),
+        "rule_type": rule.rule_type,
+        "points": rule.points,
+        "daily_limit": rule.daily_limit,
+        "enabled": rule.enabled,
+    }
+
+
+@member_router.delete("/point-rules/{rule_id}", status_code=204, summary="删除 point rule")
+async def delete_point_rule_endpoint(
+    rule_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    tenant_id: uuid.UUID = Depends(get_current_tenant),
+):
+    if not await delete_point_rule(db, tenant_id, rule_id):
+        raise HTTPException(status_code=404, detail="Rule not found")
+
+
+# ─── Point Products (积分商城) ───
+
+
+@member_router.get("/point-products", summary="积分商品列表")
+async def list_point_products_endpoint(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    enabled_only: bool = Query(False),
+    db: AsyncSession = Depends(get_db),
+    tenant_id: uuid.UUID = Depends(get_current_tenant),
+):
+    items, total = await list_point_products(db, tenant_id, page, page_size, enabled_only)
+    return PaginatedResponse(
+        items=[
+            {
+                "id": str(p.id),
+                "name": p.name,
+                "description": p.description,
+                "image_url": p.image_url,
+                "points_cost": p.points_cost,
+                "stock": p.stock,
+                "total_claimed": p.total_claimed,
+                "enabled": p.enabled,
+                "benefit_id": str(p.benefit_id) if p.benefit_id else None,
+            }
+            for p in items
+        ],
+        total=total,
+        page=page,
+        page_size=page_size,
+    )
+
+
+@member_router.post("/point-products", status_code=201, summary="创建积分商品")
+async def create_point_product_endpoint(
+    body: PointProductCreate,
+    db: AsyncSession = Depends(get_db),
+    tenant_id: uuid.UUID = Depends(get_current_tenant),
+):
+    product = await create_point_product(
+        db, tenant_id,
+        name=body.name,
+        description=body.description,
+        image_url=body.image_url,
+        points_cost=body.points_cost,
+        stock=body.stock,
+        benefit_id=body.benefit_id,
+    )
+    return {"id": str(product.id), "name": product.name, "points_cost": product.points_cost}
+
+
+@member_router.put("/point-products/{product_id}", summary="更新积分商品")
+async def update_point_product_endpoint(
+    product_id: uuid.UUID,
+    body: PointProductUpdate,
+    db: AsyncSession = Depends(get_db),
+    tenant_id: uuid.UUID = Depends(get_current_tenant),
+):
+    product = await update_point_product(
+        db, tenant_id, product_id, **body.model_dump(exclude_none=True)
+    )
+    if not product:
+        raise HTTPException(status_code=404, detail="Product not found")
+    return {"id": str(product.id), "name": product.name, "stock": product.stock}
+
+
+@member_router.delete("/point-products/{product_id}", status_code=204, summary="删除积分商品")
+async def delete_point_product_endpoint(
+    product_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    tenant_id: uuid.UUID = Depends(get_current_tenant),
+):
+    if not await delete_point_product(db, tenant_id, product_id):
+        raise HTTPException(status_code=404, detail="Product not found")
+
+
+@member_router.post("/point-products/exchange", summary="积分兑换")
+async def exchange_product_endpoint(
+    body: ExchangeRequest,
+    db: AsyncSession = Depends(get_db),
+    tenant_id: uuid.UUID = Depends(get_current_tenant),
+):
+    try:
+        result = await exchange_product(db, tenant_id, body.consumer_id, body.product_id)
+        return result
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))

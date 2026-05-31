@@ -191,6 +191,11 @@ async def lifespan(app):
 
     init_risk_auto_handler()
 
+    # 初始化积分自动发放处理器
+    from app.services.point_auto_handler import init_point_auto_handler
+
+    init_point_auto_handler()
+
     # 注册连接器适配器 + 权益发放事件处理器
     import app.services.benefit_delivery_handler  # noqa: F401
     import app.services.connectors.coupon_pool  # noqa: F401

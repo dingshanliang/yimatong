@@ -158,9 +158,13 @@ async def _update_member_level(db: AsyncSession, consumer: ConsumerProfile):
 async def get_point_rules(
     db: AsyncSession,
     tenant_id: uuid.UUID,
+    enabled_only: bool = False,
 ) -> list[PointRule]:
     """获取租户积分规则"""
-    result = await db.execute(select(PointRule).where(PointRule.tenant_id == tenant_id, PointRule.enabled.is_(True)))
+    stmt = select(PointRule).where(PointRule.tenant_id == tenant_id)
+    if enabled_only:
+        stmt = stmt.where(PointRule.enabled.is_(True))
+    result = await db.execute(stmt)
     return list(result.scalars().all())
 
 
@@ -169,17 +173,62 @@ async def create_point_rule(
     tenant_id: uuid.UUID,
     rule_type: str,
     points: int,
+    *,
+    daily_limit: int = 0,
+    description: str | None = None,
+    config: dict | None = None,
 ) -> PointRule:
     """创建积分规则"""
     rule = PointRule(
         tenant_id=tenant_id,
         rule_type=rule_type,
         points=points,
+        daily_limit=daily_limit,
+        description=description,
+        config=config,
     )
     db.add(rule)
     await db.flush()
     await db.refresh(rule)
     return rule
+
+
+async def update_point_rule(
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    rule_id: uuid.UUID,
+    **kwargs,
+) -> PointRule | None:
+    """更新积分规则"""
+    result = await db.execute(
+        select(PointRule).where(PointRule.id == rule_id, PointRule.tenant_id == tenant_id)
+    )
+    rule = result.scalar_one_or_none()
+    if not rule:
+        return None
+    for key, value in kwargs.items():
+        if hasattr(rule, key) and value is not None:
+            setattr(rule, key, value)
+    await db.flush()
+    await db.refresh(rule)
+    return rule
+
+
+async def delete_point_rule(
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    rule_id: uuid.UUID,
+) -> bool:
+    """删除积分规则"""
+    result = await db.execute(
+        select(PointRule).where(PointRule.id == rule_id, PointRule.tenant_id == tenant_id)
+    )
+    rule = result.scalar_one_or_none()
+    if not rule:
+        return False
+    await db.delete(rule)
+    await db.flush()
+    return True
 
 
 async def get_consumer_profile(

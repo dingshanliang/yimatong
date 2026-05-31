@@ -1,9 +1,10 @@
 """会员与积分模型"""
 
 import uuid
+from datetime import datetime
 from enum import StrEnum
 
-from sqlalchemy import JSON, Index, String, Text, UniqueConstraint
+from sqlalchemy import JSON, DateTime, Index, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column
 from uuid6 import uuid7
 
@@ -44,6 +45,7 @@ class ConsumerProfile(Base):
 class PointTransactionType(StrEnum):
     earning = "earning"
     spending = "spending"
+    expired = "expired"
 
 
 class PointTransaction(Base):
@@ -57,8 +59,12 @@ class PointTransaction(Base):
     txn_type: Mapped[str] = mapped_column(String(20), nullable=False)
     reason: Mapped[str] = mapped_column(String(200), nullable=False, default="")
     reference_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
-    __table_args__ = (Index("ix_point_transactions_consumer", "tenant_id", "consumer_id"),)
+    __table_args__ = (
+        Index("ix_point_transactions_consumer", "tenant_id", "consumer_id"),
+        Index("ix_point_txn_expires", "expires_at", postgresql_where=mapped_column("expires_at").is_not(None)),
+    )
 
 
 class PointRule(Base):
@@ -71,5 +77,31 @@ class PointRule(Base):
     rule_type: Mapped[str] = mapped_column(String(50), nullable=False)
     points: Mapped[int] = mapped_column(nullable=False)
     enabled: Mapped[bool] = mapped_column(default=True, nullable=False)
+    daily_limit: Mapped[int] = mapped_column(default=0, nullable=False)
+    description: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    config: Mapped[dict | None] = mapped_column(JSON, nullable=True, default=dict)
 
     __table_args__ = (Index("ix_point_rules_tenant_type", "tenant_id", "rule_type", unique=True),)
+
+
+class PointProduct(Base):
+    """积分商城商品"""
+
+    __tablename__ = "point_products"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid7)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    image_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    points_cost: Mapped[int] = mapped_column(nullable=False)
+    stock: Mapped[int] = mapped_column(nullable=False, default=0)
+    total_claimed: Mapped[int] = mapped_column(nullable=False, default=0)
+    enabled: Mapped[bool] = mapped_column(default=True, nullable=False)
+    benefit_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    __table_args__ = (Index("ix_point_products_tenant", "tenant_id"),)
