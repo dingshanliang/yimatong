@@ -162,8 +162,8 @@ async def alert_stream(
                 try:
                     data = await asyncio.wait_for(queue.get(), timeout=30)
                     yield f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
-                except asyncio.TimeoutError:
-                    yield f": keepalive\n\n"
+                except TimeoutError:
+                    yield ": keepalive\n\n"
         finally:
             _sse_clients[tid].remove(queue)
             if not _sse_clients[tid]:

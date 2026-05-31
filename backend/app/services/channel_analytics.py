@@ -6,11 +6,10 @@ from datetime import UTC, date, datetime, timedelta
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.campaign import BenefitClaim
 from app.models.channel import CodeAllocation, Distributor, Region, Store
 from app.models.code import CodeBatch, CodeItem
-from app.models.campaign import BenefitClaim
 from app.models.scan import ScanEvent
-
 
 # ── 维度配置 ────────────────────────────────────────
 
@@ -180,7 +179,9 @@ async def get_conversion_comparison(
     days_back: int = 30,
 ) -> list[dict]:
     """渠道间转化率对比：扫码 UV → 权益领取数"""
-    scan_items, _ = await get_scan_by_channel(db, tenant_id, dimension=dimension, days_back=days_back, page=1, page_size=100)
+    scan_items, _ = await get_scan_by_channel(
+        db, tenant_id, dimension=dimension, days_back=days_back, page=1, page_size=100
+    )
 
     claim_result = await db.execute(
         select(func.count())

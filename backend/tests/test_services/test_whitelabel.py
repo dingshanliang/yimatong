@@ -93,6 +93,5 @@ class TestDomainRouting:
 
     def test_cname_dns_record(self):
         """CNAME 记录格式"""
-        domain = "brand.example.com"
         cname_target = "cname.yimatong.cn"
         assert cname_target == "cname.yimatong.cn"

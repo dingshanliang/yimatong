@@ -3,8 +3,6 @@
 import uuid
 from types import SimpleNamespace
 
-import pytest
-
 from app.services.risk_rule import _evaluate_rule
 
 

@@ -3,12 +3,12 @@
 import uuid
 from datetime import datetime, timedelta
 
-from sqlalchemy import func, select, update
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.campaign import Campaign
 from app.models.code import CodeBatch, CodeItem
-from app.models.gmv import ExternalOrder, GmvAttribution, GmvDailyStats
+from app.models.gmv import ExternalOrder, GmvAttribution
 from app.models.member import ConsumerProfile
 from app.models.scan import ScanEvent
 from app.utils.crypto import hash_phone
@@ -169,7 +169,8 @@ async def _find_latest_scan_for_consumer(
 
     # 最实用的方案：用扫码时间窗口 + 产品名匹配
     if not order.order_time:
-        window_start = datetime.now(order.order_time.tzinfo if order.order_time else None) - timedelta(hours=window_hours)
+        tz = order.order_time.tzinfo if order.order_time else None
+        window_start = datetime.now(tz) - timedelta(hours=window_hours)
     else:
         window_start = order.order_time - timedelta(hours=window_hours)
 
@@ -319,7 +320,14 @@ async def _get_daily_trend(
         .order_by("day")
     )).all()
 
-    return [{"date": str(r.day) if not hasattr(r.day, "date") else str(r.day.date()) if r.day else "", "gmv": float(r.gmv), "orders": r.orders} for r in rows]
+    return [
+        {
+            "date": str(r.day.date()) if r.day and hasattr(r.day, "date") else (str(r.day) if r.day else ""),
+            "gmv": float(r.gmv),
+            "orders": r.orders,
+        }
+        for r in rows
+    ]
 
 
 async def _get_channel_breakdown(
@@ -580,7 +588,9 @@ async def aggregate_daily_stats(
         from sqlalchemy import text
         await db.execute(
             text("""
-                INSERT INTO gmv_daily_stats (id, tenant_id, stat_date, channel, attributed_gmv, attributed_orders, scan_count, scan_uv)
+                INSERT INTO gmv_daily_stats
+                    (id, tenant_id, stat_date, channel,
+                     attributed_gmv, attributed_orders, scan_count, scan_uv)
                 VALUES (gen_random_uuid(), :tid, :dt, :ch, :gmv, :ords, :sc, :suv)
                 ON CONFLICT (tenant_id, stat_date, campaign_id, channel)
                 DO UPDATE SET attributed_gmv = EXCLUDED.attributed_gmv,
@@ -588,7 +598,11 @@ async def aggregate_daily_stats(
                               scan_count = EXCLUDED.scan_count,
                               scan_uv = EXCLUDED.scan_uv
             """),
-            {"tid": str(tenant_id), "dt": day_start, "ch": row.channel, "gmv": float(row.gmv), "ords": row.orders, "sc": scan_count, "suv": scan_uv}
+            {
+                "tid": str(tenant_id), "dt": day_start, "ch": row.channel,
+                "gmv": float(row.gmv), "ords": row.orders,
+                "sc": scan_count, "suv": scan_uv,
+            }
         )
         upserted += 1
 
@@ -597,7 +611,9 @@ async def aggregate_daily_stats(
         from sqlalchemy import text
         await db.execute(
             text("""
-                INSERT INTO gmv_daily_stats (id, tenant_id, stat_date, campaign_id, channel, attributed_gmv, attributed_orders, scan_count, scan_uv)
+                INSERT INTO gmv_daily_stats
+                    (id, tenant_id, stat_date, campaign_id, channel,
+                     attributed_gmv, attributed_orders, scan_count, scan_uv)
                 VALUES (gen_random_uuid(), :tid, :dt, NULL, NULL, 0, 0, :sc, :suv)
                 ON CONFLICT (tenant_id, stat_date, campaign_id, channel)
                 DO UPDATE SET scan_count = EXCLUDED.scan_count,

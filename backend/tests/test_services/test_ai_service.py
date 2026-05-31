@@ -6,7 +6,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from app.services.ai import (
-    AIRateLimitError,
     extract_product_fields,
     extract_product_from_image,
     generate_campaign,

@@ -37,8 +37,8 @@ from app.api.v1.regional import regional_router
 from app.api.v1.resolver import resolver_router
 from app.api.v1.risk import risk_router
 from app.api.v1.risk_dashboard import risk_dashboard_router
-from app.api.v1.risk_notifications import risk_notification_router
 from app.api.v1.risk_evaluate import risk_evaluate_router
+from app.api.v1.risk_notifications import risk_notification_router
 from app.api.v1.risk_rules import risk_rule_router
 from app.api.v1.roles import router as roles_router
 from app.api.v1.scan_events import scan_event_router

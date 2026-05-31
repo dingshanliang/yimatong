@@ -164,7 +164,6 @@ class TestRiskActionExecutor:
         mock_db.add = MagicMock()
         mock_db.flush = AsyncMock()
 
-        from app.models.code import CodeItem
 
         mock_code_item = MagicMock()
         mock_code_item.id = uuid.uuid4()

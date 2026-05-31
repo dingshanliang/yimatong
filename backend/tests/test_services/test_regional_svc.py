@@ -2,15 +2,8 @@
 
 import uuid
 from datetime import UTC, datetime
-from unittest.mock import AsyncMock, patch
-
-import pytest
 
 from app.models.regional import RegionalOrg, RegionalOrgMember, RegionalTemplate
-from app.services.regional import (
-    _get_stats_by_member,
-    _get_stats_by_product,
-)
 
 
 class TestRegionalOrgModel:

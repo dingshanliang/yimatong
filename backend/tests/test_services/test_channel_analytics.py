@@ -1,9 +1,6 @@
 """渠道分析服务单元测试"""
 
 import uuid
-from types import SimpleNamespace
-
-import pytest
 
 
 class TestHealthScoreCalculation:

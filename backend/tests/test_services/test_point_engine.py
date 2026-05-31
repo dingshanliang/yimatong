@@ -1,9 +1,6 @@
 """积分规则引擎与商城单元测试"""
 
 import uuid
-from types import SimpleNamespace
-
-import pytest
 
 
 class TestDailyLimitCheck:

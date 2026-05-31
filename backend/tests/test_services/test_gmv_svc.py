@@ -1,10 +1,7 @@
 """GMV 归因服务单元测试"""
 
 import uuid
-from datetime import datetime, timedelta, timezone
-from unittest.mock import AsyncMock, patch
-
-import pytest
+from datetime import UTC, datetime
 
 from app.models.gmv import ExternalOrder, GmvAttribution
 from app.services.gmv import (
@@ -33,17 +30,17 @@ class TestParseTime:
 
 class TestHoursBetween:
     def test_basic(self):
-        a = datetime(2026, 5, 31, 10, 0, tzinfo=timezone.utc)
-        b = datetime(2026, 5, 31, 17, 0, tzinfo=timezone.utc)
+        a = datetime(2026, 5, 31, 10, 0, tzinfo=UTC)
+        b = datetime(2026, 5, 31, 17, 0, tzinfo=UTC)
         assert _hours_between(a, b) == 7.0
 
     def test_zero(self):
-        dt = datetime(2026, 5, 31, 10, 0, tzinfo=timezone.utc)
+        dt = datetime(2026, 5, 31, 10, 0, tzinfo=UTC)
         assert _hours_between(dt, dt) == 0
 
     def test_negative_returns_zero(self):
-        a = datetime(2026, 5, 31, 17, 0, tzinfo=timezone.utc)
-        b = datetime(2026, 5, 31, 10, 0, tzinfo=timezone.utc)
+        a = datetime(2026, 5, 31, 17, 0, tzinfo=UTC)
+        b = datetime(2026, 5, 31, 10, 0, tzinfo=UTC)
         assert _hours_between(a, b) == 0
 
     def test_none_returns_zero(self):
@@ -141,7 +138,7 @@ class TestGmvAttributionModel:
             consumer_id=uuid.uuid4(),
             amount=199.0,
             match_type="phone",
-            scan_time=datetime.now(timezone.utc),
+            scan_time=datetime.now(UTC),
             attribution_window_hours=168,
             confidence_score=0.95,
         )

@@ -312,11 +312,11 @@ class TestSSEAlertStream:
         token = headers["Authorization"].split(" ", 1)[1]
 
         # Patch StreamingResponse 为同步返回，避免无限流卡住测试
-        from fastapi.responses import StreamingResponse as _SR
+        from fastapi.responses import StreamingResponse as OrigStreamingResponse  # noqa: N814
 
         captured: list = []
 
-        class FiniteSR(_SR):
+        class FiniteSR(OrigStreamingResponse):
             def __init__(self, content, *args, **kwargs):
                 # 替换 generator 为有限版本
                 async def _finite():

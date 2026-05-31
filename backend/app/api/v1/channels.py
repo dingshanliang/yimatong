@@ -104,8 +104,12 @@ async def list_distributors_endpoint(
     tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
     dists, total = await list_distributors(db, tenant_id, page=page, page_size=page_size)
+    items = [
+        {"id": str(d.id), "name": d.name, "code": d.code, "contact_name": d.contact_name, "status": d.status}
+        for d in dists
+    ]
     return PaginatedResponse(
-        items=[{"id": str(d.id), "name": d.name, "code": d.code, "contact_name": d.contact_name, "status": d.status} for d in dists],
+        items=items,
         total=total, page=page, page_size=page_size,
     )
 

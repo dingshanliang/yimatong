@@ -12,19 +12,18 @@ from app.schemas.common import PaginatedResponse
 from app.services.member import (
     award_points,
     create_point_rule,
+    delete_point_rule,
     get_consumer_profile,
     get_or_create_consumer,
     get_point_rules,
     list_point_transactions,
     spend_points,
     update_point_rule,
-    delete_point_rule,
 )
 from app.services.point_shop import (
     create_point_product,
     delete_point_product,
     exchange_product,
-    get_point_product,
     list_point_products,
     update_point_product,
 )

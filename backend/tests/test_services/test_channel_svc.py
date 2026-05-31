@@ -2,8 +2,6 @@
 
 import uuid
 
-import pytest
-
 from app.models.channel import CodeAllocation, Distributor, Region, Store
 
 
