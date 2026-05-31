@@ -407,16 +407,19 @@ async def create_batch_endpoint(
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
-    return await create_production_batch(
-        db,
-        tenant_id,
-        body.product_id,
-        body.sku_id,
-        body.batch_code,
-        body.production_date,
-        body.expiry_date,
-        origin=body.origin,
-    )
+    try:
+        return await create_production_batch(
+            db,
+            tenant_id,
+            body.product_id,
+            body.sku_id,
+            body.batch_code,
+            body.production_date,
+            body.expiry_date,
+            origin=body.origin,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @batch_router.get("", summary="批次 列表")
@@ -449,16 +452,20 @@ async def update_batch_endpoint(
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
-    batch = await update_production_batch(
-        db,
-        tenant_id,
-        batch_id,
-        batch_code=body.batch_code,
-        production_date=body.production_date,
-        expiry_date=body.expiry_date,
-        origin=body.origin,
-        status=getattr(body, "status", None),
-    )
+    try:
+        batch = await update_production_batch(
+            db,
+            tenant_id,
+            batch_id,
+            batch_code=body.batch_code,
+            production_date=body.production_date,
+            expiry_date=body.expiry_date,
+            origin=body.origin,
+            status=getattr(body, "status", None),
+            fields_to_update=body.model_fields_set,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     if not batch:
         raise HTTPException(status_code=404, detail="Batch not found")
     return batch

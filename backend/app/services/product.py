@@ -345,10 +345,19 @@ async def create_production_batch(
     expiry_date,
     origin: str | None = None,
 ) -> ProductionBatch:
+    if expiry_date < production_date:
+        raise ValueError("Expiry date cannot be earlier than production date")
+
     product_result = await db.execute(select(Product).where(Product.id == product_id, Product.tenant_id == tenant_id))
     product = product_result.scalar_one_or_none()
     sku_result = await db.execute(select(SKU).where(SKU.id == sku_id, SKU.tenant_id == tenant_id))
     sku = sku_result.scalar_one_or_none()
+    if not product:
+        raise ValueError("Product not found")
+    if not sku:
+        raise ValueError("SKU not found")
+    if sku.product_id != product_id:
+        raise ValueError("SKU does not belong to selected product")
     existing = await db.execute(
         select(ProductionBatch).where(ProductionBatch.tenant_id == tenant_id, ProductionBatch.batch_code == batch_code)
     )
@@ -386,7 +395,9 @@ async def update_production_batch(
     expiry_date=None,
     origin: str | None = None,
     status=None,
+    fields_to_update: set[str] | None = None,
 ) -> ProductionBatch | None:
+    fields_to_update = fields_to_update or set()
     result = await db.execute(
         select(ProductionBatch)
         .options(selectinload(ProductionBatch.product), selectinload(ProductionBatch.sku))
@@ -413,10 +424,12 @@ async def update_production_batch(
         batch.production_date = production_date
     if expiry_date is not None:
         batch.expiry_date = expiry_date
-    if origin is not None:
+    if "origin" in fields_to_update:
         batch.origin = origin
     if status is not None:
         batch.status = status
+    if batch.expiry_date < batch.production_date:
+        raise ValueError("Expiry date cannot be earlier than production date")
 
     await db.flush()
     await db.refresh(batch)

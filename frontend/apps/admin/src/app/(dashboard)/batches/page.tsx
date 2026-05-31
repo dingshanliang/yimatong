@@ -1,10 +1,12 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
+import { useRouter } from "next/navigation";
 import { useCrud } from "@/lib/hooks";
-import { App, Button, DatePicker, Form, Input, Modal, Select, Space, Table, Tag, Typography } from "antd";
+import { App, Button, Form, Modal, Select, Space, Table, Tag, Typography } from "antd";
 import { PlusOutlined } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
+import ProductionBatchFormFields, { buildBatchPayload, formatBatchSkuLabel, type ProductionBatchFormValues } from "@/components/ProductionBatchFormFields";
 import api from "@/lib/api";
 import dayjs from "dayjs";
 
@@ -16,6 +18,7 @@ interface ProductionBatch {
   product_name?: string;
   sku_id: string;
   sku_name?: string;
+  sku_code?: string;
   batch_code: string;
   production_date: string;
   expiry_date: string;
@@ -26,12 +29,14 @@ interface ProductionBatch {
 interface Product {
   id: string;
   name: string;
+  origin?: string;
 }
 
 interface SKU {
   id: string;
   name: string;
   product_id: string;
+  code?: string;
 }
 
 const BATCH_STATUS_MAP: Record<string, { label: string; color: string }> = {
@@ -42,11 +47,12 @@ const BATCH_STATUS_MAP: Record<string, { label: string; color: string }> = {
 
 export default function BatchesPage() {
   const { message } = App.useApp();
+  const router = useRouter();
   const [products, setProducts] = useState<Product[]>([]);
   const [skus, setSKUs] = useState<SKU[]>([]);
   const [modalOpen, setModalOpen] = useState(false);
   const [editItem, setEditItem] = useState<ProductionBatch | null>(null);
-  const [form] = Form.useForm();
+  const [form] = Form.useForm<ProductionBatchFormValues>();
   const [selectedProduct, setSelectedProduct] = useState<string | undefined>(undefined);
 
   const { items: batches, total, page, loading, setPage, setFilter, create, update } = useCrud<ProductionBatch>("/production-batches");
@@ -88,13 +94,9 @@ export default function BatchesPage() {
     setModalOpen(true);
   };
 
-  const handleSubmit = async (values: Record<string, unknown>) => {
+  const handleSubmit = async (values: ProductionBatchFormValues) => {
     try {
-      const payload: Record<string, unknown> = {
-        ...values,
-        production_date: (values.production_date as dayjs.Dayjs).format("YYYY-MM-DD"),
-        expiry_date: (values.expiry_date as dayjs.Dayjs).format("YYYY-MM-DD"),
-      };
+      const payload: Record<string, unknown> = buildBatchPayload(values);
       if (editItem) {
         const updatePayload = { ...payload };
         delete updatePayload.product_id;
@@ -103,23 +105,34 @@ export default function BatchesPage() {
         message.success("生产批次更新成功");
       } else {
         await create(payload);
-        message.success("生产批次创建成功");
+        message.success("批次已创建，可继续生成码批次或维护扫码页关联");
       }
       setModalOpen(false);
       form.resetFields();
       setSelectedProduct(undefined);
     } catch {
-      message.error("创建失败");
+      message.error("保存批次失败");
     }
   };
 
+  const handleProductChange = (productId?: string) => {
+    setSelectedProduct(productId);
+    fetchSKUs(productId);
+    const product = products.find((item) => item.id === productId);
+    form.setFieldsValue({ origin: product?.origin || undefined });
+  };
+
+  const handleCreateSkuClick = () => {
+    if (selectedProduct) router.push(`/products/${selectedProduct}`);
+  };
+
   const columns: ColumnsType<ProductionBatch> = [
-    { title: "产品", dataIndex: "product_name", key: "product_name", render: (v?: string) => v || "-" },
-    { title: "SKU", dataIndex: "sku_name", key: "sku_name", render: (v?: string) => v || "-" },
+    { title: "产品", dataIndex: "product_name", key: "product_name", render: (v?: string) => v || "未关联" },
+    { title: "SKU", key: "sku", render: (_: unknown, record) => formatBatchSkuLabel({ name: record.sku_name || "", code: record.sku_code }) },
     { title: "批次号", dataIndex: "batch_code", key: "batch_code" },
     { title: "生产日期", dataIndex: "production_date", key: "production_date" },
     { title: "过期日期", dataIndex: "expiry_date", key: "expiry_date" },
-    { title: "产地", dataIndex: "origin", key: "origin", render: (v?: string) => v || "-" },
+    { title: "产地", dataIndex: "origin", key: "origin", render: (v?: string) => v || "未填写" },
     {
       title: "状态",
       dataIndex: "status",
@@ -170,40 +183,20 @@ export default function BatchesPage() {
         open={modalOpen}
         onCancel={() => { setModalOpen(false); setSelectedProduct(undefined); setEditItem(null); }}
         onOk={() => form.submit()}
-        width={500}
+        okText={editItem ? "更新批次" : "创建批次"}
+        width={560}
       >
-        <Form form={form} layout="vertical" onFinish={handleSubmit}>
-          <Form.Item name="product_id" label="关联产品" rules={[{ required: true, message: "请选择产品" }]}>
-            <Select
-              placeholder="选择产品"
-              options={products.map((p) => ({ value: p.id, label: p.name }))}
-              showSearch
-              optionFilterProp="label"
-              onChange={(v) => { setSelectedProduct(v); fetchSKUs(v); }}
-              disabled={!!editItem}
-            />
-          </Form.Item>
-          <Form.Item name="sku_id" label="关联 SKU" rules={[{ required: true, message: "请选择 SKU" }]}>
-            <Select
-              placeholder="选择 SKU"
-              options={skus.map((s) => ({ value: s.id, label: s.name }))}
-              disabled={!selectedProduct}
-            />
-          </Form.Item>
-          <Form.Item name="batch_code" label="批次号" rules={[{ required: true, message: "请输入批次号" }]}>
-            <Input placeholder="例如 PB-2026-001" />
-          </Form.Item>
-          <Form.Item name="origin" label="批次产地">
-            <Input placeholder="例如 黑龙江省哈尔滨市五常市" />
-          </Form.Item>
-          <Space>
-            <Form.Item name="production_date" label="生产日期" rules={[{ required: true, message: "请选择" }]}>
-              <DatePicker />
-            </Form.Item>
-            <Form.Item name="expiry_date" label="过期日期" rules={[{ required: true, message: "请选择" }]}>
-              <DatePicker />
-            </Form.Item>
-          </Space>
+        <Form<ProductionBatchFormValues> form={form} layout="vertical" onFinish={handleSubmit}>
+          <ProductionBatchFormFields
+            form={form}
+            products={products}
+            skus={skus}
+            selectedProductId={selectedProduct}
+            editing={!!editItem}
+            onProductChange={handleProductChange}
+            onCreateSkuClick={handleCreateSkuClick}
+            onDateRangeReset={() => message.warning("保质期至不能早于生产日期，已清空原日期")}
+          />
         </Form>
       </Modal>
     </div>

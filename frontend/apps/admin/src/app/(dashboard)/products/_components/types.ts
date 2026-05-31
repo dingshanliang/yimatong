@@ -54,6 +54,7 @@ export interface ProductionBatch {
   product_name?: string;
   sku_id: string;
   sku_name?: string;
+  sku_code?: string;
   batch_code: string;
   production_date: string;
   expiry_date: string;

@@ -138,6 +138,7 @@ class ProductionBatchRead(BaseModel):
     product_name: str | None = Field(None, description="产品名称")
     sku_id: uuid.UUID = Field(..., description="SKU ID")
     sku_name: str | None = Field(None, description="SKU 名称")
+    sku_code: str | None = Field(None, description="SKU 编码")
     batch_code: str = Field(..., description="批次号")
     production_date: date = Field(..., description="生产日期")
     expiry_date: date = Field(..., description="保质期至")

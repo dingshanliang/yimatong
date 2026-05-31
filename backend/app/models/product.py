@@ -140,6 +140,11 @@ class ProductionBatch(Base, ExternalRefMixin):
         sku = self.__dict__.get("sku")
         return sku.name if sku else None
 
+    @property
+    def sku_code(self) -> str | None:
+        sku = self.__dict__.get("sku")
+        return sku.code if sku else None
+
 
 class ProductAsset(Base, ExternalRefMixin):
     __tablename__ = "product_assets"

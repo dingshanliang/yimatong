@@ -192,6 +192,77 @@ class TestProductionBatchCRUD:
         assert "already exists" in resp.json()["detail"].lower()
 
     @pytest.mark.anyio
+    async def test_create_batch_rejects_sku_from_another_product(self, client: AsyncClient, tenant_with_auth, sku_id):
+        product_id, _ = sku_id
+        _, headers = tenant_with_auth
+        brand_resp = await client.post("/api/v1/brands", json={"name": "错配品牌"}, headers=headers)
+        other_product_resp = await client.post(
+            "/api/v1/products",
+            json={"brand_id": brand_resp.json()["id"], "name": "错配产品"},
+            headers=headers,
+        )
+        other_sku_resp = await client.post(
+            "/api/v1/skus",
+            json={"product_id": other_product_resp.json()["id"], "code": "OTHER-SKU", "name": "错配 SKU"},
+            headers=headers,
+        )
+
+        resp = await client.post(
+            "/api/v1/production-batches",
+            json={
+                "product_id": product_id,
+                "sku_id": other_sku_resp.json()["id"],
+                "batch_code": "WRONG-SKU-BATCH",
+                "production_date": "2026-01-01",
+                "expiry_date": "2027-01-01",
+            },
+            headers=headers,
+        )
+
+        assert resp.status_code == 400
+        assert "does not belong" in resp.json()["detail"]
+
+    @pytest.mark.anyio
+    async def test_batch_date_validation_and_origin_clear(self, client: AsyncClient, tenant_with_auth, sku_id):
+        product_id, sid = sku_id
+        _, headers = tenant_with_auth
+        invalid_resp = await client.post(
+            "/api/v1/production-batches",
+            json={
+                "product_id": product_id,
+                "sku_id": sid,
+                "batch_code": "INVALID-DATE-BATCH",
+                "production_date": "2026-02-01",
+                "expiry_date": "2026-01-01",
+            },
+            headers=headers,
+        )
+        assert invalid_resp.status_code == 400
+        assert "earlier than production date" in invalid_resp.json()["detail"]
+
+        create_resp = await client.post(
+            "/api/v1/production-batches",
+            json={
+                "product_id": product_id,
+                "sku_id": sid,
+                "batch_code": "CLEAR-ORIGIN-BATCH",
+                "production_date": "2026-01-01",
+                "expiry_date": "2027-01-01",
+                "origin": "黑龙江省哈尔滨市五常市",
+            },
+            headers=headers,
+        )
+        assert create_resp.status_code == 201
+
+        patch_resp = await client.patch(
+            f"/api/v1/production-batches/{create_resp.json()['id']}",
+            json={"origin": None},
+            headers=headers,
+        )
+        assert patch_resp.status_code == 200
+        assert patch_resp.json()["origin"] is None
+
+    @pytest.mark.anyio
     async def test_csv_import(self, client: AsyncClient, tenant_with_auth, sku_id):
         product_id, sid = sku_id
         _, headers = tenant_with_auth

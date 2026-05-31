@@ -23,6 +23,7 @@ import { ArrowLeftOutlined, EditOutlined, FileTextOutlined, PlusOutlined } from 
 import type { ColumnsType } from "antd/es/table";
 import FileUploadInput from "@/components/FileUploadInput";
 import ImageUploadInput from "@/components/ImageUploadInput";
+import ProductionBatchFormFields, { buildBatchPayload, formatBatchSkuLabel, type ProductionBatchFormValues } from "@/components/ProductionBatchFormFields";
 import SKUFormFields, { buildSkuPayload, type SKUFormValues } from "@/components/SKUFormFields";
 import api, { extractErrorMessage } from "@/lib/api";
 import { createDefaultModules, createEmptyDSL } from "@/lib/page-dsl";
@@ -193,11 +194,6 @@ const PROFILE_FIELD_LABELS: Record<string, string> = {
   description: "产品介绍",
 };
 
-type BatchFormValues = Omit<ProductionBatch, "id" | "status" | "production_date" | "expiry_date"> & {
-  production_date: dayjs.Dayjs;
-  expiry_date: dayjs.Dayjs;
-};
-
 interface PageTemplate {
   id: string;
   name: string;
@@ -259,7 +255,7 @@ export default function ProductWorkbenchPage() {
   const [productForm] = Form.useForm();
   const [assetForm] = Form.useForm();
   const [skuForm] = Form.useForm();
-  const [batchForm] = Form.useForm();
+  const [batchForm] = Form.useForm<ProductionBatchFormValues>();
   const [pageForm] = Form.useForm();
   const [assetModalOpen, setAssetModalOpen] = useState(false);
   const [skuModalOpen, setSkuModalOpen] = useState(false);
@@ -477,18 +473,13 @@ export default function ProductWorkbenchPage() {
       ...batch,
       production_date: dayjs(batch.production_date),
       expiry_date: dayjs(batch.expiry_date),
-    } : { product_id: productId });
+    } : { product_id: productId, origin: product?.origin || undefined });
     setBatchModalOpen(true);
   };
 
-  const handleBatchSubmit = async (values: BatchFormValues) => {
+  const handleBatchSubmit = async (values: ProductionBatchFormValues) => {
     try {
-      const payload = {
-        ...values,
-        product_id: productId,
-        production_date: values.production_date.format("YYYY-MM-DD"),
-        expiry_date: values.expiry_date.format("YYYY-MM-DD"),
-      };
+      const payload = buildBatchPayload(values, productId);
       if (editingBatch) {
         const updatePayload: Record<string, unknown> = { ...payload };
         delete updatePayload.product_id;
@@ -497,7 +488,7 @@ export default function ProductWorkbenchPage() {
       } else {
         await api.post("/production-batches", payload);
       }
-      message.success(editingBatch ? "批次已更新" : "批次已新增");
+      message.success(editingBatch ? "批次已更新" : "批次已创建，可继续生成码批次或维护扫码页关联");
       setBatchModalOpen(false);
       load();
     } catch (err) {
@@ -567,10 +558,10 @@ export default function ProductWorkbenchPage() {
 
   const batchColumns: ColumnsType<ProductionBatch> = [
     { title: "批次号", dataIndex: "batch_code", key: "batch_code" },
-    { title: "SKU", dataIndex: "sku_name", key: "sku_name", render: (v?: string) => v || "-" },
+    { title: "SKU", key: "sku", render: (_: unknown, record) => formatBatchSkuLabel({ name: record.sku_name || "", code: record.sku_code }) },
     { title: "生产日期", dataIndex: "production_date", key: "production_date" },
     { title: "保质期至", dataIndex: "expiry_date", key: "expiry_date" },
-    { title: "产地", dataIndex: "origin", key: "origin", render: (v?: string) => v || product?.origin || "-" },
+    { title: "产地", dataIndex: "origin", key: "origin", render: (v?: string) => v || product?.origin || "未填写" },
     { title: "状态", dataIndex: "status", key: "status", render: (s: string) => <Tag color={BATCH_STATUS_MAP[s]?.color || "default"}>{BATCH_STATUS_MAP[s]?.label || s}</Tag> },
     { title: "操作", key: "actions", render: (_: unknown, record) => <Button type="link" size="small" onClick={() => openBatchModal(record)}>编辑</Button> },
   ];
@@ -703,7 +694,17 @@ export default function ProductWorkbenchPage() {
             label: "批次",
             children: (
               <div>
-                <div className="mb-3 flex justify-end"><Button type="primary" icon={<PlusOutlined />} onClick={() => openBatchModal()} disabled={skus.length === 0}>新增批次</Button></div>
+                <div className="mb-3 flex items-center justify-between gap-3">
+                  {skus.length === 0 ? (
+                    <Text type="secondary">该产品暂无 SKU，请先创建 SKU 后再新增批次。</Text>
+                  ) : <span />}
+                  <Space>
+                    {skus.length === 0 && (
+                      <Button onClick={() => setActiveTab("skus")}>去创建 SKU</Button>
+                    )}
+                    <Button type="primary" icon={<PlusOutlined />} onClick={() => openBatchModal()} disabled={skus.length === 0}>新增批次</Button>
+                  </Space>
+                </div>
                 <Table columns={batchColumns} dataSource={batches} rowKey="id" loading={loading} pagination={false} />
               </div>
             ),
@@ -839,15 +840,29 @@ export default function ProductWorkbenchPage() {
         </Form>
       </Modal>
 
-      <Modal title={editingBatch ? "编辑批次" : "新增批次"} open={batchModalOpen} onCancel={() => setBatchModalOpen(false)} onOk={() => batchForm.submit()} width={560} forceRender>
-        <Form form={batchForm} layout="vertical" onFinish={handleBatchSubmit}>
-          <Form.Item name="sku_id" label="关联 SKU" rules={[{ required: true }]}><Select options={skus.map((sku) => ({ value: sku.id, label: `${sku.name} (${sku.code})` }))} disabled={!!editingBatch} /></Form.Item>
-          <Form.Item name="batch_code" label="批次号" rules={[{ required: true }]}><Input /></Form.Item>
-          <Form.Item name="origin" label="批次产地"><Input placeholder={product.origin || "省/市/县/基地"} /></Form.Item>
-          <Space>
-            <Form.Item name="production_date" label="生产日期" rules={[{ required: true }]}><DatePicker /></Form.Item>
-            <Form.Item name="expiry_date" label="保质期至" rules={[{ required: true }]}><DatePicker /></Form.Item>
-          </Space>
+      <Modal
+        title={editingBatch ? "编辑批次" : "新增批次"}
+        open={batchModalOpen}
+        onCancel={() => setBatchModalOpen(false)}
+        onOk={() => batchForm.submit()}
+        okText={editingBatch ? "更新批次" : "创建批次"}
+        width={560}
+        forceRender
+      >
+        <Form<ProductionBatchFormValues> form={batchForm} layout="vertical" onFinish={handleBatchSubmit}>
+          <ProductionBatchFormFields
+            form={batchForm}
+            products={[product]}
+            skus={skus}
+            selectedProductId={productId}
+            productLocked
+            editing={!!editingBatch}
+            onCreateSkuClick={() => {
+              setBatchModalOpen(false);
+              setActiveTab("skus");
+            }}
+            onDateRangeReset={() => message.warning("保质期至不能早于生产日期，已清空原日期")}
+          />
         </Form>
       </Modal>
 
