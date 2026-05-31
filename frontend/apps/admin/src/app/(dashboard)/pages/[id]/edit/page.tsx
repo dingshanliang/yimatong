@@ -30,6 +30,7 @@ export default function PageEditorPage() {
   const { message } = App.useApp();
 
   const [templateName, setTemplateName] = useState("");
+  const [templateProductId, setTemplateProductId] = useState<string | null>(null);
   const [version, setVersion] = useState<PageVersion | null>(null);
   const [dsl, setDsl] = useState<PageDSL>(createEmptyDSL());
   const [saving, setSaving] = useState(false);
@@ -40,6 +41,7 @@ export default function PageEditorPage() {
       try {
         const { data: tpl } = await api.get(`/page-templates/${params.id}`);
         setTemplateName(tpl.name);
+        setTemplateProductId(tpl.product_id || null);
         const { data: versions } = await api.get(`/page-templates/${params.id}/versions`);
         const draft = versions.find((v: PageVersion) => v.status === "draft");
         const target = draft || versions[0];
@@ -112,6 +114,7 @@ export default function PageEditorPage() {
                 children: (
                   <ModuleList
                     modules={dsl.modules || []}
+                    productId={templateProductId}
                     onChange={(modules) => setDsl({ ...dsl, modules })}
                   />
                 ),

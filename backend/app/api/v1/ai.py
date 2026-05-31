@@ -1,8 +1,9 @@
 """AI 资料识别与文案生成 API"""
 
+import base64
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -129,6 +130,29 @@ async def recognize_image_endpoint(
         return await extract_product_from_image(
             image_url=body.image_url,
             filename=body.filename,
+            tenant_id=tenant_id,
+            db=db,
+        )
+    except AIServiceError as e:
+        raise _handle_ai_error(e)
+
+
+@ai_router.post("/recognize-image-upload")
+async def recognize_image_upload_endpoint(
+    file: UploadFile = File(...),
+    db: AsyncSession = Depends(get_db),
+    tenant_id: uuid.UUID = Depends(get_current_tenant),
+):
+    """AI-01b: 上传图片并识别产品信息"""
+    content = await file.read()
+    content_type = file.content_type or "image/png"
+    if content_type not in {"image/jpeg", "image/png", "image/webp"}:
+        raise HTTPException(status_code=400, detail="仅支持 JPG、PNG、WebP 图片")
+    image_url = f"data:{content_type};base64,{base64.b64encode(content).decode('ascii')}"
+    try:
+        return await extract_product_from_image(
+            image_url=image_url,
+            filename=file.filename or "image.jpg",
             tenant_id=tenant_id,
             db=db,
         )

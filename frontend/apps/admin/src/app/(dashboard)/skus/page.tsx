@@ -5,6 +5,7 @@ import { useCrud } from "@/lib/hooks";
 import { App, Button, Form, Input, Modal, Select, Space, Table, Tag, Typography } from "antd";
 import { PlusOutlined } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
+import ImageUploadInput from "@/components/ImageUploadInput";
 import api from "@/lib/api";
 
 const { Title } = Typography;
@@ -12,9 +13,13 @@ const { Title } = Typography;
 interface SKU {
   id: string;
   product_id: string;
+  product_name?: string;
   code: string;
   name: string;
   specifications?: Record<string, string>;
+  package_type?: string;
+  barcode?: string;
+  image_url?: string;
   status: string;
 }
 
@@ -22,6 +27,9 @@ interface Product {
   id: string;
   name: string;
 }
+
+type SpecEntry = { key?: string; value?: string };
+type SKUFormValues = Omit<SKU, "id" | "status" | "specifications"> & { spec_entries?: SpecEntry[] };
 
 export default function SKUsPage() {
   const { message } = App.useApp();
@@ -52,17 +60,24 @@ export default function SKUsPage() {
 
   const openEdit = (sku: SKU) => {
     setEditItem(sku);
-    form.setFieldsValue({ ...sku, specifications: sku.specifications ? JSON.stringify(sku.specifications) : "" });
+    form.setFieldsValue({
+      ...sku,
+      spec_entries: Object.entries(sku.specifications || {}).map(([key, value]) => ({ key, value })),
+    });
     setModalOpen(true);
   };
 
-  const handleSubmit = async (values: Record<string, string>) => {
+  const handleSubmit = async (values: SKUFormValues) => {
     try {
-      const payload = { ...values };
-      if (payload.specifications) {
-        try { payload.specifications = JSON.parse(payload.specifications); }
-        catch { /* keep as string if not valid JSON */ }
-      }
+      const specifications = (values.spec_entries || []).reduce<Record<string, string>>((acc, entry) => {
+        const key = entry.key?.trim();
+        const value = entry.value?.trim();
+        if (key && value) acc[key] = value;
+        return acc;
+      }, {});
+      const rest = { ...values };
+      delete rest.spec_entries;
+      const payload = { ...rest, specifications: Object.keys(specifications).length ? specifications : undefined };
       if (editItem) {
         await update(editItem.id, payload);
         message.success("SKU 更新成功");
@@ -78,8 +93,11 @@ export default function SKUsPage() {
   };
 
   const columns: ColumnsType<SKU> = [
+    { title: "产品", dataIndex: "product_name", key: "product_name", render: (v?: string) => v || "-" },
     { title: "SKU 编码", dataIndex: "code", key: "code" },
     { title: "名称", dataIndex: "name", key: "name" },
+    { title: "包装", dataIndex: "package_type", key: "package_type", render: (v?: string) => v || "-" },
+    { title: "条码/GTIN", dataIndex: "barcode", key: "barcode", render: (v?: string) => v || "-" },
     {
       title: "规格",
       dataIndex: "specifications",
@@ -156,9 +174,41 @@ export default function SKUsPage() {
           <Form.Item name="name" label="名称" rules={[{ required: true, message: "请输入名称" }]}>
             <Input />
           </Form.Item>
-          <Form.Item name="specifications" label="规格（JSON）">
-            <Input.TextArea rows={3} placeholder='{"颜色":"红色","尺寸":"500ml"}' />
+          <Form.Item name="package_type" label="包装类型">
+            <Input placeholder="例如 袋装、盒装、礼盒" />
           </Form.Item>
+          <Form.Item name="barcode" label="条码/GTIN">
+            <Input placeholder="例如 6901234567890" />
+          </Form.Item>
+          <Form.Item
+            name="image_url"
+            label="SKU 图片（可选）"
+            extra="用于展示具体规格包装。可直接上传，也可粘贴公开图片链接。"
+            rules={[{ type: "url", message: "请输入以 http:// 或 https:// 开头的图片链接" }]}
+          >
+            <ImageUploadInput module="sku-image" previewAlt="SKU 图片预览" />
+          </Form.Item>
+          <Form.List name="spec_entries">
+            {(fields, { add, remove }) => (
+              <div>
+                <div className="mb-2 flex items-center justify-between">
+                  <span>规格属性</span>
+                  <Button size="small" onClick={() => add({ key: "", value: "" })}>添加规格</Button>
+                </div>
+                {fields.map((field) => (
+                  <Space key={field.key} className="mb-2 flex" align="baseline">
+                    <Form.Item {...field} name={[field.name, "key"]} className="!mb-0" rules={[{ required: true, message: "请输入规格名" }]}>
+                      <Input placeholder="规格名，如 净含量" />
+                    </Form.Item>
+                    <Form.Item {...field} name={[field.name, "value"]} className="!mb-0" rules={[{ required: true, message: "请输入规格值" }]}>
+                      <Input placeholder="规格值，如 5kg" />
+                    </Form.Item>
+                    <Button danger type="link" onClick={() => remove(field.name)}>删除</Button>
+                  </Space>
+                ))}
+              </div>
+            )}
+          </Form.List>
         </Form>
       </Modal>
     </div>

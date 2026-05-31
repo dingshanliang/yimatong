@@ -31,10 +31,12 @@ const CHECKLIST_GROUPS: ChecklistGroup[] = [
       { key: "product.created", label: "至少一个产品已创建", required: true },
       { key: "product.sku", label: "SKU 信息已完善", required: true },
       { key: "product.images", label: "产品图片已上传", required: false },
+      { key: "product.reports", label: "检测报告已上传", required: true },
+      { key: "product.certificates", label: "资质证书已上传", required: true },
       {
         key: "product.batch",
         label: "生产批次信息已录入",
-        required: false,
+        required: true,
       },
     ],
   },

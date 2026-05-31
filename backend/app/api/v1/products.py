@@ -11,9 +11,14 @@ from app.schemas.product import (
     BrandUpdate,
     CSVImportResult,
     PaginatedResponse,
+    ProductAssetCreate,
+    ProductAssetRead,
+    ProductAssetType,
+    ProductAssetUpdate,
     ProductCreate,
     ProductionBatchCreate,
     ProductionBatchRead,
+    ProductionBatchUpdate,
     ProductRead,
     ProductUpdate,
     SKUCreate,
@@ -24,15 +29,21 @@ from app.services.product import (
     check_brand_has_products,
     create_brand,
     create_product,
+    create_product_asset,
     create_production_batch,
     create_sku,
+    delete_product_asset,
+    get_product,
     import_batches_csv,
     list_brands,
+    list_product_assets,
     list_production_batches,
     list_products,
     list_skus,
     update_brand,
     update_product,
+    update_product_asset,
+    update_production_batch,
     update_sku,
 )
 
@@ -40,6 +51,7 @@ brand_router = APIRouter(prefix="/api/v1/brands", tags=["brands"])
 product_router = APIRouter(prefix="/api/v1/products", tags=["products"])
 sku_router = APIRouter(prefix="/api/v1/skus", tags=["skus"])
 batch_router = APIRouter(prefix="/api/v1/production-batches", tags=["production-batches"])
+asset_router = APIRouter(prefix="/api/v1/product-assets", tags=["product-assets"])
 
 
 # --- Brand endpoints ---
@@ -135,13 +147,25 @@ async def create_product_endpoint(
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
-    return await create_product(db, tenant_id, body.brand_id, body.name, body.category, body.description)
+    return await create_product(
+        db,
+        tenant_id,
+        body.brand_id,
+        body.name,
+        body.category,
+        body.description,
+        origin=body.origin,
+        image_url=body.image_url,
+        story_title=body.story_title,
+        story_content=body.story_content,
+    )
 
 
 @product_router.get("", summary="产品 列表")
 async def list_products_endpoint(
     brand_id: uuid.UUID | None = Query(None),
     category: str | None = Query(None),
+    search: str | None = Query(None),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
@@ -152,6 +176,7 @@ async def list_products_endpoint(
         tenant_id,
         brand_id=brand_id,
         category=category,
+        search=search,
         page=page,
         page_size=page_size,
     )
@@ -161,6 +186,18 @@ async def list_products_endpoint(
         page=page,
         page_size=page_size,
     )
+
+
+@product_router.get("/{product_id}", response_model=ProductRead, summary="产品 详情")
+async def get_product_endpoint(
+    product_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    tenant_id: uuid.UUID = Depends(get_current_tenant),
+):
+    product = await get_product(db, tenant_id, product_id)
+    if not product:
+        raise HTTPException(status_code=404, detail="Product not found")
+    return product
 
 
 @product_router.patch("/{product_id}", response_model=ProductRead, summary="更新 产品")
@@ -176,12 +213,69 @@ async def update_product_endpoint(
         product_id,
         name=body.name,
         category=body.category,
+        origin=body.origin,
+        image_url=body.image_url,
+        story_title=body.story_title,
+        story_content=body.story_content,
         description=body.description,
         status=body.status,
     )
     if not product:
         raise HTTPException(status_code=404, detail="Product not found")
     return product
+
+
+@product_router.get("/{product_id}/assets", summary="产品资料 列表")
+async def list_product_assets_endpoint(
+    product_id: uuid.UUID,
+    asset_type: ProductAssetType | None = Query(None),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    db: AsyncSession = Depends(get_db),
+    tenant_id: uuid.UUID = Depends(get_current_tenant),
+):
+    if not await get_product(db, tenant_id, product_id):
+        raise HTTPException(status_code=404, detail="Product not found")
+    assets, total = await list_product_assets(
+        db,
+        tenant_id,
+        product_id,
+        asset_type=asset_type,
+        page=page,
+        page_size=page_size,
+    )
+    return PaginatedResponse(
+        items=[ProductAssetRead.model_validate(a) for a in assets],
+        total=total,
+        page=page,
+        page_size=page_size,
+    )
+
+
+@product_router.post("/{product_id}/assets", response_model=ProductAssetRead, status_code=201, summary="创建 产品资料")
+async def create_product_asset_endpoint(
+    product_id: uuid.UUID,
+    body: ProductAssetCreate,
+    db: AsyncSession = Depends(get_db),
+    tenant_id: uuid.UUID = Depends(get_current_tenant),
+):
+    asset = await create_product_asset(
+        db,
+        tenant_id,
+        product_id,
+        body.asset_type,
+        body.name,
+        description=body.description,
+        issuer=body.issuer,
+        valid_until=body.valid_until,
+        file_url=body.file_url,
+        image_url=body.image_url,
+        content_text=body.content_text,
+        metadata_json=body.metadata_json,
+    )
+    if not asset:
+        raise HTTPException(status_code=404, detail="Product not found")
+    return asset
 
 
 @product_router.get("/{product_id}/skus")
@@ -246,6 +340,9 @@ async def create_sku_endpoint(
         body.code,
         body.name,
         body.specifications,
+        package_type=body.package_type,
+        barcode=body.barcode,
+        image_url=body.image_url,
     )
 
 
@@ -286,6 +383,9 @@ async def update_sku_endpoint(
         code=body.code,
         name=body.name,
         specifications=body.specifications,
+        package_type=body.package_type,
+        barcode=body.barcode,
+        image_url=body.image_url,
         status=body.status,
     )
     if not sku:
@@ -310,6 +410,7 @@ async def create_batch_endpoint(
         body.batch_code,
         body.production_date,
         body.expiry_date,
+        origin=body.origin,
     )
 
 
@@ -336,6 +437,28 @@ async def list_batches_endpoint(
     )
 
 
+@batch_router.patch("/{batch_id}", response_model=ProductionBatchRead, summary="更新 批次")
+async def update_batch_endpoint(
+    batch_id: uuid.UUID,
+    body: ProductionBatchUpdate,
+    db: AsyncSession = Depends(get_db),
+    tenant_id: uuid.UUID = Depends(get_current_tenant),
+):
+    batch = await update_production_batch(
+        db,
+        tenant_id,
+        batch_id,
+        batch_code=body.batch_code,
+        production_date=body.production_date,
+        expiry_date=body.expiry_date,
+        origin=body.origin,
+        status=getattr(body, "status", None),
+    )
+    if not batch:
+        raise HTTPException(status_code=404, detail="Batch not found")
+    return batch
+
+
 @batch_router.post("/import-csv", response_model=CSVImportResult, summary="导入 csv")
 async def import_csv_endpoint(
     product_id: str = Form(...),
@@ -353,3 +476,41 @@ async def import_csv_endpoint(
         content,
     )
     return CSVImportResult(imported=imported, errors=errors)
+
+
+@asset_router.patch("/{asset_id}", response_model=ProductAssetRead, summary="更新 产品资料")
+async def update_product_asset_endpoint(
+    asset_id: uuid.UUID,
+    body: ProductAssetUpdate,
+    db: AsyncSession = Depends(get_db),
+    tenant_id: uuid.UUID = Depends(get_current_tenant),
+):
+    asset = await update_product_asset(
+        db,
+        tenant_id,
+        asset_id,
+        asset_type=body.asset_type,
+        name=body.name,
+        description=body.description,
+        issuer=body.issuer,
+        valid_until=body.valid_until,
+        file_url=body.file_url,
+        image_url=body.image_url,
+        content_text=body.content_text,
+        metadata_json=body.metadata_json,
+        status=body.status,
+    )
+    if not asset:
+        raise HTTPException(status_code=404, detail="Product asset not found")
+    return asset
+
+
+@asset_router.delete("/{asset_id}", status_code=204, summary="删除 产品资料")
+async def delete_product_asset_endpoint(
+    asset_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    tenant_id: uuid.UUID = Depends(get_current_tenant),
+):
+    deleted = await delete_product_asset(db, tenant_id, asset_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Product asset not found")

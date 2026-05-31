@@ -6,6 +6,7 @@ import { App, Button, Empty, Form, Input, InputNumber, Modal, Popconfirm, Select
 import { QrcodeOutlined, PlusOutlined, DownloadOutlined } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
 import api from "@/lib/api";
+import { formatDate } from "@/lib/format";
 
 const { Title } = Typography;
 
@@ -17,7 +18,7 @@ interface CodeBatch {
   sku_id: string;
   code_type: string;
   status: string;
-  created_at: string;
+  created_at?: string;
 }
 
 interface Product {
@@ -133,7 +134,7 @@ export default function CodesPage() {
       title: "创建时间",
       dataIndex: "created_at",
       key: "created_at",
-      render: (v: string) => new Date(v).toLocaleDateString("zh-CN"),
+      render: (v?: string) => formatDate(v),
     },
     {
       title: "操作",

@@ -2,12 +2,16 @@ import uuid
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.models.product import (
     SKU,
     Brand,
     BrandStatus,
     Product,
+    ProductAsset,
+    ProductAssetStatus,
+    ProductAssetType,
     ProductionBatch,
     ProductStatus,
     SKUStatus,
@@ -107,17 +111,30 @@ async def create_product(
     name: str,
     category: str | None = None,
     description: str | None = None,
+    origin: str | None = None,
+    image_url: str | None = None,
+    story_title: str | None = None,
+    story_content: str | None = None,
 ) -> Product:
+    brand_result = await db.execute(select(Brand).where(Brand.id == brand_id, Brand.tenant_id == tenant_id))
+    brand = brand_result.scalar_one_or_none()
     product = Product(
         tenant_id=tenant_id,
         brand_id=brand_id,
         name=name,
         category=category,
+        origin=origin,
+        image_url=image_url,
+        story_title=story_title,
+        story_content=story_content,
         description=description,
     )
+    if brand:
+        product.brand = brand
     db.add(product)
     await db.flush()
     await db.refresh(product)
+    await db.refresh(product, ["brand"])
     return product
 
 
@@ -126,10 +143,11 @@ async def list_products(
     tenant_id: uuid.UUID,
     brand_id: uuid.UUID | None = None,
     category: str | None = None,
+    search: str | None = None,
     page: int = 1,
     page_size: int = 20,
 ) -> tuple[list[Product], int]:
-    stmt = select(Product).where(Product.tenant_id == tenant_id)
+    stmt = select(Product).options(selectinload(Product.brand)).where(Product.tenant_id == tenant_id)
     count_stmt = select(func.count()).select_from(Product).where(Product.tenant_id == tenant_id)
 
     if brand_id:
@@ -138,6 +156,11 @@ async def list_products(
     if category:
         stmt = stmt.where(Product.category == category)
         count_stmt = count_stmt.where(Product.category == category)
+    if search:
+        escaped = escape_like_pattern(search)
+        condition = Product.name.ilike(f"%{escaped}%", escape="\\")
+        stmt = stmt.where(condition)
+        count_stmt = count_stmt.where(condition)
 
     total_result = await db.execute(count_stmt)
     total = total_result.scalar() or 0
@@ -147,6 +170,15 @@ async def list_products(
     return list(result.scalars().all()), total
 
 
+async def get_product(db: AsyncSession, tenant_id: uuid.UUID, product_id: uuid.UUID) -> Product | None:
+    result = await db.execute(
+        select(Product)
+        .options(selectinload(Product.brand))
+        .where(Product.id == product_id, Product.tenant_id == tenant_id)
+    )
+    return result.scalar_one_or_none()
+
+
 async def update_product(
     db: AsyncSession,
     tenant_id: uuid.UUID,
@@ -154,6 +186,10 @@ async def update_product(
     name: str | None = None,
     category: str | None = None,
     description: str | None = None,
+    origin: str | None = None,
+    image_url: str | None = None,
+    story_title: str | None = None,
+    story_content: str | None = None,
     status: ProductStatus | None = None,
 ) -> Product | None:
     result = await db.execute(select(Product).where(Product.id == product_id, Product.tenant_id == tenant_id))
@@ -165,6 +201,14 @@ async def update_product(
         product.name = name
     if category is not None:
         product.category = category
+    if origin is not None:
+        product.origin = origin
+    if image_url is not None:
+        product.image_url = image_url
+    if story_title is not None:
+        product.story_title = story_title
+    if story_content is not None:
+        product.story_content = story_content
     if description is not None:
         product.description = description
     if status is not None:
@@ -172,6 +216,7 @@ async def update_product(
 
     await db.flush()
     await db.refresh(product)
+    await db.refresh(product, ["brand"])
     return product
 
 
@@ -182,7 +227,12 @@ async def create_sku(
     code: str,
     name: str,
     specifications: dict | None = None,
+    package_type: str | None = None,
+    barcode: str | None = None,
+    image_url: str | None = None,
 ) -> SKU:
+    product_result = await db.execute(select(Product).where(Product.id == product_id, Product.tenant_id == tenant_id))
+    product = product_result.scalar_one_or_none()
     existing = await db.execute(select(SKU).where(SKU.product_id == product_id, SKU.code == code))
     if existing.scalar_one_or_none():
         from fastapi import HTTPException
@@ -195,7 +245,12 @@ async def create_sku(
         code=code,
         name=name,
         specifications=specifications,
+        package_type=package_type,
+        barcode=barcode,
+        image_url=image_url,
     )
+    if product:
+        sku.product = product
     db.add(sku)
     await db.flush()
     await db.refresh(sku)
@@ -209,7 +264,7 @@ async def list_skus(
     page: int = 1,
     page_size: int = 20,
 ) -> tuple[list[SKU], int]:
-    stmt = select(SKU).where(SKU.tenant_id == tenant_id)
+    stmt = select(SKU).options(selectinload(SKU.product)).where(SKU.tenant_id == tenant_id)
     count_stmt = select(func.count()).select_from(SKU).where(SKU.tenant_id == tenant_id)
 
     if product_id:
@@ -231,6 +286,9 @@ async def update_sku(
     code: str | None = None,
     name: str | None = None,
     specifications: dict | None = None,
+    package_type: str | None = None,
+    barcode: str | None = None,
+    image_url: str | None = None,
     status: SKUStatus | None = None,
 ) -> SKU | None:
     result = await db.execute(select(SKU).where(SKU.id == sku_id, SKU.tenant_id == tenant_id))
@@ -255,11 +313,18 @@ async def update_sku(
         sku.name = name
     if specifications is not None:
         sku.specifications = specifications
+    if package_type is not None:
+        sku.package_type = package_type
+    if barcode is not None:
+        sku.barcode = barcode
+    if image_url is not None:
+        sku.image_url = image_url
     if status is not None:
         sku.status = status
 
     await db.flush()
     await db.refresh(sku)
+    await db.refresh(sku, ["product"])
     return sku
 
 
@@ -271,7 +336,12 @@ async def create_production_batch(
     batch_code: str,
     production_date,
     expiry_date,
+    origin: str | None = None,
 ) -> ProductionBatch:
+    product_result = await db.execute(select(Product).where(Product.id == product_id, Product.tenant_id == tenant_id))
+    product = product_result.scalar_one_or_none()
+    sku_result = await db.execute(select(SKU).where(SKU.id == sku_id, SKU.tenant_id == tenant_id))
+    sku = sku_result.scalar_one_or_none()
     existing = await db.execute(
         select(ProductionBatch).where(ProductionBatch.tenant_id == tenant_id, ProductionBatch.batch_code == batch_code)
     )
@@ -287,8 +357,60 @@ async def create_production_batch(
         batch_code=batch_code,
         production_date=production_date,
         expiry_date=expiry_date,
+        origin=origin,
     )
+    if product:
+        batch.product = product
+    if sku:
+        batch.sku = sku
     db.add(batch)
+    await db.flush()
+    await db.refresh(batch)
+    await db.refresh(batch, ["product", "sku"])
+    return batch
+
+
+async def update_production_batch(
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    batch_id: uuid.UUID,
+    batch_code: str | None = None,
+    production_date=None,
+    expiry_date=None,
+    origin: str | None = None,
+    status=None,
+) -> ProductionBatch | None:
+    result = await db.execute(
+        select(ProductionBatch)
+        .options(selectinload(ProductionBatch.product), selectinload(ProductionBatch.sku))
+        .where(ProductionBatch.id == batch_id, ProductionBatch.tenant_id == tenant_id)
+    )
+    batch = result.scalar_one_or_none()
+    if not batch:
+        return None
+
+    if batch_code is not None:
+        existing = await db.execute(
+            select(ProductionBatch).where(
+                ProductionBatch.tenant_id == tenant_id,
+                ProductionBatch.batch_code == batch_code,
+                ProductionBatch.id != batch_id,
+            )
+        )
+        if existing.scalar_one_or_none():
+            from fastapi import HTTPException
+
+            raise HTTPException(status_code=409, detail="Batch code already exists in this tenant")
+        batch.batch_code = batch_code
+    if production_date is not None:
+        batch.production_date = production_date
+    if expiry_date is not None:
+        batch.expiry_date = expiry_date
+    if origin is not None:
+        batch.origin = origin
+    if status is not None:
+        batch.status = status
+
     await db.flush()
     await db.refresh(batch)
     return batch
@@ -301,7 +423,11 @@ async def list_production_batches(
     page: int = 1,
     page_size: int = 20,
 ) -> tuple[list[ProductionBatch], int]:
-    stmt = select(ProductionBatch).where(ProductionBatch.tenant_id == tenant_id)
+    stmt = (
+        select(ProductionBatch)
+        .options(selectinload(ProductionBatch.product), selectinload(ProductionBatch.sku))
+        .where(ProductionBatch.tenant_id == tenant_id)
+    )
     count_stmt = select(func.count()).select_from(ProductionBatch).where(ProductionBatch.tenant_id == tenant_id)
 
     if product_id:
@@ -314,6 +440,126 @@ async def list_production_batches(
     stmt = stmt.order_by(ProductionBatch.id.desc()).offset((page - 1) * page_size).limit(page_size)
     result = await db.execute(stmt)
     return list(result.scalars().all()), total
+
+
+async def create_product_asset(
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    product_id: uuid.UUID,
+    asset_type: ProductAssetType,
+    name: str,
+    description: str | None = None,
+    issuer: str | None = None,
+    valid_until=None,
+    file_url: str | None = None,
+    image_url: str | None = None,
+    content_text: str | None = None,
+    metadata_json: dict | None = None,
+) -> ProductAsset | None:
+    product = await get_product(db, tenant_id, product_id)
+    if not product:
+        return None
+    asset = ProductAsset(
+        tenant_id=tenant_id,
+        product_id=product_id,
+        asset_type=asset_type,
+        name=name,
+        description=description,
+        issuer=issuer,
+        valid_until=valid_until,
+        file_url=file_url,
+        image_url=image_url,
+        content_text=content_text,
+        metadata_json=metadata_json,
+    )
+    db.add(asset)
+    await db.flush()
+    await db.refresh(asset)
+    return asset
+
+
+async def list_product_assets(
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    product_id: uuid.UUID,
+    asset_type: ProductAssetType | None = None,
+    page: int = 1,
+    page_size: int = 20,
+) -> tuple[list[ProductAsset], int]:
+    stmt = select(ProductAsset).where(ProductAsset.tenant_id == tenant_id, ProductAsset.product_id == product_id)
+    count_stmt = select(func.count()).select_from(ProductAsset).where(
+        ProductAsset.tenant_id == tenant_id,
+        ProductAsset.product_id == product_id,
+    )
+    if asset_type:
+        stmt = stmt.where(ProductAsset.asset_type == asset_type)
+        count_stmt = count_stmt.where(ProductAsset.asset_type == asset_type)
+
+    total_result = await db.execute(count_stmt)
+    total = total_result.scalar() or 0
+    stmt = stmt.order_by(ProductAsset.id.desc()).offset((page - 1) * page_size).limit(page_size)
+    result = await db.execute(stmt)
+    return list(result.scalars().all()), total
+
+
+async def update_product_asset(
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    asset_id: uuid.UUID,
+    asset_type: ProductAssetType | None = None,
+    name: str | None = None,
+    description: str | None = None,
+    issuer: str | None = None,
+    valid_until=None,
+    file_url: str | None = None,
+    image_url: str | None = None,
+    content_text: str | None = None,
+    metadata_json: dict | None = None,
+    status: ProductAssetStatus | None = None,
+) -> ProductAsset | None:
+    result = await db.execute(
+        select(ProductAsset).where(ProductAsset.id == asset_id, ProductAsset.tenant_id == tenant_id)
+    )
+    asset = result.scalar_one_or_none()
+    if not asset:
+        return None
+
+    if asset_type is not None:
+        asset.asset_type = asset_type
+    if name is not None:
+        asset.name = name
+    if description is not None:
+        asset.description = description
+    if issuer is not None:
+        asset.issuer = issuer
+    if valid_until is not None:
+        asset.valid_until = valid_until
+    if file_url is not None:
+        asset.file_url = file_url
+    if image_url is not None:
+        asset.image_url = image_url
+    if content_text is not None:
+        asset.content_text = content_text
+    if metadata_json is not None:
+        asset.metadata_json = metadata_json
+    if status is not None:
+        asset.status = status
+
+    await db.flush()
+    await db.refresh(asset)
+    return asset
+
+
+async def delete_product_asset(db: AsyncSession, tenant_id: uuid.UUID, asset_id: uuid.UUID) -> bool:
+    result = await db.execute(
+        select(ProductAsset).where(ProductAsset.id == asset_id, ProductAsset.tenant_id == tenant_id)
+    )
+    asset = result.scalar_one_or_none()
+    if not asset:
+        return False
+    await db.delete(asset)
+    await db.flush()
+    return True
 
 
 async def import_batches_csv(
@@ -356,6 +602,7 @@ async def import_batches_csv(
                 batch_code=batch_code,
                 production_date=production_date,
                 expiry_date=expiry_date,
+                origin=row.get("origin", "").strip() or None,
             )
             db.add(batch)
             imported += 1

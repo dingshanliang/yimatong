@@ -3,7 +3,14 @@
 import { useState } from "react";
 import { App, Alert, Button, Divider, Drawer, Input, List, Tag, Typography, Upload } from "antd";
 import { CameraOutlined, FileTextOutlined, BulbOutlined, PlusOutlined, RobotOutlined, UploadOutlined } from "@ant-design/icons";
-import { extractFromText, recognizeImage, generatePageCopy, type PageCopyResult, type ExtractedFields } from "@/lib/ai";
+import {
+  extractFromText,
+  recognizeImageFile,
+  generatePageCopy,
+  getAIErrorMessage,
+  type PageCopyResult,
+  type ExtractedFields,
+} from "@/lib/ai";
 import type { FormInstance } from "antd";
 
 const { Title, Text, Paragraph } = Typography;
@@ -28,10 +35,10 @@ export function AIDrawer({ open, onClose, form }: AIDrawerProps) {
   const handleImageRecognize = async (file: File) => {
     setRecognizing(true);
     try {
-      const result = await recognizeImage(file as unknown as string, "image.jpg");
+      const result = await recognizeImageFile(file);
       setExtractedFields(result.fields);
       message.success("AI 识别完成，请查看识别结果");
-    } catch { message.error("AI 识别失败，请重试"); }
+    } catch (err) { message.error(getAIErrorMessage(err)); }
     finally { setRecognizing(false); }
     return false;
   };
@@ -43,7 +50,7 @@ export function AIDrawer({ open, onClose, form }: AIDrawerProps) {
       const result = await extractFromText(textInput);
       setExtractedFields(result.fields);
       message.success("AI 提取完成");
-    } catch { message.error("AI 提取失败"); }
+    } catch (err) { message.error(getAIErrorMessage(err)); }
     finally { setRecognizing(false); }
   };
 
@@ -54,7 +61,7 @@ export function AIDrawer({ open, onClose, form }: AIDrawerProps) {
       const result = await generatePageCopy(extractedFields.product_name, extractedFields.category || "其他", extractedFields.origin ? [extractedFields.origin] : []);
       setPageCopy(result.result);
       message.success("页面文案生成完成");
-    } catch { message.error("文案生成失败"); }
+    } catch (err) { message.error(getAIErrorMessage(err)); }
     finally { setGenerating(false); }
   };
 
@@ -67,6 +74,7 @@ export function AIDrawer({ open, onClose, form }: AIDrawerProps) {
       updates.description = `产地：${extractedFields.origin}`;
       if (extractedFields.weight) updates.description += `；重量：${extractedFields.weight}`;
       if (extractedFields.shelf_life) updates.description += `；保质期：${extractedFields.shelf_life}`;
+      updates.origin = extractedFields.origin;
     }
     form.setFieldsValue(updates);
     message.success("已自动填充产品资料");

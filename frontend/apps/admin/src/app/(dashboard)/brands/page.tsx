@@ -4,7 +4,9 @@ import { useState } from "react";
 import { App, Button, Form, Input, Modal, Space, Table, Tag, Typography } from "antd";
 import { PlusOutlined, SearchOutlined } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
+import ImageUploadInput from "@/components/ImageUploadInput";
 import { useCrud } from "@/lib/hooks";
+import { formatDate } from "@/lib/format";
 
 const { Title } = Typography;
 
@@ -14,7 +16,7 @@ interface Brand {
   logo_url?: string;
   description?: string;
   status: string;
-  created_at: string;
+  created_at?: string;
 }
 
 export default function BrandsPage() {
@@ -77,7 +79,7 @@ export default function BrandsPage() {
       title: "创建时间",
       dataIndex: "created_at",
       key: "created_at",
-      render: (v: string) => new Date(v).toLocaleDateString("zh-CN"),
+      render: (v?: string) => formatDate(v),
     },
     {
       title: "操作",
@@ -125,8 +127,13 @@ export default function BrandsPage() {
           <Form.Item name="name" label="品牌名称" rules={[{ required: true, message: "请输入品牌名称" }]}>
             <Input />
           </Form.Item>
-          <Form.Item name="logo_url" label="Logo URL">
-            <Input placeholder="https://..." />
+          <Form.Item
+            name="logo_url"
+            label="品牌 Logo 图片（可选）"
+            extra="用于溯源码页面和品牌展示。可直接上传，也可粘贴公开可访问的图片链接。"
+            rules={[{ type: "url", message: "请输入以 http:// 或 https:// 开头的图片链接" }]}
+          >
+            <ImageUploadInput module="brand-logo" previewAlt="品牌 Logo 预览" />
           </Form.Item>
           <Form.Item name="description" label="描述">
             <Input.TextArea rows={3} />

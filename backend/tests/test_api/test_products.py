@@ -144,3 +144,54 @@ class TestProductCRUD:
         resp = await client.get("/api/v1/products?category=食用油", headers=headers)
         data = resp.json()
         assert all(item["category"] == "食用油" for item in data["items"])
+
+    @pytest.mark.anyio
+    async def test_product_profile_fields_search_and_assets(self, client: AsyncClient, tenant_with_auth, brand_id):
+        _, headers = tenant_with_auth
+        create_resp = await client.post(
+            "/api/v1/products",
+            json={
+                "brand_id": brand_id,
+                "name": "五常稻花香大米",
+                "category": "大米",
+                "origin": "黑龙江省哈尔滨市五常市",
+                "image_url": "https://example.com/rice.png",
+                "story_title": "核心产区好米",
+                "story_content": "来自五常核心产区。",
+            },
+            headers=headers,
+        )
+        assert create_resp.status_code == 201
+        product_id = create_resp.json()["id"]
+        assert create_resp.json()["brand_name"] == "测试品牌"
+        assert create_resp.json()["origin"] == "黑龙江省哈尔滨市五常市"
+
+        search_resp = await client.get("/api/v1/products?search=稻花香", headers=headers)
+        assert search_resp.status_code == 200
+        assert any(item["id"] == product_id for item in search_resp.json()["items"])
+
+        asset_resp = await client.post(
+            f"/api/v1/products/{product_id}/assets",
+            json={
+                "asset_type": "test_report",
+                "name": "农残检测报告",
+                "issuer": "第三方检测机构",
+                "valid_until": "2027-01-01",
+                "file_url": "https://example.com/report.pdf",
+            },
+            headers=headers,
+        )
+        assert asset_resp.status_code == 201
+        assert asset_resp.json()["asset_type"] == "test_report"
+
+        list_resp = await client.get(f"/api/v1/products/{product_id}/assets", headers=headers)
+        assert list_resp.status_code == 200
+        assert list_resp.json()["total"] == 1
+
+        update_resp = await client.patch(
+            f"/api/v1/product-assets/{asset_resp.json()['id']}",
+            json={"name": "年度农残检测报告"},
+            headers=headers,
+        )
+        assert update_resp.status_code == 200
+        assert update_resp.json()["name"] == "年度农残检测报告"

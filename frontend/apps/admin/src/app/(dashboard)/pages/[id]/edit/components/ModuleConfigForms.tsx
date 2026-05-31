@@ -1,20 +1,64 @@
 "use client";
 
-import { Button, Input, InputNumber, Popconfirm, Select, Switch, Typography } from "antd";
+import { useEffect, useMemo, useState } from "react";
+import { Button, Input, InputNumber, Select, Switch, Typography } from "antd";
 import { PlusOutlined } from "@ant-design/icons";
+import ImageUploadInput from "@/components/ImageUploadInput";
+import api from "@/lib/api";
 
 const { Text } = Typography;
 const { TextArea } = Input;
 
+interface ProductAssetOption {
+  id: string;
+  asset_type: string;
+  name: string;
+  issuer?: string;
+  valid_until?: string;
+}
+
 export function ModuleConfigForm({
   moduleType,
+  productId,
   config,
   onChange,
 }: {
   moduleType: string;
+  productId?: string | null;
   config: Record<string, unknown>;
   onChange: (config: Record<string, unknown>) => void;
 }) {
+  const [assets, setAssets] = useState<ProductAssetOption[]>([]);
+
+  useEffect(() => {
+    if (!productId) {
+      setAssets([]);
+      return;
+    }
+    api.get(`/products/${productId}/assets`, { params: { page_size: 100 } })
+      .then(({ data }) => setAssets(data.items || []))
+      .catch(() => setAssets([]));
+  }, [productId]);
+
+  const reportOptions = useMemo(
+    () => assets
+      .filter((asset) => asset.asset_type === "test_report")
+      .map((asset) => ({ value: asset.id, label: `${asset.name}${asset.issuer ? ` · ${asset.issuer}` : ""}` })),
+    [assets],
+  );
+  const certificateOptions = useMemo(
+    () => assets
+      .filter((asset) => asset.asset_type === "certificate")
+      .map((asset) => ({ value: asset.id, label: `${asset.name}${asset.valid_until ? ` · 有效期至 ${asset.valid_until}` : ""}` })),
+    [assets],
+  );
+  const mediaOptions = useMemo(
+    () => assets
+      .filter((asset) => ["image", "video", "story"].includes(asset.asset_type))
+      .map((asset) => ({ value: asset.id, label: asset.name })),
+    [assets],
+  );
+
   const update = (key: string, value: unknown) => {
     onChange({ ...config, [key]: value });
   };
@@ -28,7 +72,15 @@ export function ModuleConfigForm({
             <Switch size="small" checked={!!config.show_verify_badge} onChange={(v) => update("show_verify_badge", v)} />
             <Text type="secondary" className="text-xs">显示验真徽章</Text>
           </div>
-          <Input size="small" placeholder="产品图片 URL（可选，留空使用产品数据）" value={String(config.image_url || "")} onChange={(e) => update("image_url", e.target.value)} />
+          <ImageUploadInput
+            size="small"
+            module="page-image"
+            buttonText="上传"
+            previewAlt="产品展示图预览"
+            placeholder="产品图片（可选，留空使用产品数据）"
+            value={String(config.image_url || "") || undefined}
+            onChange={(value) => update("image_url", value || "")}
+          />
           <Input size="small" placeholder="标题模板，如 {{product.name}}" value={String(config.title_template || "")} onChange={(e) => update("title_template", e.target.value)} />
         </div>
       );
@@ -71,15 +123,16 @@ export function ModuleConfigForm({
     case "test_reports":
       return (
         <div className="space-y-2">
-          <Text type="secondary" className="text-xs">报告 ID 列表</Text>
+          <Text type="secondary" className="text-xs">检测报告</Text>
           <Select
-            mode="tags"
+            mode={productId ? "multiple" : "tags"}
             size="small"
-            placeholder="输入报告 ID 后回车添加"
+            placeholder={productId ? "选择产品资料库中的检测报告" : "输入报告 ID 后回车添加"}
             value={((config.report_ids as string[]) || []).map(String)}
             onChange={(v) => update("report_ids", v)}
+            options={reportOptions}
             style={{ width: "100%" }}
-            open={false}
+            open={productId ? undefined : false}
           />
         </div>
       );
@@ -88,14 +141,16 @@ export function ModuleConfigForm({
     case "certificates":
       return (
         <div className="space-y-2">
-          <Text type="secondary" className="text-xs">证书配置（JSON 数组，每个含 name/issuer/valid_until/image_url/file_url）</Text>
-          <TextArea
+          <Text type="secondary" className="text-xs">资质证书</Text>
+          <Select
+            mode={productId ? "multiple" : "tags"}
             size="small"
-            rows={3}
-            value={JSON.stringify(config.certificates || [], null, 0)}
-            onChange={(e) => {
-              try { update("certificates", JSON.parse(e.target.value)); } catch { /* ignore */ }
-            }}
+            placeholder={productId ? "选择产品资料库中的资质证书" : "输入证书 ID 后回车添加"}
+            value={((config.certificate_ids as string[]) || []).map(String)}
+            onChange={(v) => update("certificate_ids", v)}
+            options={certificateOptions}
+            style={{ width: "100%" }}
+            open={productId ? undefined : false}
           />
         </div>
       );
@@ -196,14 +251,16 @@ export function ModuleConfigForm({
     case "media_section":
       return (
         <div className="space-y-2">
-          <Text type="secondary" className="text-xs">媒体内容配置（JSON 数组，每项含 type/video|image/url/caption）</Text>
-          <TextArea
+          <Text type="secondary" className="text-xs">图文/视频素材</Text>
+          <Select
+            mode={productId ? "multiple" : "tags"}
             size="small"
-            rows={3}
-            value={JSON.stringify(config.items || [], null, 0)}
-            onChange={(e) => {
-              try { update("items", JSON.parse(e.target.value)); } catch { /* ignore */ }
-            }}
+            placeholder={productId ? "选择产品资料库中的图片、视频或故事" : "输入素材 ID 后回车添加"}
+            value={((config.asset_ids as string[]) || []).map(String)}
+            onChange={(v) => update("asset_ids", v)}
+            options={mediaOptions}
+            style={{ width: "100%" }}
+            open={productId ? undefined : false}
           />
         </div>
       );
@@ -278,7 +335,15 @@ export function ModuleConfigForm({
           <Input size="small" placeholder="品牌名称" value={String(config.brand_name || "")} onChange={(e) => update("brand_name", e.target.value)} />
           <Input size="small" placeholder="产品名称" value={String(config.product_name || "")} onChange={(e) => update("product_name", e.target.value)} />
           <Input size="small" placeholder="内码提示文案" value={String(config.inner_code_hint || "")} onChange={(e) => update("inner_code_hint", e.target.value)} />
-          <Input size="small" placeholder="产品图片 URL" value={String(config.product_image || "")} onChange={(e) => update("product_image", e.target.value)} />
+          <ImageUploadInput
+            size="small"
+            module="page-image"
+            buttonText="上传"
+            previewAlt="外码引导产品图预览"
+            placeholder="产品图片"
+            value={String(config.product_image || "") || undefined}
+            onChange={(value) => update("product_image", value || "")}
+          />
         </div>
       );
 

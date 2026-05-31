@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { App, Button, Descriptions, Form, Input, Select, Spin } from "antd";
 import { ExperimentOutlined, CheckCircleOutlined } from "@ant-design/icons";
+import ImageUploadInput from "@/components/ImageUploadInput";
 import { extractFromText, recognizeImage, getAIErrorMessage, type ExtractResult } from "@/lib/ai";
 import { ResultCard } from "./shared";
 import { FIELD_LABELS } from "./constants";
@@ -50,8 +51,15 @@ export function ExtractTab() {
           </Form.Item>
         ) : (
           <>
-            <Form.Item name="image_url" label="图片 URL" rules={[{ required: true, message: "请输入图片 URL" }]}>
-              <Input placeholder="已上传到 MinIO 的图片 URL" />
+            <Form.Item
+              name="image_url"
+              label="产品图片"
+              rules={[
+                { required: true, message: "请上传或填写图片地址" },
+                { type: "url", message: "请输入以 http:// 或 https:// 开头的图片链接" },
+              ]}
+            >
+              <ImageUploadInput module="ai-recognition" previewAlt="待识别图片预览" />
             </Form.Item>
             <Form.Item name="filename" label="文件名"><Input placeholder="image.jpg" /></Form.Item>
           </>

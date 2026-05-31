@@ -18,14 +18,16 @@ import {
 } from "@dnd-kit/sortable";
 import { Button } from "antd";
 import { PlusOutlined } from "@ant-design/icons";
-import type { ModuleConfig, ModuleType } from "@/lib/page-dsl";
+import type { ModuleConfig } from "@/lib/page-dsl";
 import { ModuleItem } from "./ModuleItem";
 
 export function ModuleList({
   modules,
+  productId,
   onChange,
 }: {
   modules: ModuleConfig[];
+  productId?: string | null;
   onChange: (modules: ModuleConfig[]) => void;
 }) {
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -84,6 +86,7 @@ export function ModuleList({
               <ModuleItem
                 key={mod.id}
                 module={mod}
+                productId={productId}
                 expanded={expandedId === mod.id}
                 onToggleExpand={() =>
                   setExpandedId(expandedId === mod.id ? null : mod.id)

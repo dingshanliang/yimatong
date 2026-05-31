@@ -9,12 +9,14 @@ import { ModuleConfigForm } from "./ModuleConfigForms";
 
 export function ModuleItem({
   module,
+  productId,
   expanded,
   onToggleExpand,
   onUpdate,
   onRemove,
 }: {
   module: ModuleConfig;
+  productId?: string | null;
   expanded: boolean;
   onToggleExpand: () => void;
   onUpdate: (updates: Partial<ModuleConfig>) => void;
@@ -96,6 +98,7 @@ export function ModuleItem({
           <div className="rounded bg-gray-50 p-2">
             <ModuleConfigForm
               moduleType={module.type}
+              productId={productId}
               config={module.config || {}}
               onChange={(config) => onUpdate({ config })}
             />

@@ -28,6 +28,7 @@ class TenantScopeMiddleware(BaseHTTPMiddleware):
             or request.url.path in public_auth_paths
             or request.url.path in query_auth_paths
             or request.url.path.startswith("/c/")
+            or request.url.path.startswith("/api/v1/files/public/")
             or request.url.path == "/api/v1/platform/auth/login"
             or (request.url.path == "/api/v1/tenants" and request.method == "POST")
             or request.url.path.startswith("/api/v1/connectors/connectors/") and request.url.path.endswith("/callback")

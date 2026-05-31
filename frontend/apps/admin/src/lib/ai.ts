@@ -95,6 +95,17 @@ export async function recognizeImage(imageUrl: string, filename: string): Promis
   return data;
 }
 
+/** AI-01b: 上传本地图片并识别产品信息 */
+export async function recognizeImageFile(file: File): Promise<ExtractResult> {
+  const formData = new FormData();
+  formData.append("file", file);
+  const { data } = await api.post<ExtractResult>("/ai/recognize-image-upload", formData, {
+    headers: { "Content-Type": "multipart/form-data" },
+    timeout: 30000,
+  });
+  return data;
+}
+
 /** AI-02: 生成文案（品牌故事/产品卖点） */
 export async function generateCopywriting(
   type: CopywritingType,

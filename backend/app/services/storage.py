@@ -6,10 +6,11 @@ from pathlib import PurePosixPath
 
 import boto3
 from botocore.config import Config as BotoConfig
+from botocore.exceptions import ClientError
 
-MAX_FILE_SIZE = 5 * 1024 * 1024  # 5MB
-ALLOWED_EXTENSIONS = {"jpg", "jpeg", "png", "webp"}
-ALLOWED_MIME_TYPES = {"image/jpeg", "image/png", "image/webp"}
+MAX_FILE_SIZE = 20 * 1024 * 1024  # 20MB
+ALLOWED_EXTENSIONS = {"jpg", "jpeg", "pdf", "png", "webp"}
+ALLOWED_MIME_TYPES = {"application/pdf", "image/jpeg", "image/png", "image/webp"}
 
 _storage_client = None
 
@@ -44,6 +45,15 @@ def build_file_key(tenant_id: str, module: str, filename: str) -> str:
     ext = PurePosixPath(filename).suffix.lstrip(".").lower()
     file_uuid = uuid.uuid4().hex
     return f"{tenant_id}/{module}/{file_uuid}.{ext}"
+
+
+def validate_file_key(file_key: str) -> str | None:
+    path = PurePosixPath(file_key)
+    if file_key.startswith("/") or ".." in path.parts:
+        return "Invalid file path"
+    if not path.suffix:
+        return "Invalid file path"
+    return None
 
 
 async def upload_file(
@@ -110,4 +120,27 @@ async def get_file_info(tenant_id: str, file_id: str) -> dict:
     return {
         **record,
         "download_url": download_url,
+    }
+
+
+async def get_public_file(file_key: str) -> dict:
+    error = validate_file_key(file_key)
+    if error:
+        from fastapi import HTTPException
+
+        raise HTTPException(status_code=400, detail=error)
+
+    bucket = os.environ.get("minio_bucket", "yimatong")
+    client = get_storage_client()
+    try:
+        obj = client.get_object(Bucket=bucket, Key=file_key)
+    except ClientError as exc:
+        from fastapi import HTTPException
+
+        status = exc.response.get("ResponseMetadata", {}).get("HTTPStatusCode", 404)
+        raise HTTPException(status_code=404 if status == 404 else 502, detail="File not found") from exc
+
+    return {
+        "body": obj["Body"],
+        "content_type": obj.get("ContentType") or "application/octet-stream",
     }

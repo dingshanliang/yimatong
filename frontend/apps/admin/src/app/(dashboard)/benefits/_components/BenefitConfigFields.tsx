@@ -1,6 +1,7 @@
 "use client";
 
 import { Form, Input, InputNumber, Divider, Radio, Select } from "antd";
+import ImageUploadInput from "@/components/ImageUploadInput";
 import { YuanInput } from "./YuanInput";
 import { AMOUNT_TYPE_OPTIONS } from "./constants";
 import type { Connector } from "./types";
@@ -104,7 +105,14 @@ export function BenefitConfigFields({
   if (benefitType === "private_domain") {
     return (
       <>
-        <Form.Item name={["config_json", "qr_image_url"]} label="微信群二维码图片 URL"><Input placeholder="https://..." /></Form.Item>
+        <Form.Item
+          name={["config_json", "qr_image_url"]}
+          label="微信群二维码图片"
+          extra="消费者领取后展示。可直接上传二维码图片，也可粘贴公开图片链接。"
+          rules={[{ type: "url", message: "请输入以 http:// 或 https:// 开头的图片链接" }]}
+        >
+          <ImageUploadInput module="benefit-qr" buttonText="上传二维码" previewAlt="微信群二维码预览" />
+        </Form.Item>
         <Form.Item name={["config_json", "group_name"]} label="群名称"><Input /></Form.Item>
       </>
     );

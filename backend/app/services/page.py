@@ -34,6 +34,7 @@ async def list_page_templates(
     tenant_id: uuid.UUID,
     template_type: str | None = None,
     status: str | None = None,
+    product_id: uuid.UUID | None = None,
     page: int = 1,
     page_size: int = 20,
 ) -> tuple[list[dict], int]:
@@ -52,6 +53,9 @@ async def list_page_templates(
     if status:
         stmt = stmt.where(PageTemplate.status == status)
         count_stmt = count_stmt.where(PageTemplate.status == status)
+    if product_id:
+        stmt = stmt.where(PageTemplate.product_id == product_id)
+        count_stmt = count_stmt.where(PageTemplate.product_id == product_id)
 
     total_result = await db.execute(count_stmt)
     total = total_result.scalar() or 0

@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { App, Button, Card, ColorPicker, Form, Input, Modal, Space, Switch, Table, Tag, Typography } from "antd";
+import { useCallback, useEffect, useState } from "react";
+import { App, Button, Card, Form, Input, Modal, Space, Switch, Table, Tag, Typography } from "antd";
 import { CheckOutlined, DeleteOutlined, PlusOutlined } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
+import ImageUploadInput from "@/components/ImageUploadInput";
 import api from "@/lib/api";
 
 const { Title } = Typography;
@@ -26,7 +27,7 @@ export default function BrandingSettingsPage() {
     }).catch(() => {});
   }, []);
 
-  const fetchConfig = async () => {
+  const fetchConfig = useCallback(async () => {
     if (!orgId) return;
     setLoading(true);
     try {
@@ -38,9 +39,9 @@ export default function BrandingSettingsPage() {
       setDomains(Array.isArray(data) ? data : []);
     } catch { /* silent */ }
     setLoading(false);
-  };
+  }, [orgId]);
 
-  useEffect(() => { fetchConfig(); }, [orgId]);
+  useEffect(() => { fetchConfig(); }, [fetchConfig]);
 
   const handleSave = async (values: Record<string, unknown>) => {
     if (!orgId) return;
@@ -134,14 +135,29 @@ export default function BrandingSettingsPage() {
           <Form.Item name="primary_color" label="主色调">
             <Input placeholder="#000000" />
           </Form.Item>
-          <Form.Item name="logo_url" label="Logo URL">
-            <Input placeholder="https://..." />
+          <Form.Item
+            name="logo_url"
+            label="品牌 Logo 图片（可选）"
+            extra="用于 H5 页头和品牌展示。可直接上传，也可粘贴公开可访问的图片链接。"
+            rules={[{ type: "url", message: "请输入以 http:// 或 https:// 开头的图片链接" }]}
+          >
+            <ImageUploadInput module="brand-logo" previewAlt="品牌 Logo 预览" />
           </Form.Item>
-          <Form.Item name="favicon_url" label="Favicon URL">
-            <Input placeholder="https://..." />
+          <Form.Item
+            name="favicon_url"
+            label="浏览器图标（可选）"
+            extra="用于浏览器标签页图标。可上传 PNG/JPG/WebP，或粘贴已有图片链接。"
+            rules={[{ type: "url", message: "请输入以 http:// 或 https:// 开头的图片链接" }]}
+          >
+            <ImageUploadInput module="brand-icon" buttonText="上传图标" previewAlt="浏览器图标预览" />
           </Form.Item>
-          <Form.Item name="login_bg_url" label="登录页背景图 URL">
-            <Input placeholder="https://..." />
+          <Form.Item
+            name="login_bg_url"
+            label="登录页背景图（可选）"
+            extra="用于后台登录页品牌背景。可直接上传，也可粘贴公开图片链接。"
+            rules={[{ type: "url", message: "请输入以 http:// 或 https:// 开头的图片链接" }]}
+          >
+            <ImageUploadInput module="branding" buttonText="上传背景图" previewAlt="登录页背景图预览" />
           </Form.Item>
           <Form.Item name="font_family" label="字体">
             <Input placeholder="如: 'Noto Sans SC', sans-serif" />

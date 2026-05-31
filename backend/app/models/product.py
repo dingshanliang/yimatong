@@ -2,7 +2,7 @@ import uuid
 from datetime import date
 from enum import StrEnum
 
-from sqlalchemy import JSON, Date, ForeignKey, String
+from sqlalchemy import JSON, Date, ForeignKey, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from uuid6 import uuid7
 
@@ -38,6 +38,20 @@ class BatchStatus(StrEnum):
     expired = "expired"
 
 
+class ProductAssetType(StrEnum):
+    image = "image"
+    video = "video"
+    test_report = "test_report"
+    certificate = "certificate"
+    story = "story"
+    other = "other"
+
+
+class ProductAssetStatus(StrEnum):
+    active = "active"
+    inactive = "inactive"
+
+
 class Brand(Base, ExternalRefMixin):
     __tablename__ = "brands"
 
@@ -59,11 +73,22 @@ class Product(Base, ExternalRefMixin):
     brand_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("brands.id"), nullable=False, index=True)
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     category: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    origin: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    image_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    story_title: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    story_content: Mapped[str | None] = mapped_column(Text, nullable=True)
     description: Mapped[str | None] = mapped_column(String(1000), nullable=True)
     status: Mapped[ProductStatus] = mapped_column(default=ProductStatus.active, nullable=False)
 
     brand = relationship("Brand", back_populates="products")
     skus = relationship("SKU", back_populates="product", lazy="selectin")
+    batches = relationship("ProductionBatch", back_populates="product", lazy="selectin")
+    assets = relationship("ProductAsset", back_populates="product", lazy="selectin", cascade="all, delete-orphan")
+
+    @property
+    def brand_name(self) -> str | None:
+        brand = self.__dict__.get("brand")
+        return brand.name if brand else None
 
 
 class SKU(Base, ExternalRefMixin):
@@ -75,9 +100,18 @@ class SKU(Base, ExternalRefMixin):
     code: Mapped[str] = mapped_column(String(100), nullable=False)
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     specifications: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    package_type: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    barcode: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    image_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
     status: Mapped[SKUStatus] = mapped_column(default=SKUStatus.active, nullable=False)
 
     product = relationship("Product", back_populates="skus")
+    batches = relationship("ProductionBatch", back_populates="sku", lazy="selectin")
+
+    @property
+    def product_name(self) -> str | None:
+        product = self.__dict__.get("product")
+        return product.name if product else None
 
 
 class ProductionBatch(Base, ExternalRefMixin):
@@ -90,4 +124,38 @@ class ProductionBatch(Base, ExternalRefMixin):
     batch_code: Mapped[str] = mapped_column(String(100), nullable=False)
     production_date: Mapped[date] = mapped_column(Date, nullable=False)
     expiry_date: Mapped[date] = mapped_column(Date, nullable=False)
+    origin: Mapped[str | None] = mapped_column(String(200), nullable=True)
     status: Mapped[BatchStatus] = mapped_column(default=BatchStatus.active, nullable=False)
+
+    product = relationship("Product", back_populates="batches")
+    sku = relationship("SKU", back_populates="batches")
+
+    @property
+    def product_name(self) -> str | None:
+        product = self.__dict__.get("product")
+        return product.name if product else None
+
+    @property
+    def sku_name(self) -> str | None:
+        sku = self.__dict__.get("sku")
+        return sku.name if sku else None
+
+
+class ProductAsset(Base, ExternalRefMixin):
+    __tablename__ = "product_assets"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid7)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
+    product_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("products.id"), nullable=False, index=True)
+    asset_type: Mapped[ProductAssetType] = mapped_column(nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    description: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    issuer: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    valid_until: Mapped[date | None] = mapped_column(Date, nullable=True)
+    file_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    image_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    content_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    metadata_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    status: Mapped[ProductAssetStatus] = mapped_column(default=ProductAssetStatus.active, nullable=False)
+
+    product = relationship("Product", back_populates="assets")

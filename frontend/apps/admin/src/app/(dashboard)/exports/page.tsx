@@ -156,10 +156,9 @@ export default function ExportsPage() {
   );
 }
 
-function formatDate(dateStr: string): string {
-  try {
-    return new Date(dateStr).toLocaleString("zh-CN");
-  } catch {
-    return dateStr;
-  }
+function formatDate(dateStr?: string): string {
+  if (!dateStr) return "-";
+  const date = new Date(dateStr);
+  if (Number.isNaN(date.getTime())) return "-";
+  return date.toLocaleString("zh-CN");
 }

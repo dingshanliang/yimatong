@@ -1,6 +1,7 @@
 """A3-005: 文件上传服务 验收测试"""
 
 from collections.abc import AsyncGenerator
+from io import BytesIO
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -9,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.main import app
+from app.services.storage import MAX_FILE_SIZE
 from app.utils.security import create_access_token
 from tests.conftest import TestSessionLocal
 
@@ -67,13 +69,15 @@ class TestFileUpload:
             data = resp.json()
             assert "file_url" in data
             assert "file_id" in data
+            assert "public_url" in data
             assert str(tid) in data["file_url"]
             assert "brands" in data["file_url"]
+            assert data["public_url"].startswith("http://test/api/v1/files/public/")
 
     @pytest.mark.anyio
     async def test_upload_invalid_format(self, client: AsyncClient, tenant_with_auth):
         _, headers = tenant_with_auth
-        files = {"file": ("test.pdf", b"fake-pdf-content", "application/pdf")}
+        files = {"file": ("test.txt", b"fake-text-content", "text/plain")}
         resp = await client.post(
             "/api/v1/files/upload",
             files=files,
@@ -84,10 +88,31 @@ class TestFileUpload:
         assert "not allowed" in resp.json()["detail"].lower()
 
     @pytest.mark.anyio
+    async def test_upload_pdf_success(self, client: AsyncClient, tenant_with_auth):
+        tid, headers = tenant_with_auth
+        with patch("app.services.storage.get_storage_client") as mock_client:
+            mock_s3 = MagicMock()
+            mock_s3.put_object.return_value = None
+            mock_client.return_value = mock_s3
+
+            files = {"file": ("report.pdf", b"%PDF-1.4 fake", "application/pdf")}
+            resp = await client.post(
+                "/api/v1/files/upload",
+                files=files,
+                data={"module": "product-document"},
+                headers=headers,
+            )
+
+            assert resp.status_code == 201
+            data = resp.json()
+            assert str(tid) in data["file_url"]
+            assert "product-document" in data["file_url"]
+            assert data["public_url"].endswith(".pdf")
+
+    @pytest.mark.anyio
     async def test_upload_file_too_large(self, client: AsyncClient, tenant_with_auth):
         _, headers = tenant_with_auth
-        # Create content > 5MB
-        large_content = b"x" * (5 * 1024 * 1024 + 1)
+        large_content = b"x" * (MAX_FILE_SIZE + 1)
         files = {"file": ("big.png", large_content, "image/png")}
         resp = await client.post(
             "/api/v1/files/upload",
@@ -124,3 +149,22 @@ class TestFileUpload:
             data = resp.json()
             assert "download_url" in data
             assert data["filename"] == "test.png"
+
+    @pytest.mark.anyio
+    async def test_public_file_endpoint_streams_uploaded_object(self, client: AsyncClient, tenant_with_auth):
+        tid, _ = tenant_with_auth
+        file_key = f"{tid}/brand-logo/test.png"
+        with patch("app.services.storage.get_storage_client") as mock_client:
+            mock_s3 = MagicMock()
+            mock_s3.get_object.return_value = {
+                "Body": BytesIO(b"logo-bytes"),
+                "ContentType": "image/png",
+            }
+            mock_client.return_value = mock_s3
+
+            resp = await client.get(f"/api/v1/files/public/{file_key}")
+
+            assert resp.status_code == 200
+            assert resp.content == b"logo-bytes"
+            assert resp.headers["content-type"].startswith("image/png")
+            mock_s3.get_object.assert_called_once_with(Bucket="yimatong", Key=file_key)

@@ -31,7 +31,7 @@ from app.api.v1.password import router as password_router
 from app.api.v1.platform import router as platform_router
 from app.api.v1.prd_compat import prd_compat_router
 from app.api.v1.private_domain import private_domain_router
-from app.api.v1.products import batch_router, brand_router, product_router, sku_router
+from app.api.v1.products import asset_router, batch_router, brand_router, product_router, sku_router
 from app.api.v1.public_pages import public_page_router
 from app.api.v1.regional import regional_router
 from app.api.v1.resolver import resolver_router
@@ -63,6 +63,7 @@ OPENAPI_TAGS = [
     {"name": "members", "description": "成员管理：租户成员邀请、激活、管理"},
     {"name": "brands", "description": "品牌管理：品牌创建、查询、更新"},
     {"name": "products", "description": "产品管理：产品定义、属性维护"},
+    {"name": "product-assets", "description": "产品资料：检测报告、资质证书、素材与故事"},
     {"name": "skus", "description": "SKU 管理：产品规格与 SKU 维护"},
     {"name": "production-batches", "description": "生产批次管理：批次创建与查询"},
     {"name": "code-batches", "description": "码批次管理：批量生码、码规则配置"},
@@ -296,6 +297,7 @@ app.include_router(brand_router)
 app.include_router(product_router)
 app.include_router(sku_router)
 app.include_router(batch_router)
+app.include_router(asset_router)
 app.include_router(file_router)
 app.include_router(code_batch_router)
 app.include_router(code_item_router)

@@ -102,7 +102,7 @@ export function useCrud<T extends { id: string }>(
 
   const setFilter = useCallback(
     (next: Record<string, string | number>) => {
-      setFilters((prev) => ({ ...prev, ...next }));
+      setFilters(next);
       setPage(1);
     },
     [],

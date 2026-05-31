@@ -104,6 +104,7 @@ async def create_page_template_endpoint(
 async def list_page_templates_endpoint(
     template_type: str | None = Query(None),
     status: str | None = Query(None),
+    product_id: uuid.UUID | None = Query(None),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
@@ -114,6 +115,7 @@ async def list_page_templates_endpoint(
         tenant_id,
         template_type=template_type,
         status=status,
+        product_id=product_id,
         page=page,
         page_size=page_size,
     )
