@@ -50,6 +50,7 @@ class ProductCreate(BaseModel):
 
 
 class ProductUpdate(BaseModel):
+    brand_id: uuid.UUID | None = Field(None, description="所属品牌 ID")
     name: str | None = Field(None, max_length=200, description="产品名称")
     category: str | None = Field(None, description="产品分类")
     origin: str | None = Field(None, max_length=200, description="产地/原产地")

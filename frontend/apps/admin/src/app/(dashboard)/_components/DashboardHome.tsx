@@ -1,13 +1,13 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { App, Button, Card, Col, Row, Space, Statistic, Table, Tag, Typography } from "antd";
 import {
+  DownloadOutlined,
+  RiseOutlined,
+  RocketOutlined,
   ScanOutlined,
   TeamOutlined,
-  RocketOutlined,
-  RiseOutlined,
-  DownloadOutlined,
 } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
 import dayjs from "dayjs";
@@ -64,7 +64,7 @@ const CAMPAIGN_TYPE_MAP: Record<string, string> = {
   points: "积分",
 };
 
-export default function DashboardPage() {
+export default function DashboardHome() {
   const { message } = App.useApp();
   const [data, setData] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -128,8 +128,8 @@ export default function DashboardPage() {
       title: "状态",
       dataIndex: "status",
       key: "status",
-      render: (s: string) => {
-        const info = BATCH_STATUS_MAP[s] || { label: s, color: "default" };
+      render: (status: string) => {
+        const info = BATCH_STATUS_MAP[status] || { label: status, color: "default" };
         return <Tag color={info.color}>{info.label}</Tag>;
       },
     },
@@ -142,14 +142,14 @@ export default function DashboardPage() {
       title: "类型",
       dataIndex: "campaign_type",
       key: "campaign_type",
-      render: (t: string) => CAMPAIGN_TYPE_MAP[t] || t,
+      render: (type: string) => CAMPAIGN_TYPE_MAP[type] || type,
     },
     {
       title: "状态",
       dataIndex: "status",
       key: "status",
-      render: (s: string) => {
-        const info = CAMPAIGN_STATUS_MAP[s] || { label: s, color: "default" };
+      render: (status: string) => {
+        const info = CAMPAIGN_STATUS_MAP[status] || { label: status, color: "default" };
         return <Tag color={info.color}>{info.label}</Tag>;
       },
     },
@@ -193,39 +193,22 @@ export default function DashboardPage() {
       <Row gutter={[16, 16]} className="mb-6">
         <Col xs={24} sm={12} lg={6}>
           <Card loading={loading}>
-            <Statistic
-              title="今日扫码"
-              value={data?.today_scans ?? 0}
-              prefix={<ScanOutlined />}
-            />
+            <Statistic title="今日扫码" value={data?.today_scans ?? 0} prefix={<ScanOutlined />} />
           </Card>
         </Col>
         <Col xs={24} sm={12} lg={6}>
           <Card loading={loading}>
-            <Statistic
-              title="累计扫码"
-              value={data?.cumulative_scans ?? 0}
-              prefix={<RiseOutlined />}
-            />
+            <Statistic title="累计扫码" value={data?.cumulative_scans ?? 0} prefix={<RiseOutlined />} />
           </Card>
         </Col>
         <Col xs={24} sm={12} lg={6}>
           <Card loading={loading}>
-            <Statistic
-              title="累计首扫"
-              value={data?.cumulative_first_scans ?? 0}
-              prefix={<RocketOutlined />}
-            />
+            <Statistic title="累计首扫" value={data?.cumulative_first_scans ?? 0} prefix={<RocketOutlined />} />
           </Card>
         </Col>
         <Col xs={24} sm={12} lg={6}>
           <Card loading={loading}>
-            <Statistic
-              title="首扫率"
-              value={firstScanRate}
-              suffix="%"
-              prefix={<TeamOutlined />}
-            />
+            <Statistic title="首扫率" value={firstScanRate} suffix="%" prefix={<TeamOutlined />} />
           </Card>
         </Col>
       </Row>
@@ -233,37 +216,18 @@ export default function DashboardPage() {
       <Row gutter={[16, 16]} className="mb-6">
         <Col xs={24} lg={12}>
           <Card title="最近 7 天扫码趋势" size="small">
-            <Table
-              columns={trendColumns}
-              dataSource={trend}
-              rowKey="date"
-              loading={loading}
-              pagination={false}
-              size="small"
-            />
+            <Table columns={trendColumns} dataSource={trend} rowKey="date" loading={loading} pagination={false} size="small" />
           </Card>
         </Col>
         <Col xs={24} lg={12}>
           <Card title="最近码批次" size="small">
-            <Table
-              columns={batchColumns}
-              dataSource={batches}
-              rowKey="id"
-              pagination={false}
-              size="small"
-            />
+            <Table columns={batchColumns} dataSource={batches} rowKey="id" pagination={false} size="small" />
           </Card>
         </Col>
       </Row>
 
       <Card title="最近活动" size="small">
-        <Table
-          columns={campaignColumns}
-          dataSource={campaigns}
-          rowKey="id"
-          pagination={false}
-          size="small"
-        />
+        <Table columns={campaignColumns} dataSource={campaigns} rowKey="id" pagination={false} size="small" />
       </Card>
     </div>
   );

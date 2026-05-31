@@ -47,6 +47,14 @@ const BATCH_STATUS_MAP: Record<string, { label: string; color: string }> = {
   expired: { label: "已过期", color: "gray" },
 };
 
+const WORKBENCH_STEP_ACTIONS: Record<string, string> = {
+  profile: "完善基础资料",
+  skus: "继续维护 SKU",
+  batches: "新增生产批次",
+  assets: "上传报告证书",
+  pages: "配置扫码页",
+};
+
 type SpecEntry = { key?: string; value?: string };
 type SKUFormValues = Omit<SKU, "id" | "status" | "specifications"> & { spec_entries?: SpecEntry[] };
 type BatchFormValues = Omit<ProductionBatch, "id" | "status" | "production_date" | "expiry_date"> & {
@@ -88,6 +96,7 @@ export default function ProductWorkbenchPage() {
   const [editingAsset, setEditingAsset] = useState<ProductAsset | null>(null);
   const [editingSku, setEditingSku] = useState<SKU | null>(null);
   const [editingBatch, setEditingBatch] = useState<ProductionBatch | null>(null);
+  const [activeTab, setActiveTab] = useState("profile");
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -132,6 +141,20 @@ export default function ProductWorkbenchPage() {
     ];
     return Math.round((checks.filter(Boolean).length / checks.length) * 100);
   }, [assets, batches.length, product, skus.length]);
+
+  const completionSteps = useMemo(() => {
+    if (!product) return [];
+    return [
+      { key: "profile", label: "基础资料", done: Boolean(product.name && product.brand_id && product.category && product.origin && product.image_url && (product.description || product.story_content)) },
+      { key: "skus", label: "SKU", done: skus.length > 0 },
+      { key: "batches", label: "批次", done: batches.length > 0 },
+      { key: "assets", label: "检测报告", done: assets.some((asset) => asset.asset_type === "test_report") },
+      { key: "assets", label: "资质证书", done: assets.some((asset) => asset.asset_type === "certificate") },
+      { key: "pages", label: "扫码页", done: pages.length > 0 },
+    ];
+  }, [assets, batches.length, pages.length, product, skus.length]);
+
+  const nextStep = completionSteps.find((step) => !step.done);
 
   const handleProductSave = async (values: Record<string, unknown>) => {
     try {
@@ -323,6 +346,8 @@ export default function ProductWorkbenchPage() {
       </div>
 
       <Tabs
+        activeKey={activeTab}
+        onChange={setActiveTab}
         items={[
           {
             key: "profile",
@@ -336,25 +361,44 @@ export default function ProductWorkbenchPage() {
                     <Form.Item name="origin" label="产地"><Input placeholder="省/市/县/基地" /></Form.Item>
                     <Form.Item
                       name="image_url"
-                      label="产品主图（可选）"
-                      extra="用于溯源页产品展示。可直接上传，也可粘贴公开图片链接。"
+                      label="产品主图"
                       rules={[{ type: "url", message: "请输入以 http:// 或 https:// 开头的图片链接" }]}
                     >
-                      <ImageUploadInput module="product-image" previewAlt="产品主图预览" />
+                      <ImageUploadInput
+                        module="product-image"
+                        previewAlt="产品主图预览"
+                        variant="uploadFirst"
+                        emptyText="用于扫码页和产品资料展示，支持 PNG、JPG、WebP，单张不超过 5MB"
+                      />
                     </Form.Item>
                   </div>
-                  <Form.Item name="description" label="产品介绍"><TextArea rows={3} /></Form.Item>
-                  <Form.Item name="story_title" label="故事标题"><Input /></Form.Item>
-                  <Form.Item name="story_content" label="品牌/产品故事"><TextArea rows={6} /></Form.Item>
+                  <Form.Item name="description" label="产品介绍"><TextArea rows={3} placeholder="一句话说明产品特点，用于扫码页摘要展示" /></Form.Item>
+                  <Form.Item name="story_title" label="故事标题"><Input placeholder="例如 来自核心产区的安心好物" /></Form.Item>
+                  <Form.Item name="story_content" label="品牌/产品故事"><TextArea rows={6} placeholder="补充品牌、产地、种植/生产过程等消费者关心的信息" /></Form.Item>
                   <Button type="primary" htmlType="submit" icon={<EditOutlined />}>保存基础资料</Button>
                 </Form>
-                <Descriptions bordered size="small" column={1}>
-                  <Descriptions.Item label="SKU 数">{skus.length}</Descriptions.Item>
-                  <Descriptions.Item label="批次数">{batches.length}</Descriptions.Item>
-                  <Descriptions.Item label="检测报告">{assets.filter((a) => a.asset_type === "test_report").length}</Descriptions.Item>
-                  <Descriptions.Item label="资质证书">{assets.filter((a) => a.asset_type === "certificate").length}</Descriptions.Item>
-                  <Descriptions.Item label="扫码页">{pages.length}</Descriptions.Item>
-                </Descriptions>
+                <Space direction="vertical" size={12} className="w-full">
+                  <Descriptions bordered size="small" column={1}>
+                    <Descriptions.Item label="SKU 数">{skus.length}</Descriptions.Item>
+                    <Descriptions.Item label="批次数">{batches.length}</Descriptions.Item>
+                    <Descriptions.Item label="检测报告">{assets.filter((a) => a.asset_type === "test_report").length}</Descriptions.Item>
+                    <Descriptions.Item label="资质证书">{assets.filter((a) => a.asset_type === "certificate").length}</Descriptions.Item>
+                    <Descriptions.Item label="扫码页">{pages.length}</Descriptions.Item>
+                  </Descriptions>
+                  <div>
+                    <div className="mb-2 text-sm font-medium">上线资料清单</div>
+                    <Space wrap size={[6, 6]}>
+                      {completionSteps.map((step) => (
+                        <Tag key={`${step.key}-${step.label}`} color={step.done ? "green" : "default"}>{step.label}</Tag>
+                      ))}
+                    </Space>
+                  </div>
+                  {nextStep && (
+                    <Button type="primary" block onClick={() => setActiveTab(nextStep.key)}>
+                      {WORKBENCH_STEP_ACTIONS[nextStep.key] || "继续完善资料"}
+                    </Button>
+                  )}
+                </Space>
               </div>
             ),
           },

@@ -183,6 +183,7 @@ async def update_product(
     db: AsyncSession,
     tenant_id: uuid.UUID,
     product_id: uuid.UUID,
+    brand_id: uuid.UUID | None = None,
     name: str | None = None,
     category: str | None = None,
     description: str | None = None,
@@ -197,6 +198,11 @@ async def update_product(
     if not product:
         return None
 
+    if brand_id is not None:
+        brand_result = await db.execute(select(Brand).where(Brand.id == brand_id, Brand.tenant_id == tenant_id))
+        if not brand_result.scalar_one_or_none():
+            raise ValueError("Brand not found")
+        product.brand_id = brand_id
     if name is not None:
         product.name = name
     if category is not None:

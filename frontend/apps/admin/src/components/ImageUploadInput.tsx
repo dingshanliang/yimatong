@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { App, Button, Image, Input, Space, Typography, Upload } from "antd";
 import type { InputProps } from "antd";
-import { UploadOutlined } from "@ant-design/icons";
+import { LinkOutlined, UploadOutlined } from "@ant-design/icons";
 import api, { extractErrorMessage } from "@/lib/api";
 
 const { Text } = Typography;
@@ -22,6 +22,7 @@ interface ImageUploadInputProps {
   emptyText?: string;
   previewAlt?: string;
   size?: InputProps["size"];
+  variant?: "compact" | "uploadFirst";
 }
 
 export default function ImageUploadInput({
@@ -33,9 +34,11 @@ export default function ImageUploadInput({
   emptyText = "支持 PNG、JPG、WebP，单张不超过 5MB；也可直接粘贴已有图片链接。",
   previewAlt = "图片预览",
   size,
+  variant = "compact",
 }: ImageUploadInputProps) {
   const { message } = App.useApp();
   const [uploading, setUploading] = useState(false);
+  const [showUrlInput, setShowUrlInput] = useState(false);
 
   const handleUpload = async (file: File) => {
     const formData = new FormData();
@@ -57,6 +60,59 @@ export default function ImageUploadInput({
     }
   };
 
+  const uploadButton = (
+    <Upload
+      accept="image/jpeg,image/png,image/webp"
+      showUploadList={false}
+      beforeUpload={(file) => {
+        void handleUpload(file);
+        return Upload.LIST_IGNORE;
+      }}
+    >
+      <Button size={size} icon={<UploadOutlined />} loading={uploading}>
+        {buttonText}
+      </Button>
+    </Upload>
+  );
+
+  if (variant === "uploadFirst") {
+    return (
+      <Space orientation="vertical" size={10} className="w-full">
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="flex h-24 w-24 items-center justify-center rounded border border-dashed border-gray-200 bg-gray-50">
+            {value ? (
+              <Image src={value} alt={previewAlt} width={88} height={88} className="rounded object-contain" />
+            ) : (
+              <Text type="secondary" className="text-xs">暂无图片</Text>
+            )}
+          </div>
+          <Space direction="vertical" size={4}>
+            {uploadButton}
+            <Button
+              type="link"
+              className="!px-0"
+              size="small"
+              icon={<LinkOutlined />}
+              onClick={() => setShowUrlInput((prev) => !prev)}
+            >
+              {showUrlInput ? "收起图片链接" : "粘贴图片链接"}
+            </Button>
+          </Space>
+        </div>
+        {showUrlInput && (
+          <Input
+            size={size}
+            value={value}
+            onChange={(event) => onChange?.(event.target.value || undefined)}
+            placeholder={placeholder}
+            allowClear
+          />
+        )}
+        <Text type="secondary">{emptyText}</Text>
+      </Space>
+    );
+  }
+
   return (
     <Space orientation="vertical" size={8} className="w-full">
       <Space.Compact className="w-full">
@@ -67,18 +123,7 @@ export default function ImageUploadInput({
           placeholder={placeholder}
           allowClear
         />
-        <Upload
-          accept="image/jpeg,image/png,image/webp"
-          showUploadList={false}
-          beforeUpload={(file) => {
-            void handleUpload(file);
-            return Upload.LIST_IGNORE;
-          }}
-        >
-          <Button size={size} icon={<UploadOutlined />} loading={uploading}>
-            {buttonText}
-          </Button>
-        </Upload>
+        {uploadButton}
       </Space.Compact>
       {value ? (
         <Image src={value} alt={previewAlt} width={64} height={64} className="rounded border object-contain p-1" />

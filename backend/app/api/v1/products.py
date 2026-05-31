@@ -207,19 +207,23 @@ async def update_product_endpoint(
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
-    product = await update_product(
-        db,
-        tenant_id,
-        product_id,
-        name=body.name,
-        category=body.category,
-        origin=body.origin,
-        image_url=body.image_url,
-        story_title=body.story_title,
-        story_content=body.story_content,
-        description=body.description,
-        status=body.status,
-    )
+    try:
+        product = await update_product(
+            db,
+            tenant_id,
+            product_id,
+            brand_id=body.brand_id,
+            name=body.name,
+            category=body.category,
+            origin=body.origin,
+            image_url=body.image_url,
+            story_title=body.story_title,
+            story_content=body.story_content,
+            description=body.description,
+            status=body.status,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
     if not product:
         raise HTTPException(status_code=404, detail="Product not found")
     return product

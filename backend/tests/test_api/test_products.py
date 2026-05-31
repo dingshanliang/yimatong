@@ -117,15 +117,19 @@ class TestProductCRUD:
             headers=headers,
         )
         pid = resp.json()["id"]
+        brand_resp = await client.post("/api/v1/brands", json={"name": "新品牌"}, headers=headers)
+        new_brand_id = brand_resp.json()["id"]
 
         resp = await client.patch(
             f"/api/v1/products/{pid}",
-            json={"name": "新产品", "category": "新分类"},
+            json={"brand_id": new_brand_id, "name": "新产品", "category": "新分类"},
             headers=headers,
         )
         assert resp.status_code == 200
         assert resp.json()["name"] == "新产品"
         assert resp.json()["category"] == "新分类"
+        assert resp.json()["brand_id"] == new_brand_id
+        assert resp.json()["brand_name"] == "新品牌"
 
     @pytest.mark.anyio
     async def test_list_products_filter_by_category(self, client: AsyncClient, tenant_with_auth, brand_id):
