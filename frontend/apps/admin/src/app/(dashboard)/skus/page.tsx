@@ -1,11 +1,11 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useCrud } from "@/lib/hooks";
-import { App, Button, Form, Input, Modal, Select, Space, Table, Tag, Typography } from "antd";
+import { App, Button, Form, Modal, Select, Space, Table, Tag, Typography } from "antd";
 import { PlusOutlined } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
-import ImageUploadInput from "@/components/ImageUploadInput";
+import SKUFormFields, { buildSkuPayload, type SKUFormValues } from "@/components/SKUFormFields";
 import api from "@/lib/api";
 
 const { Title } = Typography;
@@ -28,15 +28,13 @@ interface Product {
   name: string;
 }
 
-type SpecEntry = { key?: string; value?: string };
-type SKUFormValues = Omit<SKU, "id" | "status" | "specifications"> & { spec_entries?: SpecEntry[] };
-
 export default function SKUsPage() {
   const { message } = App.useApp();
   const [products, setProducts] = useState<Product[]>([]);
   const [modalOpen, setModalOpen] = useState(false);
   const [editItem, setEditItem] = useState<SKU | null>(null);
   const [form] = Form.useForm();
+  const submitModeRef = useRef<"close" | "continue">("close");
 
   const {
     items: skus, total, page, loading, setPage,
@@ -62,6 +60,7 @@ export default function SKUsPage() {
     setEditItem(sku);
     form.setFieldsValue({
       ...sku,
+      package_type: sku.package_type ? [sku.package_type] : undefined,
       spec_entries: Object.entries(sku.specifications || {}).map(([key, value]) => ({ key, value })),
     });
     setModalOpen(true);
@@ -69,15 +68,7 @@ export default function SKUsPage() {
 
   const handleSubmit = async (values: SKUFormValues) => {
     try {
-      const specifications = (values.spec_entries || []).reduce<Record<string, string>>((acc, entry) => {
-        const key = entry.key?.trim();
-        const value = entry.value?.trim();
-        if (key && value) acc[key] = value;
-        return acc;
-      }, {});
-      const rest = { ...values };
-      delete rest.spec_entries;
-      const payload = { ...rest, specifications: Object.keys(specifications).length ? specifications : undefined };
+      const payload = buildSkuPayload(values);
       if (editItem) {
         await update(editItem.id, payload);
         message.success("SKU 更新成功");
@@ -85,8 +76,13 @@ export default function SKUsPage() {
         await create(payload);
         message.success("SKU 创建成功");
       }
-      setModalOpen(false);
-      form.resetFields();
+      if (submitModeRef.current === "continue" && !editItem) {
+        form.resetFields();
+        form.setFieldValue("product_id", values.product_id);
+      } else {
+        setModalOpen(false);
+        form.resetFields();
+      }
     } catch {
       message.error(editItem ? "更新失败" : "创建失败");
     }
@@ -102,7 +98,9 @@ export default function SKUsPage() {
       title: "规格",
       dataIndex: "specifications",
       key: "specifications",
-      render: (v: Record<string, string>) => v ? Object.entries(v).map(([k, val]) => `${k}: ${val}`).join(", ") : "-",
+      render: (v: Record<string, string>) => v && Object.keys(v).length
+        ? Object.entries(v).map(([k, val]) => `${k}: ${val}`).join(", ")
+        : "未填写",
     },
     {
       title: "状态",
@@ -155,60 +153,32 @@ export default function SKUsPage() {
         title={editItem ? "编辑 SKU" : "新建 SKU"}
         open={modalOpen}
         onCancel={() => setModalOpen(false)}
-        onOk={() => form.submit()}
+        onOk={() => {
+          submitModeRef.current = "close";
+          form.submit();
+        }}
+        okText={editItem ? "更新 SKU" : "保存 SKU"}
+        width={640}
+        forceRender
+        footer={(_, { OkBtn, CancelBtn }) => (
+          <>
+            <CancelBtn />
+            {!editItem && (
+              <Button
+                onClick={() => {
+                  submitModeRef.current = "continue";
+                  form.submit();
+                }}
+              >
+                保存并继续添加
+              </Button>
+            )}
+            <OkBtn />
+          </>
+        )}
       >
         <Form form={form} layout="vertical" onFinish={handleSubmit}>
-          {!editItem && (
-            <Form.Item name="product_id" label="关联产品" rules={[{ required: true, message: "请选择产品" }]}>
-              <Select
-                placeholder="选择产品"
-                options={products.map((p) => ({ value: p.id, label: p.name }))}
-                showSearch
-                optionFilterProp="label"
-              />
-            </Form.Item>
-          )}
-          <Form.Item name="code" label="SKU 编码" rules={[{ required: true, message: "请输入编码" }]}>
-            <Input placeholder="例如 SKU-001" />
-          </Form.Item>
-          <Form.Item name="name" label="名称" rules={[{ required: true, message: "请输入名称" }]}>
-            <Input />
-          </Form.Item>
-          <Form.Item name="package_type" label="包装类型">
-            <Input placeholder="例如 袋装、盒装、礼盒" />
-          </Form.Item>
-          <Form.Item name="barcode" label="条码/GTIN">
-            <Input placeholder="例如 6901234567890" />
-          </Form.Item>
-          <Form.Item
-            name="image_url"
-            label="SKU 图片（可选）"
-            extra="用于展示具体规格包装。可直接上传，也可粘贴公开图片链接。"
-            rules={[{ type: "url", message: "请输入以 http:// 或 https:// 开头的图片链接" }]}
-          >
-            <ImageUploadInput module="sku-image" previewAlt="SKU 图片预览" />
-          </Form.Item>
-          <Form.List name="spec_entries">
-            {(fields, { add, remove }) => (
-              <div>
-                <div className="mb-2 flex items-center justify-between">
-                  <span>规格属性</span>
-                  <Button size="small" onClick={() => add({ key: "", value: "" })}>添加规格</Button>
-                </div>
-                {fields.map((field) => (
-                  <Space key={field.key} className="mb-2 flex" align="baseline">
-                    <Form.Item {...field} name={[field.name, "key"]} className="!mb-0" rules={[{ required: true, message: "请输入规格名" }]}>
-                      <Input placeholder="规格名，如 净含量" />
-                    </Form.Item>
-                    <Form.Item {...field} name={[field.name, "value"]} className="!mb-0" rules={[{ required: true, message: "请输入规格值" }]}>
-                      <Input placeholder="规格值，如 5kg" />
-                    </Form.Item>
-                    <Button danger type="link" onClick={() => remove(field.name)}>删除</Button>
-                  </Space>
-                ))}
-              </div>
-            )}
-          </Form.List>
+          <SKUFormFields form={form} products={products} showProductSelect={!editItem} />
         </Form>
       </Modal>
     </div>

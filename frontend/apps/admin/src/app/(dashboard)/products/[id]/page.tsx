@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import dayjs from "dayjs";
 import {
@@ -23,6 +23,7 @@ import { ArrowLeftOutlined, EditOutlined, FileTextOutlined, PlusOutlined } from 
 import type { ColumnsType } from "antd/es/table";
 import FileUploadInput from "@/components/FileUploadInput";
 import ImageUploadInput from "@/components/ImageUploadInput";
+import SKUFormFields, { buildSkuPayload, type SKUFormValues } from "@/components/SKUFormFields";
 import api, { extractErrorMessage } from "@/lib/api";
 import { createDefaultModules, createEmptyDSL } from "@/lib/page-dsl";
 import type { Brand, Product, ProductAsset, ProductAssetType, ProductionBatch, SKU } from "../_components/types";
@@ -192,8 +193,6 @@ const PROFILE_FIELD_LABELS: Record<string, string> = {
   description: "产品介绍",
 };
 
-type SpecEntry = { key?: string; value?: string };
-type SKUFormValues = Omit<SKU, "id" | "status" | "specifications"> & { spec_entries?: SpecEntry[] };
 type BatchFormValues = Omit<ProductionBatch, "id" | "status" | "production_date" | "expiry_date"> & {
   production_date: dayjs.Dayjs;
   expiry_date: dayjs.Dayjs;
@@ -270,6 +269,7 @@ export default function ProductWorkbenchPage() {
   const [editingSku, setEditingSku] = useState<SKU | null>(null);
   const [editingBatch, setEditingBatch] = useState<ProductionBatch | null>(null);
   const [activeTab, setActiveTab] = useState("profile");
+  const skuSubmitModeRef = useRef<"close" | "continue">("close");
   const watchedAssetType = Form.useWatch<ProductAssetType>("asset_type", assetForm);
   const assetFormType = watchedAssetType || editingAsset?.asset_type || "test_report";
   const assetFormConfig = ASSET_FORM_CONFIGS[assetFormType];
@@ -446,6 +446,7 @@ export default function ProductWorkbenchPage() {
     skuForm.resetFields();
     skuForm.setFieldsValue(sku ? {
       ...sku,
+      package_type: sku.package_type ? [sku.package_type] : undefined,
       spec_entries: Object.entries(sku.specifications || {}).map(([key, value]) => ({ key, value })),
     } : { product_id: productId });
     setSkuModalOpen(true);
@@ -453,19 +454,16 @@ export default function ProductWorkbenchPage() {
 
   const handleSkuSubmit = async (values: SKUFormValues) => {
     try {
-      const specifications = (values.spec_entries || []).reduce<Record<string, string>>((acc, entry) => {
-        const key = entry.key?.trim();
-        const value = entry.value?.trim();
-        if (key && value) acc[key] = value;
-        return acc;
-      }, {});
-      const rest = { ...values };
-      delete rest.spec_entries;
-      const payload = { ...rest, product_id: productId, specifications };
+      const payload = buildSkuPayload(values, productId);
       if (editingSku) await api.patch(`/skus/${editingSku.id}`, payload);
       else await api.post("/skus", payload);
       message.success(editingSku ? "SKU 已更新" : "SKU 已新增");
-      setSkuModalOpen(false);
+      if (skuSubmitModeRef.current === "continue" && !editingSku) {
+        skuForm.resetFields();
+        skuForm.setFieldsValue({ product_id: productId });
+      } else {
+        setSkuModalOpen(false);
+      }
       load();
     } catch (err) {
       message.error(extractErrorMessage(err, "保存 SKU 失败"));
@@ -556,7 +554,14 @@ export default function ProductWorkbenchPage() {
     { title: "名称", dataIndex: "name", key: "name" },
     { title: "包装", dataIndex: "package_type", key: "package_type", render: (v?: string) => v || "-" },
     { title: "条码/GTIN", dataIndex: "barcode", key: "barcode", render: (v?: string) => v || "-" },
-    { title: "规格", dataIndex: "specifications", key: "specifications", render: (v?: Record<string, string>) => v ? Object.entries(v).map(([k, val]) => `${k}: ${val}`).join("，") : "-" },
+    {
+      title: "规格",
+      dataIndex: "specifications",
+      key: "specifications",
+      render: (v?: Record<string, string>) => v && Object.keys(v).length
+        ? Object.entries(v).map(([k, val]) => `${k}: ${val}`).join("，")
+        : "未填写",
+    },
     { title: "操作", key: "actions", render: (_: unknown, record) => <Button type="link" size="small" onClick={() => openSkuModal(record)}>编辑</Button> },
   ];
 
@@ -801,34 +806,36 @@ export default function ProductWorkbenchPage() {
         </Form>
       </Modal>
 
-      <Modal title={editingSku ? "编辑 SKU" : "新增 SKU"} open={skuModalOpen} onCancel={() => setSkuModalOpen(false)} onOk={() => skuForm.submit()} width={640} forceRender>
-        <Form form={skuForm} layout="vertical" onFinish={handleSkuSubmit}>
-          <Form.Item name="code" label="SKU 编码" rules={[{ required: true }]}><Input placeholder="例如 RICE-5KG" /></Form.Item>
-          <Form.Item name="name" label="SKU 名称" rules={[{ required: true }]}><Input placeholder="例如 5kg 袋装" /></Form.Item>
-          <Form.Item name="package_type" label="包装类型"><Input /></Form.Item>
-          <Form.Item name="barcode" label="条码/GTIN"><Input /></Form.Item>
-          <Form.Item
-            name="image_url"
-            label="SKU 图片（可选）"
-            extra="用于展示具体规格包装。可直接上传，也可粘贴公开图片链接。"
-            rules={[{ type: "url", message: "请输入以 http:// 或 https:// 开头的图片链接" }]}
-          >
-            <ImageUploadInput module="sku-image" previewAlt="SKU 图片预览" />
-          </Form.Item>
-          <Form.List name="spec_entries">
-            {(fields, { add, remove }) => (
-              <div>
-                <div className="mb-2 flex justify-between"><span>规格属性</span><Button size="small" onClick={() => add({ key: "", value: "" })}>添加规格</Button></div>
-                {fields.map((field) => (
-                  <Space key={field.key} className="mb-2 flex" align="baseline">
-                    <Form.Item {...field} name={[field.name, "key"]} className="!mb-0"><Input placeholder="规格名" /></Form.Item>
-                    <Form.Item {...field} name={[field.name, "value"]} className="!mb-0"><Input placeholder="规格值" /></Form.Item>
-                    <Button danger type="link" onClick={() => remove(field.name)}>删除</Button>
-                  </Space>
-                ))}
-              </div>
+      <Modal
+        title={editingSku ? "编辑 SKU" : "新增 SKU"}
+        open={skuModalOpen}
+        onCancel={() => setSkuModalOpen(false)}
+        onOk={() => {
+          skuSubmitModeRef.current = "close";
+          skuForm.submit();
+        }}
+        okText={editingSku ? "更新 SKU" : "保存 SKU"}
+        width={640}
+        forceRender
+        footer={(_, { OkBtn, CancelBtn }) => (
+          <>
+            <CancelBtn />
+            {!editingSku && (
+              <Button
+                onClick={() => {
+                  skuSubmitModeRef.current = "continue";
+                  skuForm.submit();
+                }}
+              >
+                保存并继续添加
+              </Button>
             )}
-          </Form.List>
+            <OkBtn />
+          </>
+        )}
+      >
+        <Form form={skuForm} layout="vertical" onFinish={handleSkuSubmit}>
+          <SKUFormFields form={skuForm} />
         </Form>
       </Modal>
 

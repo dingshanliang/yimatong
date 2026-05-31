@@ -151,7 +151,15 @@ class TestSKUCRUD:
         _, headers = tenant_with_auth
         resp = await client.post(
             "/api/v1/skus",
-            json={"product_id": product_id, "code": "SKU-UPD", "name": "原名"},
+            json={
+                "product_id": product_id,
+                "code": "SKU-UPD",
+                "name": "原名",
+                "specifications": {"size": "500ml"},
+                "package_type": "瓶装",
+                "barcode": "6901234567890",
+                "image_url": "https://example.com/sku.png",
+            },
             headers=headers,
         )
         sku_id = resp.json()["id"]
@@ -164,3 +172,19 @@ class TestSKUCRUD:
         assert resp.status_code == 200
         assert resp.json()["name"] == "新名"
         assert resp.json()["specifications"]["size"] == "1L"
+
+        clear_resp = await client.patch(
+            f"/api/v1/skus/{sku_id}",
+            json={
+                "specifications": None,
+                "package_type": None,
+                "barcode": None,
+                "image_url": None,
+            },
+            headers=headers,
+        )
+        assert clear_resp.status_code == 200
+        assert clear_resp.json()["specifications"] is None
+        assert clear_resp.json()["package_type"] is None
+        assert clear_resp.json()["barcode"] is None
+        assert clear_resp.json()["image_url"] is None

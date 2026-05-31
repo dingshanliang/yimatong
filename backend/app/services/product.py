@@ -296,6 +296,7 @@ async def update_sku(
     barcode: str | None = None,
     image_url: str | None = None,
     status: SKUStatus | None = None,
+    fields_to_update: set[str] | None = None,
 ) -> SKU | None:
     result = await db.execute(select(SKU).where(SKU.id == sku_id, SKU.tenant_id == tenant_id))
     sku = result.scalar_one_or_none()
@@ -317,13 +318,13 @@ async def update_sku(
         sku.code = code
     if name is not None:
         sku.name = name
-    if specifications is not None:
+    if specifications is not None or (fields_to_update and "specifications" in fields_to_update):
         sku.specifications = specifications
-    if package_type is not None:
+    if package_type is not None or (fields_to_update and "package_type" in fields_to_update):
         sku.package_type = package_type
-    if barcode is not None:
+    if barcode is not None or (fields_to_update and "barcode" in fields_to_update):
         sku.barcode = barcode
-    if image_url is not None:
+    if image_url is not None or (fields_to_update and "image_url" in fields_to_update):
         sku.image_url = image_url
     if status is not None:
         sku.status = status

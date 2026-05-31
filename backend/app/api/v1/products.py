@@ -391,6 +391,7 @@ async def update_sku_endpoint(
         barcode=body.barcode,
         image_url=body.image_url,
         status=body.status,
+        fields_to_update=body.model_fields_set,
     )
     if not sku:
         raise HTTPException(status_code=404, detail="SKU not found")
