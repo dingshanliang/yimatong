@@ -503,6 +503,7 @@ async def update_product_asset_endpoint(
         content_text=body.content_text,
         metadata_json=body.metadata_json,
         status=body.status,
+        fields_to_update=body.model_fields_set,
     )
     if not asset:
         raise HTTPException(status_code=404, detail="Product asset not found")

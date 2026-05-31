@@ -31,15 +31,144 @@ const { Title, Text } = Typography;
 const { TextArea } = Input;
 
 const ASSET_TYPE_OPTIONS: Array<{ value: ProductAssetType; label: string }> = [
-  { value: "image", label: "产品图片" },
-  { value: "video", label: "视频素材" },
   { value: "test_report", label: "检测报告" },
   { value: "certificate", label: "资质证书" },
+  { value: "image", label: "图片素材" },
+  { value: "video", label: "视频素材" },
   { value: "story", label: "图文故事" },
   { value: "other", label: "其他资料" },
 ];
 
 const ASSET_TYPE_LABELS = Object.fromEntries(ASSET_TYPE_OPTIONS.map((item) => [item.value, item.label]));
+
+type AssetFormFeature = "issuer" | "validUntil" | "file" | "image" | "description" | "content";
+
+interface AssetFormConfig {
+  nameLabel: string;
+  namePlaceholder: string;
+  issuerLabel?: string;
+  issuerPlaceholder?: string;
+  validUntilLabel?: string;
+  fileLabel?: string;
+  filePlaceholder?: string;
+  fileExtra?: string;
+  fileRequired?: boolean;
+  fileButtonText?: string;
+  imageLabel?: string;
+  imagePlaceholder?: string;
+  imageExtra?: string;
+  imageRequired?: boolean;
+  imageButtonText?: string;
+  descriptionLabel?: string;
+  descriptionPlaceholder?: string;
+  contentLabel?: string;
+  contentPlaceholder?: string;
+  contentRequired?: boolean;
+  features: AssetFormFeature[];
+}
+
+const ASSET_FORM_CONFIGS: Record<ProductAssetType, AssetFormConfig> = {
+  test_report: {
+    nameLabel: "报告名称",
+    namePlaceholder: "例如 2026 年农残检测报告",
+    issuerLabel: "检测机构",
+    issuerPlaceholder: "例如 黑龙江省农产品质量检测中心",
+    validUntilLabel: "有效期至",
+    fileLabel: "报告文件",
+    filePlaceholder: "上传 PDF/图片，或粘贴公开可访问的报告链接",
+    fileExtra: "用于扫码页检测报告展示，支持 PDF、PNG、JPG、WebP，单个文件不超过 20MB。",
+    fileRequired: true,
+    fileButtonText: "上传报告",
+    contentLabel: "检测解读",
+    contentPlaceholder: "用用户能理解的语言说明检测结论，例如各项指标符合标准。",
+    features: ["issuer", "validUntil", "file", "content"],
+  },
+  certificate: {
+    nameLabel: "证书名称",
+    namePlaceholder: "例如 绿色食品认证证书",
+    issuerLabel: "发证机构",
+    issuerPlaceholder: "例如 中国绿色食品发展中心",
+    validUntilLabel: "有效期至",
+    fileLabel: "证书文件",
+    filePlaceholder: "上传 PDF/图片，或粘贴公开可访问的证书链接",
+    fileExtra: "用于扫码页资质证书展示，支持 PDF、PNG、JPG、WebP，单个文件不超过 20MB。",
+    fileRequired: true,
+    fileButtonText: "上传证书",
+    descriptionLabel: "说明",
+    descriptionPlaceholder: "补充证书适用范围或展示说明。",
+    features: ["issuer", "validUntil", "file", "description"],
+  },
+  image: {
+    nameLabel: "素材名称",
+    namePlaceholder: "例如 产地航拍图",
+    imageLabel: "图片",
+    imagePlaceholder: "上传图片，或粘贴公开可访问的图片链接",
+    imageExtra: "用于扫码页图文素材展示，支持 PNG、JPG、WebP，单张不超过 5MB。",
+    imageRequired: true,
+    imageButtonText: "上传图片",
+    descriptionLabel: "说明",
+    descriptionPlaceholder: "说明图片内容或适用场景。",
+    features: ["image", "description"],
+  },
+  video: {
+    nameLabel: "视频名称",
+    namePlaceholder: "例如 产地采收过程视频",
+    fileLabel: "公开视频链接",
+    filePlaceholder: "粘贴公开视频链接，例如 https://...",
+    fileExtra: "第一版视频素材仅支持公开可访问的视频链接，暂不支持直接上传视频文件。",
+    fileRequired: true,
+    imageLabel: "封面图",
+    imagePlaceholder: "上传封面图，或粘贴公开可访问的图片链接",
+    imageExtra: "用于扫码页视频卡片封面，支持 PNG、JPG、WebP，单张不超过 5MB。",
+    imageButtonText: "上传封面",
+    descriptionLabel: "说明",
+    descriptionPlaceholder: "说明视频内容或推荐展示位置。",
+    features: ["file", "image", "description"],
+  },
+  story: {
+    nameLabel: "故事标题",
+    namePlaceholder: "例如 来自核心产区的安心好物",
+    issuerLabel: "来源",
+    issuerPlaceholder: "例如 品牌方、合作社、基地负责人",
+    imageLabel: "配图",
+    imagePlaceholder: "上传配图，或粘贴公开可访问的图片链接",
+    imageExtra: "用于扫码页图文故事展示，支持 PNG、JPG、WebP，单张不超过 5MB。",
+    contentLabel: "正文内容",
+    contentPlaceholder: "补充品牌、产地、种植/生产过程等消费者关心的信息。",
+    contentRequired: true,
+    features: ["issuer", "image", "content"],
+  },
+  other: {
+    nameLabel: "资料名称",
+    namePlaceholder: "例如 供应商声明文件",
+    issuerLabel: "来源",
+    issuerPlaceholder: "例如 供应商、合作机构或内部团队",
+    fileLabel: "资料文件",
+    filePlaceholder: "上传 PDF/图片，或粘贴公开可访问的资料链接",
+    fileExtra: "用于后台留档或扫码页资料展示，支持 PDF、PNG、JPG、WebP，单个文件不超过 20MB。",
+    fileButtonText: "上传资料",
+    imageLabel: "资料图片",
+    imagePlaceholder: "上传图片，或粘贴公开可访问的图片链接",
+    imageExtra: "可作为资料预览图或扫码页展示图。",
+    descriptionLabel: "说明",
+    descriptionPlaceholder: "说明资料用途或展示方式。",
+    features: ["issuer", "file", "image", "description"],
+  },
+};
+
+const ASSET_FILE_LINK_TEXT: Record<ProductAssetType, string> = {
+  test_report: "查看报告",
+  certificate: "查看证书",
+  image: "查看图片",
+  video: "查看视频",
+  story: "查看故事",
+  other: "查看资料",
+};
+
+const ASSET_STATUS_MAP: Record<string, { label: string; color: string }> = {
+  active: { label: "启用", color: "green" },
+  inactive: { label: "停用", color: "default" },
+};
 
 const BATCH_STATUS_MAP: Record<string, { label: string; color: string }> = {
   active: { label: "有效", color: "green" },
@@ -141,6 +270,9 @@ export default function ProductWorkbenchPage() {
   const [editingSku, setEditingSku] = useState<SKU | null>(null);
   const [editingBatch, setEditingBatch] = useState<ProductionBatch | null>(null);
   const [activeTab, setActiveTab] = useState("profile");
+  const watchedAssetType = Form.useWatch<ProductAssetType>("asset_type", assetForm);
+  const assetFormType = watchedAssetType || editingAsset?.asset_type || "test_report";
+  const assetFormConfig = ASSET_FORM_CONFIGS[assetFormType];
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -268,11 +400,36 @@ export default function ProductWorkbenchPage() {
     setAssetModalOpen(true);
   };
 
+  const handleAssetTypeChange = (assetType: ProductAssetType) => {
+    const currentName = assetForm.getFieldValue("name");
+    assetForm.setFieldsValue({
+      asset_type: assetType,
+      name: currentName,
+      issuer: undefined,
+      valid_until: undefined,
+      file_url: undefined,
+      image_url: undefined,
+      description: undefined,
+      content_text: undefined,
+    });
+  };
+
   const handleAssetSubmit = async (values: Record<string, unknown>) => {
     try {
+      const assetType = values.asset_type as ProductAssetType;
+      const config = ASSET_FORM_CONFIGS[assetType];
+      const hasFeature = (feature: AssetFormFeature) => config.features.includes(feature);
       const payload = {
-        ...values,
-        valid_until: values.valid_until ? (values.valid_until as dayjs.Dayjs).format("YYYY-MM-DD") : undefined,
+        asset_type: assetType,
+        name: values.name,
+        issuer: hasFeature("issuer") ? values.issuer : null,
+        valid_until: hasFeature("validUntil") && values.valid_until
+          ? (values.valid_until as dayjs.Dayjs).format("YYYY-MM-DD")
+          : null,
+        file_url: hasFeature("file") ? values.file_url : null,
+        image_url: hasFeature("image") ? values.image_url : null,
+        description: hasFeature("description") ? values.description : null,
+        content_text: hasFeature("content") ? values.content_text : null,
       };
       if (editingAsset) await api.patch(`/product-assets/${editingAsset.id}`, payload);
       else await api.post(`/products/${productId}/assets`, payload);
@@ -371,11 +528,24 @@ export default function ProductWorkbenchPage() {
     { title: "机构/来源", dataIndex: "issuer", key: "issuer", render: (v?: string) => v || "-" },
     { title: "有效期", dataIndex: "valid_until", key: "valid_until", render: (v?: string) => v || "-" },
     {
+      title: "状态",
+      dataIndex: "status",
+      key: "status",
+      render: (v: string) => {
+        const status = ASSET_STATUS_MAP[v] || { label: v, color: "default" };
+        return <Tag color={status.color}>{status.label}</Tag>;
+      },
+    },
+    {
       title: "文件",
       key: "file",
       render: (_: unknown, record) => {
         const url = record.file_url || record.image_url;
-        return url ? <Typography.Link href={url} target="_blank">查看文件</Typography.Link> : "-";
+        return url ? (
+          <Typography.Link href={url} target="_blank">
+            {ASSET_FILE_LINK_TEXT[record.asset_type] || "查看资料"}
+          </Typography.Link>
+        ) : "未上传";
       },
     },
     { title: "操作", key: "actions", render: (_: unknown, record) => <Button type="link" size="small" onClick={() => openAssetModal(record)}>编辑</Button> },
@@ -546,30 +716,88 @@ export default function ProductWorkbenchPage() {
         ]}
       />
 
-      <Modal title={editingAsset ? "编辑资料" : "新增资料"} open={assetModalOpen} onCancel={() => setAssetModalOpen(false)} onOk={() => assetForm.submit()} width={640} forceRender>
+      <Modal
+        title={editingAsset ? "编辑资料" : "新增资料"}
+        open={assetModalOpen}
+        onCancel={() => setAssetModalOpen(false)}
+        onOk={() => assetForm.submit()}
+        okText={editingAsset ? "更新资料" : "保存资料"}
+        width={640}
+        forceRender
+      >
         <Form form={assetForm} layout="vertical" onFinish={handleAssetSubmit}>
-          <Form.Item name="asset_type" label="资料类型" rules={[{ required: true }]}><Select options={ASSET_TYPE_OPTIONS} /></Form.Item>
-          <Form.Item name="name" label="资料名称" rules={[{ required: true, message: "请输入资料名称" }]}><Input /></Form.Item>
-          <Form.Item name="issuer" label="机构/来源"><Input placeholder="检测机构、签发机构或素材来源" /></Form.Item>
-          <Form.Item name="valid_until" label="有效期至"><DatePicker className="w-full" /></Form.Item>
-          <Form.Item
-            name="file_url"
-            label="报告/证书文件（可选）"
-            extra="用于检测报告、资质证书等资料。可直接上传 PDF 或图片，也可粘贴公开文件链接。"
-            rules={[{ type: "url", message: "请输入以 http:// 或 https:// 开头的文件链接" }]}
-          >
-            <FileUploadInput module="product-document" buttonText="上传资料" />
+          <Form.Item name="asset_type" label="资料类型" rules={[{ required: true }]}>
+            <Select options={ASSET_TYPE_OPTIONS} onChange={handleAssetTypeChange} />
           </Form.Item>
-          <Form.Item
-            name="image_url"
-            label="图片素材（可选）"
-            extra="用于图文素材展示。图片可直接上传；视频请粘贴公开视频地址。"
-            rules={[{ type: "url", message: "请输入以 http:// 或 https:// 开头的地址" }]}
-          >
-            <ImageUploadInput module="product-asset" previewAlt="资料图片预览" />
+          <Form.Item name="name" label={assetFormConfig.nameLabel} rules={[{ required: true, message: `请输入${assetFormConfig.nameLabel}` }]}>
+            <Input placeholder={assetFormConfig.namePlaceholder} />
           </Form.Item>
-          <Form.Item name="description" label="说明"><TextArea rows={3} /></Form.Item>
-          <Form.Item name="content_text" label="正文/检测解读"><TextArea rows={4} /></Form.Item>
+          {assetFormConfig.features.includes("issuer") && (
+            <Form.Item name="issuer" label={assetFormConfig.issuerLabel}>
+              <Input placeholder={assetFormConfig.issuerPlaceholder} />
+            </Form.Item>
+          )}
+          {assetFormConfig.features.includes("validUntil") && (
+            <Form.Item name="valid_until" label={assetFormConfig.validUntilLabel}>
+              <DatePicker className="w-full" />
+            </Form.Item>
+          )}
+          {assetFormConfig.features.includes("file") && (
+            <Form.Item
+              name="file_url"
+              label={assetFormConfig.fileLabel}
+              extra={assetFormType === "video" ? assetFormConfig.fileExtra : undefined}
+              rules={[
+                ...(assetFormConfig.fileRequired ? [{ required: true, message: `请填写或上传${assetFormConfig.fileLabel}` }] : []),
+                { type: "url", message: "请输入以 http:// 或 https:// 开头的链接" },
+              ]}
+            >
+              {assetFormType === "video" ? (
+                <Input placeholder={assetFormConfig.filePlaceholder} allowClear />
+              ) : (
+                <FileUploadInput
+                  module="product-document"
+                  buttonText={assetFormConfig.fileButtonText}
+                  placeholder={assetFormConfig.filePlaceholder}
+                  emptyText={assetFormConfig.fileExtra}
+                  variant="uploadFirst"
+                />
+              )}
+            </Form.Item>
+          )}
+          {assetFormConfig.features.includes("image") && (
+            <Form.Item
+              name="image_url"
+              label={assetFormConfig.imageLabel}
+              rules={[
+                ...(assetFormConfig.imageRequired ? [{ required: true, message: `请上传${assetFormConfig.imageLabel}` }] : []),
+                { type: "url", message: "请输入以 http:// 或 https:// 开头的图片链接" },
+              ]}
+            >
+              <ImageUploadInput
+                module="product-asset"
+                buttonText={assetFormConfig.imageButtonText}
+                placeholder={assetFormConfig.imagePlaceholder}
+                previewAlt={`${assetFormConfig.imageLabel || "图片"}预览`}
+                emptyText={assetFormConfig.imageExtra}
+                variant="uploadFirst"
+              />
+            </Form.Item>
+          )}
+          {assetFormConfig.features.includes("description") && (
+            <Form.Item name="description" label={assetFormConfig.descriptionLabel}>
+              <TextArea rows={3} placeholder={assetFormConfig.descriptionPlaceholder} />
+            </Form.Item>
+          )}
+          {assetFormConfig.features.includes("content") && (
+            <Form.Item
+              name="content_text"
+              label={assetFormConfig.contentLabel}
+              rules={assetFormConfig.contentRequired ? [{ required: true, message: `请输入${assetFormConfig.contentLabel}` }] : undefined}
+            >
+              <TextArea rows={4} placeholder={assetFormConfig.contentPlaceholder} />
+            </Form.Item>
+          )}
         </Form>
       </Modal>
 

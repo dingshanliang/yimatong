@@ -199,3 +199,21 @@ class TestProductCRUD:
         )
         assert update_resp.status_code == 200
         assert update_resp.json()["name"] == "年度农残检测报告"
+
+        clear_resp = await client.patch(
+            f"/api/v1/product-assets/{asset_resp.json()['id']}",
+            json={
+                "asset_type": "image",
+                "issuer": None,
+                "valid_until": None,
+                "file_url": None,
+                "image_url": "https://example.com/origin.png",
+            },
+            headers=headers,
+        )
+        assert clear_resp.status_code == 200
+        assert clear_resp.json()["asset_type"] == "image"
+        assert clear_resp.json()["issuer"] is None
+        assert clear_resp.json()["valid_until"] is None
+        assert clear_resp.json()["file_url"] is None
+        assert clear_resp.json()["image_url"] == "https://example.com/origin.png"

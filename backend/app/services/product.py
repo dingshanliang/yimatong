@@ -522,6 +522,7 @@ async def update_product_asset(
     content_text: str | None = None,
     metadata_json: dict | None = None,
     status: ProductAssetStatus | None = None,
+    fields_to_update: set[str] | None = None,
 ) -> ProductAsset | None:
     result = await db.execute(
         select(ProductAsset).where(ProductAsset.id == asset_id, ProductAsset.tenant_id == tenant_id)
@@ -534,19 +535,19 @@ async def update_product_asset(
         asset.asset_type = asset_type
     if name is not None:
         asset.name = name
-    if description is not None:
+    if description is not None or (fields_to_update and "description" in fields_to_update):
         asset.description = description
-    if issuer is not None:
+    if issuer is not None or (fields_to_update and "issuer" in fields_to_update):
         asset.issuer = issuer
-    if valid_until is not None:
+    if valid_until is not None or (fields_to_update and "valid_until" in fields_to_update):
         asset.valid_until = valid_until
-    if file_url is not None:
+    if file_url is not None or (fields_to_update and "file_url" in fields_to_update):
         asset.file_url = file_url
-    if image_url is not None:
+    if image_url is not None or (fields_to_update and "image_url" in fields_to_update):
         asset.image_url = image_url
-    if content_text is not None:
+    if content_text is not None or (fields_to_update and "content_text" in fields_to_update):
         asset.content_text = content_text
-    if metadata_json is not None:
+    if metadata_json is not None or (fields_to_update and "metadata_json" in fields_to_update):
         asset.metadata_json = metadata_json
     if status is not None:
         asset.status = status
