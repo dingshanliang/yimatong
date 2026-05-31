@@ -5,6 +5,8 @@
 import api from "./api";
 import { extractErrorMessage } from "./api";
 
+const AI_REQUEST_TIMEOUT_MS = 60000;
+
 // ──────────────────── Types ────────────────────
 
 /** 从文本/图片提取的产品字段 */
@@ -29,8 +31,10 @@ export interface ExtractResult {
 export type CopywritingType = "brand_story" | "selling_points";
 
 /** 文案生成结果 */
+export type CopywritingItem = string | { title?: string; detail?: string; [key: string]: unknown };
+
 export interface CopywritingResult {
-  content: string | { items: string[] };
+  content: string | { items: CopywritingItem[] };
   generation_id: string;
 }
 
@@ -78,11 +82,16 @@ export interface CampaignResult {
   generation_id: string;
 }
 
+export interface AITargetContext {
+  target_type?: string;
+  target_id?: string;
+}
+
 // ──────────────────── API Functions ────────────────────
 
 /** AI-01a: 从文本提取产品信息 */
 export async function extractFromText(text: string): Promise<ExtractResult> {
-  const { data } = await api.post<ExtractResult>("/ai/extract", { text });
+  const { data } = await api.post<ExtractResult>("/ai/extract", { text }, { timeout: AI_REQUEST_TIMEOUT_MS });
   return data;
 }
 
@@ -91,7 +100,7 @@ export async function recognizeImage(imageUrl: string, filename: string): Promis
   const { data } = await api.post<ExtractResult>("/ai/recognize-image", {
     image_url: imageUrl,
     filename,
-  });
+  }, { timeout: AI_REQUEST_TIMEOUT_MS });
   return data;
 }
 
@@ -101,7 +110,7 @@ export async function recognizeImageFile(file: File): Promise<ExtractResult> {
   formData.append("file", file);
   const { data } = await api.post<ExtractResult>("/ai/recognize-image-upload", formData, {
     headers: { "Content-Type": "multipart/form-data" },
-    timeout: 30000,
+    timeout: AI_REQUEST_TIMEOUT_MS,
   });
   return data;
 }
@@ -111,12 +120,14 @@ export async function generateCopywriting(
   type: CopywritingType,
   productName: string,
   keywords: string[],
+  target?: AITargetContext,
 ): Promise<CopywritingResult> {
   const { data } = await api.post<CopywritingResult>("/ai/copywriting", {
     type,
     product_name: productName,
     keywords,
-  });
+    ...target,
+  }, { timeout: AI_REQUEST_TIMEOUT_MS });
   return data;
 }
 
@@ -125,12 +136,14 @@ export async function generatePageCopy(
   productName: string,
   category: string,
   keywords: string[],
+  target?: AITargetContext,
 ): Promise<PageCopyResult> {
   const { data } = await api.post<PageCopyResult>("/ai/page-copy", {
     product_name: productName,
     category,
     keywords,
-  });
+    ...target,
+  }, { timeout: AI_REQUEST_TIMEOUT_MS });
   return data;
 }
 
@@ -138,11 +151,13 @@ export async function generatePageCopy(
 export async function suggestPageStructure(
   productName: string,
   category: string,
+  target?: AITargetContext,
 ): Promise<PageSuggestResult> {
   const { data } = await api.post<PageSuggestResult>("/ai/page-suggest", {
     product_name: productName,
     category,
-  });
+    ...target,
+  }, { timeout: AI_REQUEST_TIMEOUT_MS });
   return data;
 }
 
@@ -151,12 +166,14 @@ export async function generateCampaign(
   productName: string,
   goal: CampaignGoal,
   targetAudience: string,
+  target?: AITargetContext,
 ): Promise<CampaignResult> {
   const { data } = await api.post<CampaignResult>("/ai/campaign", {
     product_name: productName,
     goal,
     target_audience: targetAudience,
-  });
+    ...target,
+  }, { timeout: AI_REQUEST_TIMEOUT_MS });
   return data;
 }
 
@@ -164,9 +181,15 @@ export async function generateCampaign(
 
 /** 将 AI API 错误转换为用户友好的中文提示 */
 export function getAIErrorMessage(err: unknown): string {
-  if (typeof err === "object" && err !== null && "response" in err) {
-    const axiosErr = err as { response?: { status?: number; data?: { detail?: string } } };
+  if (typeof err === "object" && err !== null) {
+    const axiosErr = err as {
+      code?: string;
+      message?: string;
+      response?: { status?: number; data?: { detail?: string } };
+    };
+    if (axiosErr.code === "ECONNABORTED") return "AI 生成耗时较长，请稍后重试";
     const status = axiosErr.response?.status;
+    if (status === 401) return "登录已过期，请重新登录后再试";
     if (status === 429) return "今日 AI 调用次数已达上限，请明天再试";
     if (status === 503) return "AI 服务暂时不可用，请稍后重试";
     if (status === 500) return "AI 服务出现错误，请稍后重试";

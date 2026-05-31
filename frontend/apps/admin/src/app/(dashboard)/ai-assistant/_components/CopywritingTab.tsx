@@ -3,7 +3,13 @@
 import { useState } from "react";
 import { App, Button, Col, Form, Input, Row, Select, Spin, Typography } from "antd";
 import { CopyOutlined, CheckCircleOutlined } from "@ant-design/icons";
-import { generateCopywriting, getAIErrorMessage, type CopywritingResult, type CopywritingType } from "@/lib/ai";
+import {
+  generateCopywriting,
+  getAIErrorMessage,
+  type CopywritingItem,
+  type CopywritingResult,
+  type CopywritingType,
+} from "@/lib/ai";
 import { ResultCard } from "./shared";
 
 const { Paragraph } = Typography;
@@ -29,13 +35,32 @@ export function CopywritingTab() {
     }
   };
 
-  const renderContent = (content: string | { items: string[] }) => {
+  const normalizeItem = (item: CopywritingItem) => {
+    if (typeof item === "string") return { detail: item };
+    const title = typeof item.title === "string" ? item.title : undefined;
+    const detail = typeof item.detail === "string"
+      ? item.detail
+      : Object.entries(item)
+        .filter(([key, value]) => key !== "title" && value != null && value !== "")
+        .map(([key, value]) => `${key}: ${String(value)}`)
+        .join("；");
+    return { title, detail: detail || title || "" };
+  };
+
+  const renderContent = (content: CopywritingResult["content"]) => {
     if (typeof content === "string") {
       return <Paragraph style={{ whiteSpace: "pre-wrap", lineHeight: 1.8 }} className="text-gray-700">{content}</Paragraph>;
     }
+    const items = content.items.map(normalizeItem);
     return (
       <ul className="list-inside list-disc space-y-2 pl-2">
-        {content.items.map((item, idx) => <li key={idx} className="text-gray-700">{item}</li>)}
+        {items.map((item, idx) => (
+          <li key={idx} className="text-gray-700">
+            {item.title ? <strong>{item.title}</strong> : null}
+            {item.title && item.detail ? "：" : null}
+            {item.detail}
+          </li>
+        ))}
       </ul>
     );
   };
