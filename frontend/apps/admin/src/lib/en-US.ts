@@ -1,6 +1,11 @@
 const enUS: Record<string, string> = {
   // Menu
   "menu.dashboard": "Dashboard",
+  "menu.group.catalog": "Catalog",
+  "menu.group.traceability": "Traceability Content",
+  "menu.group.growth": "Growth",
+  "menu.group.channels": "Channels & Organization",
+  "menu.group.governance": "Risk & Launch",
   "menu.brands": "Brands",
   "menu.products": "Products",
   "menu.skus": "SKUs",

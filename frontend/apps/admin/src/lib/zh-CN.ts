@@ -1,6 +1,11 @@
 const zhCN: Record<string, string> = {
   // 菜单
   "menu.dashboard": "工作台",
+  "menu.group.catalog": "商品资料",
+  "menu.group.traceability": "溯源内容",
+  "menu.group.growth": "营销增长",
+  "menu.group.channels": "渠道组织",
+  "menu.group.governance": "风控发布",
   "menu.brands": "品牌管理",
   "menu.products": "产品管理",
   "menu.skus": "SKU 管理",

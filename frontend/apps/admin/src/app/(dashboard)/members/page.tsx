@@ -25,6 +25,7 @@ function RulesTab() {
   const [open, setOpen] = useState(false);
   const [editItem, setEditItem] = useState<Record<string, unknown> | null>(null);
   const [form] = Form.useForm();
+  const { message } = App.useApp();
 
   const fetch = async () => {
     setLoading(true);
@@ -32,7 +33,7 @@ function RulesTab() {
       const { data } = await api.get("/members/point-rules");
       setItems(Array.isArray(data) ? data : []);
     } catch {
-      App.useApp().message.error("加载积分规则失败");
+      message.error("加载积分规则失败");
     } finally {
       setLoading(false);
     }
@@ -43,13 +44,13 @@ function RulesTab() {
   const handleCreate = async (values: Record<string, unknown>) => {
     try {
       await api.post("/members/point-rules", values);
-      App.useApp().message.success("规则创建成功");
+      message.success("规则创建成功");
       setOpen(false);
       form.resetFields();
       fetch();
     } catch (e: unknown) {
       const err = e as { response?: { data?: { detail?: string } } };
-      App.useApp().message.error(err.response?.data?.detail || "创建失败");
+      message.error(err.response?.data?.detail || "创建失败");
     }
   };
 
@@ -57,23 +58,23 @@ function RulesTab() {
     if (!editItem) return;
     try {
       await api.put(`/members/point-rules/${editItem.id}`, values);
-      App.useApp().message.success("规则更新成功");
+      message.success("规则更新成功");
       setEditItem(null);
       form.resetFields();
       fetch();
     } catch (e: unknown) {
       const err = e as { response?: { data?: { detail?: string } } };
-      App.useApp().message.error(err.response?.data?.detail || "更新失败");
+      message.error(err.response?.data?.detail || "更新失败");
     }
   };
 
   const handleDelete = async (id: string) => {
     try {
       await api.delete(`/members/point-rules/${id}`);
-      App.useApp().message.success("规则已删除");
+      message.success("规则已删除");
       fetch();
     } catch {
-      App.useApp().message.error("删除失败");
+      message.error("删除失败");
     }
   };
 
@@ -82,7 +83,7 @@ function RulesTab() {
       await api.put(`/members/point-rules/${id}`, { enabled });
       fetch();
     } catch {
-      App.useApp().message.error("操作失败");
+      message.error("操作失败");
     }
   };
 
@@ -456,4 +457,3 @@ export default function MembersPage() {
     </div>
   );
 }
-

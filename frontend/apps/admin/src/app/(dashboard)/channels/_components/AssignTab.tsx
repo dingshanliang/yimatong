@@ -88,6 +88,15 @@ function StoreAllocationTab() {
   const [storeOptions, setStoreOptions] = useState<Option[]>([]);
   const [batchOptions, setBatchOptions] = useState<Option[]>([]);
 
+  const fetchAllocs = async () => {
+    setLoading(true);
+    try {
+      const { data } = await api.get("/channels/code-allocations");
+      setAllocs(Array.isArray(data) ? data : []);
+    } catch { /* */ }
+    finally { setLoading(false); }
+  };
+
   useEffect(() => {
     api.get("/channels/stores?page_size=100").then(({ data }) => {
       const items = data?.items || [];
@@ -99,15 +108,6 @@ function StoreAllocationTab() {
     }).catch(() => {});
     fetchAllocs();
   }, []);
-
-  const fetchAllocs = async () => {
-    setLoading(true);
-    try {
-      const { data } = await api.get("/channels/code-allocations");
-      setAllocs(Array.isArray(data) ? data : []);
-    } catch { /* */ }
-    finally { setLoading(false); }
-  };
 
   const handleAllocate = async (values: Record<string, unknown>) => {
     try {

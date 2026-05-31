@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import { ConfigProvider, Layout, Menu, Avatar, Dropdown, Select, Spin } from "antd";
 import {
@@ -39,54 +39,78 @@ const LOCALE_MAP: Record<string, Parameters<typeof ConfigProvider>[0]["locale"]>
   "en-US": enUS,
 };
 
+const MENU_OPEN_KEY_RULES = [
+  { key: "catalog-group", prefixes: ["/brands", "/products", "/skus", "/batches"] },
+  { key: "traceability-group", prefixes: ["/codes", "/pages", "/ai-assistant"] },
+  { key: "growth-group", prefixes: ["/campaigns", "/benefits", "/members"] },
+  { key: "channels-group", prefixes: ["/channels", "/regional", "/accounts", "/agency"] },
+  { key: "analytics-group", prefixes: ["/stats", "/campaign-analytics", "/gmv", "/risk-dashboard", "/exports"] },
+  { key: "integrations-group", prefixes: ["/connectors", "/integrations", "/imports", "/crm-sync"] },
+  { key: "governance-group", prefixes: ["/risk", "/launch-checklist"] },
+  { key: "settings-group", prefixes: ["/settings", "/i18n"] },
+];
+
 function DashboardInner({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
   const { user, hydrate, logout } = useAuthStore();
   const { locale, setLocale, t } = useI18n();
 
-  const [mounted, setMounted] = useState(false);
   useEffect(() => {
     hydrate();
-    setMounted(true);
-  }, [hydrate]);
-
-  useEffect(() => {
-    if (mounted && !localStorage.getItem("access_token")) {
+    if (!localStorage.getItem("access_token")) {
       router.replace("/login");
     }
-  }, [mounted, router]);
+  }, [hydrate, router]);
 
   const selectedKeys = [pathname];
 
-  const openKeys: string[] = [];
-  if (pathname.startsWith("/stats") || pathname.startsWith("/campaign-analytics") || pathname.startsWith("/exports") || pathname.startsWith("/risk-dashboard")) {
-    openKeys.push("analytics-group");
-  }
-  if (pathname.startsWith("/connectors")) {
-    openKeys.push("integrations-group");
-  }
-  if (pathname.startsWith("/settings")) {
-    openKeys.push("settings-group");
-  }
+  const openKeys = MENU_OPEN_KEY_RULES
+    .filter(({ prefixes }) => prefixes.some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`)))
+    .map(({ key }) => key);
 
   const menuItems: MenuProps["items"] = [
     { key: "/", icon: <DashboardOutlined />, label: t("menu.dashboard") },
-    { key: "/brands", icon: <TagOutlined />, label: t("menu.brands") },
-    { key: "/products", icon: <AppstoreOutlined />, label: t("menu.products") },
-    { key: "/skus", icon: <ProfileOutlined />, label: t("menu.skus") },
-    { key: "/batches", icon: <DatabaseOutlined />, label: t("menu.batches") },
-    { key: "/codes", icon: <QrcodeOutlined />, label: t("menu.codes") },
-    { key: "/pages", icon: <FileTextOutlined />, label: t("menu.pages") },
-    { key: "/ai-assistant", icon: <RobotOutlined />, label: t("menu.ai-assistant") },
-    { key: "/campaigns", icon: <GiftOutlined />, label: t("menu.campaigns") },
-    { key: "/benefits", icon: <SafetyCertificateOutlined />, label: t("menu.benefits") },
     {
-      key: "integrations-group",
-      icon: <DatabaseOutlined />,
-      label: t("menu.integrations"),
+      key: "catalog-group",
+      icon: <AppstoreOutlined />,
+      label: t("menu.group.catalog"),
       children: [
-        { key: "/connectors", icon: <DatabaseOutlined />, label: t("menu.connectors") },
+        { key: "/brands", icon: <TagOutlined />, label: t("menu.brands") },
+        { key: "/products", icon: <AppstoreOutlined />, label: t("menu.products") },
+        { key: "/skus", icon: <ProfileOutlined />, label: t("menu.skus") },
+        { key: "/batches", icon: <DatabaseOutlined />, label: t("menu.batches") },
+      ],
+    },
+    {
+      key: "traceability-group",
+      icon: <QrcodeOutlined />,
+      label: t("menu.group.traceability"),
+      children: [
+        { key: "/codes", icon: <QrcodeOutlined />, label: t("menu.codes") },
+        { key: "/pages", icon: <FileTextOutlined />, label: t("menu.pages") },
+        { key: "/ai-assistant", icon: <RobotOutlined />, label: t("menu.ai-assistant") },
+      ],
+    },
+    {
+      key: "growth-group",
+      icon: <GiftOutlined />,
+      label: t("menu.group.growth"),
+      children: [
+        { key: "/campaigns", icon: <GiftOutlined />, label: t("menu.campaigns") },
+        { key: "/benefits", icon: <SafetyCertificateOutlined />, label: t("menu.benefits") },
+        { key: "/members", icon: <UserOutlined />, label: t("menu.members") },
+      ],
+    },
+    {
+      key: "channels-group",
+      icon: <ShopOutlined />,
+      label: t("menu.group.channels"),
+      children: [
+        { key: "/channels", icon: <ShopOutlined />, label: t("menu.channels") },
+        { key: "/regional", icon: <TeamOutlined />, label: t("menu.regional") },
+        { key: "/accounts", icon: <TeamOutlined />, label: t("menu.accounts") },
+        { key: "/agency", icon: <TeamOutlined />, label: t("menu.agency") },
       ],
     },
     {
@@ -96,16 +120,28 @@ function DashboardInner({ children }: { children: React.ReactNode }) {
       children: [
         { key: "/stats", icon: <BarChartOutlined />, label: t("menu.stats") },
         { key: "/campaign-analytics", icon: <LineChartOutlined />, label: t("menu.campaign-analytics") },
+        { key: "/gmv", icon: <LineChartOutlined />, label: t("menu.gmv") },
         { key: "/risk-dashboard", icon: <SafetyCertificateOutlined />, label: t("menu.risk-dashboard") },
         { key: "/exports", icon: <ExportOutlined />, label: t("menu.exports") },
       ],
     },
-    { key: "/channels", icon: <ShopOutlined />, label: t("menu.channels") },
-    { key: "/risk", icon: <SafetyCertificateOutlined />, label: t("menu.risk") },
-    { key: "/members", icon: <UserOutlined />, label: t("menu.members") },
-    { key: "/gmv", icon: <LineChartOutlined />, label: t("menu.gmv") },
-    { key: "/regional", icon: <TeamOutlined />, label: t("menu.regional") },
-    { key: "/accounts", icon: <TeamOutlined />, label: t("menu.accounts") },
+    {
+      key: "integrations-group",
+      icon: <DatabaseOutlined />,
+      label: t("menu.integrations"),
+      children: [
+        { key: "/connectors", icon: <DatabaseOutlined />, label: t("menu.connectors") },
+      ],
+    },
+    {
+      key: "governance-group",
+      icon: <SafetyCertificateOutlined />,
+      label: t("menu.group.governance"),
+      children: [
+        { key: "/risk", icon: <SafetyCertificateOutlined />, label: t("menu.risk") },
+        { key: "/launch-checklist", icon: <CheckSquareOutlined />, label: t("menu.launch-checklist") },
+      ],
+    },
     {
       key: "settings-group",
       icon: <SettingOutlined />,
@@ -115,23 +151,12 @@ function DashboardInner({ children }: { children: React.ReactNode }) {
         { key: "/settings/compliance", icon: <SafetyCertificateOutlined />, label: t("menu.compliance") },
         { key: "/settings/tenant", icon: <ShopOutlined />, label: t("menu.tenant") },
         { key: "/settings/audit-logs", icon: <FileTextOutlined />, label: t("menu.audit-logs") },
+        { key: "/i18n", icon: <GlobalOutlined />, label: t("menu.i18n") },
       ],
     },
-    { key: "/agency", icon: <TeamOutlined />, label: t("menu.agency") },
-    { key: "/launch-checklist", icon: <CheckSquareOutlined />, label: t("menu.launch-checklist") },
-    { key: "/i18n", icon: <GlobalOutlined />, label: t("menu.i18n") },
   ];
 
-  if (!mounted) {
-    return (
-      <div className="flex min-h-screen items-center justify-center">
-        <Spin size="large" />
-      </div>
-    );
-  }
-
   if (!user) {
-    router.replace("/login");
     return (
       <div className="flex min-h-screen items-center justify-center">
         <Spin size="large" />

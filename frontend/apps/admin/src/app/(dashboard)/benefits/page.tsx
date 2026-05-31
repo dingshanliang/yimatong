@@ -65,7 +65,7 @@ export default function BenefitsPage() {
 
   const handleSubmit = async (values: Record<string, unknown>) => {
     try {
-      let configJson = values.config_json as Record<string, number> || {};
+      const configJson = values.config_json as Record<string, number> || {};
       if (values.benefit_type === "cash_red_packet") {
         for (const field of ["fixed_amount", "min_amount", "max_amount", "lucky_min_per", "budget"]) {
           if (typeof configJson[field] === "number") configJson[field] = yuanToFen(configJson[field]);
