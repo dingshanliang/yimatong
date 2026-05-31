@@ -72,3 +72,22 @@ class WhitelabelConfig(Base):
     hide_yimatong: Mapped[bool] = mapped_column(default=False, nullable=False)
     primary_color: Mapped[str] = mapped_column(String(20), nullable=False, default="#000000")
     logo_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    favicon_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    login_bg_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    font_family: Mapped[str] = mapped_column(String(100), nullable=False, default="")
+    custom_css: Mapped[str | None] = mapped_column(String(5000), nullable=True)
+
+
+class TenantDomain(Base):
+    """租户自定义域名绑定"""
+
+    __tablename__ = "tenant_domains"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid7)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
+    domain: Mapped[str] = mapped_column(String(253), nullable=False, unique=True)
+    ssl_status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending")
+    verified: Mapped[bool] = mapped_column(default=False, nullable=False)
+    cname_target: Mapped[str] = mapped_column(String(253), nullable=False, default="cname.yimatong.cn")
+
+    __table_args__ = (Index("ix_tenant_domains_tenant", "tenant_id"),)

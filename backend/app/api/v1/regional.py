@@ -362,3 +362,109 @@ async def update_data_policy_endpoint(
     org.config["data_policy"] = body.model_dump()
     await db.flush()
     return {"org_id": str(org_id), "policy": body.model_dump()}
+
+
+# ── 白标配置管理 ──────────────────────────────────
+
+
+class WhitelabelConfigUpdate(BaseModel):
+    brand_name: str | None = None
+    hide_yimatong: bool | None = None
+    primary_color: str | None = None
+    logo_url: str | None = None
+    favicon_url: str | None = None
+    login_bg_url: str | None = None
+    font_family: str | None = None
+    custom_css: str | None = None
+
+
+@regional_router.get("/orgs/{org_id}/whitelabel-config", summary="获取白标配置（增强版）")
+async def get_whitelabel_config_endpoint(
+    org_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    tenant_id: uuid.UUID = Depends(get_current_tenant),
+):
+    from app.services.whitelabel import get_whitelabel_config
+    config = await get_whitelabel_config(db, org_id)
+    if not config:
+        return {"brand_name": "", "hide_yimatong": False, "primary_color": "#000000", "logo_url": None, "favicon_url": None, "login_bg_url": None, "font_family": "", "custom_css": None}
+    return {
+        "id": str(config.id), "org_id": str(config.org_id),
+        "brand_name": config.brand_name, "hide_yimatong": config.hide_yimatong,
+        "primary_color": config.primary_color, "logo_url": config.logo_url,
+        "favicon_url": config.favicon_url, "login_bg_url": config.login_bg_url,
+        "font_family": config.font_family, "custom_css": config.custom_css,
+    }
+
+
+@regional_router.put("/orgs/{org_id}/whitelabel-config", summary="更新白标配置")
+async def update_whitelabel_config_endpoint(
+    org_id: uuid.UUID,
+    body: WhitelabelConfigUpdate,
+    db: AsyncSession = Depends(get_db),
+    tenant_id: uuid.UUID = Depends(get_current_tenant),
+):
+    from app.services.whitelabel import update_whitelabel_config
+    config = await update_whitelabel_config(db, org_id, **body.model_dump(exclude_none=True))
+    return {
+        "id": str(config.id), "org_id": str(config.org_id),
+        "brand_name": config.brand_name, "hide_yimatong": config.hide_yimatong,
+        "primary_color": config.primary_color, "logo_url": config.logo_url,
+        "favicon_url": config.favicon_url, "login_bg_url": config.login_bg_url,
+        "font_family": config.font_family, "custom_css": config.custom_css,
+    }
+
+
+# ── 域名管理 ──────────────────────────────────────
+
+
+class DomainCreate(BaseModel):
+    domain: str
+
+
+@regional_router.post("/orgs/{org_id}/domains", status_code=201, summary="添加自定义域名")
+async def add_domain_endpoint(
+    org_id: uuid.UUID,
+    body: DomainCreate,
+    db: AsyncSession = Depends(get_db),
+    tenant_id: uuid.UUID = Depends(get_current_tenant),
+):
+    from app.services.whitelabel import add_domain
+    td = await add_domain(db, tenant_id, body.domain)
+    return {"id": str(td.id), "domain": td.domain, "verified": td.verified, "ssl_status": td.ssl_status, "cname_target": td.cname_target}
+
+
+@regional_router.get("/orgs/{org_id}/domains", summary="域名列表")
+async def list_domains_endpoint(
+    org_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    tenant_id: uuid.UUID = Depends(get_current_tenant),
+):
+    from app.services.whitelabel import list_domains
+    domains = await list_domains(db, tenant_id)
+    return [{"id": str(d.id), "domain": d.domain, "verified": d.verified, "ssl_status": d.ssl_status, "cname_target": d.cname_target} for d in domains]
+
+
+@regional_router.post("/orgs/{org_id}/domains/{domain_id}/verify", summary="验证域名")
+async def verify_domain_endpoint(
+    org_id: uuid.UUID,
+    domain_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    tenant_id: uuid.UUID = Depends(get_current_tenant),
+):
+    from app.services.whitelabel import verify_domain
+    ok = await verify_domain(db, domain_id, tenant_id)
+    return {"success": ok}
+
+
+@regional_router.delete("/orgs/{org_id}/domains/{domain_id}", status_code=204, summary="删除域名")
+async def remove_domain_endpoint(
+    org_id: uuid.UUID,
+    domain_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    tenant_id: uuid.UUID = Depends(get_current_tenant),
+):
+    from app.services.whitelabel import remove_domain
+    if not await remove_domain(db, domain_id, tenant_id):
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail="Domain not found")
