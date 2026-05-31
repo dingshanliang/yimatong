@@ -187,6 +187,7 @@ export default function ProductsPage() {
         okText={editItem ? "保存基础信息" : "创建并进入工作台"}
         confirmLoading={saving}
         width={560}
+        forceRender
       >
         <Form form={form} layout="vertical" onFinish={handleSubmit}>
           <Form.Item name="name" label="产品名称" rules={[{ required: true, message: "请输入产品名称" }]}><Input data-testid="product-name-input" /></Form.Item>
@@ -249,6 +250,7 @@ export default function ProductsPage() {
         onOk={() => brandForm.submit()}
         confirmLoading={brandCreating}
         okText="创建品牌"
+        forceRender
       >
         <Form form={brandForm} layout="vertical" onFinish={handleQuickBrandCreate}>
           <Form.Item name="name" label="品牌名称" rules={[{ required: true, message: "请输入品牌名称" }]}>

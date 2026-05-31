@@ -546,7 +546,7 @@ export default function ProductWorkbenchPage() {
         ]}
       />
 
-      <Modal title={editingAsset ? "编辑资料" : "新增资料"} open={assetModalOpen} onCancel={() => setAssetModalOpen(false)} onOk={() => assetForm.submit()} width={640}>
+      <Modal title={editingAsset ? "编辑资料" : "新增资料"} open={assetModalOpen} onCancel={() => setAssetModalOpen(false)} onOk={() => assetForm.submit()} width={640} forceRender>
         <Form form={assetForm} layout="vertical" onFinish={handleAssetSubmit}>
           <Form.Item name="asset_type" label="资料类型" rules={[{ required: true }]}><Select options={ASSET_TYPE_OPTIONS} /></Form.Item>
           <Form.Item name="name" label="资料名称" rules={[{ required: true, message: "请输入资料名称" }]}><Input /></Form.Item>
@@ -573,7 +573,7 @@ export default function ProductWorkbenchPage() {
         </Form>
       </Modal>
 
-      <Modal title={editingSku ? "编辑 SKU" : "新增 SKU"} open={skuModalOpen} onCancel={() => setSkuModalOpen(false)} onOk={() => skuForm.submit()} width={640}>
+      <Modal title={editingSku ? "编辑 SKU" : "新增 SKU"} open={skuModalOpen} onCancel={() => setSkuModalOpen(false)} onOk={() => skuForm.submit()} width={640} forceRender>
         <Form form={skuForm} layout="vertical" onFinish={handleSkuSubmit}>
           <Form.Item name="code" label="SKU 编码" rules={[{ required: true }]}><Input placeholder="例如 RICE-5KG" /></Form.Item>
           <Form.Item name="name" label="SKU 名称" rules={[{ required: true }]}><Input placeholder="例如 5kg 袋装" /></Form.Item>
@@ -604,7 +604,7 @@ export default function ProductWorkbenchPage() {
         </Form>
       </Modal>
 
-      <Modal title={editingBatch ? "编辑批次" : "新增批次"} open={batchModalOpen} onCancel={() => setBatchModalOpen(false)} onOk={() => batchForm.submit()} width={560}>
+      <Modal title={editingBatch ? "编辑批次" : "新增批次"} open={batchModalOpen} onCancel={() => setBatchModalOpen(false)} onOk={() => batchForm.submit()} width={560} forceRender>
         <Form form={batchForm} layout="vertical" onFinish={handleBatchSubmit}>
           <Form.Item name="sku_id" label="关联 SKU" rules={[{ required: true }]}><Select options={skus.map((sku) => ({ value: sku.id, label: `${sku.name} (${sku.code})` }))} disabled={!!editingBatch} /></Form.Item>
           <Form.Item name="batch_code" label="批次号" rules={[{ required: true }]}><Input /></Form.Item>
@@ -616,7 +616,7 @@ export default function ProductWorkbenchPage() {
         </Form>
       </Modal>
 
-      <Modal title="新建关联扫码页" open={pageModalOpen} onCancel={() => setPageModalOpen(false)} onOk={() => pageForm.submit()}>
+      <Modal title="新建关联扫码页" open={pageModalOpen} onCancel={() => setPageModalOpen(false)} onOk={() => pageForm.submit()} forceRender>
         <Form form={pageForm} layout="vertical" onFinish={handlePageCreate} initialValues={{ template_type: "traceability" }}>
           <Form.Item name="name" label="页面名称" rules={[{ required: true }]}><Input placeholder={`${product.name} 扫码页`} /></Form.Item>
           <Form.Item name="template_type" label="页面类型" rules={[{ required: true }]}>
