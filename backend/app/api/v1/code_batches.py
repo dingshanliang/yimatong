@@ -2,7 +2,7 @@
 
 import io
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.core.dependencies import get_current_account_id, get_current_tenant
-from app.models.code import CodeItemStatus, CodeType
+from app.models.code import CodeGenerationMode, CodeItemStatus, CodeType
 from app.schemas.common import PaginatedResponse
 from app.services.code import (
     activate_batch,
@@ -37,9 +37,11 @@ code_item_router = APIRouter(prefix="/api/v1/code-items", tags=["code-items"])
 class CodeBatchCreateRequest(BaseModel):
     product_id: uuid.UUID
     sku_id: uuid.UUID
-    batch_code: str
+    production_batch_id: uuid.UUID
+    batch_code: str | None = None
     quantity: int
     code_type: str = CodeType.single
+    generation_mode: CodeGenerationMode = CodeGenerationMode.item_level
 
 
 class CodeBatchRead(BaseModel):
@@ -47,11 +49,19 @@ class CodeBatchRead(BaseModel):
     tenant_id: uuid.UUID
     product_id: uuid.UUID
     sku_id: uuid.UUID
+    production_batch_id: uuid.UUID | None = None
     batch_code: str
     quantity: int
     status: str
     code_type: str = CodeType.single
+    generation_mode: str = CodeGenerationMode.item_level
     created_by: uuid.UUID
+    product_name: str | None = None
+    sku_name: str | None = None
+    sku_code: str | None = None
+    production_batch_code: str | None = None
+    production_date: date | None = None
+    production_origin: str | None = None
 
     model_config = {"from_attributes": True}
 
@@ -82,22 +92,27 @@ async def create_code_batch_endpoint(
     from app.services.quota import QuotaExceededError, check_quota
 
     tenant = await db.get(Tenant, tenant_id)
+    generation_quantity = 1 if body.generation_mode == CodeGenerationMode.batch_level else body.quantity
     if tenant and tenant.quota:
         try:
-            check_quota(tenant.quota, "max_codes_per_batch", body.quantity)
+            check_quota(tenant.quota, "max_codes_per_batch", generation_quantity)
         except QuotaExceededError as e:
             raise HTTPException(status_code=429, detail=str(e))
 
-    return await create_code_batch(
-        db,
-        tenant_id,
-        body.product_id,
-        body.sku_id,
-        body.batch_code,
-        body.quantity,
-        account_id,
-        code_type=body.code_type,
-    )
+    try:
+        return await create_code_batch(
+            db,
+            tenant_id,
+            body.product_id,
+            body.sku_id,
+            body.production_batch_id,
+            body.quantity,
+            account_id,
+            code_type=body.code_type,
+            generation_mode=body.generation_mode,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @code_batch_router.get("", summary="码批次 列表")
@@ -149,6 +164,8 @@ async def activate_batch_endpoint(
         return await activate_batch(db, tenant_id, batch_id)
     except InvalidStateTransitionError as e:
         raise HTTPException(status_code=409, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
 
 
 @code_batch_router.post("/{batch_id}/export", summary="导出 码批次")

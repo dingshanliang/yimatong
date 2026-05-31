@@ -440,6 +440,7 @@ async def list_production_batches(
     db: AsyncSession,
     tenant_id: uuid.UUID,
     product_id: uuid.UUID | None = None,
+    sku_id: uuid.UUID | None = None,
     page: int = 1,
     page_size: int = 20,
 ) -> tuple[list[ProductionBatch], int]:
@@ -453,6 +454,9 @@ async def list_production_batches(
     if product_id:
         stmt = stmt.where(ProductionBatch.product_id == product_id)
         count_stmt = count_stmt.where(ProductionBatch.product_id == product_id)
+    if sku_id:
+        stmt = stmt.where(ProductionBatch.sku_id == sku_id)
+        count_stmt = count_stmt.where(ProductionBatch.sku_id == sku_id)
 
     total_result = await db.execute(count_stmt)
     total = total_result.scalar() or 0

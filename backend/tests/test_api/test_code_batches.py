@@ -63,41 +63,55 @@ async def sku_with_auth(client: AsyncClient, tenant_with_auth):
         headers=headers,
     )
     sku_id = sku_resp.json()["id"]
-    return product_id, sku_id
+    batch_resp = await client.post(
+        "/api/v1/production-batches",
+        json={
+            "product_id": product_id,
+            "sku_id": sku_id,
+            "batch_code": "PB-CODE-001",
+            "production_date": "2026-05-31",
+            "expiry_date": "2027-05-31",
+            "origin": "黑龙江省哈尔滨市五常市",
+        },
+        headers=headers,
+    )
+    return product_id, sku_id, batch_resp.json()["id"]
 
 
 class TestCodeBatchCreate:
     @pytest.mark.anyio
     async def test_create_code_batch(self, client: AsyncClient, tenant_with_auth, sku_with_auth):
         tid, headers = tenant_with_auth
-        product_id, sku_id = sku_with_auth
+        product_id, sku_id, production_batch_id = sku_with_auth
         resp = await client.post(
             "/api/v1/code-batches",
             json={
                 "product_id": product_id,
                 "sku_id": sku_id,
-                "batch_code": "CB-001",
+                "production_batch_id": production_batch_id,
                 "quantity": 10,
             },
             headers=headers,
         )
         assert resp.status_code == 201
         data = resp.json()
-        assert data["batch_code"] == "CB-001"
+        assert data["batch_code"] == "PB-CODE-001"
         assert data["quantity"] == 10
         assert data["generated_count"] == 10
         assert data["status"] == "completed"
+        assert data["generation_mode"] == "item_level"
+        assert data["production_batch_id"] == production_batch_id
 
     @pytest.mark.anyio
     async def test_batch_creates_code_items(self, client: AsyncClient, tenant_with_auth, sku_with_auth):
         _, headers = tenant_with_auth
-        product_id, sku_id = sku_with_auth
+        product_id, sku_id, production_batch_id = sku_with_auth
         resp = await client.post(
             "/api/v1/code-batches",
             json={
                 "product_id": product_id,
                 "sku_id": sku_id,
-                "batch_code": "CB-002",
+                "production_batch_id": production_batch_id,
                 "quantity": 5,
             },
             headers=headers,
@@ -115,13 +129,13 @@ class TestCodeBatchCreate:
     @pytest.mark.anyio
     async def test_code_items_have_unique_public_ids(self, client: AsyncClient, tenant_with_auth, sku_with_auth):
         _, headers = tenant_with_auth
-        product_id, sku_id = sku_with_auth
+        product_id, sku_id, production_batch_id = sku_with_auth
         resp = await client.post(
             "/api/v1/code-batches",
             json={
                 "product_id": product_id,
                 "sku_id": sku_id,
-                "batch_code": "CB-003",
+                "production_batch_id": production_batch_id,
                 "quantity": 20,
             },
             headers=headers,
@@ -135,3 +149,60 @@ class TestCodeBatchCreate:
         items = items_resp.json()["items"]
         public_ids = [item["public_id"] for item in items]
         assert len(public_ids) == len(set(public_ids))
+
+    @pytest.mark.anyio
+    async def test_batch_level_code_forces_single_item(self, client: AsyncClient, tenant_with_auth, sku_with_auth):
+        _, headers = tenant_with_auth
+        product_id, sku_id, production_batch_id = sku_with_auth
+        resp = await client.post(
+            "/api/v1/code-batches",
+            json={
+                "product_id": product_id,
+                "sku_id": sku_id,
+                "production_batch_id": production_batch_id,
+                "quantity": 50,
+                "code_type": "paired",
+                "generation_mode": "batch_level",
+            },
+            headers=headers,
+        )
+        assert resp.status_code == 201
+        data = resp.json()
+        assert data["quantity"] == 1
+        assert data["generated_count"] == 1
+        assert data["code_type"] == "single"
+        assert data["generation_mode"] == "batch_level"
+
+    @pytest.mark.anyio
+    async def test_rejects_production_batch_from_another_sku(self, client: AsyncClient, tenant_with_auth, sku_with_auth):
+        _, headers = tenant_with_auth
+        product_id, sku_id, _ = sku_with_auth
+        other_sku_resp = await client.post(
+            "/api/v1/skus",
+            json={"product_id": product_id, "code": "OTHER-CODE-SKU", "name": "其他 SKU"},
+            headers=headers,
+        )
+        other_batch_resp = await client.post(
+            "/api/v1/production-batches",
+            json={
+                "product_id": product_id,
+                "sku_id": other_sku_resp.json()["id"],
+                "batch_code": "PB-CODE-OTHER",
+                "production_date": "2026-05-31",
+                "expiry_date": "2027-05-31",
+            },
+            headers=headers,
+        )
+
+        resp = await client.post(
+            "/api/v1/code-batches",
+            json={
+                "product_id": product_id,
+                "sku_id": sku_id,
+                "production_batch_id": other_batch_resp.json()["id"],
+                "quantity": 1,
+            },
+            headers=headers,
+        )
+        assert resp.status_code == 400
+        assert "Production batch does not belong" in resp.json()["detail"]

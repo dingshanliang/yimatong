@@ -62,7 +62,18 @@ async def setup_tenant(client: AsyncClient):
         },
         headers=headers,
     )
-    return tid, headers, product.json()["id"], sku.json()["id"]
+    production_batch = await client.post(
+        "/api/v1/production-batches",
+        json={
+            "product_id": product.json()["id"],
+            "sku_id": sku.json()["id"],
+            "batch_code": "CH-PB-001",
+            "production_date": "2026-05-31",
+            "expiry_date": "2027-05-31",
+        },
+        headers=headers,
+    )
+    return tid, headers, product.json()["id"], sku.json()["id"], production_batch.json()["id"]
 
 
 class TestDistributorCRUD:
@@ -144,7 +155,7 @@ class TestBatchAssignment:
         client: AsyncClient,
         setup_tenant,
     ):
-        tid, headers, product_id, sku_id = setup_tenant
+        tid, headers, product_id, sku_id, production_batch_id = setup_tenant
 
         # 创建区域
         region = await client.post(
@@ -157,7 +168,12 @@ class TestBatchAssignment:
         # 创建码批次
         batch = await client.post(
             "/api/v1/code-batches",
-            json={"product_id": product_id, "sku_id": sku_id, "batch_code": "CH-BATCH", "quantity": 10},
+            json={
+                "product_id": product_id,
+                "sku_id": sku_id,
+                "production_batch_id": production_batch_id,
+                "quantity": 10,
+            },
             headers=headers,
         )
         batch_id = batch.json()["id"]
@@ -200,7 +216,7 @@ class TestDiversionDetection:
         setup_tenant,
         db_session: AsyncSession,
     ):
-        tid, headers, product_id, sku_id = setup_tenant
+        tid, headers, product_id, sku_id, production_batch_id = setup_tenant
 
         # 创建上海区域
         region = await client.post(
@@ -213,7 +229,12 @@ class TestDiversionDetection:
         # 创建并分配码批次
         batch = await client.post(
             "/api/v1/code-batches",
-            json={"product_id": product_id, "sku_id": sku_id, "batch_code": "DIV-BATCH", "quantity": 5},
+            json={
+                "product_id": product_id,
+                "sku_id": sku_id,
+                "production_batch_id": production_batch_id,
+                "quantity": 5,
+            },
             headers=headers,
         )
         batch_id = batch.json()["id"]
@@ -247,7 +268,7 @@ class TestDiversionDetection:
         setup_tenant,
         db_session: AsyncSession,
     ):
-        tid, headers, product_id, sku_id = setup_tenant
+        tid, headers, product_id, sku_id, production_batch_id = setup_tenant
 
         region = await client.post(
             "/api/v1/channels/regions",
@@ -258,7 +279,12 @@ class TestDiversionDetection:
 
         batch = await client.post(
             "/api/v1/code-batches",
-            json={"product_id": product_id, "sku_id": sku_id, "batch_code": "SAME-BATCH", "quantity": 5},
+            json={
+                "product_id": product_id,
+                "sku_id": sku_id,
+                "production_batch_id": production_batch_id,
+                "quantity": 5,
+            },
             headers=headers,
         )
         batch_id = batch.json()["id"]

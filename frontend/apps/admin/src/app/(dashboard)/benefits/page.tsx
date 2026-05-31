@@ -129,7 +129,7 @@ export default function BenefitsPage() {
         { key: "claims", label: "领取记录", children: <Table columns={claimColumns} dataSource={claims} rowKey="id" loading={claimsLoading} pagination={{ current: claimsPage, total: claimsTotal, pageSize: 20, onChange: setClaimsPage, showTotal: (t) => `共 ${t} 条` }} /> },
       ]} />
       <Modal title={editItem ? "编辑权益" : "新建权益"} open={modalOpen} onCancel={() => setModalOpen(false)} onOk={() => form.submit()} width={640} destroyOnClose>
-        {benefitType === "cash_red_packet" && <Alert message="微信现金红包" description="单笔转账上限 200 元，金额以元为单位输入，系统自动转换为分存储。请确保已配置微信支付转账连接器。" type="info" showIcon className="mb-4" />}
+        {benefitType === "cash_red_packet" && <Alert title="微信现金红包" description="单笔转账上限 200 元，金额以元为单位输入，系统自动转换为分存储。请确保已配置微信支付转账连接器。" type="info" showIcon className="mb-4" />}
         <Form form={form} layout="vertical" onFinish={handleSubmit} onValuesChange={(changed) => { if (changed.benefit_type) setBenefitType(changed.benefit_type as string); }}>
           <Form.Item name="name" label="权益名称" rules={[{ required: true, message: "请输入权益名称" }]}><Input data-testid="benefit-name-input" /></Form.Item>
           <Form.Item name="benefit_type" label="权益类型" rules={[{ required: true, message: "请选择权益类型" }]}>

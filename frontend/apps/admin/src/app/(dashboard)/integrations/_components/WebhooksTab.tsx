@@ -77,7 +77,7 @@ export function WebhooksTab() {
       </div>
       <Table columns={columns} dataSource={items} rowKey="id" loading={loading} />
       {secretVisible && (
-        <Alert type="success" message="Webhook Secret（仅展示一次，请立即复制）" description={
+        <Alert type="success" title="Webhook Secret（仅展示一次，请立即复制）" description={
           <Space><Text code>{secretVisible}</Text>
             <Button size="small" icon={<CopyOutlined />} onClick={() => { navigator.clipboard.writeText(secretVisible); message.success("已复制"); }}>复制</Button>
             <Button size="small" onClick={() => setSecretVisible(null)}>关闭</Button>

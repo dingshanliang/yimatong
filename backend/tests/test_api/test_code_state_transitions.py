@@ -59,13 +59,24 @@ async def batch_with_codes(client: AsyncClient):
         headers=headers,
     )
     sku_id = sku.json()["id"]
+    production_batch = await client.post(
+        "/api/v1/production-batches",
+        json={
+            "product_id": product_id,
+            "sku_id": sku_id,
+            "batch_code": "SB-001",
+            "production_date": "2026-05-31",
+            "expiry_date": "2027-05-31",
+        },
+        headers=headers,
+    )
 
     batch = await client.post(
         "/api/v1/code-batches",
         json={
             "product_id": product_id,
             "sku_id": sku_id,
-            "batch_code": "SB-001",
+            "production_batch_id": production_batch.json()["id"],
             "quantity": 5,
         },
         headers=headers,
@@ -84,6 +95,27 @@ class TestCodeStateTransitions:
         )
         assert resp.status_code == 200
         assert resp.json()["activated"] == 5
+
+        list_resp = await client.get("/api/v1/code-batches", headers=headers)
+        assert list_resp.status_code == 200
+        batch = next(item for item in list_resp.json()["items"] if item["id"] == batch_id)
+        assert batch["status"] == "activated"
+
+    @pytest.mark.anyio
+    async def test_activate_batch_twice_returns_conflict(self, client: AsyncClient, batch_with_codes):
+        _, headers, batch_id = batch_with_codes
+        first_resp = await client.post(
+            f"/api/v1/code-batches/{batch_id}/activate",
+            headers=headers,
+        )
+        assert first_resp.status_code == 200
+
+        resp = await client.post(
+            f"/api/v1/code-batches/{batch_id}/activate",
+            headers=headers,
+        )
+        assert resp.status_code == 409
+        assert "already activated" in resp.json()["detail"]
 
     @pytest.mark.anyio
     async def test_revoke_single_code(self, client: AsyncClient, batch_with_codes):

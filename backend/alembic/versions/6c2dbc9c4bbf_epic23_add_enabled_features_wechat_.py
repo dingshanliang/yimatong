@@ -14,16 +14,17 @@ EPIC-23: 现金红包插件
 - consumer_profiles 唯一约束从 phone_hash 改为 tenant_id + wechat_openid
 - 删除废弃的 redpacket_rules, redpacket_claims, kyc_records, withdrawals 表
 """
-from typing import Sequence, Union
+from collections.abc import Sequence
+
+import sqlalchemy as sa
 
 from alembic import op
-import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision: str = '6c2dbc9c4bbf'
-down_revision: Union[str, None] = 'fd41060e5f42'
-branch_labels: Union[str, Sequence[str], None] = None
-depends_on: Union[str, Sequence[str], None] = None
+down_revision: str | None = 'fd41060e5f42'
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
 
 
 def _column_exists(conn: sa.engine.Connection, table: str, column: str) -> bool:
@@ -35,6 +36,11 @@ def _column_exists(conn: sa.engine.Connection, table: str, column: str) -> bool:
         ),
         {"table": table, "column": column},
     )
+    if result is None:
+        # Offline SQL generation cannot inspect information_schema. These
+        # checks only guard idempotent columns, so assume the prior migration
+        # chain already owns them and keep --sql generation deterministic.
+        return True
     return result.fetchone() is not None
 
 
@@ -90,7 +96,13 @@ def downgrade() -> None:
         sa.Column('end_time', sa.DateTime(timezone=True), autoincrement=False, nullable=False),
         sa.Column('status', sa.VARCHAR(length=20), autoincrement=False, nullable=False),
         sa.Column('claimed_budget', sa.INTEGER(), autoincrement=False, nullable=False),
-        sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), autoincrement=False, nullable=False),
+        sa.Column(
+            'created_at',
+            sa.DateTime(timezone=True),
+            server_default=sa.text('now()'),
+            autoincrement=False,
+            nullable=False,
+        ),
         sa.PrimaryKeyConstraint('id', name='redpacket_rules_pkey'),
     )
     op.create_index('ix_redpacket_rules_tenant_id', 'redpacket_rules', ['tenant_id'], unique=False)
@@ -102,7 +114,13 @@ def downgrade() -> None:
         sa.Column('account_id', sa.UUID(), autoincrement=False, nullable=False),
         sa.Column('amount', sa.INTEGER(), autoincrement=False, nullable=False),
         sa.Column('status', sa.VARCHAR(length=20), autoincrement=False, nullable=False),
-        sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), autoincrement=False, nullable=False),
+        sa.Column(
+            'created_at',
+            sa.DateTime(timezone=True),
+            server_default=sa.text('now()'),
+            autoincrement=False,
+            nullable=False,
+        ),
         sa.PrimaryKeyConstraint('id', name='redpacket_claims_pkey'),
     )
     op.create_index('ix_redpacket_claims_rule_account', 'redpacket_claims', ['rule_id', 'account_id'], unique=False)
@@ -116,7 +134,13 @@ def downgrade() -> None:
         sa.Column('phone_encrypted', sa.TEXT(), autoincrement=False, nullable=False),
         sa.Column('phone_hash', sa.VARCHAR(length=64), autoincrement=False, nullable=False),
         sa.Column('status', sa.VARCHAR(length=20), autoincrement=False, nullable=False),
-        sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), autoincrement=False, nullable=False),
+        sa.Column(
+            'created_at',
+            sa.DateTime(timezone=True),
+            server_default=sa.text('now()'),
+            autoincrement=False,
+            nullable=False,
+        ),
         sa.PrimaryKeyConstraint('id', name='kyc_records_pkey'),
     )
     op.create_index('ix_kyc_tenant_account', 'kyc_records', ['tenant_id', 'account_id'], unique=False)
@@ -127,7 +151,13 @@ def downgrade() -> None:
         sa.Column('account_id', sa.UUID(), autoincrement=False, nullable=False),
         sa.Column('amount', sa.INTEGER(), autoincrement=False, nullable=False),
         sa.Column('status', sa.VARCHAR(length=20), autoincrement=False, nullable=False),
-        sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), autoincrement=False, nullable=False),
+        sa.Column(
+            'created_at',
+            sa.DateTime(timezone=True),
+            server_default=sa.text('now()'),
+            autoincrement=False,
+            nullable=False,
+        ),
         sa.PrimaryKeyConstraint('id', name='withdrawals_pkey'),
     )
     op.create_index('ix_withdrawals_tenant_account', 'withdrawals', ['tenant_id', 'account_id'], unique=False)

@@ -60,13 +60,24 @@ async def setup_batch_with_codes(client: AsyncClient):
         headers=headers,
     )
     sku_id = sku.json()["id"]
+    production_batch = await client.post(
+        "/api/v1/production-batches",
+        json={
+            "product_id": product_id,
+            "sku_id": sku_id,
+            "batch_code": "Q-PB-001",
+            "production_date": "2026-05-31",
+            "expiry_date": "2027-05-31",
+        },
+        headers=headers,
+    )
 
     batch = await client.post(
         "/api/v1/code-batches",
         json={
             "product_id": product_id,
             "sku_id": sku_id,
-            "batch_code": "Q-001",
+            "production_batch_id": production_batch.json()["id"],
             "quantity": 5,
         },
         headers=headers,
@@ -120,8 +131,10 @@ class TestCodeBatchDetail:
         assert resp.status_code == 200
         data = resp.json()
         assert data["id"] == batch_id
-        assert data["batch_code"] == "Q-001"
+        assert data["batch_code"] == "Q-PB-001"
         assert data["quantity"] == 5
+        assert data["production_batch_code"] == "Q-PB-001"
+        assert data["generation_mode"] == "item_level"
         # 包含各状态码数量统计
         assert "stats" in data
         assert "created" in data["stats"]

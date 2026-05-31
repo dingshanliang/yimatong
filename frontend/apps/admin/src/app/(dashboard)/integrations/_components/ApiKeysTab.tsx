@@ -66,7 +66,7 @@ export function ApiKeysTab() {
       </div>
       <Table columns={columns} dataSource={items} rowKey="id" loading={loading} />
       {newKeyVisible && (
-        <Alert type="success" message="API Key（仅展示一次，请立即复制）" description={
+        <Alert type="success" title="API Key（仅展示一次，请立即复制）" description={
           <Space><Text code>{newKeyVisible}</Text>
             <Button size="small" icon={<CopyOutlined />} onClick={() => { navigator.clipboard.writeText(newKeyVisible); message.success("已复制"); }}>复制</Button>
             <Button size="small" onClick={() => setNewKeyVisible(null)}>关闭</Button>

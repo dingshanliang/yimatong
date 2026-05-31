@@ -4,8 +4,17 @@ import uuid
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
-from app.models.code import CodeBatch, CodeBatchStatus, CodeItem, CodeItemStatus, CodeType
+from app.models.code import (
+    CodeBatch,
+    CodeBatchStatus,
+    CodeGenerationMode,
+    CodeItem,
+    CodeItemStatus,
+    CodeType,
+)
+from app.models.product import SKU, Product, ProductionBatch
 from app.services.public_id import generate_public_id
 from app.utils import utcnow
 
@@ -15,19 +24,44 @@ async def create_code_batch(
     tenant_id: uuid.UUID,
     product_id: uuid.UUID,
     sku_id: uuid.UUID,
-    batch_code: str,
+    production_batch_id: uuid.UUID,
     quantity: int,
     created_by: uuid.UUID,
     code_type: str = CodeType.single,
+    generation_mode: str = CodeGenerationMode.item_level,
 ) -> dict:
+    product = await db.get(Product, product_id)
+    if not product or product.tenant_id != tenant_id:
+        raise ValueError("Product not found")
+
+    sku = await db.get(SKU, sku_id)
+    if not sku or sku.tenant_id != tenant_id:
+        raise ValueError("SKU not found")
+    if sku.product_id != product_id:
+        raise ValueError("SKU does not belong to selected product")
+
+    production_batch = await db.get(ProductionBatch, production_batch_id)
+    if not production_batch or production_batch.tenant_id != tenant_id:
+        raise ValueError("Production batch not found")
+    if production_batch.product_id != product_id or production_batch.sku_id != sku_id:
+        raise ValueError("Production batch does not belong to selected product and SKU")
+
+    if generation_mode == CodeGenerationMode.batch_level:
+        quantity = 1
+        code_type = CodeType.single
+    elif generation_mode != CodeGenerationMode.item_level:
+        raise ValueError("Invalid generation mode")
+
     batch = CodeBatch(
         tenant_id=tenant_id,
         product_id=product_id,
         sku_id=sku_id,
-        batch_code=batch_code,
+        production_batch_id=production_batch_id,
+        batch_code=production_batch.batch_code,
         quantity=quantity,
         created_by=created_by,
         code_type=code_type,
+        generation_mode=generation_mode,
     )
     db.add(batch)
     await db.flush()
@@ -83,12 +117,20 @@ async def create_code_batch(
         "tenant_id": str(batch.tenant_id),
         "product_id": str(batch.product_id),
         "sku_id": str(batch.sku_id),
+        "production_batch_id": str(batch.production_batch_id) if batch.production_batch_id else None,
         "batch_code": batch.batch_code,
         "quantity": batch.quantity,
         "generated_count": total_generated,
         "status": batch.status,
         "code_type": batch.code_type,
+        "generation_mode": batch.generation_mode,
         "created_by": str(batch.created_by),
+        "product_name": product.name,
+        "sku_name": sku.name,
+        "sku_code": sku.code,
+        "production_batch_code": production_batch.batch_code,
+        "production_date": production_batch.production_date,
+        "production_origin": production_batch.origin,
     }
 
 
@@ -100,7 +142,11 @@ async def list_code_batches(
     page: int = 1,
     page_size: int = 20,
 ) -> tuple[list[CodeBatch], int]:
-    stmt = select(CodeBatch).where(CodeBatch.tenant_id == tenant_id)
+    stmt = (
+        select(CodeBatch)
+        .options(selectinload(CodeBatch.product), selectinload(CodeBatch.sku), selectinload(CodeBatch.production_batch))
+        .where(CodeBatch.tenant_id == tenant_id)
+    )
     count_stmt = select(func.count()).select_from(CodeBatch).where(CodeBatch.tenant_id == tenant_id)
 
     if product_id:
@@ -149,7 +195,11 @@ async def get_code_batch(
     tenant_id: uuid.UUID,
     batch_id: uuid.UUID,
 ) -> dict | None:
-    result = await db.execute(select(CodeBatch).where(CodeBatch.id == batch_id, CodeBatch.tenant_id == tenant_id))
+    result = await db.execute(
+        select(CodeBatch)
+        .options(selectinload(CodeBatch.product), selectinload(CodeBatch.sku), selectinload(CodeBatch.production_batch))
+        .where(CodeBatch.id == batch_id, CodeBatch.tenant_id == tenant_id)
+    )
     batch = result.scalar_one_or_none()
     if not batch:
         return None
@@ -165,11 +215,19 @@ async def get_code_batch(
         "tenant_id": str(batch.tenant_id),
         "product_id": str(batch.product_id),
         "sku_id": str(batch.sku_id),
+        "production_batch_id": str(batch.production_batch_id) if batch.production_batch_id else None,
         "batch_code": batch.batch_code,
         "quantity": batch.quantity,
         "status": batch.status,
         "code_type": batch.code_type,
+        "generation_mode": batch.generation_mode,
         "created_by": str(batch.created_by),
+        "product_name": batch.product_name,
+        "sku_name": batch.sku_name,
+        "sku_code": batch.sku_code,
+        "production_batch_code": batch.production_batch_code,
+        "production_date": batch.production_date.isoformat() if batch.production_date else None,
+        "production_origin": batch.production_origin,
         "stats": stats,
     }
 
@@ -215,7 +273,15 @@ async def resolve_code_by_public_id(
 async def activate_batch(db: AsyncSession, tenant_id: uuid.UUID, batch_id: uuid.UUID) -> dict:
     from sqlalchemy import update as sa_update
 
-    from app.services.code_state import can_transition
+    from app.services.code_state import InvalidStateTransitionError, can_transition
+
+    batch = await db.get(CodeBatch, batch_id)
+    if not batch or batch.tenant_id != tenant_id:
+        raise ValueError("Code batch not found")
+    if batch.status == CodeBatchStatus.activated:
+        raise InvalidStateTransitionError("Code batch is already activated")
+    if batch.status != CodeBatchStatus.completed:
+        raise InvalidStateTransitionError(f"Cannot activate code batch with status '{batch.status.value}'")
 
     # Validate current state with a lightweight count query
     result = await db.execute(
@@ -242,6 +308,9 @@ async def activate_batch(db: AsyncSession, tenant_id: uuid.UUID, batch_id: uuid.
         .values(status=CodeItemStatus.activated, activated_at=now)
     )
     r = await db.execute(stmt)
+    if r.rowcount == 0:
+        raise InvalidStateTransitionError("No generated codes can be activated")
+    batch.status = CodeBatchStatus.activated
     await db.flush()
     return {"activated": r.rowcount}
 

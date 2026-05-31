@@ -101,7 +101,7 @@ export function AIDrawer({ open, onClose, form }: AIDrawerProps) {
           <>
             <Divider>识别结果</Divider>
             <div>
-              <Alert type="success" message="AI 已识别以下产品信息" className="mb-3" />
+              <Alert type="success" title="AI 已识别以下产品信息" className="mb-3" />
               <div className="rounded border p-4 space-y-2">
                 {extractedFields.product_name && <div><Text strong>产品名称：</Text>{extractedFields.product_name}</div>}
                 {extractedFields.category && <div><Text strong>品类：</Text>{extractedFields.category}</div>}

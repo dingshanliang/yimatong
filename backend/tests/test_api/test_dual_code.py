@@ -66,7 +66,18 @@ async def setup_tenant(client: AsyncClient):
         },
         headers=headers,
     )
-    return tid, headers, brand.json()["id"], product.json()["id"], sku.json()["id"]
+    production_batch = await client.post(
+        "/api/v1/production-batches",
+        json={
+            "product_id": product.json()["id"],
+            "sku_id": sku.json()["id"],
+            "batch_code": "DUAL-PB-001",
+            "production_date": "2026-05-31",
+            "expiry_date": "2027-05-31",
+        },
+        headers=headers,
+    )
+    return tid, headers, brand.json()["id"], product.json()["id"], sku.json()["id"], production_batch.json()["id"]
 
 
 class TestDualCodeModel:
@@ -75,13 +86,13 @@ class TestDualCodeModel:
     @pytest.mark.anyio
     async def test_create_paired_batch(self, client: AsyncClient, setup_tenant):
         """创建配对码批次：外码+内码配对生成"""
-        tid, headers, brand_id, product_id, sku_id = setup_tenant
+        tid, headers, brand_id, product_id, sku_id, production_batch_id = setup_tenant
         resp = await client.post(
             "/api/v1/code-batches",
             json={
                 "product_id": product_id,
                 "sku_id": sku_id,
-                "batch_code": "DUAL-001",
+                "production_batch_id": production_batch_id,
                 "quantity": 5,
                 "code_type": "paired",
             },
@@ -96,13 +107,13 @@ class TestDualCodeModel:
     @pytest.mark.anyio
     async def test_code_item_has_type_and_pair(self, client: AsyncClient, setup_tenant, db_session: AsyncSession):
         """码项应包含 code_type(outer/inner) 和 pair_id 字段"""
-        tid, headers, brand_id, product_id, sku_id = setup_tenant
+        tid, headers, brand_id, product_id, sku_id, production_batch_id = setup_tenant
         resp = await client.post(
             "/api/v1/code-batches",
             json={
                 "product_id": product_id,
                 "sku_id": sku_id,
-                "batch_code": "DUAL-002",
+                "production_batch_id": production_batch_id,
                 "quantity": 3,
                 "code_type": "paired",
             },
@@ -131,13 +142,13 @@ class TestDualCodeModel:
     @pytest.mark.anyio
     async def test_single_code_batch_still_works(self, client: AsyncClient, setup_tenant):
         """非配对批次（默认 single 类型）仍正常工作"""
-        tid, headers, brand_id, product_id, sku_id = setup_tenant
+        tid, headers, brand_id, product_id, sku_id, production_batch_id = setup_tenant
         resp = await client.post(
             "/api/v1/code-batches",
             json={
                 "product_id": product_id,
                 "sku_id": sku_id,
-                "batch_code": "SINGLE-001",
+                "production_batch_id": production_batch_id,
                 "quantity": 5,
             },
             headers=headers,
@@ -154,14 +165,14 @@ class TestOuterCodeResolve:
     @pytest.mark.anyio
     async def test_outer_code_shows_landing_page(self, client: AsyncClient, setup_tenant):
         """外码扫码展示引流页"""
-        tid, headers, brand_id, product_id, sku_id = setup_tenant
+        tid, headers, brand_id, product_id, sku_id, production_batch_id = setup_tenant
         # 创建配对码批次并激活
         batch = await client.post(
             "/api/v1/code-batches",
             json={
                 "product_id": product_id,
                 "sku_id": sku_id,
-                "batch_code": "DUAL-LAND",
+                "production_batch_id": production_batch_id,
                 "quantity": 2,
                 "code_type": "paired",
             },
@@ -193,13 +204,13 @@ class TestInnerCodeResolve:
     @pytest.mark.anyio
     async def test_inner_code_verifies_authentic(self, client: AsyncClient, setup_tenant):
         """内码扫码展示验真结果"""
-        tid, headers, brand_id, product_id, sku_id = setup_tenant
+        tid, headers, brand_id, product_id, sku_id, production_batch_id = setup_tenant
         batch = await client.post(
             "/api/v1/code-batches",
             json={
                 "product_id": product_id,
                 "sku_id": sku_id,
-                "batch_code": "DUAL-VERIFY",
+                "production_batch_id": production_batch_id,
                 "quantity": 2,
                 "code_type": "paired",
             },
@@ -229,13 +240,13 @@ class TestPairQuery:
     @pytest.mark.anyio
     async def test_get_pair_info(self, client: AsyncClient, setup_tenant):
         """查询配对信息：给定一个码，返回其配对码"""
-        tid, headers, brand_id, product_id, sku_id = setup_tenant
+        tid, headers, brand_id, product_id, sku_id, production_batch_id = setup_tenant
         batch = await client.post(
             "/api/v1/code-batches",
             json={
                 "product_id": product_id,
                 "sku_id": sku_id,
-                "batch_code": "DUAL-PAIR",
+                "production_batch_id": production_batch_id,
                 "quantity": 2,
                 "code_type": "paired",
             },

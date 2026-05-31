@@ -60,13 +60,24 @@ async def setup_activated_code(client: AsyncClient):
         headers=headers,
     )
     sku_id = sku.json()["id"]
+    production_batch = await client.post(
+        "/api/v1/production-batches",
+        json={
+            "product_id": product_id,
+            "sku_id": sku_id,
+            "batch_code": "P-001",
+            "production_date": "2026-05-31",
+            "expiry_date": "2027-05-31",
+        },
+        headers=headers,
+    )
 
     batch = await client.post(
         "/api/v1/code-batches",
         json={
             "product_id": product_id,
             "sku_id": sku_id,
-            "batch_code": "P-001",
+            "production_batch_id": production_batch.json()["id"],
             "quantity": 3,
         },
         headers=headers,

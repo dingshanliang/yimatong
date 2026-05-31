@@ -59,13 +59,24 @@ async def batch_with_codes(client: AsyncClient):
         headers=headers,
     )
     sku_id = sku.json()["id"]
+    production_batch = await client.post(
+        "/api/v1/production-batches",
+        json={
+            "product_id": product_id,
+            "sku_id": sku_id,
+            "batch_code": "EXP-001",
+            "production_date": "2026-05-31",
+            "expiry_date": "2027-05-31",
+        },
+        headers=headers,
+    )
 
     batch = await client.post(
         "/api/v1/code-batches",
         json={
             "product_id": product_id,
             "sku_id": sku_id,
-            "batch_code": "EXP-001",
+            "production_batch_id": production_batch.json()["id"],
             "quantity": 5,
         },
         headers=headers,
@@ -84,6 +95,7 @@ class TestCodeExport:
         )
         assert resp.status_code == 200
         assert "text/csv" in resp.headers.get("content-type", "")
+        assert f"codes-{batch_id}.csv" in resp.headers.get("content-disposition", "")
         assert "public_id" in resp.text
 
     @pytest.mark.anyio

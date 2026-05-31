@@ -65,9 +65,25 @@ async def setup_tenant(client: AsyncClient):
 
 async def _create_and_activate_batch(client, headers, product_id, sku_id, batch_code, quantity=5):
     """创建并激活码批次"""
+    production_batch = await client.post(
+        "/api/v1/production-batches",
+        json={
+            "product_id": product_id,
+            "sku_id": sku_id,
+            "batch_code": batch_code,
+            "production_date": "2026-05-31",
+            "expiry_date": "2027-05-31",
+        },
+        headers=headers,
+    )
     batch = await client.post(
         "/api/v1/code-batches",
-        json={"product_id": product_id, "sku_id": sku_id, "batch_code": batch_code, "quantity": quantity},
+        json={
+            "product_id": product_id,
+            "sku_id": sku_id,
+            "production_batch_id": production_batch.json()["id"],
+            "quantity": quantity,
+        },
         headers=headers,
     )
     batch_id = batch.json()["id"]

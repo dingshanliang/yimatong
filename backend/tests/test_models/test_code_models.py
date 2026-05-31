@@ -16,6 +16,7 @@ os.environ.setdefault("secret_key", "test-secret-key")
 
 from app.models.base import Base  # noqa: E402
 from app.models.code import CodeBatch, CodeItem, CodeItemStatus  # noqa: E402
+from app.models.product import SKU, Product, ProductionBatch  # noqa: E402,F401
 
 engine = create_async_engine("sqlite+aiosqlite://")
 TestSession = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
@@ -54,7 +55,18 @@ class TestCodeBatchModel:
     async def test_code_batch_has_required_fields(self):
         mapper = inspect(CodeBatch)
         col_names = {c.key for c in mapper.mapper.column_attrs}
-        required = {"id", "tenant_id", "product_id", "sku_id", "batch_code", "quantity", "status", "created_by"}
+        required = {
+            "id",
+            "tenant_id",
+            "product_id",
+            "sku_id",
+            "production_batch_id",
+            "batch_code",
+            "quantity",
+            "status",
+            "generation_mode",
+            "created_by",
+        }
         assert required.issubset(col_names)
 
 

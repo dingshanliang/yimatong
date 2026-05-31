@@ -425,6 +425,7 @@ async def create_batch_endpoint(
 @batch_router.get("", summary="批次 列表")
 async def list_batches_endpoint(
     product_id: uuid.UUID | None = Query(None),
+    sku_id: uuid.UUID | None = Query(None),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
@@ -434,6 +435,7 @@ async def list_batches_endpoint(
         db,
         tenant_id,
         product_id=product_id,
+        sku_id=sku_id,
         page=page,
         page_size=page_size,
     )
