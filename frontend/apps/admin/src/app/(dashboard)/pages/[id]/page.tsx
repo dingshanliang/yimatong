@@ -64,7 +64,7 @@ export default function VersionPage() {
   const publishVersion = async (versionId: string) => {
     try {
       await api.post(`/page-versions/${versionId}/publish`);
-      message.success("发布成功");
+      message.success("草稿已发布");
       refresh();
     } catch {
       message.error("发布失败");
@@ -74,7 +74,7 @@ export default function VersionPage() {
   const archiveVersion = async (versionId: string) => {
     try {
       await api.post(`/page-versions/${versionId}/archive`);
-      message.success("已下线");
+      message.success("线上版本已下线");
       refresh();
     } catch {
       message.error("下线失败");
@@ -84,7 +84,7 @@ export default function VersionPage() {
   const rollbackVersion = async (versionId: string) => {
     try {
       await api.post(`/page-templates/${params.id}/versions/${versionId}/rollback`);
-      message.success("已回滚，创建了新草稿版本");
+      message.success("已基于此版本创建草稿");
       refresh();
     } catch {
       message.error("回滚失败");
@@ -100,7 +100,7 @@ export default function VersionPage() {
       await api.post(`/page-templates/${params.id}/versions`, {
         config_json: baseConfig,
       });
-      message.success("新草稿版本已创建");
+      message.success("草稿已创建");
       refresh();
     } catch {
       message.error("创建草稿失败");
@@ -147,36 +147,36 @@ export default function VersionPage() {
                 icon={<EditOutlined />}
                 onClick={() => router.push(`/pages/${params.id}/edit`)}
               >
-                编辑
+                编辑草稿
               </Button>
               <Popconfirm
-                title="确认发布此版本？"
+                title="发布此页面草稿？"
                 onConfirm={() => publishVersion(record.id)}
               >
                 <Button size="small" type="primary" icon={<SendOutlined />}>
-                  发布
+                  发布草稿
                 </Button>
               </Popconfirm>
             </>
           )}
           {record.status === "published" && (
             <Popconfirm
-              title="确认下线？"
+              title="下线此线上版本？"
               onConfirm={() => archiveVersion(record.id)}
             >
               <Button size="small" danger icon={<StopOutlined />}>
-                下线
+                下线线上版本
               </Button>
             </Popconfirm>
           )}
           {record.status !== "draft" && (
-            <Tooltip title="基于此版本创建新草稿">
+            <Tooltip title="基于此版本创建草稿">
               <Button
                 size="small"
                 icon={<RollbackOutlined />}
                 onClick={() => rollbackVersion(record.id)}
               >
-                回滚
+                创建草稿
               </Button>
             </Tooltip>
           )}
@@ -197,7 +197,7 @@ export default function VersionPage() {
             返回
           </Button>
           <h2 className="text-lg font-semibold !mb-0">
-            版本管理 — {templateName}
+            版本记录 — {templateName}
           </h2>
         </div>
         <Button type="primary" icon={<PlusOutlined />} onClick={createNewDraft}>

@@ -1,8 +1,9 @@
 """页面模板与版本模型"""
 
 import uuid
+from datetime import datetime
 
-from sqlalchemy import JSON, Index, String
+from sqlalchemy import JSON, DateTime, Index, String, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base
@@ -39,6 +40,13 @@ class PageTemplate(Base):
         default=PageTemplateStatus.active,
     )
     description: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
 
 
 class PageVersion(Base):
@@ -58,5 +66,13 @@ class PageVersion(Base):
         default=PageVersionStatus.draft,
     )
     created_by: Mapped[uuid.UUID] = mapped_column(nullable=False)
+    published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
 
     __table_args__ = (Index("ix_page_versions_template_status", "page_template_id", "status"),)

@@ -42,6 +42,11 @@ class PageTemplateUpdateRequest(BaseModel):
     description: str | None = None
 
 
+class IndustryTemplateCloneRequest(BaseModel):
+    name: str | None = None
+    product_id: uuid.UUID | None = None
+
+
 class PageVersionCreateRequest(BaseModel):
     config_json: dict
 
@@ -59,6 +64,7 @@ async def list_industry_templates():
 @page_template_router.post("/industry-templates/{index}/clone", status_code=201)
 async def clone_industry_template(
     index: int,
+    body: IndustryTemplateCloneRequest | None = None,
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
     account_id: uuid.UUID = Depends(get_current_account_id),
@@ -70,9 +76,10 @@ async def clone_industry_template(
     template = await create_page_template(
         db,
         tenant_id,
-        tpl["name"],
+        body.name if body and body.name else tpl["name"],
         tpl["template_type"],
         tpl["description"],
+        body.product_id if body else None,
     )
     version = await create_page_version(
         db,

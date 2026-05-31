@@ -36,7 +36,7 @@ export function EditorHeader({
   const handlePublish = async () => {
     try {
       await api.post(`/page-versions/${versionId}/publish`);
-      message.success("发布成功");
+      message.success("草稿已发布");
       onRefresh();
     } catch {
       message.error("发布失败");
@@ -55,19 +55,21 @@ export function EditorHeader({
         </Button>
         <span className="font-medium">{templateName}</span>
         <Tag color={versionStatus === "draft" ? "default" : "blue"}>
-          草稿 v{version}
+          {versionStatus === "draft" ? "草稿" : "已发布"} v{version}
         </Tag>
       </div>
       <Space>
-        <Button icon={<SaveOutlined />} onClick={onSave} loading={saving}>
-          保存
-        </Button>
         {versionStatus === "draft" && (
-          <Popconfirm title="确认发布此版本？" onConfirm={handlePublish}>
-            <Button type="primary" icon={<SendOutlined />}>
-              发布
+          <>
+            <Button icon={<SaveOutlined />} onClick={onSave} loading={saving}>
+              保存草稿
             </Button>
-          </Popconfirm>
+            <Popconfirm title="发布此页面草稿？发布后消费者扫码可能看到此页面。" onConfirm={handlePublish}>
+              <Button type="primary" icon={<SendOutlined />}>
+                发布草稿
+              </Button>
+            </Popconfirm>
+          </>
         )}
       </Space>
     </div>

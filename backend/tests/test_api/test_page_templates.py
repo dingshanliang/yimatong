@@ -47,6 +47,16 @@ async def auth_setup(client: AsyncClient):
     return {"Authorization": f"Bearer {token}"}
 
 
+async def create_product(client: AsyncClient, headers: dict[str, str], name: str = "五常大米") -> str:
+    brand = await client.post("/api/v1/brands", json={"name": f"{name}品牌"}, headers=headers)
+    product = await client.post(
+        "/api/v1/products",
+        json={"brand_id": brand.json()["id"], "name": name, "category": "大米"},
+        headers=headers,
+    )
+    return product.json()["id"]
+
+
 class TestPageTemplateCRUD:
     @pytest.mark.anyio
     async def test_create_template(self, client: AsyncClient, auth_setup):
@@ -81,6 +91,38 @@ class TestPageTemplateCRUD:
         assert resp.status_code == 200
         data = resp.json()
         assert data["total"] >= 2
+
+    @pytest.mark.anyio
+    async def test_list_templates_returns_publish_workbench_fields(self, client: AsyncClient, auth_setup):
+        product_id = await create_product(client, auth_setup)
+        create = await client.post(
+            "/api/v1/page-templates",
+            json={"name": "扫码信任页", "template_type": "traceability", "product_id": product_id},
+            headers=auth_setup,
+        )
+        tid = create.json()["id"]
+        published = await client.post(
+            f"/api/v1/page-templates/{tid}/versions",
+            json={"config_json": {"v": "published"}},
+            headers=auth_setup,
+        )
+        await client.post(f"/api/v1/page-versions/{published.json()['id']}/publish", headers=auth_setup)
+        await client.post(
+            f"/api/v1/page-templates/{tid}/versions",
+            json={"config_json": {"v": "draft"}},
+            headers=auth_setup,
+        )
+
+        resp = await client.get("/api/v1/page-templates", headers=auth_setup)
+
+        assert resp.status_code == 200
+        item = next(t for t in resp.json()["items"] if t["id"] == tid)
+        assert item["product_name"] == "五常大米"
+        assert item["published_version"]["status"] == "published"
+        assert item["published_version"]["published_at"] is not None
+        assert item["draft_version"]["status"] == "draft"
+        assert item["display_status"] == "has_unpublished_draft"
+        assert item["updated_at"] is not None
 
     @pytest.mark.anyio
     async def test_list_templates_filter_by_type(self, client: AsyncClient, auth_setup):
@@ -328,6 +370,21 @@ class TestPageVersionManagement:
         )
         assert detail.json()["published_version"] is not None
         assert detail.json()["published_version"]["status"] == "published"
+        assert detail.json()["published_version"]["published_at"] is not None
+
+    @pytest.mark.anyio
+    async def test_clone_industry_template_can_bind_product_and_name(self, client: AsyncClient, auth_setup):
+        product_id = await create_product(client, auth_setup, "礼盒大米")
+        resp = await client.post(
+            "/api/v1/page-templates/industry-templates/0/clone",
+            json={"name": "礼盒扫码页", "product_id": product_id},
+            headers=auth_setup,
+        )
+
+        assert resp.status_code == 201
+        template = resp.json()["template"]
+        assert template["name"] == "礼盒扫码页"
+        assert template["product_id"] == product_id
 
     @pytest.mark.anyio
     async def test_list_versions(self, client: AsyncClient, auth_setup):

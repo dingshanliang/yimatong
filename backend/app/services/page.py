@@ -1,11 +1,13 @@
 """页面模板服务层"""
 
 import uuid
+from datetime import UTC, datetime
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.page import PageTemplate, PageTemplateStatus, PageVersion, PageVersionStatus
+from app.models.product import Product
 
 
 async def create_page_template(
@@ -38,7 +40,14 @@ async def list_page_templates(
     page: int = 1,
     page_size: int = 20,
 ) -> tuple[list[dict], int]:
-    stmt = select(PageTemplate).where(PageTemplate.tenant_id == tenant_id)
+    stmt = (
+        select(PageTemplate, Product.name.label("product_name"))
+        .outerjoin(
+            Product,
+            (Product.id == PageTemplate.product_id) & (Product.tenant_id == tenant_id),
+        )
+        .where(PageTemplate.tenant_id == tenant_id)
+    )
     count_stmt = (
         select(func.count())
         .select_from(PageTemplate)
@@ -60,9 +69,12 @@ async def list_page_templates(
     total_result = await db.execute(count_stmt)
     total = total_result.scalar() or 0
 
-    stmt = stmt.order_by(PageTemplate.id.desc()).offset((page - 1) * page_size).limit(page_size)
+    stmt = stmt.order_by(PageTemplate.updated_at.desc()).offset((page - 1) * page_size).limit(page_size)
     result = await db.execute(stmt)
-    templates = [_template_to_dict(t) for t in result.scalars().all()]
+    templates = [
+        await _template_to_dict_with_versions(db, t, product_name)
+        for t, product_name in result.all()
+    ]
     return templates, total
 
 
@@ -81,23 +93,51 @@ async def get_page_template(
     if not t:
         return None
 
-    data = _template_to_dict(t)
-
-    # 获取当前发布版本
-    ver_result = await db.execute(
-        select(PageVersion)
-        .where(
-            PageVersion.page_template_id == template_id,
-            PageVersion.status == PageVersionStatus.published,
+    product_name = None
+    if t.product_id:
+        product_result = await db.execute(
+            select(Product.name).where(Product.id == t.product_id, Product.tenant_id == tenant_id)
         )
+        product_name = product_result.scalar_one_or_none()
+
+    return await _template_to_dict_with_versions(db, t, product_name)
+
+
+async def _latest_version_by_status(
+    db: AsyncSession,
+    template_id: uuid.UUID,
+    status: str,
+) -> PageVersion | None:
+    result = await db.execute(
+        select(PageVersion)
+        .where(PageVersion.page_template_id == template_id, PageVersion.status == status)
+        .order_by(PageVersion.version.desc())
         .limit(1)
     )
-    published_version = ver_result.scalar_one_or_none()
-    if published_version:
-        data["published_version"] = _version_to_dict(published_version)
-    else:
-        data["published_version"] = None
+    return result.scalar_one_or_none()
 
+
+async def _template_to_dict_with_versions(
+    db: AsyncSession,
+    t: PageTemplate,
+    product_name: str | None,
+) -> dict:
+    data = _template_to_dict(t)
+    published_version = await _latest_version_by_status(db, t.id, PageVersionStatus.published)
+    draft_version = await _latest_version_by_status(db, t.id, PageVersionStatus.draft)
+    data["product_name"] = product_name
+    data["published_version"] = _version_to_dict(published_version) if published_version else None
+    data["draft_version"] = _version_to_dict(draft_version) if draft_version else None
+    if published_version and draft_version:
+        data["display_status"] = "has_unpublished_draft"
+    elif published_version:
+        data["display_status"] = "published"
+    else:
+        data["display_status"] = "unpublished"
+    if draft_version:
+        data["updated_at"] = _format_dt(draft_version.updated_at)
+    elif published_version:
+        data["updated_at"] = _format_dt(published_version.updated_at)
     return data
 
 
@@ -220,6 +260,7 @@ async def publish_page_version(
         old.status = PageVersionStatus.archived
 
     v.status = PageVersionStatus.published
+    v.published_at = datetime.now(UTC)
     await db.flush()
     await db.refresh(v)
     return _version_to_dict(v)
@@ -298,6 +339,8 @@ def _template_to_dict(t: PageTemplate) -> dict:
         "template_type": t.template_type,
         "status": t.status,
         "description": t.description,
+        "created_at": _format_dt(t.created_at),
+        "updated_at": _format_dt(t.updated_at),
     }
 
 
@@ -310,4 +353,11 @@ def _version_to_dict(v: PageVersion) -> dict:
         "config_json": v.config_json,
         "status": v.status,
         "created_by": str(v.created_by),
+        "published_at": _format_dt(v.published_at),
+        "created_at": _format_dt(v.created_at),
+        "updated_at": _format_dt(v.updated_at),
     }
+
+
+def _format_dt(value: datetime | None) -> str | None:
+    return value.isoformat() if value else None

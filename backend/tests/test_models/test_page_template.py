@@ -26,12 +26,14 @@ class TestPageTemplate:
         assert t.template_type == "product_info"
         assert t.status == PageTemplateStatus.active
         assert t.description is not None
+        assert t.created_at is not None
+        assert t.updated_at is not None
 
     @pytest.mark.anyio
     async def test_page_template_has_required_fields(self):
         mapper = inspect(PageTemplate)
         col_names = {c.key for c in mapper.mapper.column_attrs}
-        required = {"id", "tenant_id", "name", "template_type", "status", "description"}
+        required = {"id", "tenant_id", "name", "template_type", "status", "description", "created_at", "updated_at"}
         assert required.issubset(col_names)
 
     @pytest.mark.anyio
@@ -64,12 +66,25 @@ class TestPageVersion:
         assert v.version == 1
         assert v.config_json["brand_name"] == "测试品牌"
         assert v.status == PageVersionStatus.draft
+        assert v.created_at is not None
+        assert v.updated_at is not None
 
     @pytest.mark.anyio
     async def test_page_version_has_required_fields(self):
         mapper = inspect(PageVersion)
         col_names = {c.key for c in mapper.mapper.column_attrs}
-        required = {"id", "tenant_id", "page_template_id", "version", "config_json", "status", "created_by"}
+        required = {
+            "id",
+            "tenant_id",
+            "page_template_id",
+            "version",
+            "config_json",
+            "status",
+            "created_by",
+            "published_at",
+            "created_at",
+            "updated_at",
+        }
         assert required.issubset(col_names)
 
     @pytest.mark.anyio

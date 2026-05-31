@@ -1,46 +1,59 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent, waitFor, within } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import PagesPage from "../page";
 
-// Mock Ant Design message
+const mockPush = vi.fn();
+const mockMutate = vi.fn();
+const mockConfirm = vi.fn();
+const mockMessage = {
+  success: vi.fn(),
+  error: vi.fn(),
+  warning: vi.fn(),
+};
+
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ push: mockPush }),
+}));
+
 vi.mock("antd", async () => {
-  const actual = await vi.importActual("antd");
+  const actual = await vi.importActual<typeof import("antd")>("antd");
   return {
     ...actual,
-    message: {
-      success: vi.fn(),
-      error: vi.fn(),
+    App: {
+      ...actual.App,
+      useApp: () => ({
+        message: mockMessage,
+        modal: { confirm: mockConfirm },
+      }),
     },
-    // Popconfirm in jsdom does not show a popup; mock it to call onConfirm immediately
-    Popconfirm: ({ children, onConfirm }: { children: React.ReactNode; onConfirm?: () => void }) => (
-      <span onClick={onConfirm}>{children}</span>
-    ),
   };
 });
 
-// Mock api
 const mockGet = vi.fn();
 const mockPost = vi.fn();
-const mockPatch = vi.fn();
 
 vi.mock("@/lib/api", () => ({
   default: {
+    defaults: { baseURL: "http://localhost:8000/api/v1" },
     get: (...args: unknown[]) => mockGet(...args),
     post: (...args: unknown[]) => mockPost(...args),
-    patch: (...args: unknown[]) => mockPatch(...args),
   },
 }));
 
-// Mock hooks
 vi.mock("@/lib/hooks", () => ({
   useCrud: vi.fn(() => ({
     items: [
       {
         id: "tpl-1",
-        name: "测试模板",
-        template_type: "product_info",
+        name: "五常稻花香扫码信任页",
+        template_type: "traceability",
         status: "active",
-        published_version: null,
+        product_id: null,
+        product_name: null,
+        display_status: "has_unpublished_draft",
+        published_version: { id: "ver-pub", version: 1, status: "published", config_json: { modules: [] } },
+        draft_version: { id: "ver-draft", version: 2, status: "draft", config_json: { modules: [] } },
+        updated_at: "2026-05-31T10:00:00Z",
       },
     ],
     total: 1,
@@ -51,154 +64,98 @@ vi.mock("@/lib/hooks", () => ({
     setPage: vi.fn(),
     setFilter: vi.fn(),
     resetFilters: vi.fn(),
-    mutate: vi.fn(),
+    mutate: mockMutate,
     create: vi.fn(),
     update: vi.fn(),
     remove: vi.fn(),
   })),
 }));
 
-describe("PagesPage DSL Editor", () => {
+describe("PagesPage", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockGet.mockImplementation((url: string) => {
+      if (url === "/products") {
+        return Promise.resolve({ data: { items: [{ id: "p1", name: "五常稻花香大米 5kg" }] } });
+      }
+      if (url === "/page-templates/industry-templates") {
+        return Promise.resolve({
+          data: [
+            {
+              name: "食品溯源页",
+              template_type: "traceability",
+              description: "食品行业标准模板",
+            },
+          ],
+        });
+      }
+      return Promise.resolve({ data: {} });
+    });
   });
 
-  it("renders page list with template data", () => {
+  it("renders the scan page workbench fields and actions", async () => {
     render(<PagesPage />);
+
     expect(screen.getByText("页面管理")).toBeInTheDocument();
-    expect(screen.getByText("测试模板")).toBeInTheDocument();
+    expect(screen.getByText("管理消费者扫码后看到的 H5 页面")).toBeInTheDocument();
+    expect(screen.getByText("页面名称")).toBeInTheDocument();
+    expect(screen.getByText("关联产品")).toBeInTheDocument();
+    expect(screen.getByText("五常稻花香扫码信任页")).toBeInTheDocument();
+    expect(screen.getByText("未关联产品")).toBeInTheDocument();
+    expect(screen.getByText("有未发布草稿")).toBeInTheDocument();
+    expect(screen.getByText("已发布 v1")).toBeInTheDocument();
+    expect(screen.getByText("草稿 v2")).toBeInTheDocument();
+    expect(screen.getByText("编辑草稿")).toBeInTheDocument();
+    expect(screen.getByText("预览线上页").closest("a")).toHaveAttribute(
+      "href",
+      "http://localhost:8000/api/v1/page-templates/tpl-1/preview",
+    );
   });
 
-  it("opens version management modal when clicking 版本管理", async () => {
-    mockGet.mockResolvedValueOnce({
-      data: [
-        {
-          id: "ver-1",
-          version: 1,
-          status: "draft",
-          config_json: { modules: [] },
-          created_at: "2026-05-29T10:00:00Z",
-        },
-      ],
-    });
-
+  it("opens create flow with blank and industry template starting points", async () => {
     render(<PagesPage />);
-    const versionBtn = screen.getByText("版本管理");
-    fireEvent.click(versionBtn);
+    fireEvent.click(screen.getByText("新建页面"));
 
     await waitFor(() => {
-      expect(screen.getByText("版本管理 — 测试模板")).toBeInTheDocument();
-    });
-  });
-
-  it("opens DSL editor drawer when clicking 编辑 on a draft version", async () => {
-    mockGet.mockResolvedValueOnce({
-      data: [
-        {
-          id: "ver-1",
-          version: 1,
-          status: "draft",
-          config_json: {
-            modules: [
-              { id: "hero", type: "product_hero", enabled: true, config: {} },
-            ],
-          },
-          created_at: "2026-05-29T10:00:00Z",
-        },
-      ],
-    });
-
-    render(<PagesPage />);
-    const versionBtn = screen.getByText("版本管理");
-    fireEvent.click(versionBtn);
-
-    await waitFor(() => {
-      expect(screen.getByText("版本管理 — 测试模板")).toBeInTheDocument();
-    });
-
-    // Find the edit button within the modal
-    const modal = screen.getByRole("dialog");
-    const editBtn = within(modal).getByText("编辑");
-    fireEvent.click(editBtn);
-
-    await waitFor(() => {
-      expect(screen.getByText("页面 DSL 编辑")).toBeInTheDocument();
+      expect(screen.getByText("从空白页开始")).toBeInTheDocument();
+      expect(screen.getByText("从行业模板开始")).toBeInTheDocument();
+      expect(mockGet).toHaveBeenCalledWith("/page-templates/industry-templates");
     });
   });
 
-  it("preview button links to correct API URL with full base", () => {
-    render(<PagesPage />);
-    const previewLink = screen.getByTestId("preview-link");
-    const href = previewLink.getAttribute("href");
-    expect(href).toMatch(/^http:\/\/localhost:8000\/api\/v1\/page-templates\/tpl-1\/preview$/);
-  });
-
-  it("saves DSL draft successfully", async () => {
-    mockGet.mockResolvedValueOnce({
-      data: [
-        {
-          id: "ver-1",
-          version: 1,
-          status: "draft",
-          config_json: { modules: [] },
-          created_at: "2026-05-29T10:00:00Z",
-        },
-      ],
-    });
-    mockPatch.mockResolvedValueOnce({ data: { id: "ver-1" } });
+  it("creates a blank page and enters the editor", async () => {
+    mockPost
+      .mockResolvedValueOnce({ data: { id: "tpl-new" } })
+      .mockResolvedValueOnce({ data: { id: "ver-new" } });
 
     render(<PagesPage />);
-    fireEvent.click(screen.getByText("版本管理"));
-
-    await waitFor(() => {
-      expect(screen.getByText("版本管理 — 测试模板")).toBeInTheDocument();
+    fireEvent.click(screen.getByText("新建页面"));
+    fireEvent.change(screen.getByPlaceholderText("例如 五常稻花香扫码信任页"), {
+      target: { value: "新扫码页" },
     });
-
-    const modal = screen.getByRole("dialog");
-    fireEvent.click(within(modal).getByText("编辑"));
+    fireEvent.click(screen.getByText("创建并编辑草稿"));
 
     await waitFor(() => {
-      expect(screen.getByText("页面 DSL 编辑")).toBeInTheDocument();
-    });
-
-    // Click save
-    const saveBtn = screen.getByText("保存");
-    fireEvent.click(saveBtn);
-
-    await waitFor(() => {
-      expect(mockPatch).toHaveBeenCalledWith("/page-versions/ver-1", {
-        config_json: { modules: [] },
+      expect(mockPost).toHaveBeenCalledWith("/page-templates", {
+        name: "新扫码页",
+        template_type: "traceability",
+        product_id: null,
       });
+      expect(mockPost).toHaveBeenCalledWith("/page-templates/tpl-new/versions", expect.any(Object));
+      expect(mockPush).toHaveBeenCalledWith("/pages/tpl-new/edit");
     });
   });
 
-  it("publishes a draft version", async () => {
-    mockGet.mockResolvedValueOnce({
-      data: [
-        {
-          id: "ver-1",
-          version: 1,
-          status: "draft",
-          config_json: { modules: [] },
-          created_at: "2026-05-29T10:00:00Z",
-        },
-      ],
-    });
+  it("confirms and publishes the draft from the list", async () => {
     mockPost.mockResolvedValueOnce({ data: {} });
-
     render(<PagesPage />);
-    fireEvent.click(screen.getByText("版本管理"));
 
-    await waitFor(() => {
-      expect(screen.getByText("版本管理 — 测试模板")).toBeInTheDocument();
-    });
+    fireEvent.click(screen.getByText("发布草稿"));
 
-    const modal = screen.getByRole("dialog");
-    const publishBtn = within(modal).getByText("发布");
-    fireEvent.click(publishBtn);
+    expect(mockConfirm).toHaveBeenCalledWith(expect.objectContaining({ okText: "发布草稿" }));
+    await mockConfirm.mock.calls[0][0].onOk();
 
-    await waitFor(() => {
-      expect(mockPost).toHaveBeenCalledWith("/page-versions/ver-1/publish");
-    });
+    expect(mockPost).toHaveBeenCalledWith("/page-versions/ver-draft/publish");
+    expect(mockMutate).toHaveBeenCalled();
   });
 });
