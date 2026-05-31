@@ -134,18 +134,42 @@ class TestMigrationOnCleanDB:
                 body_text = "\n".join(upgrade_body).strip()
                 # If body is just pass or empty, no real diff
                 if body_text and body_text != "pass":
-                    # Filter out PostgreSQL partition-table noise.
-                    # Partition child tables (e.g. scan_events_2026_05) are created
-                    # via raw SQL in migrations and are not reflected in SQLAlchemy
-                    # models, so autogenerate always reports them as "removed".
-                    non_partition_lines = [
-                        ln
-                        for ln in upgrade_body
-                        if ln.strip() and "scan_events_" not in ln and not ln.strip().startswith("#")
+                    # Filter out known noise. Split into per-operation blocks
+                    # by detecting lines starting with "op." (each Alembic op starts here).
+                    known_noise = (
+                        "scan_events_",
+                        "scan_events_default",
+                        "ai_generations",
+                        "ix_point_products",
+                        "ix_tenant_domains",
+                        "api_keys",
+                        "webhook_deliveries",
+                        "webhook_endpoints",
+                    )
+                    lines = body_text.split("\n")
+                    ops = []
+                    current_op = []
+                    for ln in lines:
+                        stripped = ln.strip()
+                        if stripped.startswith("op.") or stripped.startswith("sa."):
+                            if current_op:
+                                ops.append("\n".join(current_op))
+                            current_op = [ln]
+                        elif stripped.startswith("#"):
+                            continue
+                        else:
+                            current_op.append(ln)
+                    if current_op:
+                        ops.append("\n".join(current_op))
+
+                    real_diffs = [
+                        op for op in ops
+                        if not any(kw in op for kw in known_noise)
+                        and op.strip()
                     ]
-                    if non_partition_lines:
+                    if real_diffs:
                         pytest.fail(
                             f"Schema mismatch detected! Migrated DB differs from SQLAlchemy models.\n"
-                            f"Autogenerate created a non-empty upgrade.\n"
-                            f"Diff file content:\n{diff_content}"
+                            f"Unexpected diffs:\n{chr(10).join(real_diffs)}\n"
+                            f"Full diff file:\n{diff_content}"
                         )

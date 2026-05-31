@@ -19,7 +19,7 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
         from app.core.context import get_request_tenant_id
 
         tenant_id = get_request_tenant_id()
-        if tenant_id:
+        if tenant_id and _is_pg:
             from sqlalchemy import text
 
             # asyncpg does not support parameterized SET LOCAL, but UUID v7
@@ -38,9 +38,10 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
 async def get_db_with_bypass() -> AsyncGenerator[AsyncSession, None]:
     """Open a session with explicit RLS bypass (for platform admin / background workers)."""
     async with async_session_factory() as session:
-        from sqlalchemy import text
+        if _is_pg:
+            from sqlalchemy import text
 
-        await session.execute(text("SET LOCAL app.bypass_rls = 'true'"))
+            await session.execute(text("SET LOCAL app.bypass_rls = 'true'"))
         try:
             yield session
             await session.commit()

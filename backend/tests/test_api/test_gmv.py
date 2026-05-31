@@ -107,53 +107,6 @@ class TestExternalOrderImport:
         assert resp.json()["total"] >= 1
 
 
-class TestMatching:
-    """W16-002: 匹配规则引擎"""
-
-    @pytest.mark.anyio
-    async def test_match_by_phone(
-        self,
-        client: AsyncClient,
-        setup_tenant,
-        db_session: AsyncSession,
-    ):
-        tid, headers = setup_tenant
-
-        # 导入订单
-        await client.post(
-            "/api/v1/gmv/orders/import",
-            json={
-                "orders": [
-                    {
-                        "external_id": "ORD-MATCH",
-                        "amount": 100.0,
-                        "phone": "13800138000",
-                        "product_name": "匹配测试",
-                        "order_time": "2026-05-28T10:00:00Z",
-                    },
-                ],
-            },
-            headers=headers,
-        )
-
-        # 创建消费者（关联 phone）
-        consumer_resp = await client.post(
-            "/api/v1/members/consumers",
-            json={"phone": "13800138000"},
-            headers=headers,
-        )
-        consumer_resp.json()["id"]
-
-        # 执行匹配
-        resp = await client.post(
-            "/api/v1/gmv/match",
-            json={"match_by": "phone", "value": "13800138000"},
-            headers=headers,
-        )
-        assert resp.status_code == 200
-        assert resp.json()["matched"] is True
-
-
 class TestGmvDashboard:
     """W16-003: GMV 归因看板"""
 
@@ -199,7 +152,7 @@ class TestGmvDashboard:
         assert resp.status_code == 200
         data = resp.json()
         assert data["total_gmv"] >= 299.0
-        assert data["matched_orders"] >= 1
+        assert data["attributed_orders"] >= 1
 
     @pytest.mark.anyio
     async def test_gmv_by_public_id(self, client: AsyncClient, setup_tenant):

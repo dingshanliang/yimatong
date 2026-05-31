@@ -1,7 +1,7 @@
 """AI API 端点集成测试"""
 
-import io
 import uuid
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -44,8 +44,40 @@ def auth_client(client: AsyncClient, auth_token: str):
     return client
 
 
+# 模拟 LLM 返回值，避免真实 API 调用
+MOCK_EXTRACT_RESULT = {
+    "product_name": "脐橙",
+    "category": "水果",
+    "origin": "江西赣州",
+}
+MOCK_COPYWRITING_RESULT = {"content": "赣南脐橙，大自然的馈赠"}
+MOCK_PAGE_SUGGEST_RESULT = {"modules": ["hero_banner", "origin_map", "reviews"]}
+MOCK_PAGE_COPY_RESULT = {
+    "copywriting": "优质脐橙",
+    "recommended_template": {"template_type": "traceability"},
+    "page_suggestion": {"modules": ["hero_banner"]},
+}
+MOCK_CAMPAIGN_RESULT = {
+    "name": "脐橙尝鲜季",
+    "description": "限时优惠活动",
+    "suggested_benefits": [{"type": "coupon", "value": 10}],
+}
+MOCK_IMAGE_RESULT = {"product_name": "蜂蜜", "category": "蜂蜜"}
+
+
+@pytest.fixture(autouse=True)
+def _mock_llm():
+    with patch("app.services.ai._check_daily_limit", new_callable=AsyncMock), \
+         patch("app.services.ai._increment_daily_count", new_callable=AsyncMock), \
+         patch("app.services.ai._save_generation", new_callable=AsyncMock) as mock_save, \
+         patch("app.services.ai._call_llm", new_callable=AsyncMock) as mock_llm:
+        mock_save.return_value = type("R", (), {"id": uuid.uuid4()})()
+        yield mock_llm
+
+
 @pytest.mark.asyncio
-async def test_extract_text(auth_client):
+async def test_extract_text(auth_client, _mock_llm):
+    _mock_llm.return_value = MOCK_EXTRACT_RESULT
     resp = await auth_client.post(
         "/api/v1/ai/extract",
         json={"text": "赣南脐橙，产地江西赣州"},
@@ -57,11 +89,11 @@ async def test_extract_text(auth_client):
 
 
 @pytest.mark.asyncio
-async def test_recognize_image(auth_client):
-    fake_image = io.BytesIO(b"fake-jpg-content")
+async def test_recognize_image(auth_client, _mock_llm):
+    _mock_llm.return_value = MOCK_IMAGE_RESULT
     resp = await auth_client.post(
         "/api/v1/ai/recognize-image",
-        files={"file": ("orange.jpg", fake_image, "image/jpeg")},
+        json={"image_url": "https://example.com/product.jpg", "filename": "product.jpg"},
     )
     assert resp.status_code == 200
     data = resp.json()
@@ -71,17 +103,17 @@ async def test_recognize_image(auth_client):
 
 
 @pytest.mark.asyncio
-async def test_recognize_image_rejects_pdf(auth_client):
-    fake_pdf = io.BytesIO(b"fake-pdf-content")
+async def test_recognize_image_rejects_no_url(auth_client):
     resp = await auth_client.post(
         "/api/v1/ai/recognize-image",
-        files={"file": ("doc.pdf", fake_pdf, "application/pdf")},
+        json={"filename": "doc.pdf"},
     )
     assert resp.status_code == 422
 
 
 @pytest.mark.asyncio
-async def test_page_copy(auth_client):
+async def test_page_copy(auth_client, _mock_llm):
+    _mock_llm.return_value = MOCK_PAGE_COPY_RESULT
     resp = await auth_client.post(
         "/api/v1/ai/page-copy",
         json={
@@ -92,13 +124,13 @@ async def test_page_copy(auth_client):
     )
     assert resp.status_code == 200
     data = resp.json()
-    assert "copywriting" in data
-    assert "recommended_template" in data
-    assert "page_suggestion" in data
+    assert "result" in data
+    assert "generation_id" in data
 
 
 @pytest.mark.asyncio
-async def test_copywriting(auth_client):
+async def test_copywriting(auth_client, _mock_llm):
+    _mock_llm.return_value = MOCK_COPYWRITING_RESULT
     resp = await auth_client.post(
         "/api/v1/ai/copywriting",
         json={"type": "brand_story", "product_name": "蜂蜜", "keywords": ["天然"]},
@@ -109,18 +141,21 @@ async def test_copywriting(auth_client):
 
 
 @pytest.mark.asyncio
-async def test_page_suggest(auth_client):
+async def test_page_suggest(auth_client, _mock_llm):
+    _mock_llm.return_value = MOCK_PAGE_SUGGEST_RESULT
     resp = await auth_client.post(
         "/api/v1/ai/page-suggest",
         json={"product_name": "脐橙", "category": "水果"},
     )
     assert resp.status_code == 200
     data = resp.json()
-    assert "modules" in data
+    assert "suggestion" in data
+    assert "modules" in data["suggestion"]
 
 
 @pytest.mark.asyncio
-async def test_campaign(auth_client):
+async def test_campaign(auth_client, _mock_llm):
+    _mock_llm.return_value = MOCK_CAMPAIGN_RESULT
     resp = await auth_client.post(
         "/api/v1/ai/campaign",
         json={
@@ -131,5 +166,5 @@ async def test_campaign(auth_client):
     )
     assert resp.status_code == 200
     data = resp.json()
-    assert "name" in data
-    assert "description" in data
+    assert "campaign" in data
+    assert data["campaign"]["name"] == "脐橙尝鲜季"

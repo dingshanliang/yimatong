@@ -63,16 +63,24 @@ async def http_exception_handler(
 async def validation_exception_handler(
     request: Request, exc: RequestValidationError
 ) -> JSONResponse:
+    import json
+
     request_id = get_request_id()
-    errors = exc.errors()
+    # Pydantic V2 errors() 可能含不可序列化对象（如 ctx.error=ValueError）
+    # 用 json.loads(json.dumps(..., default=str)) 做深度清理
+    raw_errors = exc.errors()
+    try:
+        clean_errors = json.loads(json.dumps(raw_errors, default=str))
+    except (TypeError, ValueError):
+        clean_errors = json.loads(json.dumps(raw_errors, default=lambda o: str(o)))
     logger.warning(
         "ValidationError: %d errors path=%s",
-        len(errors),
+        len(clean_errors),
         request.url.path,
     )
     return JSONResponse(
         status_code=422,
-        content=_error_body("VALIDATION_ERROR", errors, request_id),
+        content=_error_body("VALIDATION_ERROR", clean_errors, request_id),
     )
 
 

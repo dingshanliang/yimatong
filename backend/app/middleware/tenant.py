@@ -1,7 +1,6 @@
 from fastapi import Request
 from starlette.middleware.base import BaseHTTPMiddleware
 
-from app.core.exceptions import UnauthorizedError
 from app.utils.security import verify_access_token
 
 # Open API 路径前缀，使用 API Key 认证
@@ -41,14 +40,16 @@ class TenantScopeMiddleware(BaseHTTPMiddleware):
         return await self._authenticate_jwt(request, call_next)
 
     async def _authenticate_jwt(self, request: Request, call_next):
+        from starlette.responses import JSONResponse
+
         auth_header = request.headers.get("Authorization", "")
         if not auth_header.startswith("Bearer "):
-            raise UnauthorizedError("Missing or invalid token")
+            return JSONResponse(status_code=401, content={"detail": "Missing or invalid token"})
 
         token = auth_header[7:]
         payload = await verify_access_token(token)
         if payload is None:
-            raise UnauthorizedError("Invalid or expired token")
+            return JSONResponse(status_code=401, content={"detail": "Invalid or expired token"})
 
         tenant_id = payload.get("tenant_id")
         request.state.tenant_id = tenant_id
@@ -66,9 +67,11 @@ class TenantScopeMiddleware(BaseHTTPMiddleware):
             set_request_tenant_id(None)
 
     async def _authenticate_api_key(self, request: Request, call_next):
+        from starlette.responses import JSONResponse
+
         api_key_str = request.headers.get("X-Api-Key", "")
         if not api_key_str:
-            raise UnauthorizedError("Missing X-Api-Key header")
+            return JSONResponse(status_code=401, content={"detail": "Missing X-Api-Key header"})
 
         # 查询数据库验证 API Key
         from app.core.database import async_session_factory
@@ -81,12 +84,12 @@ class TenantScopeMiddleware(BaseHTTPMiddleware):
             key = result.scalar_one_or_none()
 
             if not key:
-                raise UnauthorizedError("Invalid or revoked API key")
+                return JSONResponse(status_code=401, content={"detail": "Invalid or revoked API key"})
 
             from datetime import UTC, datetime
 
             if key.expires_at and key.expires_at < datetime.now(UTC):
-                raise UnauthorizedError("API key has expired")
+                return JSONResponse(status_code=401, content={"detail": "API key has expired"})
 
             # 更新 last_used_at
             key.last_used_at = datetime.now(UTC)

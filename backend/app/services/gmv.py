@@ -3,7 +3,7 @@
 import uuid
 from datetime import datetime, timedelta
 
-from sqlalchemy import and_, func, select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.campaign import Campaign
@@ -310,7 +310,7 @@ async def _get_daily_trend(
 
     rows = (await db.execute(
         select(
-            func.date_trunc("day", GmvAttribution.scan_time).label("day"),
+            func.date(GmvAttribution.scan_time).label("day"),
             func.coalesce(func.sum(GmvAttribution.amount), 0).label("gmv"),
             func.count().label("orders"),
         )
@@ -319,7 +319,7 @@ async def _get_daily_trend(
         .order_by("day")
     )).all()
 
-    return [{"date": str(r.day.date()) if r.day else "", "gmv": float(r.gmv), "orders": r.orders} for r in rows]
+    return [{"date": str(r.day) if not hasattr(r.day, "date") else str(r.day.date()) if r.day else "", "gmv": float(r.gmv), "orders": r.orders} for r in rows]
 
 
 async def _get_channel_breakdown(

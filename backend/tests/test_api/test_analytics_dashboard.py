@@ -142,12 +142,11 @@ class TestDashboardExport:
             headers=headers,
         )
         assert resp.status_code == 200
-        assert "text/csv" in resp.headers.get("content-type", "")
-        assert "SCAN000" in resp.text
+        assert "spreadsheetml.sheet" in resp.headers.get("content-type", "")
 
         # 验证 export_log 写入
         result = await db_session.execute(
-            select(ExportLog).where(ExportLog.tenant_id == tenant_uuid, ExportLog.export_type == "scan_events_csv")
+            select(ExportLog).where(ExportLog.tenant_id == tenant_uuid, ExportLog.export_type == "scan_events_xlsx")
         )
         log = result.scalar_one_or_none()
         assert log is not None
@@ -187,11 +186,10 @@ class TestDashboardExport:
             headers=headers,
         )
         assert resp.status_code == 200
-        assert "text/csv" in resp.headers.get("content-type", "")
-        assert "测试活动" in resp.text
+        assert "spreadsheetml.sheet" in resp.headers.get("content-type", "")
 
         result = await db_session.execute(
-            select(ExportLog).where(ExportLog.tenant_id == tenant_uuid, ExportLog.export_type == "campaign_dashboard_csv")
+            select(ExportLog).where(ExportLog.tenant_id == tenant_uuid, ExportLog.export_type == "campaign_dashboard_xlsx")
         )
         log = result.scalar_one_or_none()
         assert log is not None
@@ -218,11 +216,10 @@ class TestDashboardExport:
             headers=headers,
         )
         assert resp.status_code == 200
-        assert "text/csv" in resp.headers.get("content-type", "")
-        assert "RISK001" in resp.text
+        assert "spreadsheetml.sheet" in resp.headers.get("content-type", "")
 
         result = await db_session.execute(
-            select(ExportLog).where(ExportLog.tenant_id == tenant_uuid, ExportLog.export_type == "risk_dashboard_csv")
+            select(ExportLog).where(ExportLog.tenant_id == tenant_uuid, ExportLog.export_type == "risk_dashboard_xlsx")
         )
         log = result.scalar_one_or_none()
         assert log is not None
@@ -250,11 +247,10 @@ class TestDashboardExport:
             headers=headers,
         )
         assert resp.status_code == 200
-        assert "text/csv" in resp.headers.get("content-type", "")
-        assert "DIV001" in resp.text
+        assert "spreadsheetml.sheet" in resp.headers.get("content-type", "")
 
         result = await db_session.execute(
-            select(ExportLog).where(ExportLog.tenant_id == tenant_uuid, ExportLog.export_type == "regional_dashboard_csv")
+            select(ExportLog).where(ExportLog.tenant_id == tenant_uuid, ExportLog.export_type == "regional_dashboard_xlsx")
         )
         log = result.scalar_one_or_none()
         assert log is not None

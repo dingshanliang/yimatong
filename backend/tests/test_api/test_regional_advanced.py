@@ -96,7 +96,7 @@ class TestAdvancedDashboard:
         )
         assert resp.status_code == 200
         data = resp.json()
-        assert "member_stats" in data
+        assert "by_member" in data
 
 
 class TestWhitelabel:
