@@ -464,28 +464,6 @@ async def get_advanced_dashboard(
     by_member_prev: dict[str, dict] = {}
 
     if member_tids:
-        # 当期扫码总数
-        current_scans = (
-            await db.execute(
-                select(func.count())
-                .select_from(ScanEvent)
-                .where(ScanEvent.tenant_id.in_(member_tids), ScanEvent.scan_time >= cutoff)
-            )
-        ).scalar() or 0
-
-        # 当期领取总数
-        current_claims = (
-            await db.execute(
-                select(func.count())
-                .select_from(BenefitClaim)
-                .where(
-                    BenefitClaim.tenant_id.in_(member_tids),
-                    BenefitClaim.status == "success",
-                    BenefitClaim.created_at >= cutoff,
-                )
-            )
-        ).scalar() or 0
-
         # 按成员 — 当期扫码（单条 GROUP BY 代替 N 条）
         rows = (
             await db.execute(
@@ -495,6 +473,7 @@ async def get_advanced_dashboard(
             )
         ).all()
         member_scan_current = {str(r[0]): r[1] for r in rows}
+        current_scans = sum(member_scan_current.values())
 
         # 按成员 — 当期领取（单条 GROUP BY 代替 N 条）
         rows = (
@@ -509,6 +488,7 @@ async def get_advanced_dashboard(
             )
         ).all()
         member_claim_current = {str(r[0]): r[1] for r in rows}
+        current_claims = sum(member_claim_current.values())
 
         # 按成员 — 上期扫码（单条 GROUP BY 代替 N 条）
         rows = (
