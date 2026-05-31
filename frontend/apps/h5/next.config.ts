@@ -1,4 +1,5 @@
 import type { NextConfig } from "next";
+import path from "node:path";
 import withBundleAnalyzer from "@next/bundle-analyzer";
 
 const securityHeaders = [
@@ -24,6 +25,9 @@ const securityHeaders = [
 
 const nextConfig: NextConfig = {
   transpilePackages: ["@yimatong/shared"],
+  turbopack: {
+    root: path.resolve(__dirname, "../.."),
+  },
   async headers() {
     return [{ source: "/(.*)", headers: securityHeaders }];
   },

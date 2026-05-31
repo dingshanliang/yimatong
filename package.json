@@ -1,0 +1,8 @@
+{
+  "name": "yimatong",
+  "private": true,
+  "scripts": {
+    "dev:stack": "sh scripts/dev-stack.sh"
+  },
+  "packageManager": "pnpm@10.0.0"
+}

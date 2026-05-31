@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.core.config import settings
 from app.core.database import get_db
@@ -30,6 +31,14 @@ MAX_FAILED_ATTEMPTS = 5
 LOCK_DURATION_MINUTES = 15
 
 
+def _resolve_account_role(account: Account) -> str:
+    role_names = {role.name for role in account.roles}
+    for role in ("platform_admin", "admin", "operator"):
+        if role in role_names:
+            return role
+    return sorted(role_names)[0] if role_names else "admin"
+
+
 class LoginRequest(BaseModel):
     email: str = Field(..., max_length=255, description="登录邮箱", examples=["admin@example.com"])
     password: str = Field(..., min_length=1, description="密码", examples=["SecurePass123!"])
@@ -53,7 +62,7 @@ class RefreshRequest(BaseModel):
     response_description="登录成功，返回 JWT 令牌",
 )
 async def login(body: LoginRequest, db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(Account).where(Account.email == body.email))
+    result = await db.execute(select(Account).options(selectinload(Account.roles)).where(Account.email == body.email))
     account = result.scalar_one_or_none()
 
     now = utcnow()
@@ -74,7 +83,7 @@ async def login(body: LoginRequest, db: AsyncSession = Depends(get_db)):
     account.last_login_at = now
     await db.commit()
 
-    access = create_access_token(str(account.tenant_id), str(account.id), "admin")
+    access = create_access_token(str(account.tenant_id), str(account.id), _resolve_account_role(account))
     refresh = create_refresh_token(str(account.id))
     return TokenResponse(
         access_token=access,
@@ -96,11 +105,13 @@ async def refresh(body: RefreshRequest, db: AsyncSession = Depends(get_db)):
     if not payload:
         raise HTTPException(status_code=401, detail="Invalid refresh token")
     account_id = payload["sub"]
-    result = await db.execute(select(Account).where(Account.id == uuid.UUID(account_id)))
+    result = await db.execute(
+        select(Account).options(selectinload(Account.roles)).where(Account.id == uuid.UUID(account_id))
+    )
     account = result.scalar_one_or_none()
     if not account:
         raise HTTPException(status_code=401, detail="Account not found")
-    access = create_access_token(str(account.tenant_id), str(account.id), "admin")
+    access = create_access_token(str(account.tenant_id), str(account.id), _resolve_account_role(account))
     refresh = create_refresh_token(str(account.id))
     return TokenResponse(
         access_token=access,

@@ -9,8 +9,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.main import app
-from app.models.tenant import Account
-from app.utils.security import hash_password
+from app.models.tenant import Account, Role
+from app.utils.security import decode_token, hash_password
 from tests.conftest import TestSessionLocal
 
 
@@ -73,6 +73,23 @@ class TestLogin:
         assert "access_token" in data
         assert "refresh_token" in data
         assert data["token_type"] == "bearer"
+
+    @pytest.mark.anyio
+    async def test_login_uses_assigned_account_role(self, client: AsyncClient, db_session: AsyncSession, seeded_account):
+        role = Role(tenant_id=seeded_account.tenant_id, name="operator", description="运营")
+        db_session.add(role)
+        await db_session.flush()
+        seeded_account.roles = [role]
+        await db_session.commit()
+
+        resp = await client.post(
+            "/api/v1/auth/login",
+            json={"email": "login@test.com", "password": "Password1"},
+        )
+
+        assert resp.status_code == 200
+        payload = decode_token(resp.json()["access_token"])
+        assert payload["role"] == "operator"
 
     @pytest.mark.anyio
     async def test_login_failure_returns_401(self, client: AsyncClient, seeded_account):

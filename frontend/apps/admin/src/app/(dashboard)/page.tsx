@@ -20,6 +20,7 @@ interface DashboardData {
   cumulative_scans: number;
   cumulative_first_scans: number;
   first_scan_rate: number;
+  trend?: TrendRow[];
 }
 
 interface TrendRow {
@@ -68,32 +69,18 @@ export default function DashboardPage() {
   const [data, setData] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
   const [trend, setTrend] = useState<TrendRow[]>([]);
-  const [trendLoading, setTrendLoading] = useState(false);
   const [batches, setBatches] = useState<CodeBatch[]>([]);
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
 
   useEffect(() => {
     api
-      .get("/analytics/scan-summary")
-      .then((res) => setData(res.data))
+      .get("/analytics/dashboard")
+      .then((res) => {
+        setData(res.data);
+        setTrend(Array.isArray(res.data.trend) ? res.data.trend.slice(-7) : []);
+      })
       .catch(() => setData(null))
       .finally(() => setLoading(false));
-  }, []);
-
-  const fetchTrend = useCallback(async () => {
-    setTrendLoading(true);
-    try {
-      const end = dayjs().format("YYYY-MM-DD");
-      const start = dayjs().subtract(6, "day").format("YYYY-MM-DD");
-      const { data } = await api.get("/analytics/scan-details", {
-        params: { start_date: start, end_date: end },
-      });
-      setTrend(Array.isArray(data) ? data.slice(-7) : []);
-    } catch {
-      setTrend([]);
-    } finally {
-      setTrendLoading(false);
-    }
   }, []);
 
   const fetchRecentBatches = useCallback(async () => {
@@ -119,10 +106,11 @@ export default function DashboardPage() {
   }, []);
 
   useEffect(() => {
-    fetchTrend();
-    fetchRecentBatches();
-    fetchRecentCampaigns();
-  }, [fetchTrend, fetchRecentBatches, fetchRecentCampaigns]);
+    const loadRecent = async () => {
+      await Promise.all([fetchRecentBatches(), fetchRecentCampaigns()]);
+    };
+    void loadRecent();
+  }, [fetchRecentBatches, fetchRecentCampaigns]);
 
   const firstScanRate = data?.cumulative_scans
     ? ((data.cumulative_first_scans / data.cumulative_scans) * 100).toFixed(1)
@@ -249,7 +237,7 @@ export default function DashboardPage() {
               columns={trendColumns}
               dataSource={trend}
               rowKey="date"
-              loading={trendLoading}
+              loading={loading}
               pagination={false}
               size="small"
             />
