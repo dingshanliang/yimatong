@@ -1,0 +1,177 @@
+"""扫码事件驱动的风控自动评估处理器。
+
+订阅 scan.created 事件，构建评估上下文，调用规则引擎，
+命中时触发自动处置动作（冻结码 / 暂停活动 / 发送通知）。
+"""
+
+from __future__ import annotations
+
+import logging
+import uuid
+from datetime import timedelta
+
+from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.event_bus import event_bus
+from app.models.code import CodeItem, CodeItemStatus
+from app.models.risk import RiskRule
+from app.models.scan import ScanEvent
+from app.services.risk_rule import _evaluate_rule
+from app.utils import utcnow
+
+logger = logging.getLogger(__name__)
+
+DEDUP_KEY_PREFIX = "ymt:risk:dedup:"
+DEDUP_TTL_SECONDS = 300  # 5 分钟冷却
+
+
+async def _check_dedup(tenant_id: str, rule_id: str, public_id: str) -> bool:
+    """Redis 去重：同一规则 + 同一码在冷却窗口内不重复触发。"""
+    try:
+        import redis.asyncio as aioredis
+
+        from app.core.config import settings
+
+        key = f"{DEDUP_KEY_PREFIX}{tenant_id}:{rule_id}:{public_id}"
+        async with aioredis.from_url(settings.redis_url) as r:
+            exists = await r.exists(key)
+            if not exists:
+                await r.setex(key, DEDUP_TTL_SECONDS, "1")
+            return bool(exists)
+    except Exception:
+        logger.warning("Redis dedup check failed, proceeding without dedup")
+        return False
+
+
+async def _build_scan_context(
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    public_id: str,
+) -> dict:
+    """从 ScanEvent 表构建评估上下文。"""
+    now = utcnow()
+
+    # 最近 1 分钟扫码次数
+    since_1min = now - timedelta(minutes=1)
+    r1 = await db.execute(
+        select(func.count())
+        .select_from(ScanEvent)
+        .where(
+            ScanEvent.tenant_id == tenant_id,
+            ScanEvent.public_id == public_id,
+            ScanEvent.scan_time >= since_1min,
+        )
+    )
+    recent_count = r1.scalar() or 0
+
+    # 最近 10 分钟不同 IP 数
+    since_10min = now - timedelta(minutes=10)
+    r2 = await db.execute(
+        select(func.count(func.distinct(ScanEvent.ip_hash)))
+        .where(
+            ScanEvent.tenant_id == tenant_id,
+            ScanEvent.public_id == public_id,
+            ScanEvent.scan_time >= since_10min,
+            ScanEvent.ip_hash.isnot(None),
+        )
+    )
+    distinct_ips = r2.scalar() or 0
+
+    # 全部扫码总次数
+    r3 = await db.execute(
+        select(func.count())
+        .select_from(ScanEvent)
+        .where(
+            ScanEvent.tenant_id == tenant_id,
+            ScanEvent.public_id == public_id,
+        )
+    )
+    total_scans = r3.scalar() or 0
+
+    # 当前小时
+    current_hour = now.hour
+
+    return {
+        "request_count": recent_count,
+        "distinct_ips": distinct_ips,
+        "total_scans": total_scans,
+        "current_hour": current_hour,
+    }
+
+
+async def _handle_scan_created(event_type: str, data: dict, tenant_id: str) -> None:
+    """scan.created 事件处理器。"""
+    from app.core.database import async_session_factory
+
+    public_id = data.get("public_id")
+    if not public_id:
+        return
+
+    tenant_uuid = uuid.UUID(tenant_id)
+
+    async with async_session_factory() as db:
+        try:
+            # 检查码是否已冻结，冻结码跳过评估
+            item_result = await db.execute(
+                select(CodeItem).where(
+                    CodeItem.public_id == public_id,
+                    CodeItem.tenant_id == tenant_uuid,
+                )
+            )
+            code_item = item_result.scalar_one_or_none()
+            if code_item and code_item.status == CodeItemStatus.frozen:
+                return
+
+            # 查询租户所有启用的风控规则
+            rules_result = await db.execute(
+                select(RiskRule).where(
+                    RiskRule.tenant_id == tenant_uuid,
+                    RiskRule.enabled.is_(True),
+                )
+            )
+            rules = list(rules_result.scalars().all())
+            if not rules:
+                return
+
+            # 构建上下文
+            context = await _build_scan_context(db, tenant_uuid, public_id)
+            context["public_id"] = public_id
+            context["code_item_id"] = str(code_item.id) if code_item else None
+
+            # 逐条评估规则
+            for rule in rules:
+                # Redis 去重
+                if await _check_dedup(tenant_id, str(rule.id), public_id):
+                    continue
+
+                if _evaluate_rule(rule, context):
+                    logger.info(
+                        "Risk rule triggered: rule=%s public_id=%s action=%s",
+                        rule.name,
+                        public_id,
+                        rule.action,
+                    )
+
+                    # 执行处置动作
+                    from app.services.risk_action import execute_risk_action
+
+                    await execute_risk_action(
+                        db=db,
+                        tenant_id=tenant_uuid,
+                        rule=rule,
+                        public_id=public_id,
+                        code_item=code_item,
+                        context=context,
+                    )
+
+            await db.commit()
+        except Exception:
+            logger.exception("Risk auto-handler error for public_id=%s", public_id)
+            await db.rollback()
+
+
+def init_risk_auto_handler() -> None:
+    """应用启动时注册 scan.created 事件处理器。"""
+    event_bus.add_handler("scan.created", _handle_scan_created)
+    logger.info("Risk auto-handler registered for scan.created events")

@@ -3,7 +3,7 @@
 import uuid
 from enum import StrEnum
 
-from sqlalchemy import JSON, Index, String
+from sqlalchemy import JSON, Boolean, Index, String
 from sqlalchemy.orm import Mapped, mapped_column
 from uuid6 import uuid7
 
@@ -74,5 +74,26 @@ class InterceptionRecord(Base):
     action: Mapped[str] = mapped_column(String(20), nullable=False)
     context: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     consumer_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    auto_triggered: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    action_taken: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    action_detail: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
     __table_args__ = (Index("ix_interceptions_tenant_rule", "tenant_id", "risk_rule_id"),)
+
+
+class RiskNotification(Base):
+    __tablename__ = "risk_notifications"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid7)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
+    notification_type: Mapped[str] = mapped_column(String(30), nullable=False, index=True)
+    title: Mapped[str] = mapped_column(String(200), nullable=False)
+    detail: Mapped[str] = mapped_column(String(500), nullable=False, default="")
+    risk_rule_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True, index=True)
+    campaign_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True, index=True)
+    code_item_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True, index=True)
+    read: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+
+    __table_args__ = (
+        Index("ix_risk_notif_tenant_read", "tenant_id", "read"),
+    )

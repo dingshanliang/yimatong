@@ -36,6 +36,7 @@ from app.api.v1.regional import regional_router
 from app.api.v1.resolver import resolver_router
 from app.api.v1.risk import risk_router
 from app.api.v1.risk_dashboard import risk_dashboard_router
+from app.api.v1.risk_notifications import risk_notification_router
 from app.api.v1.risk_evaluate import risk_evaluate_router
 from app.api.v1.risk_rules import risk_rule_router
 from app.api.v1.roles import router as roles_router
@@ -184,6 +185,11 @@ async def lifespan(app):
 
     init_webhook_dispatcher()
 
+    # 初始化风控自动评估处理器
+    from app.services.risk_auto_handler import init_risk_auto_handler
+
+    init_risk_auto_handler()
+
     # 注册连接器适配器 + 权益发放事件处理器
     import app.services.benefit_delivery_handler  # noqa: F401
     import app.services.connectors.coupon_pool  # noqa: F401
@@ -296,6 +302,7 @@ app.include_router(campaign_router)
 app.include_router(benefit_router)
 app.include_router(ops_router)
 app.include_router(risk_router)
+app.include_router(risk_notification_router)
 app.include_router(channel_router)
 app.include_router(member_router)
 app.include_router(risk_rule_router)

@@ -119,12 +119,15 @@ async def evaluate_campaign_endpoint(
 @risk_rule_router.get("/interceptions", summary="interceptions 列表")
 async def list_interceptions_endpoint(
     action: str | None = Query(None),
+    auto_triggered: bool | None = Query(None),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
-    records, total = await list_interceptions(db, tenant_id, action=action, page=page, page_size=page_size)
+    records, total = await list_interceptions(
+        db, tenant_id, action=action, auto_triggered=auto_triggered, page=page, page_size=page_size,
+    )
     return PaginatedResponse(
         items=[
             {
@@ -134,6 +137,9 @@ async def list_interceptions_endpoint(
                 "action": r.action,
                 "context": r.context,
                 "consumer_id": r.consumer_id,
+                "auto_triggered": r.auto_triggered,
+                "action_taken": r.action_taken,
+                "action_detail": r.action_detail,
             }
             for r in records
         ],

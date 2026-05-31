@@ -217,6 +217,7 @@ async def list_interceptions(
     db: AsyncSession,
     tenant_id: uuid.UUID,
     action: str | None = None,
+    auto_triggered: bool | None = None,
     page: int = 1,
     page_size: int = 20,
 ) -> tuple[list[InterceptionRecord], int]:
@@ -234,6 +235,9 @@ async def list_interceptions(
     if action:
         stmt = stmt.where(InterceptionRecord.action == action)
         count_stmt = count_stmt.where(InterceptionRecord.action == action)
+    if auto_triggered is not None:
+        stmt = stmt.where(InterceptionRecord.auto_triggered == auto_triggered)
+        count_stmt = count_stmt.where(InterceptionRecord.auto_triggered == auto_triggered)
 
     total_result = await db.execute(count_stmt)
     total = total_result.scalar() or 0
