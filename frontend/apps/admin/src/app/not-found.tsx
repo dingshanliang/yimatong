@@ -3,7 +3,7 @@ import { Button, Result } from "antd";
 
 export default function NotFound() {
   return (
-    <div className="flex min-h-screen items-center justify-center bg-[#f5f5f5] px-4">
+    <div className="flex min-h-screen items-center justify-center px-4" style={{ background: "var(--admin-bg-layout)" }}>
       <Result
         status="404"
         title="页面不存在"

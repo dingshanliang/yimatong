@@ -1,13 +1,81 @@
 @import "tailwindcss";
 
 :root {
-  --background: #f5f5f5;
-  --foreground: #171717;
+  --background: #f4f7fb;
+  --foreground: #172033;
   --color-primary: #1677ff;
+  --admin-bg-layout: #f4f7fb;
+  --admin-bg-container: #ffffff;
+  --admin-bg-elevated: #ffffff;
+  --admin-bg-muted: #f8fafc;
+  --admin-border: #e7edf5;
+  --admin-text-muted: #64748b;
+  --admin-sider-bg: #06172a;
+  --admin-shadow: 0 10px 28px rgb(16 24 40 / 0.08);
+}
+
+html[data-theme="dark"] {
+  --background: #07111f;
+  --foreground: #e6edf7;
+  --color-primary: #4c9dff;
+  --admin-bg-layout: #07111f;
+  --admin-bg-container: #0f1a2a;
+  --admin-bg-elevated: #142033;
+  --admin-bg-muted: #101d30;
+  --admin-border: #23334d;
+  --admin-text-muted: #a7b4c8;
+  --admin-sider-bg: #06101d;
+  --admin-shadow: 0 16px 36px rgb(0 0 0 / 0.32);
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+}
+
+.admin-app,
+.admin-shell,
+.admin-workspace {
+  background: var(--admin-bg-layout);
+  color: var(--foreground);
+}
+
+.admin-header,
+.admin-content {
+  background: var(--admin-bg-container);
+  border: 1px solid var(--admin-border);
+  box-shadow: var(--admin-shadow);
+}
+
+.admin-header {
+  border-left: 0;
+  border-right: 0;
+  border-top: 0;
+}
+
+.admin-sider {
+  background: var(--admin-sider-bg) !important;
+}
+
+.admin-muted-panel,
+.admin-image-placeholder {
+  background: var(--admin-bg-muted);
+  border-color: var(--admin-border);
+}
+
+html[data-theme="dark"] .bg-white,
+html[data-theme="dark"] .bg-gray-50 {
+  background-color: var(--admin-bg-container) !important;
+}
+
+html[data-theme="dark"] .border-gray-200 {
+  border-color: var(--admin-border) !important;
+}
+
+html[data-theme="dark"] .text-gray-400,
+html[data-theme="dark"] .text-gray-500,
+html[data-theme="dark"] .text-gray-600,
+html[data-theme="dark"] .text-gray-700 {
+  color: var(--admin-text-muted) !important;
 }

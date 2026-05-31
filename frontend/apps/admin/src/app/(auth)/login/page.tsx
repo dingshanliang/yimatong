@@ -70,13 +70,13 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-[#f4f7f2] px-4 py-8">
+    <div className="flex min-h-screen items-center justify-center px-4 py-8" style={{ background: "var(--admin-bg-layout)" }}>
       <Card className="w-full max-w-[520px] shadow-xl" variant="borderless">
         <div className="mb-8 text-center">
           <Title level={2} className="!mb-2">一码通</Title>
           <Text type="secondary">包装扫码增长 SaaS 管理后台</Text>
         </div>
-        <div className="mb-6 rounded-md border border-[#d9e7d2] bg-[#fbfdf8] p-3">
+        <div className="admin-muted-panel mb-6 rounded-md border p-3">
           <div className="mb-3 flex items-center justify-between">
             <Text strong>演示快捷账号</Text>
             <Tag color="green">Demo Ready</Tag>

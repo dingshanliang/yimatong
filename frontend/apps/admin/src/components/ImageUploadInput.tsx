@@ -79,7 +79,7 @@ export default function ImageUploadInput({
     return (
       <Space orientation="vertical" size={10} className="w-full">
         <div className="flex flex-wrap items-center gap-3">
-          <div className="flex h-24 w-24 items-center justify-center rounded border border-dashed border-gray-200 bg-gray-50">
+          <div className="admin-image-placeholder flex h-24 w-24 items-center justify-center rounded border border-dashed">
             {value ? (
               <Image src={value} alt={previewAlt} width={88} height={88} className="rounded object-contain" />
             ) : (

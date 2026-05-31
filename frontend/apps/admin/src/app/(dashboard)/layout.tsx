@@ -2,7 +2,7 @@
 
 import { useEffect } from "react";
 import { useRouter, usePathname } from "next/navigation";
-import { ConfigProvider, Layout, Menu, Avatar, Dropdown, Select, Spin } from "antd";
+import { Button, ConfigProvider, Layout, Menu, Avatar, Dropdown, Select, Space, Spin, Tooltip } from "antd";
 import {
   DashboardOutlined,
   AppstoreOutlined,
@@ -25,10 +25,13 @@ import {
   CheckSquareOutlined,
   RobotOutlined,
   GlobalOutlined,
+  MoonOutlined,
+  SunOutlined,
 } from "@ant-design/icons";
 import type { MenuProps } from "antd";
 import { useAuthStore } from "@/lib/auth";
 import { I18nProvider, useI18n } from "@/lib/i18n";
+import { useAdminTheme } from "@/lib/theme-provider";
 import zhCN from "antd/locale/zh_CN";
 import enUS from "antd/locale/en_US";
 
@@ -55,6 +58,7 @@ function DashboardInner({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const { user, hydrate, logout } = useAuthStore();
   const { locale, setLocale, t } = useI18n();
+  const { isDark, toggleMode } = useAdminTheme();
 
   useEffect(() => {
     hydrate();
@@ -178,8 +182,14 @@ function DashboardInner({ children }: { children: React.ReactNode }) {
 
   return (
     <ConfigProvider locale={LOCALE_MAP[locale]}>
-      <Layout className="min-h-screen" style={{ minHeight: "100vh" }}>
-        <Sider breakpoint="lg" collapsedWidth={0} width={220} style={{ minHeight: "100vh" }}>
+      <Layout className="admin-shell min-h-screen" style={{ minHeight: "100vh" }}>
+        <Sider
+          breakpoint="lg"
+          collapsedWidth={0}
+          width={220}
+          className="admin-sider"
+          style={{ minHeight: "100vh" }}
+        >
           <div className="my-4 flex h-10 items-center justify-center">
             <span className="text-lg font-bold text-white">{t("common.brand")}</span>
           </div>
@@ -194,8 +204,8 @@ function DashboardInner({ children }: { children: React.ReactNode }) {
             }}
           />
         </Sider>
-        <Layout style={{ minHeight: "100vh" }}>
-          <Header className="flex items-center justify-between bg-white px-6 shadow-sm">
+        <Layout className="admin-workspace" style={{ minHeight: "100vh" }}>
+          <Header className="admin-header flex items-center justify-between px-6">
             <Select
               value={locale}
               onChange={setLocale}
@@ -208,15 +218,25 @@ function DashboardInner({ children }: { children: React.ReactNode }) {
               ]}
               suffixIcon={<GlobalOutlined />}
             />
-            <Dropdown menu={{ items: userMenuItems }} placement="bottomRight">
-              <div className="flex cursor-pointer items-center gap-2">
-                <Avatar icon={<UserOutlined />} size="small" />
-                <span>{user.name || user.email}</span>
-              </div>
-            </Dropdown>
+            <Space size={12}>
+              <Tooltip title={isDark ? "切换浅色模式" : "切换深色模式"}>
+                <Button
+                  aria-label={isDark ? "切换浅色模式" : "切换深色模式"}
+                  shape="circle"
+                  icon={isDark ? <SunOutlined /> : <MoonOutlined />}
+                  onClick={toggleMode}
+                />
+              </Tooltip>
+              <Dropdown menu={{ items: userMenuItems }} placement="bottomRight">
+                <div className="flex cursor-pointer items-center gap-2">
+                  <Avatar icon={<UserOutlined />} size="small" />
+                  <span>{user.name || user.email}</span>
+                </div>
+              </Dropdown>
+            </Space>
           </Header>
           <Content
-            className="m-6 rounded-lg bg-white p-6 shadow-sm"
+            className="admin-content m-6 rounded-lg p-6"
             style={{ minHeight: "calc(100vh - 112px)" }}
           >
             {children}

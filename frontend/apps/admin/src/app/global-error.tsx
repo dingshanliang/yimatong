@@ -17,8 +17,8 @@ export default function GlobalError({
   return (
     <html lang="zh-CN">
       <body>
-        <main className="flex min-h-screen items-center justify-center bg-[#f5f5f5] px-4">
-          <div className="max-w-md rounded-lg bg-white p-6 text-center shadow-sm">
+        <main className="flex min-h-screen items-center justify-center px-4" style={{ background: "var(--admin-bg-layout)" }}>
+          <div className="max-w-md rounded-lg p-6 text-center" style={{ background: "var(--admin-bg-container)", boxShadow: "var(--admin-shadow)" }}>
             <h1 className="mb-2 text-xl font-semibold">页面加载失败</h1>
             <p className="mb-4 text-sm text-gray-500">请重试加载页面；如果仍然失败，请刷新浏览器或重新登录。</p>
             <button

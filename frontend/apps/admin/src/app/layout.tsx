@@ -1,9 +1,6 @@
 import type { Metadata } from "next";
 import { AntdRegistry } from "@ant-design/nextjs-registry";
-import { App, ConfigProvider } from "antd";
-import zhCN from "antd/locale/zh_CN";
-import theme from "@/lib/theme";
-import { SWRProvider } from "@/lib/swr-provider";
+import { AdminThemeProvider } from "@/lib/theme-provider";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -17,14 +14,15 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="zh-CN" className="h-full">
+    <html lang="zh-CN" className="h-full" suppressHydrationWarning>
       <body className="h-full min-h-screen">
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `try{var m=localStorage.getItem("admin_theme_mode");if(m!=="light"&&m!=="dark"){m=matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light"}document.documentElement.dataset.theme=m;document.documentElement.style.colorScheme=m}catch(e){document.documentElement.dataset.theme="light"}`,
+          }}
+        />
         <AntdRegistry>
-          <ConfigProvider theme={theme} locale={zhCN}>
-            <SWRProvider>
-              <App className="min-h-screen">{children}</App>
-            </SWRProvider>
-          </ConfigProvider>
+          <AdminThemeProvider>{children}</AdminThemeProvider>
         </AntdRegistry>
       </body>
     </html>
