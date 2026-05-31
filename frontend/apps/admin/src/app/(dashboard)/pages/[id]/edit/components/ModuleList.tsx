@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useRef } from "react";
 import {
   DndContext,
   closestCenter,
@@ -16,21 +16,32 @@ import {
   sortableKeyboardCoordinates,
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
-import { Button } from "antd";
+import { Alert, Button, Empty, Select, Typography } from "antd";
 import { PlusOutlined } from "@ant-design/icons";
-import type { ModuleConfig } from "@/lib/page-dsl";
+import { MODULE_TYPES, type ModuleConfig, type ModuleReadiness, type ModuleType } from "@/lib/page-dsl";
+import { ModuleConfigForm } from "./ModuleConfigForms";
 import { ModuleItem } from "./ModuleItem";
+
+const { Text } = Typography;
 
 export function ModuleList({
   modules,
   productId,
+  moduleStatuses,
+  selectedModuleId,
+  onSelectModule,
   onChange,
 }: {
   modules: ModuleConfig[];
   productId?: string | null;
+  moduleStatuses: ModuleReadiness[];
+  selectedModuleId?: string | null;
+  onSelectModule: (id: string | null) => void;
   onChange: (modules: ModuleConfig[]) => void;
 }) {
-  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const selectedModule = modules.find((module) => module.id === selectedModuleId) || null;
+  const statusById = new Map(moduleStatuses.map((status) => [status.moduleId, status]));
+  const nextIdRef = useRef(0);
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
@@ -43,67 +54,135 @@ export function ModuleList({
     const { active, over } = event;
     if (!over || active.id === over.id) return;
 
-    const oldIndex = modules.findIndex((m) => m.id === active.id);
-    const newIndex = modules.findIndex((m) => m.id === over.id);
+    const oldIndex = modules.findIndex((module) => module.id === active.id);
+    const newIndex = modules.findIndex((module) => module.id === over.id);
     onChange(arrayMove(modules, oldIndex, newIndex));
   };
 
   const addModule = () => {
-    const id = `mod_${Date.now()}`;
-    const newMod: ModuleConfig = { id, type: "product_hero", enabled: true, config: {} };
-    onChange([newMod, ...modules]);
-    setExpandedId(id);
+    nextIdRef.current += 1;
+    const id = `mod_new_${nextIdRef.current}`;
+    const newModule: ModuleConfig = { id, type: "product_hero", enabled: true, config: {} };
+    onChange([newModule, ...modules]);
+    onSelectModule(id);
   };
 
   const updateModule = (id: string, updates: Partial<ModuleConfig>) => {
-    onChange(modules.map((m) => (m.id === id ? { ...m, ...updates } : m)));
+    onChange(modules.map((module) => (module.id === id ? { ...module, ...updates } : module)));
+  };
+
+  const duplicateModule = (module: ModuleConfig) => {
+    nextIdRef.current += 1;
+    const id = `mod_copy_${nextIdRef.current}`;
+    const newModule = {
+      ...module,
+      id,
+      config: { ...(module.config || {}) },
+    };
+    const sourceIndex = modules.findIndex((item) => item.id === module.id);
+    const nextModules = [...modules];
+    nextModules.splice(sourceIndex + 1, 0, newModule);
+    onChange(nextModules);
+    onSelectModule(id);
   };
 
   const removeModule = (id: string) => {
-    onChange(modules.filter((m) => m.id !== id));
-    if (expandedId === id) setExpandedId(null);
+    const nextModules = modules.filter((module) => module.id !== id);
+    onChange(nextModules);
+    if (selectedModuleId === id) {
+      onSelectModule(nextModules[0]?.id || null);
+    }
   };
 
   return (
-    <div>
-      <div className="mb-3 flex justify-end">
-        <Button size="small" icon={<PlusOutlined />} onClick={addModule}>
-          添加模块
-        </Button>
+    <div className="flex h-full flex-col gap-4">
+      <div>
+        <div className="mb-3 flex items-center justify-between">
+          <div>
+            <Text strong>模块工作区</Text>
+            <div className="text-xs text-gray-500">拖拽调整顺序，点击模块配置内容</div>
+          </div>
+          <Button size="small" icon={<PlusOutlined />} onClick={addModule}>
+            添加模块
+          </Button>
+        </div>
+
+        {modules.length > 0 ? (
+          <DndContext
+            sensors={sensors}
+            collisionDetection={closestCenter}
+            onDragEnd={handleDragEnd}
+          >
+            <SortableContext
+              items={modules.map((module) => module.id)}
+              strategy={verticalListSortingStrategy}
+            >
+              <div className="space-y-2">
+                {modules.map((module) => (
+                  <ModuleItem
+                    key={module.id}
+                    module={module}
+                    selected={selectedModuleId === module.id}
+                    readiness={statusById.get(module.id)}
+                    onSelect={() => onSelectModule(module.id)}
+                    onUpdate={(updates) => updateModule(module.id, updates)}
+                    onRemove={() => removeModule(module.id)}
+                    onDuplicate={() => duplicateModule(module)}
+                  />
+                ))}
+              </div>
+            </SortableContext>
+          </DndContext>
+        ) : (
+          <Empty description="暂无模块，点击添加模块开始配置" image={Empty.PRESENTED_IMAGE_SIMPLE} />
+        )}
       </div>
 
-      <DndContext
-        sensors={sensors}
-        collisionDetection={closestCenter}
-        onDragEnd={handleDragEnd}
-      >
-        <SortableContext
-          items={modules.map((m) => m.id)}
-          strategy={verticalListSortingStrategy}
-        >
-          <div className="space-y-2">
-            {modules.map((mod) => (
-              <ModuleItem
-                key={mod.id}
-                module={mod}
-                productId={productId}
-                expanded={expandedId === mod.id}
-                onToggleExpand={() =>
-                  setExpandedId(expandedId === mod.id ? null : mod.id)
-                }
-                onUpdate={(updates) => updateModule(mod.id, updates)}
-                onRemove={() => removeModule(mod.id)}
+      <div className="min-h-0 flex-1 rounded border border-gray-200 bg-white p-3">
+        {selectedModule ? (
+          <div className="space-y-3">
+            <div className="flex items-center justify-between gap-2">
+              <div>
+                <Text strong>配置模块</Text>
+                <div className="text-xs text-gray-500">修改后请保存草稿，预览会实时刷新</div>
+              </div>
+              <Select
+                size="small"
+                value={selectedModule.type}
+                onChange={(type: ModuleType) => updateModule(selectedModule.id, { type, config: {} })}
+                options={MODULE_TYPES}
+                style={{ width: 150 }}
               />
-            ))}
+            </div>
+            {statusById.get(selectedModule.id)?.status === "example" ? (
+              <Alert
+                type="info"
+                showIcon
+                title={statusById.get(selectedModule.id)?.issues[0] || "当前模块会使用示例数据预览"}
+              />
+            ) : null}
+            {statusById.get(selectedModule.id)?.status === "incomplete" ? (
+              <Alert
+                type="warning"
+                showIcon
+                title={statusById.get(selectedModule.id)?.issues[0] || "当前模块仍有配置项待完善"}
+              />
+            ) : null}
+            <div className="rounded bg-gray-50 p-3">
+              <ModuleConfigForm
+                moduleType={selectedModule.type}
+                productId={productId}
+                config={selectedModule.config || {}}
+                onChange={(config) => updateModule(selectedModule.id, { config })}
+              />
+            </div>
           </div>
-        </SortableContext>
-      </DndContext>
-
-      {modules.length === 0 && (
-        <div className="py-8 text-center text-gray-400">
-          暂无模块，点击&ldquo;添加模块&rdquo;开始
-        </div>
-      )}
+        ) : (
+          <div className="flex h-full items-center justify-center text-sm text-gray-500">
+            选择一个模块后在这里配置内容
+          </div>
+        )}
+      </div>
     </div>
   );
 }

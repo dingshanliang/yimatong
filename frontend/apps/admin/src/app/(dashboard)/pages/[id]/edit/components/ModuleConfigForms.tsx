@@ -31,14 +31,15 @@ export function ModuleConfigForm({
   const [assets, setAssets] = useState<ProductAssetOption[]>([]);
 
   useEffect(() => {
-    if (!productId) {
+    const needsAssets = ["test_reports", "certificates", "media_section"].includes(moduleType);
+    if (!productId || !needsAssets) {
       setAssets([]);
       return;
     }
     api.get(`/products/${productId}/assets`, { params: { page_size: 100 } })
       .then(({ data }) => setAssets(data.items || []))
       .catch(() => setAssets([]));
-  }, [productId]);
+  }, [moduleType, productId]);
 
   const reportOptions = useMemo(
     () => assets

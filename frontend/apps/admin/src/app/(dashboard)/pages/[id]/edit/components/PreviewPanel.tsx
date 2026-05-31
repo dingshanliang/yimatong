@@ -1,12 +1,12 @@
 "use client";
 
 import { useEffect, useRef, useState, useCallback } from "react";
-import { Select, Slider, Typography } from "antd";
+import { Select, Slider, Tag, Typography } from "antd";
 import {
   MobileOutlined,
   DesktopOutlined,
 } from "@ant-design/icons";
-import type { PageDSL } from "@/lib/page-dsl";
+import type { PageDSL, PagePreviewContext } from "@/lib/page-dsl";
 
 const { Text } = Typography;
 
@@ -23,7 +23,15 @@ const DEVICE_PRESETS: Record<string, DevicePreset> = {
   desktop: { label: "桌面", width: 1024, height: 768, icon: <DesktopOutlined /> },
 };
 
-export function PreviewPanel({ dsl }: { dsl: PageDSL }) {
+export function PreviewPanel({
+  dsl,
+  previewContext,
+  usesExampleData,
+}: {
+  dsl: PageDSL;
+  previewContext: PagePreviewContext;
+  usesExampleData: boolean;
+}) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const [device, setDevice] = useState("iphone15");
   const [scale, setScale] = useState(75);
@@ -41,10 +49,17 @@ export function PreviewPanel({ dsl }: { dsl: PageDSL }) {
   const sendDSL = useCallback(() => {
     if (!iframeRef.current?.contentWindow || !ready) return;
     iframeRef.current.contentWindow.postMessage(
-      { type: "preview-dsl", payload: dsl },
+      {
+        type: "preview-dsl",
+        payload: {
+          dsl,
+          previewContext,
+          previewMode: usesExampleData ? "example" : "bound",
+        },
+      },
       getPreviewOrigin(),
     );
-  }, [dsl, ready, getPreviewOrigin]);
+  }, [dsl, previewContext, ready, getPreviewOrigin, usesExampleData]);
 
   useEffect(() => {
     sendDSL();
@@ -67,20 +82,25 @@ export function PreviewPanel({ dsl }: { dsl: PageDSL }) {
   return (
     <div className="flex h-full flex-col items-center">
       <div className="mb-3 flex w-full items-center justify-between border-b pb-2">
-        <Select
-          size="small"
-          value={device}
-          onChange={setDevice}
-          options={Object.entries(DEVICE_PRESETS).map(([key, p]) => ({
-            value: key,
-            label: (
-              <span className="flex items-center gap-1">
-                {p.icon} {p.label}
-              </span>
-            ),
-          }))}
-          style={{ width: 150 }}
-        />
+        <div className="flex items-center gap-2">
+          <Select
+            size="small"
+            value={device}
+            onChange={setDevice}
+            options={Object.entries(DEVICE_PRESETS).map(([key, p]) => ({
+              value: key,
+              label: (
+                <span className="flex items-center gap-1">
+                  {p.icon} {p.label}
+                </span>
+              ),
+            }))}
+            style={{ width: 150 }}
+          />
+          <Tag color={usesExampleData ? "blue" : "green"}>
+            {usesExampleData ? "草稿预览 · 示例数据" : "草稿预览 · 已绑定真实产品"}
+          </Tag>
+        </div>
         <div className="flex items-center gap-2">
           <Text type="secondary" className="text-xs">缩放</Text>
           <Slider

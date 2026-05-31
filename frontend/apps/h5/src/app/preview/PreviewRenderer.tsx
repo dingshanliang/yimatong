@@ -36,13 +36,58 @@ type PreviewConfig = {
   };
 };
 
+type PreviewProduct = {
+  id: string;
+  name: string;
+  origin?: string;
+  image_url?: string;
+  description?: string;
+  story_content?: string;
+};
+
+type PreviewBatch = {
+  id: string;
+  batch_code: string;
+  production_date?: string;
+  expiry_date?: string;
+  origin?: string;
+};
+
+type PreviewAsset = {
+  id: string;
+  asset_type: string;
+  name: string;
+  issuer?: string;
+  description?: string;
+  valid_until?: string;
+  image_url?: string;
+  file_url?: string;
+};
+
+type PreviewContext = {
+  product?: PreviewProduct | null;
+  batches?: PreviewBatch[];
+  assets?: PreviewAsset[];
+};
+
 export function PreviewRenderer() {
   const [config, setConfig] = useState<PreviewConfig | null>(null);
+  const [previewContext, setPreviewContext] = useState<PreviewContext>({});
+  const [previewMode, setPreviewMode] = useState<"example" | "bound">("example");
 
   useEffect(() => {
     function handleMessage(event: MessageEvent) {
       if (event.data?.type === "preview-dsl") {
-        setConfig(event.data.payload as PreviewConfig);
+        const payload = event.data.payload;
+        if (payload?.dsl) {
+          setConfig(payload.dsl as PreviewConfig);
+          setPreviewContext(payload.previewContext || {});
+          setPreviewMode(payload.previewMode === "bound" ? "bound" : "example");
+        } else {
+          setConfig(payload as PreviewConfig);
+          setPreviewContext({});
+          setPreviewMode("example");
+        }
       }
     }
     window.addEventListener("message", handleMessage);
@@ -68,24 +113,38 @@ export function PreviewRenderer() {
         logoUrl={branding.logo_url || ""}
         primaryColor={branding.primary_color}
       />
+      <div className={`mx-4 mt-3 rounded-full px-3 py-1 text-xs ${previewMode === "bound" ? "bg-green-50 text-green-700" : "bg-blue-50 text-blue-700"}`}>
+        {previewMode === "bound" ? "草稿预览 · 已绑定真实产品" : "草稿预览 · 示例数据"}
+      </div>
       {enabledModules.map((mod) => (
-        <PreviewModule key={mod.id} module={mod} />
+        <PreviewModule key={mod.id} module={mod} previewContext={previewContext} previewMode={previewMode} />
       ))}
       <FooterSection branding={{ name: branding.name, logo_url: branding.logo_url }} />
     </div>
   );
 }
 
-function PreviewModule({ module }: { module: ModuleConfig }) {
+function PreviewModule({
+  module,
+  previewContext,
+  previewMode,
+}: {
+  module: ModuleConfig;
+  previewContext: PreviewContext;
+  previewMode: "example" | "bound";
+}) {
   const config = module.config || {};
+  const product = previewContext.product || null;
+  const latestBatch = previewContext.batches?.[0];
+  const assets = previewContext.assets || [];
 
   switch (module.type) {
     case "product_hero":
       return (
         <ProductCard
-          productName={(config.title_template as string) || "产品名称预览"}
-          description="产品描述预览"
-          imageUrl={config.image_url as string}
+          productName={(config.title_template as string) || product?.name || "产品名称预览"}
+          description={(config.description as string) || product?.description || product?.story_content || "产品描述预览"}
+          imageUrl={(config.image_url as string) || product?.image_url}
           showBadge={config.show_verify_badge as boolean}
         />
       );
@@ -99,19 +158,42 @@ function PreviewModule({ module }: { module: ModuleConfig }) {
       return (
         <TraceabilitySection
           codeData={{
-            batch: { origin: "产地预览", production_date: "2026-01-01", batch_no: "BATCH001" },
-            product: { name: "产品预览" },
+            batch: {
+              origin: latestBatch?.origin || product?.origin || "产地预览",
+              production_date: latestBatch?.production_date || "2026-01-01",
+              expiry_date: latestBatch?.expiry_date,
+              batch_no: latestBatch?.batch_code || "BATCH001",
+            },
+            product: { name: product?.name || "产品预览" },
           }}
           config={config as { fields?: string[] }}
         />
       );
     case "test_reports":
-      return <TestReportSection reports={[]} />;
+      return (
+        <TestReportSection
+          reports={filterAssets(assets, "test_report", config.report_ids).map((asset) => ({
+            id: asset.id,
+            title: asset.name,
+            summary: asset.description || asset.issuer,
+            file_url: asset.file_url,
+            image_url: asset.image_url,
+          }))}
+        />
+      );
     case "certificates":
       return (
         <div className="mx-4 mt-3 rounded-2xl bg-white p-4 shadow-sm">
           <h2 className="text-base font-semibold text-gray-900">资质证书</h2>
-          <p className="mt-2 text-sm text-gray-400">预览模式下显示示例证书</p>
+          {filterAssets(assets, "certificate", config.certificate_ids).length > 0 ? (
+            <div className="mt-2 space-y-2">
+              {filterAssets(assets, "certificate", config.certificate_ids).slice(0, 3).map((asset) => (
+                <div key={asset.id} className="rounded-xl bg-gray-50 p-3 text-sm text-gray-700">{asset.name}</div>
+              ))}
+            </div>
+          ) : (
+            <p className="mt-2 text-sm text-gray-400">预览模式下显示示例证书</p>
+          )}
         </div>
       );
     case "benefit_card":
@@ -169,7 +251,15 @@ function PreviewModule({ module }: { module: ModuleConfig }) {
       return (
         <div className="mx-4 mt-3 rounded-2xl bg-white p-4 shadow-sm">
           <h2 className="text-base font-semibold text-gray-900">视频/图文</h2>
-          <p className="mt-2 text-sm text-gray-400">预览模式下显示占位内容</p>
+          {filterAssets(assets, ["image", "video", "story"], config.asset_ids).length > 0 ? (
+            <div className="mt-2 space-y-2">
+              {filterAssets(assets, ["image", "video", "story"], config.asset_ids).slice(0, 3).map((asset) => (
+                <div key={asset.id} className="rounded-xl bg-gray-50 p-3 text-sm text-gray-700">{asset.name}</div>
+              ))}
+            </div>
+          ) : (
+            <p className="mt-2 text-sm text-gray-400">{previewMode === "bound" ? "未关联素材" : "预览模式下显示占位内容"}</p>
+          )}
         </div>
       );
     case "legal_terms":
@@ -248,4 +338,10 @@ function PreviewModule({ module }: { module: ModuleConfig }) {
         </div>
       );
   }
+}
+
+function filterAssets(assets: PreviewAsset[], assetType: string | string[], selectedIds: unknown) {
+  const types = Array.isArray(assetType) ? assetType : [assetType];
+  const ids = Array.isArray(selectedIds) ? selectedIds.map(String) : [];
+  return assets.filter((asset) => types.includes(asset.asset_type) && (ids.length === 0 || ids.includes(asset.id)));
 }

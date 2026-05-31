@@ -2,26 +2,34 @@
 
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { HolderOutlined } from "@ant-design/icons";
-import { Button, Popconfirm, Select, Switch } from "antd";
-import { MODULE_TYPES, type ModuleConfig, type ModuleType } from "@/lib/page-dsl";
-import { ModuleConfigForm } from "./ModuleConfigForms";
+import { CopyOutlined, HolderOutlined, MoreOutlined, SettingOutlined } from "@ant-design/icons";
+import { App, Dropdown, Switch, Tag, Tooltip } from "antd";
+import { MODULE_TYPES, type ModuleConfig, type ModuleReadiness } from "@/lib/page-dsl";
+
+const STATUS_TAGS: Record<ModuleReadiness["status"], { label: string; color: string }> = {
+  configured: { label: "已配置", color: "green" },
+  incomplete: { label: "待完善", color: "orange" },
+  example: { label: "使用示例数据", color: "blue" },
+};
 
 export function ModuleItem({
   module,
-  productId,
-  expanded,
-  onToggleExpand,
+  selected,
+  readiness,
+  onSelect,
   onUpdate,
   onRemove,
+  onDuplicate,
 }: {
   module: ModuleConfig;
-  productId?: string | null;
-  expanded: boolean;
-  onToggleExpand: () => void;
+  selected: boolean;
+  readiness?: ModuleReadiness;
+  onSelect: () => void;
   onUpdate: (updates: Partial<ModuleConfig>) => void;
   onRemove: () => void;
+  onDuplicate: () => void;
 }) {
+  const { modal } = App.useApp();
   const {
     attributes,
     listeners,
@@ -37,74 +45,90 @@ export function ModuleItem({
     opacity: isDragging ? 0.5 : 1,
   };
 
-  const typeLabel =
-    MODULE_TYPES.find((t) => t.value === module.type)?.label || module.type;
+  const typeLabel = MODULE_TYPES.find((type) => type.value === module.type)?.label || module.type;
+  const status = readiness ? STATUS_TAGS[readiness.status] : null;
 
   return (
     <div
       ref={setNodeRef}
       style={style}
       className={`rounded border transition-colors ${
-        module.enabled ? "bg-white" : "bg-gray-50 opacity-60"
-      } ${expanded ? "ring-2 ring-blue-200" : ""}`}
+        selected ? "border-blue-500 bg-blue-50" : "border-gray-200 bg-white"
+      } ${module.enabled === false ? "opacity-60" : ""}`}
     >
       <div
-        className="flex items-center gap-2 p-3 cursor-pointer"
-        onClick={onToggleExpand}
+        role="button"
+        tabIndex={0}
+        className="flex w-full cursor-pointer items-center gap-2 p-3 text-left"
+        onClick={onSelect}
+        onKeyDown={(event) => {
+          if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            onSelect();
+          }
+        }}
       >
         <span
           {...attributes}
           {...listeners}
           className="cursor-grab text-gray-400 hover:text-gray-600 active:cursor-grabbing"
+          onClick={(event) => event.stopPropagation()}
         >
           <HolderOutlined />
         </span>
         <Switch
           size="small"
-          checked={module.enabled}
+          checked={module.enabled !== false}
           onChange={(checked) => onUpdate({ enabled: checked })}
-          onClick={(_, e) => e.stopPropagation()}
+          onClick={(_, event) => event.stopPropagation()}
         />
-        <span className="text-sm font-medium">{typeLabel}</span>
-        <span className="text-xs text-gray-400">{module.id}</span>
-        <div className="flex-1" />
-        <Popconfirm
-          title="删除此模块？"
-          onConfirm={onRemove}
-          onCancel={(e) => e?.stopPropagation()}
-        >
-          <Button
-            size="small"
-            danger
-            type="text"
-            onClick={(e) => e.stopPropagation()}
-          >
-            删除
-          </Button>
-        </Popconfirm>
-      </div>
-
-      {expanded && (
-        <div className="border-t px-3 pb-3 pt-2">
-          <div className="mb-2 flex gap-2">
-            <Select
-              size="small"
-              value={module.type}
-              onChange={(type: ModuleType) => onUpdate({ type })}
-              options={MODULE_TYPES}
-              style={{ width: 140 }}
-            />
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2">
+            <span className="truncate text-sm font-medium">{typeLabel}</span>
+            {selected ? <SettingOutlined className="text-blue-500" /> : null}
           </div>
-          <div className="rounded bg-gray-50 p-2">
-            <ModuleConfigForm
-              moduleType={module.type}
-              productId={productId}
-              config={module.config || {}}
-              onChange={(config) => onUpdate({ config })}
-            />
+          <div className="mt-1 flex items-center gap-2">
+            {status ? <Tag color={status.color}>{status.label}</Tag> : null}
+            {readiness?.message ? (
+              <Tooltip title={readiness.issues.join("；") || readiness.message}>
+                <span className="truncate text-xs text-gray-500">{readiness.message}</span>
+              </Tooltip>
+            ) : null}
           </div>
         </div>
-      )}
+        <Dropdown
+          trigger={["click"]}
+          menu={{
+            items: [
+              { key: "duplicate", icon: <CopyOutlined />, label: "复制模块" },
+              { type: "divider" },
+              { key: "delete", danger: true, label: "删除模块" },
+            ],
+            onClick: ({ key, domEvent }) => {
+              domEvent.stopPropagation();
+              if (key === "duplicate") {
+                onDuplicate();
+                return;
+              }
+              modal.confirm({
+                title: "删除此模块？",
+                content: "删除后需要重新添加和配置，当前草稿保存后才会生效。",
+                okText: "删除",
+                okButtonProps: { danger: true },
+                cancelText: "取消",
+                onOk: onRemove,
+              });
+            },
+          }}
+        >
+          <span
+            className="rounded px-2 py-1 text-gray-500 hover:bg-gray-100"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <MoreOutlined />
+          </span>
+        </Dropdown>
+      </div>
     </div>
   );
 }

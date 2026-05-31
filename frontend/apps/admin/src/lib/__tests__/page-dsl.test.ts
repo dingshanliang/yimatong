@@ -3,10 +3,11 @@ import {
   validateDSL,
   createEmptyDSL,
   createDefaultModules,
+  inspectPageReadiness,
   MODULE_TYPES,
   MODULE_TYPE_LABELS,
 } from "../page-dsl";
-import type { PageDSL, ModuleConfig } from "../page-dsl";
+import type { PageDSL } from "../page-dsl";
 
 describe("page-dsl utilities", () => {
   describe("validateDSL", () => {
@@ -139,6 +140,100 @@ describe("page-dsl utilities", () => {
       expect(MODULE_TYPES.length).toBe(Object.keys(MODULE_TYPE_LABELS).length);
       expect(MODULE_TYPES[0]).toHaveProperty("value");
       expect(MODULE_TYPES[0]).toHaveProperty("label");
+    });
+  });
+
+  describe("inspectPageReadiness", () => {
+    it("blocks publish when page has no product", () => {
+      const dsl: PageDSL = {
+        modules: [{ id: "hero", type: "product_hero", enabled: true, config: {} }],
+      };
+
+      const readiness = inspectPageReadiness(dsl, {});
+
+      expect(readiness.blockingIssues).toContain("页面未关联产品，消费者扫码不会自动命中该页面");
+      expect(readiness.usesExampleData).toBe(true);
+      expect(readiness.moduleStatuses[0]).toMatchObject({
+        moduleId: "hero",
+        status: "example",
+      });
+    });
+
+    it("blocks publish when no module is enabled", () => {
+      const dsl: PageDSL = {
+        modules: [{ id: "hero", type: "product_hero", enabled: false, config: {} }],
+      };
+
+      const readiness = inspectPageReadiness(dsl, {
+        product: { id: "p1", name: "五常大米" },
+      });
+
+      expect(readiness.blockingIssues).toContain("页面没有启用模块");
+    });
+
+    it("warns when report and certificate modules have no selected assets", () => {
+      const dsl: PageDSL = {
+        modules: [
+          { id: "report", type: "test_reports", enabled: true, config: {} },
+          { id: "cert", type: "certificates", enabled: true, config: {} },
+        ],
+      };
+
+      const readiness = inspectPageReadiness(dsl, {
+        product: { id: "p1", name: "五常大米" },
+      });
+
+      expect(readiness.blockingIssues).toEqual([]);
+      expect(readiness.warnings).toEqual(
+        expect.arrayContaining([
+          "检测报告：检测报告模块未关联产品资料",
+          "资质证书：资质证书模块未关联产品资料",
+        ]),
+      );
+    });
+
+    it("warns when traceability has no real batch data", () => {
+      const dsl: PageDSL = {
+        modules: [
+          {
+            id: "trace",
+            type: "light_traceability",
+            enabled: true,
+            config: { fields: ["origin", "batch_no"] },
+          },
+        ],
+      };
+
+      const readiness = inspectPageReadiness(dsl, {
+        product: { id: "p1", name: "五常大米" },
+        batches: [],
+      });
+
+      expect(readiness.usesExampleData).toBe(true);
+      expect(readiness.warnings).toContain("溯源信息：溯源信息暂无真实生产批次数据");
+    });
+
+    it("passes configured product hero and traceability with real product and batch", () => {
+      const dsl: PageDSL = {
+        modules: [
+          { id: "hero", type: "product_hero", enabled: true, config: {} },
+          {
+            id: "trace",
+            type: "light_traceability",
+            enabled: true,
+            config: { fields: ["origin", "batch_no"] },
+          },
+        ],
+      };
+
+      const readiness = inspectPageReadiness(dsl, {
+        product: { id: "p1", name: "五常大米" },
+        batches: [{ id: "b1", batch_code: "PB-001", origin: "五常" }],
+      });
+
+      expect(readiness.blockingIssues).toEqual([]);
+      expect(readiness.warnings).toEqual([]);
+      expect(readiness.usesExampleData).toBe(false);
     });
   });
 });

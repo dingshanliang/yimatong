@@ -3,7 +3,7 @@
 /* eslint-disable @next/next/no-img-element */
 
 import { useEffect, useMemo, useState } from "react";
-import type { PageDSL, ModuleConfig } from "@/lib/page-dsl";
+import type { PageDSL, ModuleConfig, PagePreviewContext, PreviewAsset } from "@/lib/page-dsl";
 
 type PreviewConfig = PageDSL & {
   tenant_branding?: {
@@ -30,11 +30,22 @@ const card: React.CSSProperties = {
 
 export function PagePreviewRenderer() {
   const [config, setConfig] = useState<PreviewConfig | null>(null);
+  const [previewContext, setPreviewContext] = useState<PagePreviewContext>({});
+  const [previewMode, setPreviewMode] = useState<"example" | "bound">("example");
 
   useEffect(() => {
     function handleMessage(event: MessageEvent) {
       if (event.data?.type === "preview-dsl") {
-        setConfig(event.data.payload as PreviewConfig);
+        const payload = event.data.payload;
+        if (payload?.dsl) {
+          setConfig(payload.dsl as PreviewConfig);
+          setPreviewContext(payload.previewContext || {});
+          setPreviewMode(payload.previewMode === "bound" ? "bound" : "example");
+        } else {
+          setConfig(payload as PreviewConfig);
+          setPreviewContext({});
+          setPreviewMode("example");
+        }
       }
     }
 
@@ -66,8 +77,18 @@ export function PagePreviewRenderer() {
         logoUrl={branding.logo_url}
         primaryColor={branding.primary_color}
       />
+      <section style={{ margin: "10px 16px 0", fontSize: 12, color: previewMode === "bound" ? "#15803d" : "#2563eb" }}>
+        {previewMode === "bound" ? "草稿预览 · 已绑定真实产品" : "草稿预览 · 示例数据"}
+      </section>
       {enabledModules.length > 0 ? (
-        enabledModules.map((module) => <PreviewModule key={module.id} module={module} />)
+        enabledModules.map((module) => (
+          <PreviewModule
+            key={module.id}
+            module={module}
+            previewContext={previewContext}
+            previewMode={previewMode}
+          />
+        ))
       ) : (
         <section style={{ ...card, textAlign: "center", color: "#94a3b8" }}>
           暂无模块，点击左侧「添加模块」开始配置。
@@ -127,25 +148,37 @@ function BrandHeader({
   );
 }
 
-function PreviewModule({ module }: { module: ModuleConfig }) {
+function PreviewModule({
+  module,
+  previewContext,
+  previewMode,
+}: {
+  module: ModuleConfig;
+  previewContext: PagePreviewContext;
+  previewMode: "example" | "bound";
+}) {
   const config = module.config || {};
+  const product = previewContext.product || null;
+  const latestBatch = previewContext.batches?.[0];
+  const assets = previewContext.assets || [];
+  const isExample = previewMode !== "bound";
 
   switch (module.type) {
     case "product_hero":
       return (
         <section style={card}>
-          {typeof config.image_url === "string" && config.image_url ? (
+          {(typeof config.image_url === "string" && config.image_url) || product?.image_url ? (
             <img
-              src={config.image_url}
+              src={(config.image_url as string) || product?.image_url}
               alt="产品展示"
               style={{ width: "100%", height: 192, objectFit: "cover", borderRadius: 12, marginBottom: 12 }}
             />
           ) : null}
           <h1 style={{ margin: 0, fontSize: 22, lineHeight: "30px", fontWeight: 800 }}>
-            {(config.title_template as string) || "产品名称预览"}
+            {(config.title_template as string) || product?.name || "产品名称预览"} {isExample ? <InlineFlag /> : null}
           </h1>
           <p style={{ margin: "6px 0 0", color: "#64748b", fontSize: 14, lineHeight: "22px" }}>
-            {(config.description as string) || "这里展示产品介绍、产地和关键卖点。"}
+            {(config.description as string) || product?.description || product?.story_content || "这里展示产品介绍、产地和关键卖点。"}
           </p>
           {config.show_verify_badge ? (
             <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
@@ -159,16 +192,18 @@ function PreviewModule({ module }: { module: ModuleConfig }) {
       return (
         <section style={{ ...card, border: "1px solid #bbf7d0", background: "#f0fdf4" }}>
           <strong style={{ display: "block", color: "#166534", fontSize: 17 }}>验证通过</strong>
-          <p style={{ margin: "6px 0 0", color: "#15803d", fontSize: 14 }}>这是首次扫码验证，产品为正品。</p>
+          <p style={{ margin: "6px 0 0", color: "#15803d", fontSize: 14 }}>
+            {isExample ? "示例扫码结果：首次扫码验证，产品为正品。" : "首次扫码验证时，消费者将在这里看到验真结果。"}
+          </p>
         </section>
       );
     case "light_traceability": {
       const fields = (config.fields as string[]) || ["origin", "production_date", "batch_no"];
       const values: Record<string, string> = {
-        origin: "产地预览",
-        production_date: "2026-01-01",
-        expiry_date: "2027-01-01",
-        batch_no: "BATCH001",
+        origin: latestBatch?.origin || product?.origin || "产地预览",
+        production_date: latestBatch?.production_date || "2026-01-01",
+        expiry_date: latestBatch?.expiry_date || "2027-01-01",
+        batch_no: latestBatch?.batch_code || "BATCH001",
       };
       const labels: Record<string, string> = {
         origin: "产地",
@@ -179,6 +214,7 @@ function PreviewModule({ module }: { module: ModuleConfig }) {
       return (
         <section style={card}>
           <h2 style={{ margin: 0, fontSize: 17 }}>溯源信息</h2>
+          {isExample || !latestBatch ? <p style={{ margin: "6px 0 0", color: "#2563eb", fontSize: 12 }}>以下为示例批次数据</p> : null}
           <div style={{ display: "grid", gap: 10, marginTop: 12 }}>
             {fields.map((field) => (
               <div key={field} style={{ display: "flex", justifyContent: "space-between", fontSize: 14 }}>
@@ -191,9 +227,9 @@ function PreviewModule({ module }: { module: ModuleConfig }) {
       );
     }
     case "test_reports":
-      return <SimpleCard title="检测报告" body="预览模式下显示关联检测报告入口。" />;
+      return <AssetCard title="检测报告" assets={filterAssets(assets, "test_report", config.report_ids)} emptyBody="预览模式下显示关联检测报告入口。" />;
     case "certificates":
-      return <SimpleCard title="资质证书" body="预览模式下显示关联证书入口。" />;
+      return <AssetCard title="资质证书" assets={filterAssets(assets, "certificate", config.certificate_ids)} emptyBody="预览模式下显示关联证书入口。" />;
     case "benefit_card":
       return (
         <section style={{ ...card, background: "linear-gradient(135deg, #fff7ed, #ffffff)" }}>
@@ -223,7 +259,7 @@ function PreviewModule({ module }: { module: ModuleConfig }) {
     case "lead_form":
       return <SimpleCard title={(config.title as string) || "填写信息"} body="姓名、手机号等留资字段将在这里展示。" />;
     case "media_section":
-      return <SimpleCard title="视频/图文" body="展示品牌故事、产地环境或生产过程素材。" />;
+      return <AssetCard title="视频/图文" assets={filterAssets(assets, ["image", "video", "story"], config.asset_ids)} emptyBody="展示品牌故事、产地环境或生产过程素材。" />;
     case "legal_terms":
       return <SimpleCard title="法律条款" body="隐私政策、活动规则和合规说明。" />;
     case "custom_html":
@@ -250,6 +286,49 @@ function PreviewModule({ module }: { module: ModuleConfig }) {
     default:
       return <SimpleCard title="未知模块" body={`模块类型：${module.type}`} />;
   }
+}
+
+function filterAssets(assets: PreviewAsset[], assetType: string | string[], selectedIds: unknown) {
+  const types = Array.isArray(assetType) ? assetType : [assetType];
+  const ids = Array.isArray(selectedIds) ? selectedIds.map(String) : [];
+  return assets.filter((asset) => types.includes(asset.asset_type) && (ids.length === 0 || ids.includes(asset.id)));
+}
+
+function AssetCard({
+  title,
+  assets,
+  emptyBody,
+}: {
+  title: string;
+  assets: PreviewAsset[];
+  emptyBody: string;
+}) {
+  if (assets.length === 0) {
+    return <SimpleCard title={title} body={`${emptyBody}（示例）`} />;
+  }
+  return (
+    <section style={card}>
+      <h2 style={{ margin: 0, fontSize: 17 }}>{title}</h2>
+      <div style={{ display: "grid", gap: 8, marginTop: 12 }}>
+        {assets.slice(0, 3).map((asset) => (
+          <div key={asset.id} style={{ borderRadius: 10, background: "#f8fafc", padding: "8px 10px" }}>
+            <strong style={{ display: "block", fontSize: 14 }}>{asset.name}</strong>
+            <span style={{ color: "#64748b", fontSize: 12 }}>
+              {asset.issuer || asset.description || asset.valid_until || "已关联产品资料"}
+            </span>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function InlineFlag() {
+  return (
+    <span style={{ color: "#2563eb", fontSize: 12, fontWeight: 600, verticalAlign: "middle" }}>
+      示例
+    </span>
+  );
 }
 
 function SimpleCard({ title, body }: { title: string; body: string }) {
