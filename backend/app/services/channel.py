@@ -1,7 +1,6 @@
 """渠道服务层：经销商/区域/门店 CRUD + 码段分配 + 窜货检测"""
 
 import uuid
-from datetime import UTC, datetime
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -9,7 +8,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.channel import CodeAllocation, Distributor, DiversionClue, Region, Store
 from app.models.code import CodeBatch, CodeItem
 from app.utils import utcnow
-
 
 # ── 经销商 ────────────────────────────────────────
 
@@ -458,7 +456,7 @@ async def check_diversion(
     clue = DiversionClue(
         tenant_id=tenant_id,
         public_id=public_id,
-        code_item_id=item.id if item else uuid.uuid4(),
+        code_item_id=item.id if item else uuid.Nil,
         expected_region=expected_region,
         detected_city=detected_city,
         distributor_id=dist_id,

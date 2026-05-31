@@ -15,7 +15,6 @@ from app.services.regional import (
     create_regional_org,
     create_shared_template,
     get_advanced_dashboard,
-    get_org,
     get_regional_dashboard,
     get_whitelabel,
     list_code_rules,
@@ -26,6 +25,7 @@ from app.services.regional import (
     remove_member,
     set_whitelabel,
     update_member,
+    verify_org_access,
 )
 
 regional_router = APIRouter(prefix="/api/v1/regional", tags=["regional"])
@@ -84,9 +84,7 @@ async def get_org_endpoint(
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
-    org = await get_org(db, org_id)
-    if not org:
-        return {"error": "not found"}
+    org = await verify_org_access(db, org_id, tenant_id)
     return {"id": str(org.id), "name": org.name, "org_type": org.org_type, "config": org.config}
 
 
@@ -100,10 +98,13 @@ async def add_member_endpoint(
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
+    await verify_org_access(db, org_id, tenant_id)
     member = await add_member(db, org_id, uuid.UUID(body.tenant_id), body.member_name)
     return {
-        "id": str(member.id), "org_id": str(member.org_id),
-        "tenant_id": str(member.tenant_id), "member_name": member.member_name,
+        "id": str(member.id),
+        "org_id": str(member.org_id),
+        "tenant_id": str(member.tenant_id),
+        "member_name": member.member_name,
         "status": member.status,
     }
 
@@ -117,11 +118,17 @@ async def list_members_endpoint(
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
+    await verify_org_access(db, org_id, tenant_id)
     members, total = await list_members(db, org_id, status=status, page=page, page_size=page_size)
     return {
         "items": [
-            {"id": str(m.id), "org_id": str(m.org_id), "tenant_id": str(m.tenant_id),
-             "member_name": m.member_name, "status": m.status}
+            {
+                "id": str(m.id),
+                "org_id": str(m.org_id),
+                "tenant_id": str(m.tenant_id),
+                "member_name": m.member_name,
+                "status": m.status,
+            }
             for m in members
         ],
         "total": total,
@@ -138,12 +145,15 @@ async def update_member_endpoint(
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
+    await verify_org_access(db, org_id, tenant_id)
     member = await update_member(db, member_id, member_name=body.member_name, status=body.status)
     if not member:
         return {"error": "not found"}
     return {
-        "id": str(member.id), "org_id": str(member.org_id),
-        "tenant_id": str(member.tenant_id), "member_name": member.member_name,
+        "id": str(member.id),
+        "org_id": str(member.org_id),
+        "tenant_id": str(member.tenant_id),
+        "member_name": member.member_name,
         "status": member.status,
     }
 
@@ -155,6 +165,7 @@ async def remove_member_endpoint(
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
+    await verify_org_access(db, org_id, tenant_id)
     ok = await remove_member(db, member_id)
     return {"success": ok}
 
@@ -169,6 +180,7 @@ async def create_template_endpoint(
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
+    await verify_org_access(db, org_id, tenant_id)
     template = await create_shared_template(db, org_id, body.name, body.config)
     return {"id": str(template.id), "org_id": str(template.org_id), "name": template.name, "config": template.config}
 
@@ -179,6 +191,7 @@ async def list_templates_endpoint(
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
+    await verify_org_access(db, org_id, tenant_id)
     templates = await list_shared_templates(db, org_id)
     return [{"id": str(t.id), "org_id": str(t.org_id), "name": t.name, "config": t.config} for t in templates]
 
@@ -190,6 +203,7 @@ async def publish_template_endpoint(
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
+    await verify_org_access(db, org_id, tenant_id)
     return await publish_template_to_members(db, org_id, template_id)
 
 
@@ -203,8 +217,14 @@ async def authorize_product_endpoint(
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
+    await verify_org_access(db, org_id, tenant_id)
     auth = await authorize_product(db, org_id, uuid.UUID(body.product_id), uuid.UUID(body.tenant_id))
-    return {"id": str(auth.id), "org_id": str(auth.org_id), "product_id": str(auth.product_id), "tenant_id": str(auth.tenant_id)}
+    return {
+        "id": str(auth.id),
+        "org_id": str(auth.org_id),
+        "product_id": str(auth.product_id),
+        "tenant_id": str(auth.tenant_id),
+    }
 
 
 # ── 看板 ──────────────────────────────────────────
@@ -217,6 +237,7 @@ async def dashboard_endpoint(
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
+    await verify_org_access(db, org_id, tenant_id)
     return await get_regional_dashboard(db, org_id, days_back=days_back)
 
 
@@ -242,8 +263,15 @@ async def create_code_rule_endpoint(
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
+    await verify_org_access(db, org_id, tenant_id)
     rule = await create_code_rule(db, org_id, body.rule_name, body.pattern, body.prefix)
-    return {"id": str(rule.id), "org_id": str(rule.org_id), "rule_name": rule.rule_name, "pattern": rule.pattern, "prefix": rule.prefix}
+    return {
+        "id": str(rule.id),
+        "org_id": str(rule.org_id),
+        "rule_name": rule.rule_name,
+        "pattern": rule.pattern,
+        "prefix": rule.prefix,
+    }
 
 
 @regional_router.get("/orgs/{org_id}/code-rules", summary="码规则列表")
@@ -252,6 +280,7 @@ async def list_code_rules_endpoint(
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
+    await verify_org_access(db, org_id, tenant_id)
     rules = await list_code_rules(db, org_id)
     return [{"id": str(r.id), "rule_name": r.rule_name, "pattern": r.pattern, "prefix": r.prefix} for r in rules]
 
@@ -263,6 +292,7 @@ async def advanced_dashboard_endpoint(
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
+    await verify_org_access(db, org_id, tenant_id)
     return await get_advanced_dashboard(db, org_id, days_back=days_back)
 
 
@@ -273,8 +303,15 @@ async def set_whitelabel_endpoint(
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
+    await verify_org_access(db, org_id, tenant_id)
     config = await set_whitelabel(db, org_id, body.brand_name, body.hide_yimatong, body.primary_color)
-    return {"id": str(config.id), "org_id": str(config.org_id), "brand_name": config.brand_name, "hide_yimatong": config.hide_yimatong, "primary_color": config.primary_color}
+    return {
+        "id": str(config.id),
+        "org_id": str(config.org_id),
+        "brand_name": config.brand_name,
+        "hide_yimatong": config.hide_yimatong,
+        "primary_color": config.primary_color,
+    }
 
 
 @regional_router.get("/orgs/{org_id}/whitelabel", summary="获取白标配置")
@@ -283,10 +320,17 @@ async def get_whitelabel_endpoint(
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
+    await verify_org_access(db, org_id, tenant_id)
     config = await get_whitelabel(db, org_id)
     if not config:
         return {"brand_name": "", "hide_yimatong": False, "primary_color": "#000000"}
-    return {"id": str(config.id), "org_id": str(config.org_id), "brand_name": config.brand_name, "hide_yimatong": config.hide_yimatong, "primary_color": config.primary_color}
+    return {
+        "id": str(config.id),
+        "org_id": str(config.org_id),
+        "brand_name": config.brand_name,
+        "hide_yimatong": config.hide_yimatong,
+        "primary_color": config.primary_color,
+    }
 
 
 # ── 统一营销活动管理 ──────────────────────────────
@@ -305,7 +349,9 @@ async def create_unified_campaign_endpoint(
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
+    await verify_org_access(db, org_id, tenant_id)
     from app.services.regional_campaign import create_unified_campaign
+
     campaign = await create_unified_campaign(db, org_id, tenant_id, body.name, body.description, body.member_ids)
     return campaign
 
@@ -316,7 +362,9 @@ async def list_unified_campaigns_endpoint(
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
+    await verify_org_access(db, org_id, tenant_id)
     from app.services.regional_campaign import list_unified_campaigns
+
     return await list_unified_campaigns(db, org_id)
 
 
@@ -325,6 +373,7 @@ async def list_unified_campaigns_endpoint(
 
 class DataIsolationPolicy(BaseModel):
     """数据隔离策略：brand_all = 品牌方看全部，own_only = 只看自己"""
+
     scan_visibility: str = "own_only"  # own_only | brand_all
     claim_visibility: str = "own_only"  # own_only | brand_all
     member_data_visibility: str = "brand_all"  # own_only | brand_all
@@ -336,15 +385,15 @@ async def get_data_policy_endpoint(
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
-    from app.services.regional import get_org
-    org = await get_org(db, org_id)
-    if not org:
-        return {"error": "not found"}
-    policy = org.config.get("data_policy", {
-        "scan_visibility": "own_only",
-        "claim_visibility": "own_only",
-        "member_data_visibility": "brand_all",
-    })
+    org = await verify_org_access(db, org_id, tenant_id)
+    policy = org.config.get(
+        "data_policy",
+        {
+            "scan_visibility": "own_only",
+            "claim_visibility": "own_only",
+            "member_data_visibility": "brand_all",
+        },
+    )
     return {"org_id": str(org_id), "policy": policy}
 
 
@@ -355,10 +404,7 @@ async def update_data_policy_endpoint(
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
-    from app.services.regional import get_org
-    org = await get_org(db, org_id)
-    if not org:
-        return {"error": "not found"}
+    org = await verify_org_access(db, org_id, tenant_id)
     org.config["data_policy"] = body.model_dump()
     await db.flush()
     return {"org_id": str(org_id), "policy": body.model_dump()}
@@ -384,16 +430,32 @@ async def get_whitelabel_config_endpoint(
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
+    await verify_org_access(db, org_id, tenant_id)
     from app.services.whitelabel import get_whitelabel_config
+
     config = await get_whitelabel_config(db, org_id)
     if not config:
-        return {"brand_name": "", "hide_yimatong": False, "primary_color": "#000000", "logo_url": None, "favicon_url": None, "login_bg_url": None, "font_family": "", "custom_css": None}
+        return {
+            "brand_name": "",
+            "hide_yimatong": False,
+            "primary_color": "#000000",
+            "logo_url": None,
+            "favicon_url": None,
+            "login_bg_url": None,
+            "font_family": "",
+            "custom_css": None,
+        }
     return {
-        "id": str(config.id), "org_id": str(config.org_id),
-        "brand_name": config.brand_name, "hide_yimatong": config.hide_yimatong,
-        "primary_color": config.primary_color, "logo_url": config.logo_url,
-        "favicon_url": config.favicon_url, "login_bg_url": config.login_bg_url,
-        "font_family": config.font_family, "custom_css": config.custom_css,
+        "id": str(config.id),
+        "org_id": str(config.org_id),
+        "brand_name": config.brand_name,
+        "hide_yimatong": config.hide_yimatong,
+        "primary_color": config.primary_color,
+        "logo_url": config.logo_url,
+        "favicon_url": config.favicon_url,
+        "login_bg_url": config.login_bg_url,
+        "font_family": config.font_family,
+        "custom_css": config.custom_css,
     }
 
 
@@ -404,14 +466,21 @@ async def update_whitelabel_config_endpoint(
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
+    await verify_org_access(db, org_id, tenant_id)
     from app.services.whitelabel import update_whitelabel_config
+
     config = await update_whitelabel_config(db, org_id, **body.model_dump(exclude_none=True))
     return {
-        "id": str(config.id), "org_id": str(config.org_id),
-        "brand_name": config.brand_name, "hide_yimatong": config.hide_yimatong,
-        "primary_color": config.primary_color, "logo_url": config.logo_url,
-        "favicon_url": config.favicon_url, "login_bg_url": config.login_bg_url,
-        "font_family": config.font_family, "custom_css": config.custom_css,
+        "id": str(config.id),
+        "org_id": str(config.org_id),
+        "brand_name": config.brand_name,
+        "hide_yimatong": config.hide_yimatong,
+        "primary_color": config.primary_color,
+        "logo_url": config.logo_url,
+        "favicon_url": config.favicon_url,
+        "login_bg_url": config.login_bg_url,
+        "font_family": config.font_family,
+        "custom_css": config.custom_css,
     }
 
 
@@ -429,9 +498,17 @@ async def add_domain_endpoint(
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
+    await verify_org_access(db, org_id, tenant_id)
     from app.services.whitelabel import add_domain
+
     td = await add_domain(db, tenant_id, body.domain)
-    return {"id": str(td.id), "domain": td.domain, "verified": td.verified, "ssl_status": td.ssl_status, "cname_target": td.cname_target}
+    return {
+        "id": str(td.id),
+        "domain": td.domain,
+        "verified": td.verified,
+        "ssl_status": td.ssl_status,
+        "cname_target": td.cname_target,
+    }
 
 
 @regional_router.get("/orgs/{org_id}/domains", summary="域名列表")
@@ -440,9 +517,20 @@ async def list_domains_endpoint(
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
+    await verify_org_access(db, org_id, tenant_id)
     from app.services.whitelabel import list_domains
+
     domains = await list_domains(db, tenant_id)
-    return [{"id": str(d.id), "domain": d.domain, "verified": d.verified, "ssl_status": d.ssl_status, "cname_target": d.cname_target} for d in domains]
+    return [
+        {
+            "id": str(d.id),
+            "domain": d.domain,
+            "verified": d.verified,
+            "ssl_status": d.ssl_status,
+            "cname_target": d.cname_target,
+        }
+        for d in domains
+    ]
 
 
 @regional_router.post("/orgs/{org_id}/domains/{domain_id}/verify", summary="验证域名")
@@ -452,7 +540,9 @@ async def verify_domain_endpoint(
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
+    await verify_org_access(db, org_id, tenant_id)
     from app.services.whitelabel import verify_domain
+
     ok = await verify_domain(db, domain_id, tenant_id)
     return {"success": ok}
 
@@ -464,7 +554,10 @@ async def remove_domain_endpoint(
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
+    await verify_org_access(db, org_id, tenant_id)
     from app.services.whitelabel import remove_domain
+
     if not await remove_domain(db, domain_id, tenant_id):
         from fastapi import HTTPException
+
         raise HTTPException(status_code=404, detail="Domain not found")

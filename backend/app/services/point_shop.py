@@ -9,12 +9,9 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.member import (
-    ConsumerProfile,
     PointProduct,
-    PointTransaction,
-    PointTransactionType,
 )
-from app.services.member import award_points, spend_points
+from app.services.member import spend_points
 
 logger = logging.getLogger(__name__)
 
@@ -111,7 +108,13 @@ async def exchange_product(
     product_id: uuid.UUID,
 ) -> dict:
     """消费者兑换积分商品。"""
-    product = await get_point_product(db, tenant_id, product_id)
+    # 使用 FOR UPDATE 行锁防止并发超卖
+    result = await db.execute(
+        select(PointProduct)
+        .where(PointProduct.id == product_id, PointProduct.tenant_id == tenant_id)
+        .with_for_update()
+    )
+    product = result.scalar_one_or_none()
     if not product:
         raise ValueError("商品不存在")
     if not product.enabled:
@@ -129,7 +132,7 @@ async def exchange_product(
         reference_id=f"product:{product_id}",
     )
 
-    # 扣减库存
+    # 扣减库存（行锁保护下安全操作）
     product.stock -= 1
     product.total_claimed += 1
     await db.flush()
@@ -140,11 +143,12 @@ async def exchange_product(
         try:
             from app.services.campaign import claim_benefit
 
-            claim = await claim_benefit(
+            result = await claim_benefit(
                 db, tenant_id, product.benefit_id, str(consumer_id),
                 idempotency_key=f"points_exchange:{product_id}:{consumer_id}",
             )
-            claim_id = str(claim.id) if claim else None
+            if result.get("status") == "success" and result.get("claim"):
+                claim_id = result["claim"].get("id")
         except Exception:
             logger.warning(
                 "Benefit claim failed for product %s", product_id, exc_info=True

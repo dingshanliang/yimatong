@@ -11,9 +11,9 @@ from app.services.page_render import _render_cache, invalidate_cache, render_pag
 
 @pytest.fixture(autouse=True)
 def clear_cache():
-    _render_cache.clear()
+    _render_cache._mem_store.clear()
     yield
-    _render_cache.clear()
+    _render_cache._mem_store.clear()
 
 
 async def _setup_published_template(db: AsyncSession, template_type: str, config: dict):
@@ -121,7 +121,8 @@ class TestPageRender:
         html1 = await render_page(db, tid, tmpl_id)
         html2 = await render_page(db, tid, tmpl_id)
         assert html1 == html2
-        assert f"page:{tmpl_id}" in _render_cache
+        cached = await _render_cache.get(f"page:{tmpl_id}")
+        assert cached is not None
 
     @pytest.mark.anyio
     async def test_invalidate_cache(self, db: AsyncSession):
@@ -134,10 +135,12 @@ class TestPageRender:
             },
         )
         await render_page(db, tid, tmpl_id)
-        assert f"page:{tmpl_id}" in _render_cache
+        cached = await _render_cache.get(f"page:{tmpl_id}")
+        assert cached is not None
 
-        invalidate_cache(tmpl_id)
-        assert f"page:{tmpl_id}" not in _render_cache
+        await invalidate_cache(tmpl_id)
+        cached_after = await _render_cache.get(f"page:{tmpl_id}")
+        assert cached_after is None
 
     @pytest.mark.anyio
     async def test_render_with_extra_context(self, db: AsyncSession):

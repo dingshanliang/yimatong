@@ -126,14 +126,23 @@ async def get_cross_region_trend(
     """跨区扫码趋势（按天统计）"""
     cutoff = datetime.combine(date.today() - timedelta(days=days_back), datetime.min.time(), tzinfo=UTC)
 
-    # 使用子查询获取线索创建日期
-    from sqlalchemy import cast, Date
+    # UUID v7 前 48 位是毫秒时间戳，用 PostgreSQL 函数提取日期
+    from sqlalchemy import Date as SqlDate
+    from sqlalchemy import String, cast, text
+    uuid_ts_expr = func.to_timestamp(
+        ("x" + func.substr(cast(DiversionClue.id, String), 1, 12)).cast(
+            text("bigint")
+        ) / 1000
+    )
     stmt = (
         select(
-            cast(DiversionClue.id.hex, Date).label("stat_date"),
+            cast(uuid_ts_expr, SqlDate).label("stat_date"),
             func.count().label("cnt"),
         )
-        .where(DiversionClue.tenant_id == tenant_id)
+        .where(
+            DiversionClue.tenant_id == tenant_id,
+            uuid_ts_expr >= cutoff,
+        )
         .group_by("stat_date")
         .order_by("stat_date")
     )

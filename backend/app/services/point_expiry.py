@@ -9,7 +9,6 @@ import logging
 import uuid
 
 from sqlalchemy import select, update
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import async_session_factory
 from app.models.member import (
@@ -47,14 +46,10 @@ async def expire_points_batch() -> int:
             return 0
 
         # 按 consumer_id 分组，计算每个消费者的总过期积分
-        consumer_expired: dict[uuid.UUID, tuple[uuid.UUID, int]] = {}
+        consumer_expired: dict[tuple[uuid.UUID, uuid.UUID], int] = {}
         for txn in expired_txns:
-            tid = txn.tenant_id
-            cid = txn.consumer_id
-            key = (tid, cid)
-            consumer_expired[key] = (
-                consumer_expired[key][0] + txn.amount if key in consumer_expired else txn.amount
-            )
+            key = (txn.tenant_id, txn.consumer_id)
+            consumer_expired[key] = consumer_expired.get(key, 0) + txn.amount
 
         # 对每个消费者扣减余额并创建过期记录
         for (tid, cid), total_expired in consumer_expired.items():

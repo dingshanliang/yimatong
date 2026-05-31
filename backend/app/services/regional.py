@@ -3,7 +3,7 @@
 import uuid
 from datetime import UTC, date, datetime, timedelta
 
-from sqlalchemy import and_, func, select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.campaign import BenefitClaim
@@ -17,7 +17,6 @@ from app.models.regional import (
     WhitelabelConfig,
 )
 from app.models.scan import ScanEvent
-
 
 # ── 组织 CRUD ──────────────────────────────────────
 
@@ -50,6 +49,31 @@ async def get_org(db: AsyncSession, org_id: uuid.UUID) -> RegionalOrg | None:
     return result.scalar_one_or_none()
 
 
+async def verify_org_access(
+    db: AsyncSession,
+    org_id: uuid.UUID,
+    tenant_id: uuid.UUID,
+) -> RegionalOrg:
+    """验证 tenant_id 是否为组织创建者或活跃成员，否则抛出 403。"""
+    from fastapi import HTTPException
+
+    org = await get_org(db, org_id)
+    if not org:
+        raise HTTPException(status_code=404, detail="Organization not found")
+    if org.tenant_id == tenant_id:
+        return org
+    result = await db.execute(
+        select(RegionalOrgMember).where(
+            RegionalOrgMember.org_id == org_id,
+            RegionalOrgMember.tenant_id == tenant_id,
+            RegionalOrgMember.status == "active",
+        )
+    )
+    if not result.scalar_one_or_none():
+        raise HTTPException(status_code=403, detail="No access to this organization")
+    return org
+
+
 # ── 成员企业管理 ──────────────────────────────────
 
 
@@ -76,9 +100,7 @@ async def update_member(
     member_name: str | None = None,
     status: str | None = None,
 ) -> RegionalOrgMember | None:
-    result = await db.execute(
-        select(RegionalOrgMember).where(RegionalOrgMember.id == member_id)
-    )
+    result = await db.execute(select(RegionalOrgMember).where(RegionalOrgMember.id == member_id))
     member = result.scalar_one_or_none()
     if not member:
         return None
@@ -92,9 +114,7 @@ async def update_member(
 
 
 async def remove_member(db: AsyncSession, member_id: uuid.UUID) -> bool:
-    result = await db.execute(
-        select(RegionalOrgMember).where(RegionalOrgMember.id == member_id)
-    )
+    result = await db.execute(select(RegionalOrgMember).where(RegionalOrgMember.id == member_id))
     member = result.scalar_one_or_none()
     if not member:
         return False
@@ -114,17 +134,21 @@ async def list_members(
     if status:
         conditions.append(RegionalOrgMember.status == status)
 
-    total = (await db.execute(
-        select(func.count()).select_from(RegionalOrgMember).where(*conditions)
-    )).scalar() or 0
+    total = (await db.execute(select(func.count()).select_from(RegionalOrgMember).where(*conditions))).scalar() or 0
 
-    rows = (await db.execute(
-        select(RegionalOrgMember)
-        .where(*conditions)
-        .order_by(RegionalOrgMember.id.desc())
-        .offset((page - 1) * page_size)
-        .limit(page_size)
-    )).scalars().all()
+    rows = (
+        (
+            await db.execute(
+                select(RegionalOrgMember)
+                .where(*conditions)
+                .order_by(RegionalOrgMember.id.desc())
+                .offset((page - 1) * page_size)
+                .limit(page_size)
+            )
+        )
+        .scalars()
+        .all()
+    )
     return list(rows), total
 
 
@@ -160,9 +184,7 @@ async def publish_template_to_members(
     template_id: uuid.UUID,
 ) -> dict:
     """将模板下发到所有 active 成员企业（记录下发日志到 config）"""
-    template_result = await db.execute(
-        select(RegionalTemplate).where(RegionalTemplate.id == template_id)
-    )
+    template_result = await db.execute(select(RegionalTemplate).where(RegionalTemplate.id == template_id))
     template = template_result.scalar_one_or_none()
     if not template:
         return {"published": 0, "error": "template not found"}
@@ -190,11 +212,13 @@ async def publish_template_to_members(
     # 更新模板 config 记录下发
     if "publish_history" not in template.config:
         template.config["publish_history"] = []
-    template.config["publish_history"].append({
-        "published_at": datetime.now(UTC).isoformat(),
-        "member_count": len(members),
-        "delivered_count": published,
-    })
+    template.config["publish_history"].append(
+        {
+            "published_at": datetime.now(UTC).isoformat(),
+            "member_count": len(members),
+            "delivered_count": published,
+        }
+    )
 
     await db.flush()
     return {"template_id": str(template_id), "published": published, "total_members": len(members)}
@@ -228,16 +252,21 @@ async def get_regional_dashboard(
     cutoff = datetime.combine(date.today() - timedelta(days=days_back), datetime.min.time(), tzinfo=UTC)
 
     # 基础统计
-    member_count = (await db.execute(
-        select(func.count()).select_from(RegionalOrgMember)
-        .where(RegionalOrgMember.org_id == org_id, RegionalOrgMember.status == "active")
-    )).scalar() or 0
+    member_count = (
+        await db.execute(
+            select(func.count())
+            .select_from(RegionalOrgMember)
+            .where(RegionalOrgMember.org_id == org_id, RegionalOrgMember.status == "active")
+        )
+    ).scalar() or 0
 
-    product_count = (await db.execute(
-        select(func.count(func.distinct(RegionalProductAuth.product_id)))
-        .select_from(RegionalProductAuth)
-        .where(RegionalProductAuth.org_id == org_id)
-    )).scalar() or 0
+    product_count = (
+        await db.execute(
+            select(func.count(func.distinct(RegionalProductAuth.product_id)))
+            .select_from(RegionalProductAuth)
+            .where(RegionalProductAuth.org_id == org_id)
+        )
+    ).scalar() or 0
 
     # 获取成员 tenant_id 列表
     member_tids_result = await db.execute(
@@ -255,16 +284,22 @@ async def get_regional_dashboard(
 
     if member_tids:
         # 总扫码量
-        total_scans = (await db.execute(
-            select(func.count()).select_from(ScanEvent)
-            .where(ScanEvent.tenant_id.in_(member_tids), ScanEvent.scan_time >= cutoff)
-        )).scalar() or 0
+        total_scans = (
+            await db.execute(
+                select(func.count())
+                .select_from(ScanEvent)
+                .where(ScanEvent.tenant_id.in_(member_tids), ScanEvent.scan_time >= cutoff)
+            )
+        ).scalar() or 0
 
         # 总领取量
-        total_claims = (await db.execute(
-            select(func.count()).select_from(BenefitClaim)
-            .where(BenefitClaim.tenant_id.in_(member_tids), BenefitClaim.status == "success")
-        )).scalar() or 0
+        total_claims = (
+            await db.execute(
+                select(func.count())
+                .select_from(BenefitClaim)
+                .where(BenefitClaim.tenant_id.in_(member_tids), BenefitClaim.status == "success")
+            )
+        ).scalar() or 0
 
         # 按成员企业维度
         by_member = await _get_stats_by_member(db, member_tids, cutoff)
@@ -292,27 +327,35 @@ async def _get_stats_by_member(
     """按成员企业维度统计扫码和领取"""
     results = []
     for tid in member_tids:
-        scan_count = (await db.execute(
-            select(func.count()).select_from(ScanEvent)
-            .where(ScanEvent.tenant_id == tid, ScanEvent.scan_time >= cutoff)
-        )).scalar() or 0
+        scan_count = (
+            await db.execute(
+                select(func.count())
+                .select_from(ScanEvent)
+                .where(ScanEvent.tenant_id == tid, ScanEvent.scan_time >= cutoff)
+            )
+        ).scalar() or 0
 
-        claim_count = (await db.execute(
-            select(func.count()).select_from(BenefitClaim)
-            .where(BenefitClaim.tenant_id == tid, BenefitClaim.status == "success")
-        )).scalar() or 0
+        claim_count = (
+            await db.execute(
+                select(func.count())
+                .select_from(BenefitClaim)
+                .where(BenefitClaim.tenant_id == tid, BenefitClaim.status == "success")
+            )
+        ).scalar() or 0
 
         # 查成员名称
-        member = (await db.execute(
-            select(RegionalOrgMember.member_name).where(RegionalOrgMember.tenant_id == tid)
-        )).scalar()
+        member = (
+            await db.execute(select(RegionalOrgMember.member_name).where(RegionalOrgMember.tenant_id == tid))
+        ).scalar()
 
-        results.append({
-            "tenant_id": str(tid),
-            "member_name": member or "Unknown",
-            "scan_count": scan_count,
-            "claim_count": claim_count,
-        })
+        results.append(
+            {
+                "tenant_id": str(tid),
+                "member_name": member or "Unknown",
+                "scan_count": scan_count,
+                "claim_count": claim_count,
+            }
+        )
 
     # 按扫码量降序
     results.sort(key=lambda x: x["scan_count"], reverse=True)
@@ -327,10 +370,15 @@ async def _get_stats_by_product(
 ) -> list[dict]:
     """按产品维度统计扫码量"""
     # 获取组织授权的产品
-    auth_products = (await db.execute(
-        select(func.distinct(RegionalProductAuth.product_id))
-        .where(RegionalProductAuth.org_id == org_id)
-    )).scalars().all()
+    auth_products = (
+        (
+            await db.execute(
+                select(func.distinct(RegionalProductAuth.product_id)).where(RegionalProductAuth.org_id == org_id)
+            )
+        )
+        .scalars()
+        .all()
+    )
 
     if not auth_products:
         return []
@@ -338,22 +386,25 @@ async def _get_stats_by_product(
     results = []
     for pid in auth_products:
         # 产品名称
-        product = (await db.execute(
-            select(Product.name).where(Product.id == pid)
-        )).scalar()
+        product = (await db.execute(select(Product.name).where(Product.id == pid))).scalar()
 
         # 通过 CodeBatch → CodeItem → ScanEvent 关联
         # 简化：统计成员企业的所有扫码（精确关联需要 JOIN 多层）
-        scan_count = (await db.execute(
-            select(func.count()).select_from(ScanEvent)
-            .where(ScanEvent.tenant_id.in_(member_tids), ScanEvent.scan_time >= cutoff)
-        )).scalar() or 0
+        scan_count = (
+            await db.execute(
+                select(func.count())
+                .select_from(ScanEvent)
+                .where(ScanEvent.tenant_id.in_(member_tids), ScanEvent.scan_time >= cutoff)
+            )
+        ).scalar() or 0
 
-        results.append({
-            "product_id": str(pid),
-            "product_name": product or "Unknown",
-            "scan_count": scan_count,
-        })
+        results.append(
+            {
+                "product_id": str(pid),
+                "product_name": product or "Unknown",
+                "scan_count": scan_count,
+            }
+        )
 
     results.sort(key=lambda x: x["scan_count"], reverse=True)
     return results
@@ -396,15 +447,11 @@ async def get_advanced_dashboard(
 ) -> dict:
     """高级汇总看板：同比环比 + 按成员/产品/时间维度下钻"""
     cutoff = datetime.combine(date.today() - timedelta(days=days_back), datetime.min.time(), tzinfo=UTC)
-    prev_cutoff = datetime.combine(
-        date.today() - timedelta(days=days_back * 2), datetime.min.time(), tzinfo=UTC
-    )
+    prev_cutoff = datetime.combine(date.today() - timedelta(days=days_back * 2), datetime.min.time(), tzinfo=UTC)
 
     # 成员列表
     members_result = await db.execute(
-        select(RegionalOrgMember).where(
-            RegionalOrgMember.org_id == org_id, RegionalOrgMember.status == "active"
-        )
+        select(RegionalOrgMember).where(RegionalOrgMember.org_id == org_id, RegionalOrgMember.status == "active")
     )
     members = list(members_result.scalars().all())
     member_tids = [m.tenant_id for m in members]
@@ -417,38 +464,57 @@ async def get_advanced_dashboard(
     by_member_prev: dict[str, dict] = {}
 
     if member_tids:
-        current_scans = (await db.execute(
-            select(func.count()).select_from(ScanEvent)
-            .where(ScanEvent.tenant_id.in_(member_tids), ScanEvent.scan_time >= cutoff)
-        )).scalar() or 0
+        current_scans = (
+            await db.execute(
+                select(func.count())
+                .select_from(ScanEvent)
+                .where(ScanEvent.tenant_id.in_(member_tids), ScanEvent.scan_time >= cutoff)
+            )
+        ).scalar() or 0
 
-        current_claims = (await db.execute(
-            select(func.count()).select_from(BenefitClaim)
-            .where(BenefitClaim.tenant_id.in_(member_tids), BenefitClaim.status == "success")
-        )).scalar() or 0
+        current_claims = (
+            await db.execute(
+                select(func.count())
+                .select_from(BenefitClaim)
+                .where(
+                    BenefitClaim.tenant_id.in_(member_tids),
+                    BenefitClaim.status == "success",
+                    BenefitClaim.created_at >= cutoff,
+                )
+            )
+        ).scalar() or 0
 
         # 按成员 — 当期
         for tid in member_tids:
-            sc = (await db.execute(
-                select(func.count()).select_from(ScanEvent)
-                .where(ScanEvent.tenant_id == tid, ScanEvent.scan_time >= cutoff)
-            )).scalar() or 0
-            cc = (await db.execute(
-                select(func.count()).select_from(BenefitClaim)
-                .where(BenefitClaim.tenant_id == tid, BenefitClaim.status == "success")
-            )).scalar() or 0
+            sc = (
+                await db.execute(
+                    select(func.count())
+                    .select_from(ScanEvent)
+                    .where(ScanEvent.tenant_id == tid, ScanEvent.scan_time >= cutoff)
+                )
+            ).scalar() or 0
+            cc = (
+                await db.execute(
+                    select(func.count())
+                    .select_from(BenefitClaim)
+                    .where(BenefitClaim.tenant_id == tid, BenefitClaim.status == "success")
+                )
+            ).scalar() or 0
             by_member_current[str(tid)] = {"scan_count": sc, "claim_count": cc}
 
         # 按成员 — 环比上期
         for tid in member_tids:
-            sc = (await db.execute(
-                select(func.count()).select_from(ScanEvent)
-                .where(
-                    ScanEvent.tenant_id == tid,
-                    ScanEvent.scan_time >= prev_cutoff,
-                    ScanEvent.scan_time < cutoff,
+            sc = (
+                await db.execute(
+                    select(func.count())
+                    .select_from(ScanEvent)
+                    .where(
+                        ScanEvent.tenant_id == tid,
+                        ScanEvent.scan_time >= prev_cutoff,
+                        ScanEvent.scan_time < cutoff,
+                    )
                 )
-            )).scalar() or 0
+            ).scalar() or 0
             by_member_prev[str(tid)] = {"scan_count": sc}
 
     # 计算环比变化
@@ -460,14 +526,16 @@ async def get_advanced_dashboard(
         cur_scan = cur.get("scan_count", 0)
         prev_scan = prev.get("scan_count", 0)
         scan_change = round((cur_scan - prev_scan) / prev_scan * 100, 1) if prev_scan > 0 else None
-        member_drilldown.append({
-            "tenant_id": tid_str,
-            "member_name": member_map.get(tid, "Unknown"),
-            "scan_count": cur_scan,
-            "claim_count": cur.get("claim_count", 0),
-            "prev_scan_count": prev_scan,
-            "scan_change_pct": scan_change,
-        })
+        member_drilldown.append(
+            {
+                "tenant_id": tid_str,
+                "member_name": member_map.get(tid, "Unknown"),
+                "scan_count": cur_scan,
+                "claim_count": cur.get("claim_count", 0),
+                "prev_scan_count": prev_scan,
+                "scan_change_pct": scan_change,
+            }
+        )
     member_drilldown.sort(key=lambda x: x["scan_count"], reverse=True)
 
     # 按时间维度（日趋势）
@@ -477,10 +545,17 @@ async def get_advanced_dashboard(
             day = date.today() - timedelta(days=i)
             day_start = datetime.combine(day, datetime.min.time(), tzinfo=UTC)
             day_end = datetime.combine(day + timedelta(days=1), datetime.min.time(), tzinfo=UTC)
-            sc = (await db.execute(
-                select(func.count()).select_from(ScanEvent)
-                .where(ScanEvent.tenant_id.in_(member_tids), ScanEvent.scan_time >= day_start, ScanEvent.scan_time < day_end)
-            )).scalar() or 0
+            sc = (
+                await db.execute(
+                    select(func.count())
+                    .select_from(ScanEvent)
+                    .where(
+                        ScanEvent.tenant_id.in_(member_tids),
+                        ScanEvent.scan_time >= day_start,
+                        ScanEvent.scan_time < day_end,
+                    )
+                )
+            ).scalar() or 0
             daily_trend.append({"date": day.isoformat(), "scan_count": sc})
         daily_trend.reverse()
 

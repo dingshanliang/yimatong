@@ -60,7 +60,7 @@ class TestFastAPIApp:
     def test_app_title(self):
         from app.main import app
 
-        assert app.title in ("一码通", "Yimatong", "yimatong")
+        assert app.title in ("一码通", "一码通 API", "Yimatong", "yimatong")
 
     def test_health_endpoint_exists(self):
         from app.main import app

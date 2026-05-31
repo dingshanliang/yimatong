@@ -57,12 +57,17 @@ async def _check_redis_dedup(tenant_id: str, consumer_id: str, rule_type: str) -
         from app.core.config import settings
 
         key = f"{DEDUP_KEY_PREFIX}{tenant_id}:{consumer_id}:{rule_type}"
-        async with aioredis.from_url(settings.redis_url) as r:
-            exists = await r.exists(key)
-            if exists:
-                return True
-            await r.setex(key, DEDUP_TTL_SECONDS, "1")
-            return False
+        # 复用全局连接池而非每次创建新连接
+        if not hasattr(_check_redis_dedup, "_pool"):
+            _check_redis_dedup._pool = aioredis.from_url(
+                settings.redis_url, decode_responses=True
+            )
+        r = _check_redis_dedup._pool
+        exists = await r.exists(key)
+        if exists:
+            return True
+        await r.setex(key, DEDUP_TTL_SECONDS, "1")
+        return False
     except Exception:
         return False
 
