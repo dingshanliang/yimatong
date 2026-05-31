@@ -464,6 +464,7 @@ async def get_advanced_dashboard(
     by_member_prev: dict[str, dict] = {}
 
     if member_tids:
+        # 当期扫码总数
         current_scans = (
             await db.execute(
                 select(func.count())
@@ -472,6 +473,7 @@ async def get_advanced_dashboard(
             )
         ).scalar() or 0
 
+        # 当期领取总数
         current_claims = (
             await db.execute(
                 select(func.count())
@@ -484,38 +486,54 @@ async def get_advanced_dashboard(
             )
         ).scalar() or 0
 
-        # 按成员 — 当期
-        for tid in member_tids:
-            sc = (
-                await db.execute(
-                    select(func.count())
-                    .select_from(ScanEvent)
-                    .where(ScanEvent.tenant_id == tid, ScanEvent.scan_time >= cutoff)
-                )
-            ).scalar() or 0
-            cc = (
-                await db.execute(
-                    select(func.count())
-                    .select_from(BenefitClaim)
-                    .where(BenefitClaim.tenant_id == tid, BenefitClaim.status == "success")
-                )
-            ).scalar() or 0
-            by_member_current[str(tid)] = {"scan_count": sc, "claim_count": cc}
+        # 按成员 — 当期扫码（单条 GROUP BY 代替 N 条）
+        rows = (
+            await db.execute(
+                select(ScanEvent.tenant_id, func.count())
+                .where(ScanEvent.tenant_id.in_(member_tids), ScanEvent.scan_time >= cutoff)
+                .group_by(ScanEvent.tenant_id)
+            )
+        ).all()
+        member_scan_current = {str(r[0]): r[1] for r in rows}
 
-        # 按成员 — 环比上期
-        for tid in member_tids:
-            sc = (
-                await db.execute(
-                    select(func.count())
-                    .select_from(ScanEvent)
-                    .where(
-                        ScanEvent.tenant_id == tid,
-                        ScanEvent.scan_time >= prev_cutoff,
-                        ScanEvent.scan_time < cutoff,
-                    )
+        # 按成员 — 当期领取（单条 GROUP BY 代替 N 条）
+        rows = (
+            await db.execute(
+                select(BenefitClaim.tenant_id, func.count())
+                .where(
+                    BenefitClaim.tenant_id.in_(member_tids),
+                    BenefitClaim.status == "success",
+                    BenefitClaim.created_at >= cutoff,
                 )
-            ).scalar() or 0
-            by_member_prev[str(tid)] = {"scan_count": sc}
+                .group_by(BenefitClaim.tenant_id)
+            )
+        ).all()
+        member_claim_current = {str(r[0]): r[1] for r in rows}
+
+        # 按成员 — 上期扫码（单条 GROUP BY 代替 N 条）
+        rows = (
+            await db.execute(
+                select(ScanEvent.tenant_id, func.count())
+                .where(
+                    ScanEvent.tenant_id.in_(member_tids),
+                    ScanEvent.scan_time >= prev_cutoff,
+                    ScanEvent.scan_time < cutoff,
+                )
+                .group_by(ScanEvent.tenant_id)
+            )
+        ).all()
+        member_scan_prev = {str(r[0]): r[1] for r in rows}
+
+        # 组装 per-member dict
+        for tid in member_tids:
+            tid_str = str(tid)
+            by_member_current[tid_str] = {
+                "scan_count": member_scan_current.get(tid_str, 0),
+                "claim_count": member_claim_current.get(tid_str, 0),
+            }
+            by_member_prev[tid_str] = {
+                "scan_count": member_scan_prev.get(tid_str, 0),
+            }
 
     # 计算环比变化
     member_drilldown = []
@@ -538,26 +556,26 @@ async def get_advanced_dashboard(
         )
     member_drilldown.sort(key=lambda x: x["scan_count"], reverse=True)
 
-    # 按时间维度（日趋势）
+    # 按时间维度（日趋势）— 单条 GROUP BY DATE 代替逐日循环
     daily_trend: list[dict] = []
     if member_tids:
-        for i in range(min(days_back, 14)):
-            day = date.today() - timedelta(days=i)
-            day_start = datetime.combine(day, datetime.min.time(), tzinfo=UTC)
-            day_end = datetime.combine(day + timedelta(days=1), datetime.min.time(), tzinfo=UTC)
-            sc = (
-                await db.execute(
-                    select(func.count())
-                    .select_from(ScanEvent)
-                    .where(
-                        ScanEvent.tenant_id.in_(member_tids),
-                        ScanEvent.scan_time >= day_start,
-                        ScanEvent.scan_time < day_end,
-                    )
+        trend_days = min(days_back, 14)
+        trend_cutoff = datetime.combine(date.today() - timedelta(days=trend_days), datetime.min.time(), tzinfo=UTC)
+        rows = (
+            await db.execute(
+                select(func.date(ScanEvent.scan_time), func.count())
+                .where(
+                    ScanEvent.tenant_id.in_(member_tids),
+                    ScanEvent.scan_time >= trend_cutoff,
                 )
-            ).scalar() or 0
-            daily_trend.append({"date": day.isoformat(), "scan_count": sc})
-        daily_trend.reverse()
+                .group_by(func.date(ScanEvent.scan_time))
+                .order_by(func.date(ScanEvent.scan_time))
+            )
+        ).all()
+        trend_map = {str(r[0]): r[1] for r in rows}
+        for i in range(trend_days):
+            day = date.today() - timedelta(days=trend_days - 1 - i)
+            daily_trend.append({"date": day.isoformat(), "scan_count": trend_map.get(day.isoformat(), 0)})
 
     return {
         "org_id": str(org_id),

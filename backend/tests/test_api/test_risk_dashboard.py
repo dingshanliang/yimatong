@@ -299,3 +299,49 @@ class TestRiskExport:
         )
         assert resp.status_code == 200
         assert "EXP002" in resp.text
+
+
+class TestSSEAlertStream:
+    """SSE 告警流 — query parameter 认证"""
+
+    @pytest.mark.anyio
+    async def test_sse_with_valid_token(self, client: AsyncClient, setup_tenant):
+        from unittest.mock import patch
+
+        tid, headers = setup_tenant
+        token = headers["Authorization"].split(" ", 1)[1]
+
+        # Patch StreamingResponse 为同步返回，避免无限流卡住测试
+        from fastapi.responses import StreamingResponse as _SR
+
+        captured: list = []
+
+        class FiniteSR(_SR):
+            def __init__(self, content, *args, **kwargs):
+                # 替换 generator 为有限版本
+                async def _finite():
+                    yield ": connected\n\n"
+
+                super().__init__(_finite(), *args, **kwargs)
+                captured.append(True)
+
+        with patch("app.api.v1.risk_dashboard.StreamingResponse", FiniteSR):
+            resp = await client.get(
+                "/api/v1/risk-dashboard/alerts/stream",
+                params={"token": token},
+            )
+        assert resp.status_code == 200
+        assert "text/event-stream" in resp.headers.get("content-type", "")
+
+    @pytest.mark.anyio
+    async def test_sse_without_token_returns_422(self, client: AsyncClient, setup_tenant):
+        resp = await client.get("/api/v1/risk-dashboard/alerts/stream")
+        assert resp.status_code == 422
+
+    @pytest.mark.anyio
+    async def test_sse_with_invalid_token_returns_401(self, client: AsyncClient, setup_tenant):
+        resp = await client.get(
+            "/api/v1/risk-dashboard/alerts/stream",
+            params={"token": "invalid-token"},
+        )
+        assert resp.status_code == 401

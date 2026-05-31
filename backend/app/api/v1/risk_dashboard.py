@@ -133,11 +133,22 @@ def _broadcast_alert(tenant_id: str, alert_data: dict) -> None:
 @risk_dashboard_router.get("/alerts/stream")
 async def alert_stream(
     request: Request,
-    tenant_id: uuid.UUID = Depends(get_current_tenant),
+    token: str = Query(..., description="JWT access token (EventSource 不支持自定义 header)"),
 ):
-    """SSE 实时告警流。Admin 前端通过 EventSource 连接。"""
+    """SSE 实时告警流。Admin 前端通过 EventSource 连接，使用 query parameter 认证。"""
+    from starlette.responses import JSONResponse
+
+    from app.utils.security import verify_access_token
+
+    payload = await verify_access_token(token)
+    if payload is None:
+        return JSONResponse(status_code=401, content={"detail": "Invalid or expired token"})
+
+    tid = payload.get("tenant_id")
+    if not tid:
+        return JSONResponse(status_code=401, content={"detail": "Tenant context not found"})
+
     queue: asyncio.Queue = asyncio.Queue(maxsize=50)
-    tid = str(tenant_id)
 
     if tid not in _sse_clients:
         _sse_clients[tid] = []

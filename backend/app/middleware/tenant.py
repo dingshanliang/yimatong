@@ -15,6 +15,8 @@ class TenantScopeMiddleware(BaseHTTPMiddleware):
 
         # 公开路由跳过认证
         public_paths = {"/health", "/health/detail", "/docs", "/openapi.json", "/redoc"}
+        # SSE endpoint uses query-param auth instead of header auth
+        sse_paths = {"/api/v1/risk-dashboard/alerts/stream"}
         public_auth_paths = {
             "/api/v1/auth/login",
             "/api/v1/auth/refresh",
@@ -24,6 +26,7 @@ class TenantScopeMiddleware(BaseHTTPMiddleware):
         if (
             request.url.path in public_paths
             or request.url.path in public_auth_paths
+            or request.url.path in sse_paths
             or request.url.path.startswith("/c/")
             or request.url.path == "/api/v1/platform/auth/login"
             or (request.url.path == "/api/v1/tenants" and request.method == "POST")
