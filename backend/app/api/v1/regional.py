@@ -2,7 +2,7 @@
 
 import uuid
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -15,13 +15,17 @@ from app.services.regional import (
     create_regional_org,
     create_shared_template,
     get_advanced_dashboard,
+    get_org,
     get_regional_dashboard,
     get_whitelabel,
     list_code_rules,
     list_members,
     list_regional_orgs,
     list_shared_templates,
+    publish_template_to_members,
+    remove_member,
     set_whitelabel,
+    update_member,
 )
 
 regional_router = APIRouter(prefix="/api/v1/regional", tags=["regional"])
@@ -37,6 +41,11 @@ class MemberAdd(BaseModel):
     member_name: str
 
 
+class MemberUpdate(BaseModel):
+    member_name: str | None = None
+    status: str | None = None
+
+
 class TemplateCreate(BaseModel):
     name: str
     config: dict
@@ -47,22 +56,20 @@ class ProductAuthCreate(BaseModel):
     tenant_id: str
 
 
-@regional_router.post("/orgs", status_code=201, summary="创建 org")
+# ── 组织 ──────────────────────────────────────────
+
+
+@regional_router.post("/orgs", status_code=201, summary="创建组织")
 async def create_org_endpoint(
     body: RegionalOrgCreate,
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
     org = await create_regional_org(db, tenant_id, body.name, body.org_type)
-    return {
-        "id": str(org.id),
-        "name": org.name,
-        "org_type": org.org_type,
-        "config": org.config,
-    }
+    return {"id": str(org.id), "name": org.name, "org_type": org.org_type, "config": org.config}
 
 
-@regional_router.get("/orgs", summary="orgs 列表")
+@regional_router.get("/orgs", summary="组织列表")
 async def list_orgs_endpoint(
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
@@ -71,7 +78,22 @@ async def list_orgs_endpoint(
     return [{"id": str(o.id), "name": o.name, "org_type": o.org_type, "config": o.config} for o in orgs]
 
 
-@regional_router.post("/orgs/{org_id}/members", status_code=201)
+@regional_router.get("/orgs/{org_id}", summary="组织详情")
+async def get_org_endpoint(
+    org_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    tenant_id: uuid.UUID = Depends(get_current_tenant),
+):
+    org = await get_org(db, org_id)
+    if not org:
+        return {"error": "not found"}
+    return {"id": str(org.id), "name": org.name, "org_type": org.org_type, "config": org.config}
+
+
+# ── 成员企业 ──────────────────────────────────────
+
+
+@regional_router.post("/orgs/{org_id}/members", status_code=201, summary="添加成员")
 async def add_member_endpoint(
     org_id: uuid.UUID,
     body: MemberAdd,
@@ -80,34 +102,67 @@ async def add_member_endpoint(
 ):
     member = await add_member(db, org_id, uuid.UUID(body.tenant_id), body.member_name)
     return {
-        "id": str(member.id),
-        "org_id": str(member.org_id),
-        "tenant_id": str(member.tenant_id),
-        "member_name": member.member_name,
+        "id": str(member.id), "org_id": str(member.org_id),
+        "tenant_id": str(member.tenant_id), "member_name": member.member_name,
         "status": member.status,
     }
 
 
-@regional_router.get("/orgs/{org_id}/members", summary="成员 列表")
+@regional_router.get("/orgs/{org_id}/members", summary="成员列表")
 async def list_members_endpoint(
     org_id: uuid.UUID,
+    status: str | None = Query(None),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
-    members = await list_members(db, org_id)
-    return [
-        {
-            "id": str(m.id),
-            "org_id": str(m.org_id),
-            "tenant_id": str(m.tenant_id),
-            "member_name": m.member_name,
-            "status": m.status,
-        }
-        for m in members
-    ]
+    members, total = await list_members(db, org_id, status=status, page=page, page_size=page_size)
+    return {
+        "items": [
+            {"id": str(m.id), "org_id": str(m.org_id), "tenant_id": str(m.tenant_id),
+             "member_name": m.member_name, "status": m.status}
+            for m in members
+        ],
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+    }
 
 
-@regional_router.post("/orgs/{org_id}/templates", status_code=201, summary="创建 模板")
+@regional_router.put("/orgs/{org_id}/members/{member_id}", summary="更新成员")
+async def update_member_endpoint(
+    org_id: uuid.UUID,
+    member_id: uuid.UUID,
+    body: MemberUpdate,
+    db: AsyncSession = Depends(get_db),
+    tenant_id: uuid.UUID = Depends(get_current_tenant),
+):
+    member = await update_member(db, member_id, member_name=body.member_name, status=body.status)
+    if not member:
+        return {"error": "not found"}
+    return {
+        "id": str(member.id), "org_id": str(member.org_id),
+        "tenant_id": str(member.tenant_id), "member_name": member.member_name,
+        "status": member.status,
+    }
+
+
+@regional_router.delete("/orgs/{org_id}/members/{member_id}", summary="移除成员")
+async def remove_member_endpoint(
+    org_id: uuid.UUID,
+    member_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    tenant_id: uuid.UUID = Depends(get_current_tenant),
+):
+    ok = await remove_member(db, member_id)
+    return {"success": ok}
+
+
+# ── 模板 ──────────────────────────────────────────
+
+
+@regional_router.post("/orgs/{org_id}/templates", status_code=201, summary="创建模板")
 async def create_template_endpoint(
     org_id: uuid.UUID,
     body: TemplateCreate,
@@ -115,15 +170,10 @@ async def create_template_endpoint(
     tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
     template = await create_shared_template(db, org_id, body.name, body.config)
-    return {
-        "id": str(template.id),
-        "org_id": str(template.org_id),
-        "name": template.name,
-        "config": template.config,
-    }
+    return {"id": str(template.id), "org_id": str(template.org_id), "name": template.name, "config": template.config}
 
 
-@regional_router.get("/orgs/{org_id}/templates", summary="模板 列表")
+@regional_router.get("/orgs/{org_id}/templates", summary="模板列表")
 async def list_templates_endpoint(
     org_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
@@ -133,7 +183,20 @@ async def list_templates_endpoint(
     return [{"id": str(t.id), "org_id": str(t.org_id), "name": t.name, "config": t.config} for t in templates]
 
 
-@regional_router.post("/orgs/{org_id}/products", status_code=201)
+@regional_router.post("/orgs/{org_id}/templates/{template_id}/publish", summary="下发模板到成员企业")
+async def publish_template_endpoint(
+    org_id: uuid.UUID,
+    template_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    tenant_id: uuid.UUID = Depends(get_current_tenant),
+):
+    return await publish_template_to_members(db, org_id, template_id)
+
+
+# ── 产品授权 ──────────────────────────────────────
+
+
+@regional_router.post("/orgs/{org_id}/products", status_code=201, summary="产品授权")
 async def authorize_product_endpoint(
     org_id: uuid.UUID,
     body: ProductAuthCreate,
@@ -141,24 +204,23 @@ async def authorize_product_endpoint(
     tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
     auth = await authorize_product(db, org_id, uuid.UUID(body.product_id), uuid.UUID(body.tenant_id))
-    return {
-        "id": str(auth.id),
-        "org_id": str(auth.org_id),
-        "product_id": str(auth.product_id),
-        "tenant_id": str(auth.tenant_id),
-    }
+    return {"id": str(auth.id), "org_id": str(auth.org_id), "product_id": str(auth.product_id), "tenant_id": str(auth.tenant_id)}
 
 
-@regional_router.get("/orgs/{org_id}/dashboard")
+# ── 看板 ──────────────────────────────────────────
+
+
+@regional_router.get("/orgs/{org_id}/dashboard", summary="汇总看板")
 async def dashboard_endpoint(
     org_id: uuid.UUID,
+    days_back: int = Query(30, ge=1, le=365),
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
-    return await get_regional_dashboard(db, org_id)
+    return await get_regional_dashboard(db, org_id, days_back=days_back)
 
 
-# W21: 区域品牌高级能力
+# ── 高级能力 (W21) ────────────────────────────────
 
 
 class CodeRuleCreate(BaseModel):
@@ -173,7 +235,7 @@ class WhitelabelUpdate(BaseModel):
     primary_color: str = "#000000"
 
 
-@regional_router.post("/orgs/{org_id}/code-rules", status_code=201, summary="创建 code rule")
+@regional_router.post("/orgs/{org_id}/code-rules", status_code=201, summary="创建码规则")
 async def create_code_rule_endpoint(
     org_id: uuid.UUID,
     body: CodeRuleCreate,
@@ -181,16 +243,10 @@ async def create_code_rule_endpoint(
     tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
     rule = await create_code_rule(db, org_id, body.rule_name, body.pattern, body.prefix)
-    return {
-        "id": str(rule.id),
-        "org_id": str(rule.org_id),
-        "rule_name": rule.rule_name,
-        "pattern": rule.pattern,
-        "prefix": rule.prefix,
-    }
+    return {"id": str(rule.id), "org_id": str(rule.org_id), "rule_name": rule.rule_name, "pattern": rule.pattern, "prefix": rule.prefix}
 
 
-@regional_router.get("/orgs/{org_id}/code-rules", summary="code rules 列表")
+@regional_router.get("/orgs/{org_id}/code-rules", summary="码规则列表")
 async def list_code_rules_endpoint(
     org_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
@@ -200,7 +256,7 @@ async def list_code_rules_endpoint(
     return [{"id": str(r.id), "rule_name": r.rule_name, "pattern": r.pattern, "prefix": r.prefix} for r in rules]
 
 
-@regional_router.get("/orgs/{org_id}/advanced-dashboard")
+@regional_router.get("/orgs/{org_id}/advanced-dashboard", summary="高级看板")
 async def advanced_dashboard_endpoint(
     org_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
@@ -209,7 +265,7 @@ async def advanced_dashboard_endpoint(
     return await get_advanced_dashboard(db, org_id)
 
 
-@regional_router.put("/orgs/{org_id}/whitelabel")
+@regional_router.put("/orgs/{org_id}/whitelabel", summary="设置白标")
 async def set_whitelabel_endpoint(
     org_id: uuid.UUID,
     body: WhitelabelUpdate,
@@ -217,16 +273,10 @@ async def set_whitelabel_endpoint(
     tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
     config = await set_whitelabel(db, org_id, body.brand_name, body.hide_yimatong, body.primary_color)
-    return {
-        "id": str(config.id),
-        "org_id": str(config.org_id),
-        "brand_name": config.brand_name,
-        "hide_yimatong": config.hide_yimatong,
-        "primary_color": config.primary_color,
-    }
+    return {"id": str(config.id), "org_id": str(config.org_id), "brand_name": config.brand_name, "hide_yimatong": config.hide_yimatong, "primary_color": config.primary_color}
 
 
-@regional_router.get("/orgs/{org_id}/whitelabel", summary="获取 whitelabel")
+@regional_router.get("/orgs/{org_id}/whitelabel", summary="获取白标配置")
 async def get_whitelabel_endpoint(
     org_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
@@ -235,10 +285,4 @@ async def get_whitelabel_endpoint(
     config = await get_whitelabel(db, org_id)
     if not config:
         return {"brand_name": "", "hide_yimatong": False, "primary_color": "#000000"}
-    return {
-        "id": str(config.id),
-        "org_id": str(config.org_id),
-        "brand_name": config.brand_name,
-        "hide_yimatong": config.hide_yimatong,
-        "primary_color": config.primary_color,
-    }
+    return {"id": str(config.id), "org_id": str(config.org_id), "brand_name": config.brand_name, "hide_yimatong": config.hide_yimatong, "primary_color": config.primary_color}
