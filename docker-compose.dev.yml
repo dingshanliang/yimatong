@@ -58,56 +58,6 @@ services:
       echo 'MinIO buckets created';
       "
 
-  backend:
-    build:
-      context: ./backend
-      dockerfile: Dockerfile
-    ports:
-      - "8000:8000"
-    env_file: ./backend/.env
-    environment:
-      database_url: postgresql+asyncpg://yimatong:yimatong@postgres:5432/yimatong_dev
-      redis_url: redis://redis:6379/0
-      minio_endpoint: minio:9000
-      minio_access_key: minioadmin
-      minio_secret_key: minioadmin
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-      minio:
-        condition: service_healthy
-      migration:
-        condition: service_completed_successfully
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
-      start_period: 10s
-    volumes:
-      - ./backend:/app
-      - backend_venv:/app/.venv
-
-  worker:
-    build:
-      context: ./backend
-      dockerfile: Dockerfile
-    command: ["uv", "run", "arq", "app.tasks.worker.WorkerSettings"]
-    env_file: ./backend/.env
-    environment:
-      database_url: postgresql+asyncpg://yimatong:yimatong@postgres:5432/yimatong_dev
-      redis_url: redis://redis:6379/0
-    depends_on:
-      redis:
-        condition: service_healthy
-      postgres:
-        condition: service_healthy
-    volumes:
-      - ./backend:/app
-      - backend_venv:/app/.venv
-
   migration:
     build:
       context: ./backend
@@ -122,22 +72,155 @@ services:
       - ./backend:/app
       - backend_venv:/app/.venv
 
-  mock-sms:
-    image: node:20-alpine
-    working_dir: /mock
-    command: ["node", "-e", "const http=require('http');http.createServer((req,res)=>{res.writeHead(200);res.end(JSON.stringify({code:0,msg:'mock ok'}));}).listen(3001,()=>console.log('mock-sms on 3001'));"]
+  seed:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    command: ["uv", "run", "python", "-m", "app.cli", "all"]
+    environment:
+      database_url: postgresql+asyncpg://yimatong:yimatong@postgres:5432/yimatong_dev
+      secret_key: dev-secret-key-change-in-production
+      AES_MASTER_KEY_V1: f18d81c3b455f9a5a01db6a8546fc5acc242b51cbc4ae70ec99654e091f38a4b
+      HMAC_PEPPER: 7c9cade78554566742f263539bd4ff404493e9b9ed6939168da7ad5ceb3813cd
+    depends_on:
+      migration:
+        condition: service_completed_successfully
+    volumes:
+      - ./backend:/app
+      - backend_venv:/app/.venv
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    env_file: ./backend/.env
+    environment:
+      database_url: postgresql+asyncpg://yimatong:yimatong@postgres:5432/yimatong_dev
+      redis_url: redis://redis:6379/0
+      minio_endpoint: minio:9000
+      minio_access_key: minioadmin
+      minio_secret_key: minioadmin
+      sms_provider: mock
+      sms_api_url: http://mock-sms:3001
+      wechat_provider: mock
+      wechat_api_url: http://mock-wechat:3002
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      migration:
+        condition: service_completed_successfully
+      seed:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    volumes:
+      - ./backend:/app
+      - backend_venv:/app/.venv
+
+  worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    command: ["uv", "run", "python", "-c", "from app.tasks.worker import run_worker; run_worker()"]
+    env_file: ./backend/.env
+    environment:
+      database_url: postgresql+asyncpg://yimatong:yimatong@postgres:5432/yimatong_dev
+      redis_url: redis://redis:6379/0
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./backend:/app
+      - backend_venv:/app/.venv
+
+  admin:
+    image: node:22-alpine
+    working_dir: /app
+    command:
+      [
+        "sh",
+        "-c",
+        "corepack enable && corepack prepare pnpm@latest --activate && pnpm install && rm -rf apps/admin/.next && pnpm dev:admin",
+      ]
+    ports:
+      - "3000:3000"
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:8000
+    depends_on:
+      backend:
+        condition: service_healthy
+    volumes:
+      - ./frontend:/app
+      - admin_node_modules:/app/node_modules
+      - admin_app_node_modules:/app/apps/admin/node_modules
+      - admin_shared_node_modules:/app/packages/shared/node_modules
+
+  h5:
+    image: node:22-alpine
+    working_dir: /app
+    command:
+      [
+        "sh",
+        "-c",
+        "corepack enable && corepack prepare pnpm@latest --activate && pnpm install && rm -rf apps/h5/.next && pnpm dev:h5 --port 3001",
+      ]
     ports:
       - "3001:3001"
+    environment:
+      BACKEND_URL: http://backend:8000
+    depends_on:
+      backend:
+        condition: service_healthy
+    volumes:
+      - ./frontend:/app
+      - h5_node_modules:/app/node_modules
+      - h5_app_node_modules:/app/apps/h5/node_modules
+      - h5_shared_node_modules:/app/packages/shared/node_modules
+
+  mock-sms:
+    image: node:22-alpine
+    working_dir: /mock
+    command:
+      [
+        "node",
+        "-e",
+        "const http=require('http');http.createServer((req,res)=>{res.writeHead(200);res.end(JSON.stringify({code:0,msg:'mock ok'}));}).listen(3001,()=>console.log('mock-sms on 3001'));",
+      ]
+    ports:
+      - "3099:3001"
 
   mock-wechat:
-    image: node:20-alpine
+    image: node:22-alpine
     working_dir: /mock
-    command: ["node", "-e", "const http=require('http');http.createServer((req,res)=>{res.writeHead(200);res.end(JSON.stringify({access_token:'mock_token_123',openid:'mock_openid'}));}).listen(3002,()=>console.log('mock-wechat on 3002'));"]
+    command:
+      [
+        "node",
+        "-e",
+        "const http=require('http');http.createServer((req,res)=>{res.writeHead(200);res.end(JSON.stringify({access_token:'mock_token_123',openid:'mock_openid'}));}).listen(3002,()=>console.log('mock-wechat on 3002'));",
+      ]
     ports:
-      - "3002:3002"
+      - "3098:3002"
 
 volumes:
   postgres_data:
   redis_data:
   minio_data:
   backend_venv:
+  admin_node_modules:
+  admin_app_node_modules:
+  admin_shared_node_modules:
+  h5_node_modules:
+  h5_app_node_modules:
+  h5_shared_node_modules:

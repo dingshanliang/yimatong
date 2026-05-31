@@ -54,6 +54,7 @@ def tenant(
                 admin_password=admin_password,
                 plan="free",
             )
+            await db.commit()
             typer.echo(f"Created tenant: {t.name} (id={t.id}, slug={slug})")
 
     asyncio.run(_run())
@@ -78,6 +79,7 @@ def product(
             b = await create_brand_if_needed(db, t.id, brand)
             p = await create_product_if_needed(db, t.id, b.id, product_name)
             s = await create_sku_if_needed(db, t.id, p.id, sku, f"{product_name}-{sku}")
+            await db.commit()
 
             typer.echo(f"Brand: {b.name} (id={b.id})")
             typer.echo(f"Product: {p.name} (id={p.id})")
@@ -102,7 +104,57 @@ def code(
                 raise typer.Exit(code=1)
 
             generated = await _generate_codes(db, t.id, batch_code, count)
+            await db.commit()
             typer.echo(f"Generated {generated} codes for batch '{batch_code}'")
+
+    asyncio.run(_run())
+
+
+@app.command()
+def all(
+    name: str = typer.Option("演示租户", help="租户名称"),
+    slug: str = typer.Option("demo", help="租户标识"),
+    admin_email: str = typer.Option("admin@demo.com", help="管理员邮箱"),
+    admin_name: str = typer.Option("Admin", help="管理员姓名"),
+    admin_password: str = typer.Option("Admin1234", help="管理员密码"),
+    brand: str = typer.Option("演示品牌", help="品牌名称"),
+    product_name: str = typer.Option("演示产品", help="产品名称"),
+    sku: str = typer.Option("DEMO-001", help="SKU 编码"),
+):
+    """一键创建全部种子数据（租户 + 产品链）"""
+
+    async def _run():
+        async with async_session() as db:
+            # 1. 创建租户
+            existing = await _get_tenant_by_slug(db, slug)
+            if existing:
+                typer.echo(f"Tenant '{slug}' already exists (id={existing.id})")
+                t = existing
+            else:
+                t = await create_tenant(
+                    db,
+                    name=name,
+                    slug=slug,
+                    admin_email=admin_email,
+                    admin_name=admin_name,
+                    admin_password=admin_password,
+                    plan="free",
+                )
+                typer.echo(f"Created tenant: {t.name} (id={t.id})")
+
+            # 2. 创建品牌 + 产品 + SKU
+            b = await create_brand_if_needed(db, t.id, brand)
+            typer.echo(f"Brand: {b.name} (id={b.id})")
+            p = await create_product_if_needed(db, t.id, b.id, product_name)
+            typer.echo(f"Product: {p.name} (id={p.id})")
+            s = await create_sku_if_needed(db, t.id, p.id, sku, f"{product_name}-{sku}")
+            typer.echo(f"SKU: {s.code} (id={s.id})")
+
+            await db.commit()
+
+        typer.echo("\nSeed complete! Login with:")
+        typer.echo(f"  Email:    {admin_email}")
+        typer.echo(f"  Password: {admin_password}")
 
     asyncio.run(_run())
 

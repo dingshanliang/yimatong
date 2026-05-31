@@ -28,14 +28,15 @@ const nextConfig: NextConfig = {
     return [{ source: "/(.*)", headers: securityHeaders }];
   },
   async rewrites() {
+    const backendUrl = process.env.BACKEND_URL || "http://localhost:8000";
     return [
       {
         source: "/api/v1/:path*",
-        destination: "http://localhost:8000/api/v1/:path*",
+        destination: `${backendUrl}/api/v1/:path*`,
       },
       {
         source: "/c/:publicId",
-        destination: "http://localhost:8000/c/:publicId",
+        destination: `${backendUrl}/c/:publicId`,
       },
     ];
   },
