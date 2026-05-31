@@ -18,11 +18,11 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="zh-CN" className="h-full">
-      <body className="min-h-full">
+      <body className="h-full min-h-screen">
         <AntdRegistry>
           <ConfigProvider theme={theme} locale={zhCN}>
             <SWRProvider>
-              <App>{children}</App>
+              <App className="min-h-screen">{children}</App>
             </SWRProvider>
           </ConfigProvider>
         </AntdRegistry>

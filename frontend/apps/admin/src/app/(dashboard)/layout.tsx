@@ -178,8 +178,8 @@ function DashboardInner({ children }: { children: React.ReactNode }) {
 
   return (
     <ConfigProvider locale={LOCALE_MAP[locale]}>
-      <Layout className="min-h-screen">
-        <Sider breakpoint="lg" collapsedWidth={0} width={220}>
+      <Layout className="min-h-screen" style={{ minHeight: "100vh" }}>
+        <Sider breakpoint="lg" collapsedWidth={0} width={220} style={{ minHeight: "100vh" }}>
           <div className="my-4 flex h-10 items-center justify-center">
             <span className="text-lg font-bold text-white">{t("common.brand")}</span>
           </div>
@@ -194,7 +194,7 @@ function DashboardInner({ children }: { children: React.ReactNode }) {
             }}
           />
         </Sider>
-        <Layout>
+        <Layout style={{ minHeight: "100vh" }}>
           <Header className="flex items-center justify-between bg-white px-6 shadow-sm">
             <Select
               value={locale}
@@ -215,7 +215,10 @@ function DashboardInner({ children }: { children: React.ReactNode }) {
               </div>
             </Dropdown>
           </Header>
-          <Content className="m-6 rounded-lg bg-white p-6 shadow-sm">
+          <Content
+            className="m-6 rounded-lg bg-white p-6 shadow-sm"
+            style={{ minHeight: "calc(100vh - 112px)" }}
+          >
             {children}
           </Content>
         </Layout>
