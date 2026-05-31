@@ -1,8 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { App, Card, Col, Row, Space, Statistic, Table, Typography, Button, Tag } from "antd";
-import { DownloadOutlined } from "@ant-design/icons";
+import { App, Card, Col, Row, Space, Statistic, Table, Typography, Button, Tag, InputNumber } from "antd";
+import { DownloadOutlined, CheckOutlined } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
 import api from "@/lib/api";
 
@@ -33,7 +33,7 @@ function RepeatScansCard() {
   const columns: ColumnsType<Record<string, unknown>> = [
     { title: "码 ID", dataIndex: "public_id", key: "public_id" },
     { title: "扫码次数", dataIndex: "scan_count", key: "scan_count" },
-    { title: "最近扫码 IP", dataIndex: "last_ip", key: "last_ip", render: (v: string) => v || "—" },
+    { title: "不同 IP", dataIndex: "distinct_ips", key: "distinct_ips", render: (v: number) => v ?? "—" },
   ];
 
   return (
@@ -47,14 +47,15 @@ function RepeatScansCard() {
 /* ---------- Cross Region ---------- */
 
 function CrossRegionCard() {
-  const [data, setData] = useState<Record<string, unknown>[]>([]);
+  const [stats, setStats] = useState<Record<string, unknown>>({});
+  const [daysBack, setDaysBack] = useState(30);
   const [loading, setLoading] = useState(false);
 
   const fetch = async () => {
     setLoading(true);
     try {
-      const { data: d } = await api.get("/risk-dashboard/cross-region");
-      setData(Array.isArray(d) ? d : d?.items || []);
+      const { data } = await api.get("/risk-dashboard/cross-region", { params: { days_back: daysBack } });
+      setStats(data || {});
     } catch {
       /* silent */
     } finally {
@@ -62,18 +63,62 @@ function CrossRegionCard() {
     }
   };
 
-  useEffect(() => { fetch(); }, []);
+  useEffect(() => { fetch(); }, [daysBack]);
 
-  const columns: ColumnsType<Record<string, unknown>> = [
-    { title: "码 ID", dataIndex: "public_id", key: "public_id" },
-    { title: "预期城市", dataIndex: "expected_city", key: "expected_city", render: (v: string) => v || "—" },
-    { title: "实际城市", dataIndex: "detected_city", key: "detected_city" },
-    { title: "扫码次数", dataIndex: "scan_count", key: "scan_count" },
+  const byRegion = (stats.by_region || []) as Record<string, unknown>[];
+  const byCity = (stats.by_detected_city || []) as Record<string, unknown>[];
+  const byCode = (stats.by_code || []) as Record<string, unknown>[];
+
+  const regionCols: ColumnsType<Record<string, unknown>> = [
+    { title: "预期区域", dataIndex: "region", key: "region" },
+    { title: "跨区次数", dataIndex: "count", key: "count" },
+  ];
+
+  const cityCols: ColumnsType<Record<string, unknown>> = [
+    { title: "实际扫码城市", dataIndex: "city", key: "city" },
+    { title: "跨区次数", dataIndex: "count", key: "count" },
   ];
 
   return (
-    <Card title="跨区扫码统计" size="small">
-      <Table columns={columns} dataSource={data} rowKey="public_id" loading={loading} size="small" pagination={false} />
+    <Card
+      title="跨区扫码统计"
+      size="small"
+      extra={
+        <Space>
+          <span className="text-gray-500 text-sm">近</span>
+          <InputNumber min={1} max={365} value={daysBack} onChange={(v) => setDaysBack(v || 30)} size="small" style={{ width: 70 }} />
+          <span className="text-gray-500 text-sm">天</span>
+        </Space>
+      }
+    >
+      <Row gutter={16} className="mb-4">
+        <Col span={8}><Statistic title="跨区线索总数" value={Number(stats.total_clues ?? 0)} loading={loading} /></Col>
+        <Col span={8}><Statistic title="待处理" value={Number(stats.unresolved_count ?? 0)} loading={loading} valueStyle={{ color: Number(stats.unresolved_count ?? 0) > 0 ? "#cf1322" : undefined }} /></Col>
+      </Row>
+      <Row gutter={16}>
+        <Col span={12}>
+          <Table columns={regionCols} dataSource={byRegion.slice(0, 5)} rowKey="region" loading={loading} size="small" pagination={false} title={() => "按预期区域"} />
+        </Col>
+        <Col span={12}>
+          <Table columns={cityCols} dataSource={byCity.slice(0, 5)} rowKey="city" loading={loading} size="small" pagination={false} title={() => "按实际城市"} />
+        </Col>
+      </Row>
+      {byCode.length > 0 && (
+        <div className="mt-4">
+          <Table
+            columns={[
+              { title: "码 ID", dataIndex: "public_id", key: "public_id" },
+              { title: "跨区次数", dataIndex: "count", key: "count" },
+            ]}
+            dataSource={byCode}
+            rowKey="public_id"
+            loading={loading}
+            size="small"
+            pagination={false}
+            title={() => "跨区频次 Top 10"}
+          />
+        </div>
+      )}
     </Card>
   );
 }
@@ -84,11 +129,12 @@ function DiversionCard() {
   const [items, setItems] = useState<Record<string, unknown>[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
+  const { message } = App.useApp();
 
   const fetch = async () => {
     setLoading(true);
     try {
-      const { data } = await api.get("/risk-dashboard/diversion-summary", { params: { page: 1, page_size: 10 } });
+      const { data } = await api.get("/risk-dashboard/diversion-summary", { params: { page: 1, page_size: 20 } });
       setItems(data.items || []);
       setTotal(data.total || 0);
     } catch {
@@ -100,6 +146,16 @@ function DiversionCard() {
 
   useEffect(() => { fetch(); }, []);
 
+  const handleResolve = async (id: string) => {
+    try {
+      await api.put(`/risk-dashboard/diversion-clues/${id}/resolve`);
+      message.success("已标记为处理");
+      fetch();
+    } catch {
+      message.error("操作失败");
+    }
+  };
+
   const columns: ColumnsType<Record<string, unknown>> = [
     { title: "码 ID", dataIndex: "public_id", key: "public_id" },
     { title: "预期区域", dataIndex: "expected_region", key: "expected_region" },
@@ -110,6 +166,15 @@ function DiversionCard() {
       key: "resolved",
       render: (v: boolean) => <Tag color={v ? "green" : "red"}>{v ? "已处理" : "待处理"}</Tag>,
     },
+    {
+      title: "操作", key: "actions", width: 80,
+      render: (_: unknown, record: Record<string, unknown>) =>
+        !record.resolved && (
+          <Button size="small" type="link" icon={<CheckOutlined />} onClick={() => handleResolve(String(record.id))}>
+            处理
+          </Button>
+        ),
+    },
   ];
 
   return (
@@ -119,8 +184,6 @@ function DiversionCard() {
     </Card>
   );
 }
-
-/* ---------- Export ---------- */
 
 /* ---------- Main ---------- */
 
@@ -170,4 +233,3 @@ export default function RiskDashboardPage() {
     </div>
   );
 }
-

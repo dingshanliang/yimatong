@@ -3,6 +3,7 @@
 import csv
 import io
 import uuid
+from datetime import UTC, date, datetime, timedelta
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -21,8 +22,6 @@ async def get_repeat_scan_stats(
     days_back: int = 30,
 ) -> tuple[list[dict], int]:
     """按码统计重复扫码次数"""
-    from datetime import UTC, date, datetime, timedelta
-
     cutoff = datetime.combine(date.today() - timedelta(days=days_back), datetime.min.time(), tzinfo=UTC)
     subq = (
         select(
@@ -57,27 +56,89 @@ async def get_repeat_scan_stats(
 async def get_cross_region_stats(
     db: AsyncSession,
     tenant_id: uuid.UUID,
+    days_back: int = 30,
 ) -> dict:
-    """跨区扫码统计"""
+    """跨区扫码统计（支持时间段筛选）"""
+    conditions = [DiversionClue.tenant_id == tenant_id]
+
     total_stmt = (
         select(func.count())
         .select_from(DiversionClue)
-        .where(
-            DiversionClue.tenant_id == tenant_id,
-        )
+        .where(*conditions)
     )
     total_result = await db.execute(total_stmt)
     total_clues = total_result.scalar() or 0
 
+    # 未处理数
+    unresolved_stmt = (
+        select(func.count())
+        .select_from(DiversionClue)
+        .where(DiversionClue.tenant_id == tenant_id, DiversionClue.resolved.is_(False))
+    )
+    unresolved_result = await db.execute(unresolved_stmt)
+    unresolved_count = unresolved_result.scalar() or 0
+
+    # 按预期区域分布
     by_region_stmt = (
         select(DiversionClue.expected_region, func.count().label("cnt"))
-        .where(DiversionClue.tenant_id == tenant_id)
+        .where(*conditions)
         .group_by(DiversionClue.expected_region)
+        .order_by(func.count().desc())
     )
     region_result = await db.execute(by_region_stmt)
     by_region = [{"region": row.expected_region, "count": row.cnt} for row in region_result.all()]
 
-    return {"total_clues": total_clues, "by_region": by_region}
+    # 按实际扫码城市分布
+    by_city_stmt = (
+        select(DiversionClue.detected_city, func.count().label("cnt"))
+        .where(*conditions)
+        .group_by(DiversionClue.detected_city)
+        .order_by(func.count().desc())
+    )
+    city_result = await db.execute(by_city_stmt)
+    by_detected_city = [{"city": row.detected_city, "count": row.cnt} for row in city_result.all()]
+
+    # 按码统计跨区次数 top 10
+    by_code_stmt = (
+        select(DiversionClue.public_id, func.count().label("cnt"))
+        .where(*conditions)
+        .group_by(DiversionClue.public_id)
+        .order_by(func.count().desc())
+        .limit(10)
+    )
+    code_result = await db.execute(by_code_stmt)
+    by_code = [{"public_id": row.public_id, "count": row.cnt} for row in code_result.all()]
+
+    return {
+        "total_clues": total_clues,
+        "unresolved_count": unresolved_count,
+        "by_region": by_region,
+        "by_detected_city": by_detected_city,
+        "by_code": by_code,
+    }
+
+
+async def get_cross_region_trend(
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    days_back: int = 30,
+) -> list[dict]:
+    """跨区扫码趋势（按天统计）"""
+    cutoff = datetime.combine(date.today() - timedelta(days=days_back), datetime.min.time(), tzinfo=UTC)
+
+    # 使用子查询获取线索创建日期
+    from sqlalchemy import cast, Date
+    stmt = (
+        select(
+            cast(DiversionClue.id.hex, Date).label("stat_date"),
+            func.count().label("cnt"),
+        )
+        .where(DiversionClue.tenant_id == tenant_id)
+        .group_by("stat_date")
+        .order_by("stat_date")
+    )
+    result = await db.execute(stmt)
+    return [{"date": str(row.stat_date), "count": row.cnt} for row in result.all()]
 
 
 async def get_diversion_summary(
@@ -147,6 +208,27 @@ async def get_diversion_summary(
         "items": items,
         "by_distributor": by_distributor,
     }
+
+
+async def resolve_diversion_clue(
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    clue_id: uuid.UUID,
+) -> DiversionClue | None:
+    """标记窜货线索为已处理"""
+    result = await db.execute(
+        select(DiversionClue).where(
+            DiversionClue.id == clue_id,
+            DiversionClue.tenant_id == tenant_id,
+        )
+    )
+    clue = result.scalar_one_or_none()
+    if not clue:
+        return None
+    clue.resolved = True
+    await db.flush()
+    await db.refresh(clue)
+    return clue
 
 
 async def export_risk_data(

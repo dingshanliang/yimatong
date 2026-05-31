@@ -373,19 +373,56 @@ def _resolve_ip(ip: str) -> str | None:
     return resolve_ip_to_city(ip)
 
 
-async def get_batch_expected_region(
+async def get_code_expected_region(
     db: AsyncSession,
-    batch_id: uuid.UUID,
-) -> str | None:
-    """获取批次分配的区域城市"""
-    result = await db.execute(select(CodeBatch).where(CodeBatch.id == batch_id))
-    batch = result.scalar_one_or_none()
-    if not batch or not batch.region_id:
+    public_id: str,
+) -> dict | None:
+    """获取码的归属区域信息（通过 CodeAllocation → Store → Region 链路，回退到 CodeBatch.region_id）"""
+    item = (await db.execute(
+        select(CodeItem).where(CodeItem.public_id == public_id)
+    )).scalar_one_or_none()
+    if not item or not item.code_batch_id:
         return None
 
-    region_result = await db.execute(select(Region).where(Region.id == batch.region_id))
-    region = region_result.scalar_one_or_none()
-    return region.city if region else None
+    # 优先通过门店分配查区域
+    alloc = (await db.execute(
+        select(CodeAllocation).where(CodeAllocation.batch_id == item.code_batch_id)
+        .order_by(CodeAllocation.id.desc()).limit(1)
+    )).scalar_one_or_none()
+
+    if alloc and alloc.store_id:
+        store = (await db.execute(
+            select(Store).where(Store.id == alloc.store_id)
+        )).scalar_one_or_none()
+        if store and store.region_id:
+            region = (await db.execute(
+                select(Region).where(Region.id == store.region_id)
+            )).scalar_one_or_none()
+            if region:
+                return {
+                    "city": region.city,
+                    "region_name": region.name,
+                    "store_id": str(store.id),
+                    "store_name": store.name,
+                    "distributor_id": str(store.distributor_id) if store.distributor_id else None,
+                }
+
+    # 回退：通过批次 region_id
+    batch = (await db.execute(
+        select(CodeBatch).where(CodeBatch.id == item.code_batch_id)
+    )).scalar_one_or_none()
+    if batch and batch.region_id:
+        region = (await db.execute(
+            select(Region).where(Region.id == batch.region_id)
+        )).scalar_one_or_none()
+        if region:
+            return {
+                "city": region.city,
+                "region_name": region.name,
+                "distributor_id": str(batch.distributor_id) if batch.distributor_id else None,
+            }
+
+    return None
 
 
 async def check_diversion(
@@ -394,33 +431,37 @@ async def check_diversion(
     public_id: str,
     ip: str,
 ) -> DiversionClue | None:
-    """检测窜货：扫码 IP 城市与批次分配区域不匹配"""
+    """检测窜货：扫码 IP 城市与码归属区域不匹配（支持门店级和批次级两种链路）"""
     detected_city = _resolve_ip(ip)
     if not detected_city:
         return None
 
-    item_result = await db.execute(select(CodeItem).where(CodeItem.public_id == public_id))
-    item = item_result.scalar_one_or_none()
-    if not item or not item.code_batch_id:
+    expected = await get_code_expected_region(db, public_id)
+    if not expected or not expected.get("city"):
         return None
 
-    expected_region = await get_batch_expected_region(db, item.code_batch_id)
-    if not expected_region:
-        return None
-
+    expected_region = expected["city"]
     if detected_city == expected_region:
         return None
 
-    batch_result = await db.execute(select(CodeBatch).where(CodeBatch.id == item.code_batch_id))
-    batch = batch_result.scalar_one_or_none()
+    item = (await db.execute(
+        select(CodeItem).where(CodeItem.public_id == public_id)
+    )).scalar_one_or_none()
+
+    dist_id = None
+    if expected.get("distributor_id"):
+        try:
+            dist_id = uuid.UUID(expected["distributor_id"])
+        except (ValueError, TypeError):
+            pass
 
     clue = DiversionClue(
         tenant_id=tenant_id,
         public_id=public_id,
-        code_item_id=item.id,
+        code_item_id=item.id if item else uuid.uuid4(),
         expected_region=expected_region,
         detected_city=detected_city,
-        distributor_id=batch.distributor_id if batch else None,
+        distributor_id=dist_id,
     )
     db.add(clue)
     await db.flush()

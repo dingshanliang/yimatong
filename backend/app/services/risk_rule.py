@@ -98,6 +98,12 @@ def _evaluate_rule(rule: RiskRule, context: dict) -> bool:
         allowed = config.get("allowed_regions", [])
         detected = context.get("detected_region", "")
         return detected not in allowed if allowed else False
+    elif rt == "cross_region":
+        # 跨区预警规则：检测到跨区扫码且累计次数超过阈值
+        if not context.get("cross_region_detected"):
+            return False
+        threshold = config.get("threshold_count", 1)
+        return context.get("cross_region_count", 0) >= threshold
     elif rt == "budget_limit":
         return context.get("current_spend", 0) >= config.get("max_budget", float("inf"))
     elif rt == "stock_limit":
