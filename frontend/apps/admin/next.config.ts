@@ -3,7 +3,7 @@ import path from "node:path";
 import withBundleAnalyzer from "@next/bundle-analyzer";
 
 const securityHeaders = [
-  { key: "X-Frame-Options", value: "DENY" },
+  { key: "X-Frame-Options", value: "SAMEORIGIN" },
   { key: "X-Content-Type-Options", value: "nosniff" },
   { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
   { key: "X-XSS-Protection", value: "0" },
@@ -17,7 +17,7 @@ const securityHeaders = [
       "img-src 'self' data: blob: https:",
       "font-src 'self'",
       `connect-src 'self'${process.env.NODE_ENV !== "production" ? " http://localhost:8000" : ""}`,
-      "frame-ancestors 'none'",
+      "frame-ancestors 'self'",
       "base-uri 'self'",
       "form-action 'self'",
     ].join("; "),

@@ -30,15 +30,21 @@ export function PreviewPanel({ dsl }: { dsl: PageDSL }) {
   const [ready, setReady] = useState(false);
 
   const preset = DEVICE_PRESETS[device];
-  const h5Url = process.env.NEXT_PUBLIC_H5_URL || "http://localhost:3001";
+  const configuredH5Url = process.env.NEXT_PUBLIC_H5_URL?.replace(/\/$/, "");
+  const previewUrl = configuredH5Url ? `${configuredH5Url}/preview` : "/page-preview";
+
+  const getPreviewOrigin = useCallback(() => {
+    if (typeof window === "undefined") return "*";
+    return new URL(previewUrl, window.location.origin).origin;
+  }, [previewUrl]);
 
   const sendDSL = useCallback(() => {
     if (!iframeRef.current?.contentWindow || !ready) return;
     iframeRef.current.contentWindow.postMessage(
       { type: "preview-dsl", payload: dsl },
-      h5Url,
+      getPreviewOrigin(),
     );
-  }, [dsl, ready, h5Url]);
+  }, [dsl, ready, getPreviewOrigin]);
 
   useEffect(() => {
     sendDSL();
@@ -105,7 +111,7 @@ export function PreviewPanel({ dsl }: { dsl: PageDSL }) {
         >
           <iframe
             ref={iframeRef}
-            src={`${h5Url}/preview`}
+            src={previewUrl}
             style={{
               width: preset.width,
               height: preset.height,

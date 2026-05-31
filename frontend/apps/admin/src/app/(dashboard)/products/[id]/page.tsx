@@ -25,7 +25,7 @@ import FileUploadInput from "@/components/FileUploadInput";
 import ImageUploadInput from "@/components/ImageUploadInput";
 import api, { extractErrorMessage } from "@/lib/api";
 import { createDefaultModules, createEmptyDSL } from "@/lib/page-dsl";
-import type { Product, ProductAsset, ProductAssetType, ProductionBatch, SKU } from "../_components/types";
+import type { Brand, Product, ProductAsset, ProductAssetType, ProductionBatch, SKU } from "../_components/types";
 
 const { Title, Text } = Typography;
 const { TextArea } = Input;
@@ -53,6 +53,14 @@ const WORKBENCH_STEP_ACTIONS: Record<string, string> = {
   batches: "新增生产批次",
   assets: "上传报告证书",
   pages: "配置扫码页",
+};
+
+const PROFILE_FIELD_LABELS: Record<string, string> = {
+  brand_id: "品牌",
+  category: "品类",
+  origin: "产地",
+  image_url: "产品主图",
+  description: "产品介绍",
 };
 
 type SpecEntry = { key?: string; value?: string };
@@ -117,6 +125,7 @@ export default function ProductWorkbenchPage() {
   const [skus, setSkus] = useState<SKU[]>([]);
   const [batches, setBatches] = useState<ProductionBatch[]>([]);
   const [pages, setPages] = useState<PageTemplate[]>([]);
+  const [brands, setBrands] = useState<Brand[]>([]);
   const [loading, setLoading] = useState(true);
 
   const [productForm] = Form.useForm();
@@ -137,17 +146,19 @@ export default function ProductWorkbenchPage() {
     setLoading(true);
     try {
       const productResp = await fetchProductDetail(productId);
-      const [assetItems, skuItems, batchItems, pageItems] = await Promise.all([
+      const [assetItems, skuItems, batchItems, pageItems, brandItems] = await Promise.all([
         fetchOptionalItems<ProductAsset>(api.get(`/products/${productId}/assets`, { params: { page_size: 100 } })),
         fetchOptionalItems<SKU>(api.get(`/products/${productId}/skus`, { params: { page_size: 100 } })),
         fetchOptionalItems<ProductionBatch>(api.get(`/products/${productId}/batches`, { params: { page_size: 100 } })),
         fetchOptionalItems<PageTemplate>(api.get("/page-templates", { params: { product_id: productId, page_size: 100 } })),
+        fetchOptionalItems<Brand>(api.get("/brands", { params: { page_size: 100 } })),
       ]);
       setProduct(productResp);
       setAssets(assetItems);
       setSkus(skuItems);
       setBatches(batchItems);
       setPages(pageItems);
+      setBrands(brandItems);
       productForm.setFieldsValue(productResp);
     } catch (err) {
       setProduct(null);
@@ -155,6 +166,7 @@ export default function ProductWorkbenchPage() {
       setSkus([]);
       setBatches([]);
       setPages([]);
+      setBrands([]);
       message.error(extractErrorMessage(err, "加载产品工作台失败"));
     } finally {
       setLoading(false);
@@ -195,6 +207,46 @@ export default function ProductWorkbenchPage() {
   }, [assets, batches.length, pages.length, product, skus.length]);
 
   const nextStep = completionSteps.find((step) => !step.done);
+
+  const scrollToProfileField = useCallback((fieldName: string) => {
+    window.setTimeout(() => {
+      productForm.scrollToField(fieldName, {
+        behavior: "smooth",
+        block: "center",
+        focus: true,
+      });
+      message.info(`请补充${PROFILE_FIELD_LABELS[fieldName] || "基础资料"}`);
+    }, 0);
+  }, [message, productForm]);
+
+  const getFirstIncompleteProfileField = useCallback(() => {
+    if (!product) return undefined;
+
+    const values = { ...product, ...productForm.getFieldsValue() } as Product;
+    if (!values.brand_id) return "brand_id";
+    if (!values.category) return "category";
+    if (!values.origin) return "origin";
+    if (!values.image_url) return "image_url";
+    if (!values.description && !values.story_content) return "description";
+    return undefined;
+  }, [product, productForm]);
+
+  const handleNextStepClick = useCallback(() => {
+    if (!nextStep) return;
+
+    if (nextStep.key !== "profile") {
+      setActiveTab(nextStep.key);
+      return;
+    }
+
+    const incompleteField = getFirstIncompleteProfileField();
+    if (activeTab !== "profile") {
+      setActiveTab("profile");
+    }
+    if (incompleteField) {
+      scrollToProfileField(incompleteField);
+    }
+  }, [activeTab, getFirstIncompleteProfileField, nextStep, scrollToProfileField]);
 
   const handleProductSave = async (values: Record<string, unknown>) => {
     try {
@@ -397,6 +449,15 @@ export default function ProductWorkbenchPage() {
                 <Form form={productForm} layout="vertical" onFinish={handleProductSave}>
                   <div className="grid grid-cols-1 gap-x-4 md:grid-cols-2">
                     <Form.Item name="name" label="产品名称" rules={[{ required: true, message: "请输入产品名称" }]}><Input /></Form.Item>
+                    <Form.Item name="brand_id" label="品牌" rules={[{ required: true, message: "请选择品牌" }]}>
+                      <Select
+                        showSearch
+                        allowClear
+                        placeholder="选择品牌"
+                        optionFilterProp="label"
+                        options={brands.map((brand) => ({ value: brand.id, label: brand.name }))}
+                      />
+                    </Form.Item>
                     <Form.Item name="category" label="品类"><Input /></Form.Item>
                     <Form.Item name="origin" label="产地"><Input placeholder="省/市/县/基地" /></Form.Item>
                     <Form.Item
@@ -434,7 +495,7 @@ export default function ProductWorkbenchPage() {
                     </Space>
                   </div>
                   {nextStep && (
-                    <Button type="primary" block onClick={() => setActiveTab(nextStep.key)}>
+                    <Button type="primary" block onClick={handleNextStepClick}>
                       {WORKBENCH_STEP_ACTIONS[nextStep.key] || "继续完善资料"}
                     </Button>
                   )}
