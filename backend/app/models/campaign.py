@@ -29,6 +29,7 @@ class Campaign(Base):
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     campaign_type: Mapped[str] = mapped_column(String(50), nullable=False)
     status: Mapped[str] = mapped_column(String(20), nullable=False, default=CampaignStatus.DRAFT)
+    product_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("products.id"), nullable=True, index=True)
     start_at: Mapped[str] = mapped_column(String(30), nullable=False)
     end_at: Mapped[str] = mapped_column(String(30), nullable=False)
     rules_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)

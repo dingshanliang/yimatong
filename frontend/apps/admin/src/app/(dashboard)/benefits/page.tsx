@@ -34,6 +34,7 @@ export default function BenefitsPage() {
   const [form] = Form.useForm();
   const [activeTab, setActiveTab] = useState("benefits");
   const [benefitType, setBenefitType] = useState<string>("");
+  const [appliedCampaignQuery, setAppliedCampaignQuery] = useState<string | null>(null);
 
   const wechatPayConnectors = allConnectors.filter((c) => c.connector_type === "wechat_pay_transfer");
   const couponPoolConnectors = allConnectors.filter((c) => c.connector_type === "coupon_pool");
@@ -47,6 +48,18 @@ export default function BenefitsPage() {
   }, []);
 
   useEffect(() => { fetchCampaigns(); fetchConnectors(); }, [fetchCampaigns, fetchConnectors]);
+
+  useEffect(() => {
+    const campaignId = new URLSearchParams(window.location.search).get("campaign_id");
+    if (!campaignId || campaigns.length === 0 || modalOpen || editItem || appliedCampaignQuery === campaignId) return;
+    setEditItem(null);
+    form.resetFields();
+    form.setFieldsValue({ campaign_id: campaignId });
+    setBenefitType("");
+    setActiveTab("benefits");
+    setModalOpen(true);
+    setAppliedCampaignQuery(campaignId);
+  }, [appliedCampaignQuery, campaigns, editItem, form, modalOpen]);
 
   const openCreate = () => { setEditItem(null); form.resetFields(); setBenefitType(""); setModalOpen(true); };
 
@@ -128,7 +141,7 @@ export default function BenefitsPage() {
         { key: "benefits", label: "权益列表", children: <Table columns={benefitColumns} dataSource={benefits} rowKey="id" loading={benefitsLoading} pagination={{ current: benefitsPage, total: benefitsTotal, pageSize: 20, onChange: setBenefitsPage, showTotal: (t) => `共 ${t} 条` }} /> },
         { key: "claims", label: "领取记录", children: <Table columns={claimColumns} dataSource={claims} rowKey="id" loading={claimsLoading} pagination={{ current: claimsPage, total: claimsTotal, pageSize: 20, onChange: setClaimsPage, showTotal: (t) => `共 ${t} 条` }} /> },
       ]} />
-      <Modal title={editItem ? "编辑权益" : "新建权益"} open={modalOpen} onCancel={() => setModalOpen(false)} onOk={() => form.submit()} width={640} destroyOnClose>
+      <Modal title={editItem ? "编辑权益" : "新建权益"} open={modalOpen} onCancel={() => setModalOpen(false)} onOk={() => form.submit()} width={640} destroyOnHidden>
         {benefitType === "cash_red_packet" && <Alert title="微信现金红包" description="单笔转账上限 200 元，金额以元为单位输入，系统自动转换为分存储。请确保已配置微信支付转账连接器。" type="info" showIcon className="mb-4" />}
         <Form form={form} layout="vertical" onFinish={handleSubmit} onValuesChange={(changed) => { if (changed.benefit_type) setBenefitType(changed.benefit_type as string); }}>
           <Form.Item name="name" label="权益名称" rules={[{ required: true, message: "请输入权益名称" }]}><Input data-testid="benefit-name-input" /></Form.Item>

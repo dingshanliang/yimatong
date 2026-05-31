@@ -1,12 +1,14 @@
 """活动与权益服务层"""
 
 import uuid
+from datetime import datetime
 
-from sqlalchemy import func, select, update
+from sqlalchemy import func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.event_bus import event_bus
 from app.models.campaign import Benefit, BenefitClaim, Campaign, CampaignStatus
+from app.models.product import Product
 
 
 async def create_campaign(
@@ -18,11 +20,15 @@ async def create_campaign(
     end_at: str,
     rules_json: dict,
     description: str | None = None,
+    product_id: uuid.UUID | None = None,
 ) -> dict:
+    product_id = product_id or _product_id_from_rules(rules_json)
+    rules_json = _rules_with_product_id(rules_json, product_id)
     c = Campaign(
         tenant_id=tenant_id,
         name=name,
         campaign_type=campaign_type,
+        product_id=product_id,
         start_at=start_at,
         end_at=end_at,
         rules_json=rules_json,
@@ -31,7 +37,9 @@ async def create_campaign(
     db.add(c)
     await db.flush()
     await db.refresh(c)
-    return _campaign_to_dict(c)
+    product_names = await _load_product_names(db, tenant_id, [c])
+    stats = await _load_campaign_stats(db, tenant_id, [c.id])
+    return _campaign_to_dict(c, product_names=product_names, stats=stats)
 
 
 async def list_campaigns(
@@ -39,6 +47,9 @@ async def list_campaigns(
     tenant_id: uuid.UUID,
     status: str | None = None,
     campaign_type: str | None = None,
+    product_id: uuid.UUID | None = None,
+    computed_status: str | None = None,
+    q: str | None = None,
     page: int = 1,
     page_size: int = 20,
 ) -> tuple[list[dict], int]:
@@ -56,11 +67,26 @@ async def list_campaigns(
     if campaign_type:
         stmt = stmt.where(Campaign.campaign_type == campaign_type)
         count_stmt = count_stmt.where(Campaign.campaign_type == campaign_type)
+    if product_id:
+        stmt = stmt.where(Campaign.product_id == product_id)
+        count_stmt = count_stmt.where(Campaign.product_id == product_id)
+    if computed_status:
+        status_conditions = _computed_status_conditions(computed_status)
+        if status_conditions is not None:
+            stmt = stmt.where(status_conditions)
+            count_stmt = count_stmt.where(status_conditions)
+    if q:
+        pattern = f"%{q}%"
+        stmt = stmt.where(Campaign.name.ilike(pattern))
+        count_stmt = count_stmt.where(Campaign.name.ilike(pattern))
 
     total = (await db.execute(count_stmt)).scalar() or 0
     stmt = stmt.order_by(Campaign.id.desc()).offset((page - 1) * page_size).limit(page_size)
     result = await db.execute(stmt)
-    return [_campaign_to_dict(c) for c in result.scalars().all()], total
+    campaigns = result.scalars().all()
+    product_names = await _load_product_names(db, tenant_id, campaigns)
+    stats = await _load_campaign_stats(db, tenant_id, [c.id for c in campaigns])
+    return [_campaign_to_dict(c, product_names=product_names, stats=stats) for c in campaigns], total
 
 
 async def get_campaign(
@@ -72,7 +98,11 @@ async def get_campaign(
         select(Campaign).where(Campaign.id == campaign_id, Campaign.tenant_id == tenant_id),
     )
     c = result.scalar_one_or_none()
-    return _campaign_to_dict(c) if c else None
+    if not c:
+        return None
+    product_names = await _load_product_names(db, tenant_id, [c])
+    stats = await _load_campaign_stats(db, tenant_id, [c.id])
+    return _campaign_to_dict(c, product_names=product_names, stats=stats)
 
 
 async def update_campaign(
@@ -88,11 +118,20 @@ async def update_campaign(
     if not c:
         return None
     for k, v in fields.items():
+        if k == "rules_json" and isinstance(v, dict):
+            v = _rules_with_product_id(v, fields.get("product_id", c.product_id))
+        if k == "product_id":
+            c.product_id = v
+            continue
         if v is not None:
             setattr(c, k, v)
+    if "product_id" in fields:
+        c.rules_json = _rules_with_product_id(c.rules_json, c.product_id)
     await db.flush()
     await db.refresh(c)
-    return _campaign_to_dict(c)
+    product_names = await _load_product_names(db, tenant_id, [c])
+    stats = await _load_campaign_stats(db, tenant_id, [c.id])
+    return _campaign_to_dict(c, product_names=product_names, stats=stats)
 
 
 async def change_campaign_status(
@@ -116,7 +155,9 @@ async def change_campaign_status(
         {"campaign_id": str(campaign_id), "status": new_status},
         str(tenant_id),
     )
-    return _campaign_to_dict(c)
+    product_names = await _load_product_names(db, tenant_id, [c])
+    stats = await _load_campaign_stats(db, tenant_id, [c.id])
+    return _campaign_to_dict(c, product_names=product_names, stats=stats)
 
 
 async def delete_campaign(
@@ -354,17 +395,156 @@ def _claim_to_dict(c: BenefitClaim) -> dict:
     }
 
 
-def _campaign_to_dict(c: Campaign) -> dict:
+async def campaign_product_exists(db: AsyncSession, tenant_id: uuid.UUID, product_id: uuid.UUID) -> bool:
+    result = await db.execute(select(Product.id).where(Product.id == product_id, Product.tenant_id == tenant_id))
+    return result.scalar_one_or_none() is not None
+
+
+def _rules_with_product_id(rules_json: dict | None, product_id: uuid.UUID | None) -> dict:
+    rules = dict(rules_json or {})
+    if product_id:
+        rules["product_id"] = str(product_id)
+    else:
+        rules.pop("product_id", None)
+    return rules
+
+
+def _product_id_from_rules(rules_json: dict | None) -> uuid.UUID | None:
+    raw = (rules_json or {}).get("product_id")
+    if not raw:
+        return None
+    try:
+        return uuid.UUID(str(raw))
+    except ValueError:
+        return None
+
+
+def _campaign_product_id(c: Campaign) -> uuid.UUID | None:
+    if c.product_id:
+        return c.product_id
+    return _product_id_from_rules(c.rules_json)
+
+
+async def _load_product_names(
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    campaigns: list[Campaign],
+) -> dict[uuid.UUID, str]:
+    product_ids = {pid for c in campaigns if (pid := _campaign_product_id(c))}
+    if not product_ids:
+        return {}
+    result = await db.execute(
+        select(Product.id, Product.name).where(Product.tenant_id == tenant_id, Product.id.in_(product_ids))
+    )
+    return {row.id: row.name for row in result.all()}
+
+
+async def _load_campaign_stats(
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    campaign_ids: list[uuid.UUID],
+) -> dict[uuid.UUID, dict]:
+    if not campaign_ids:
+        return {}
+    stats: dict[uuid.UUID, dict] = {
+        cid: {"benefit_count": 0, "stock_total": 0, "stock_used": 0, "claim_count": 0}
+        for cid in campaign_ids
+    }
+    benefit_result = await db.execute(
+        select(
+            Benefit.campaign_id,
+            func.count(Benefit.id).label("benefit_count"),
+            func.coalesce(func.sum(Benefit.stock_total), 0).label("stock_total"),
+            func.coalesce(func.sum(Benefit.stock_used), 0).label("stock_used"),
+        )
+        .where(Benefit.tenant_id == tenant_id, Benefit.campaign_id.in_(campaign_ids))
+        .group_by(Benefit.campaign_id)
+    )
+    for row in benefit_result.all():
+        stats[row.campaign_id].update(
+            {
+                "benefit_count": row.benefit_count or 0,
+                "stock_total": row.stock_total or 0,
+                "stock_used": row.stock_used or 0,
+            }
+        )
+
+    claim_result = await db.execute(
+        select(BenefitClaim.campaign_id, func.count(BenefitClaim.id).label("claim_count"))
+        .where(BenefitClaim.tenant_id == tenant_id, BenefitClaim.campaign_id.in_(campaign_ids))
+        .group_by(BenefitClaim.campaign_id)
+    )
+    for row in claim_result.all():
+        stats[row.campaign_id]["claim_count"] = row.claim_count or 0
+    return stats
+
+
+def _parse_campaign_datetime(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def _compute_campaign_status(c: Campaign) -> str:
+    if c.status in (CampaignStatus.DRAFT, CampaignStatus.PAUSED, CampaignStatus.ENDED):
+        return c.status
+    start_at = _parse_campaign_datetime(c.start_at)
+    end_at = _parse_campaign_datetime(c.end_at)
+    now = datetime.now(end_at.tzinfo) if end_at and end_at.tzinfo else datetime.now()
+    if end_at and end_at < now:
+        return CampaignStatus.ENDED
+    if start_at:
+        start_now = datetime.now(start_at.tzinfo) if start_at.tzinfo else datetime.now()
+        if start_at > start_now:
+            return "pending"
+    return CampaignStatus.ACTIVE
+
+
+def _computed_status_conditions(computed_status: str):
+    now = datetime.now().isoformat(timespec="seconds")
+    if computed_status == CampaignStatus.DRAFT:
+        return Campaign.status == CampaignStatus.DRAFT
+    if computed_status == CampaignStatus.PAUSED:
+        return Campaign.status == CampaignStatus.PAUSED
+    if computed_status == "pending":
+        return (Campaign.status == CampaignStatus.ACTIVE) & (Campaign.start_at > now)
+    if computed_status == CampaignStatus.ACTIVE:
+        return (Campaign.status == CampaignStatus.ACTIVE) & (Campaign.start_at <= now) & (Campaign.end_at >= now)
+    if computed_status == CampaignStatus.ENDED:
+        return or_(
+            Campaign.status == CampaignStatus.ENDED,
+            (Campaign.status == CampaignStatus.ACTIVE) & (Campaign.end_at < now),
+        )
+    return None
+
+
+def _campaign_to_dict(
+    c: Campaign,
+    product_names: dict[uuid.UUID, str] | None = None,
+    stats: dict[uuid.UUID, dict] | None = None,
+) -> dict:
+    product_id = _campaign_product_id(c)
+    campaign_stats = (stats or {}).get(c.id, {})
     return {
         "id": str(c.id),
         "tenant_id": str(c.tenant_id),
         "name": c.name,
         "campaign_type": c.campaign_type,
         "status": c.status,
+        "computed_status": _compute_campaign_status(c),
+        "product_id": str(product_id) if product_id else None,
+        "product_name": (product_names or {}).get(product_id) if product_id else None,
         "start_at": c.start_at,
         "end_at": c.end_at,
         "rules_json": c.rules_json,
         "description": c.description,
+        "benefit_count": campaign_stats.get("benefit_count", 0),
+        "stock_total": campaign_stats.get("stock_total", 0),
+        "stock_used": campaign_stats.get("stock_used", 0),
+        "claim_count": campaign_stats.get("claim_count", 0),
     }
 
 

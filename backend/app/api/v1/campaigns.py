@@ -10,6 +10,7 @@ from app.core.database import get_db
 from app.core.dependencies import get_current_tenant
 from app.schemas.common import PaginatedResponse
 from app.services.campaign import (
+    campaign_product_exists,
     change_campaign_status,
     claim_benefit,
     create_benefit,
@@ -35,9 +36,22 @@ REQUIRED_RULES_FIELDS = [
 ]
 
 
+def _request_product_id(product_id: uuid.UUID | None, rules_json: dict | None) -> uuid.UUID | None:
+    if product_id is not None:
+        return product_id
+    raw = (rules_json or {}).get("product_id")
+    if not raw:
+        return None
+    try:
+        return uuid.UUID(str(raw))
+    except ValueError:
+        return None
+
+
 class CampaignCreateRequest(BaseModel):
     name: str
     campaign_type: str
+    product_id: uuid.UUID | None = None
     start_at: str
     end_at: str
     rules_json: dict
@@ -54,13 +68,24 @@ class CampaignCreateRequest(BaseModel):
 
 class CampaignUpdateRequest(BaseModel):
     name: str | None = None
+    campaign_type: str | None = None
+    product_id: uuid.UUID | None = None
     start_at: str | None = None
     end_at: str | None = None
+    rules_json: dict | None = None
     description: str | None = None
 
 
 class CampaignStatusRequest(BaseModel):
     status: str
+
+    @field_validator("status")
+    @classmethod
+    def validate_status(cls, v: str) -> str:
+        allowed = {"draft", "active", "paused", "ended"}
+        if v not in allowed:
+            raise ValueError(f"status must be one of: {', '.join(sorted(allowed))}")
+        return v
 
 
 class BenefitCreateRequest(BaseModel):
@@ -83,6 +108,9 @@ async def create_campaign_endpoint(
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
+    product_id = _request_product_id(body.product_id, body.rules_json)
+    if product_id and not await campaign_product_exists(db, tenant_id, product_id):
+        raise HTTPException(status_code=400, detail="Product not found")
     return await create_campaign(
         db,
         tenant_id,
@@ -92,6 +120,7 @@ async def create_campaign_endpoint(
         body.end_at,
         body.rules_json,
         body.description,
+        product_id,
     )
 
 
@@ -99,6 +128,9 @@ async def create_campaign_endpoint(
 async def list_campaigns_endpoint(
     status: str | None = Query(None),
     campaign_type: str | None = Query(None),
+    product_id: uuid.UUID | None = Query(None),
+    computed_status: str | None = Query(None),
+    q: str | None = Query(None),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
@@ -109,6 +141,9 @@ async def list_campaigns_endpoint(
         tenant_id,
         status=status,
         campaign_type=campaign_type,
+        product_id=product_id,
+        computed_status=computed_status,
+        q=q,
         page=page,
         page_size=page_size,
     )
@@ -134,11 +169,14 @@ async def update_campaign_endpoint(
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
+    product_id = _request_product_id(body.product_id, body.rules_json)
+    if product_id is not None and not await campaign_product_exists(db, tenant_id, product_id):
+        raise HTTPException(status_code=400, detail="Product not found")
     data = await update_campaign(
         db,
         tenant_id,
         campaign_id,
-        **body.model_dump(exclude_none=True),
+        **body.model_dump(exclude_unset=True),
     )
     if not data:
         raise HTTPException(status_code=404, detail="Campaign not found")

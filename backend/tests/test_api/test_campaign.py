@@ -21,6 +21,17 @@ RULES_JSON = {
 }
 
 
+async def create_product(client: AsyncClient, headers: dict[str, str], name: str = "活动产品") -> str:
+    brand = await client.post("/api/v1/brands", json={"name": f"{name}品牌"}, headers=headers)
+    brand_id = brand.json()["id"]
+    product = await client.post(
+        "/api/v1/products",
+        json={"brand_id": brand_id, "name": name, "category": "大米"},
+        headers=headers,
+    )
+    return product.json()["id"]
+
+
 @pytest.fixture
 async def db_session() -> AsyncGenerator[AsyncSession, None]:
     async with TestSessionLocal() as session:
@@ -108,6 +119,97 @@ class TestCampaignCRUD:
         resp = await client.get("/api/v1/campaigns", headers=headers)
         assert resp.status_code == 200
         assert resp.json()["total"] >= 1
+
+    @pytest.mark.anyio
+    async def test_create_campaign_with_product_and_list_stats(self, client: AsyncClient, auth_setup):
+        _, headers = auth_setup
+        product_id = await create_product(client, headers)
+        campaign = await client.post(
+            "/api/v1/campaigns",
+            json={
+                "name": "产品绑定活动",
+                "campaign_type": "coupon",
+                "product_id": product_id,
+                "start_at": "2026-06-01T00:00:00",
+                "end_at": "2026-06-30T23:59:59",
+                "rules_json": RULES_JSON,
+            },
+            headers=headers,
+        )
+        assert campaign.status_code == 201
+        cid = campaign.json()["id"]
+        assert campaign.json()["product_id"] == product_id
+        assert campaign.json()["product_name"] == "活动产品"
+
+        benefit = await client.post(
+            f"/api/v1/campaigns/{cid}/benefits",
+            json={
+                "name": "5元优惠券",
+                "benefit_type": "platform_coupon",
+                "config_json": {"amount": 5},
+                "stock_total": 10,
+            },
+            headers=headers,
+        )
+        bid = benefit.json()["id"]
+        await client.post(
+            f"/api/v1/campaigns/benefits/{bid}/claim",
+            json={"consumer_id": "campaign-user", "idempotency_key": "campaign-key"},
+            headers=headers,
+        )
+
+        resp = await client.get(f"/api/v1/campaigns?product_id={product_id}", headers=headers)
+        assert resp.status_code == 200
+        item = next(i for i in resp.json()["items"] if i["id"] == cid)
+        assert item["benefit_count"] == 1
+        assert item["stock_total"] == 10
+        assert item["stock_used"] == 1
+        assert item["claim_count"] == 1
+
+    @pytest.mark.anyio
+    async def test_campaign_legacy_rules_product_id_is_compatible(self, client: AsyncClient, auth_setup):
+        _, headers = auth_setup
+        product_id = await create_product(client, headers, "旧活动产品")
+        resp = await client.post(
+            "/api/v1/campaigns",
+            json={
+                "name": "旧规则产品活动",
+                "campaign_type": "coupon",
+                "start_at": "2026-06-01",
+                "end_at": "2026-06-30",
+                "rules_json": {**RULES_JSON, "product_id": product_id},
+            },
+            headers=headers,
+        )
+        assert resp.status_code == 201
+        assert resp.json()["product_id"] == product_id
+        assert resp.json()["product_name"] == "旧活动产品"
+
+    @pytest.mark.anyio
+    async def test_update_campaign_product_id(self, client: AsyncClient, auth_setup):
+        _, headers = auth_setup
+        product_id = await create_product(client, headers, "更新产品")
+        campaign = await client.post(
+            "/api/v1/campaigns",
+            json={
+                "name": "待更新活动",
+                "campaign_type": "coupon",
+                "start_at": "2026-06-01",
+                "end_at": "2026-06-30",
+                "rules_json": RULES_JSON,
+            },
+            headers=headers,
+        )
+        cid = campaign.json()["id"]
+
+        resp = await client.patch(
+            f"/api/v1/campaigns/{cid}",
+            json={"product_id": product_id, "rules_json": RULES_JSON},
+            headers=headers,
+        )
+        assert resp.status_code == 200
+        assert resp.json()["product_id"] == product_id
+        assert resp.json()["rules_json"]["product_id"] == product_id
 
     @pytest.mark.anyio
     async def test_campaign_status_change(self, client: AsyncClient, auth_setup):
