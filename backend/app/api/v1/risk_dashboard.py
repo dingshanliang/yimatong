@@ -1,9 +1,11 @@
 """渠道风控看板 API"""
 
+import asyncio
+import json
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import PlainTextResponse, StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
@@ -108,4 +110,56 @@ async def export_endpoint(
         content=csv_data,
         media_type="text/csv",
         headers={"Content-Disposition": f"attachment; filename=risk_{data_type}.csv"},
+    )
+
+
+# ── SSE 实时告警 ──────────────────────────────────────
+
+
+# 每个 tenant 维护一个 SSE 客户端队列
+_sse_clients: dict[str, list[asyncio.Queue]] = {}
+
+
+def _broadcast_alert(tenant_id: str, alert_data: dict) -> None:
+    """向所有订阅该 tenant 的 SSE 客户端广播告警"""
+    queues = _sse_clients.get(tenant_id, [])
+    for q in queues:
+        try:
+            q.put_nowait(alert_data)
+        except asyncio.QueueFull:
+            pass  # 丢弃过旧消息
+
+
+@risk_dashboard_router.get("/alerts/stream")
+async def alert_stream(
+    request: Request,
+    tenant_id: uuid.UUID = Depends(get_current_tenant),
+):
+    """SSE 实时告警流。Admin 前端通过 EventSource 连接。"""
+    queue: asyncio.Queue = asyncio.Queue(maxsize=50)
+    tid = str(tenant_id)
+
+    if tid not in _sse_clients:
+        _sse_clients[tid] = []
+    _sse_clients[tid].append(queue)
+
+    async def event_generator():
+        try:
+            while True:
+                if await request.is_disconnected():
+                    break
+                try:
+                    data = await asyncio.wait_for(queue.get(), timeout=30)
+                    yield f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
+                except asyncio.TimeoutError:
+                    yield f": keepalive\n\n"
+        finally:
+            _sse_clients[tid].remove(queue)
+            if not _sse_clients[tid]:
+                del _sse_clients[tid]
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"},
     )

@@ -10,6 +10,7 @@ from app.api.v1.auth import router as auth_router
 from app.api.v1.benefit_claims import benefit_claim_router
 from app.api.v1.benefits import benefit_router
 from app.api.v1.campaigns import campaign_router
+from app.api.v1.channel_analytics import channel_analytics_router
 from app.api.v1.channels import channel_router
 from app.api.v1.code_batches import code_batch_router, code_item_router
 from app.api.v1.connectors import connector_router
@@ -304,6 +305,7 @@ app.include_router(ops_router)
 app.include_router(risk_router)
 app.include_router(risk_notification_router)
 app.include_router(channel_router)
+app.include_router(channel_analytics_router)
 app.include_router(member_router)
 app.include_router(risk_rule_router)
 app.include_router(risk_dashboard_router)

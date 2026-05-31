@@ -86,6 +86,21 @@ async def execute_risk_action(
         str(tenant_id),
     )
 
+    # 广播到 SSE 实时告警
+    try:
+        from app.api.v1.risk_dashboard import _broadcast_alert
+        _broadcast_alert(str(tenant_id), {
+            "type": "risk_alert",
+            "rule_name": rule.name,
+            "rule_type": rule.rule_type,
+            "action": rule.action,
+            "public_id": public_id,
+            "interception_id": str(interception.id),
+            "steps": action_detail.get("steps", []),
+        })
+    except Exception:
+        logger.warning("SSE broadcast failed", exc_info=True)
+
 
 async def _execute_block(
     db: AsyncSession,

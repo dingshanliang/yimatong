@@ -1,12 +1,54 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { App, Card, Col, Row, Space, Statistic, Table, Typography, Button, Tag, InputNumber } from "antd";
-import { DownloadOutlined, CheckOutlined } from "@ant-design/icons";
+import { useEffect, useRef, useState } from "react";
+import { App, Badge, Button, Card, Col, Row, Select, Space, Statistic, Table, Tag, Typography, InputNumber } from "antd";
+import { DownloadOutlined, CheckOutlined, BellOutlined } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
 import api from "@/lib/api";
 
 const { Title } = Typography;
+
+/* ---------- SSE Alert Indicator ---------- */
+
+function AlertIndicator({ tenantId }: { tenantId: string | null }) {
+  const [alerts, setAlerts] = useState<Record<string, unknown>[]>([]);
+  const [connected, setConnected] = useState(false);
+  const eventSourceRef = useRef<EventSource | null>(null);
+
+  useEffect(() => {
+    if (!tenantId) return;
+
+    const token = typeof window !== "undefined" ? localStorage.getItem("token") : null;
+    if (!token) return;
+
+    // SSE 连接（通过 query param 传递 token，因为 EventSource 不支持 header）
+    const base = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+    const es = new EventSource(`${base}/api/v1/risk-dashboard/alerts/stream?token=${token}`);
+    eventSourceRef.current = es;
+
+    es.onopen = () => setConnected(true);
+    es.onerror = () => setConnected(false);
+    es.onmessage = (e) => {
+      try {
+        const data = JSON.parse(e.data);
+        setAlerts((prev) => [data, ...prev].slice(0, 20));
+      } catch { /* ignore */ }
+    };
+
+    return () => {
+      es.close();
+      eventSourceRef.current = null;
+    };
+  }, [tenantId]);
+
+  return (
+    <Badge count={alerts.length} size="small" offset={[2, 0]}>
+      <Button icon={<BellOutlined />} type={connected ? "default" : "dashed"} size="small">
+        {connected ? "实时告警" : "未连接"}
+      </Button>
+    </Badge>
+  );
+}
 
 /* ---------- Repeat Scans ---------- */
 
@@ -123,6 +165,120 @@ function CrossRegionCard() {
   );
 }
 
+/* ---------- Channel Health Scores ---------- */
+
+function ChannelHealthCard() {
+  const [scores, setScores] = useState<Record<string, unknown>[]>([]);
+  const [dimension, setDimension] = useState<string>("distributor");
+  const [loading, setLoading] = useState(false);
+
+  const fetch = async () => {
+    setLoading(true);
+    try {
+      const { data } = await api.get("/channel-analytics/health-scores", { params: { dimension } });
+      setScores(data.scores || []);
+    } catch {
+      /* silent */
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { fetch(); }, [dimension]);
+
+  const columns: ColumnsType<Record<string, unknown>> = [
+    { title: "渠道名称", dataIndex: "name", key: "name" },
+    { title: "扫码量", dataIndex: "scan_count", key: "scan_count" },
+    { title: "UV", dataIndex: "scan_uv", key: "scan_uv" },
+    {
+      title: "健康评分",
+      dataIndex: "health_score",
+      key: "health_score",
+      render: (v: number) => {
+        const color = v >= 80 ? "green" : v >= 60 ? "orange" : "red";
+        return <Tag color={color}>{v}</Tag>;
+      },
+    },
+    { title: "重复率%", dataIndex: "repeat_rate", key: "repeat_rate", render: (v: number) => `${v}%` },
+    { title: "跨区率%", dataIndex: "cross_region_rate", key: "cross_region_rate", render: (v: number) => `${v}%` },
+    { title: "异常率%", dataIndex: "anomaly_rate", key: "anomaly_rate", render: (v: number) => `${v}%` },
+  ];
+
+  return (
+    <Card
+      title="渠道健康评分"
+      size="small"
+      extra={
+        <Select value={dimension} onChange={setDimension} size="small" style={{ width: 100 }}
+          options={[
+            { label: "经销商", value: "distributor" },
+            { label: "区域", value: "region" },
+            { label: "门店", value: "store" },
+          ]}
+        />
+      }
+    >
+      <Table columns={columns} dataSource={scores} rowKey="name" loading={loading} size="small" pagination={{ pageSize: 10 }} />
+    </Card>
+  );
+}
+
+/* ---------- Conversion Comparison ---------- */
+
+function ConversionCard() {
+  const [data, setData] = useState<Record<string, unknown>[]>([]);
+  const [dimension, setDimension] = useState<string>("distributor");
+  const [loading, setLoading] = useState(false);
+
+  const fetch = async () => {
+    setLoading(true);
+    try {
+      const { data: d } = await api.get("/channel-analytics/conversion-comparison", { params: { dimension } });
+      setData(d.comparison || []);
+    } catch {
+      /* silent */
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { fetch(); }, [dimension]);
+
+  const columns: ColumnsType<Record<string, unknown>> = [
+    { title: "渠道名称", dataIndex: "name", key: "name" },
+    { title: "扫码 UV", dataIndex: "scan_uv", key: "scan_uv" },
+    { title: "预估领取", dataIndex: "estimated_claims", key: "estimated_claims" },
+    { title: "转化率%", dataIndex: "conversion_rate", key: "conversion_rate", render: (v: number) => `${v}%` },
+    {
+      title: "vs 平均",
+      dataIndex: "vs_average",
+      key: "vs_average",
+      render: (v: number) => {
+        const color = v > 0 ? "green" : v < 0 ? "red" : "default";
+        return <Tag color={color}>{v > 0 ? "+" : ""}{v}%</Tag>;
+      },
+    },
+  ];
+
+  return (
+    <Card
+      title="渠道转化率对比"
+      size="small"
+      extra={
+        <Select value={dimension} onChange={setDimension} size="small" style={{ width: 100 }}
+          options={[
+            { label: "经销商", value: "distributor" },
+            { label: "区域", value: "region" },
+            { label: "门店", value: "store" },
+          ]}
+        />
+      }
+    >
+      <Table columns={columns} dataSource={data} rowKey="name" loading={loading} size="small" pagination={{ pageSize: 10 }} />
+    </Card>
+  );
+}
+
 /* ---------- Diversion Summary ---------- */
 
 function DiversionCard() {
@@ -214,19 +370,38 @@ export default function RiskDashboardPage() {
     }
   };
 
+  // 简单获取 tenantId（从 localStorage 解析 JWT）
+  const [tenantId, setTenantId] = useState<string | null>(null);
+  useEffect(() => {
+    try {
+      const token = localStorage.getItem("token");
+      if (token) {
+        const payload = JSON.parse(atob(token.split(".")[1]));
+        setTenantId(payload.tenant_id || null);
+      }
+    } catch { /* ignore */ }
+  }, []);
+
   return (
     <div>
       <div className="mb-4 flex items-center justify-between">
         <Title level={4} className="!mb-0">风控看板</Title>
         <Space>
-          <Button icon={<DownloadOutlined />} onClick={() => handleExport("alerts")}>导出预警 Excel</Button>
-          <Button icon={<DownloadOutlined />} onClick={() => handleExport("diversions")}>导出窜货 Excel</Button>
+          <AlertIndicator tenantId={tenantId} />
+          <Button icon={<DownloadOutlined />} onClick={() => handleExport("alerts")}>导出预警</Button>
+          <Button icon={<DownloadOutlined />} onClick={() => handleExport("diversions")}>导出窜货</Button>
         </Space>
       </div>
       <Row gutter={[16, 16]}>
         <Col span={12}><RepeatScansCard /></Col>
         <Col span={12}><CrossRegionCard /></Col>
       </Row>
+      <div className="mt-4">
+        <Row gutter={[16, 16]}>
+          <Col span={12}><ChannelHealthCard /></Col>
+          <Col span={12}><ConversionCard /></Col>
+        </Row>
+      </div>
       <div className="mt-4">
         <DiversionCard />
       </div>
