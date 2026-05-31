@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Button, Form, Input, Modal, Table, Tabs, Typography } from "antd";
 import { PlusOutlined } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
@@ -8,6 +8,8 @@ import api from "@/lib/api";
 import { MembersTab } from "./_components/MembersTab";
 import { TemplatesTab } from "./_components/TemplatesTab";
 import { DashboardTab } from "./_components/DashboardTab";
+import { AdvancedDashboardTab } from "./_components/AdvancedDashboardTab";
+import { CampaignsTab } from "./_components/CampaignsTab";
 
 const { Title } = Typography;
 
@@ -55,10 +57,21 @@ export default function RegionalPage() {
 
   const selectedOrgName = orgs.find((o) => o.id === selectedOrgId)?.name || "";
 
+  // 成员列表（用于 CampaignsTab）
+  const [membersList, setMembersList] = useState<Record<string, unknown>[]>([]);
+  useEffect(() => {
+    if (!selectedOrgId) { setMembersList([]); return; }
+    api.get(`/regional/orgs/${selectedOrgId}/members`, { params: { page_size: 100 } })
+      .then(({ data }) => setMembersList(data.items || []))
+      .catch(() => {});
+  }, [selectedOrgId]);
+
   const tabItems = [
     { key: "members", label: "成员管理", children: <MembersTab orgId={selectedOrgId} />, disabled: !selectedOrgId },
     { key: "templates", label: "共享模板", children: <TemplatesTab orgId={selectedOrgId} />, disabled: !selectedOrgId },
-    { key: "dashboard", label: "汇总看板", children: <DashboardTab orgId={selectedOrgId} orgName={selectedOrgName} />, disabled: !selectedOrgId },
+    { key: "dashboard", label: "基础看板", children: <DashboardTab orgId={selectedOrgId} orgName={selectedOrgName} />, disabled: !selectedOrgId },
+    { key: "advanced", label: "高级看板", children: <AdvancedDashboardTab orgId={selectedOrgId} orgName={selectedOrgName} />, disabled: !selectedOrgId },
+    { key: "campaigns", label: "统一活动", children: <CampaignsTab orgId={selectedOrgId} members={membersList} />, disabled: !selectedOrgId },
   ];
 
   return (

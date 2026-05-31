@@ -259,10 +259,11 @@ async def list_code_rules_endpoint(
 @regional_router.get("/orgs/{org_id}/advanced-dashboard", summary="高级看板")
 async def advanced_dashboard_endpoint(
     org_id: uuid.UUID,
+    days_back: int = Query(30, ge=7, le=365),
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
-    return await get_advanced_dashboard(db, org_id)
+    return await get_advanced_dashboard(db, org_id, days_back=days_back)
 
 
 @regional_router.put("/orgs/{org_id}/whitelabel", summary="设置白标")
@@ -286,3 +287,78 @@ async def get_whitelabel_endpoint(
     if not config:
         return {"brand_name": "", "hide_yimatong": False, "primary_color": "#000000"}
     return {"id": str(config.id), "org_id": str(config.org_id), "brand_name": config.brand_name, "hide_yimatong": config.hide_yimatong, "primary_color": config.primary_color}
+
+
+# ── 统一营销活动管理 ──────────────────────────────
+
+
+class UnifiedCampaignCreate(BaseModel):
+    name: str
+    description: str | None = None
+    member_ids: list[str] | None = None  # 指定成员企业，空则全部
+
+
+@regional_router.post("/orgs/{org_id}/unified-campaigns", status_code=201, summary="创建统一活动")
+async def create_unified_campaign_endpoint(
+    org_id: uuid.UUID,
+    body: UnifiedCampaignCreate,
+    db: AsyncSession = Depends(get_db),
+    tenant_id: uuid.UUID = Depends(get_current_tenant),
+):
+    from app.services.regional_campaign import create_unified_campaign
+    campaign = await create_unified_campaign(db, org_id, tenant_id, body.name, body.description, body.member_ids)
+    return campaign
+
+
+@regional_router.get("/orgs/{org_id}/unified-campaigns", summary="统一活动列表")
+async def list_unified_campaigns_endpoint(
+    org_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    tenant_id: uuid.UUID = Depends(get_current_tenant),
+):
+    from app.services.regional_campaign import list_unified_campaigns
+    return await list_unified_campaigns(db, org_id)
+
+
+# ── 数据隔离策略 ──────────────────────────────────
+
+
+class DataIsolationPolicy(BaseModel):
+    """数据隔离策略：brand_all = 品牌方看全部，own_only = 只看自己"""
+    scan_visibility: str = "own_only"  # own_only | brand_all
+    claim_visibility: str = "own_only"  # own_only | brand_all
+    member_data_visibility: str = "brand_all"  # own_only | brand_all
+
+
+@regional_router.get("/orgs/{org_id}/data-policy", summary="数据隔离策略")
+async def get_data_policy_endpoint(
+    org_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    tenant_id: uuid.UUID = Depends(get_current_tenant),
+):
+    from app.services.regional import get_org
+    org = await get_org(db, org_id)
+    if not org:
+        return {"error": "not found"}
+    policy = org.config.get("data_policy", {
+        "scan_visibility": "own_only",
+        "claim_visibility": "own_only",
+        "member_data_visibility": "brand_all",
+    })
+    return {"org_id": str(org_id), "policy": policy}
+
+
+@regional_router.put("/orgs/{org_id}/data-policy", summary="更新数据隔离策略")
+async def update_data_policy_endpoint(
+    org_id: uuid.UUID,
+    body: DataIsolationPolicy,
+    db: AsyncSession = Depends(get_db),
+    tenant_id: uuid.UUID = Depends(get_current_tenant),
+):
+    from app.services.regional import get_org
+    org = await get_org(db, org_id)
+    if not org:
+        return {"error": "not found"}
+    org.config["data_policy"] = body.model_dump()
+    await db.flush()
+    return {"org_id": str(org_id), "policy": body.model_dump()}

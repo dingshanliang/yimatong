@@ -392,11 +392,107 @@ async def list_code_rules(
 async def get_advanced_dashboard(
     db: AsyncSession,
     org_id: uuid.UUID,
+    days_back: int = 30,
 ) -> dict:
-    members_result = await db.execute(select(RegionalOrgMember).where(RegionalOrgMember.org_id == org_id))
+    """高级汇总看板：同比环比 + 按成员/产品/时间维度下钻"""
+    cutoff = datetime.combine(date.today() - timedelta(days=days_back), datetime.min.time(), tzinfo=UTC)
+    prev_cutoff = datetime.combine(
+        date.today() - timedelta(days=days_back * 2), datetime.min.time(), tzinfo=UTC
+    )
+
+    # 成员列表
+    members_result = await db.execute(
+        select(RegionalOrgMember).where(
+            RegionalOrgMember.org_id == org_id, RegionalOrgMember.status == "active"
+        )
+    )
     members = list(members_result.scalars().all())
-    member_stats = [{"tenant_id": str(m.tenant_id), "name": m.member_name, "status": m.status} for m in members]
-    return {"org_id": str(org_id), "member_stats": member_stats}
+    member_tids = [m.tenant_id for m in members]
+    member_map = {m.tenant_id: m.member_name for m in members}
+
+    # 当期统计
+    current_scans = 0
+    current_claims = 0
+    by_member_current: dict[str, dict] = {}
+    by_member_prev: dict[str, dict] = {}
+
+    if member_tids:
+        current_scans = (await db.execute(
+            select(func.count()).select_from(ScanEvent)
+            .where(ScanEvent.tenant_id.in_(member_tids), ScanEvent.scan_time >= cutoff)
+        )).scalar() or 0
+
+        current_claims = (await db.execute(
+            select(func.count()).select_from(BenefitClaim)
+            .where(BenefitClaim.tenant_id.in_(member_tids), BenefitClaim.status == "success")
+        )).scalar() or 0
+
+        # 按成员 — 当期
+        for tid in member_tids:
+            sc = (await db.execute(
+                select(func.count()).select_from(ScanEvent)
+                .where(ScanEvent.tenant_id == tid, ScanEvent.scan_time >= cutoff)
+            )).scalar() or 0
+            cc = (await db.execute(
+                select(func.count()).select_from(BenefitClaim)
+                .where(BenefitClaim.tenant_id == tid, BenefitClaim.status == "success")
+            )).scalar() or 0
+            by_member_current[str(tid)] = {"scan_count": sc, "claim_count": cc}
+
+        # 按成员 — 环比上期
+        for tid in member_tids:
+            sc = (await db.execute(
+                select(func.count()).select_from(ScanEvent)
+                .where(
+                    ScanEvent.tenant_id == tid,
+                    ScanEvent.scan_time >= prev_cutoff,
+                    ScanEvent.scan_time < cutoff,
+                )
+            )).scalar() or 0
+            by_member_prev[str(tid)] = {"scan_count": sc}
+
+    # 计算环比变化
+    member_drilldown = []
+    for tid in member_tids:
+        tid_str = str(tid)
+        cur = by_member_current.get(tid_str, {})
+        prev = by_member_prev.get(tid_str, {})
+        cur_scan = cur.get("scan_count", 0)
+        prev_scan = prev.get("scan_count", 0)
+        scan_change = round((cur_scan - prev_scan) / prev_scan * 100, 1) if prev_scan > 0 else None
+        member_drilldown.append({
+            "tenant_id": tid_str,
+            "member_name": member_map.get(tid, "Unknown"),
+            "scan_count": cur_scan,
+            "claim_count": cur.get("claim_count", 0),
+            "prev_scan_count": prev_scan,
+            "scan_change_pct": scan_change,
+        })
+    member_drilldown.sort(key=lambda x: x["scan_count"], reverse=True)
+
+    # 按时间维度（日趋势）
+    daily_trend: list[dict] = []
+    if member_tids:
+        for i in range(min(days_back, 14)):
+            day = date.today() - timedelta(days=i)
+            day_start = datetime.combine(day, datetime.min.time(), tzinfo=UTC)
+            day_end = datetime.combine(day + timedelta(days=1), datetime.min.time(), tzinfo=UTC)
+            sc = (await db.execute(
+                select(func.count()).select_from(ScanEvent)
+                .where(ScanEvent.tenant_id.in_(member_tids), ScanEvent.scan_time >= day_start, ScanEvent.scan_time < day_end)
+            )).scalar() or 0
+            daily_trend.append({"date": day.isoformat(), "scan_count": sc})
+        daily_trend.reverse()
+
+    return {
+        "org_id": str(org_id),
+        "days_back": days_back,
+        "member_count": len(members),
+        "total_scans": current_scans,
+        "total_claims": current_claims,
+        "by_member": member_drilldown,
+        "daily_trend": daily_trend,
+    }
 
 
 # ── 白标配置 ──────────────────────────────────────
