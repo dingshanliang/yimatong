@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor, within } from "@testing-library/react";
 import BenefitsPage from "../page";
 
 vi.mock("next/navigation", () => ({
@@ -134,6 +134,21 @@ describe("BenefitsPage", () => {
     expect(screen.getByText("管理可复用权益、活动使用关系、库存与消费者领取记录。")).toBeInTheDocument();
     expect(screen.getByText("测试权益")).toBeInTheDocument();
     await waitFor(() => expect(screen.getByText("剩余库存")).toBeInTheDocument());
+  });
+
+  it("falls back to visible list data when summary is unavailable", async () => {
+    mockGet.mockImplementation((url: string) => {
+      if (url === "/benefits/summary") return Promise.reject(new Error("summary route unavailable"));
+      if (url === "/campaigns") return Promise.resolve({ data: { items: [{ id: "c1", name: "活动1" }], total: 1 } });
+      if (url === "/connectors/connectors") return Promise.resolve({ data: [] });
+      return Promise.resolve({ data: { items: [], total: 0 } });
+    });
+
+    render(<BenefitsPage />);
+
+    const activeCard = screen.getByText("启用中").closest(".ant-card");
+    expect(activeCard).not.toBeNull();
+    await waitFor(() => expect(within(activeCard as HTMLElement).getByText("1")).toBeInTheDocument());
   });
 
   it("opens create modal with business-oriented fields", () => {

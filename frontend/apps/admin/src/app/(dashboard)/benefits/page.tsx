@@ -47,6 +47,21 @@ const DEFAULT_SUMMARY: BenefitSummary = {
   failed_delivery_count: 0,
 };
 
+function summarizeVisibleBenefits(benefits: Benefit[], total: number, claimCount: number): BenefitSummary {
+  const stockTotal = benefits.reduce((sum, benefit) => sum + (benefit.stock_total || 0), 0);
+  const stockUsed = benefits.reduce((sum, benefit) => sum + (benefit.stock_used || 0), 0);
+  return {
+    ...DEFAULT_SUMMARY,
+    total,
+    active: benefits.filter((benefit) => benefit.status === "active").length,
+    unused: benefits.filter((benefit) => !benefit.campaign_id).length,
+    stock_total: stockTotal,
+    stock_used: stockUsed,
+    stock_remaining: Math.max(stockTotal - stockUsed, 0),
+    claim_count: claimCount,
+  };
+}
+
 const VALIDITY_OPTIONS = [
   { value: "campaign_period", label: "随活动期有效" },
   { value: "after_claim_days", label: "领取后 N 天有效" },
@@ -99,6 +114,7 @@ export default function BenefitsPage() {
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [allConnectors, setAllConnectors] = useState<Connector[]>([]);
   const [summary, setSummary] = useState<BenefitSummary>(DEFAULT_SUMMARY);
+  const [summaryUnavailable, setSummaryUnavailable] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [editItem, setEditItem] = useState<Benefit | null>(null);
@@ -115,13 +131,18 @@ export default function BenefitsPage() {
   const benefitMap = useMemo(() => benefits.reduce<Record<string, string>>((acc, b) => { acc[b.id] = b.name; return acc; }, {}), [benefits]);
   const wechatPayConnectors = allConnectors.filter((c) => c.connector_type === "wechat_pay_transfer");
   const couponPoolConnectors = allConnectors.filter((c) => c.connector_type === "coupon_pool");
+  const displaySummary = useMemo(
+    () => summaryUnavailable ? summarizeVisibleBenefits(benefits, benefitsTotal, claimsTotal) : summary,
+    [benefits, benefitsTotal, claimsTotal, summary, summaryUnavailable],
+  );
 
   const fetchSummary = useCallback(async () => {
     try {
       const { data } = await api.get("/benefits/summary");
       setSummary({ ...DEFAULT_SUMMARY, ...(data || {}) });
+      setSummaryUnavailable(false);
     } catch {
-      setSummary(DEFAULT_SUMMARY);
+      setSummaryUnavailable(true);
     }
   }, []);
 
@@ -410,10 +431,10 @@ export default function BenefitsPage() {
       </div>
 
       <Row gutter={12}>
-        <Col xs={12} md={6}><Card size="small"><Statistic title="权益总数" value={summary.total} /></Card></Col>
-        <Col xs={12} md={6}><Card size="small"><Statistic title="启用中" value={summary.active} /></Card></Col>
-        <Col xs={12} md={6}><Card size="small"><Statistic title="剩余库存" value={summary.stock_remaining} suffix={`/ ${summary.stock_total}`} /></Card></Col>
-        <Col xs={12} md={6}><Card size="small"><Statistic title="领取记录" value={summary.claim_count} /></Card></Col>
+        <Col xs={12} md={6}><Card size="small"><Statistic title="权益总数" value={displaySummary.total} /></Card></Col>
+        <Col xs={12} md={6}><Card size="small"><Statistic title="启用中" value={displaySummary.active} /></Card></Col>
+        <Col xs={12} md={6}><Card size="small"><Statistic title="剩余库存" value={displaySummary.stock_remaining} suffix={`/ ${displaySummary.stock_total}`} /></Card></Col>
+        <Col xs={12} md={6}><Card size="small"><Statistic title="领取记录" value={displaySummary.claim_count} /></Card></Col>
       </Row>
 
       {contextCampaignId ? (
