@@ -17,9 +17,12 @@ from app.services.campaign import (
     create_campaign,
     delete_campaign,
     get_campaign,
+    get_campaign_activation_blockers,
     list_benefits,
     list_campaigns,
     update_campaign,
+    validate_benefit_config_shape,
+    validate_campaign_rules_shape,
 )
 from app.services.campaign_analytics import get_campaign_comparison, get_campaign_funnel
 
@@ -63,7 +66,7 @@ class CampaignCreateRequest(BaseModel):
         missing = [f for f in REQUIRED_RULES_FIELDS if f not in v]
         if missing:
             raise ValueError(f"rules_json 缺少必填字段: {', '.join(missing)}")
-        return v
+        return validate_campaign_rules_shape(v)
 
 
 class CampaignUpdateRequest(BaseModel):
@@ -74,6 +77,13 @@ class CampaignUpdateRequest(BaseModel):
     end_at: str | None = None
     rules_json: dict | None = None
     description: str | None = None
+
+    @field_validator("rules_json")
+    @classmethod
+    def validate_rules_json(cls, v: dict | None) -> dict | None:
+        if v is None:
+            return v
+        return validate_campaign_rules_shape(v)
 
 
 class CampaignStatusRequest(BaseModel):
@@ -95,6 +105,11 @@ class BenefitCreateRequest(BaseModel):
     stock_total: int
     per_person_limit: int = 1
     connector_id: uuid.UUID | None = None
+
+    @field_validator("config_json")
+    @classmethod
+    def validate_config_json(cls, v: dict) -> dict:
+        return validate_benefit_config_shape(v)
 
 
 class ClaimRequest(BaseModel):
@@ -190,6 +205,12 @@ async def change_campaign_status_endpoint(
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
+    if body.status == "active":
+        blockers = await get_campaign_activation_blockers(db, tenant_id, campaign_id)
+        if blockers is None:
+            raise HTTPException(status_code=404, detail="Campaign not found")
+        if blockers:
+            raise HTTPException(status_code=400, detail="；".join(blockers))
     data = await change_campaign_status(db, tenant_id, campaign_id, body.status)
     if not data:
         raise HTTPException(status_code=404, detail="Campaign not found")

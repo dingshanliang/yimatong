@@ -100,10 +100,19 @@ export default function BenefitsPage() {
   const campaignMap = campaigns.reduce<Record<string, string>>((acc, c) => { acc[c.id] = c.name; return acc; }, {});
   const benefitMap = benefits.reduce<Record<string, string>>((acc, b) => { acc[b.id] = b.name; return acc; }, {});
 
+  const getBenefitValidityText = (record: Benefit) => {
+    const validity = record.config_json?.validity_period;
+    if (typeof validity === "string" && validity.trim()) return validity;
+    if (record.config_json?.validity_type === "campaign_period") return "随活动期有效";
+    if (typeof record.config_json?.validity_days === "number") return `领取后 ${record.config_json.validity_days} 天内有效`;
+    return "未设置";
+  };
+
   const benefitColumns: ColumnsType<Benefit> = [
     { title: "权益名称", dataIndex: "name", key: "name" },
     { title: "类型", dataIndex: "benefit_type", key: "benefit_type", render: (t: string) => { const info = BENEFIT_TYPE_MAP[t] || { label: t, color: "default" }; return <Tag color={info.color}>{info.label}</Tag>; } },
     { title: "关联活动", dataIndex: "campaign_id", key: "campaign_id", render: (v: string) => campaignMap[v] || v },
+    { title: "权益有效期", key: "validity", render: (_: unknown, record) => getBenefitValidityText(record) },
     { title: "库存", key: "stock", render: (_: unknown, record) => {
       const percent = record.stock_total > 0 ? Math.round((record.stock_used / record.stock_total) * 100) : 0;
       return <div className="min-w-[120px]"><div className="mb-1 text-xs text-gray-500">已用 {record.stock_used} / {record.stock_total}（剩余 {record.stock_total - record.stock_used}）</div><Progress percent={percent} size="small" status={percent >= 90 ? "exception" : percent >= 70 ? "active" : undefined} /></div>;

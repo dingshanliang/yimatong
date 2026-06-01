@@ -3,7 +3,7 @@
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
@@ -15,6 +15,7 @@ from app.services.campaign import (
     list_all_benefits,
     list_benefit_claims_admin,
     update_benefit,
+    validate_benefit_config_shape,
 )
 
 benefit_router = APIRouter(prefix="/api/v1/benefits", tags=["benefits"])
@@ -28,6 +29,13 @@ class BenefitUpdateRequest(BaseModel):
     per_person_limit: int | None = None
     status: str | None = None
     connector_id: uuid.UUID | None = None
+
+    @field_validator("config_json")
+    @classmethod
+    def validate_config_json(cls, v: dict | None) -> dict | None:
+        if v is None:
+            return v
+        return validate_benefit_config_shape(v)
 
 
 @benefit_router.get("", summary="权益 列表")

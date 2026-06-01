@@ -10,6 +10,72 @@ from app.core.event_bus import event_bus
 from app.models.campaign import Benefit, BenefitClaim, Campaign, CampaignStatus
 from app.models.product import Product
 
+CAMPAIGN_GOALS = {
+    "first_scan_coupon",
+    "lottery",
+    "points",
+    "private_domain_repurchase",
+    "festival",
+    "custom",
+}
+
+PARTICIPATION_CONDITION_TYPES = {
+    "first_scan",
+    "any_scan",
+    "member_only",
+    "wecom_required",
+}
+
+BENEFIT_VALIDITY_TYPES = {
+    "campaign_period",
+    "after_claim_days",
+    "fixed_range",
+}
+
+
+def validate_campaign_rules_shape(rules_json: dict) -> dict:
+    campaign_goal = rules_json.get("campaign_goal")
+    if campaign_goal is not None and campaign_goal not in CAMPAIGN_GOALS:
+        raise ValueError(f"campaign_goal must be one of: {', '.join(sorted(CAMPAIGN_GOALS))}")
+
+    participation_type = rules_json.get("participation_condition_type")
+    if participation_type is not None and participation_type not in PARTICIPATION_CONDITION_TYPES:
+        raise ValueError(
+            f"participation_condition_type must be one of: {', '.join(sorted(PARTICIPATION_CONDITION_TYPES))}"
+        )
+
+    claim_limit_count = rules_json.get("claim_limit_count")
+    if claim_limit_count is not None:
+        if not isinstance(claim_limit_count, int) or claim_limit_count < 1:
+            raise ValueError("claim_limit_count must be an integer greater than or equal to 1")
+
+    return rules_json
+
+
+def validate_benefit_config_shape(config_json: dict) -> dict:
+    campaign_goal = config_json.get("campaign_goal")
+    if campaign_goal is not None and campaign_goal not in CAMPAIGN_GOALS:
+        raise ValueError(f"campaign_goal must be one of: {', '.join(sorted(CAMPAIGN_GOALS))}")
+
+    validity_type = config_json.get("validity_type")
+    if validity_type is None:
+        return config_json
+    if validity_type not in BENEFIT_VALIDITY_TYPES:
+        raise ValueError(f"validity_type must be one of: {', '.join(sorted(BENEFIT_VALIDITY_TYPES))}")
+
+    if validity_type == "after_claim_days":
+        validity_days = config_json.get("validity_days")
+        if not isinstance(validity_days, int) or validity_days < 1:
+            raise ValueError("validity_days must be an integer greater than or equal to 1")
+
+    if validity_type == "fixed_range":
+        start_at = _parse_config_datetime(config_json.get("validity_start_at"), "validity_start_at")
+        end_at = _parse_config_datetime(config_json.get("validity_end_at"), "validity_end_at")
+        if end_at < start_at:
+            raise ValueError("validity_end_at must be later than or equal to validity_start_at")
+
+    return config_json
+
 
 async def create_campaign(
     db: AsyncSession,
@@ -158,6 +224,37 @@ async def change_campaign_status(
     product_names = await _load_product_names(db, tenant_id, [c])
     stats = await _load_campaign_stats(db, tenant_id, [c.id])
     return _campaign_to_dict(c, product_names=product_names, stats=stats)
+
+
+async def get_campaign_activation_blockers(
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    campaign_id: uuid.UUID,
+) -> list[str] | None:
+    result = await db.execute(select(Campaign).where(Campaign.id == campaign_id, Campaign.tenant_id == tenant_id))
+    campaign = result.scalar_one_or_none()
+    if not campaign:
+        return None
+
+    blockers: list[str] = []
+    if not _campaign_product_id(campaign):
+        blockers.append("活动未关联产品")
+
+    start_at = _parse_campaign_datetime(campaign.start_at)
+    end_at = _parse_campaign_datetime(campaign.end_at)
+    if not start_at or not end_at:
+        blockers.append("投放时间不完整")
+    elif end_at < start_at:
+        blockers.append("结束时间不能早于开始时间")
+
+    stats = await _load_campaign_stats(db, tenant_id, [campaign.id])
+    campaign_stats = stats.get(campaign.id, {})
+    if campaign_stats.get("benefit_count", 0) < 1:
+        blockers.append("活动未配置权益")
+    if campaign_stats.get("stock_total", 0) < 1:
+        blockers.append("权益库存为 0")
+
+    return blockers
 
 
 async def delete_campaign(
@@ -477,6 +574,15 @@ async def _load_campaign_stats(
     for row in claim_result.all():
         stats[row.campaign_id]["claim_count"] = row.claim_count or 0
     return stats
+
+
+def _parse_config_datetime(value: object, field_name: str) -> datetime:
+    if not isinstance(value, str) or not value:
+        raise ValueError(f"{field_name} is required")
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ValueError(f"{field_name} must be a valid datetime") from exc
 
 
 def _parse_campaign_datetime(value: str | None) -> datetime | None:

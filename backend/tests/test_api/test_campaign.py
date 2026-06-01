@@ -104,6 +104,27 @@ class TestCampaignCRUD:
         assert resp.status_code == 422
 
     @pytest.mark.anyio
+    async def test_create_campaign_rejects_invalid_structured_rules(self, client: AsyncClient, auth_setup):
+        _, headers = auth_setup
+        resp = await client.post(
+            "/api/v1/campaigns",
+            json={
+                "name": "错误规则活动",
+                "campaign_type": "lottery",
+                "start_at": "2026-06-01",
+                "end_at": "2026-06-30",
+                "rules_json": {
+                    **RULES_JSON,
+                    "campaign_goal": "lottery",
+                    "participation_condition_type": "unknown",
+                    "claim_limit_count": 0,
+                },
+            },
+            headers=headers,
+        )
+        assert resp.status_code == 422
+
+    @pytest.mark.anyio
     async def test_list_campaigns(self, client: AsyncClient, auth_setup):
         _, headers = auth_setup
         await client.post(
@@ -233,10 +254,45 @@ class TestCampaignCRUD:
     @pytest.mark.anyio
     async def test_campaign_status_change(self, client: AsyncClient, auth_setup):
         _, headers = auth_setup
+        product_id = await create_product(client, headers, "上线产品")
         create = await client.post(
             "/api/v1/campaigns",
             json={
                 "name": "状态测试",
+                "campaign_type": "coupon",
+                "product_id": product_id,
+                "start_at": "2026-06-01",
+                "end_at": "2026-06-30",
+                "rules_json": RULES_JSON,
+            },
+            headers=headers,
+        )
+        cid = create.json()["id"]
+        await client.post(
+            f"/api/v1/campaigns/{cid}/benefits",
+            json={
+                "name": "上线权益",
+                "benefit_type": "platform_coupon",
+                "config_json": {"validity_type": "campaign_period"},
+                "stock_total": 10,
+            },
+            headers=headers,
+        )
+        resp = await client.post(
+            f"/api/v1/campaigns/{cid}/status",
+            json={"status": "active"},
+            headers=headers,
+        )
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "active"
+
+    @pytest.mark.anyio
+    async def test_campaign_status_change_rejects_incomplete_campaign(self, client: AsyncClient, auth_setup):
+        _, headers = auth_setup
+        create = await client.post(
+            "/api/v1/campaigns",
+            json={
+                "name": "未闭环活动",
                 "campaign_type": "coupon",
                 "start_at": "2026-06-01",
                 "end_at": "2026-06-30",
@@ -250,8 +306,9 @@ class TestCampaignCRUD:
             json={"status": "active"},
             headers=headers,
         )
-        assert resp.status_code == 200
-        assert resp.json()["status"] == "active"
+        assert resp.status_code == 400
+        assert "活动未关联产品" in resp.json()["detail"]
+        assert "活动未配置权益" in resp.json()["detail"]
 
     @pytest.mark.anyio
     async def test_delete_draft_campaign(self, client: AsyncClient, auth_setup):
@@ -302,6 +359,116 @@ class TestBenefitAndClaim:
         assert resp.status_code == 201
         assert resp.json()["stock_total"] == 100
         assert resp.json()["stock_used"] == 0
+
+    @pytest.mark.anyio
+    async def test_structured_campaign_rules_and_benefit_validity_are_persisted(self, client: AsyncClient, auth_setup):
+        _, headers = auth_setup
+        product_id = await create_product(client, headers, "结构化活动产品")
+        campaign = await client.post(
+            "/api/v1/campaigns",
+            json={
+                "name": "结构化活动",
+                "campaign_type": "lottery",
+                "product_id": product_id,
+                "start_at": "2026-06-01",
+                "end_at": "2026-06-30",
+                "rules_json": {
+                    **RULES_JSON,
+                    "campaign_goal": "lottery",
+                    "participation_condition_type": "first_scan",
+                    "claim_limit_count": 1,
+                },
+            },
+            headers=headers,
+        )
+        assert campaign.status_code == 201
+        cid = campaign.json()["id"]
+        assert campaign.json()["rules_json"]["participation_condition_type"] == "first_scan"
+        assert campaign.json()["rules_json"]["claim_limit_count"] == 1
+
+        benefit = await client.post(
+            f"/api/v1/campaigns/{cid}/benefits",
+            json={
+                "name": "结构化奖品",
+                "benefit_type": "platform_coupon",
+                "config_json": {
+                    "campaign_goal": "lottery",
+                    "validity_type": "after_claim_days",
+                    "validity_days": 7,
+                    "validity_period": "领取后 7 天内有效",
+                },
+                "stock_total": 100,
+                "per_person_limit": 1,
+            },
+            headers=headers,
+        )
+        assert benefit.status_code == 201
+        assert benefit.json()["config_json"]["validity_type"] == "after_claim_days"
+        assert benefit.json()["config_json"]["validity_days"] == 7
+
+        detail = await client.get(f"/api/v1/benefits/{benefit.json()['id']}", headers=headers)
+        assert detail.status_code == 200
+        assert detail.json()["config_json"]["validity_period"] == "领取后 7 天内有效"
+
+    @pytest.mark.anyio
+    async def test_create_benefit_rejects_invalid_validity_config(self, client: AsyncClient, auth_setup):
+        _, headers = auth_setup
+        campaign = await client.post(
+            "/api/v1/campaigns",
+            json={
+                "name": "权益校验活动",
+                "campaign_type": "coupon",
+                "start_at": "2026-06-01",
+                "end_at": "2026-06-30",
+                "rules_json": RULES_JSON,
+            },
+            headers=headers,
+        )
+        cid = campaign.json()["id"]
+
+        resp = await client.post(
+            f"/api/v1/campaigns/{cid}/benefits",
+            json={
+                "name": "无效权益",
+                "benefit_type": "platform_coupon",
+                "config_json": {"validity_type": "after_claim_days", "validity_days": 0},
+                "stock_total": 100,
+            },
+            headers=headers,
+        )
+        assert resp.status_code == 422
+
+    @pytest.mark.anyio
+    async def test_create_benefit_rejects_invalid_fixed_validity_range(self, client: AsyncClient, auth_setup):
+        _, headers = auth_setup
+        campaign = await client.post(
+            "/api/v1/campaigns",
+            json={
+                "name": "权益日期校验活动",
+                "campaign_type": "coupon",
+                "start_at": "2026-06-01",
+                "end_at": "2026-06-30",
+                "rules_json": RULES_JSON,
+            },
+            headers=headers,
+        )
+        cid = campaign.json()["id"]
+
+        resp = await client.post(
+            f"/api/v1/campaigns/{cid}/benefits",
+            json={
+                "name": "无效日期权益",
+                "benefit_type": "platform_coupon",
+                "config_json": {
+                    "validity_type": "fixed_range",
+                    "validity_start_at": "2026-06-10T00:00:00",
+                    "validity_end_at": "2026-06-01T00:00:00",
+                },
+                "stock_total": 100,
+            },
+            headers=headers,
+        )
+        assert resp.status_code == 422
 
     @pytest.mark.anyio
     async def test_claim_benefit_success(self, client: AsyncClient, auth_setup):
