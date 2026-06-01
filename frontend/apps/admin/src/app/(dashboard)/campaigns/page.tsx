@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import {
   Alert,
   App,
+  AutoComplete,
   Button,
   Checkbox,
   DatePicker,
@@ -54,6 +55,7 @@ interface Campaign {
   stock_total: number;
   stock_used: number;
   claim_count: number;
+  wecom_add_count?: number;
 }
 
 interface ProductOption {
@@ -70,6 +72,7 @@ interface CampaignFormValues {
   active_range: [Dayjs, Dayjs];
   description?: string;
   participation_condition_type?: "first_scan" | "any_scan" | "member_only";
+  wecom_mode?: "none" | "guide" | "required";
   claim_limit_count?: number;
   participation_conditions?: string;
   claim_limits?: string;
@@ -85,6 +88,12 @@ interface CampaignFormValues {
   benefit_validity_days?: number;
   benefit_validity_range?: [Dayjs, Dayjs];
   benefit_description?: string;
+}
+
+interface WeComIntegrationStatus {
+  connected: boolean;
+  status: string;
+  connector_id?: string;
 }
 
 const TYPE_OPTIONS = [
@@ -114,6 +123,12 @@ const PARTICIPATION_OPTIONS = [
   { value: "member_only", label: "仅会员可参与" },
 ];
 
+const WECOM_MODE_OPTIONS = [
+  { value: "none", label: "不使用企业微信" },
+  { value: "guide", label: "引导添加企业微信" },
+  { value: "required", label: "加企微后领取" },
+];
+
 const PARTICIPATION_LABELS: Record<NonNullable<CampaignFormValues["participation_condition_type"]>, string> = {
   first_scan: "消费者首次扫码后即可参与。",
   any_scan: "消费者扫码后即可参与。",
@@ -133,6 +148,7 @@ const GOAL_PRESETS: Record<string, {
   benefit_enabled: boolean;
   benefit_name: string;
   benefit_description: string;
+  wecom_mode?: NonNullable<CampaignFormValues["wecom_mode"]>;
 }> = {
   first_scan_coupon: {
     campaign_type: "coupon",
@@ -147,6 +163,7 @@ const GOAL_PRESETS: Record<string, {
     benefit_enabled: true,
     benefit_name: "首扫专属优惠券",
     benefit_description: "扫码后可领取的复购优惠券",
+    wecom_mode: "none",
   },
   lottery: {
     campaign_type: "lottery",
@@ -161,6 +178,7 @@ const GOAL_PRESETS: Record<string, {
     benefit_enabled: false,
     benefit_name: "",
     benefit_description: "",
+    wecom_mode: "none",
   },
   points: {
     campaign_type: "points",
@@ -175,6 +193,7 @@ const GOAL_PRESETS: Record<string, {
     benefit_enabled: false,
     benefit_name: "",
     benefit_description: "",
+    wecom_mode: "none",
   },
   private_domain_repurchase: {
     campaign_type: "coupon",
@@ -189,6 +208,7 @@ const GOAL_PRESETS: Record<string, {
     benefit_enabled: true,
     benefit_name: "企微复购优惠券",
     benefit_description: "扫码领取后用于复购转化的优惠券",
+    wecom_mode: "guide",
   },
   festival: {
     campaign_type: "coupon",
@@ -203,6 +223,7 @@ const GOAL_PRESETS: Record<string, {
     benefit_enabled: true,
     benefit_name: "节日专属优惠券",
     benefit_description: "节日活动期使用的专属优惠券",
+    wecom_mode: "none",
   },
   custom: {
     campaign_type: "coupon",
@@ -217,6 +238,7 @@ const GOAL_PRESETS: Record<string, {
     benefit_enabled: false,
     benefit_name: "",
     benefit_description: "",
+    wecom_mode: "none",
   },
 };
 
@@ -354,6 +376,50 @@ function buildBenefitDefaults(values: Partial<CampaignFormValues>, products: Pro
   return templates[goal] || templates.custom;
 }
 
+function buildBenefitNameSuggestions(values: Partial<CampaignFormValues>, products: ProductOption[]) {
+  const goal = values.campaign_goal || "custom";
+  const productName = getProductName(products, values.product_id);
+  const defaults = buildBenefitDefaults(values, products);
+  const productPrefix = productName || values.name || "活动";
+  const suggestions: Array<{ value: string; label: string; description: string }> = [
+    { value: defaults.name, label: defaults.name, description: defaults.description },
+  ];
+  const goalSuggestions: Record<string, Array<{ suffix: string; description: string }>> = {
+    first_scan_coupon: [
+      { suffix: "首扫专属优惠券", description: `${productPrefix}首次扫码后可领取的复购优惠券。` },
+      { suffix: "新客体验券", description: `${productPrefix}新客首次扫码后可领取的体验优惠。` },
+      { suffix: "复购优惠券", description: `${productPrefix}用于引导二次购买的优惠权益。` },
+    ],
+    lottery: [
+      { suffix: "扫码抽奖奖品", description: `${productPrefix}扫码抽奖活动奖品，中奖后按页面规则领取。` },
+      { suffix: "幸运抽奖权益", description: `${productPrefix}抽奖活动中奖后可领取的权益。` },
+    ],
+    points: [
+      { suffix: "扫码积分奖励", description: `${productPrefix}扫码后可获得的积分奖励。` },
+      { suffix: "会员积分权益", description: `${productPrefix}会员参与活动后可获得的积分权益。` },
+    ],
+    private_domain_repurchase: [
+      { suffix: "企微复购优惠券", description: `${productPrefix}添加企业微信后可使用的复购优惠券。` },
+      { suffix: "客服专属复购券", description: `${productPrefix}通过企业微信客服领取的复购权益。` },
+    ],
+    festival: [
+      { suffix: "节日专属优惠券", description: `${productPrefix}节日活动期可领取的专属优惠券。` },
+      { suffix: "限时促销权益", description: `${productPrefix}活动期内可领取的限时促销权益。` },
+    ],
+    custom: [
+      { suffix: "活动权益", description: `${productPrefix}可发放的活动权益。` },
+      { suffix: "专属优惠权益", description: `${productPrefix}活动期间可领取的专属优惠权益。` },
+    ],
+  };
+
+  for (const item of goalSuggestions[goal] || goalSuggestions.custom) {
+    const value = productName ? `${productName}${item.suffix}` : item.suffix;
+    suggestions.push({ value, label: value, description: item.description });
+  }
+
+  return Array.from(new Map(suggestions.filter((item) => item.value).map((item) => [item.value, item])).values());
+}
+
 function buildBenefitValidityDefaults(validityPeriod?: string) {
   if (validityPeriod?.includes("领取后7天")) {
     return { benefit_validity_mode: "after_claim_days" as const, benefit_validity_days: 7 };
@@ -387,7 +453,7 @@ function formatBenefitValidity(values: CampaignFormValues) {
   };
 }
 
-function getActivationIssues(record: Campaign) {
+function getActivationIssues(record: Campaign, wecomStatus?: WeComIntegrationStatus | null) {
   const blocking: string[] = [];
   const warnings: string[] = [];
   const startAt = dayjs(record.start_at);
@@ -398,6 +464,9 @@ function getActivationIssues(record: Campaign) {
   if (getBenefitCount(record) <= 0) blocking.push("未配置权益，消费者参与后无法领取奖励。");
   if (!startAt.isValid() || !endAt.isValid() || !endAt.isAfter(startAt)) blocking.push("投放时间无效，请检查开始和结束时间。");
   if (getStockTotal(record) <= 0) blocking.push("权益库存为 0，请先配置可领取库存。");
+  if (rules.wecom_mode === "required" && !wecomStatus?.connected) {
+    blocking.push("加企微后领取需要先完成企业微信连接。");
+  }
   if (!record.description && !rules.disclaimer) warnings.push("消费者说明为空，用户可能不清楚活动规则。");
   if (!rules.customer_service_contact) warnings.push("客服方式为空，用户遇到领取问题时无法联系品牌方。");
   if (endAt.isValid() && endAt.diff(dayjs(), "day") <= 3) warnings.push("活动即将结束，请确认仍需上线。");
@@ -412,6 +481,7 @@ export default function CampaignsPage() {
   const [editItem, setEditItem] = useState<Campaign | null>(null);
   const [detailItem, setDetailItem] = useState<Campaign | null>(null);
   const [products, setProducts] = useState<ProductOption[]>([]);
+  const [wecomStatus, setWecomStatus] = useState<WeComIntegrationStatus | null>(null);
   const [form] = Form.useForm<CampaignFormValues>();
 
   const {
@@ -442,9 +512,19 @@ export default function CampaignsPage() {
     }
   }, []);
 
+  const fetchWecomStatus = useCallback(async () => {
+    try {
+      const { data } = await api.get<WeComIntegrationStatus>("/integrations/wecom");
+      setWecomStatus(data);
+    } catch {
+      setWecomStatus({ connected: false, status: "error" });
+    }
+  }, []);
+
   useEffect(() => {
     fetchProducts();
-  }, [fetchProducts]);
+    fetchWecomStatus();
+  }, [fetchProducts, fetchWecomStatus]);
 
   const openCreate = () => {
     const validityDefaults = buildBenefitValidityDefaults(GOAL_PRESETS.first_scan_coupon.validity_period);
@@ -467,6 +547,7 @@ export default function CampaignsPage() {
       benefit_per_person_limit: 1,
       ...validityDefaults,
       benefit_description: GOAL_PRESETS.first_scan_coupon.benefit_description,
+      wecom_mode: "none",
     });
     setModalOpen(true);
   };
@@ -488,6 +569,7 @@ export default function CampaignsPage() {
       disclaimer: rules.disclaimer || "",
       minor_notice: rules.minor_notice || "",
       customer_service_contact: rules.customer_service_contact || "",
+      wecom_mode: (rules.wecom_mode as CampaignFormValues["wecom_mode"]) || "none",
       benefit_enabled: false,
     });
     setModalOpen(true);
@@ -504,6 +586,7 @@ export default function CampaignsPage() {
       campaign_goal: goal,
       name: nextName || values.name,
       validity_period: preset.validity_period,
+      wecom_mode: preset.wecom_mode === "guide" && !wecomStatus?.connected ? "none" : preset.wecom_mode,
     };
     const benefitDefaults = buildBenefitDefaults(nextValues, products);
     const validityDefaults = buildBenefitValidityDefaults(preset.validity_period);
@@ -518,6 +601,7 @@ export default function CampaignsPage() {
       claim_limits: preset.claim_limits,
       validity_period: preset.validity_period,
       disclaimer: preset.disclaimer,
+      wecom_mode: preset.wecom_mode === "guide" && !wecomStatus?.connected ? "none" : preset.wecom_mode,
       benefit_enabled: benefitEnabled,
       benefit_name: !form.isFieldTouched("benefit_name") || !values.benefit_name
         ? benefitDefaults.name
@@ -581,6 +665,7 @@ export default function CampaignsPage() {
         disclaimer: values.disclaimer || "最终解释权归品牌方所有",
         minor_notice: values.minor_notice || "未成年人请在监护人陪同下参与",
         customer_service_contact: values.customer_service_contact || "",
+        wecom_mode: values.wecom_mode || "none",
       },
     };
   };
@@ -626,6 +711,7 @@ export default function CampaignsPage() {
           stock_total: createdBenefit ? values.benefit_stock_total || 0 : getStockTotal(createdCampaign),
           stock_used: getStockUsed(createdCampaign),
           claim_count: getClaimCount(createdCampaign),
+          wecom_add_count: createdCampaign.wecom_add_count || 0,
         });
         mutate();
       }
@@ -649,7 +735,7 @@ export default function CampaignsPage() {
   };
 
   const confirmActivate = (record: Campaign) => {
-    const issues = getActivationIssues(record);
+    const issues = getActivationIssues(record, wecomStatus);
     if (issues.blocking.length > 0) {
       modal.warning({
         title: "活动暂不能上线",
@@ -811,6 +897,7 @@ export default function CampaignsPage() {
       render: (_, record) => (
         <Space orientation="vertical" size={2}>
           <Text>{getClaimCount(record)} 次领取</Text>
+          {Boolean(record.wecom_add_count) && <Text type="secondary" className="text-xs">企微添加 {record.wecom_add_count} 人</Text>}
           <Button size="small" type="link" className="h-auto !p-0" onClick={() => setDetailItem(record)}>
             查看数据
           </Button>
@@ -1016,16 +1103,45 @@ export default function CampaignsPage() {
               <Form.Item name="benefit_enabled" valuePropName="checked">
                 <Checkbox>创建基础平台券权益</Checkbox>
               </Form.Item>
-              <Form.Item noStyle shouldUpdate={(prev, cur) => prev.benefit_enabled !== cur.benefit_enabled}>
-                {({ getFieldValue }) => getFieldValue("benefit_enabled") ? (
+              <Form.Item
+                noStyle
+                shouldUpdate={(prev, cur) =>
+                  prev.benefit_enabled !== cur.benefit_enabled
+                  || prev.campaign_goal !== cur.campaign_goal
+                  || prev.product_id !== cur.product_id
+                  || prev.name !== cur.name
+                }
+              >
+                {({ getFieldValue, getFieldsValue }) => {
+                  if (!getFieldValue("benefit_enabled")) {
+                    return (
+                      <Alert
+                        type="warning"
+                        showIcon
+                        title="暂不配置权益时，活动创建后不能直接上线，需要先去权益管理补齐。"
+                      />
+                    );
+                  }
+                  const benefitNameSuggestions = buildBenefitNameSuggestions(getFieldsValue(), products);
+                  return (
                   <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
                     <Form.Item
                       name="benefit_name"
                       label="权益名称"
-                      extra="已根据活动目标和关联产品生成，可直接修改。"
-                      rules={[{ required: true, message: "请输入权益名称" }]}
+                      extra="可从建议中选择，也可按实际权益修改名称。"
+                      rules={[{ required: true, message: "请选择或输入权益名称" }]}
                     >
-                      <Input placeholder="例如：首扫专属优惠券" />
+                      <AutoComplete
+                        options={benefitNameSuggestions}
+                        placeholder="选择系统建议，也可直接输入"
+                        filterOption={false}
+                        onSelect={(value) => {
+                          const selected = benefitNameSuggestions.find((item) => item.value === value);
+                          if (selected?.description) {
+                            form.setFieldsValue({ benefit_description: selected.description });
+                          }
+                        }}
+                      />
                     </Form.Item>
                     <Form.Item name="benefit_stock_total" label="总库存" rules={[{ required: true, message: "请输入总库存" }]}>
                       <InputNumber min={1} className="w-full" />
@@ -1097,9 +1213,8 @@ export default function CampaignsPage() {
                       <TextArea rows={2} placeholder="例如：满 99 元可用，活动期内有效" />
                     </Form.Item>
                   </div>
-                ) : (
-                  <Alert type="warning" showIcon title="暂不配置权益时，活动创建后不能直接上线，需要先去权益管理补齐。" />
-                )}
+                  );
+                }}
               </Form.Item>
               <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
                 <Form.Item
@@ -1123,10 +1238,28 @@ export default function CampaignsPage() {
                     <Alert
                       type="info"
                       showIcon
-                      title="企业微信用于复购引导，权益发放按扫码、库存和每人次数判断。"
+                      title="可引导消费者添加企业微信；如选择加企微后领取，系统会等待添加确认后再发放权益。"
                     />
                   ) : null
                 }
+              </Form.Item>
+              <Form.Item
+                name="wecom_mode"
+                label="企微转化"
+                extra={wecomStatus?.connected ? "已连接企业微信，可选择引导添加或加企微后领取。" : "连接企业微信后，可启用添加引导和领取门槛。"}
+              >
+                <Select
+                  options={WECOM_MODE_OPTIONS.map((option) => ({
+                    ...option,
+                    disabled: option.value !== "none" && !wecomStatus?.connected,
+                  }))}
+                  onChange={(value) => {
+                    if (value !== "none" && !wecomStatus?.connected) {
+                      form.setFieldValue("wecom_mode", "none");
+                      message.info("请先在集成管理中连接企业微信");
+                    }
+                  }}
+                />
               </Form.Item>
             </div>
           )}
@@ -1150,6 +1283,18 @@ export default function CampaignsPage() {
                   <InputNumber min={1} precision={0} addonAfter="次" className="w-full" data-testid="campaign-claim-limits-input" />
                 </Form.Item>
               </div>
+              <Form.Item
+                name="wecom_mode"
+                label="企微转化"
+                extra={wecomStatus?.connected ? "已连接企业微信，可选择引导添加或加企微后领取。" : "连接企业微信后，可启用添加引导和领取门槛。"}
+              >
+                <Select
+                  options={WECOM_MODE_OPTIONS.map((option) => ({
+                    ...option,
+                    disabled: option.value !== "none" && !wecomStatus?.connected,
+                  }))}
+                />
+              </Form.Item>
               <Alert type="info" showIcon title="完整权益维护请进入权益管理，避免编辑活动基础信息时误改已投放权益。" />
             </div>
           )}
@@ -1190,6 +1335,7 @@ export default function CampaignsPage() {
               <Statistic title="领取数" value={getClaimCount(detailItem)} />
               <Statistic title="总库存" value={getStockTotal(detailItem)} />
               <Statistic title="已消耗库存" value={getStockUsed(detailItem)} />
+              <Statistic title="企微添加" value={detailItem.wecom_add_count || 0} />
             </div>
             <Alert
               type="info"

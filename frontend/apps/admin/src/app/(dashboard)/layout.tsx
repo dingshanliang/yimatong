@@ -134,6 +134,7 @@ function DashboardInner({ children }: { children: React.ReactNode }) {
       icon: <DatabaseOutlined />,
       label: t("menu.integrations"),
       children: [
+        { key: "/integrations", icon: <DatabaseOutlined />, label: t("menu.integrations") },
         { key: "/connectors", icon: <DatabaseOutlined />, label: t("menu.connectors") },
       ],
     },

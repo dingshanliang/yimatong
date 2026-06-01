@@ -13,3 +13,5 @@ npm-debug.log*
 /playwright-report/
 /playwright/.cache/
 /e2e/.auth/
+/.pnpm-store/
+/output/

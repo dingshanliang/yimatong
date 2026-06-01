@@ -29,7 +29,7 @@ from app.models.export_log import ExportLog  # noqa: E402, F401
 from app.models.gmv import ExternalOrder, GmvAttribution  # noqa: E402, F401
 from app.models.i18n import Translation  # noqa: E402, F401
 from app.models.integration import SyncRecord  # noqa: E402, F401
-from app.models.member import ConsumerProfile, PointRule, PointTransaction  # noqa: E402, F401
+from app.models.member import ConsumerProfile, PointProduct, PointRedemption, PointRule, PointTransaction  # noqa: E402, F401
 from app.models.page import PageTemplate, PageVersion  # noqa: E402, F401
 from app.models.private_domain import PrivateDomainConfig  # noqa: E402, F401
 from app.models.product import SKU, Brand, Product, ProductionBatch  # noqa: E402, F401
@@ -61,6 +61,7 @@ from app.models.tenant import (  # noqa: E402, F401
     role_permissions,
 )
 from app.models.webhook import ApiKey, WebhookDelivery, WebhookEndpoint  # noqa: E402, F401
+from app.models.wecom import WeComContactWay, WeComExternalContact  # noqa: E402, F401
 from app.utils.crypto import EnvKeyProvider, init_crypto  # noqa: E402
 
 # 初始化加密模块（读取上面设置的环境变量）

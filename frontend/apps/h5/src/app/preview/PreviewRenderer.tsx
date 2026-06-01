@@ -299,6 +299,15 @@ function PreviewModule({
           />
         </div>
       );
+    case "points_shop":
+      return (
+        <div className="px-4 mt-3">
+          <div className="rounded-2xl bg-white p-4 shadow-sm">
+            <h3 className="text-sm font-semibold text-gray-900">积分商城</h3>
+            <p className="mt-2 text-sm text-gray-400">预览模式下显示积分商品列表占位内容</p>
+          </div>
+        </div>
+      );
     case "outer_code_guide":
       return (
         <div className="px-4 mt-3">

@@ -11,6 +11,7 @@ import { ShopRedirect } from "@/components/ShopRedirect";
 import { MemberCard } from "@/components/MemberCard";
 import { PointsBalance } from "@/components/PointsBalance";
 import { PointsExchange } from "@/components/PointsExchange";
+import { PointsShop } from "@/components/PointsShop";
 import { OuterCodeGuide } from "@/components/OuterCodeGuide";
 import { RiskAlert } from "@/components/RiskAlert";
 import { DualCodeVerify } from "@/components/DualCodeVerify";
@@ -224,18 +225,22 @@ function ModuleRenderer({
         <CertificateRenderer codeData={codeData} />
       );
 
-    case "benefit_card":
+    case "benefit_card": {
+      const campaignBenefit = campaign.benefit as Record<string, unknown> | undefined;
+      const campaignRules = campaign.rules as Record<string, unknown> | undefined;
       return (
         <div className="px-4 mt-3">
           <BenefitClaimCard
-            benefitId={(config.benefit_id as string) || ""}
+            benefitId={(config.benefit_id as string) || (campaignBenefit?.id as string) || ""}
             benefitType={(config.benefit_type as "coupon" | "points" | "lottery" | "gift" | "cash_red_packet") || "coupon"}
-            title={(config.title as string) || "领取权益"}
-            description={config.description as string}
+            title={(config.title as string) || (campaignBenefit?.name as string) || "领取权益"}
+            description={(config.description as string) || (campaignBenefit?.description as string)}
             scanToken={scanToken}
+            wecomMode={(campaignRules?.wecom_mode as "none" | "guide" | "required") || "none"}
           />
         </div>
       );
+    }
 
     case "cta_group":
       return (
@@ -331,6 +336,17 @@ function ModuleRenderer({
           <PointsBalance
             points={(config.points as number) || 0}
             consumerId={config.consumer_id as string}
+            scanToken={scanToken}
+          />
+        </div>
+      );
+
+    case "points_shop":
+      return (
+        <div className="px-4 mt-3">
+          <PointsShop
+            consumerId={config.consumer_id as string}
+            scanToken={scanToken}
           />
         </div>
       );

@@ -1,14 +1,18 @@
 """会员与积分服务层"""
 
 import uuid
+from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.event_bus import event_bus
+from app.models.campaign import Benefit
 from app.models.member import (
     ConsumerProfile,
     MemberLevel,
+    PointProduct,
+    PointRedemption,
     PointRule,
     PointTransaction,
     PointTransactionType,
@@ -20,6 +24,7 @@ async def get_or_create_consumer(
     db: AsyncSession,
     tenant_id: uuid.UUID,
     phone: str | None = None,
+    nickname: str | None = None,
 ) -> ConsumerProfile:
     """获取或创建消费者档案"""
     phone_h = hash_phone(phone) if phone else None
@@ -33,12 +38,15 @@ async def get_or_create_consumer(
         )
         consumer = result.scalar_one_or_none()
         if consumer:
+            if nickname and not consumer.nickname:
+                consumer.nickname = nickname
             return consumer
 
     consumer = ConsumerProfile(
         tenant_id=tenant_id,
         phone_hash=phone_h,
         phone_encrypted=encrypt_phone(phone) if phone else None,
+        nickname=nickname,
     )
     db.add(consumer)
     is_new = True
@@ -59,6 +67,8 @@ async def get_or_create_consumer(
                 return consumer
         raise
     await db.refresh(consumer)
+    if nickname and not consumer.nickname:
+        consumer.nickname = nickname
 
     if is_new:
         await event_bus.emit(
@@ -78,7 +88,12 @@ async def award_points(
     reference_id: str | None = None,
 ) -> PointTransaction:
     """发放积分"""
-    consumer_result = await db.execute(select(ConsumerProfile).where(ConsumerProfile.id == consumer_id))
+    consumer_result = await db.execute(
+        select(ConsumerProfile).where(
+            ConsumerProfile.id == consumer_id,
+            ConsumerProfile.tenant_id == tenant_id,
+        )
+    )
     consumer = consumer_result.scalar_one_or_none()
     if not consumer:
         raise ValueError("Consumer not found")
@@ -113,7 +128,12 @@ async def spend_points(
     reference_id: str | None = None,
 ) -> PointTransaction:
     """消费积分"""
-    consumer_result = await db.execute(select(ConsumerProfile).where(ConsumerProfile.id == consumer_id))
+    consumer_result = await db.execute(
+        select(ConsumerProfile).where(
+            ConsumerProfile.id == consumer_id,
+            ConsumerProfile.tenant_id == tenant_id,
+        )
+    )
     consumer = consumer_result.scalar_one_or_none()
     if not consumer:
         raise ValueError("Consumer not found")
@@ -166,6 +186,141 @@ async def get_point_rules(
         stmt = stmt.where(PointRule.enabled.is_(True))
     result = await db.execute(stmt)
     return list(result.scalars().all())
+
+
+async def get_member_overview(db: AsyncSession, tenant_id: uuid.UUID) -> dict:
+    """会员积分运营概览。"""
+    since = datetime.now(UTC) - timedelta(days=7)
+    enabled_rules = (
+        await db.execute(
+            select(func.count()).select_from(PointRule).where(
+                PointRule.tenant_id == tenant_id,
+                PointRule.enabled.is_(True),
+            )
+        )
+    ).scalar() or 0
+    active_products = (
+        await db.execute(
+            select(func.count()).select_from(PointProduct).where(
+                PointProduct.tenant_id == tenant_id,
+                PointProduct.enabled.is_(True),
+            )
+        )
+    ).scalar() or 0
+    points_awarded = (
+        await db.execute(
+            select(func.coalesce(func.sum(PointTransaction.amount), 0)).where(
+                PointTransaction.tenant_id == tenant_id,
+                PointTransaction.txn_type == PointTransactionType.earning,
+                PointTransaction.created_at >= since,
+            )
+        )
+    ).scalar() or 0
+    points_spent_raw = (
+        await db.execute(
+            select(func.coalesce(func.sum(PointTransaction.amount), 0)).where(
+                PointTransaction.tenant_id == tenant_id,
+                PointTransaction.txn_type == PointTransactionType.spending,
+                PointTransaction.created_at >= since,
+            )
+        )
+    ).scalar() or 0
+    redemptions_7d = (
+        await db.execute(
+            select(func.count()).select_from(PointRedemption).where(
+                PointRedemption.tenant_id == tenant_id,
+                PointRedemption.created_at >= since,
+            )
+        )
+    ).scalar() or 0
+    low_stock_products = (
+        await db.execute(
+            select(func.count()).select_from(PointProduct).where(
+                PointProduct.tenant_id == tenant_id,
+                PointProduct.enabled.is_(True),
+                PointProduct.stock <= 5,
+            )
+        )
+    ).scalar() or 0
+    return {
+        "enabled_rules": int(enabled_rules),
+        "active_products": int(active_products),
+        "points_awarded_7d": int(points_awarded),
+        "points_spent_7d": abs(int(points_spent_raw)),
+        "redemptions_7d": int(redemptions_7d),
+        "low_stock_products": int(low_stock_products),
+    }
+
+
+def _masked_phone(consumer: ConsumerProfile) -> str | None:
+    if not consumer.phone_encrypted:
+        return None
+    try:
+        return mask_phone(decrypt_phone(consumer.phone_encrypted))
+    except CryptoError:
+        return None
+
+
+def serialize_consumer_profile(consumer: ConsumerProfile) -> dict:
+    return {
+        "id": str(consumer.id),
+        "nickname": consumer.nickname,
+        "phone": _masked_phone(consumer),
+        "member_level": consumer.member_level,
+        "total_points": consumer.total_points,
+    }
+
+
+async def search_consumers(
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    keyword: str,
+    lookup_type: str = "auto",
+    limit: int = 20,
+) -> list[dict]:
+    """按消费者 ID、手机号或昵称搜索消费者。"""
+    value = keyword.strip()
+    if not value:
+        return []
+
+    normalized_type = lookup_type
+    if lookup_type == "auto":
+        try:
+            uuid.UUID(value)
+            normalized_type = "id"
+        except ValueError:
+            normalized_type = "phone" if value.isdigit() else "nickname"
+
+    conditions = [ConsumerProfile.tenant_id == tenant_id]
+    if normalized_type == "id":
+        try:
+            conditions.append(ConsumerProfile.id == uuid.UUID(value))
+        except ValueError:
+            return []
+    elif normalized_type == "phone":
+        conditions.append(ConsumerProfile.phone_hash == hash_phone(value))
+    elif normalized_type == "nickname":
+        conditions.append(ConsumerProfile.nickname.ilike(f"%{value}%"))
+    else:
+        try:
+            maybe_id = uuid.UUID(value)
+        except ValueError:
+            maybe_id = None
+        phone_clause = ConsumerProfile.phone_hash == hash_phone(value) if value.isdigit() else None
+        clauses = [ConsumerProfile.nickname.ilike(f"%{value}%")]
+        if maybe_id:
+            clauses.append(ConsumerProfile.id == maybe_id)
+        if phone_clause is not None:
+            clauses.append(phone_clause)
+        conditions.append(or_(*clauses))
+
+    result = await db.execute(
+        select(ConsumerProfile)
+        .where(*conditions)
+        .order_by(ConsumerProfile.id.desc())
+        .limit(limit)
+    )
+    return [serialize_consumer_profile(c) for c in result.scalars().all()]
 
 
 async def create_point_rule(
@@ -250,7 +405,10 @@ async def get_consumer_profile(
     # 获取最近交易
     txn_result = await db.execute(
         select(PointTransaction)
-        .where(PointTransaction.consumer_id == consumer_id)
+        .where(
+            PointTransaction.consumer_id == consumer_id,
+            PointTransaction.tenant_id == tenant_id,
+        )
         .order_by(PointTransaction.id.desc())
         .limit(10)
     )
@@ -258,6 +416,8 @@ async def get_consumer_profile(
 
     return {
         "id": str(consumer.id),
+        "nickname": consumer.nickname,
+        "phone": _masked_phone(consumer),
         "member_level": consumer.member_level,
         "total_points": consumer.total_points,
         "recent_transactions": [
@@ -267,6 +427,7 @@ async def get_consumer_profile(
                 "balance_after": t.balance_after,
                 "txn_type": t.txn_type,
                 "reason": t.reason,
+                "created_at": t.created_at.isoformat() if t.created_at else None,
             }
             for t in recent_txns
         ],
@@ -297,17 +458,82 @@ async def list_point_transactions(
     total_result = await db.execute(count_stmt)
     total = total_result.scalar() or 0
 
-    stmt = stmt.order_by(PointTransaction.id.desc()).offset((page - 1) * page_size).limit(page_size)
+    stmt = (
+        stmt.order_by(PointTransaction.created_at.desc(), PointTransaction.id.desc())
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+    )
     result = await db.execute(stmt)
     return list(result.scalars().all()), total
 
 
+async def list_point_redemptions(
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    *,
+    page: int = 1,
+    page_size: int = 20,
+    consumer_id: uuid.UUID | None = None,
+    product_id: uuid.UUID | None = None,
+    status: str | None = None,
+) -> tuple[list[dict], int]:
+    """后台查询积分兑换记录。"""
+    filters = [PointRedemption.tenant_id == tenant_id]
+    if consumer_id:
+        filters.append(PointRedemption.consumer_id == consumer_id)
+    if product_id:
+        filters.append(PointRedemption.product_id == product_id)
+    if status:
+        filters.append(PointRedemption.status == status)
+
+    count_stmt = select(func.count()).select_from(PointRedemption).where(*filters)
+    total = (await db.execute(count_stmt)).scalar() or 0
+
+    stmt = (
+        select(PointRedemption, PointProduct, ConsumerProfile, Benefit)
+        .join(PointProduct, PointProduct.id == PointRedemption.product_id)
+        .join(ConsumerProfile, ConsumerProfile.id == PointRedemption.consumer_id)
+        .outerjoin(Benefit, Benefit.id == PointRedemption.benefit_id)
+        .where(*filters)
+        .order_by(PointRedemption.created_at.desc())
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+    )
+    result = await db.execute(stmt)
+    items = []
+    for redemption, product, consumer, benefit in result.all():
+        items.append(
+            {
+                "id": str(redemption.id),
+                "consumer_id": str(redemption.consumer_id),
+                "consumer_phone": _masked_phone(consumer),
+                "consumer_nickname": consumer.nickname,
+                "product_id": str(redemption.product_id),
+                "product_name": product.name,
+                "points_cost": redemption.points_cost,
+                "point_transaction_id": str(redemption.point_transaction_id),
+                "benefit_id": str(redemption.benefit_id) if redemption.benefit_id else None,
+                "benefit_name": benefit.name if benefit else None,
+                "benefit_claim_id": str(redemption.benefit_claim_id) if redemption.benefit_claim_id else None,
+                "status": redemption.status,
+                "created_at": redemption.created_at.isoformat() if redemption.created_at else None,
+            }
+        )
+    return items, total
+
+
 async def get_consumer_phone(
     db: AsyncSession,
+    tenant_id: uuid.UUID,
     consumer_id: uuid.UUID,
 ) -> str | None:
     """获取消费者脱敏手机号"""
-    result = await db.execute(select(ConsumerProfile).where(ConsumerProfile.id == consumer_id))
+    result = await db.execute(
+        select(ConsumerProfile).where(
+            ConsumerProfile.id == consumer_id,
+            ConsumerProfile.tenant_id == tenant_id,
+        )
+    )
     consumer = result.scalar_one_or_none()
     if not consumer or not consumer.phone_encrypted:
         return None

@@ -47,7 +47,7 @@ async def http_exception_handler(
 ) -> JSONResponse:
     request_id = get_request_id()
     error_code = f"HTTP_{exc.status_code}"
-    detail = exc.detail if isinstance(exc.detail, str) else str(exc.detail)
+    detail = exc.detail
     logger.info(
         "HTTPException: %s detail=%s path=%s",
         error_code,

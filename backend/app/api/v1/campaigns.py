@@ -10,6 +10,7 @@ from app.core.database import get_db
 from app.core.dependencies import get_current_tenant
 from app.schemas.common import PaginatedResponse
 from app.services.campaign import (
+    attach_benefit_to_campaign,
     campaign_product_exists,
     change_campaign_status,
     claim_benefit,
@@ -250,6 +251,22 @@ async def create_benefit_endpoint(
         body.per_person_limit,
         connector_id=body.connector_id,
     )
+
+
+@campaign_router.post("/{campaign_id}/benefits/{benefit_id}/attach", summary="活动使用权益")
+async def attach_benefit_endpoint(
+    campaign_id: uuid.UUID,
+    benefit_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    tenant_id: uuid.UUID = Depends(get_current_tenant),
+):
+    try:
+        data = await attach_benefit_to_campaign(db, tenant_id, campaign_id, benefit_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if not data:
+        raise HTTPException(status_code=404, detail="Campaign or benefit not found")
+    return data
 
 
 @campaign_router.get("/{campaign_id}/benefits", summary="权益列表")

@@ -275,6 +275,8 @@ function PreviewModule({
       return <SimpleCard title="积分余额" body={`${(config.points as number) || 0} 积分`} />;
     case "points_exchange":
       return <SimpleCard title={(config.title as string) || "积分兑换"} body={`消耗 ${(config.points_cost as number) || 100} 积分兑换权益。`} />;
+    case "points_shop":
+      return <SimpleCard title="积分商城" body="展示可兑换商品、积分价格、库存和兑换状态。" />;
     case "outer_code_guide":
       return <SimpleCard title="外码引导" body="引导消费者开箱后继续验证内码。" />;
     case "risk_alert":

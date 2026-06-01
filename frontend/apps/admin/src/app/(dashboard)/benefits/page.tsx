@@ -1,8 +1,8 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
-import { useRouter } from "next/navigation";
-import { App, Button, Form, Input, InputNumber, Modal, Popconfirm, Progress, Select, Space, Table, Tabs, Tag, Typography, Alert } from "antd";
+import { useRouter, useSearchParams } from "next/navigation";
+import { Alert, App, Button, Form, Input, InputNumber, Modal, Popconfirm, Progress, Select, Space, Table, Tabs, Tag, Typography } from "antd";
 import { PlusOutlined, SendOutlined } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
 import api from "@/lib/api";
@@ -12,10 +12,11 @@ import { BENEFIT_TYPE_MAP, BENEFIT_STATUS_MAP, CLAIM_STATUS_MAP, DELIVERY_STATUS
 import { yuanToFen, fenToYuan } from "./_components/utils";
 import type { Benefit, BenefitClaim, Campaign, Connector } from "./_components/types";
 
-const { Title } = Typography;
+const { Text, Title } = Typography;
 
 export default function BenefitsPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const { message } = App.useApp();
   const {
     items: benefits, total: benefitsTotal, page: benefitsPage, loading: benefitsLoading,
@@ -34,7 +35,7 @@ export default function BenefitsPage() {
   const [form] = Form.useForm();
   const [activeTab, setActiveTab] = useState("benefits");
   const [benefitType, setBenefitType] = useState<string>("");
-  const [appliedCampaignQuery, setAppliedCampaignQuery] = useState<string | null>(null);
+  const [contextCampaignId, setContextCampaignId] = useState<string | null>(null);
 
   const wechatPayConnectors = allConnectors.filter((c) => c.connector_type === "wechat_pay_transfer");
   const couponPoolConnectors = allConnectors.filter((c) => c.connector_type === "coupon_pool");
@@ -50,18 +51,20 @@ export default function BenefitsPage() {
   useEffect(() => { fetchCampaigns(); fetchConnectors(); }, [fetchCampaigns, fetchConnectors]);
 
   useEffect(() => {
-    const campaignId = new URLSearchParams(window.location.search).get("campaign_id");
-    if (!campaignId || campaigns.length === 0 || modalOpen || editItem || appliedCampaignQuery === campaignId) return;
+    const campaignId = searchParams.get("campaign_id");
+    setContextCampaignId(campaignId);
+    if (campaignId) setActiveTab("benefits");
+  }, [searchParams]);
+
+  const selectedCampaign = contextCampaignId ? campaigns.find((campaign) => campaign.id === contextCampaignId) : undefined;
+
+  const openCreate = () => {
     setEditItem(null);
     form.resetFields();
-    form.setFieldsValue({ campaign_id: campaignId });
+    form.setFieldsValue({ campaign_id: contextCampaignId || null });
     setBenefitType("");
-    setActiveTab("benefits");
     setModalOpen(true);
-    setAppliedCampaignQuery(campaignId);
-  }, [appliedCampaignQuery, campaigns, editItem, form, modalOpen]);
-
-  const openCreate = () => { setEditItem(null); form.resetFields(); setBenefitType(""); setModalOpen(true); };
+  };
 
   const openEdit = (record: Benefit) => {
     setEditItem(record);
@@ -86,7 +89,16 @@ export default function BenefitsPage() {
       }
       const payload = { name: values.name, benefit_type: values.benefit_type, stock_total: values.stock_total, per_person_limit: values.per_person_limit, config_json: configJson, connector_id: values.connector_id || null };
       if (editItem) { await updateBenefit(editItem.id, payload); message.success("权益更新成功"); }
-      else { await api.post(`/campaigns/${values.campaign_id}/benefits`, payload); message.success("权益创建成功"); mutateBenefits(); }
+      else {
+        if (contextCampaignId) {
+          await api.post(`/campaigns/${contextCampaignId}/benefits`, payload);
+          message.success("权益已创建并用于当前活动");
+        } else {
+          await api.post("/benefits", payload);
+          message.success("权益已创建，可在活动中选择使用");
+        }
+        mutateBenefits();
+      }
       setModalOpen(false); form.resetFields();
     } catch (e: unknown) { const err = e as { response?: { data?: { detail?: string } } }; message.error(err.response?.data?.detail || (editItem ? "更新权益失败" : "创建权益失败")); }
   };
@@ -96,8 +108,20 @@ export default function BenefitsPage() {
     const newStatus = record.status === "active" ? "inactive" : "active";
     try { await updateBenefit(record.id, { status: newStatus }); message.success(newStatus === "active" ? "已启用" : "已停用"); } catch { message.error("操作失败"); }
   };
+  const handleUseInCampaign = async (record: Benefit) => {
+    if (!contextCampaignId) return;
+    try {
+      await api.post(`/campaigns/${contextCampaignId}/benefits/${record.id}/attach`);
+      message.success("已用于当前活动");
+      mutateBenefits();
+    } catch (e: unknown) {
+      const err = e as { response?: { data?: { detail?: string } } };
+      message.error(err.response?.data?.detail || "使用权益失败");
+    }
+  };
 
   const campaignMap = campaigns.reduce<Record<string, string>>((acc, c) => { acc[c.id] = c.name; return acc; }, {});
+  const visibleBenefits = contextCampaignId ? benefits.filter((benefit) => !benefit.campaign_id || benefit.campaign_id === contextCampaignId) : benefits;
   const benefitMap = benefits.reduce<Record<string, string>>((acc, b) => { acc[b.id] = b.name; return acc; }, {});
 
   const getBenefitValidityText = (record: Benefit) => {
@@ -111,7 +135,22 @@ export default function BenefitsPage() {
   const benefitColumns: ColumnsType<Benefit> = [
     { title: "权益名称", dataIndex: "name", key: "name" },
     { title: "类型", dataIndex: "benefit_type", key: "benefit_type", render: (t: string) => { const info = BENEFIT_TYPE_MAP[t] || { label: t, color: "default" }; return <Tag color={info.color}>{info.label}</Tag>; } },
-    { title: "关联活动", dataIndex: "campaign_id", key: "campaign_id", render: (v: string) => campaignMap[v] || v },
+    {
+      title: contextCampaignId ? "使用状态" : "使用活动",
+      dataIndex: "campaign_id",
+      key: "campaign_id",
+      render: (v: string | null) => {
+        if (!v) {
+          return <Tag>未使用</Tag>;
+        }
+        const campaignName = contextCampaignId && v === contextCampaignId ? "当前活动" : campaignMap[v] || "未找到活动";
+        return (
+          <Text ellipsis={{ tooltip: campaignName }} className="block max-w-[180px]">
+            {campaignName}
+          </Text>
+        );
+      },
+    },
     { title: "权益有效期", key: "validity", render: (_: unknown, record) => getBenefitValidityText(record) },
     { title: "库存", key: "stock", render: (_: unknown, record) => {
       const percent = record.stock_total > 0 ? Math.round((record.stock_used / record.stock_total) * 100) : 0;
@@ -122,6 +161,9 @@ export default function BenefitsPage() {
     { title: "创建时间", dataIndex: "created_at", key: "created_at" },
     { title: "操作", key: "actions", render: (_: unknown, record) => (
       <Space>
+        {contextCampaignId && !record.campaign_id && (
+          <Button size="small" type="primary" onClick={() => handleUseInCampaign(record)}>用于此活动</Button>
+        )}
         <Button size="small" onClick={() => openEdit(record)}>编辑</Button>
         <Popconfirm title={record.status === "active" ? "确认停用？" : "确认启用？"} onConfirm={() => handleToggleStatus(record)}><Button size="small" danger={record.status === "active"}>{record.status === "active" ? "停用" : "启用"}</Button></Popconfirm>
         <Popconfirm title="确认删除权益？" onConfirm={() => handleDelete(record.id)}><Button size="small" danger>删除</Button></Popconfirm>
@@ -144,22 +186,40 @@ export default function BenefitsPage() {
     <div>
       <div className="mb-4 flex items-center justify-between">
         <Title level={4} className="!mb-0">权益管理</Title>
-        <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>新建权益</Button>
+        <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
+          {contextCampaignId ? "新建并用于此活动" : "新建权益"}
+        </Button>
       </div>
+      {contextCampaignId ? (
+        <Alert
+          className="mb-4"
+          type="info"
+          showIcon
+          title={`当前活动：${selectedCampaign?.name || "活动"}`}
+          description="可以选择未使用的权益用于当前活动，也可以直接新建一个活动专用权益。"
+        />
+      ) : null}
       <Tabs activeKey={activeTab} onChange={setActiveTab} items={[
-        { key: "benefits", label: "权益列表", children: <Table columns={benefitColumns} dataSource={benefits} rowKey="id" loading={benefitsLoading} pagination={{ current: benefitsPage, total: benefitsTotal, pageSize: 20, onChange: setBenefitsPage, showTotal: (t) => `共 ${t} 条` }} /> },
+        { key: "benefits", label: "权益列表", children: <Table columns={benefitColumns} dataSource={visibleBenefits} rowKey="id" loading={benefitsLoading} pagination={{ current: benefitsPage, total: contextCampaignId ? visibleBenefits.length : benefitsTotal, pageSize: 20, onChange: setBenefitsPage, showTotal: (t) => `共 ${t} 条` }} /> },
         { key: "claims", label: "领取记录", children: <Table columns={claimColumns} dataSource={claims} rowKey="id" loading={claimsLoading} pagination={{ current: claimsPage, total: claimsTotal, pageSize: 20, onChange: setClaimsPage, showTotal: (t) => `共 ${t} 条` }} /> },
       ]} />
-      <Modal title={editItem ? "编辑权益" : "新建权益"} open={modalOpen} onCancel={() => setModalOpen(false)} onOk={() => form.submit()} width={640} destroyOnHidden>
+      <Modal title={editItem ? "编辑权益" : selectedCampaign ? `新建权益并用于「${selectedCampaign.name}」` : "新建权益"} open={modalOpen} onCancel={() => setModalOpen(false)} onOk={() => form.submit()} width={640} forceRender>
         {benefitType === "cash_red_packet" && <Alert title="微信现金红包" description="单笔转账上限 200 元，金额以元为单位输入，系统自动转换为分存储。请确保已配置微信支付转账连接器。" type="info" showIcon className="mb-4" />}
         <Form form={form} layout="vertical" onFinish={handleSubmit} onValuesChange={(changed) => { if (changed.benefit_type) setBenefitType(changed.benefit_type as string); }}>
+          {contextCampaignId || editItem?.campaign_id ? (
+            <Alert
+              className="mb-4"
+              type="info"
+              showIcon
+              title={editItem ? `使用活动：${editItem.campaign_id ? campaignMap[editItem.campaign_id] || "活动" : "未使用"}` : `创建后用于：${selectedCampaign?.name || "当前活动"}`}
+              description="权益用于活动后，会参与活动页面展示、领取校验和库存统计。"
+            />
+          ) : null}
           <Form.Item name="name" label="权益名称" rules={[{ required: true, message: "请输入权益名称" }]}><Input data-testid="benefit-name-input" /></Form.Item>
           <Form.Item name="benefit_type" label="权益类型" rules={[{ required: true, message: "请选择权益类型" }]}>
             <Select options={Object.entries(BENEFIT_TYPE_MAP).map(([value, { label }]) => ({ value, label }))} data-testid="benefit-type-select" />
           </Form.Item>
-          <Form.Item name="campaign_id" label="关联活动" rules={[{ required: true, message: "请选择关联活动" }]}>
-            <Select placeholder="选择活动" options={campaigns.map((c) => ({ value: c.id, label: c.name }))} showSearch optionFilterProp="label" data-testid="benefit-campaign-select" />
-          </Form.Item>
+          <Form.Item name="campaign_id" hidden><Input /></Form.Item>
           <div className="grid grid-cols-2 gap-4">
             <Form.Item name="stock_total" label="总库存" rules={[{ required: true, message: "请输入总库存" }]}><InputNumber min={1} className="w-full" data-testid="benefit-stock-input" /></Form.Item>
             <Form.Item name="per_person_limit" label="每人限领" rules={[{ required: true, message: "请输入每人限领数量" }]}><InputNumber min={1} className="w-full" data-testid="benefit-limit-input" /></Form.Item>

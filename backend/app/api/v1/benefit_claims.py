@@ -68,11 +68,54 @@ async def claim_benefit_h5(
     if benefit.benefit_type == "cash_red_packet":
         return await _handle_cash_red_packet_claim(benefit, token, payload, db)
 
-    # 4. 检查库存
+    # 4. 企业微信添加门槛：只以后端收到的企业微信事件为准
+    from app.models.campaign import Campaign
+    from app.services.wecom_integration import (
+        WeComIntegrationError,
+        get_or_create_claim_contact_way,
+        has_confirmed_wecom_contact,
+        is_wecom_required,
+    )
+
+    campaign_result = await db.execute(
+        select(Campaign).where(Campaign.id == benefit.campaign_id, Campaign.tenant_id == benefit.tenant_id)
+    )
+    campaign = campaign_result.scalar_one_or_none()
+    if campaign and is_wecom_required(campaign.rules_json):
+        if not await has_confirmed_wecom_contact(
+            db,
+            tenant_id=benefit.tenant_id,
+            benefit_id=benefit.id,
+            scan_token=token,
+        ):
+            try:
+                contact_way = await get_or_create_claim_contact_way(
+                    db,
+                    tenant_id=benefit.tenant_id,
+                    benefit=benefit,
+                    scan_token=token,
+                )
+                await db.commit()
+            except WeComIntegrationError as exc:
+                raise HTTPException(
+                    status_code=403,
+                    detail={"code": "require_wecom_contact", "message": str(exc)},
+                ) from exc
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "code": "require_wecom_contact",
+                    "message": "请先添加企业微信，再继续领取权益",
+                    "qr_code": contact_way.qr_code,
+                    "state": contact_way.state,
+                },
+            )
+
+    # 5. 检查库存
     if benefit.stock_total <= 0:
         raise HTTPException(status_code=410, detail="权益已抢光")
 
-    # 5. 双层幂等：Redis 缓存层 + DB 唯一约束
+    # 6. 双层幂等：Redis 缓存层 + DB 唯一约束
     idempotency_key = f"claim:{token[:16]}:{benefit_id}"
 
     if not await _claim_cache.set_idempotent(idempotency_key, ttl=300):
@@ -89,14 +132,14 @@ async def claim_benefit_h5(
     if existing.scalar_one_or_none():
         raise HTTPException(status_code=409, detail="already claimed")
 
-    # 6. 如果需要手机号
+    # 7. 如果需要手机号
     if benefit.config_json.get("require_phone") and not body.phone:
         raise HTTPException(
             status_code=403,
             detail={"code": "require_auth", "message": "需要授权手机号"},
         )
 
-    # 7. 创建领取记录
+    # 8. 创建领取记录
     claim = BenefitClaim(
         tenant_id=benefit.tenant_id,
         benefit_id=benefit_id,

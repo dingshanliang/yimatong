@@ -216,6 +216,42 @@ async def _build_json_response(
                 await _page_config_cache.set(f"pv:{template_id}", version.config_json)
                 result["page_config"] = version.config_json
 
+    # 查询当前产品可用活动，供 H5 展示权益与活动规则
+    if product_id:
+        from app.models.campaign import Benefit, Campaign, CampaignStatus
+
+        campaign_result = await db.execute(
+            select(Campaign)
+            .where(
+                Campaign.product_id == uuid.UUID(product_id),
+                Campaign.status == CampaignStatus.ACTIVE,
+            )
+            .order_by(Campaign.id.desc())
+            .limit(1)
+        )
+        campaign = campaign_result.scalar_one_or_none()
+        if campaign:
+            benefit_result = await db.execute(
+                select(Benefit)
+                .where(Benefit.campaign_id == campaign.id, Benefit.tenant_id == campaign.tenant_id)
+                .order_by(Benefit.id.desc())
+                .limit(1)
+            )
+            benefit = benefit_result.scalar_one_or_none()
+            result["campaign"] = {
+                "id": str(campaign.id),
+                "name": campaign.name,
+                "rules": campaign.rules_json,
+                "benefit": {
+                    "id": str(benefit.id),
+                    "name": benefit.name,
+                    "benefit_type": benefit.benefit_type,
+                    "description": benefit.config_json.get("description"),
+                }
+                if benefit
+                else None,
+            }
+
     return result
 
 

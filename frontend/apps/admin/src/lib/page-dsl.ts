@@ -28,6 +28,7 @@ export type ModuleType =
   | "member_card"
   | "points_balance"
   | "points_exchange"
+  | "points_shop"
   | "outer_code_guide"
   | "risk_alert"
   | "dual_code_verify"
@@ -125,6 +126,7 @@ export const MODULE_TYPE_LABELS: Record<ModuleType, string> = {
   member_card: "会员卡片",
   points_balance: "积分余额",
   points_exchange: "积分兑换",
+  points_shop: "积分商城",
   outer_code_guide: "外码引导",
   risk_alert: "风险预警",
   dual_code_verify: "双码验真",
@@ -229,6 +231,9 @@ function buildModuleReadiness(
       if (!config.benefit_id) {
         setStatus("incomplete", "未关联权益", "权益模块需要关联权益 ID");
       }
+      break;
+    case "points_shop":
+      setStatus("configured", "展示积分商城", undefined);
       break;
     case "custom_html":
       if (!config.html) {

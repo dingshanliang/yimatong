@@ -45,6 +45,7 @@ from app.api.v1.scan_events import scan_event_router
 from app.api.v1.tasks import task_router
 from app.api.v1.tenants import router as tenants_router
 from app.api.v1.webhooks import webhook_router
+from app.api.v1.wecom_integrations import wecom_integration_router
 from app.api.v1.wechat_oauth import wechat_oauth_router
 from app.core.config import settings
 from app.core.error_handlers import register_exception_handlers
@@ -85,6 +86,7 @@ OPENAPI_TAGS = [
     {"name": "connectors", "description": "连接器：外部系统集成适配器配置"},
     {"name": "webhooks", "description": "Webhook：事件订阅与推送管理"},
     {"name": "integration", "description": "系统集成：第三方平台对接配置"},
+    {"name": "wecom-integrations", "description": "企业微信客户联系：接入状态、添加事件与联系入口"},
     {"name": "open-api", "description": "开放 API：对外提供的标准 API 接口（API Key 认证）"},
     {"name": "wechat-oauth", "description": "微信 OAuth：微信授权登录与用户信息获取"},
     {"name": "imports", "description": "数据导入：批量导入产品与码数据"},
@@ -321,6 +323,7 @@ app.include_router(gmv_router)
 app.include_router(ai_router)
 app.include_router(connector_router)
 app.include_router(webhook_router)
+app.include_router(wecom_integration_router)
 app.include_router(open_api_router)
 app.include_router(integration_router)
 app.include_router(i18n_router)

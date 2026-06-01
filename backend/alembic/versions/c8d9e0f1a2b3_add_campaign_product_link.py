@@ -9,8 +9,8 @@ Create Date: 2026-06-01 00:00:00.000000
 from collections.abc import Sequence
 
 import sqlalchemy as sa
-from alembic import op
 
+from alembic import op
 
 revision: str = "c8d9e0f1a2b3"
 down_revision: str | Sequence[str] | None = "b7c8d9e0f2a3"
@@ -36,7 +36,7 @@ def upgrade() -> None:
             UPDATE campaigns
             SET product_id = (rules_json ->> 'product_id')::uuid
             WHERE product_id IS NULL
-              AND rules_json ? 'product_id'
+              AND rules_json::jsonb ? 'product_id'
               AND rules_json ->> 'product_id' ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
             """
         )

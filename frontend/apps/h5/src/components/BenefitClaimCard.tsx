@@ -22,6 +22,8 @@ interface BenefitClaimCardProps {
   description?: string;
   /** 扫码令牌，用于鉴权 */
   scanToken?: string;
+  /** 企业微信转化模式 */
+  wecomMode?: "none" | "guide" | "required";
   /** 领取成功回调 */
   onClaimed?: () => void;
 }
@@ -105,6 +107,7 @@ export function BenefitClaimCard({
   title,
   description,
   scanToken,
+  wecomMode = "none",
   onClaimed,
 }: BenefitClaimCardProps) {
   const [loading, setLoading] = useState(false);
@@ -112,6 +115,7 @@ export function BenefitClaimCard({
   const [error, setError] = useState<string | null>(null);
   const [showPhoneModal, setShowPhoneModal] = useState(false);
   const [phone, setPhone] = useState("");
+  const [wecomPrompt, setWecomPrompt] = useState<{ message: string; qrCode?: string } | null>(null);
   // 红包领取成功后的金额展示（分）
   const [redPacketAmount, setRedPacketAmount] = useState<number | null>(null);
 
@@ -167,27 +171,29 @@ export function BenefitClaimCard({
       }
 
       // 通用领取成功
+      setWecomPrompt(null);
       setClaimed(true);
       onClaimed?.();
     } catch (err: unknown) {
+      const response = typeof err === "object" && err !== null && "response" in err
+        ? (err as { response?: { status?: number; data?: { code?: string; detail?: string | { code?: string; message?: string; qr_code?: string } } } }).response
+        : undefined;
+      const detail = response?.data?.detail;
+      const errorCode = typeof detail === "object" ? detail.code : response?.data?.code;
       // 判断是否需要手机号授权
-      if (
-        typeof err === "object" &&
-        err !== null &&
-        "response" in err &&
-        (err as { response?: { status?: number; data?: { code?: string } } })
-          .response?.data?.code === "require_auth"
-      ) {
+      if (errorCode === "require_auth") {
         setShowPhoneModal(true);
         return;
       }
+      if (errorCode === "require_wecom_contact") {
+        setWecomPrompt({
+          message: typeof detail === "object" ? detail.message || "请先添加企业微信，再继续领取权益" : "请先添加企业微信，再继续领取权益",
+          qrCode: typeof detail === "object" ? detail.qr_code : undefined,
+        });
+        return;
+      }
       // 判断幂等冲突（已领取）
-      if (
-        typeof err === "object" &&
-        err !== null &&
-        "response" in err &&
-        (err as { response?: { status?: number } }).response?.status === 409
-      ) {
+      if (response?.status === 409) {
         setClaimed(true);
         return;
       }
@@ -215,6 +221,26 @@ export function BenefitClaimCard({
       setLoading(false);
     }
   }, [benefitId, scanToken, phone, onClaimed]);
+
+  const handleShowWeComGuide = useCallback(async () => {
+    if (!scanToken || !benefitId) return;
+    setLoading(true);
+    setError(null);
+    try {
+      const { data } = await apiClient.post<{ qr_code?: string }>("/integrations/wecom/contact-way", {
+        benefit_id: benefitId,
+        scan_token: scanToken,
+      });
+      setWecomPrompt({
+        message: "添加企业微信，获取活动提醒和复购服务",
+        qrCode: data.qr_code,
+      });
+    } catch {
+      setError("企业微信添加入口暂不可用，请稍后重试");
+    } finally {
+      setLoading(false);
+    }
+  }, [benefitId, scanToken]);
 
   // 红包领取成功时显示金额
   if (redPacketAmount !== null) {
@@ -273,6 +299,21 @@ export function BenefitClaimCard({
           {error && (
             <p className="mb-2 text-center text-xs text-red-600">{error}</p>
           )}
+          {wecomPrompt && (
+            <div className="mb-3 rounded-xl border border-blue-100 bg-blue-50 p-3 text-center">
+              <p className="text-sm font-medium text-blue-900">{wecomPrompt.message}</p>
+              {wecomPrompt.qrCode ? (
+                <img
+                  src={wecomPrompt.qrCode}
+                  alt="企业微信添加二维码"
+                  className="mx-auto mt-3 h-40 w-40 rounded-lg bg-white object-contain p-2"
+                />
+              ) : (
+                <p className="mt-2 text-xs text-blue-700">添加入口暂不可用，请稍后再试。</p>
+              )}
+              <p className="mt-2 text-xs text-blue-700">添加后可能需要几秒确认，请返回本页继续领取。</p>
+            </div>
+          )}
           <button
             type="button"
             disabled={loading || claimed}
@@ -287,8 +328,18 @@ export function BenefitClaimCard({
                     : "bg-blue-600 text-white active:bg-blue-700"
             }`}
           >
-            {claimed ? "已领取" : loading ? "领取中..." : buttonText}
+            {claimed ? "已领取" : loading ? "领取中..." : wecomPrompt ? "我已添加，继续领取" : buttonText}
           </button>
+          {wecomMode === "guide" && !claimed && !wecomPrompt && (
+            <button
+              type="button"
+              disabled={loading}
+              onClick={handleShowWeComGuide}
+              className="mt-2 w-full rounded-xl border border-blue-200 bg-white py-2.5 text-sm font-semibold text-blue-700 active:bg-blue-50 disabled:cursor-not-allowed disabled:text-blue-300"
+            >
+              添加企业微信获取专属服务
+            </button>
+          )}
         </div>
       </div>
 

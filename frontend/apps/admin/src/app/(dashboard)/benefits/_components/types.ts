@@ -5,7 +5,7 @@ export interface Benefit {
   stock_total: number;
   stock_used: number;
   per_person_limit: number;
-  campaign_id: string;
+  campaign_id: string | null;
   connector_id: string | null;
   status: string;
   created_at: string;

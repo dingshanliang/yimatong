@@ -31,6 +31,8 @@ BENEFIT_VALIDITY_TYPES = {
     "fixed_range",
 }
 
+WECOM_MODES = {"none", "guide", "required"}
+
 
 def validate_campaign_rules_shape(rules_json: dict) -> dict:
     campaign_goal = rules_json.get("campaign_goal")
@@ -42,6 +44,10 @@ def validate_campaign_rules_shape(rules_json: dict) -> dict:
         raise ValueError(
             f"participation_condition_type must be one of: {', '.join(sorted(PARTICIPATION_CONDITION_TYPES))}"
         )
+
+    wecom_mode = rules_json.get("wecom_mode", "none")
+    if wecom_mode is not None and wecom_mode not in WECOM_MODES:
+        raise ValueError(f"wecom_mode must be one of: {', '.join(sorted(WECOM_MODES))}")
 
     claim_limit_count = rules_json.get("claim_limit_count")
     if claim_limit_count is not None:
@@ -253,6 +259,13 @@ async def get_campaign_activation_blockers(
     if campaign_stats.get("stock_total", 0) < 1:
         blockers.append("权益库存为 0")
 
+    if (campaign.rules_json or {}).get("wecom_mode") == "required":
+        from app.services.wecom_integration import get_active_wecom_connector
+
+        connector = await get_active_wecom_connector(db, tenant_id)
+        if not connector or connector.config.get("status") != "connected":
+            blockers.append("请先完成企业微信连接，再上线加企微后领取活动")
+
     return blockers
 
 
@@ -282,7 +295,7 @@ async def delete_campaign(
 async def create_benefit(
     db: AsyncSession,
     tenant_id: uuid.UUID,
-    campaign_id: uuid.UUID,
+    campaign_id: uuid.UUID | None,
     name: str,
     benefit_type: str,
     config_json: dict,
@@ -304,6 +317,33 @@ async def create_benefit(
     await db.flush()
     await db.refresh(b)
     return _benefit_to_dict(b)
+
+
+async def attach_benefit_to_campaign(
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    campaign_id: uuid.UUID,
+    benefit_id: uuid.UUID,
+) -> dict | None:
+    campaign_result = await db.execute(
+        select(Campaign).where(Campaign.id == campaign_id, Campaign.tenant_id == tenant_id),
+    )
+    if not campaign_result.scalar_one_or_none():
+        return None
+
+    result = await db.execute(
+        select(Benefit).where(Benefit.id == benefit_id, Benefit.tenant_id == tenant_id),
+    )
+    benefit = result.scalar_one_or_none()
+    if not benefit:
+        return None
+    if benefit.campaign_id and benefit.campaign_id != campaign_id:
+        raise ValueError("Benefit already used by another campaign")
+
+    benefit.campaign_id = campaign_id
+    await db.flush()
+    await db.refresh(benefit)
+    return _benefit_to_dict(benefit)
 
 
 async def list_benefits(
@@ -543,7 +583,13 @@ async def _load_campaign_stats(
     if not campaign_ids:
         return {}
     stats: dict[uuid.UUID, dict] = {
-        cid: {"benefit_count": 0, "stock_total": 0, "stock_used": 0, "claim_count": 0}
+        cid: {
+            "benefit_count": 0,
+            "stock_total": 0,
+            "stock_used": 0,
+            "claim_count": 0,
+            "wecom_add_count": 0,
+        }
         for cid in campaign_ids
     }
     benefit_result = await db.execute(
@@ -572,6 +618,20 @@ async def _load_campaign_stats(
     )
     for row in claim_result.all():
         stats[row.campaign_id]["claim_count"] = row.claim_count or 0
+
+    from app.models.wecom import WeComExternalContact, WeComExternalContactStatus
+
+    wecom_result = await db.execute(
+        select(WeComExternalContact.campaign_id, func.count(WeComExternalContact.id).label("wecom_add_count"))
+        .where(
+            WeComExternalContact.tenant_id == tenant_id,
+            WeComExternalContact.campaign_id.in_(campaign_ids),
+            WeComExternalContact.status == WeComExternalContactStatus.ACTIVE,
+        )
+        .group_by(WeComExternalContact.campaign_id)
+    )
+    for row in wecom_result.all():
+        stats[row.campaign_id]["wecom_add_count"] = row.wecom_add_count or 0
     return stats
 
 
@@ -650,6 +710,7 @@ def _campaign_to_dict(
         "stock_total": campaign_stats.get("stock_total", 0),
         "stock_used": campaign_stats.get("stock_used", 0),
         "claim_count": campaign_stats.get("claim_count", 0),
+        "wecom_add_count": campaign_stats.get("wecom_add_count", 0),
     }
 
 
@@ -657,7 +718,7 @@ def _benefit_to_dict(b: Benefit) -> dict:
     return {
         "id": str(b.id),
         "tenant_id": str(b.tenant_id),
-        "campaign_id": str(b.campaign_id),
+        "campaign_id": str(b.campaign_id) if b.campaign_id else None,
         "name": b.name,
         "benefit_type": b.benefit_type,
         "config_json": b.config_json,

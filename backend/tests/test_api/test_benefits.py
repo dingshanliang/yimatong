@@ -87,6 +87,57 @@ async def campaign_and_benefit(client: AsyncClient, auth_setup):
 
 class TestBenefitsList:
     @pytest.mark.anyio
+    async def test_create_standalone_benefit(self, client: AsyncClient, auth_setup):
+        _, headers = auth_setup
+        resp = await client.post(
+            "/api/v1/benefits",
+            json={
+                "name": "权益库优惠券",
+                "benefit_type": "platform_coupon",
+                "config_json": {"amount": 20, "validity_period": "领取后7天内有效"},
+                "stock_total": 100,
+                "per_person_limit": 1,
+            },
+            headers=headers,
+        )
+        assert resp.status_code == 201
+        data = resp.json()
+        assert data["name"] == "权益库优惠券"
+        assert data["campaign_id"] is None
+
+    @pytest.mark.anyio
+    async def test_attach_standalone_benefit_to_campaign(self, client: AsyncClient, auth_setup):
+        _, headers = auth_setup
+        campaign = await client.post(
+            "/api/v1/campaigns",
+            json={
+                "name": "使用权益活动",
+                "campaign_type": "coupon",
+                "start_at": "2026-06-01T00:00:00",
+                "end_at": "2026-06-30T23:59:59",
+                "rules_json": RULES_JSON,
+            },
+            headers=headers,
+        )
+        benefit = await client.post(
+            "/api/v1/benefits",
+            json={
+                "name": "可选用权益",
+                "benefit_type": "platform_coupon",
+                "config_json": {"amount": 10},
+                "stock_total": 50,
+                "per_person_limit": 1,
+            },
+            headers=headers,
+        )
+        resp = await client.post(
+            f"/api/v1/campaigns/{campaign.json()['id']}/benefits/{benefit.json()['id']}/attach",
+            headers=headers,
+        )
+        assert resp.status_code == 200
+        assert resp.json()["campaign_id"] == campaign.json()["id"]
+
+    @pytest.mark.anyio
     async def test_list_benefits_paginated(self, client: AsyncClient, campaign_and_benefit):
         _, _, headers = campaign_and_benefit
         resp = await client.get("/api/v1/benefits", headers=headers)

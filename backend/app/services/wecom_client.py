@@ -143,6 +143,35 @@ class WeChatWorkClient:
         self._check_error(data)
         return data
 
+    async def list_follow_users(self) -> dict:
+        """获取配置了客户联系功能的成员列表。"""
+        data = await self._request("GET", "/externalcontact/get_follow_user_list")
+        self._check_error(data)
+        return data
+
+    async def add_contact_way(
+        self,
+        *,
+        state: str,
+        user_ids: list[str],
+        remark: str | None = None,
+        skip_verify: bool = True,
+    ) -> dict:
+        """创建「联系我」入口，返回 config_id 和二维码地址。"""
+        body: dict = {
+            "type": 1,
+            "scene": 2,
+            "style": 1,
+            "state": state,
+            "user": user_ids,
+            "skip_verify": skip_verify,
+        }
+        if remark:
+            body["remark"] = remark
+        data = await self._request("POST", "/externalcontact/add_contact_way", json=body)
+        self._check_error(data)
+        return data
+
     async def get_external_contact(self, external_userid: str) -> dict:
         """获取外部联系人详情。
 

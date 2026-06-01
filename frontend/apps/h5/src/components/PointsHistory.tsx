@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { apiClient } from "@/lib/api";
+import { apiClient, getConsumerId } from "@/lib/api";
 
 interface Transaction {
   id: string;
@@ -12,13 +12,14 @@ interface Transaction {
 }
 
 interface PointsHistoryProps {
-  consumerId: string;
+  consumerId?: string;
   scanToken?: string;
 }
 
 const PAGE_SIZE = 20;
 
 export function PointsHistory({ consumerId, scanToken }: PointsHistoryProps) {
+  const resolvedConsumerId = consumerId || getConsumerId() || undefined;
   const [items, setItems] = useState<Transaction[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
@@ -28,13 +29,20 @@ export function PointsHistory({ consumerId, scanToken }: PointsHistoryProps) {
   const fetchPage = useCallback(
     async (p: number) => {
       setLoading(true);
+      if (!resolvedConsumerId) {
+        setItems([]);
+        setTotal(0);
+        setLoading(false);
+        setInitialLoading(false);
+        return;
+      }
       try {
         const headers: Record<string, string> = {};
         if (scanToken) headers.Authorization = `Bearer ${scanToken}`;
-        const { data } = await apiClient.get(
-          `/members/consumers/${consumerId}/transactions`,
-          { params: { page: p, page_size: PAGE_SIZE }, headers },
-        );
+        const { data } = await apiClient.get("/consumers/points/transactions", {
+          params: { consumer_id: resolvedConsumerId, page: p, page_size: PAGE_SIZE },
+          headers,
+        });
         const newItems = (data.items || []) as Transaction[];
         if (p === 1) {
           setItems(newItems);
@@ -50,7 +58,7 @@ export function PointsHistory({ consumerId, scanToken }: PointsHistoryProps) {
         setInitialLoading(false);
       }
     },
-    [consumerId, scanToken],
+    [resolvedConsumerId, scanToken],
   );
 
   useEffect(() => {

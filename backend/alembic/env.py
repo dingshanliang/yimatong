@@ -29,7 +29,7 @@ from app.models.gmv import ExternalOrder, GmvAttribution  # noqa: F401
 from app.models.private_domain import PrivateDomainConfig  # noqa: F401
 from app.models.i18n import Translation  # noqa: F401
 from app.models.integration import SyncRecord  # noqa: F401
-from app.models.member import ConsumerProfile, PointTransaction, PointRule  # noqa: F401
+from app.models.member import ConsumerProfile, PointProduct, PointRedemption, PointRule, PointTransaction  # noqa: F401
 from app.models.page import PageTemplate, PageVersion  # noqa: F401
 from app.models.product import Brand, Product, ProductionBatch, SKU  # noqa: F401
 from app.models.regional import (  # noqa: F401
@@ -45,6 +45,7 @@ from app.models.scan import ScanEvent  # noqa: F401
 from app.models.sync_mapping import SyncMapping  # noqa: F401
 from app.models.tenant import Account, Organization, Permission, Role, Tenant, account_roles, role_permissions  # noqa: F401
 from app.models.webhook import ApiKey, WebhookDelivery, WebhookEndpoint  # noqa: F401
+from app.models.wecom import WeComContactWay, WeComExternalContact  # noqa: F401
 
 target_metadata = Base.metadata
 

@@ -7,11 +7,13 @@ import { PointsHistory } from "@/components/PointsHistory";
 interface PointsBalanceProps {
   points?: number;
   consumerId?: string;
+  scanToken?: string;
 }
 
 export function PointsBalance({
   points: fallbackPoints,
   consumerId: propConsumerId,
+  scanToken,
 }: PointsBalanceProps) {
   const consumerId = propConsumerId || getConsumerId() || undefined;
   const [points, setPoints] = useState<number | null>(null);
@@ -22,15 +24,17 @@ export function PointsBalance({
   useEffect(() => {
     if (!consumerId) return;
     setLoading(true);
+    const headers: Record<string, string> = {};
+    if (scanToken) headers.Authorization = `Bearer ${scanToken}`;
     apiClient
-      .get("/consumers/me", { params: { consumer_id: consumerId } })
+      .get("/consumers/points/me", { params: { consumer_id: consumerId }, headers })
       .then((res) => {
         setPoints(res.data.total_points ?? 0);
         setResolvedConsumerId(res.data.consumer_id || consumerId);
       })
       .catch(() => {})
       .finally(() => setLoading(false));
-  }, [consumerId]);
+  }, [consumerId, scanToken]);
 
   const displayPoints = points ?? fallbackPoints ?? 0;
 
@@ -60,6 +64,11 @@ export function PointsBalance({
         </div>
       </div>
       <p className="mt-2 text-xs text-blue-100">积分可用于兑换权益</p>
+      {!consumerId && (
+        <p className="mt-3 rounded-xl bg-white/15 px-3 py-2 text-xs text-blue-50">
+          完成手机号留资后，可查看积分并兑换权益。
+        </p>
+      )}
 
       {resolvedConsumerId && (
         <button

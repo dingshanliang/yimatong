@@ -28,7 +28,12 @@ class TenantScopeMiddleware(BaseHTTPMiddleware):
             or request.url.path in public_auth_paths
             or request.url.path in query_auth_paths
             or request.url.path.startswith("/c/")
+            or request.url.path.startswith("/api/v1/consumers/points/")
             or request.url.path.startswith("/api/v1/files/public/")
+            or request.url.path == "/api/v1/benefit-claims"
+            or request.url.path.startswith("/api/v1/integrations/wecom/callback/")
+            or request.url.path == "/api/v1/integrations/wecom/contact-way"
+            or request.url.path == "/api/v1/integrations/wecom/mock-added"
             or request.url.path == "/api/v1/platform/auth/login"
             or (request.url.path == "/api/v1/tenants" and request.method == "POST")
             or request.url.path.startswith("/api/v1/connectors/connectors/") and request.url.path.endswith("/callback")

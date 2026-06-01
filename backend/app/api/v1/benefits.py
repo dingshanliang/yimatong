@@ -10,6 +10,7 @@ from app.core.database import get_db
 from app.core.dependencies import get_current_tenant
 from app.schemas.common import PaginatedResponse
 from app.services.campaign import (
+    create_benefit,
     delete_benefit,
     get_benefit,
     list_all_benefits,
@@ -36,6 +37,39 @@ class BenefitUpdateRequest(BaseModel):
         if v is None:
             return v
         return validate_benefit_config_shape(v)
+
+
+class BenefitCreateRequest(BaseModel):
+    name: str
+    benefit_type: str
+    config_json: dict
+    stock_total: int
+    per_person_limit: int = 1
+    connector_id: uuid.UUID | None = None
+
+    @field_validator("config_json")
+    @classmethod
+    def validate_config_json(cls, v: dict) -> dict:
+        return validate_benefit_config_shape(v)
+
+
+@benefit_router.post("", status_code=201, summary="创建权益")
+async def create_benefit_endpoint(
+    body: BenefitCreateRequest,
+    db: AsyncSession = Depends(get_db),
+    tenant_id: uuid.UUID = Depends(get_current_tenant),
+):
+    return await create_benefit(
+        db,
+        tenant_id,
+        None,
+        body.name,
+        body.benefit_type,
+        body.config_json,
+        body.stock_total,
+        body.per_person_limit,
+        connector_id=body.connector_id,
+    )
 
 
 @benefit_router.get("", summary="权益 列表")
