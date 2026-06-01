@@ -100,7 +100,9 @@ class BenefitClaim(Base):
     delivery_status: Mapped[str] = mapped_column(
         String(20), nullable=False, default="not_required"
     )
-    created_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    created_at: Mapped[DateTime | None] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=True
+    )
     updated_at: Mapped[DateTime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )

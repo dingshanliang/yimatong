@@ -115,6 +115,11 @@ async def benefit_summary_endpoint(
 
 @benefit_router.get("/admin/claims", summary="benefit claims admin 列表")
 async def list_benefit_claims_admin_endpoint(
+    q: str | None = Query(None),
+    benefit_id: uuid.UUID | None = Query(None),
+    campaign_id: uuid.UUID | None = Query(None),
+    status: str | None = Query(None),
+    delivery_status: str | None = Query(None),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
@@ -123,6 +128,11 @@ async def list_benefit_claims_admin_endpoint(
     items, total = await list_benefit_claims_admin(
         db,
         tenant_id,
+        q=q,
+        benefit_id=benefit_id,
+        campaign_id=campaign_id,
+        status=status,
+        delivery_status=delivery_status,
         page=page,
         page_size=page_size,
     )

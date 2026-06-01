@@ -48,6 +48,7 @@ class DeliveryStatus:
 
 async def on_claim_created(event_type: str, data: dict, tenant_id: str) -> None:
     """claim.created 事件处理器：触发外部连接器发放。"""
+    claim_id = data.get("claim_id")
     benefit_id = data.get("benefit_id")
     consumer_id = data.get("consumer_id")
     if not benefit_id or not consumer_id:
@@ -85,7 +86,15 @@ async def on_claim_created(event_type: str, data: dict, tenant_id: str) -> None:
         )
 
         # 执行发放
-        await _do_deliver(db, uuid.UUID(tenant_id), connector, consumer_id, benefit.config_json)
+        await _do_deliver(
+            db,
+            uuid.UUID(tenant_id),
+            connector,
+            consumer_id,
+            benefit.config_json,
+            benefit_id=benefit.id,
+            claim_id=uuid.UUID(claim_id) if claim_id else None,
+        )
         await db.commit()
 
 
@@ -95,13 +104,17 @@ async def _do_deliver(
     connector: Connector,
     consumer_id: str,
     benefit_config: dict,
-) -> None:
+    benefit_id: uuid.UUID | None = None,
+    claim_id: uuid.UUID | None = None,
+) -> BenefitDelivery:
     """执行外部发放，写入 BenefitDelivery 记录。"""
     cb = _get_circuit_breaker(connector)
 
     delivery = BenefitDelivery(
         tenant_id=tenant_id,
         connector_id=connector.id,
+        benefit_id=benefit_id,
+        claim_id=claim_id,
         consumer_id=consumer_id,
         benefit_type=benefit_config.get("benefit_type", "coupon"),
         benefit_config=benefit_config,
@@ -113,7 +126,7 @@ async def _do_deliver(
         delivery.next_retry_at = datetime.now(UTC) + timedelta(seconds=RETRY_BACKOFF_BASE)
         db.add(delivery)
         await db.flush()
-        return
+        return delivery
 
     try:
         adapter = get_adapter(connector)
@@ -136,10 +149,11 @@ async def _do_deliver(
 
         # 更新 claim delivery_status
         if delivery.status == DeliveryStatus.SUCCESS:
-            await _update_claim_delivery_status(db, connector.id, consumer_id, "delivered")
+            await _update_claim_delivery_status(db, connector.id, consumer_id, "delivered", claim_id=claim_id)
 
         db.add(delivery)
         await db.flush()
+        return delivery
 
     except Exception as exc:
         cb.record_failure()
@@ -148,6 +162,7 @@ async def _do_deliver(
         delivery.next_retry_at = datetime.now(UTC) + timedelta(seconds=RETRY_BACKOFF_BASE)
         db.add(delivery)
         await db.flush()
+        return delivery
 
 
 async def _update_claim_delivery_status(
@@ -155,8 +170,19 @@ async def _update_claim_delivery_status(
     connector_id: uuid.UUID,
     consumer_id: str,
     status: str,
+    claim_id: uuid.UUID | None = None,
 ) -> None:
     """更新关联的 BenefitClaim 的 delivery_status。"""
+    if claim_id:
+        await db.execute(
+            update(BenefitClaim)
+            .where(
+                BenefitClaim.id == claim_id,
+            )
+            .values(delivery_status=status)
+        )
+        return
+
     # 通过 benefit 找到关联的 claim
     await db.execute(
         update(BenefitClaim)

@@ -1,13 +1,18 @@
 """Benefits API 测试"""
 
+import uuid
 from collections.abc import AsyncGenerator
+from datetime import UTC, datetime
 
 import pytest
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.main import app
+from app.models.campaign import BenefitClaim
+from app.models.connector import BenefitDelivery
 from app.utils.security import create_access_token
 from tests.conftest import TestSessionLocal
 
@@ -328,3 +333,109 @@ class TestBenefitClaimsAdmin:
         data = resp.json()
         assert data["page"] == 1
         assert data["page_size"] == 5
+
+    @pytest.mark.anyio
+    async def test_list_benefit_claims_admin_normalizes_status_and_filters(
+        self,
+        client: AsyncClient,
+        db_session: AsyncSession,
+        auth_setup,
+    ):
+        tenant_id, headers = auth_setup
+        campaign = await client.post(
+            "/api/v1/campaigns",
+            json={
+                "name": "筛选活动",
+                "campaign_type": "coupon",
+                "start_at": "2026-06-01T00:00:00",
+                "end_at": "2026-06-30T23:59:59",
+                "rules_json": RULES_JSON,
+            },
+            headers=headers,
+        )
+        cid = campaign.json()["id"]
+        first_benefit = await client.post(
+            f"/api/v1/campaigns/{cid}/benefits",
+            json={
+                "name": "发放失败权益",
+                "benefit_type": "platform_coupon",
+                "config_json": {"amount": 10},
+                "stock_total": 100,
+                "per_person_limit": 2,
+            },
+            headers=headers,
+        )
+        second_benefit = await client.post(
+            f"/api/v1/campaigns/{cid}/benefits",
+            json={
+                "name": "正常权益",
+                "benefit_type": "platform_coupon",
+                "config_json": {"amount": 5},
+                "stock_total": 100,
+                "per_person_limit": 2,
+            },
+            headers=headers,
+        )
+        first_bid = first_benefit.json()["id"]
+        second_bid = second_benefit.json()["id"]
+
+        await client.post(
+            f"/api/v1/campaigns/benefits/{first_bid}/claim",
+            json={"consumer_id": "consumer-failed-001", "idempotency_key": "claim-filter-001"},
+            headers=headers,
+        )
+        await client.post(
+            f"/api/v1/campaigns/benefits/{second_bid}/claim",
+            json={"consumer_id": "consumer-normal-002", "idempotency_key": "claim-filter-002"},
+            headers=headers,
+        )
+
+        failed_claim = (
+            await db_session.execute(
+                select(BenefitClaim).where(
+                    BenefitClaim.benefit_id == uuid.UUID(first_bid),
+                    BenefitClaim.consumer_id == "consumer-failed-001",
+                )
+            )
+        ).scalar_one()
+        failed_claim.delivery_status = "failed"
+        failed_claim.created_at = None
+        delivery_id = uuid.uuid4()
+        db_session.add(
+            BenefitDelivery(
+                id=delivery_id,
+                tenant_id=uuid.UUID(tenant_id),
+                connector_id=uuid.uuid4(),
+                consumer_id="consumer-failed-001",
+                benefit_type="coupon",
+                benefit_config={"benefit_id": first_bid},
+                status="failed",
+                retry_count=2,
+                max_retries=5,
+                benefit_id=uuid.UUID(first_bid),
+                claim_id=failed_claim.id,
+                next_retry_at=datetime(2026, 6, 1, 12, 0, tzinfo=UTC),
+            )
+        )
+        await db_session.flush()
+
+        resp = await client.get(
+            (
+                "/api/v1/benefits/admin/claims"
+                f"?q=failed&benefit_id={first_bid}&campaign_id={cid}"
+                "&status=claimed&delivery_status=failed"
+            ),
+            headers=headers,
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["total"] == 1
+        claim = data["items"][0]
+        assert claim["consumer_id"] == "consumer-failed-001"
+        assert claim["status"] == "claimed"
+        assert claim["delivery_status"] == "failed"
+        assert claim["claimed_at"] is None
+        assert claim["latest_delivery_id"] == str(delivery_id)
+        assert claim["latest_delivery_status"] == "failed"
+        assert claim["delivery_retry_count"] == 2
+        assert claim["delivery_next_retry_at"].startswith("2026-06-01T12:00:00")

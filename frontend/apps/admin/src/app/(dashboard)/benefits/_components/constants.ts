@@ -14,6 +14,7 @@ export const BENEFIT_STATUS_MAP: Record<string, { label: string; color: string }
 export const CLAIM_STATUS_MAP: Record<string, { label: string; color: string }> = {
   pending: { label: "待领取", color: "default" },
   claimed: { label: "已领取", color: "blue" },
+  success: { label: "已领取", color: "blue" },
   used: { label: "已使用", color: "green" },
   expired: { label: "已过期", color: "gray" },
   cancelled: { label: "已取消", color: "red" },

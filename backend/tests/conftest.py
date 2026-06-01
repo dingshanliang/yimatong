@@ -23,13 +23,19 @@ from app.models.base import Base  # noqa: E402
 from app.models.campaign import Benefit, BenefitClaim, Campaign  # noqa: E402, F401
 from app.models.channel import Distributor, DiversionClue, Region, Store  # noqa: E402, F401
 from app.models.code import CodeBatch, CodeItem  # noqa: E402, F401
-from app.models.connector import Connector, CouponCode, CouponPool  # noqa: E402, F401
+from app.models.connector import BenefitDelivery, Connector, CouponCode, CouponPool  # noqa: E402, F401
 from app.models.consent import ConsentRecord  # noqa: E402, F401
 from app.models.export_log import ExportLog  # noqa: E402, F401
 from app.models.gmv import ExternalOrder, GmvAttribution  # noqa: E402, F401
 from app.models.i18n import Translation  # noqa: E402, F401
 from app.models.integration import SyncRecord  # noqa: E402, F401
-from app.models.member import ConsumerProfile, PointProduct, PointRedemption, PointRule, PointTransaction  # noqa: E402, F401
+from app.models.member import (  # noqa: E402, F401
+    ConsumerProfile,
+    PointProduct,
+    PointRedemption,
+    PointRule,
+    PointTransaction,
+)
 from app.models.page import PageTemplate, PageVersion  # noqa: E402, F401
 from app.models.private_domain import PrivateDomainConfig  # noqa: E402, F401
 from app.models.product import SKU, Brand, Product, ProductionBatch  # noqa: E402, F401

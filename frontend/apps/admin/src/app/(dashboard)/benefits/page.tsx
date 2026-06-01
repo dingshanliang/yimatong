@@ -1,13 +1,15 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 import {
   Alert,
   App,
   Button,
   Card,
+  Descriptions,
   Divider,
+  Drawer,
   Form,
   Input,
   InputNumber,
@@ -23,16 +25,17 @@ import {
   Table,
   Tabs,
   Tag,
+  Tooltip,
   Typography,
 } from "antd";
-import { LinkOutlined, PlusOutlined, ReloadOutlined, SendOutlined } from "@ant-design/icons";
+import { EyeOutlined, LinkOutlined, PlusOutlined, ReloadOutlined, SendOutlined } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
 import api from "@/lib/api";
 import { useCrud } from "@/lib/hooks";
 import { BenefitConfigFields } from "./_components/BenefitConfigFields";
 import { BENEFIT_TYPE_MAP, BENEFIT_STATUS_MAP, CLAIM_STATUS_MAP, DELIVERY_STATUS_MAP } from "./_components/constants";
 import { yuanToFen, fenToYuan } from "./_components/utils";
-import type { Benefit, BenefitClaim, BenefitSummary, Campaign, Connector } from "./_components/types";
+import type { Benefit, BenefitClaim, BenefitDelivery, BenefitSummary, Campaign, Connector } from "./_components/types";
 
 const { Text, Title } = Typography;
 
@@ -73,6 +76,25 @@ function formatDate(value?: string | null) {
   return new Date(value).toLocaleString("zh-CN", { hour12: false });
 }
 
+function formatClaimDate(value?: string | null) {
+  if (!value) return <Text type="secondary">时间未知</Text>;
+  return formatDate(value);
+}
+
+function shortText(value?: string | null, length = 16) {
+  if (!value) return "-";
+  return value.length > length ? `${value.slice(0, length)}...` : value;
+}
+
+function renderCopyableText(value?: string | null, length = 16) {
+  if (!value) return "-";
+  return (
+    <Tooltip title={value}>
+      <Text copyable={{ text: value }}>{shortText(value, length)}</Text>
+    </Tooltip>
+  );
+}
+
 function benefitNameSuggestion(benefitType: string, campaignName?: string) {
   const prefix = campaignName ? `${campaignName} ` : "";
   const labels: Record<string, string> = {
@@ -86,7 +108,6 @@ function benefitNameSuggestion(benefitType: string, campaignName?: string) {
 }
 
 export default function BenefitsPage() {
-  const router = useRouter();
   const searchParams = useSearchParams();
   const { message } = App.useApp();
   const {
@@ -108,6 +129,8 @@ export default function BenefitsPage() {
     page: claimsPage,
     loading: claimsLoading,
     setPage: setClaimsPage,
+    setFilter: setClaimFilter,
+    resetFilters: resetClaimFilters,
     mutate: mutateClaims,
   } = useCrud<BenefitClaim>("/benefits/admin/claims");
 
@@ -122,6 +145,12 @@ export default function BenefitsPage() {
   const [benefitType, setBenefitType] = useState<string>("");
   const [contextCampaignId, setContextCampaignId] = useState<string | null>(null);
   const [filters, setFilters] = useState<Record<string, string>>({});
+  const [claimFilters, setClaimFilters] = useState<Record<string, string>>({});
+  const [claimDetailOpen, setClaimDetailOpen] = useState(false);
+  const [selectedClaim, setSelectedClaim] = useState<BenefitClaim | null>(null);
+  const [deliveryDetail, setDeliveryDetail] = useState<BenefitDelivery | null>(null);
+  const [deliveryLoading, setDeliveryLoading] = useState(false);
+  const [retryingDelivery, setRetryingDelivery] = useState(false);
   const [nameManuallyEdited, setNameManuallyEdited] = useState(false);
   const [form] = Form.useForm();
   const validityType = Form.useWatch(["config_json", "validity_type"], form);
@@ -192,6 +221,55 @@ export default function BenefitsPage() {
   const clearFilters = () => {
     setFilters({});
     resetFilters();
+  };
+
+  const applyClaimFilters = (next: Record<string, string>) => {
+    const compact = Object.fromEntries(Object.entries(next).filter(([, value]) => value)) as Record<string, string>;
+    setClaimFilters(compact);
+    setClaimFilter(compact);
+  };
+
+  const clearClaimFilters = () => {
+    setClaimFilters({});
+    resetClaimFilters();
+  };
+
+  const fetchDeliveryDetail = useCallback(async (deliveryId: string) => {
+    setDeliveryLoading(true);
+    try {
+      const { data } = await api.get(`/connectors/deliveries/${deliveryId}`);
+      setDeliveryDetail(data);
+    } catch {
+      setDeliveryDetail(null);
+      message.error("加载发放详情失败");
+    } finally {
+      setDeliveryLoading(false);
+    }
+  }, [message]);
+
+  const openClaimDetail = (record: BenefitClaim) => {
+    setSelectedClaim(record);
+    setDeliveryDetail(null);
+    setClaimDetailOpen(true);
+    if (record.latest_delivery_id) {
+      fetchDeliveryDetail(record.latest_delivery_id);
+    }
+  };
+
+  const retryDelivery = async () => {
+    if (!selectedClaim?.latest_delivery_id) return;
+    setRetryingDelivery(true);
+    try {
+      await api.post(`/connectors/deliveries/${selectedClaim.latest_delivery_id}/retry`);
+      message.success("已触发重试发放");
+      await fetchDeliveryDetail(selectedClaim.latest_delivery_id);
+      mutateClaims();
+      fetchSummary();
+    } catch {
+      message.error("重试发放失败");
+    } finally {
+      setRetryingDelivery(false);
+    }
   };
 
   const openCreate = () => {
@@ -404,14 +482,14 @@ export default function BenefitsPage() {
   ];
 
   const claimColumns: ColumnsType<BenefitClaim> = [
-    { title: "消费者", dataIndex: "consumer_id", key: "consumer_id", render: (v: string) => v ? `${v.slice(0, 12)}...` : "-" },
-    { title: "权益", dataIndex: "benefit_name", key: "benefit_name", render: (_: unknown, record) => record.benefit_name || benefitMap[record.benefit_id] || `${record.benefit_id.slice(0, 8)}...` },
-    { title: "活动", dataIndex: "campaign_name", key: "campaign_name", render: (_: unknown, record) => record.campaign_name || (record.campaign_id ? campaignMap[record.campaign_id] || `${record.campaign_id.slice(0, 8)}...` : "独立权益") },
+    { title: "消费者", dataIndex: "consumer_id", key: "consumer_id", render: (v: string) => renderCopyableText(v, 16) },
+    { title: "权益", dataIndex: "benefit_name", key: "benefit_name", render: (_: unknown, record) => renderCopyableText(record.benefit_name || benefitMap[record.benefit_id] || record.benefit_id, 18) },
+    { title: "活动", dataIndex: "campaign_name", key: "campaign_name", render: (_: unknown, record) => renderCopyableText(record.campaign_name || (record.campaign_id ? campaignMap[record.campaign_id] || record.campaign_id : "独立权益"), 20) },
     { title: "领取状态", dataIndex: "status", key: "status", render: (s: string) => { const info = CLAIM_STATUS_MAP[s] || { label: s, color: "default" }; return <Tag color={info.color}>{info.label}</Tag>; } },
     { title: "发放状态", dataIndex: "delivery_status", key: "delivery_status", render: (s: string) => { const info = DELIVERY_STATUS_MAP[s] || { label: s || "-", color: "default" }; return <Tag color={info.color}>{info.label}</Tag>; } },
-    { title: "领取时间", dataIndex: "claimed_at", key: "claimed_at", render: formatDate },
+    { title: "领取时间", dataIndex: "claimed_at", key: "claimed_at", render: formatClaimDate },
     { title: "操作", key: "actions", render: (_: unknown, record) => (
-      record.delivery_status === "pending" || record.delivery_status === "failed" ? <Button size="small" icon={<SendOutlined />} onClick={() => router.push("/connectors?tab=deliveries")}>发放详情</Button> : null
+      <Button size="small" icon={<EyeOutlined />} onClick={() => openClaimDetail(record)}>查看详情</Button>
     ) },
   ];
 
@@ -500,6 +578,57 @@ export default function BenefitsPage() {
           label: "领取记录",
           children: (
             <Card size="small">
+              <div className="mb-3 flex flex-wrap items-center gap-2">
+                <Input.Search
+                  allowClear
+                  placeholder="搜索消费者/权益/活动"
+                  className="w-[260px]"
+                  onSearch={(q) => applyClaimFilters({ ...claimFilters, q })}
+                />
+                <Select
+                  allowClear
+                  showSearch
+                  placeholder="权益"
+                  className="w-[180px]"
+                  value={claimFilters.benefit_id}
+                  onChange={(benefit_id) => applyClaimFilters({ ...claimFilters, benefit_id })}
+                  options={benefits.map((benefit) => ({ value: benefit.id, label: benefit.name }))}
+                  optionFilterProp="label"
+                />
+                <Select
+                  allowClear
+                  showSearch
+                  placeholder="活动"
+                  className="w-[180px]"
+                  value={claimFilters.campaign_id}
+                  onChange={(campaign_id) => applyClaimFilters({ ...claimFilters, campaign_id })}
+                  options={campaigns.map((campaign) => ({ value: campaign.id, label: campaign.name }))}
+                  optionFilterProp="label"
+                />
+                <Select
+                  allowClear
+                  placeholder="领取状态"
+                  className="w-[140px]"
+                  value={claimFilters.status}
+                  onChange={(status) => applyClaimFilters({ ...claimFilters, status })}
+                  options={[
+                    { value: "claimed", label: "已领取" },
+                    { value: "pending", label: "待领取" },
+                    { value: "used", label: "已使用" },
+                    { value: "expired", label: "已过期" },
+                    { value: "cancelled", label: "已取消" },
+                  ]}
+                />
+                <Select
+                  allowClear
+                  placeholder="发放状态"
+                  className="w-[140px]"
+                  value={claimFilters.delivery_status}
+                  onChange={(delivery_status) => applyClaimFilters({ ...claimFilters, delivery_status })}
+                  options={Object.entries(DELIVERY_STATUS_MAP).map(([value, info]) => ({ value, label: info.label }))}
+                />
+                <Button onClick={clearClaimFilters}>清空筛选</Button>
+              </div>
               <Table
                 columns={claimColumns}
                 dataSource={claims}
@@ -511,6 +640,50 @@ export default function BenefitsPage() {
           ),
         },
       ]} />
+
+      <Drawer
+        title="领取详情"
+        open={claimDetailOpen}
+        onClose={() => setClaimDetailOpen(false)}
+        size="large"
+        extra={selectedClaim?.latest_delivery_id && (selectedClaim.delivery_status === "pending" || selectedClaim.delivery_status === "failed") ? (
+          <Button type="primary" icon={<SendOutlined />} loading={retryingDelivery} onClick={retryDelivery}>重试发放</Button>
+        ) : null}
+      >
+        {selectedClaim ? (
+          <Space orientation="vertical" size="middle" className="w-full">
+            <Descriptions size="small" column={1} bordered>
+              <Descriptions.Item label="消费者">{renderCopyableText(selectedClaim.consumer_id, 28)}</Descriptions.Item>
+              <Descriptions.Item label="权益">{selectedClaim.benefit_name || benefitMap[selectedClaim.benefit_id] || selectedClaim.benefit_id}</Descriptions.Item>
+              <Descriptions.Item label="活动">{selectedClaim.campaign_name || (selectedClaim.campaign_id ? campaignMap[selectedClaim.campaign_id] || selectedClaim.campaign_id : "独立权益")}</Descriptions.Item>
+              <Descriptions.Item label="领取状态">{CLAIM_STATUS_MAP[selectedClaim.status]?.label || selectedClaim.status}</Descriptions.Item>
+              <Descriptions.Item label="发放状态">{DELIVERY_STATUS_MAP[selectedClaim.delivery_status]?.label || selectedClaim.delivery_status}</Descriptions.Item>
+              <Descriptions.Item label="领取时间">{formatClaimDate(selectedClaim.claimed_at)}</Descriptions.Item>
+            </Descriptions>
+            {selectedClaim.latest_delivery_id ? (
+              <Card size="small" title="发放详情" loading={deliveryLoading}>
+                {deliveryDetail ? (
+                  <Space orientation="vertical" size="small" className="w-full">
+                    <Descriptions size="small" column={1}>
+                      <Descriptions.Item label="发放状态">{DELIVERY_STATUS_MAP[deliveryDetail.status]?.label || deliveryDetail.status}</Descriptions.Item>
+                      <Descriptions.Item label="重试次数">{deliveryDetail.retry_count} / {deliveryDetail.max_retries}</Descriptions.Item>
+                      <Descriptions.Item label="下次重试">{formatDate(deliveryDetail.next_retry_at)}</Descriptions.Item>
+                      <Descriptions.Item label="更新时间">{formatDate(deliveryDetail.updated_at)}</Descriptions.Item>
+                    </Descriptions>
+                    <pre className="max-h-56 overflow-auto rounded bg-slate-50 p-3 text-xs">
+                      {JSON.stringify(deliveryDetail.external_data || {}, null, 2)}
+                    </pre>
+                  </Space>
+                ) : (
+                  <Text type="secondary">暂无发放详情</Text>
+                )}
+              </Card>
+            ) : (
+              <Text type="secondary">此记录无需外部发放。</Text>
+            )}
+          </Space>
+        ) : null}
+      </Drawer>
 
       <Modal
         title={editItem ? "编辑权益" : selectedCampaign ? `新建权益并用于「${selectedCampaign.name}」` : "新建权益"}

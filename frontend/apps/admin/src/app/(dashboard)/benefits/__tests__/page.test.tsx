@@ -39,7 +39,8 @@ vi.mock("@/lib/api", () => ({
   },
 }));
 
-const mockSetFilter = vi.fn();
+const mockSetBenefitFilter = vi.fn();
+const mockSetClaimFilter = vi.fn();
 const mockMutate = vi.fn();
 
 vi.mock("@/lib/hooks", () => ({
@@ -54,9 +55,13 @@ vi.mock("@/lib/hooks", () => ({
             benefit_name: "测试权益",
             campaign_id: "c1",
             campaign_name: "活动1",
-            status: "claimed",
-            delivery_status: "not_required",
-            claimed_at: "2026-06-01T10:00:00Z",
+            status: "success",
+            delivery_status: "failed",
+            claimed_at: null,
+            latest_delivery_id: "d1",
+            latest_delivery_status: "failed",
+            delivery_retry_count: 2,
+            delivery_next_retry_at: "2026-06-01T12:00:00Z",
           },
         ],
         total: 1,
@@ -64,7 +69,7 @@ vi.mock("@/lib/hooks", () => ({
         pageSize: 20,
         loading: false,
         setPage: vi.fn(),
-        setFilter: mockSetFilter,
+        setFilter: mockSetClaimFilter,
         resetFilters: vi.fn(),
         mutate: mockMutate,
         create: vi.fn(),
@@ -94,7 +99,7 @@ vi.mock("@/lib/hooks", () => ({
       loading: false,
       filters: {},
       setPage: vi.fn(),
-      setFilter: mockSetFilter,
+      setFilter: mockSetBenefitFilter,
       resetFilters: vi.fn(),
       mutate: mockMutate,
       create: vi.fn(),
@@ -124,8 +129,24 @@ describe("BenefitsPage", () => {
       }
       if (url === "/campaigns") return Promise.resolve({ data: { items: [{ id: "c1", name: "活动1" }], total: 1 } });
       if (url === "/connectors/connectors") return Promise.resolve({ data: [] });
+      if (url === "/connectors/deliveries/d1") {
+        return Promise.resolve({
+          data: {
+            id: "d1",
+            consumer_id: "consumer-001-abcdef",
+            status: "failed",
+            retry_count: 2,
+            max_retries: 5,
+            external_data: { error: "invalid receiver" },
+            next_retry_at: "2026-06-01T12:00:00Z",
+            created_at: "2026-06-01T11:00:00Z",
+            updated_at: "2026-06-01T11:05:00Z",
+          },
+        });
+      }
       return Promise.resolve({ data: { items: [], total: 0 } });
     });
+    mockPost.mockResolvedValue({ data: { status: "success" } });
   });
 
   it("renders benefit workbench summary and list", async () => {
@@ -157,7 +178,7 @@ describe("BenefitsPage", () => {
 
     expect(screen.getByText("基本信息")).toBeInTheDocument();
     expect(screen.getByText("发放规则")).toBeInTheDocument();
-    expect(screen.getByText("权益类型")).toBeInTheDocument();
+    expect(screen.getAllByText("权益类型").length).toBeGreaterThan(0);
     expect(screen.getByText("每位消费者限领")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /创建权益/ })).toBeInTheDocument();
   });
@@ -169,10 +190,13 @@ describe("BenefitsPage", () => {
 
   it("shows enriched claim records", async () => {
     render(<BenefitsPage />);
-    fireEvent.click(screen.getByText("领取记录"));
+    fireEvent.click(screen.getByRole("tab", { name: "领取记录" }));
     expect(await screen.findByText("活动1")).toBeInTheDocument();
-    expect(screen.getByText("测试权益")).toBeInTheDocument();
-    expect(screen.getByText("无需发放")).toBeInTheDocument();
+    expect(screen.getAllByText("测试权益").length).toBeGreaterThan(0);
+    expect(screen.getByText("已领取")).toBeInTheDocument();
+    expect(screen.queryByText("success")).not.toBeInTheDocument();
+    expect(screen.getByText("发放失败")).toBeInTheDocument();
+    expect(screen.getByText("时间未知")).toBeInTheDocument();
   });
 
   it("filters benefits by search keyword", () => {
@@ -180,6 +204,31 @@ describe("BenefitsPage", () => {
     const search = screen.getByPlaceholderText("搜索权益名称");
     fireEvent.change(search, { target: { value: "复购" } });
     fireEvent.keyDown(search, { key: "Enter", code: "Enter" });
-    expect(mockSetFilter).toHaveBeenCalled();
+    expect(mockSetBenefitFilter).toHaveBeenCalled();
+  });
+
+  it("filters claims with dedicated claim filters", async () => {
+    render(<BenefitsPage />);
+    fireEvent.click(screen.getByRole("tab", { name: "领取记录" }));
+
+    const search = await screen.findByPlaceholderText("搜索消费者/权益/活动");
+    fireEvent.change(search, { target: { value: "consumer-001" } });
+    fireEvent.keyDown(search, { key: "Enter", code: "Enter" });
+
+    expect(mockSetClaimFilter).toHaveBeenCalledWith({ q: "consumer-001" });
+  });
+
+  it("opens claim delivery detail and retries failed delivery", async () => {
+    render(<BenefitsPage />);
+    fireEvent.click(screen.getByRole("tab", { name: "领取记录" }));
+
+    fireEvent.click(await screen.findByRole("button", { name: /查看详情/ }));
+
+    expect(await screen.findByText("领取详情")).toBeInTheDocument();
+    await waitFor(() => expect(document.body.textContent).toContain("invalid receiver"));
+
+    fireEvent.click(screen.getByRole("button", { name: /重试发放/ }));
+
+    await waitFor(() => expect(mockPost).toHaveBeenCalledWith("/connectors/deliveries/d1/retry"));
   });
 });

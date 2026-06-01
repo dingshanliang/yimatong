@@ -12,9 +12,13 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+import app.services.connectors.coupon_pool  # noqa: F401
+import app.services.connectors.generic_http  # noqa: F401
+import app.services.connectors.wechat_pay_transfer  # noqa: F401
+import app.services.connectors.wecom_crm  # noqa: F401
 from app.core.database import get_db
 from app.core.dependencies import get_current_tenant
-from app.models.connector import Connector
+from app.models.connector import BenefitDelivery, Connector
 from app.services.connectors import get_adapter
 from app.services.connectors.secrets import decrypt_secrets, encrypt_secrets, mask_secrets
 
@@ -105,12 +109,16 @@ def _delivery_to_dict(delivery) -> dict:
         "tenant_id": str(delivery.tenant_id),
         "connector_id": str(delivery.connector_id),
         "consumer_id": delivery.consumer_id,
+        "benefit_id": str(delivery.benefit_id) if delivery.benefit_id else None,
+        "claim_id": str(delivery.claim_id) if delivery.claim_id else None,
         "benefit_type": delivery.benefit_type,
         "status": delivery.status,
         "retry_count": delivery.retry_count,
         "max_retries": delivery.max_retries,
         "external_data": delivery.external_data,
         "next_retry_at": delivery.next_retry_at.isoformat() if delivery.next_retry_at else None,
+        "created_at": delivery.created_at.isoformat() if delivery.created_at else None,
+        "updated_at": delivery.updated_at.isoformat() if delivery.updated_at else None,
     }
 
 
@@ -462,7 +470,6 @@ async def retry_delivery_endpoint(
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
-    from app.models.connector import BenefitDelivery
     from app.services.benefit_delivery_handler import _do_deliver
 
     result = await db.execute(
@@ -475,7 +482,7 @@ async def retry_delivery_endpoint(
     if not delivery:
         raise HTTPException(status_code=404, detail="Delivery not found")
 
-    if delivery.status in ("success", "failed"):
+    if delivery.status == "success":
         return _delivery_to_dict(delivery)
 
     conn_result = await db.execute(select(Connector).where(Connector.id == delivery.connector_id))
@@ -486,8 +493,16 @@ async def retry_delivery_endpoint(
         return _delivery_to_dict(delivery)
 
     _inject_secrets(connector)
-    await _do_deliver(db, tenant_id, connector, delivery.consumer_id, delivery.benefit_config)
-    return _delivery_to_dict(delivery)
+    next_delivery = await _do_deliver(
+        db,
+        tenant_id,
+        connector,
+        delivery.consumer_id,
+        delivery.benefit_config,
+        benefit_id=delivery.benefit_id,
+        claim_id=delivery.claim_id,
+    )
+    return _delivery_to_dict(next_delivery)
 
 
 @connector_router.get("/deliveries/pending-retries")
@@ -496,8 +511,6 @@ async def pending_retries_endpoint(
     tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
     from datetime import UTC, datetime
-
-    from app.models.connector import BenefitDelivery
 
     now = datetime.now(UTC)
     result = await db.execute(
@@ -511,3 +524,21 @@ async def pending_retries_endpoint(
         .order_by(BenefitDelivery.created_at)
     )
     return [_delivery_to_dict(d) for d in result.scalars().all()]
+
+
+@connector_router.get("/deliveries/{delivery_id}")
+async def get_benefit_delivery_endpoint(
+    delivery_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    tenant_id: uuid.UUID = Depends(get_current_tenant),
+):
+    result = await db.execute(
+        select(BenefitDelivery).where(
+            BenefitDelivery.id == delivery_id,
+            BenefitDelivery.tenant_id == tenant_id,
+        )
+    )
+    delivery = result.scalar_one_or_none()
+    if not delivery:
+        raise HTTPException(status_code=404, detail="Delivery not found")
+    return _delivery_to_dict(delivery)

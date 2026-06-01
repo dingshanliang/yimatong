@@ -1,5 +1,6 @@
 """外部权益连接器 API 集成测试"""
 
+import uuid
 from collections.abc import AsyncGenerator
 
 import pytest
@@ -8,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.main import app
+from app.models.connector import BenefitDelivery
 from app.utils.security import create_access_token
 from tests.conftest import TestSessionLocal
 
@@ -246,3 +248,84 @@ class TestConnectorSecrets:
             headers=headers,
         )
         assert resp.status_code == 200
+
+
+class TestBenefitDeliveries:
+    """权益发放记录详情与重试"""
+
+    @pytest.mark.anyio
+    async def test_get_delivery_detail(self, client: AsyncClient, db_session: AsyncSession, setup_tenant):
+        tenant_id, headers = setup_tenant
+        delivery_id = uuid.uuid4()
+        db_session.add(
+            BenefitDelivery(
+                id=delivery_id,
+                tenant_id=uuid.UUID(tenant_id),
+                connector_id=uuid.uuid4(),
+                consumer_id="consumer-detail-001",
+                benefit_type="coupon",
+                benefit_config={"amount": 10},
+                status="failed",
+                retry_count=2,
+                max_retries=5,
+                external_data={"error": "invalid receiver"},
+            )
+        )
+        await db_session.flush()
+
+        resp = await client.get(f"/api/v1/connectors/deliveries/{delivery_id}", headers=headers)
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["id"] == str(delivery_id)
+        assert data["consumer_id"] == "consumer-detail-001"
+        assert data["status"] == "failed"
+        assert data["retry_count"] == 2
+        assert data["max_retries"] == 5
+        assert data["external_data"] == {"error": "invalid receiver"}
+        assert data["created_at"]
+        assert data["updated_at"]
+
+    @pytest.mark.anyio
+    async def test_retry_failed_delivery_runs_again(self, client: AsyncClient, db_session: AsyncSession, setup_tenant):
+        tenant_id, headers = setup_tenant
+        pool_resp = await client.post(
+            "/api/v1/connectors/coupon-pools",
+            json={"name": "重试券码池", "codes": ["RETRY001"]},
+            headers=headers,
+        )
+        connector_resp = await client.post(
+            "/api/v1/connectors/connectors",
+            json={
+                "name": "重试券码池连接器",
+                "connector_type": "coupon_pool",
+                "config": {"pool_id": pool_resp.json()["id"]},
+            },
+            headers=headers,
+        )
+        connector_id = connector_resp.json()["id"]
+        delivery_id = uuid.uuid4()
+        db_session.add(
+            BenefitDelivery(
+                id=delivery_id,
+                tenant_id=uuid.UUID(tenant_id),
+                connector_id=uuid.UUID(connector_id),
+                consumer_id="consumer-retry-001",
+                benefit_type="coupon",
+                benefit_config={"benefit_type": "platform_coupon"},
+                status="failed",
+                retry_count=1,
+                max_retries=5,
+                external_data={"error": "temporary failure"},
+            )
+        )
+        await db_session.flush()
+
+        resp = await client.post(f"/api/v1/connectors/deliveries/{delivery_id}/retry", headers=headers)
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["id"] != str(delivery_id)
+        assert data["consumer_id"] == "consumer-retry-001"
+        assert data["status"] == "success"
+        assert data["external_data"]["code"] == "RETRY001"

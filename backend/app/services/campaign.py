@@ -3,11 +3,12 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import func, or_, select, update
+from sqlalchemy import and_, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.event_bus import event_bus
 from app.models.campaign import Benefit, BenefitClaim, Campaign, CampaignStatus
+from app.models.connector import BenefitDelivery
 from app.models.product import Product
 
 CAMPAIGN_GOALS = {
@@ -590,30 +591,114 @@ async def delete_benefit(
 async def list_benefit_claims_admin(
     db: AsyncSession,
     tenant_id: uuid.UUID,
+    q: str | None = None,
+    benefit_id: uuid.UUID | None = None,
+    campaign_id: uuid.UUID | None = None,
+    status: str | None = None,
+    delivery_status: str | None = None,
     page: int = 1,
     page_size: int = 20,
 ) -> tuple[list[dict], int]:
+    latest_delivery_match = or_(
+        BenefitDelivery.claim_id == BenefitClaim.id,
+        and_(
+            BenefitDelivery.claim_id.is_(None),
+            BenefitDelivery.benefit_id == BenefitClaim.benefit_id,
+            BenefitDelivery.consumer_id == BenefitClaim.consumer_id,
+        ),
+    )
+    latest_delivery_id = (
+        select(BenefitDelivery.id)
+        .where(BenefitDelivery.tenant_id == tenant_id, latest_delivery_match)
+        .order_by(BenefitDelivery.created_at.desc().nulls_last(), BenefitDelivery.id.desc())
+        .limit(1)
+        .correlate(BenefitClaim)
+        .scalar_subquery()
+    )
+    latest_delivery_status = (
+        select(BenefitDelivery.status)
+        .where(BenefitDelivery.tenant_id == tenant_id, latest_delivery_match)
+        .order_by(BenefitDelivery.created_at.desc().nulls_last(), BenefitDelivery.id.desc())
+        .limit(1)
+        .correlate(BenefitClaim)
+        .scalar_subquery()
+    )
+    latest_delivery_retry_count = (
+        select(BenefitDelivery.retry_count)
+        .where(BenefitDelivery.tenant_id == tenant_id, latest_delivery_match)
+        .order_by(BenefitDelivery.created_at.desc().nulls_last(), BenefitDelivery.id.desc())
+        .limit(1)
+        .correlate(BenefitClaim)
+        .scalar_subquery()
+    )
+    latest_delivery_next_retry_at = (
+        select(BenefitDelivery.next_retry_at)
+        .where(BenefitDelivery.tenant_id == tenant_id, latest_delivery_match)
+        .order_by(BenefitDelivery.created_at.desc().nulls_last(), BenefitDelivery.id.desc())
+        .limit(1)
+        .correlate(BenefitClaim)
+        .scalar_subquery()
+    )
+    filters = [BenefitClaim.tenant_id == tenant_id]
+    if q:
+        pattern = f"%{q}%"
+        filters.append(
+            or_(BenefitClaim.consumer_id.ilike(pattern), Benefit.name.ilike(pattern), Campaign.name.ilike(pattern))
+        )
+    if benefit_id:
+        filters.append(BenefitClaim.benefit_id == benefit_id)
+    if campaign_id:
+        filters.append(BenefitClaim.campaign_id == campaign_id)
+    if status:
+        filters.append(BenefitClaim.status == _claim_status_to_storage(status))
+    if delivery_status:
+        filters.append(BenefitClaim.delivery_status == delivery_status)
+
     count_stmt = (
         select(func.count())
         .select_from(BenefitClaim)
-        .where(
-            BenefitClaim.tenant_id == tenant_id,
-        )
+        .join(Benefit, Benefit.id == BenefitClaim.benefit_id)
+        .outerjoin(Campaign, Campaign.id == BenefitClaim.campaign_id)
+        .where(*filters)
     )
     total = (await db.execute(count_stmt)).scalar() or 0
     stmt = (
-        select(BenefitClaim, Benefit.name.label("benefit_name"), Campaign.name.label("campaign_name"))
+        select(
+            BenefitClaim,
+            Benefit.name.label("benefit_name"),
+            Campaign.name.label("campaign_name"),
+            latest_delivery_id.label("latest_delivery_id"),
+            latest_delivery_status.label("latest_delivery_status"),
+            latest_delivery_retry_count.label("delivery_retry_count"),
+            latest_delivery_next_retry_at.label("delivery_next_retry_at"),
+        )
         .join(Benefit, Benefit.id == BenefitClaim.benefit_id)
         .outerjoin(Campaign, Campaign.id == BenefitClaim.campaign_id)
-        .where(BenefitClaim.tenant_id == tenant_id)
-        .order_by(BenefitClaim.id.desc())
+        .where(*filters)
+        .order_by(BenefitClaim.created_at.desc().nulls_last(), BenefitClaim.id.desc())
         .offset((page - 1) * page_size)
         .limit(page_size)
     )
     result = await db.execute(stmt)
     return [
-        _claim_to_dict(claim, benefit_name=benefit_name, campaign_name=campaign_name)
-        for claim, benefit_name, campaign_name in result.all()
+        _claim_to_dict(
+            claim,
+            benefit_name=benefit_name,
+            campaign_name=campaign_name,
+            latest_delivery_id=latest_delivery_id,
+            latest_delivery_status=latest_delivery_status,
+            delivery_retry_count=delivery_retry_count,
+            delivery_next_retry_at=delivery_next_retry_at,
+        )
+        for (
+            claim,
+            benefit_name,
+            campaign_name,
+            latest_delivery_id,
+            latest_delivery_status,
+            delivery_retry_count,
+            delivery_next_retry_at,
+        ) in result.all()
     ], total
 
 
@@ -698,7 +783,23 @@ async def _benefit_claim_count(db: AsyncSession, tenant_id: uuid.UUID, benefit_i
     return result.scalar() or 0
 
 
-def _claim_to_dict(c: BenefitClaim, benefit_name: str | None = None, campaign_name: str | None = None) -> dict:
+def _claim_status_to_storage(status: str) -> str:
+    return "success" if status == "claimed" else status
+
+
+def _claim_status_to_public(status: str) -> str:
+    return "claimed" if status == "success" else status
+
+
+def _claim_to_dict(
+    c: BenefitClaim,
+    benefit_name: str | None = None,
+    campaign_name: str | None = None,
+    latest_delivery_id: uuid.UUID | None = None,
+    latest_delivery_status: str | None = None,
+    delivery_retry_count: int | None = None,
+    delivery_next_retry_at: datetime | None = None,
+) -> dict:
     return {
         "id": str(c.id),
         "tenant_id": str(c.tenant_id),
@@ -708,9 +809,13 @@ def _claim_to_dict(c: BenefitClaim, benefit_name: str | None = None, campaign_na
         "campaign_name": campaign_name,
         "consumer_id": c.consumer_id,
         "claim_type": c.claim_type,
-        "status": c.status,
+        "status": _claim_status_to_public(c.status),
         "delivery_status": c.delivery_status,
         "claimed_at": c.created_at.isoformat() if c.created_at else None,
+        "latest_delivery_id": str(latest_delivery_id) if latest_delivery_id else None,
+        "latest_delivery_status": latest_delivery_status,
+        "delivery_retry_count": delivery_retry_count,
+        "delivery_next_retry_at": delivery_next_retry_at.isoformat() if delivery_next_retry_at else None,
     }
 
 

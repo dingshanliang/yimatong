@@ -60,6 +60,8 @@ class BenefitDelivery(Base):
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid7)
     tenant_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
     connector_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
+    benefit_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True, index=True)
+    claim_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True, index=True)
     consumer_id: Mapped[str] = mapped_column(String(100), nullable=False)
     benefit_type: Mapped[str] = mapped_column(String(50), nullable=False)
     benefit_config: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
