@@ -21,7 +21,7 @@ from app.models.analytics import DailyScanStats  # noqa: E402, F401
 from app.models.audit import PlatformAuditLog  # noqa: E402, F401
 from app.models.base import Base  # noqa: E402
 from app.models.campaign import Benefit, BenefitClaim, Campaign  # noqa: E402, F401
-from app.models.channel import Distributor, DiversionClue, Region, Store  # noqa: E402, F401
+from app.models.channel import AccountChannelScope, Distributor, DiversionClue, Region, Store  # noqa: E402, F401
 from app.models.code import CodeBatch, CodeItem  # noqa: E402, F401
 from app.models.connector import BenefitDelivery, Connector, CouponCode, CouponPool  # noqa: E402, F401
 from app.models.consent import ConsentRecord  # noqa: E402, F401

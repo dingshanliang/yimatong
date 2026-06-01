@@ -179,11 +179,27 @@ export default async function globalSetup() {
   console.log(`[global-setup] SKU created: ${skuId}`);
 
   // 6. Create code batch (synchronous generation)
+  const productionBatchRes = await apiPost(
+    "/api/v1/production-batches",
+    {
+      product_id: productId,
+      sku_id: skuId,
+      batch_code: `E2E-PROD-BATCH-${Date.now()}`,
+      production_date: "2026-01-01",
+      expiry_date: "2027-01-01",
+      origin: "E2E 测试产地",
+    },
+    token
+  );
+  const productionBatchId = productionBatchRes.id as string;
+  console.log(`[global-setup] Production batch created: ${productionBatchId}`);
+
   const batchRes = await apiPost(
     "/api/v1/code-batches",
     {
       product_id: productId,
       sku_id: skuId,
+      production_batch_id: productionBatchId,
       batch_code: `E2E-BATCH-${Date.now()}`,
       quantity: 10,
       code_type: "single",

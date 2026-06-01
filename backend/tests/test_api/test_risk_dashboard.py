@@ -239,6 +239,38 @@ class TestDiversionSummary:
         assert resp.status_code == 200
         assert resp.json()["total"] >= 1
 
+    @pytest.mark.anyio
+    async def test_resolve_diversion_records_note_and_operator(
+        self,
+        client: AsyncClient,
+        setup_tenant,
+        db_session: AsyncSession,
+    ):
+        tid, headers = setup_tenant
+        clue = DiversionClue(
+            tenant_id=UUID(tid),
+            public_id="NOTE001",
+            code_item_id=UUID("00000000-0000-0000-0000-000000000001"),
+            expected_region="上海",
+            detected_city="北京",
+            ip_hash="ip_note",
+            resolved=False,
+        )
+        db_session.add(clue)
+        await db_session.commit()
+
+        resp = await client.put(
+            f"/api/v1/risk-dashboard/diversion-clues/{clue.id}/resolve",
+            json={"resolution_note": "已联系经销商核实为临时调货"},
+            headers=headers,
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["resolved"] is True
+        assert data["resolution_note"] == "已联系经销商核实为临时调货"
+        assert data["resolved_by_account_id"] == "00000000-0000-0000-0000-000000000001"
+        assert data["resolved_at"] is not None
+
 
 class TestRiskExport:
     """W14-004: 风控数据导出"""

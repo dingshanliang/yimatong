@@ -46,7 +46,7 @@ const MENU_OPEN_KEY_RULES = [
   { key: "catalog-group", prefixes: ["/brands", "/products", "/skus", "/batches"] },
   { key: "traceability-group", prefixes: ["/codes", "/pages"] },
   { key: "growth-group", prefixes: ["/campaigns", "/benefits", "/members"] },
-  { key: "channels-group", prefixes: ["/channels", "/regional", "/accounts", "/agency"] },
+  { key: "channels-group", prefixes: ["/channels", "/channel-portal", "/store-portal", "/regional", "/accounts", "/agency"] },
   { key: "analytics-group", prefixes: ["/stats", "/campaign-analytics", "/gmv", "/risk-dashboard", "/exports"] },
   { key: "integrations-group", prefixes: ["/connectors", "/integrations", "/imports", "/crm-sync"] },
   { key: "governance-group", prefixes: ["/risk", "/launch-checklist"] },
@@ -72,6 +72,19 @@ function DashboardInner({ children }: { children: React.ReactNode }) {
   const openKeys = MENU_OPEN_KEY_RULES
     .filter(({ prefixes }) => prefixes.some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`)))
     .map(({ key }) => key);
+
+  const isDistributorUser = user?.role === "distributor" || user?.role === "Distributor";
+  const isStoreUser = user?.role === "store_guide" || user?.role === "StoreGuide";
+  const channelMenuChildren: MenuProps["items"] = isDistributorUser
+    ? [{ key: "/channel-portal", icon: <ShopOutlined />, label: t("menu.channel-portal") }]
+    : isStoreUser
+      ? [{ key: "/store-portal", icon: <ShopOutlined />, label: t("menu.store-portal") }]
+      : [
+          { key: "/channels", icon: <ShopOutlined />, label: t("menu.channels") },
+          { key: "/regional", icon: <TeamOutlined />, label: t("menu.regional") },
+          { key: "/accounts", icon: <TeamOutlined />, label: t("menu.accounts") },
+          { key: "/agency", icon: <TeamOutlined />, label: t("menu.agency") },
+        ];
 
   const menuItems: MenuProps["items"] = [
     { key: "/", icon: <DashboardOutlined />, label: t("menu.dashboard") },
@@ -110,12 +123,7 @@ function DashboardInner({ children }: { children: React.ReactNode }) {
       key: "channels-group",
       icon: <ShopOutlined />,
       label: t("menu.group.channels"),
-      children: [
-        { key: "/channels", icon: <ShopOutlined />, label: t("menu.channels") },
-        { key: "/regional", icon: <TeamOutlined />, label: t("menu.regional") },
-        { key: "/accounts", icon: <TeamOutlined />, label: t("menu.accounts") },
-        { key: "/agency", icon: <TeamOutlined />, label: t("menu.agency") },
-      ],
+      children: channelMenuChildren,
     },
     {
       key: "analytics-group",

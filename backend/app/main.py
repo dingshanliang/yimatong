@@ -45,8 +45,8 @@ from app.api.v1.scan_events import scan_event_router
 from app.api.v1.tasks import task_router
 from app.api.v1.tenants import router as tenants_router
 from app.api.v1.webhooks import webhook_router
-from app.api.v1.wecom_integrations import wecom_integration_router
 from app.api.v1.wechat_oauth import wechat_oauth_router
+from app.api.v1.wecom_integrations import wecom_integration_router
 from app.core.config import settings
 from app.core.error_handlers import register_exception_handlers
 from app.core.logging import setup_logging

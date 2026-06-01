@@ -9,7 +9,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.main import app
-from app.utils.security import create_access_token
+from app.models.tenant import Account, Organization
+from app.utils.security import create_access_token, hash_password
 from tests.conftest import TestSessionLocal
 
 
@@ -103,6 +104,37 @@ class TestDistributorCRUD:
         assert resp.status_code == 200
         assert resp.json()["total"] >= 1
 
+    @pytest.mark.anyio
+    async def test_patch_and_filter_distributors(self, client: AsyncClient, setup_tenant):
+        _tid, headers, *_ = setup_tenant
+        created = await client.post(
+            "/api/v1/channels/distributors",
+            json={"name": "华南经销商", "code": "DIST-SOUTH", "contact_name": "李四"},
+            headers=headers,
+        )
+        distributor_id = created.json()["id"]
+
+        patch_resp = await client.patch(
+            f"/api/v1/channels/distributors/{distributor_id}",
+            json={"name": "华南核心经销商", "status": "inactive"},
+            headers=headers,
+        )
+        assert patch_resp.status_code == 200
+        assert patch_resp.json()["name"] == "华南核心经销商"
+        assert patch_resp.json()["status"] == "inactive"
+
+        list_resp = await client.get(
+            "/api/v1/channels/distributors",
+            params={"q": "核心", "status": "inactive"},
+            headers=headers,
+        )
+        assert list_resp.status_code == 200
+        item = list_resp.json()["items"][0]
+        assert item["id"] == distributor_id
+        assert item["region_count"] == 0
+        assert item["store_count"] == 0
+        assert "allocated_quantity" in item
+
 
 class TestRegionCRUD:
     """W11-002: 区域 CRUD"""
@@ -130,6 +162,40 @@ class TestRegionCRUD:
         assert resp.status_code == 200
         assert resp.json()["total"] >= 1
 
+    @pytest.mark.anyio
+    async def test_region_list_returns_distributor_name_and_store_count(self, client: AsyncClient, setup_tenant):
+        _tid, headers, *_ = setup_tenant
+        dist = await client.post(
+            "/api/v1/channels/distributors",
+            json={"name": "华东经销商", "code": "DIST-EAST"},
+            headers=headers,
+        )
+        region = await client.post(
+            "/api/v1/channels/regions",
+            json={
+                "name": "上海市区",
+                "code": "REG-SH-CITY",
+                "city": "上海",
+                "distributor_id": dist.json()["id"],
+            },
+            headers=headers,
+        )
+        await client.post(
+            "/api/v1/channels/stores",
+            json={"name": "南京东路店", "code": "STORE-NJDL", "region_id": region.json()["id"]},
+            headers=headers,
+        )
+
+        resp = await client.get(
+            "/api/v1/channels/regions",
+            params={"distributor_id": dist.json()["id"], "q": "上海"},
+            headers=headers,
+        )
+        assert resp.status_code == 200
+        item = resp.json()["items"][0]
+        assert item["distributor_name"] == "华东经销商"
+        assert item["store_count"] == 1
+
 
 class TestStoreCRUD:
     """W11-002: 门店 CRUD"""
@@ -144,6 +210,37 @@ class TestStoreCRUD:
         )
         assert resp.status_code == 201
         assert resp.json()["name"] == "旗舰店"
+
+    @pytest.mark.anyio
+    async def test_patch_store_and_filter_by_region(self, client: AsyncClient, setup_tenant):
+        _tid, headers, *_ = setup_tenant
+        region = await client.post(
+            "/api/v1/channels/regions",
+            json={"name": "上海区域", "code": "REG-STORE", "city": "上海"},
+            headers=headers,
+        )
+        store = await client.post(
+            "/api/v1/channels/stores",
+            json={"name": "旧门店", "code": "STORE-PATCH", "region_id": region.json()["id"]},
+            headers=headers,
+        )
+        patch_resp = await client.patch(
+            f"/api/v1/channels/stores/{store.json()['id']}",
+            json={"name": "新门店", "address": "上海市黄浦区"},
+            headers=headers,
+        )
+        assert patch_resp.status_code == 200
+        assert patch_resp.json()["name"] == "新门店"
+
+        list_resp = await client.get(
+            "/api/v1/channels/stores",
+            params={"region_id": region.json()["id"], "q": "新门店"},
+            headers=headers,
+        )
+        assert list_resp.status_code == 200
+        item = list_resp.json()["items"][0]
+        assert item["region_name"] == "上海区域"
+        assert item["allocated_quantity"] == 0
 
 
 class TestBatchAssignment:
@@ -186,6 +283,193 @@ class TestBatchAssignment:
         )
         assert resp.status_code == 200
         assert resp.json()["region_id"] == region_id
+
+    @pytest.mark.anyio
+    async def test_store_allocation_rejects_quantity_above_remaining(
+        self,
+        client: AsyncClient,
+        setup_tenant,
+    ):
+        _tid, headers, product_id, sku_id, production_batch_id = setup_tenant
+        store = await client.post(
+            "/api/v1/channels/stores",
+            json={"name": "限量门店", "code": "STORE-LIMIT"},
+            headers=headers,
+        )
+        batch = await client.post(
+            "/api/v1/code-batches",
+            json={
+                "product_id": product_id,
+                "sku_id": sku_id,
+                "production_batch_id": production_batch_id,
+                "quantity": 10,
+            },
+            headers=headers,
+        )
+
+        first = await client.post(
+            "/api/v1/channels/code-allocations",
+            json={"batch_id": batch.json()["id"], "store_id": store.json()["id"], "quantity": 6},
+            headers=headers,
+        )
+        assert first.status_code == 201
+
+        over = await client.post(
+            "/api/v1/channels/code-allocations",
+            json={"batch_id": batch.json()["id"], "store_id": store.json()["id"], "quantity": 5},
+            headers=headers,
+        )
+        assert over.status_code == 400
+        assert "剩余" in over.json()["detail"]
+
+        list_resp = await client.get("/api/v1/channels/code-allocations", headers=headers)
+        assert list_resp.status_code == 200
+        data = list_resp.json()
+        assert data["total"] == 1
+        item = data["items"][0]
+        assert item["store_name"] == "限量门店"
+        assert item["batch_code"] == batch.json()["batch_code"]
+        assert item["remaining_quantity"] == 4
+
+
+class TestChannelAccountScopes:
+    @pytest.mark.anyio
+    async def test_account_scope_limits_distributor_portal_summary(
+        self,
+        client: AsyncClient,
+        setup_tenant,
+        db_session: AsyncSession,
+    ):
+        tid, headers, product_id, sku_id, production_batch_id = setup_tenant
+        dist = await client.post(
+            "/api/v1/channels/distributors",
+            json={"name": "授权经销商", "code": "DIST-SCOPED"},
+            headers=headers,
+        )
+        region = await client.post(
+            "/api/v1/channels/regions",
+            json={"name": "授权区域", "code": "REG-SCOPED", "city": "上海", "distributor_id": dist.json()["id"]},
+            headers=headers,
+        )
+        store = await client.post(
+            "/api/v1/channels/stores",
+            json={
+                "name": "授权门店",
+                "code": "STORE-SCOPED",
+                "distributor_id": dist.json()["id"],
+                "region_id": region.json()["id"],
+            },
+            headers=headers,
+        )
+        batch = await client.post(
+            "/api/v1/code-batches",
+            json={
+                "product_id": product_id,
+                "sku_id": sku_id,
+                "production_batch_id": production_batch_id,
+                "quantity": 8,
+            },
+            headers=headers,
+        )
+        await client.post(
+            "/api/v1/channels/code-allocations",
+            json={"batch_id": batch.json()["id"], "store_id": store.json()["id"], "quantity": 8},
+            headers=headers,
+        )
+
+        org = Organization(tenant_id=UUID(tid), name="渠道组织")
+        db_session.add(org)
+        await db_session.flush()
+        account = Account(
+            tenant_id=UUID(tid),
+            organization_id=org.id,
+            email="dist@test.com",
+            name="经销商账号",
+            hashed_password=hash_password("Pass1234"),
+        )
+        db_session.add(account)
+        await db_session.flush()
+        await db_session.refresh(account)
+
+        scope_resp = await client.post(
+            "/api/v1/channels/account-scopes",
+            json={
+                "account_id": str(account.id),
+                "scope_type": "distributor",
+                "distributor_id": dist.json()["id"],
+            },
+            headers=headers,
+        )
+        assert scope_resp.status_code == 201
+
+        scoped_token = create_access_token(tid, str(account.id), "distributor")
+        scoped_headers = {"Authorization": f"Bearer {scoped_token}"}
+        summary = await client.get("/api/v1/channels/portal/distributor/summary", headers=scoped_headers)
+        assert summary.status_code == 200
+        data = summary.json()
+        assert data["scope"]["name"] == "授权经销商"
+        assert data["allocated_quantity"] == 8
+        assert data["store_count"] == 1
+
+    @pytest.mark.anyio
+    async def test_account_scope_limits_store_portal_summary(
+        self,
+        client: AsyncClient,
+        setup_tenant,
+        db_session: AsyncSession,
+    ):
+        tid, headers, *_ = setup_tenant
+        store = await client.post(
+            "/api/v1/channels/stores",
+            json={"name": "门店入口店", "code": "STORE-PORTAL"},
+            headers=headers,
+        )
+
+        org = Organization(tenant_id=UUID(tid), name="门店组织")
+        db_session.add(org)
+        await db_session.flush()
+        account = Account(
+            tenant_id=UUID(tid),
+            organization_id=org.id,
+            email="store@test.com",
+            name="门店账号",
+            hashed_password=hash_password("Pass1234"),
+        )
+        db_session.add(account)
+        await db_session.flush()
+        await db_session.refresh(account)
+
+        scope_resp = await client.post(
+            "/api/v1/channels/account-scopes",
+            json={"account_id": str(account.id), "scope_type": "store", "store_id": store.json()["id"]},
+            headers=headers,
+        )
+        assert scope_resp.status_code == 201
+
+        scoped_token = create_access_token(tid, str(account.id), "store_guide")
+        summary = await client.get(
+            "/api/v1/channels/portal/store/summary",
+            headers={"Authorization": f"Bearer {scoped_token}"},
+        )
+        assert summary.status_code == 200
+        assert summary.json()["scope"]["name"] == "门店入口店"
+
+
+class TestChannelOverview:
+    @pytest.mark.anyio
+    async def test_overview_returns_channel_metrics(self, client: AsyncClient, setup_tenant):
+        _tid, headers, *_ = setup_tenant
+        await client.post("/api/v1/channels/distributors", json={"name": "经销商", "code": "OV-D"}, headers=headers)
+        await client.post("/api/v1/channels/regions", json={"name": "区域", "code": "OV-R"}, headers=headers)
+        await client.post("/api/v1/channels/stores", json={"name": "门店", "code": "OV-S"}, headers=headers)
+
+        resp = await client.get("/api/v1/channels/overview", headers=headers)
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["distributor_count"] == 1
+        assert data["region_count"] == 1
+        assert data["store_count"] == 1
+        assert "pending_diversion_count" in data
 
 
 class TestIPResolution:

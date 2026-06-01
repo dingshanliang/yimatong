@@ -6,6 +6,7 @@ import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import PlainTextResponse, StreamingResponse
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
@@ -21,6 +22,10 @@ from app.services.risk_dashboard import (
 )
 
 risk_dashboard_router = APIRouter(prefix="/api/v1/risk-dashboard", tags=["risk-dashboard"])
+
+
+class ResolveDiversionRequest(BaseModel):
+    resolution_note: str | None = None
 
 
 def require_admin(request: Request) -> None:
@@ -75,13 +80,27 @@ async def diversion_summary_endpoint(
 @risk_dashboard_router.put("/diversion-clues/{clue_id}/resolve")
 async def resolve_diversion_endpoint(
     clue_id: uuid.UUID,
+    body: ResolveDiversionRequest | None = None,
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
+    account_id: uuid.UUID = Depends(get_current_account_id),
 ):
-    clue = await resolve_diversion_clue(db, tenant_id, clue_id)
+    clue = await resolve_diversion_clue(
+        db,
+        tenant_id,
+        clue_id,
+        resolution_note=body.resolution_note if body else None,
+        resolved_by_account_id=account_id,
+    )
     if not clue:
         raise HTTPException(404, "Diversion clue not found")
-    return {"id": str(clue.id), "resolved": clue.resolved}
+    return {
+        "id": str(clue.id),
+        "resolved": clue.resolved,
+        "resolution_note": clue.resolution_note,
+        "resolved_by_account_id": str(clue.resolved_by_account_id) if clue.resolved_by_account_id else None,
+        "resolved_at": clue.resolved_at.isoformat() if clue.resolved_at else None,
+    }
 
 
 @risk_dashboard_router.get("/export", response_class=PlainTextResponse)

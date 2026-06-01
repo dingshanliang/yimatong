@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 
 from app.core.config import settings
 from app.models.campaign import Benefit, BenefitType, Campaign, CampaignStatus
+from app.models.channel import CodeAllocation, Distributor, DiversionClue, Region, Store
 from app.models.code import CodeItem, CodeItemStatus
 from app.models.connector import Connector  # noqa: F401 - register connector tables for Benefit FK sorting
 from app.models.page import PageTemplate, PageTemplateStatus, PageVersion, PageVersionStatus, TemplateType
@@ -17,6 +18,7 @@ from app.models.product import SKU, Brand, Product, ProductionBatch
 from app.models.scan import ScanEvent
 from app.models.tenant import Account, Organization, Role, Tenant, account_roles
 from app.services.analytics import aggregate_daily_stats
+from app.services.channel import create_account_scope
 from app.services.code import activate_batch, create_code_batch
 from app.services.public_id import generate_public_id
 from app.services.tenant import create_tenant
@@ -49,6 +51,20 @@ DEMO_ACCOUNTS = [
         "name": "代运营顾问",
         "role": "operator",
         "title": "代运营服务人员",
+    },
+    {
+        "email": "dist@demo.com",
+        "password": "Dist123456",
+        "name": "华东经销商账号",
+        "role": "distributor",
+        "title": "经销商入口",
+    },
+    {
+        "email": "store@demo.com",
+        "password": "Store123456",
+        "name": "南京东路店账号",
+        "role": "store_guide",
+        "title": "门店入口",
     },
 ]
 
@@ -101,6 +117,18 @@ async def _ensure_demo_accounts(db: AsyncSession, tenant_id: uuid.UUID, org_id: 
             tenant_id,
             "operator",
             "运营人员：可维护产品、码、页面、活动并查看数据。",
+        ),
+        "distributor": await _ensure_role(
+            db,
+            tenant_id,
+            "distributor",
+            "经销商：查看自己负责的码段、扫码数据和异常线索。",
+        ),
+        "store_guide": await _ensure_role(
+            db,
+            tenant_id,
+            "store_guide",
+            "门店：查看本店码段、扫码数据和线索统计。",
         ),
     }
     accounts: list[Account] = []
@@ -349,6 +377,122 @@ async def _ensure_scan_events(db: AsyncSession, tenant_id: uuid.UUID, items: lis
         await aggregate_daily_stats(db, tenant_id, (now - timedelta(days=offset)).date())
 
 
+async def _ensure_demo_channels(
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    accounts: list[Account],
+    code_items: list[CodeItem],
+) -> None:
+    distributor = (
+        await db.execute(
+            select(Distributor).where(Distributor.tenant_id == tenant_id, Distributor.code == "DEMO-DIST-EAST")
+        )
+    ).scalar_one_or_none()
+    if not distributor:
+        distributor = Distributor(
+            tenant_id=tenant_id,
+            name="华东经销商",
+            code="DEMO-DIST-EAST",
+            contact_name="陈经理",
+            status="active",
+        )
+        db.add(distributor)
+        await db.flush()
+
+    region = (
+        await db.execute(select(Region).where(Region.tenant_id == tenant_id, Region.code == "DEMO-REG-SH"))
+    ).scalar_one_or_none()
+    if not region:
+        region = Region(
+            tenant_id=tenant_id,
+            name="上海区域",
+            code="DEMO-REG-SH",
+            province="上海",
+            city="上海",
+            distributor_id=distributor.id,
+            status="active",
+        )
+        db.add(region)
+        await db.flush()
+    else:
+        region.distributor_id = distributor.id
+
+    store = (
+        await db.execute(select(Store).where(Store.tenant_id == tenant_id, Store.code == "DEMO-STORE-NJDL"))
+    ).scalar_one_or_none()
+    if not store:
+        store = Store(
+            tenant_id=tenant_id,
+            name="南京东路店",
+            code="DEMO-STORE-NJDL",
+            region_id=region.id,
+            distributor_id=distributor.id,
+            address="上海市黄浦区南京东路",
+            status="active",
+        )
+        db.add(store)
+        await db.flush()
+    else:
+        store.region_id = region.id
+        store.distributor_id = distributor.id
+        store.status = "active"
+
+    batch_id = code_items[0].code_batch_id if code_items else None
+    if batch_id:
+        existing_alloc = (
+            await db.execute(
+                select(CodeAllocation).where(
+                    CodeAllocation.tenant_id == tenant_id,
+                    CodeAllocation.batch_id == batch_id,
+                    CodeAllocation.store_id == store.id,
+                )
+            )
+        ).scalar_one_or_none()
+        if existing_alloc:
+            existing_alloc.quantity = 8
+            existing_alloc.distributor_id = distributor.id
+        else:
+            db.add(
+                CodeAllocation(
+                    tenant_id=tenant_id,
+                    batch_id=batch_id,
+                    store_id=store.id,
+                    distributor_id=distributor.id,
+                    quantity=8,
+                    allocated_at=utcnow().replace(microsecond=0).isoformat(),
+                )
+            )
+
+    pending_clue = (
+        await db.execute(
+            select(DiversionClue).where(
+                DiversionClue.tenant_id == tenant_id,
+                DiversionClue.public_id == "DEMO-DIVERSION",
+            )
+        )
+    ).scalar_one_or_none()
+    if not pending_clue and code_items:
+        db.add(
+            DiversionClue(
+                tenant_id=tenant_id,
+                public_id="DEMO-DIVERSION",
+                code_item_id=code_items[0].id,
+                expected_region="上海",
+                detected_city="北京",
+                distributor_id=distributor.id,
+                ip_hash="demo-diversion-ip",
+                resolved=False,
+            )
+        )
+
+    dist_account = next((account for account in accounts if account.email == "dist@demo.com"), None)
+    store_account = next((account for account in accounts if account.email == "store@demo.com"), None)
+    if dist_account:
+        await create_account_scope(db, tenant_id, dist_account.id, "distributor", distributor_id=distributor.id)
+    if store_account:
+        await create_account_scope(db, tenant_id, store_account.id, "store", store_id=store.id)
+
+
 @app.command()
 def tenant(
     name: str = typer.Option(..., help="租户名称"),
@@ -483,13 +627,12 @@ def all(
             await _ensure_campaign(db, t.id)
             code_items = await _ensure_demo_codes(db, t.id, p.id, s.id, admin_account.id)
             await _ensure_scan_events(db, t.id, code_items)
+            await _ensure_demo_channels(db, t.id, accounts, code_items)
             await db.commit()
 
         typer.echo("\nDemo seed complete. Quick login accounts:")
         for account in DEMO_ACCOUNTS:
-            typer.echo(
-                f"  {account['title']}: {account['email']} / {account['password']} ({account['role']})"
-            )
+            typer.echo(f"  {account['title']}: {account['email']} / {account['password']} ({account['role']})")
         active_code = next((item.public_id for item in code_items if item.status == CodeItemStatus.activated), None)
         revoked_code = next((item.public_id for item in code_items if item.status == CodeItemStatus.revoked), None)
         frozen_code = next((item.public_id for item in code_items if item.status == CodeItemStatus.frozen), None)

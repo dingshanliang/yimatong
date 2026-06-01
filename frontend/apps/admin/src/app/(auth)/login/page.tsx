@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { App, Button, Card, Form, Input, Space, Tag, Typography } from "antd";
-import { CrownOutlined, LockOutlined, MailOutlined, TeamOutlined, UserSwitchOutlined } from "@ant-design/icons";
+import { CrownOutlined, LockOutlined, MailOutlined, ShopOutlined, TeamOutlined, UserSwitchOutlined } from "@ant-design/icons";
 import { useRouter } from "next/navigation";
 import { useAuthStore } from "@/lib/auth";
 
@@ -36,6 +36,26 @@ const DEMO_ACCOUNTS = [
     description: "代客户维护日常运营动作",
     icon: <UserSwitchOutlined />,
   },
+  {
+    key: "distributor",
+    label: "经销商入口",
+    role: "distributor",
+    email: "dist@demo.com",
+    password: "Dist123456",
+    description: "查看分配码段、区域门店统计和异常线索",
+    icon: <TeamOutlined />,
+    route: "/channel-portal",
+  },
+  {
+    key: "store",
+    label: "门店入口",
+    role: "store_guide",
+    email: "store@demo.com",
+    password: "Store123456",
+    description: "查看本店资料、码段和扫码趋势",
+    icon: <ShopOutlined />,
+    route: "/store-portal",
+  },
 ];
 
 export default function LoginPage() {
@@ -46,12 +66,12 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false);
   const [loadingAccount, setLoadingAccount] = useState<string | null>(null);
 
-  const onFinish = async (values: { email: string; password: string }) => {
+  const onFinish = async (values: { email: string; password: string }, redirectTo = "/") => {
     setLoading(true);
     try {
       await login(values.email, values.password);
       message.success("登录成功");
-      router.push("/");
+      router.push(redirectTo);
     } catch {
       message.error("登录失败，请检查邮箱和密码");
     } finally {
@@ -63,7 +83,7 @@ export default function LoginPage() {
     form.setFieldsValue({ email: account.email, password: account.password });
     setLoadingAccount(account.key);
     try {
-      await onFinish({ email: account.email, password: account.password });
+      await onFinish({ email: account.email, password: account.password }, account.route ?? "/");
     } finally {
       setLoadingAccount(null);
     }

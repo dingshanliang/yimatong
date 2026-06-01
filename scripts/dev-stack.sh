@@ -33,4 +33,6 @@ Demo accounts:
   品牌管理员: admin@demo.com / Admin1234
   活动运营:   ops@demo.com / Ops123456
   代运营顾问: agency@demo.com / Agency1234
+  经销商入口: dist@demo.com / Dist123456
+  门店入口:   store@demo.com / Store123456
 EOF

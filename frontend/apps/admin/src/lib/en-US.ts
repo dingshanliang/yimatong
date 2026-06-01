@@ -23,6 +23,8 @@ const enUS: Record<string, string> = {
   "menu.risk-dashboard": "Risk Dashboard",
   "menu.exports": "Exports",
   "menu.channels": "Channels",
+  "menu.channel-portal": "Distributor Portal",
+  "menu.store-portal": "Store Portal",
   "menu.risk": "Risk Center",
   "menu.members": "Members & Points",
   "menu.gmv": "GMV Attribution",

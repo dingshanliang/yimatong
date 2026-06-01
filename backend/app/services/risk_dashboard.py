@@ -61,11 +61,7 @@ async def get_cross_region_stats(
     """跨区扫码统计（支持时间段筛选）"""
     conditions = [DiversionClue.tenant_id == tenant_id]
 
-    total_stmt = (
-        select(func.count())
-        .select_from(DiversionClue)
-        .where(*conditions)
-    )
+    total_stmt = select(func.count()).select_from(DiversionClue).where(*conditions)
     total_result = await db.execute(total_stmt)
     total_clues = total_result.scalar() or 0
 
@@ -129,10 +125,9 @@ async def get_cross_region_trend(
     # UUID v7 前 48 位是毫秒时间戳，用 PostgreSQL 函数提取日期
     from sqlalchemy import Date as SqlDate
     from sqlalchemy import String, cast, text
+
     uuid_ts_expr = func.to_timestamp(
-        ("x" + func.substr(cast(DiversionClue.id, String), 1, 12)).cast(
-            text("bigint")
-        ) / 1000
+        ("x" + func.substr(cast(DiversionClue.id, String), 1, 12)).cast(text("bigint")) / 1000
     )
     stmt = (
         select(
@@ -223,6 +218,8 @@ async def resolve_diversion_clue(
     db: AsyncSession,
     tenant_id: uuid.UUID,
     clue_id: uuid.UUID,
+    resolution_note: str | None = None,
+    resolved_by_account_id: uuid.UUID | None = None,
 ) -> DiversionClue | None:
     """标记窜货线索为已处理"""
     result = await db.execute(
@@ -235,6 +232,9 @@ async def resolve_diversion_clue(
     if not clue:
         return None
     clue.resolved = True
+    clue.resolution_note = resolution_note
+    clue.resolved_by_account_id = resolved_by_account_id
+    clue.resolved_at = datetime.now(UTC)
     await db.flush()
     await db.refresh(clue)
     return clue
