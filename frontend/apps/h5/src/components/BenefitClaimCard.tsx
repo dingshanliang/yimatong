@@ -5,21 +5,23 @@ import { apiClient } from "@/lib/api";
 
 /** 权益类型 */
 type BenefitType =
-  | "coupon"
-  | "points"
-  | "lottery"
-  | "gift"
+  | "platform_coupon"
+  | "external_link"
+  | "private_domain"
+  | "form_benefit"
   | "cash_red_packet";
 
 interface BenefitClaimCardProps {
   /** 权益 ID */
   benefitId: string;
   /** 权益类型 */
-  benefitType: BenefitType;
+  benefitType: BenefitType | string;
   /** 权益标题 */
   title: string;
   /** 权益描述 */
   description?: string;
+  /** 权益履约配置 */
+  configJson?: Record<string, unknown>;
   /** 扫码令牌，用于鉴权 */
   scanToken?: string;
   /** 企业微信转化模式 */
@@ -33,33 +35,33 @@ const BENEFIT_STYLES: Record<
   BenefitType,
   { icon: string; bg: string; text: string; border: string; label: string }
 > = {
-  coupon: {
+  platform_coupon: {
     icon: "🎫",
     bg: "bg-blue-50",
     text: "text-blue-700",
     border: "border-blue-200",
     label: "优惠券",
   },
-  points: {
-    icon: "⭐",
-    bg: "bg-amber-50",
-    text: "text-amber-700",
-    border: "border-amber-200",
-    label: "积分",
+  external_link: {
+    icon: "↗",
+    bg: "bg-emerald-50",
+    text: "text-emerald-700",
+    border: "border-emerald-200",
+    label: "专属入口",
   },
-  lottery: {
-    icon: "🎰",
+  private_domain: {
+    icon: "💬",
+    bg: "bg-orange-50",
+    text: "text-orange-700",
+    border: "border-orange-200",
+    label: "专属服务",
+  },
+  form_benefit: {
+    icon: "✍",
     bg: "bg-purple-50",
     text: "text-purple-700",
     border: "border-purple-200",
-    label: "抽奖",
-  },
-  gift: {
-    icon: "🎁",
-    bg: "bg-rose-50",
-    text: "text-rose-700",
-    border: "border-rose-200",
-    label: "礼品",
+    label: "表单权益",
   },
   cash_red_packet: {
     icon: "🧧",
@@ -72,12 +74,23 @@ const BENEFIT_STYLES: Record<
 
 /** 按钮文案映射 */
 const CLAIM_BUTTON_TEXT: Record<BenefitType, string> = {
-  coupon: "立即领取",
-  points: "立即领取",
-  lottery: "立即抽奖",
-  gift: "立即领取",
+  platform_coupon: "立即领取",
+  external_link: "领取入口",
+  private_domain: "领取服务",
+  form_benefit: "领取表单",
   cash_red_packet: "领取红包",
 };
+
+function normalizeBenefitType(value: string): BenefitType {
+  const legacyMap: Record<string, BenefitType> = {
+    coupon: "platform_coupon",
+    points: "platform_coupon",
+    lottery: "external_link",
+    gift: "external_link",
+  };
+  if (value in BENEFIT_STYLES) return value as BenefitType;
+  return legacyMap[value] || "platform_coupon";
+}
 
 /**
  * 将分转换为元的显示字符串
@@ -106,6 +119,7 @@ export function BenefitClaimCard({
   benefitType,
   title,
   description,
+  configJson = {},
   scanToken,
   wecomMode = "none",
   onClaimed,
@@ -119,8 +133,9 @@ export function BenefitClaimCard({
   // 红包领取成功后的金额展示（分）
   const [redPacketAmount, setRedPacketAmount] = useState<number | null>(null);
 
-  const style = BENEFIT_STYLES[benefitType] ?? BENEFIT_STYLES.gift;
-  const buttonText = CLAIM_BUTTON_TEXT[benefitType] ?? "立即领取";
+  const normalizedBenefitType = normalizeBenefitType(benefitType);
+  const style = BENEFIT_STYLES[normalizedBenefitType] ?? BENEFIT_STYLES.platform_coupon;
+  const buttonText = CLAIM_BUTTON_TEXT[normalizedBenefitType] ?? "立即领取";
 
   const handleClaim = useCallback(async () => {
     if (loading || claimed) return;
@@ -160,7 +175,7 @@ export function BenefitClaimCard({
 
       // 红包领取成功（已有 OpenID 的情况）
       if (
-        benefitType === "cash_red_packet" &&
+        normalizedBenefitType === "cash_red_packet" &&
         (data.status === "success" || data.status === "delivered") &&
         typeof data.amount === "number"
       ) {
@@ -201,7 +216,7 @@ export function BenefitClaimCard({
     } finally {
       setLoading(false);
     }
-  }, [benefitId, benefitType, scanToken, loading, claimed, onClaimed]);
+  }, [benefitId, normalizedBenefitType, scanToken, loading, claimed, onClaimed]);
 
   const handlePhoneSubmit = useCallback(async () => {
     if (!phone || phone.length < 11) return;
@@ -323,13 +338,48 @@ export function BenefitClaimCard({
                 ? "cursor-default bg-gray-100 text-gray-400"
                 : loading
                   ? "cursor-wait bg-blue-400 text-white"
-                  : benefitType === "cash_red_packet"
+                  : normalizedBenefitType === "cash_red_packet"
                     ? "bg-red-600 text-white active:bg-red-700"
                     : "bg-blue-600 text-white active:bg-blue-700"
             }`}
           >
             {claimed ? "已领取" : loading ? "领取中..." : wecomPrompt ? "我已添加，继续领取" : buttonText}
           </button>
+          {claimed && normalizedBenefitType === "platform_coupon" && (
+            <div className="mt-3 rounded-xl bg-blue-50 px-3 py-2 text-center text-sm text-blue-700">
+              {typeof configJson.coupon_code === "string" && configJson.coupon_code
+                ? `券码：${configJson.coupon_code}`
+                : "优惠券已领取，请按活动说明使用。"}
+            </div>
+          )}
+          {claimed && normalizedBenefitType === "external_link" && typeof configJson.url === "string" && (
+            <a
+              href={configJson.url}
+              className="mt-3 block rounded-xl bg-emerald-600 py-2.5 text-center text-sm font-semibold text-white"
+            >
+              {(configJson.link_text as string) || "立即前往"}
+            </a>
+          )}
+          {claimed && normalizedBenefitType === "private_domain" && (
+            <div className="mt-3 rounded-xl border border-orange-100 bg-orange-50 p-3 text-center">
+              {typeof configJson.group_name === "string" && (
+                <p className="text-sm font-medium text-orange-900">{configJson.group_name}</p>
+              )}
+              {typeof configJson.qr_image_url === "string" ? (
+                <img src={configJson.qr_image_url} alt="权益二维码" className="mx-auto mt-2 h-40 w-40 rounded-lg bg-white object-contain p-2" />
+              ) : (
+                <p className="text-xs text-orange-700">请联系活动客服获取服务入口。</p>
+              )}
+            </div>
+          )}
+          {claimed && normalizedBenefitType === "form_benefit" && typeof configJson.form_url === "string" && (
+            <a
+              href={configJson.form_url}
+              className="mt-3 block rounded-xl bg-purple-600 py-2.5 text-center text-sm font-semibold text-white"
+            >
+              填写表单
+            </a>
+          )}
           {wecomMode === "guide" && !claimed && !wecomPrompt && (
             <button
               type="button"

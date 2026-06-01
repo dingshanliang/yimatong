@@ -3,7 +3,7 @@
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, model_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
@@ -13,6 +13,7 @@ from app.services.campaign import (
     create_benefit,
     delete_benefit,
     get_benefit,
+    get_benefit_summary,
     list_all_benefits,
     list_benefit_claims_admin,
     update_benefit,
@@ -23,34 +24,37 @@ benefit_router = APIRouter(prefix="/api/v1/benefits", tags=["benefits"])
 
 
 class BenefitUpdateRequest(BaseModel):
-    name: str | None = None
+    name: str | None = Field(default=None, min_length=1, max_length=200)
     benefit_type: str | None = None
     config_json: dict | None = None
-    stock_total: int | None = None
-    per_person_limit: int | None = None
+    stock_total: int | None = Field(default=None, ge=1)
+    per_person_limit: int | None = Field(default=None, ge=1)
     status: str | None = None
     connector_id: uuid.UUID | None = None
 
-    @field_validator("config_json")
-    @classmethod
-    def validate_config_json(cls, v: dict | None) -> dict | None:
-        if v is None:
-            return v
-        return validate_benefit_config_shape(v)
+    @model_validator(mode="after")
+    def validate_benefit_update(self):
+        if self.status is not None and self.status not in {"active", "inactive"}:
+            raise ValueError("status must be one of: active, inactive")
+        if self.config_json is not None:
+            self.config_json = validate_benefit_config_shape(self.config_json, self.benefit_type)
+        return self
 
 
 class BenefitCreateRequest(BaseModel):
-    name: str
+    name: str = Field(min_length=1, max_length=200)
     benefit_type: str
-    config_json: dict
-    stock_total: int
-    per_person_limit: int = 1
+    config_json: dict = Field(default_factory=dict)
+    stock_total: int = Field(ge=1)
+    per_person_limit: int = Field(default=1, ge=1)
     connector_id: uuid.UUID | None = None
 
-    @field_validator("config_json")
-    @classmethod
-    def validate_config_json(cls, v: dict) -> dict:
-        return validate_benefit_config_shape(v)
+    @model_validator(mode="after")
+    def validate_benefit(self):
+        if self.benefit_type == "cash_red_packet" and self.connector_id is None:
+            raise ValueError("connector_id is required for cash_red_packet")
+        self.config_json = validate_benefit_config_shape(self.config_json, self.benefit_type)
+        return self
 
 
 @benefit_router.post("", status_code=201, summary="创建权益")
@@ -74,12 +78,49 @@ async def create_benefit_endpoint(
 
 @benefit_router.get("", summary="权益 列表")
 async def list_benefits_endpoint(
+    q: str | None = Query(None),
+    benefit_type: str | None = Query(None),
+    status: str | None = Query(None),
+    campaign_id: uuid.UUID | None = Query(None),
+    usage: str | None = Query(None, pattern="^(used|unused)$"),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
     items, total = await list_all_benefits(
+        db,
+        tenant_id,
+        q=q,
+        benefit_type=benefit_type,
+        status=status,
+        campaign_id=campaign_id,
+        usage=usage,
+        page=page,
+        page_size=page_size,
+    )
+    return PaginatedResponse(items=items, total=total, page=page, page_size=page_size)
+
+
+@benefit_router.get("/summary", summary="权益概览")
+async def benefit_summary_endpoint(
+    db: AsyncSession = Depends(get_db),
+    tenant_id: uuid.UUID = Depends(get_current_tenant),
+):
+    return await get_benefit_summary(db, tenant_id)
+
+
+# --- Admin benefit claims ---
+
+
+@benefit_router.get("/admin/claims", summary="benefit claims admin 列表")
+async def list_benefit_claims_admin_endpoint(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    db: AsyncSession = Depends(get_db),
+    tenant_id: uuid.UUID = Depends(get_current_tenant),
+):
+    items, total = await list_benefit_claims_admin(
         db,
         tenant_id,
         page=page,
@@ -107,12 +148,15 @@ async def update_benefit_endpoint(
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
-    data = await update_benefit(
-        db,
-        tenant_id,
-        benefit_id,
-        **body.model_dump(exclude_none=True),
-    )
+    try:
+        data = await update_benefit(
+            db,
+            tenant_id,
+            benefit_id,
+            **body.model_dump(exclude_none=True),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     if not data:
         raise HTTPException(status_code=404, detail="Benefit not found")
     return data
@@ -125,25 +169,8 @@ async def delete_benefit_endpoint(
     tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
     deleted = await delete_benefit(db, tenant_id, benefit_id)
-    if not deleted:
+    if deleted is None:
         raise HTTPException(status_code=404, detail="Benefit not found")
+    if deleted == "in_use":
+        raise HTTPException(status_code=409, detail="已有活动使用或领取记录，不能删除，请停用权益")
     return {"status": "deleted"}
-
-
-# --- Admin benefit claims ---
-
-
-@benefit_router.get("/admin/claims", summary="benefit claims admin 列表")
-async def list_benefit_claims_admin_endpoint(
-    page: int = Query(1, ge=1),
-    page_size: int = Query(20, ge=1, le=100),
-    db: AsyncSession = Depends(get_db),
-    tenant_id: uuid.UUID = Depends(get_current_tenant),
-):
-    items, total = await list_benefit_claims_admin(
-        db,
-        tenant_id,
-        page=page,
-        page_size=page_size,
-    )
-    return PaginatedResponse(items=items, total=total, page=page, page_size=page_size)

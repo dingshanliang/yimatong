@@ -111,49 +111,38 @@ async def claim_benefit_h5(
                 },
             )
 
-    # 5. 检查库存
-    if benefit.stock_total <= 0:
-        raise HTTPException(status_code=410, detail="权益已抢光")
-
-    # 6. 双层幂等：Redis 缓存层 + DB 唯一约束
-    idempotency_key = f"claim:{token[:16]}:{benefit_id}"
-
-    if not await _claim_cache.set_idempotent(idempotency_key, ttl=300):
-        raise HTTPException(status_code=409, detail="already claimed")
-
-    from app.models.campaign import BenefitClaim
-
-    existing = await db.execute(
-        select(BenefitClaim).where(
-            BenefitClaim.benefit_id == benefit_id,
-            BenefitClaim.idempotency_key == idempotency_key,
-        )
-    )
-    if existing.scalar_one_or_none():
-        raise HTTPException(status_code=409, detail="already claimed")
-
-    # 7. 如果需要手机号
+    # 5. 如果需要手机号，先提示补全，避免提前占用幂等 key
     if benefit.config_json.get("require_phone") and not body.phone:
         raise HTTPException(
             status_code=403,
             detail={"code": "require_auth", "message": "需要授权手机号"},
         )
 
-    # 8. 创建领取记录
-    claim = BenefitClaim(
-        tenant_id=benefit.tenant_id,
-        benefit_id=benefit_id,
-        campaign_id=benefit.campaign_id,
-        consumer_id=idempotency_key,
-        idempotency_key=idempotency_key,
-        status="claimed",
+    # 6. 双层幂等：Redis 缓存层 + DB 唯一约束
+    idempotency_key = f"claim:{token[:16]}:{benefit_id}"
+    if not await _claim_cache.set_idempotent(idempotency_key, ttl=300):
+        raise HTTPException(status_code=409, detail="already claimed")
+
+    from app.services.campaign import claim_benefit
+
+    consumer_id = str(payload.get("consumer_id") or idempotency_key)
+    result = await claim_benefit(
+        db,
+        benefit.tenant_id,
+        benefit_id,
+        consumer_id,
+        idempotency_key,
     )
-    db.add(claim)
-
-    benefit.stock_total -= 1
-    await db.commit()
-
-    return {"status": "claimed", "benefit_id": str(benefit_id)}
+    if result["status"] in {"idempotent", "success"}:
+        await db.commit()
+        return {"status": "claimed", "benefit_id": str(benefit_id)}
+    if result["status"] == "inactive":
+        raise HTTPException(status_code=409, detail="权益已停用")
+    if result["status"] == "out_of_stock":
+        raise HTTPException(status_code=410, detail="权益已抢光")
+    if result["status"] == "limit_reached":
+        raise HTTPException(status_code=403, detail="您已达到本次活动领取上限")
+    raise HTTPException(status_code=404, detail="benefit not found")
 
 
 async def _handle_cash_red_packet_claim(

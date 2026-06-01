@@ -246,6 +246,7 @@ async def _build_json_response(
                     "id": str(benefit.id),
                     "name": benefit.name,
                     "benefit_type": benefit.benefit_type,
+                    "config_json": benefit.config_json,
                     "description": benefit.config_json.get("description"),
                 }
                 if benefit

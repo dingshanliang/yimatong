@@ -232,9 +232,10 @@ function ModuleRenderer({
         <div className="px-4 mt-3">
           <BenefitClaimCard
             benefitId={(config.benefit_id as string) || (campaignBenefit?.id as string) || ""}
-            benefitType={(config.benefit_type as "coupon" | "points" | "lottery" | "gift" | "cash_red_packet") || "coupon"}
+            benefitType={(config.benefit_type as string) || (campaignBenefit?.benefit_type as string) || "platform_coupon"}
             title={(config.title as string) || (campaignBenefit?.name as string) || "领取权益"}
             description={(config.description as string) || (campaignBenefit?.description as string)}
+            configJson={(config.config_json as Record<string, unknown>) || (campaignBenefit?.config_json as Record<string, unknown>) || {}}
             scanToken={scanToken}
             wecomMode={(campaignRules?.wecom_mode as "none" | "guide" | "required") || "none"}
           />

@@ -1,9 +1,9 @@
-export const BENEFIT_TYPE_MAP: Record<string, { label: string; color: string }> = {
-  platform_coupon: { label: "平台券", color: "blue" },
-  external_link: { label: "外部链接", color: "green" },
-  private_domain: { label: "私域", color: "orange" },
-  form_benefit: { label: "表单", color: "purple" },
-  cash_red_packet: { label: "现金红包", color: "red" },
+export const BENEFIT_TYPE_MAP: Record<string, { label: string; color: string; description: string }> = {
+  platform_coupon: { label: "平台券", color: "blue", description: "发放复购券、满减券，可关联券码池自动发码" },
+  external_link: { label: "外部链接", color: "green", description: "领取后跳转小程序、商城页或活动页" },
+  private_domain: { label: "私域二维码", color: "orange", description: "领取后展示群码或客服码，承接复购服务" },
+  form_benefit: { label: "表单权益", color: "purple", description: "领取后引导填写留资、报名或问卷表单" },
+  cash_red_packet: { label: "现金红包", color: "red", description: "通过微信支付转账连接器发放现金红包" },
 };
 
 export const BENEFIT_STATUS_MAP: Record<string, { label: string; color: string }> = {

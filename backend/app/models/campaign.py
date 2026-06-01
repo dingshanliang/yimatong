@@ -4,10 +4,12 @@ import uuid
 
 from sqlalchemy import (
     JSON,
+    DateTime,
     ForeignKey,
     Index,
     String,
     UniqueConstraint,
+    func,
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -68,6 +70,10 @@ class Benefit(Base):
     stock_used: Mapped[int] = mapped_column(nullable=False, default=0)
     per_person_limit: Mapped[int] = mapped_column(nullable=False, default=1)
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="active")
+    created_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[DateTime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
 
     __table_args__ = (Index("ix_benefits_stock", "stock_total", "stock_used"),)
 
@@ -82,9 +88,9 @@ class BenefitClaim(Base):
         nullable=False,
         index=True,
     )
-    campaign_id: Mapped[uuid.UUID] = mapped_column(
+    campaign_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("campaigns.id"),
-        nullable=False,
+        nullable=True,
         index=True,
     )
     consumer_id: Mapped[str] = mapped_column(String(100), nullable=False)
@@ -93,6 +99,10 @@ class BenefitClaim(Base):
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="success")
     delivery_status: Mapped[str] = mapped_column(
         String(20), nullable=False, default="not_required"
+    )
+    created_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[DateTime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
 
     __table_args__ = (

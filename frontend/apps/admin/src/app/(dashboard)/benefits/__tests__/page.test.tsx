@@ -2,19 +2,29 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import BenefitsPage from "../page";
 
-// Mock Ant Design message
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ push: vi.fn() }),
+  useSearchParams: () => new URLSearchParams(),
+}));
+
+const mockMessageSuccess = vi.fn();
+const mockMessageError = vi.fn();
+
 vi.mock("antd", async () => {
-  const actual = await vi.importActual("antd");
+  const actual = await vi.importActual<typeof import("antd")>("antd");
   return {
     ...actual,
-    message: {
-      success: vi.fn(),
-      error: vi.fn(),
+    App: {
+      useApp: () => ({
+        message: {
+          success: mockMessageSuccess,
+          error: mockMessageError,
+        },
+      }),
     },
   };
 });
 
-// Mock api
 const mockGet = vi.fn();
 const mockPost = vi.fn();
 const mockPatch = vi.fn();
@@ -29,110 +39,132 @@ vi.mock("@/lib/api", () => ({
   },
 }));
 
-// Mock hooks
+const mockSetFilter = vi.fn();
+const mockMutate = vi.fn();
+
 vi.mock("@/lib/hooks", () => ({
-  useCrud: vi.fn(() => ({
-    items: [
-      {
-        id: "b1",
-        name: "测试权益",
-        benefit_type: "platform_coupon",
-        stock_total: 100,
-        stock_used: 10,
-        per_person_limit: 2,
-        campaign_id: "c1",
-        status: "active",
-        created_at: "2026-05-29T10:00:00Z",
-        config_json: { amount: 10, min_order: 50 },
-      },
-    ],
-    total: 1,
-    page: 1,
-    pageSize: 20,
-    loading: false,
-    filters: {},
-    setPage: vi.fn(),
-    setFilter: vi.fn(),
-    resetFilters: vi.fn(),
-    mutate: vi.fn(),
-    create: vi.fn(),
-    update: vi.fn(),
-    remove: vi.fn(),
-  })),
+  useCrud: vi.fn((basePath: string) => {
+    if (basePath === "/benefits/admin/claims") {
+      return {
+        items: [
+          {
+            id: "cl1",
+            consumer_id: "consumer-001-abcdef",
+            benefit_id: "b1",
+            benefit_name: "测试权益",
+            campaign_id: "c1",
+            campaign_name: "活动1",
+            status: "claimed",
+            delivery_status: "not_required",
+            claimed_at: "2026-06-01T10:00:00Z",
+          },
+        ],
+        total: 1,
+        page: 1,
+        pageSize: 20,
+        loading: false,
+        setPage: vi.fn(),
+        setFilter: mockSetFilter,
+        resetFilters: vi.fn(),
+        mutate: mockMutate,
+        create: vi.fn(),
+        update: vi.fn(),
+        remove: vi.fn(),
+      };
+    }
+    return {
+      items: [
+        {
+          id: "b1",
+          name: "测试权益",
+          benefit_type: "platform_coupon",
+          stock_total: 100,
+          stock_used: 10,
+          per_person_limit: 2,
+          campaign_id: "c1",
+          connector_id: null,
+          status: "active",
+          created_at: "2026-05-29T10:00:00Z",
+          config_json: { amount: 10, min_order: 50, validity_type: "campaign_period" },
+        },
+      ],
+      total: 1,
+      page: 1,
+      pageSize: 20,
+      loading: false,
+      filters: {},
+      setPage: vi.fn(),
+      setFilter: mockSetFilter,
+      resetFilters: vi.fn(),
+      mutate: mockMutate,
+      create: vi.fn(),
+      update: vi.fn(),
+      remove: vi.fn(),
+    };
+  }),
 }));
 
 describe("BenefitsPage", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockGet.mockResolvedValue({ data: { items: [], total: 0 } });
+    mockGet.mockImplementation((url: string) => {
+      if (url === "/benefits/summary") {
+        return Promise.resolve({
+          data: {
+            total: 1,
+            active: 1,
+            unused: 0,
+            stock_total: 100,
+            stock_used: 10,
+            stock_remaining: 90,
+            claim_count: 1,
+            failed_delivery_count: 0,
+          },
+        });
+      }
+      if (url === "/campaigns") return Promise.resolve({ data: { items: [{ id: "c1", name: "活动1" }], total: 1 } });
+      if (url === "/connectors/connectors") return Promise.resolve({ data: [] });
+      return Promise.resolve({ data: { items: [], total: 0 } });
+    });
   });
 
-  it("renders benefit list with correct columns", () => {
+  it("renders benefit workbench summary and list", async () => {
     render(<BenefitsPage />);
     expect(screen.getByText("权益管理")).toBeInTheDocument();
+    expect(screen.getByText("管理可复用权益、活动使用关系、库存与消费者领取记录。")).toBeInTheDocument();
     expect(screen.getByText("测试权益")).toBeInTheDocument();
-    expect(screen.getByText("平台券")).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByText("剩余库存")).toBeInTheDocument());
   });
 
-  it("calls /benefits endpoint for list", async () => {
-    render(<BenefitsPage />);
-    await waitFor(() => {
-      const calls = mockGet.mock.calls.filter((c) => c[0] === "/benefits");
-      expect(calls.length).toBeGreaterThan(0);
-    });
-  });
-
-  it("calls /benefits/admin/claims endpoint for claims tab", async () => {
-    mockGet.mockResolvedValue({
-      data: { items: [], total: 0, page: 1, page_size: 20 },
-    });
-    render(<BenefitsPage />);
-
-    const claimsTab = screen.getByText("领取记录");
-    fireEvent.click(claimsTab);
-
-    await waitFor(() => {
-      const calls = mockGet.mock.calls.filter(
-        (c) => c[0] === "/benefits/admin/claims"
-      );
-      expect(calls.length).toBeGreaterThan(0);
-    });
-  });
-
-  it("opens create modal with benefit type config fields", () => {
-    render(<BenefitsPage />);
-    const createBtn = screen.getByRole("button", { name: /新建权益/ });
-    fireEvent.click(createBtn);
-
-    expect(screen.queryAllByText("权益名称").length).toBeGreaterThan(0);
-    expect(screen.queryAllByText("权益类型").length).toBeGreaterThan(0);
-    expect(screen.queryAllByText("总库存").length).toBeGreaterThan(0);
-    expect(screen.queryAllByText("每人限领").length).toBeGreaterThan(0);
-    expect(screen.queryAllByText("关联活动").length).toBeGreaterThan(0);
-  });
-
-  it("shows platform coupon config fields when type selected", async () => {
-    mockGet.mockResolvedValue({
-      data: { items: [{ id: "c1", name: "活动1" }], total: 1 },
-    });
+  it("opens create modal with business-oriented fields", () => {
     render(<BenefitsPage />);
     fireEvent.click(screen.getByRole("button", { name: /新建权益/ }));
 
-    // Select platform_coupon type
-    const typeSelect = document.querySelector('[name="benefit_type"]');
-    if (typeSelect) {
-      fireEvent.mouseDown(typeSelect);
-      await waitFor(() => {
-        const option = screen.getByText("平台券");
-        if (option) fireEvent.click(option);
-      });
-    }
+    expect(screen.getByText("基本信息")).toBeInTheDocument();
+    expect(screen.getByText("发放规则")).toBeInTheDocument();
+    expect(screen.getByText("权益类型")).toBeInTheDocument();
+    expect(screen.getByText("每位消费者限领")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /创建权益/ })).toBeInTheDocument();
   });
 
-  it("displays stock total and remaining in table", () => {
+  it("displays stock as total, used, and remaining", () => {
     render(<BenefitsPage />);
-    // stock_total=100, stock_used=10, remaining=90
-    expect(screen.getByText("100")).toBeInTheDocument();
-    expect(screen.getByText("90")).toBeInTheDocument();
+    expect(screen.getByText("已领 10 / 100，剩余 90")).toBeInTheDocument();
+  });
+
+  it("shows enriched claim records", async () => {
+    render(<BenefitsPage />);
+    fireEvent.click(screen.getByText("领取记录"));
+    expect(await screen.findByText("活动1")).toBeInTheDocument();
+    expect(screen.getByText("测试权益")).toBeInTheDocument();
+    expect(screen.getByText("无需发放")).toBeInTheDocument();
+  });
+
+  it("filters benefits by search keyword", () => {
+    render(<BenefitsPage />);
+    const search = screen.getByPlaceholderText("搜索权益名称");
+    fireEvent.change(search, { target: { value: "复购" } });
+    fireEvent.keyDown(search, { key: "Enter", code: "Enter" });
+    expect(mockSetFilter).toHaveBeenCalled();
   });
 });

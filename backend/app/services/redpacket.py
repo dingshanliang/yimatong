@@ -21,8 +21,9 @@ _DEDUCT_BUDGET_SQL = text("""
         config_json, '{claimed_budget}',
         (COALESCE((config_json->>'claimed_budget')::int, 0) + :amount)::text::jsonb
     ),
-    stock_total = GREATEST(stock_total - 1, 0)
+    stock_used = stock_used + 1
     WHERE id = :benefit_id
+    AND stock_used < stock_total
     AND (COALESCE((config_json->>'claimed_budget')::int, 0) + :amount) <= (config_json->>'budget')::int
 """)
 
@@ -58,12 +59,12 @@ async def claim_red_packet(
     from app.services.connectors.registry import get_adapter
     from app.services.redpacket_amount import calc_amount, validate_config
 
-    # 1. FOR UPDATE 读取最新 stock_total 和 config_json
+    # 1. FOR UPDATE 读取最新库存和 config_json
     fresh = await db.execute(
         select(Benefit).where(Benefit.id == benefit_id).with_for_update()
     )
     benefit = fresh.scalar_one_or_none()
-    if not benefit or benefit.stock_total <= 0:
+    if not benefit or benefit.stock_used >= benefit.stock_total:
         raise RuntimeError("红包已抢光")
 
     config = benefit.config_json
@@ -80,7 +81,7 @@ async def claim_red_packet(
         raise RuntimeError("红包预算已用尽")
 
     if config.get("amount_type") == "lucky":
-        remaining_count = benefit.stock_total
+        remaining_count = max(benefit.stock_total - benefit.stock_used, 1)
         amount = calc_amount(config, remaining_budget=remaining, remaining_count=remaining_count)
     else:
         amount = calc_amount(config)

@@ -32,6 +32,15 @@ BENEFIT_VALIDITY_TYPES = {
 }
 
 WECOM_MODES = {"none", "guide", "required"}
+BENEFIT_TYPES = {
+    "platform_coupon",
+    "external_link",
+    "private_domain",
+    "form_benefit",
+    "cash_red_packet",
+}
+BENEFIT_STATUSES = {"active", "inactive"}
+CASH_RED_PACKET_AMOUNT_TYPES = {"fixed", "random", "lucky"}
 
 
 def validate_campaign_rules_shape(rules_json: dict) -> dict:
@@ -57,15 +66,16 @@ def validate_campaign_rules_shape(rules_json: dict) -> dict:
     return rules_json
 
 
-def validate_benefit_config_shape(config_json: dict) -> dict:
+def validate_benefit_config_shape(config_json: dict, benefit_type: str | None = None) -> dict:
+    if benefit_type is not None and benefit_type not in BENEFIT_TYPES:
+        raise ValueError(f"benefit_type must be one of: {', '.join(sorted(BENEFIT_TYPES))}")
+
     campaign_goal = config_json.get("campaign_goal")
     if campaign_goal is not None and campaign_goal not in CAMPAIGN_GOALS:
         raise ValueError(f"campaign_goal must be one of: {', '.join(sorted(CAMPAIGN_GOALS))}")
 
     validity_type = config_json.get("validity_type")
-    if validity_type is None:
-        return config_json
-    if validity_type not in BENEFIT_VALIDITY_TYPES:
+    if validity_type is not None and validity_type not in BENEFIT_VALIDITY_TYPES:
         raise ValueError(f"validity_type must be one of: {', '.join(sorted(BENEFIT_VALIDITY_TYPES))}")
 
     if validity_type == "after_claim_days":
@@ -79,7 +89,60 @@ def validate_benefit_config_shape(config_json: dict) -> dict:
         if end_at < start_at:
             raise ValueError("validity_end_at must be later than or equal to validity_start_at")
 
+    if benefit_type == "platform_coupon":
+        amount = config_json.get("amount")
+        if amount is not None and (not isinstance(amount, int | float) or amount < 0):
+            raise ValueError("amount must be a number greater than or equal to 0")
+        min_order = config_json.get("min_order")
+        if min_order is not None and (not isinstance(min_order, int | float) or min_order < 0):
+            raise ValueError("min_order must be a number greater than or equal to 0")
+
+    if benefit_type == "external_link":
+        _require_url(config_json, "url")
+
+    if benefit_type == "private_domain":
+        _require_url(config_json, "qr_image_url")
+
+    if benefit_type == "form_benefit":
+        _require_url(config_json, "form_url")
+        if "require_phone" in config_json and not isinstance(config_json["require_phone"], bool):
+            raise ValueError("require_phone must be a boolean")
+
+    if benefit_type == "cash_red_packet":
+        amount_type = config_json.get("amount_type")
+        if amount_type not in CASH_RED_PACKET_AMOUNT_TYPES:
+            raise ValueError(f"amount_type must be one of: {', '.join(sorted(CASH_RED_PACKET_AMOUNT_TYPES))}")
+        _require_positive_number(config_json, "budget")
+        if amount_type == "fixed":
+            _require_positive_number(config_json, "fixed_amount", max_value=20000)
+        if amount_type == "random":
+            min_amount = _require_positive_number(config_json, "min_amount", max_value=20000)
+            max_amount = _require_positive_number(config_json, "max_amount", max_value=20000)
+            if max_amount < min_amount:
+                raise ValueError("max_amount must be greater than or equal to min_amount")
+        if amount_type == "lucky":
+            _require_positive_number(config_json, "lucky_min_per", max_value=20000)
+            total_count = config_json.get("lucky_total_count")
+            if not isinstance(total_count, int) or total_count < 2:
+                raise ValueError("lucky_total_count must be an integer greater than or equal to 2")
+
     return config_json
+
+
+def _require_url(config_json: dict, field_name: str) -> str:
+    value = config_json.get(field_name)
+    if not isinstance(value, str) or not value.strip().lower().startswith(("http://", "https://")):
+        raise ValueError(f"{field_name} must be an http(s) URL")
+    return value.strip()
+
+
+def _require_positive_number(config_json: dict, field_name: str, max_value: int | None = None) -> int | float:
+    value = config_json.get(field_name)
+    if not isinstance(value, int | float) or value <= 0:
+        raise ValueError(f"{field_name} must be a number greater than 0")
+    if max_value is not None and value > max_value:
+        raise ValueError(f"{field_name} must be less than or equal to {max_value}")
+    return value
 
 
 async def create_campaign(
@@ -346,6 +409,33 @@ async def attach_benefit_to_campaign(
     return _benefit_to_dict(benefit)
 
 
+async def detach_benefit_from_campaign(
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    campaign_id: uuid.UUID,
+    benefit_id: uuid.UUID,
+) -> dict | None:
+    result = await db.execute(
+        select(Benefit).where(
+            Benefit.id == benefit_id,
+            Benefit.tenant_id == tenant_id,
+            Benefit.campaign_id == campaign_id,
+        ),
+    )
+    benefit = result.scalar_one_or_none()
+    if not benefit:
+        return None
+
+    claim_count = await _benefit_claim_count(db, tenant_id, benefit_id)
+    if claim_count > 0:
+        raise ValueError("Benefit already has claims and cannot be detached")
+
+    benefit.campaign_id = None
+    await db.flush()
+    await db.refresh(benefit)
+    return _benefit_to_dict(benefit)
+
+
 async def list_benefits(
     db: AsyncSession,
     tenant_id: uuid.UUID,
@@ -365,6 +455,11 @@ async def list_benefits(
 async def list_all_benefits(
     db: AsyncSession,
     tenant_id: uuid.UUID,
+    q: str | None = None,
+    benefit_type: str | None = None,
+    status: str | None = None,
+    campaign_id: uuid.UUID | None = None,
+    usage: str | None = None,
     page: int = 1,
     page_size: int = 20,
 ) -> tuple[list[dict], int]:
@@ -376,10 +471,63 @@ async def list_all_benefits(
             Benefit.tenant_id == tenant_id,
         )
     )
+    if q:
+        pattern = f"%{q}%"
+        stmt = stmt.where(Benefit.name.ilike(pattern))
+        count_stmt = count_stmt.where(Benefit.name.ilike(pattern))
+    if benefit_type:
+        stmt = stmt.where(Benefit.benefit_type == benefit_type)
+        count_stmt = count_stmt.where(Benefit.benefit_type == benefit_type)
+    if status:
+        stmt = stmt.where(Benefit.status == status)
+        count_stmt = count_stmt.where(Benefit.status == status)
+    if campaign_id:
+        stmt = stmt.where(Benefit.campaign_id == campaign_id)
+        count_stmt = count_stmt.where(Benefit.campaign_id == campaign_id)
+    if usage == "unused":
+        stmt = stmt.where(Benefit.campaign_id.is_(None))
+        count_stmt = count_stmt.where(Benefit.campaign_id.is_(None))
+    if usage == "used":
+        stmt = stmt.where(Benefit.campaign_id.is_not(None))
+        count_stmt = count_stmt.where(Benefit.campaign_id.is_not(None))
     total = (await db.execute(count_stmt)).scalar() or 0
     stmt = stmt.order_by(Benefit.id.desc()).offset((page - 1) * page_size).limit(page_size)
     result = await db.execute(stmt)
     return [_benefit_to_dict(b) for b in result.scalars().all()], total
+
+
+async def get_benefit_summary(db: AsyncSession, tenant_id: uuid.UUID) -> dict:
+    total_result = await db.execute(select(func.count()).select_from(Benefit).where(Benefit.tenant_id == tenant_id))
+    active_result = await db.execute(
+        select(func.count()).select_from(Benefit).where(Benefit.tenant_id == tenant_id, Benefit.status == "active")
+    )
+    unused_result = await db.execute(
+        select(func.count()).select_from(Benefit).where(Benefit.tenant_id == tenant_id, Benefit.campaign_id.is_(None))
+    )
+    stock_result = await db.execute(
+        select(func.coalesce(func.sum(Benefit.stock_total), 0), func.coalesce(func.sum(Benefit.stock_used), 0)).where(
+            Benefit.tenant_id == tenant_id
+        )
+    )
+    claim_result = await db.execute(
+        select(func.count()).select_from(BenefitClaim).where(BenefitClaim.tenant_id == tenant_id)
+    )
+    failed_delivery_result = await db.execute(
+        select(func.count())
+        .select_from(BenefitClaim)
+        .where(BenefitClaim.tenant_id == tenant_id, BenefitClaim.delivery_status == "failed")
+    )
+    stock_total, stock_used = stock_result.one()
+    return {
+        "total": total_result.scalar() or 0,
+        "active": active_result.scalar() or 0,
+        "unused": unused_result.scalar() or 0,
+        "stock_total": stock_total or 0,
+        "stock_used": stock_used or 0,
+        "stock_remaining": max((stock_total or 0) - (stock_used or 0), 0),
+        "claim_count": claim_result.scalar() or 0,
+        "failed_delivery_count": failed_delivery_result.scalar() or 0,
+    }
 
 
 async def get_benefit(
@@ -406,6 +554,13 @@ async def update_benefit(
     b = result.scalar_one_or_none()
     if not b:
         return None
+    next_type = fields.get("benefit_type", b.benefit_type)
+    next_config = fields.get("config_json", b.config_json)
+    validate_benefit_config_shape(next_config, next_type)
+    if fields.get("status") is not None and fields["status"] not in BENEFIT_STATUSES:
+        raise ValueError(f"status must be one of: {', '.join(sorted(BENEFIT_STATUSES))}")
+    if fields.get("stock_total") is not None and fields["stock_total"] < b.stock_used:
+        raise ValueError("stock_total cannot be less than stock_used")
     for k, v in fields.items():
         if v is not None:
             setattr(b, k, v)
@@ -418,16 +573,18 @@ async def delete_benefit(
     db: AsyncSession,
     tenant_id: uuid.UUID,
     benefit_id: uuid.UUID,
-) -> bool:
+) -> str | None:
     result = await db.execute(
         select(Benefit).where(Benefit.id == benefit_id, Benefit.tenant_id == tenant_id),
     )
     b = result.scalar_one_or_none()
     if not b:
-        return False
+        return None
+    if b.campaign_id or await _benefit_claim_count(db, tenant_id, benefit_id) > 0:
+        return "in_use"
     await db.delete(b)
     await db.flush()
-    return True
+    return "deleted"
 
 
 async def list_benefit_claims_admin(
@@ -436,7 +593,6 @@ async def list_benefit_claims_admin(
     page: int = 1,
     page_size: int = 20,
 ) -> tuple[list[dict], int]:
-    stmt = select(BenefitClaim).where(BenefitClaim.tenant_id == tenant_id)
     count_stmt = (
         select(func.count())
         .select_from(BenefitClaim)
@@ -445,9 +601,20 @@ async def list_benefit_claims_admin(
         )
     )
     total = (await db.execute(count_stmt)).scalar() or 0
-    stmt = stmt.order_by(BenefitClaim.id.desc()).offset((page - 1) * page_size).limit(page_size)
+    stmt = (
+        select(BenefitClaim, Benefit.name.label("benefit_name"), Campaign.name.label("campaign_name"))
+        .join(Benefit, Benefit.id == BenefitClaim.benefit_id)
+        .outerjoin(Campaign, Campaign.id == BenefitClaim.campaign_id)
+        .where(BenefitClaim.tenant_id == tenant_id)
+        .order_by(BenefitClaim.id.desc())
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+    )
     result = await db.execute(stmt)
-    return [_claim_to_dict(c) for c in result.scalars().all()], total
+    return [
+        _claim_to_dict(claim, benefit_name=benefit_name, campaign_name=campaign_name)
+        for claim, benefit_name, campaign_name in result.all()
+    ], total
 
 
 async def claim_benefit(
@@ -479,6 +646,9 @@ async def claim_benefit(
         return {"status": "not_found"}
 
     # 库存检查
+    if benefit.status != "active":
+        return {"status": "inactive"}
+
     if benefit.stock_used >= benefit.stock_total:
         return {"status": "out_of_stock"}
 
@@ -518,16 +688,29 @@ async def claim_benefit(
     return {"status": "success", "claim": _claim_to_dict(claim)}
 
 
-def _claim_to_dict(c: BenefitClaim) -> dict:
+async def _benefit_claim_count(db: AsyncSession, tenant_id: uuid.UUID, benefit_id: uuid.UUID) -> int:
+    result = await db.execute(
+        select(func.count()).select_from(BenefitClaim).where(
+            BenefitClaim.tenant_id == tenant_id,
+            BenefitClaim.benefit_id == benefit_id,
+        )
+    )
+    return result.scalar() or 0
+
+
+def _claim_to_dict(c: BenefitClaim, benefit_name: str | None = None, campaign_name: str | None = None) -> dict:
     return {
         "id": str(c.id),
         "tenant_id": str(c.tenant_id),
         "benefit_id": str(c.benefit_id),
-        "campaign_id": str(c.campaign_id),
+        "benefit_name": benefit_name,
+        "campaign_id": str(c.campaign_id) if c.campaign_id else None,
+        "campaign_name": campaign_name,
         "consumer_id": c.consumer_id,
         "claim_type": c.claim_type,
         "status": c.status,
         "delivery_status": c.delivery_status,
+        "claimed_at": c.created_at.isoformat() if c.created_at else None,
     }
 
 
@@ -727,4 +910,6 @@ def _benefit_to_dict(b: Benefit) -> dict:
         "stock_used": b.stock_used,
         "per_person_limit": b.per_person_limit,
         "status": b.status,
+        "created_at": b.created_at.isoformat() if b.created_at else None,
+        "updated_at": b.updated_at.isoformat() if b.updated_at else None,
     }

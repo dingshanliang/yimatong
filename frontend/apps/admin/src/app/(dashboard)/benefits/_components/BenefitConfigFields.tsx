@@ -81,9 +81,16 @@ export function BenefitConfigFields({
   if (benefitType === "platform_coupon") {
     return (
       <>
-        <Form.Item name={["config_json", "amount"]} label="券面额（元）"><InputNumber min={0} className="w-full" /></Form.Item>
-        <Form.Item name={["config_json", "min_order"]} label="最低订单金额（元）"><InputNumber min={0} className="w-full" /></Form.Item>
-        <Form.Item name={["config_json", "coupon_code"]} label="券码"><Input placeholder="可选，留空则系统自动生成" /></Form.Item>
+        <Divider titlePlacement="left" plain>平台券配置</Divider>
+        <Form.Item name={["config_json", "amount"]} label="券面额（元）" extra="没有固定金额时可留空，例如券码池按外部券配置发放">
+          <InputNumber min={0} className="w-full" placeholder="例如 20" />
+        </Form.Item>
+        <Form.Item name={["config_json", "min_order"]} label="最低订单金额（元）">
+          <InputNumber min={0} className="w-full" placeholder="例如 99" />
+        </Form.Item>
+        <Form.Item name={["config_json", "coupon_code"]} label="固定券码">
+          <Input placeholder="可选，留空则系统或券码池自动分配" />
+        </Form.Item>
         <Divider titlePlacement="left" plain>券码池连接器</Divider>
         <Form.Item name="connector_id" label="券码池连接器" extra="关联券码池后，消费者领取时自动分配券码">
           <Select placeholder="选择券码池连接器（可选）" showSearch optionFilterProp="label" allowClear
@@ -97,8 +104,13 @@ export function BenefitConfigFields({
   if (benefitType === "external_link") {
     return (
       <>
-        <Form.Item name={["config_json", "url"]} label="跳转链接"><Input placeholder="https://example.com" /></Form.Item>
-        <Form.Item name={["config_json", "link_text"]} label="链接文案"><Input placeholder="点击领取" /></Form.Item>
+        <Divider titlePlacement="left" plain>跳转配置</Divider>
+        <Form.Item name={["config_json", "url"]} label="跳转链接" rules={[{ required: true, message: "请输入跳转链接" }, { type: "url", message: "请输入 http:// 或 https:// 开头的链接" }]}>
+          <Input placeholder="https://example.com/campaign" />
+        </Form.Item>
+        <Form.Item name={["config_json", "link_text"]} label="按钮文案" initialValue="立即前往">
+          <Input placeholder="立即前往" maxLength={20} />
+        </Form.Item>
       </>
     );
   }
@@ -109,19 +121,22 @@ export function BenefitConfigFields({
           name={["config_json", "qr_image_url"]}
           label="微信群二维码图片"
           extra="消费者领取后展示。可直接上传二维码图片，也可粘贴公开图片链接。"
-          rules={[{ type: "url", message: "请输入以 http:// 或 https:// 开头的图片链接" }]}
+          rules={[{ required: true, message: "请上传或填写二维码图片" }, { type: "url", message: "请输入以 http:// 或 https:// 开头的图片链接" }]}
         >
           <ImageUploadInput module="benefit-qr" buttonText="上传二维码" previewAlt="微信群二维码预览" />
         </Form.Item>
-        <Form.Item name={["config_json", "group_name"]} label="群名称"><Input /></Form.Item>
+        <Form.Item name={["config_json", "group_name"]} label="群名称或客服名称"><Input placeholder="例如 复购福利群" /></Form.Item>
       </>
     );
   }
   if (benefitType === "form_benefit") {
     return (
       <>
-        <Form.Item name={["config_json", "form_url"]} label="表单链接"><Input placeholder="https://..." /></Form.Item>
-        <Form.Item name={["config_json", "require_phone"]} label="需要手机号">
+        <Divider titlePlacement="left" plain>表单配置</Divider>
+        <Form.Item name={["config_json", "form_url"]} label="表单链接" rules={[{ required: true, message: "请输入表单链接" }, { type: "url", message: "请输入 http:// 或 https:// 开头的链接" }]}>
+          <Input placeholder="https://..." />
+        </Form.Item>
+        <Form.Item name={["config_json", "require_phone"]} label="领取前需要手机号" initialValue={false}>
           <Select options={[{ value: true, label: "是" }, { value: false, label: "否" }]} />
         </Form.Item>
       </>

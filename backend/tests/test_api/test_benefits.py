@@ -157,6 +157,36 @@ class TestBenefitsList:
         assert data["page"] == 1
         assert data["page_size"] == 10
 
+    @pytest.mark.anyio
+    async def test_list_benefits_filters_and_summary(self, client: AsyncClient, campaign_and_benefit):
+        _, _, headers = campaign_and_benefit
+        filtered = await client.get("/api/v1/benefits?benefit_type=platform_coupon&status=active", headers=headers)
+        assert filtered.status_code == 200
+        assert filtered.json()["total"] >= 1
+
+        summary = await client.get("/api/v1/benefits/summary", headers=headers)
+        assert summary.status_code == 200
+        data = summary.json()
+        assert data["total"] >= 1
+        assert data["stock_total"] >= 100
+        assert data["stock_remaining"] >= 100
+
+    @pytest.mark.anyio
+    async def test_external_link_requires_url(self, client: AsyncClient, auth_setup):
+        _, headers = auth_setup
+        resp = await client.post(
+            "/api/v1/benefits",
+            json={
+                "name": "外链权益",
+                "benefit_type": "external_link",
+                "config_json": {},
+                "stock_total": 10,
+                "per_person_limit": 1,
+            },
+            headers=headers,
+        )
+        assert resp.status_code == 422
+
 
 class TestBenefitDetail:
     @pytest.mark.anyio
@@ -220,15 +250,33 @@ class TestBenefitUpdate:
 
 class TestBenefitDelete:
     @pytest.mark.anyio
-    async def test_delete_benefit(self, client: AsyncClient, campaign_and_benefit):
-        _, bid, headers = campaign_and_benefit
+    async def test_delete_unused_standalone_benefit(self, client: AsyncClient, auth_setup):
+        _, headers = auth_setup
+        benefit = await client.post(
+            "/api/v1/benefits",
+            json={
+                "name": "可删除权益",
+                "benefit_type": "platform_coupon",
+                "config_json": {"amount": 5},
+                "stock_total": 10,
+                "per_person_limit": 1,
+            },
+            headers=headers,
+        )
+        bid = benefit.json()["id"]
         resp = await client.delete(f"/api/v1/benefits/{bid}", headers=headers)
         assert resp.status_code == 200
         assert resp.json()["status"] == "deleted"
 
-        # Verify it's gone
         resp2 = await client.get(f"/api/v1/benefits/{bid}", headers=headers)
         assert resp2.status_code == 404
+
+    @pytest.mark.anyio
+    async def test_delete_attached_benefit_requires_disable(self, client: AsyncClient, campaign_and_benefit):
+        _, bid, headers = campaign_and_benefit
+        resp = await client.delete(f"/api/v1/benefits/{bid}", headers=headers)
+        assert resp.status_code == 409
+        assert "不能删除" in resp.json()["detail"]
 
     @pytest.mark.anyio
     async def test_delete_benefit_not_found(self, client: AsyncClient, campaign_and_benefit):
@@ -258,6 +306,13 @@ class TestBenefitClaimsAdmin:
         assert claim["benefit_id"] == bid
         assert claim["campaign_id"] == cid
         assert claim["consumer_id"] == "user-001"
+        assert claim["benefit_name"] == "测试权益"
+        assert claim["campaign_name"] == "权益活动"
+        assert claim["claimed_at"]
+
+        benefit = await client.get(f"/api/v1/benefits/{bid}", headers=headers)
+        assert benefit.json()["stock_total"] == 100
+        assert benefit.json()["stock_used"] == 1
 
     @pytest.mark.anyio
     async def test_list_benefit_claims_admin_pagination(self, client: AsyncClient, campaign_and_benefit):

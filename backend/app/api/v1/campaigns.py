@@ -3,7 +3,7 @@
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
@@ -17,6 +17,7 @@ from app.services.campaign import (
     create_benefit,
     create_campaign,
     delete_campaign,
+    detach_benefit_from_campaign,
     get_campaign,
     get_campaign_activation_blockers,
     list_benefits,
@@ -100,17 +101,19 @@ class CampaignStatusRequest(BaseModel):
 
 
 class BenefitCreateRequest(BaseModel):
-    name: str
+    name: str = Field(min_length=1, max_length=200)
     benefit_type: str
-    config_json: dict
-    stock_total: int
-    per_person_limit: int = 1
+    config_json: dict = Field(default_factory=dict)
+    stock_total: int = Field(ge=1)
+    per_person_limit: int = Field(default=1, ge=1)
     connector_id: uuid.UUID | None = None
 
-    @field_validator("config_json")
-    @classmethod
-    def validate_config_json(cls, v: dict) -> dict:
-        return validate_benefit_config_shape(v)
+    @model_validator(mode="after")
+    def validate_benefit(self):
+        if self.benefit_type == "cash_red_packet" and self.connector_id is None:
+            raise ValueError("connector_id is required for cash_red_packet")
+        self.config_json = validate_benefit_config_shape(self.config_json, self.benefit_type)
+        return self
 
 
 class ClaimRequest(BaseModel):
@@ -269,6 +272,22 @@ async def attach_benefit_endpoint(
     return data
 
 
+@campaign_router.delete("/{campaign_id}/benefits/{benefit_id}/attach", summary="取消活动使用权益")
+async def detach_benefit_endpoint(
+    campaign_id: uuid.UUID,
+    benefit_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    tenant_id: uuid.UUID = Depends(get_current_tenant),
+):
+    try:
+        data = await detach_benefit_from_campaign(db, tenant_id, campaign_id, benefit_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if not data:
+        raise HTTPException(status_code=404, detail="Campaign benefit not found")
+    return data
+
+
 @campaign_router.get("/{campaign_id}/benefits", summary="权益列表")
 async def list_benefits_endpoint(
     campaign_id: uuid.UUID,
@@ -299,6 +318,8 @@ async def claim_benefit_endpoint(
         raise HTTPException(status_code=404, detail="Benefit not found")
     if result["status"] == "out_of_stock":
         raise HTTPException(status_code=410, detail="权益已抢光")
+    if result["status"] == "inactive":
+        raise HTTPException(status_code=409, detail="权益已停用")
     if result["status"] == "limit_reached":
         raise HTTPException(status_code=403, detail="您已达到本次活动领取上限")
     return result

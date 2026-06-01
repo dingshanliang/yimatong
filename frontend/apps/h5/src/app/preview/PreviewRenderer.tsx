@@ -201,9 +201,10 @@ function PreviewModule({
         <div className="px-4 mt-3">
           <BenefitClaimCard
             benefitId={(config.benefit_id as string) || "preview"}
-            benefitType={(config.benefit_type as "coupon" | "points" | "lottery" | "gift") || "coupon"}
+            benefitType={(config.benefit_type as string) || "platform_coupon"}
             title={(config.title as string) || "领取权益"}
             description={config.description as string}
+            configJson={(config.config_json as Record<string, unknown>) || {}}
           />
         </div>
       );
