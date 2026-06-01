@@ -125,6 +125,27 @@ class TestCampaignCRUD:
         assert resp.status_code == 422
 
     @pytest.mark.anyio
+    async def test_create_campaign_rejects_unverifiable_wecom_condition(self, client: AsyncClient, auth_setup):
+        _, headers = auth_setup
+        resp = await client.post(
+            "/api/v1/campaigns",
+            json={
+                "name": "企微门槛活动",
+                "campaign_type": "coupon",
+                "start_at": "2026-06-01",
+                "end_at": "2026-06-30",
+                "rules_json": {
+                    **RULES_JSON,
+                    "campaign_goal": "private_domain_repurchase",
+                    "participation_condition_type": "wecom_required",
+                    "claim_limit_count": 1,
+                },
+            },
+            headers=headers,
+        )
+        assert resp.status_code == 422
+
+    @pytest.mark.anyio
     async def test_list_campaigns(self, client: AsyncClient, auth_setup):
         _, headers = auth_setup
         await client.post(

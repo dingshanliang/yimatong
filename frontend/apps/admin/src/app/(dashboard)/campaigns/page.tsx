@@ -69,7 +69,7 @@ interface CampaignFormValues {
   product_id?: string;
   active_range: [Dayjs, Dayjs];
   description?: string;
-  participation_condition_type?: "first_scan" | "any_scan" | "member_only" | "wecom_required";
+  participation_condition_type?: "first_scan" | "any_scan" | "member_only";
   claim_limit_count?: number;
   participation_conditions?: string;
   claim_limits?: string;
@@ -112,14 +112,12 @@ const PARTICIPATION_OPTIONS = [
   { value: "first_scan", label: "首次扫码可参与" },
   { value: "any_scan", label: "扫码即可参与" },
   { value: "member_only", label: "仅会员可参与" },
-  { value: "wecom_required", label: "添加企微后参与" },
 ];
 
 const PARTICIPATION_LABELS: Record<NonNullable<CampaignFormValues["participation_condition_type"]>, string> = {
   first_scan: "消费者首次扫码后即可参与。",
   any_scan: "消费者扫码后即可参与。",
   member_only: "消费者完成会员识别后即可参与。",
-  wecom_required: "消费者按页面指引添加企业微信后即可参与。",
 };
 
 const GOAL_PRESETS: Record<string, {
@@ -182,15 +180,15 @@ const GOAL_PRESETS: Record<string, {
     campaign_type: "coupon",
     name: "加企微复购活动",
     description: "消费者扫码领取权益，并引导添加企业微信完成复购转化。",
-    participation_condition_type: "wecom_required",
+    participation_condition_type: "any_scan",
     claim_limit_count: 1,
-    participation_conditions: "消费者扫码并按页面指引添加企业微信后可参与。",
+    participation_conditions: "消费者扫码后即可参与。",
     claim_limits: "每人限领1次",
     validity_period: "领取后7天有效",
     disclaimer: "请通过官方客服领取权益，最终解释权归品牌方所有。",
     benefit_enabled: true,
     benefit_name: "企微复购优惠券",
-    benefit_description: "添加企业微信后使用的复购优惠券",
+    benefit_description: "扫码领取后用于复购转化的优惠券",
   },
   festival: {
     campaign_type: "coupon",
@@ -294,7 +292,6 @@ function rulesFromCampaign(record?: Campaign | null) {
 function participationTypeFromText(value?: string) {
   if (value?.includes("首次")) return "first_scan";
   if (value?.includes("会员")) return "member_only";
-  if (value?.includes("企微") || value?.includes("企业微信")) return "wecom_required";
   return "any_scan";
 }
 
@@ -1120,6 +1117,17 @@ export default function CampaignsPage() {
                   <InputNumber min={1} precision={0} addonAfter="次" className="w-full" data-testid="campaign-claim-limits-input" />
                 </Form.Item>
               </div>
+              <Form.Item noStyle shouldUpdate={(prev, current) => prev.campaign_goal !== current.campaign_goal}>
+                {({ getFieldValue }) =>
+                  getFieldValue("campaign_goal") === "private_domain_repurchase" ? (
+                    <Alert
+                      type="info"
+                      showIcon
+                      title="企业微信用于复购引导，权益发放按扫码、库存和每人次数判断。"
+                    />
+                  ) : null
+                }
+              </Form.Item>
             </div>
           )}
 

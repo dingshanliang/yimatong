@@ -23,7 +23,6 @@ PARTICIPATION_CONDITION_TYPES = {
     "first_scan",
     "any_scan",
     "member_only",
-    "wecom_required",
 }
 
 BENEFIT_VALIDITY_TYPES = {
