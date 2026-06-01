@@ -6,12 +6,14 @@ import {
   Alert,
   App,
   Button,
+  Checkbox,
   DatePicker,
   Descriptions,
   Drawer,
   Empty,
   Form,
   Input,
+  InputNumber,
   Modal,
   Popconfirm,
   Progress,
@@ -60,6 +62,7 @@ interface ProductOption {
 }
 
 interface CampaignFormValues {
+  campaign_goal?: string;
   name: string;
   campaign_type: string;
   product_id?: string;
@@ -71,6 +74,12 @@ interface CampaignFormValues {
   disclaimer?: string;
   minor_notice?: string;
   customer_service_contact?: string;
+  benefit_enabled?: boolean;
+  benefit_name?: string;
+  benefit_stock_total?: number;
+  benefit_per_person_limit?: number;
+  benefit_validity_period?: string;
+  benefit_description?: string;
 }
 
 const TYPE_OPTIONS = [
@@ -78,6 +87,101 @@ const TYPE_OPTIONS = [
   { value: "lottery", label: "抽奖" },
   { value: "points", label: "积分" },
 ];
+
+const CAMPAIGN_GOAL_OPTIONS = [
+  { value: "first_scan_coupon", label: "首扫领券" },
+  { value: "lottery", label: "抽奖活动" },
+  { value: "points", label: "积分激励" },
+  { value: "private_domain_repurchase", label: "加企微复购" },
+  { value: "festival", label: "节日促销" },
+  { value: "custom", label: "自定义活动" },
+];
+
+const GOAL_PRESETS: Record<string, {
+  campaign_type: string;
+  name: string;
+  description: string;
+  participation_conditions: string;
+  claim_limits: string;
+  validity_period: string;
+  disclaimer: string;
+  benefit_enabled: boolean;
+  benefit_name: string;
+  benefit_description: string;
+}> = {
+  first_scan_coupon: {
+    campaign_type: "coupon",
+    name: "首扫领券复购活动",
+    description: "消费者首次扫码后领取优惠券，引导加购和复购。",
+    participation_conditions: "消费者首次扫码后即可参与。",
+    claim_limits: "每人限领1次",
+    validity_period: "领取后7天有效",
+    disclaimer: "活动权益数量有限，先到先得，最终解释权归品牌方所有。",
+    benefit_enabled: true,
+    benefit_name: "首扫专属优惠券",
+    benefit_description: "扫码后可领取的复购优惠券",
+  },
+  lottery: {
+    campaign_type: "lottery",
+    name: "扫码抽奖活动",
+    description: "消费者扫码后参与抽奖，提升互动和分享意愿。",
+    participation_conditions: "消费者扫码后即可参与抽奖。",
+    claim_limits: "每人限参与1次",
+    validity_period: "活动期内有效",
+    disclaimer: "中奖结果以系统记录为准，最终解释权归品牌方所有。",
+    benefit_enabled: false,
+    benefit_name: "",
+    benefit_description: "",
+  },
+  points: {
+    campaign_type: "points",
+    name: "扫码积分激励活动",
+    description: "消费者扫码后获得积分，沉淀会员资产。",
+    participation_conditions: "消费者扫码并完成会员识别后可参与。",
+    claim_limits: "每人每天限参与1次",
+    validity_period: "积分长期有效，以会员规则为准",
+    disclaimer: "积分发放以系统记录为准。",
+    benefit_enabled: false,
+    benefit_name: "",
+    benefit_description: "",
+  },
+  private_domain_repurchase: {
+    campaign_type: "coupon",
+    name: "加企微复购活动",
+    description: "消费者扫码领取权益，并引导添加企业微信完成复购转化。",
+    participation_conditions: "消费者扫码并按页面指引添加企业微信后可参与。",
+    claim_limits: "每人限领1次",
+    validity_period: "领取后7天有效",
+    disclaimer: "请通过官方客服领取权益，最终解释权归品牌方所有。",
+    benefit_enabled: true,
+    benefit_name: "企微复购优惠券",
+    benefit_description: "添加企业微信后使用的复购优惠券",
+  },
+  festival: {
+    campaign_type: "coupon",
+    name: "节日扫码促销活动",
+    description: "节日期间扫码领取福利，提升活动期转化。",
+    participation_conditions: "活动期间消费者扫码即可参与。",
+    claim_limits: "每人限领1次",
+    validity_period: "活动期内有效",
+    disclaimer: "活动权益数量有限，最终解释权归品牌方所有。",
+    benefit_enabled: true,
+    benefit_name: "节日专属优惠券",
+    benefit_description: "节日活动期使用的专属优惠券",
+  },
+  custom: {
+    campaign_type: "coupon",
+    name: "",
+    description: "",
+    participation_conditions: "消费者扫码后即可参与。",
+    claim_limits: "每人限参与1次",
+    validity_period: "活动期内有效",
+    disclaimer: "最终解释权归品牌方所有。",
+    benefit_enabled: false,
+    benefit_name: "",
+    benefit_description: "",
+  },
+};
 
 const STATUS_FILTER_OPTIONS = [
   { value: "draft", label: "草稿" },
@@ -148,6 +252,30 @@ function rulesFromCampaign(record?: Campaign | null) {
   return (record?.rules_json || {}) as Record<string, string>;
 }
 
+function getProductLabel(products: ProductOption[], productId?: string) {
+  const product = products.find((item) => item.id === productId);
+  if (!product) return "";
+  return product.category ? `${product.name} · ${product.category}` : product.name;
+}
+
+function getActivationIssues(record: Campaign) {
+  const blocking: string[] = [];
+  const warnings: string[] = [];
+  const startAt = dayjs(record.start_at);
+  const endAt = dayjs(record.end_at);
+  const rules = rulesFromCampaign(record);
+
+  if (!record.product_id) blocking.push("未关联产品，消费者扫码时不会自动命中该活动。");
+  if (getBenefitCount(record) <= 0) blocking.push("未配置权益，消费者参与后无法领取奖励。");
+  if (!startAt.isValid() || !endAt.isValid() || !endAt.isAfter(startAt)) blocking.push("投放时间无效，请检查开始和结束时间。");
+  if (getStockTotal(record) <= 0) blocking.push("权益库存为 0，请先配置可领取库存。");
+  if (!record.description && !rules.disclaimer) warnings.push("消费者说明为空，用户可能不清楚活动规则。");
+  if (!rules.customer_service_contact) warnings.push("客服方式为空，用户遇到领取问题时无法联系品牌方。");
+  if (endAt.isValid() && endAt.diff(dayjs(), "day") <= 3) warnings.push("活动即将结束，请确认仍需上线。");
+
+  return { blocking, warnings };
+}
+
 export default function CampaignsPage() {
   const router = useRouter();
   const { message, modal } = App.useApp();
@@ -167,7 +295,6 @@ export default function CampaignsPage() {
     setFilter,
     resetFilters,
     mutate,
-    create,
     update,
     remove,
   } = useCrud<Campaign>("/campaigns");
@@ -193,6 +320,22 @@ export default function CampaignsPage() {
   const openCreate = () => {
     setEditItem(null);
     form.resetFields();
+    form.setFieldsValue({
+      campaign_goal: "first_scan_coupon",
+      campaign_type: GOAL_PRESETS.first_scan_coupon.campaign_type,
+      name: GOAL_PRESETS.first_scan_coupon.name,
+      description: GOAL_PRESETS.first_scan_coupon.description,
+      participation_conditions: GOAL_PRESETS.first_scan_coupon.participation_conditions,
+      claim_limits: GOAL_PRESETS.first_scan_coupon.claim_limits,
+      validity_period: GOAL_PRESETS.first_scan_coupon.validity_period,
+      disclaimer: GOAL_PRESETS.first_scan_coupon.disclaimer,
+      benefit_enabled: GOAL_PRESETS.first_scan_coupon.benefit_enabled,
+      benefit_name: GOAL_PRESETS.first_scan_coupon.benefit_name,
+      benefit_stock_total: 100,
+      benefit_per_person_limit: 1,
+      benefit_validity_period: GOAL_PRESETS.first_scan_coupon.validity_period,
+      benefit_description: GOAL_PRESETS.first_scan_coupon.benefit_description,
+    });
     setModalOpen(true);
   };
 
@@ -211,20 +354,45 @@ export default function CampaignsPage() {
       disclaimer: rules.disclaimer || "",
       minor_notice: rules.minor_notice || "",
       customer_service_contact: rules.customer_service_contact || "",
+      benefit_enabled: false,
     });
     setModalOpen(true);
   };
 
+  const applyGoalPreset = (goal: string) => {
+    const preset = GOAL_PRESETS[goal];
+    if (!preset) return;
+    const values = form.getFieldsValue();
+    const productLabel = getProductLabel(products, values.product_id);
+    form.setFieldsValue({
+      campaign_type: preset.campaign_type,
+      name: preset.name && productLabel ? `${productLabel}${preset.name}` : preset.name,
+      description: preset.description,
+      participation_conditions: preset.participation_conditions,
+      claim_limits: preset.claim_limits,
+      validity_period: preset.validity_period,
+      disclaimer: preset.disclaimer,
+      benefit_enabled: preset.benefit_enabled,
+      benefit_name: preset.benefit_name,
+      benefit_per_person_limit: values.benefit_per_person_limit || 1,
+      benefit_stock_total: values.benefit_stock_total || (preset.benefit_enabled ? 100 : undefined),
+      benefit_validity_period: preset.validity_period,
+      benefit_description: preset.benefit_description,
+    });
+  };
+
   const buildPayload = (values: CampaignFormValues) => {
     const [startAt, endAt] = values.active_range;
+    const preset = values.campaign_goal ? GOAL_PRESETS[values.campaign_goal] : undefined;
     return {
       name: values.name,
-      campaign_type: values.campaign_type,
+      campaign_type: values.campaign_type || preset?.campaign_type || "coupon",
       product_id: values.product_id || null,
       start_at: startAt.format("YYYY-MM-DDTHH:mm:ss"),
       end_at: endAt.format("YYYY-MM-DDTHH:mm:ss"),
       description: values.description || null,
       rules_json: {
+        campaign_goal: values.campaign_goal || "custom",
         participation_conditions: values.participation_conditions || "",
         claim_limits: values.claim_limits || "每人限领1次",
         validity_period: values.validity_period || "领取后7天有效",
@@ -235,6 +403,19 @@ export default function CampaignsPage() {
     };
   };
 
+  const buildBenefitPayload = (values: CampaignFormValues) => ({
+    name: values.benefit_name || "活动权益",
+    benefit_type: "platform_coupon",
+    stock_total: values.benefit_stock_total || 0,
+    per_person_limit: values.benefit_per_person_limit || 1,
+    config_json: {
+      title: values.benefit_name || "活动权益",
+      description: values.benefit_description || "",
+      validity_period: values.benefit_validity_period || values.validity_period || "",
+      campaign_goal: values.campaign_goal || "custom",
+    },
+  });
+
   const handleSubmit = async (values: CampaignFormValues) => {
     try {
       const payload = buildPayload(values);
@@ -242,8 +423,25 @@ export default function CampaignsPage() {
         await update(editItem.id, payload);
         message.success("活动已更新");
       } else {
-        await create(payload);
-        message.success("活动草稿已创建，请继续配置权益后上线");
+        const { data: createdCampaign } = await api.post<Campaign>("/campaigns", payload);
+        let createdBenefit = false;
+        if (values.benefit_enabled) {
+          try {
+            await api.post(`/campaigns/${createdCampaign.id}/benefits`, buildBenefitPayload(values));
+            createdBenefit = true;
+          } catch {
+            message.warning("活动草稿已创建，但权益创建失败，请继续配置权益后再上线");
+          }
+        }
+        message.success(createdBenefit ? "活动草稿和基础权益已创建" : "活动草稿已创建，请继续配置权益后上线");
+        setDetailItem({
+          ...createdCampaign,
+          benefit_count: createdBenefit ? 1 : getBenefitCount(createdCampaign),
+          stock_total: createdBenefit ? values.benefit_stock_total || 0 : getStockTotal(createdCampaign),
+          stock_used: getStockUsed(createdCampaign),
+          claim_count: getClaimCount(createdCampaign),
+        });
+        mutate();
       }
       setModalOpen(false);
       form.resetFields();
@@ -265,6 +463,23 @@ export default function CampaignsPage() {
   };
 
   const confirmActivate = (record: Campaign) => {
+    const issues = getActivationIssues(record);
+    if (issues.blocking.length > 0) {
+      modal.warning({
+        title: "活动暂不能上线",
+        okText: "知道了",
+        content: (
+          <div className="space-y-3">
+            <Text type="secondary">请先处理以下阻断项，再上线活动。</Text>
+            <ul className="m-0 pl-5">
+              {issues.blocking.map((item) => <li key={item}>{item}</li>)}
+            </ul>
+            <Button icon={<GiftOutlined />} onClick={() => configureBenefits(record)}>继续配置权益</Button>
+          </div>
+        ),
+      });
+      return;
+    }
     modal.confirm({
       title: "确认上线活动？",
       okText: "上线活动",
@@ -272,9 +487,9 @@ export default function CampaignsPage() {
       content: (
         <div className="space-y-3">
           <Alert
-            type={getBenefitCount(record) > 0 ? "info" : "warning"}
+            type={issues.warnings.length > 0 ? "warning" : "info"}
             showIcon
-            title={getBenefitCount(record) > 0 ? "上线后消费者可在活动期内参与。" : "当前还没有配置权益，上线后消费者可能无法领取奖励。"}
+            title={issues.warnings.length > 0 ? "检查通过，但仍有需要确认的提醒。" : "检查通过，上线后消费者可在活动期内参与。"}
           />
           <Descriptions size="small" column={1} bordered>
             <Descriptions.Item label="活动">{record.name}</Descriptions.Item>
@@ -282,6 +497,11 @@ export default function CampaignsPage() {
             <Descriptions.Item label="活动时间">{formatCampaignTime(record).range}</Descriptions.Item>
             <Descriptions.Item label="权益配置">{getBenefitCount(record) > 0 ? `${getBenefitCount(record)} 个权益` : "未配置权益"}</Descriptions.Item>
           </Descriptions>
+          {issues.warnings.length > 0 && (
+            <ul className="m-0 pl-5">
+              {issues.warnings.map((item) => <li key={item}>{item}</li>)}
+            </ul>
+          )}
         </div>
       ),
       onOk: () => changeStatus(record, "active", "活动已上线"),
@@ -529,64 +749,147 @@ export default function CampaignsPage() {
         open={modalOpen}
         onCancel={() => setModalOpen(false)}
         onOk={() => form.submit()}
-        okText={editItem ? "保存活动" : "创建草稿"}
+        okText={editItem ? "保存活动" : "创建草稿并配置权益"}
         cancelText="取消"
         width={720}
         destroyOnHidden
       >
-        <Form form={form} layout="vertical" onFinish={handleSubmit}>
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-            <Form.Item name="name" label="活动名称" rules={[{ required: true, message: "请输入活动名称" }]}>
-              <Input data-testid="campaign-name-input" />
+        <Form
+          form={form}
+          layout="vertical"
+          onFinish={handleSubmit}
+          onValuesChange={(changed) => {
+            if (!editItem && changed.campaign_goal) applyGoalPreset(changed.campaign_goal);
+            if (!editItem && changed.product_id) {
+              const goal = form.getFieldValue("campaign_goal");
+              if (goal) applyGoalPreset(goal);
+            }
+          }}
+        >
+          {!editItem && (
+            <div className="mb-4 rounded border border-solid border-[var(--ant-color-border)] p-4">
+              <Text strong>活动目标</Text>
+              <Text type="secondary" className="mb-3 mt-1 block">先选择业务目标，系统会自动生成活动规则和权益建议。</Text>
+              <Form.Item name="campaign_goal" label="活动目标" rules={[{ required: true, message: "请选择活动目标" }]}>
+                <Select options={CAMPAIGN_GOAL_OPTIONS} data-testid="campaign-goal-select" />
+              </Form.Item>
+            </div>
+          )}
+
+          <div className="mb-4 rounded border border-solid border-[var(--ant-color-border)] p-4">
+            <Text strong>基础信息</Text>
+            <div className="mt-3 grid grid-cols-1 gap-4 md:grid-cols-2">
+              <Form.Item name="name" label="活动名称" rules={[{ required: true, message: "请输入活动名称" }]}>
+                <Input data-testid="campaign-name-input" />
+              </Form.Item>
+              <Form.Item name="campaign_type" label={editItem ? "活动类型" : "系统活动类型"} rules={[{ required: true, message: "请选择活动类型" }]}>
+                <Select options={TYPE_OPTIONS} disabled={!editItem} data-testid="campaign-type-select" />
+              </Form.Item>
+            </div>
+            <Form.Item
+              name="product_id"
+              label="关联产品"
+              extra="活动会通过关联产品进入扫码页和运营数据统计。"
+              rules={!editItem ? [{ required: true, message: "请选择关联产品" }] : undefined}
+            >
+              <Select
+                allowClear
+                showSearch
+                optionFilterProp="label"
+                placeholder="选择活动关联产品"
+                options={productOptions}
+              />
             </Form.Item>
-            <Form.Item name="campaign_type" label="活动类型" rules={[{ required: true, message: "请选择活动类型" }]}>
-              <Select options={TYPE_OPTIONS} data-testid="campaign-type-select" />
-            </Form.Item>
-          </div>
-          <Form.Item name="product_id" label="关联产品">
-            <Select
-              allowClear
-              showSearch
-              optionFilterProp="label"
-              placeholder="选择活动关联产品"
-              options={productOptions}
-            />
-          </Form.Item>
-          <Form.Item
-            name="active_range"
-            label="活动时间"
-            rules={[
-              { required: true, message: "请选择活动时间" },
-              {
-                validator: async (_, value?: [Dayjs, Dayjs]) => {
-                  if (!value?.[0] || !value?.[1]) return;
-                  if (value[1].isBefore(value[0])) throw new Error("结束时间必须晚于开始时间");
+            <Form.Item
+              name="active_range"
+              label="投放时间"
+              rules={[
+                { required: true, message: "请选择投放时间" },
+                {
+                  validator: async (_, value?: [Dayjs, Dayjs]) => {
+                    if (!value?.[0] || !value?.[1]) return;
+                    if (value[1].isBefore(value[0])) throw new Error("结束时间必须晚于开始时间");
+                  },
                 },
-              },
-            ]}
-          >
-            <RangePicker showTime className="w-full" format="YYYY-MM-DD HH:mm" />
-          </Form.Item>
-          <Form.Item name="description" label="活动说明">
-            <TextArea rows={2} data-testid="campaign-description-input" />
-          </Form.Item>
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-            <Form.Item name="participation_conditions" label="参与条件">
-              <TextArea rows={2} placeholder="例如：消费者扫码后即可参与" data-testid="campaign-conditions-input" />
-            </Form.Item>
-            <Form.Item name="claim_limits" label="领取限制">
-              <Input placeholder="每人限领1次" data-testid="campaign-claim-limits-input" />
-            </Form.Item>
-            <Form.Item name="validity_period" label="有效期">
-              <Input placeholder="领取后7天有效" data-testid="campaign-validity-input" />
-            </Form.Item>
-            <Form.Item name="customer_service_contact" label="客服方式">
-              <Input placeholder="400-123-4567 或企业微信客服" data-testid="campaign-contact-input" />
+              ]}
+            >
+              <RangePicker showTime className="w-full" format="YYYY-MM-DD HH:mm" />
             </Form.Item>
           </div>
-          <Form.Item name="disclaimer" label="活动说明/免责声明">
-            <TextArea rows={2} data-testid="campaign-disclaimer-input" />
-          </Form.Item>
+
+          {!editItem && (
+            <div className="mb-4 rounded border border-solid border-[var(--ant-color-border)] p-4">
+              <Text strong>权益与规则</Text>
+              <Text type="secondary" className="mb-3 mt-1 block">首版内嵌平台券基础配置，后续可在权益管理继续维护。</Text>
+              <Form.Item name="benefit_enabled" valuePropName="checked">
+                <Checkbox>创建基础平台券权益</Checkbox>
+              </Form.Item>
+              <Form.Item noStyle shouldUpdate={(prev, cur) => prev.benefit_enabled !== cur.benefit_enabled}>
+                {({ getFieldValue }) => getFieldValue("benefit_enabled") ? (
+                  <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                    <Form.Item name="benefit_name" label="权益名称" rules={[{ required: true, message: "请输入权益名称" }]}>
+                      <Input placeholder="例如：首扫专属优惠券" />
+                    </Form.Item>
+                    <Form.Item name="benefit_stock_total" label="总库存" rules={[{ required: true, message: "请输入总库存" }]}>
+                      <InputNumber min={1} className="w-full" />
+                    </Form.Item>
+                    <Form.Item name="benefit_per_person_limit" label="每人限领" rules={[{ required: true, message: "请输入每人限领次数" }]}>
+                      <InputNumber min={1} className="w-full" />
+                    </Form.Item>
+                    <Form.Item name="benefit_validity_period" label="权益有效期">
+                      <Input placeholder="领取后7天有效" />
+                    </Form.Item>
+                    <Form.Item name="benefit_description" label="券面说明" className="md:col-span-2">
+                      <TextArea rows={2} placeholder="例如：满 99 元可用，活动期内有效" />
+                    </Form.Item>
+                  </div>
+                ) : (
+                  <Alert type="warning" showIcon title="暂不配置权益时，活动创建后不能直接上线，需要先去权益管理补齐。" />
+                )}
+              </Form.Item>
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                <Form.Item name="participation_conditions" label="谁可以参与">
+                  <TextArea rows={2} placeholder="例如：消费者扫码后即可参与" data-testid="campaign-conditions-input" />
+                </Form.Item>
+                <Form.Item name="claim_limits" label="每人限领">
+                  <Input placeholder="每人限领1次" data-testid="campaign-claim-limits-input" />
+                </Form.Item>
+              </div>
+            </div>
+          )}
+
+          {editItem && (
+            <div className="mb-4 rounded border border-solid border-[var(--ant-color-border)] p-4">
+              <Text strong>活动规则</Text>
+              <div className="mt-3 grid grid-cols-1 gap-4 md:grid-cols-2">
+                <Form.Item name="participation_conditions" label="谁可以参与">
+                  <TextArea rows={2} placeholder="例如：消费者扫码后即可参与" data-testid="campaign-conditions-input" />
+                </Form.Item>
+                <Form.Item name="claim_limits" label="每人限领">
+                  <Input placeholder="每人限领1次" data-testid="campaign-claim-limits-input" />
+                </Form.Item>
+              </div>
+              <Alert type="info" showIcon title="完整权益维护请进入权益管理，避免编辑活动基础信息时误改已投放权益。" />
+            </div>
+          )}
+
+          <div className="rounded border border-solid border-[var(--ant-color-border)] p-4">
+            <Text strong>消费者说明</Text>
+            <div className="mt-3 grid grid-cols-1 gap-4 md:grid-cols-2">
+              <Form.Item name="description" label="活动说明" className="md:col-span-2">
+                <TextArea rows={2} data-testid="campaign-description-input" />
+              </Form.Item>
+              <Form.Item name="validity_period" label="权益有效期">
+                <Input placeholder="领取后7天有效" data-testid="campaign-validity-input" />
+              </Form.Item>
+              <Form.Item name="customer_service_contact" label="客服方式">
+                <Input placeholder="400-123-4567 或企业微信客服" data-testid="campaign-contact-input" />
+              </Form.Item>
+            </div>
+            <Form.Item name="disclaimer" label="消费者说明">
+              <TextArea rows={2} data-testid="campaign-disclaimer-input" />
+            </Form.Item>
+          </div>
         </Form>
       </Modal>
 

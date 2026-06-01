@@ -1,5 +1,6 @@
 """B3: 活动与权益 API 测试"""
 
+import uuid
 from collections.abc import AsyncGenerator
 
 import pytest
@@ -165,6 +166,24 @@ class TestCampaignCRUD:
         assert item["stock_total"] == 10
         assert item["stock_used"] == 1
         assert item["claim_count"] == 1
+
+    @pytest.mark.anyio
+    async def test_create_campaign_rejects_unknown_product(self, client: AsyncClient, auth_setup):
+        _, headers = auth_setup
+        resp = await client.post(
+            "/api/v1/campaigns",
+            json={
+                "name": "不存在产品活动",
+                "campaign_type": "coupon",
+                "product_id": str(uuid.uuid4()),
+                "start_at": "2026-06-01T00:00:00",
+                "end_at": "2026-06-30T23:59:59",
+                "rules_json": RULES_JSON,
+            },
+            headers=headers,
+        )
+        assert resp.status_code == 400
+        assert resp.json()["detail"] == "Product not found"
 
     @pytest.mark.anyio
     async def test_campaign_legacy_rules_product_id_is_compatible(self, client: AsyncClient, auth_setup):
