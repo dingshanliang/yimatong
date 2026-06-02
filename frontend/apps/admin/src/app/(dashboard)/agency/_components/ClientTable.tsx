@@ -1,5 +1,6 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { Button, Card, Empty, Input, Progress, Select, Space, Table, Tag } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import type { AgencyClientRow } from "./types";
@@ -52,6 +53,7 @@ export function ClientTable({
   onOpenChecklist,
   onCreateTask,
 }: ClientTableProps) {
+  const router = useRouter();
   const columns: ColumnsType<AgencyClientRow> = [
     { title: "客户", dataIndex: "name", key: "name", render: (name: string, record) => {
       const info = STATUS_MAP[record.status] || { label: record.status, color: "default" };
@@ -93,10 +95,13 @@ export function ClientTable({
     }},
     { title: "下一步", key: "actions", render: (_: unknown, record) => (
       <Space size="small">
-        <Button size="small" type="primary" onClick={() => onCreateTask(record.id, record.next_action.task_title)}>
+        <Button size="small" type="primary" onClick={() => router.push(record.next_action.href)}>
           {record.next_action.label}
         </Button>
         <Button size="small" onClick={() => onOpenChecklist(record.id, record.name)}>上线检查</Button>
+        <Button size="small" type="link" onClick={() => onCreateTask(record.id, record.next_action.task_title)}>
+          创建任务
+        </Button>
       </Space>
     )},
   ];
