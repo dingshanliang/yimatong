@@ -4,13 +4,13 @@ import uuid
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.core.dependencies import get_current_tenant
-from app.models.tenant import Permission, Role, role_permissions
+from app.models.tenant import Permission, Role, account_roles, role_permissions
 
 router = APIRouter(prefix="/api/v1/roles", tags=["roles"])
 
@@ -113,4 +113,27 @@ async def assign_permission(
         await db.commit()
     except IntegrityError:
         raise HTTPException(status_code=409, detail="Permission already assigned to this role")
+    return {"ok": True}
+
+
+@router.delete("/{role_id}")
+async def delete_role(
+    role_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    tenant_id: uuid.UUID = Depends(get_current_tenant),
+):
+    role = await db.get(Role, role_id)
+    if not role or role.tenant_id != tenant_id:
+        raise HTTPException(status_code=404, detail="Role not found")
+
+    # Check if any accounts are using this role
+    result = await db.execute(
+        select(func.count()).select_from(account_roles).where(account_roles.c.role_id == role_id)
+    )
+    count = result.scalar() or 0
+    if count > 0:
+        raise HTTPException(status_code=409, detail=f"该角色正在被 {count} 个账户使用，请先解除关联后再删除")
+
+    await db.delete(role)
+    await db.commit()
     return {"ok": True}
