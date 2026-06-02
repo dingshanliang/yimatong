@@ -83,7 +83,9 @@ async def update_tenant(
     if quota is not None:
         tenant.quota = quota
     if compliance_settings is not None:
-        tenant.compliance_settings = compliance_settings
+        existing = tenant.compliance_settings or {}
+        existing.update(compliance_settings)
+        tenant.compliance_settings = existing
     if plan_expires_at is not None:
         tenant.plan_expires_at = plan_expires_at
     if onboarding_progress is not None:
