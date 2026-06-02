@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { App, Button, Card, Col, Row, Space, Statistic, Table, Tag, Typography } from "antd";
+import { App, Button, Card, Col, DatePicker, Row, Space, Statistic, Table, Tag, Typography } from "antd";
 import {
   DownloadOutlined,
   RiseOutlined,
@@ -10,16 +10,20 @@ import {
   TeamOutlined,
 } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
-import dayjs from "dayjs";
-import api from "@/lib/api";
+import dayjs, { type Dayjs } from "dayjs";
+import api, { extractErrorMessage } from "@/lib/api";
+import ScanTrendChart from "@/components/ScanTrendChart";
+import EnvBreakdownChart from "@/components/EnvBreakdownChart";
 
 const { Title } = Typography;
+const { RangePicker } = DatePicker;
 
 interface DashboardData {
   today_scans: number;
   cumulative_scans: number;
   cumulative_first_scans: number;
   first_scan_rate: number;
+  environment_breakdown?: Record<string, number>;
   trend?: TrendRow[];
 }
 
@@ -71,6 +75,10 @@ export default function DashboardHome() {
   const [trend, setTrend] = useState<TrendRow[]>([]);
   const [batches, setBatches] = useState<CodeBatch[]>([]);
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
+  const [exportRange, setExportRange] = useState<[Dayjs, Dayjs]>([
+    dayjs().subtract(6, "day"),
+    dayjs(),
+  ]);
 
   useEffect(() => {
     api
@@ -79,9 +87,12 @@ export default function DashboardHome() {
         setData(res.data);
         setTrend(Array.isArray(res.data.trend) ? res.data.trend.slice(-7) : []);
       })
-      .catch(() => setData(null))
+      .catch((err) => {
+        setData(null);
+        message.error(extractErrorMessage(err, "加载工作台数据失败"));
+      })
       .finally(() => setLoading(false));
-  }, []);
+  }, [message]);
 
   const fetchRecentBatches = useCallback(async () => {
     try {
@@ -89,10 +100,10 @@ export default function DashboardHome() {
         params: { page: 1, page_size: 5 },
       });
       setBatches(data.items || []);
-    } catch {
-      /* ignore */
+    } catch (err) {
+      message.error(extractErrorMessage(err, "加载最近批次失败"));
     }
-  }, []);
+  }, [message]);
 
   const fetchRecentCampaigns = useCallback(async () => {
     try {
@@ -100,10 +111,10 @@ export default function DashboardHome() {
         params: { page: 1, page_size: 5 },
       });
       setCampaigns(data.items || []);
-    } catch {
-      /* ignore */
+    } catch (err) {
+      message.error(extractErrorMessage(err, "加载最近活动失败"));
     }
-  }, []);
+  }, [message]);
 
   useEffect(() => {
     const loadRecent = async () => {
@@ -115,11 +126,6 @@ export default function DashboardHome() {
   const firstScanRate = data?.cumulative_scans
     ? ((data.cumulative_first_scans / data.cumulative_scans) * 100).toFixed(1)
     : "0";
-
-  const trendColumns: ColumnsType<TrendRow> = [
-    { title: "日期", dataIndex: "date", key: "date" },
-    { title: "扫码量", dataIndex: "total_scans", key: "total_scans" },
-  ];
 
   const batchColumns: ColumnsType<CodeBatch> = [
     { title: "批次号", dataIndex: "batch_code", key: "batch_code" },
@@ -156,36 +162,44 @@ export default function DashboardHome() {
     { title: "开始时间", dataIndex: "start_at", key: "start_at" },
   ];
 
+  const handleExport = async () => {
+    try {
+      const end = exportRange[1].format("YYYY-MM-DD");
+      const start = exportRange[0].format("YYYY-MM-DD");
+      const response = await api.post("/analytics/exports", null, {
+        params: { export_type: "scan_events", start_date: start, end_date: end },
+        responseType: "blob",
+      });
+      const blob = new Blob([response.data], { type: "text/csv" });
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `scan-events-${start}-${end}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+      message.success("导出成功");
+    } catch (err) {
+      message.error(extractErrorMessage(err, "导出失败，请确认您有管理员权限"));
+    }
+  };
+
   return (
     <div>
       <div className="mb-4 flex items-center justify-between">
         <Title level={4} className="!mb-0">工作台</Title>
         <Space>
-          <Button
-            icon={<DownloadOutlined />}
-            onClick={async () => {
-              try {
-                const end = dayjs().format("YYYY-MM-DD");
-                const start = dayjs().subtract(6, "day").format("YYYY-MM-DD");
-                const response = await api.post("/analytics/exports", null, {
-                  params: { export_type: "scan_events", start_date: start, end_date: end },
-                  responseType: "blob",
-                });
-                const blob = new Blob([response.data], { type: "text/csv" });
-                const url = window.URL.createObjectURL(blob);
-                const a = document.createElement("a");
-                a.href = url;
-                a.download = `scan-events-${start}-${end}.csv`;
-                document.body.appendChild(a);
-                a.click();
-                a.remove();
-                window.URL.revokeObjectURL(url);
-                message.success("导出成功");
-              } catch {
-                message.error("导出失败，请确认您有管理员权限");
+          <RangePicker
+            value={exportRange}
+            onChange={(dates) => {
+              if (dates && dates[0] && dates[1]) {
+                setExportRange([dates[0], dates[1]]);
               }
             }}
-          >
+            disabledDate={(current) => current && current.isAfter(dayjs().endOf("day"))}
+          />
+          <Button icon={<DownloadOutlined />} onClick={handleExport}>
             导出扫码数据
           </Button>
         </Space>
@@ -214,14 +228,31 @@ export default function DashboardHome() {
       </Row>
 
       <Row gutter={[16, 16]} className="mb-6">
-        <Col xs={24} lg={12}>
+        <Col xs={24} lg={8}>
           <Card title="最近 7 天扫码趋势" size="small">
-            <Table columns={trendColumns} dataSource={trend} rowKey="date" loading={loading} pagination={false} size="small" />
+            {loading ? (
+              <div style={{ height: 250 }} className="flex items-center justify-center text-gray-400">
+                加载中...
+              </div>
+            ) : (
+              <ScanTrendChart data={trend} height={250} />
+            )}
           </Card>
         </Col>
-        <Col xs={24} lg={12}>
+        <Col xs={24} lg={8}>
           <Card title="最近码批次" size="small">
             <Table columns={batchColumns} dataSource={batches} rowKey="id" pagination={false} size="small" />
+          </Card>
+        </Col>
+        <Col xs={24} lg={8}>
+          <Card title="扫码环境占比" size="small">
+            {data?.environment_breakdown && Object.keys(data.environment_breakdown).length > 0 ? (
+              <EnvBreakdownChart data={data.environment_breakdown} height={250} />
+            ) : (
+              <div style={{ height: 250 }} className="flex items-center justify-center text-gray-400">
+                暂无环境数据
+              </div>
+            )}
           </Card>
         </Col>
       </Row>
