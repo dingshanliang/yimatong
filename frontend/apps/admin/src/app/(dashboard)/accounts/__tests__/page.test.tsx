@@ -27,6 +27,21 @@ vi.mock("@/lib/api", () => ({
   },
 }));
 
+const mockMutateAccounts = vi.fn();
+vi.mock("@/lib/hooks", () => ({
+  useCrud: () => ({
+    items: [
+      { id: "acct-1", email: "sales@test.com", name: "销售账号", organization_id: "org-1", organization_name: "销售部" },
+    ],
+    total: 1,
+    page: 1,
+    loading: false,
+    setPage: vi.fn(),
+    setFilter: vi.fn(),
+    mutate: mockMutateAccounts,
+  }),
+}));
+
 describe("AccountsPage", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -40,11 +55,6 @@ describe("AccountsPage", () => {
       if (url === "/organizations") {
         return Promise.resolve({
           data: [{ id: "org-1", name: "销售部", account_count: 1 }],
-        });
-      }
-      if (url === "/accounts") {
-        return Promise.resolve({
-          data: [{ id: "acct-1", email: "sales@test.com", name: "销售账号", organization_id: "org-1", organization_name: "销售部" }],
         });
       }
       return Promise.resolve({ data: [] });

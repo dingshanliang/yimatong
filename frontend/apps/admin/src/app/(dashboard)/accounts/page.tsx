@@ -6,6 +6,7 @@ import type { MenuProps } from "antd";
 import { CopyOutlined, DownOutlined, EditOutlined, KeyOutlined, PlusOutlined } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
 import api from "@/lib/api";
+import { useCrud } from "@/lib/hooks";
 
 const { Text, Title } = Typography;
 
@@ -30,8 +31,7 @@ export default function AccountsPage() {
   const { message, modal } = App.useApp();
   const [activeTab, setActiveTab] = useState("orgs");
   const [orgs, setOrgs] = useState<Organization[]>([]);
-  const [accounts, setAccounts] = useState<Account[]>([]);
-  const [loading, setLoading] = useState(false);
+  const [orgsLoading, setOrgsLoading] = useState(false);
   const [orgModalOpen, setOrgModalOpen] = useState(false);
   const [accountModalOpen, setAccountModalOpen] = useState(false);
   const [createdAccount, setCreatedAccount] = useState<Account | null>(null);
@@ -44,34 +44,32 @@ export default function AccountsPage() {
   const [editingAccount, setEditingAccount] = useState<Account | null>(null);
   const [editForm] = Form.useForm();
 
+  // Accounts via useCrud (paginated, SWR-backed)
+  const {
+    items: accounts,
+    total: accountsTotal,
+    page: accountsPage,
+    loading: accountsLoading,
+    setPage: setAccountsPage,
+    setFilter: setAccountsFilter,
+    mutate: mutateAccounts,
+  } = useCrud<Account>("/accounts");
+
   const fetchOrgs = useCallback(async () => {
-    setLoading(true);
+    setOrgsLoading(true);
     try {
       const { data } = await api.get("/organizations");
       setOrgs(Array.isArray(data) ? data : data.items || []);
     } catch {
       message.error("加载组织列表失败");
     } finally {
-      setLoading(false);
-    }
-  }, [message]);
-
-  const fetchAccounts = useCallback(async () => {
-    setLoading(true);
-    try {
-      const { data } = await api.get("/accounts");
-      setAccounts(Array.isArray(data) ? data : data.items || []);
-    } catch {
-      message.error("加载账户列表失败");
-    } finally {
-      setLoading(false);
+      setOrgsLoading(false);
     }
   }, [message]);
 
   useEffect(() => {
     if (activeTab === "orgs") fetchOrgs();
-    else fetchAccounts();
-  }, [activeTab, fetchOrgs, fetchAccounts]);
+  }, [activeTab, fetchOrgs]);
 
   const handleCreateOrg = async (values: { name: string }) => {
     try {
@@ -91,7 +89,7 @@ export default function AccountsPage() {
       message.success("账户创建成功");
       setCreatedAccount(data);
       accountForm.resetFields();
-      fetchAccounts();
+      mutateAccounts();
       fetchOrgs();
     } catch {
       message.error("创建失败");
@@ -209,7 +207,7 @@ export default function AccountsPage() {
       setEditModalOpen(false);
       setEditingAccount(null);
       editForm.resetFields();
-      fetchAccounts();
+      mutateAccounts();
       fetchOrgs();
     } catch {
       message.error("更新失败");
@@ -230,12 +228,24 @@ export default function AccountsPage() {
             label: "组织管理",
             children: (
               <>
-                <div className="mb-4">
+                <div className="mb-4 flex items-center gap-4">
                   <Button type="primary" icon={<PlusOutlined />} onClick={() => setOrgModalOpen(true)}>
                     新建组织
                   </Button>
+                  <Input.Search
+                    placeholder="搜索组织名称"
+                    allowClear
+                    style={{ width: 260 }}
+                    onSearch={(value) => {
+                      if (value) {
+                        setOrgs((prev) => prev.filter((o) => o.name.includes(value)));
+                      } else {
+                        fetchOrgs();
+                      }
+                    }}
+                  />
                 </div>
-                <Table columns={orgColumns} dataSource={orgs} rowKey="id" loading={loading && activeTab === "orgs"} />
+                <Table columns={orgColumns} dataSource={orgs} rowKey="id" loading={orgsLoading} />
               </>
             ),
           },
@@ -251,12 +261,30 @@ export default function AccountsPage() {
                   message="账户用于员工或渠道伙伴登录后台"
                   description="所属组织决定账号可查看和操作的数据范围。创建账户后，系统会发放一次性临时密码给使用人登录。"
                 />
-                <div className="mb-4">
+                <div className="mb-4 flex items-center gap-4">
                   <Button type="primary" icon={<PlusOutlined />} onClick={openAccountModal}>
                     新建账户
                   </Button>
+                  <Input.Search
+                    placeholder="搜索姓名或邮箱"
+                    allowClear
+                    style={{ width: 260 }}
+                    onSearch={(value) => setAccountsFilter(value ? { q: value } : {})}
+                  />
                 </div>
-                <Table columns={accountColumns} dataSource={accounts} rowKey="id" loading={loading && activeTab === "accounts"} />
+                <Table
+                  columns={accountColumns}
+                  dataSource={accounts}
+                  rowKey="id"
+                  loading={accountsLoading}
+                  pagination={{
+                    current: accountsPage,
+                    total: accountsTotal,
+                    pageSize: 20,
+                    onChange: setAccountsPage,
+                    showTotal: (t) => `共 ${t} 条`,
+                  }}
+                />
               </>
             ),
           },
@@ -273,9 +301,23 @@ export default function AccountsPage() {
         title="新建账户"
         open={accountModalOpen}
         onCancel={() => {
-          setAccountModalOpen(false);
-          setCreatedAccount(null);
-          accountForm.resetFields();
+          if (createdAccount?.initial_password) {
+            modal.confirm({
+              title: "确认关闭？",
+              content: "临时密码仅在此处显示一次，关闭后将无法再次查看。请确保已复制密码。",
+              okText: "确认关闭",
+              cancelText: "继续查看",
+              onOk: () => {
+                setAccountModalOpen(false);
+                setCreatedAccount(null);
+                accountForm.resetFields();
+              },
+            });
+          } else {
+            setAccountModalOpen(false);
+            setCreatedAccount(null);
+            accountForm.resetFields();
+          }
         }}
         onOk={() => accountForm.submit()}
         okText="创建账户"
