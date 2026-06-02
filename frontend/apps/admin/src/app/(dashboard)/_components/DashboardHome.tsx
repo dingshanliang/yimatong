@@ -79,6 +79,7 @@ export default function DashboardHome() {
     dayjs().subtract(6, "day"),
     dayjs(),
   ]);
+  const [exporting, setExporting] = useState(false);
 
   useEffect(() => {
     api
@@ -163,6 +164,7 @@ export default function DashboardHome() {
   ];
 
   const handleExport = async () => {
+    setExporting(true);
     try {
       const end = exportRange[1].format("YYYY-MM-DD");
       const start = exportRange[0].format("YYYY-MM-DD");
@@ -170,11 +172,13 @@ export default function DashboardHome() {
         params: { export_type: "scan_events", start_date: start, end_date: end },
         responseType: "blob",
       });
-      const blob = new Blob([response.data], { type: "text/csv" });
+      const blob = new Blob([response.data], {
+        type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      });
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `scan-events-${start}-${end}.csv`;
+      a.download = `scan-events-${start}-${end}.xlsx`;
       document.body.appendChild(a);
       a.click();
       a.remove();
@@ -182,6 +186,8 @@ export default function DashboardHome() {
       message.success("导出成功");
     } catch (err) {
       message.error(extractErrorMessage(err, "导出失败，请确认您有管理员权限"));
+    } finally {
+      setExporting(false);
     }
   };
 
@@ -199,7 +205,7 @@ export default function DashboardHome() {
             }}
             disabledDate={(current) => current && current.isAfter(dayjs().endOf("day"))}
           />
-          <Button icon={<DownloadOutlined />} onClick={handleExport}>
+          <Button icon={<DownloadOutlined />} onClick={handleExport} loading={exporting}>
             导出扫码数据
           </Button>
         </Space>
