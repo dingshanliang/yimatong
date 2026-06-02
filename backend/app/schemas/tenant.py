@@ -18,10 +18,15 @@ class TenantCreate(BaseModel):
     admin_email: str = Field(..., max_length=255, description="管理员邮箱", examples=["admin@example.com"])
     admin_name: str = Field(..., max_length=100, description="管理员姓名", examples=["张三"])
     admin_password: str = Field(..., min_length=8, description="管理员密码", examples=["SecurePass123!"])
+    industry: str | None = Field(None, max_length=50, description="行业类别")
+    notes: str | None = Field(None, max_length=1000, description="备注")
+    template_id: int | None = Field(None, description="行业模板 ID，创建后自动应用")
 
 
 class TenantUpdate(BaseModel):
     name: str | None = Field(None, min_length=1, max_length=100)
+    industry: str | None = Field(None, max_length=50)
+    notes: str | None = Field(None, max_length=1000)
     quota: dict | None = None
     compliance_settings: dict | None = None
     plan_expires_at: datetime | None = None
@@ -36,6 +41,8 @@ class TenantRead(BaseModel):
     status: str = Field(..., description="租户状态")
     plan: str = Field(..., description="订阅计划")
     plan_expires_at: datetime | None = Field(None, description="计划过期时间")
+    industry: str | None = Field(None, description="行业类别")
+    notes: str | None = Field(None, description="备注")
     quota: dict | None = Field(None, description="配额配置")
     compliance_settings: dict | None = Field(None, description="合规设置")
     onboarding_progress: dict | None = Field(None, description=" onboarding 进度")
@@ -63,6 +70,7 @@ class OpsTaskCreate(BaseModel):
     description: str | None = Field(None, max_length=1000)
     priority: str = "medium"
     due_date: datetime | None = None
+    assigned_to: uuid.UUID | None = Field(None, description="负责人 account ID")
 
 
 class OpsTaskUpdate(BaseModel):
@@ -95,6 +103,7 @@ class OpsTaskRead(BaseModel):
     status: str
     priority: str
     due_date: datetime | None = None
+    assigned_to: uuid.UUID | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
 

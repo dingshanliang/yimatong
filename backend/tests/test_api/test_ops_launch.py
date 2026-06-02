@@ -42,17 +42,24 @@ async def setup_tenant(client: AsyncClient):
         },
     )
     tid = resp.json()["id"]
-    token = create_access_token(tid, "00000000-0000-0000-0000-000000000001", "admin")
-    return tid, {"Authorization": f"Bearer {token}"}
+    # tenant token for brand/product creation
+    tenant_token = create_access_token(tid, "00000000-0000-0000-0000-000000000001", "admin")
+    # ops token for ops endpoints
+    ops_token = create_access_token(
+        "00000000-0000-0000-0000-000000000000",
+        "00000000-0000-0000-0000-000000000001",
+        "platform_admin",
+    )
+    return tid, {"Authorization": f"Bearer {tenant_token}"}, {"Authorization": f"Bearer {ops_token}"}
 
 
 class TestLaunchChecklist:
     @pytest.mark.anyio
     async def test_empty_checklist(self, client: AsyncClient, setup_tenant):
-        tid, headers = setup_tenant
+        tid, _tenant_headers, ops_headers = setup_tenant
         resp = await client.get(
             f"/api/v1/ops/clients/{tid}/launch-checklist",
-            headers=headers,
+            headers=ops_headers,
         )
         assert resp.status_code == 200
         data = resp.json()
@@ -61,22 +68,22 @@ class TestLaunchChecklist:
 
     @pytest.mark.anyio
     async def test_checklist_after_product(self, client: AsyncClient, setup_tenant):
-        tid, headers = setup_tenant
-        # 创建品牌和产品
+        tid, tenant_headers, ops_headers = setup_tenant
+        # 创建品牌和产品（用 tenant token）
         brand = await client.post(
             "/api/v1/brands",
             json={"name": "测试品牌"},
-            headers=headers,
+            headers=tenant_headers,
         )
         await client.post(
             "/api/v1/products",
             json={"brand_id": brand.json()["id"], "name": "测试产品"},
-            headers=headers,
+            headers=tenant_headers,
         )
 
         resp = await client.get(
             f"/api/v1/ops/clients/{tid}/launch-checklist",
-            headers=headers,
+            headers=ops_headers,
         )
         data = resp.json()
         brand_check = next(c for c in data["checks"] if "品牌" in c["name"])
@@ -86,10 +93,10 @@ class TestLaunchChecklist:
 
     @pytest.mark.anyio
     async def test_tenant_status(self, client: AsyncClient, setup_tenant):
-        tid, headers = setup_tenant
+        tid, _tenant_headers, ops_headers = setup_tenant
         resp = await client.get(
             f"/api/v1/ops/clients/{tid}/status",
-            headers=headers,
+            headers=ops_headers,
         )
         assert resp.status_code == 200
         data = resp.json()

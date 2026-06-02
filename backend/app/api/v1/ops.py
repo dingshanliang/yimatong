@@ -98,6 +98,7 @@ async def create_task_endpoint(
         description=body.description,
         priority=OpsTaskPriority(body.priority) if body.priority else OpsTaskPriority.medium,
         due_date=body.due_date,
+        assigned_to=body.assigned_to,
     )
     db.add(task)
     await db.flush()

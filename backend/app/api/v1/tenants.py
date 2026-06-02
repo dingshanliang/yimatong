@@ -39,6 +39,9 @@ async def create_tenant_endpoint(body: TenantCreate, db: AsyncSession = Depends(
         admin_email=body.admin_email,
         admin_name=body.admin_name,
         admin_password=body.admin_password,
+        industry=body.industry,
+        notes=body.notes,
+        template_id=body.template_id,
     )
     return tenant
 
@@ -100,6 +103,8 @@ async def update_current_tenant_endpoint(
         db,
         tenant_id,
         name=body.name,
+        industry=body.industry,
+        notes=body.notes,
         quota=body.quota,
         compliance_settings=body.compliance_settings,
         plan_expires_at=body.plan_expires_at,
@@ -125,6 +130,8 @@ async def update_tenant_endpoint(tenant_id: uuid.UUID, body: TenantUpdate, db: A
         db,
         tenant_id,
         name=body.name,
+        industry=body.industry,
+        notes=body.notes,
         quota=body.quota,
         compliance_settings=body.compliance_settings,
         plan_expires_at=body.plan_expires_at,

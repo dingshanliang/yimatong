@@ -26,6 +26,9 @@ async def create_tenant(
     admin_email: str,
     admin_name: str,
     admin_password: str,
+    industry: str | None = None,
+    notes: str | None = None,
+    template_id: int | None = None,
 ) -> Tenant:
     if not slug:
         slug = _generate_slug(name)
@@ -35,6 +38,8 @@ async def create_tenant(
         slug=slug,
         status=TenantStatus.active,
         plan=TenantPlan(plan),
+        industry=industry,
+        notes=notes,
         quota={"max_codes": 10000, "max_campaigns": 50, "max_accounts": 10},
     )
     db.add(tenant)
@@ -55,6 +60,32 @@ async def create_tenant(
     db.add(account)
     await db.flush()
 
+    # 应用行业模板（如果指定）
+    if template_id is not None:
+        from app.services.industry_templates import ALL_TEMPLATES
+        from app.models.page import PageTemplate, PageVersion, PageVersionStatus
+
+        if 0 <= template_id < len(ALL_TEMPLATES):
+            template_def = ALL_TEMPLATES[template_id]
+            tmpl = PageTemplate(
+                tenant_id=tenant.id,
+                name=template_def["name"],
+                template_type=template_def["template_type"],
+                status="draft",
+            )
+            db.add(tmpl)
+            await db.flush()
+
+            version = PageVersion(
+                tenant_id=tenant.id,
+                page_template_id=tmpl.id,
+                version_number=1,
+                config_json=template_def["config_json"],
+                status=PageVersionStatus.draft,
+            )
+            db.add(version)
+            await db.flush()
+
     await db.flush()
     await db.refresh(tenant)
     return tenant
@@ -69,6 +100,8 @@ async def update_tenant(
     db: AsyncSession,
     tenant_id: uuid.UUID,
     name: str | None = None,
+    industry: str | None = None,
+    notes: str | None = None,
     quota: dict | None = None,
     compliance_settings: dict | None = None,
     plan_expires_at: datetime | None = None,
@@ -80,6 +113,10 @@ async def update_tenant(
         return None
     if name:
         tenant.name = name
+    if industry is not None:
+        tenant.industry = industry
+    if notes is not None:
+        tenant.notes = notes
     if quota is not None:
         tenant.quota = quota
     if compliance_settings is not None:
