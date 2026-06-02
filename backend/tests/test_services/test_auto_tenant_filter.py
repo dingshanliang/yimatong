@@ -40,7 +40,8 @@ class TestOrganizationAutoFilter:
         await create_organization(db, tenant_a.id, "A部门", None)
         await create_organization(db, tenant_b.id, "B部门", None)
 
-        a_orgs = await list_organizations(db, tenant_a.id)
+        result = await list_organizations(db, tenant_a.id)
+        a_orgs = result["items"]
         assert all(o.tenant_id == tenant_a.id for o in a_orgs)
         # create_tenant seeds a default org, so we have >= 2 (seeded + created)
         assert len(a_orgs) == 2
@@ -52,10 +53,11 @@ class TestAccountAutoFilter:
         org_a = await create_organization(db, tenant_a.id, "A部门", None)
         org_b = await create_organization(db, tenant_b.id, "B部门", None)
 
-        await create_account(db, tenant_a.id, org_a.id, "a@test.com", "用户A", "Pass1234")
-        await create_account(db, tenant_b.id, org_b.id, "b@test.com", "用户B", "Pass1234")
+        await create_account(db, tenant_a.id, org_a.id, "a_user@test.com", "用户A", "Pass1234")
+        await create_account(db, tenant_b.id, org_b.id, "b_user@test.com", "用户B", "Pass1234")
 
-        a_accounts = await list_accounts(db, tenant_a.id)
+        result = await list_accounts(db, tenant_a.id)
+        a_accounts = result["items"]
         assert all(acc.tenant_id == tenant_a.id for acc in a_accounts)
         # create_tenant seeds an admin account, so we have >= 2 (seeded + created)
         assert len(a_accounts) == 2

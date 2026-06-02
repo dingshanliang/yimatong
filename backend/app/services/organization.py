@@ -25,9 +25,29 @@ async def create_organization(
     return org
 
 
-async def list_organizations(db: AsyncSession, tenant_id: uuid.UUID) -> list[Organization]:
-    result = await db.execute(select(Organization).where(Organization.tenant_id == tenant_id))
-    return list(result.scalars().all())
+async def list_organizations(
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    page: int = 1,
+    page_size: int = 20,
+    q: str | None = None,
+) -> dict:
+    """Returns {items: list[Organization], total: int}"""
+    query = select(Organization).where(Organization.tenant_id == tenant_id)
+    count_query = select(func.count()).select_from(Organization).where(Organization.tenant_id == tenant_id)
+
+    if q:
+        query = query.where(Organization.name.ilike(f"%{q}%"))
+        count_query = count_query.where(Organization.name.ilike(f"%{q}%"))
+
+    total_result = await db.execute(count_query)
+    total = total_result.scalar() or 0
+
+    query = query.offset((page - 1) * page_size).limit(page_size)
+    result = await db.execute(query)
+    items = list(result.scalars().all())
+
+    return {"items": items, "total": total}
 
 
 async def count_accounts_by_org(db: AsyncSession, tenant_id: uuid.UUID) -> dict[uuid.UUID, int]:
@@ -85,9 +105,33 @@ async def create_account(
     return account
 
 
-async def list_accounts(db: AsyncSession, tenant_id: uuid.UUID) -> list[Account]:
-    result = await db.execute(select(Account).where(Account.tenant_id == tenant_id))
-    return list(result.scalars().all())
+async def list_accounts(
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    page: int = 1,
+    page_size: int = 20,
+    q: str | None = None,
+) -> dict:
+    """Returns {items: list[Account], total: int}"""
+    query = select(Account).where(Account.tenant_id == tenant_id)
+    count_query = select(func.count()).select_from(Account).where(Account.tenant_id == tenant_id)
+
+    if q:
+        query = query.where(
+            (Account.name.ilike(f"%{q}%")) | (Account.email.ilike(f"%{q}%"))
+        )
+        count_query = count_query.where(
+            (Account.name.ilike(f"%{q}%")) | (Account.email.ilike(f"%{q}%"))
+        )
+
+    total_result = await db.execute(count_query)
+    total = total_result.scalar() or 0
+
+    query = query.offset((page - 1) * page_size).limit(page_size)
+    result = await db.execute(query)
+    items = list(result.scalars().all())
+
+    return {"items": items, "total": total}
 
 
 async def update_account(

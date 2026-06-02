@@ -1,6 +1,6 @@
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -8,6 +8,7 @@ from app.core.database import get_db
 from app.core.dependencies import get_current_tenant
 from app.models.tenant import Organization
 from app.schemas.account import AccountCreate, AccountRead, AccountUpdate, OrganizationCreate, OrganizationRead
+from app.schemas.common import PaginatedResponse
 from app.services.organization import (
     count_accounts_by_org,
     create_account,
@@ -31,14 +32,17 @@ async def create_org_endpoint(
     return {"id": org.id, "tenant_id": org.tenant_id, "name": org.name, "parent_id": org.parent_id, "account_count": 0}
 
 
-@router.get("/organizations", response_model=list[OrganizationRead], summary="orgs 列表")
+@router.get("/organizations", response_model=PaginatedResponse, summary="组织列表（分页）")
 async def list_orgs_endpoint(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    q: str | None = Query(None, description="搜索关键词"),
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
-    orgs = await list_organizations(db, tenant_id=tenant_id)
+    result = await list_organizations(db, tenant_id=tenant_id, page=page, page_size=page_size, q=q)
     account_counts = await count_accounts_by_org(db, tenant_id)
-    return [
+    items = [
         {
             "id": org.id,
             "tenant_id": org.tenant_id,
@@ -46,8 +50,9 @@ async def list_orgs_endpoint(
             "parent_id": org.parent_id,
             "account_count": account_counts.get(org.id, 0),
         }
-        for org in orgs
+        for org in result["items"]
     ]
+    return PaginatedResponse(items=items, total=result["total"], page=page, page_size=page_size)
 
 
 @router.post(
@@ -86,19 +91,22 @@ async def create_account_endpoint(
     }
 
 
-@router.get("/accounts", response_model=list[AccountRead], response_model_exclude_none=True, summary="账号 列表")
+@router.get("/accounts", response_model=PaginatedResponse, response_model_exclude_none=True, summary="账户列表（分页）")
 async def list_accounts_endpoint(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    q: str | None = Query(None, description="搜索姓名或邮箱"),
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
-    accounts = await list_accounts(db, tenant_id=tenant_id)
+    result = await list_accounts(db, tenant_id=tenant_id, page=page, page_size=page_size, q=q)
     org_names = {
         row[0]: row[1]
         for row in (
             await db.execute(select(Organization.id, Organization.name).where(Organization.tenant_id == tenant_id))
         ).all()
     }
-    return [
+    items = [
         {
             "id": account.id,
             "tenant_id": account.tenant_id,
@@ -107,8 +115,9 @@ async def list_accounts_endpoint(
             "email": account.email,
             "name": account.name,
         }
-        for account in accounts
+        for account in result["items"]
     ]
+    return PaginatedResponse(items=items, total=result["total"], page=page, page_size=page_size)
 
 
 @router.patch("/accounts/{account_id}", response_model=AccountRead, summary="更新 账号")

@@ -68,7 +68,12 @@ class TestOrganizationCRUD:
         await client.post("/api/v1/organizations", json={"name": "部门A"}, headers=headers)
         resp = await client.get("/api/v1/organizations", headers=headers)
         assert resp.status_code == 200
-        assert isinstance(resp.json(), list)
+        data = resp.json()
+        assert "items" in data
+        assert "total" in data
+        assert "page" in data
+        assert "page_size" in data
+        assert isinstance(data["items"], list)
 
 
 class TestAccountCRUD:
@@ -127,10 +132,12 @@ class TestAccountCRUD:
         accounts_resp = await client.get("/api/v1/accounts", headers=headers)
 
         assert orgs_resp.status_code == 200
-        org_item = next(item for item in orgs_resp.json() if item["id"] == org_id)
+        org_data = orgs_resp.json()
+        org_item = next(item for item in org_data["items"] if item["id"] == org_id)
         assert org_item["account_count"] == 1
         assert accounts_resp.status_code == 200
-        account_item = next(item for item in accounts_resp.json() if item["email"] == "sales@test.com")
+        account_data = accounts_resp.json()
+        account_item = next(item for item in account_data["items"] if item["email"] == "sales@test.com")
         assert account_item["organization_name"] == "销售部"
         assert "initial_password" not in account_item
 
@@ -149,3 +156,32 @@ class TestAccountCRUD:
             headers=headers,
         )
         assert resp.status_code == 404
+
+    @pytest.mark.anyio
+    async def test_pagination_params(self, client: AsyncClient, tenant_with_auth):
+        """分页参数正确传递并返回分页结构"""
+        _, headers = tenant_with_auth
+        # 创建 3 个组织
+        for name in ["部门X", "部门Y", "部门Z"]:
+            await client.post("/api/v1/organizations", json={"name": name}, headers=headers)
+
+        resp = await client.get("/api/v1/organizations?page=1&page_size=2", headers=headers)
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["page"] == 1
+        assert data["page_size"] == 2
+        assert len(data["items"]) <= 2
+        assert data["total"] >= 3  # 至少有 3 个新创建的 + 默认的
+
+    @pytest.mark.anyio
+    async def test_search_by_keyword(self, client: AsyncClient, tenant_with_auth):
+        """关键词搜索过滤结果"""
+        _, headers = tenant_with_auth
+        await client.post("/api/v1/organizations", json={"name": "独一无二部门"}, headers=headers)
+        await client.post("/api/v1/organizations", json={"name": "普通部门"}, headers=headers)
+
+        resp = await client.get("/api/v1/organizations?q=独一无二", headers=headers)
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["total"] >= 1
+        assert any("独一无二" in item["name"] for item in data["items"])
