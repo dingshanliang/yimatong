@@ -734,5 +734,24 @@ async def create_sku_if_needed(
     return await _create_sku(db, tenant_id, product_id, code, name)
 
 
+@app.command()
+def demo(
+    clean: bool = typer.Option(False, "--clean", help="清理现有演示数据后重新生成"),
+):
+    """生成丰富演示数据（委托 scripts/seed_demo.py）"""
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    script = Path(__file__).resolve().parent.parent.parent / "scripts" / "seed_demo.py"
+    if not script.exists():
+        typer.echo(f"Demo script not found: {script}", err=True)
+        raise typer.Exit(code=1)
+
+    cmd = [sys.executable, str(script), "reset" if clean else "generate"]
+    result = subprocess.run(cmd, cwd=str(script.parent.parent))
+    raise typer.Exit(code=result.returncode)
+
+
 if __name__ == "__main__":
     app()
