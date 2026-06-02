@@ -277,6 +277,13 @@ if _cors_origins_str == "*":
     origins = ["*"]
 else:
     origins = [o.strip() for o in _cors_origins_str.split(",") if o.strip()]
+# Middleware order in FastAPI is LIFO (last added = outermost = first executed).
+# CORSMiddleware MUST be added LAST so it becomes the outermost layer.
+# Otherwise, inner middlewares (e.g., TenantScopeMiddleware returning 401) bypass
+# CORS header injection, causing browsers to block responses as CORS failures.
+app.add_middleware(LoggingMiddleware)
+app.add_middleware(TenantScopeMiddleware)
+app.add_middleware(RequestIDMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
@@ -284,10 +291,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-app.add_middleware(LoggingMiddleware)
-app.add_middleware(TenantScopeMiddleware)
-app.add_middleware(RequestIDMiddleware)
 
 register_exception_handlers(app, debug=app.debug)
 app.include_router(tenants_router)
