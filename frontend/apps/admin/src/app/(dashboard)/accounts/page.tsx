@@ -27,6 +27,14 @@ interface Account {
   initial_password?: string;
 }
 
+interface Role {
+  id: string;
+  name: string;
+  description?: string;
+  permissions?: string[];
+  is_active?: boolean;
+}
+
 export default function AccountsPage() {
   const { message, modal } = App.useApp();
   const [activeTab, setActiveTab] = useState("orgs");
@@ -54,6 +62,9 @@ export default function AccountsPage() {
     setFilter: setAccountsFilter,
     mutate: mutateAccounts,
   } = useCrud<Account>("/accounts");
+
+  // Roles list for account create/edit
+  const { items: availableRoles } = useCrud<Role>("/roles");
 
   const fetchOrgs = useCallback(async () => {
     setOrgsLoading(true);
@@ -366,6 +377,14 @@ export default function AccountsPage() {
           <Form.Item name="organization_id" label="所属组织" rules={[{ required: true, message: "请选择组织" }]}>
             <Select placeholder="选择组织" options={orgs.map((o) => ({ value: o.id, label: o.name }))} />
           </Form.Item>
+          <Form.Item name="role_ids" label="角色">
+            <Select
+              mode="multiple"
+              placeholder="选择角色（可选）"
+              options={availableRoles.map((r) => ({ value: r.id, label: r.name }))}
+              allowClear
+            />
+          </Form.Item>
         </Form>
       </Modal>
       <Modal
@@ -416,6 +435,14 @@ export default function AccountsPage() {
           </Form.Item>
           <Form.Item name="organization_id" label="所属组织" rules={[{ required: true, message: "请选择组织" }]}>
             <Select placeholder="选择组织" options={orgs.map((o) => ({ value: o.id, label: o.name }))} />
+          </Form.Item>
+          <Form.Item name="role_ids" label="角色">
+            <Select
+              mode="multiple"
+              placeholder="选择角色（可选）"
+              options={availableRoles.map((r) => ({ value: r.id, label: r.name }))}
+              allowClear
+            />
           </Form.Item>
         </Form>
       </Modal>
