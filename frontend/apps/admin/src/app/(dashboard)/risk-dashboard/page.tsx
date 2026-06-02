@@ -17,54 +17,56 @@ function AlertIndicator({ tenantId }: { tenantId: string | null }) {
   const eventSourceRef = useRef<EventSource | null>(null);
   const retryCountRef = useRef(0);
   const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const connectRef = useRef<() => Promise<void>>(() => Promise.resolve());
 
-  const connect = useCallback(async () => {
-    if (!tenantId) return;
-
-    try {
-      const { data } = await api.post("/risk-dashboard/alerts/ticket");
-      const ticket = data.ticket;
-      if (!ticket) return;
-
-      eventSourceRef.current?.close();
-
-      const base = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-      const es = new EventSource(`${base}/api/v1/risk-dashboard/alerts/stream?ticket=${ticket}`);
-      eventSourceRef.current = es;
-
-      es.onopen = () => {
-        setConnected(true);
-        retryCountRef.current = 0;
-      };
-      es.onerror = () => {
-        setConnected(false);
-        es.close();
-        eventSourceRef.current = null;
-
-        const delay = Math.min(1000 * Math.pow(2, retryCountRef.current), 30000);
-        retryCountRef.current += 1;
-        retryTimerRef.current = setTimeout(() => {
-          void connect();
-        }, delay);
-      };
-      es.onmessage = (e) => {
-        try {
-          const msg = JSON.parse(e.data);
-          setAlerts((prev) => [msg, ...prev].slice(0, 20));
-        } catch { /* ignore parse errors */ }
-      };
-    } catch {
-      setConnected(false);
-      const delay = Math.min(1000 * Math.pow(2, retryCountRef.current), 30000);
-      retryCountRef.current += 1;
-      retryTimerRef.current = setTimeout(() => {
-        void connect();
-      }, delay);
-    }
-  }, [tenantId]);
+  const scheduleRetry = useCallback(() => {
+    const delay = Math.min(1000 * Math.pow(2, retryCountRef.current), 30000);
+    retryCountRef.current += 1;
+    retryTimerRef.current = setTimeout(() => {
+      void connectRef.current();
+    }, delay);
+  }, []);
 
   useEffect(() => {
-    void connect();
+    const doConnect = async () => {
+      if (!tenantId) return;
+
+      try {
+        const { data } = await api.post("/risk-dashboard/alerts/ticket");
+        const ticket = data.ticket;
+        if (!ticket) return;
+
+        eventSourceRef.current?.close();
+
+        const base = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+        const es = new EventSource(`${base}/api/v1/risk-dashboard/alerts/stream?ticket=${ticket}`);
+        eventSourceRef.current = es;
+
+        es.onopen = () => {
+          setConnected(true);
+          retryCountRef.current = 0;
+        };
+        es.onerror = () => {
+          setConnected(false);
+          es.close();
+          eventSourceRef.current = null;
+          scheduleRetry();
+        };
+        es.onmessage = (e) => {
+          try {
+            const msg = JSON.parse(e.data);
+            setAlerts((prev) => [msg, ...prev].slice(0, 20));
+          } catch { /* ignore parse errors */ }
+        };
+      } catch {
+        setConnected(false);
+        scheduleRetry();
+      }
+    };
+
+    connectRef.current = doConnect;
+    void doConnect();
+
     return () => {
       eventSourceRef.current?.close();
       eventSourceRef.current = null;
@@ -73,7 +75,7 @@ function AlertIndicator({ tenantId }: { tenantId: string | null }) {
         retryTimerRef.current = null;
       }
     };
-  }, [connect]);
+  }, [tenantId, scheduleRetry]);
 
   return (
     <Badge count={alerts.length} size="small" offset={[2, 0]}>
