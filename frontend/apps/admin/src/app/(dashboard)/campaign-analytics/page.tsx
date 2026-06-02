@@ -37,6 +37,11 @@ interface CodeBatch {
   product_name?: string;
 }
 
+interface Campaign {
+  id: string;
+  name: string;
+}
+
 export default function CampaignAnalyticsPage() {
   const { message } = App.useApp();
   const [dateRange, setDateRange] = useState<[Dayjs, Dayjs]>([
@@ -46,27 +51,33 @@ export default function CampaignAnalyticsPage() {
   const [trend, setTrend] = useState<ScanTrendRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [codeBatches, setCodeBatches] = useState<CodeBatch[]>([]);
-  const [selectedBatch, setSelectedBatch] = useState<string | undefined>(
-    undefined
-  );
+  const [campaigns, setCampaigns] = useState<Campaign[]>([]);
+  const [selectedCampaign, setSelectedCampaign] = useState<string | undefined>(undefined);
+  const [selectedBatch, setSelectedBatch] = useState<string | undefined>(undefined);
   const [codeStats, setCodeStats] = useState<CodeStats | null>(null);
   const [codeStatsLoading, setCodeStatsLoading] = useState(false);
 
   const fetchTrend = useCallback(async () => {
     setLoading(true);
     try {
-      const params = {
+      const params: Record<string, string> = {
         start_date: dateRange[0].format("YYYY-MM-DD"),
         end_date: dateRange[1].format("YYYY-MM-DD"),
       };
-      const { data } = await api.get("/analytics/scan-stats", { params });
+      if (selectedCampaign) {
+        params.campaign_id = selectedCampaign;
+      }
+      const endpoint = selectedCampaign
+        ? "/analytics/campaign-scan-stats"
+        : "/analytics/scan-stats";
+      const { data } = await api.get(endpoint, { params });
       setTrend(Array.isArray(data) ? data : data?.details || []);
     } catch {
       setTrend([]);
     } finally {
       setLoading(false);
     }
-  }, [dateRange]);
+  }, [dateRange, selectedCampaign]);
 
   const fetchCodeBatches = useCallback(async () => {
     try {
@@ -74,6 +85,19 @@ export default function CampaignAnalyticsPage() {
         params: { page: 1, page_size: 100 },
       });
       setCodeBatches(data.items || []);
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  const fetchCampaigns = useCallback(async () => {
+    try {
+      const { data } = await api.get("/campaigns", {
+        params: { page: 1, page_size: 100 },
+      });
+      setCampaigns(
+        (data.items || []).map((c: Campaign) => ({ id: c.id, name: c.name }))
+      );
     } catch {
       /* ignore */
     }
@@ -102,7 +126,8 @@ export default function CampaignAnalyticsPage() {
 
   useEffect(() => {
     fetchCodeBatches();
-  }, [fetchCodeBatches]);
+    fetchCampaigns();
+  }, [fetchCodeBatches, fetchCampaigns]);
 
   useEffect(() => {
     if (selectedBatch) {
@@ -173,7 +198,20 @@ export default function CampaignAnalyticsPage() {
       <Title level={4}>活动看板</Title>
 
       <div className="mb-4">
-        <Space>
+        <Space wrap>
+          <Select
+            placeholder="全部活动"
+            allowClear
+            showSearch
+            optionFilterProp="label"
+            style={{ width: 200 }}
+            value={selectedCampaign}
+            onChange={(v) => setSelectedCampaign(v)}
+            options={campaigns.map((c) => ({
+              value: c.id,
+              label: c.name,
+            }))}
+          />
           <RangePicker
             value={dateRange}
             onChange={(dates) => {
@@ -191,38 +229,22 @@ export default function CampaignAnalyticsPage() {
       <Row gutter={[16, 16]} className="mb-6">
         <Col xs={24} sm={12} lg={6}>
           <Card loading={loading}>
-            <Statistic
-              title="总扫码"
-              value={totals.total_scans}
-              prefix={<ScanOutlined />}
-            />
+            <Statistic title="总扫码" value={totals.total_scans} prefix={<ScanOutlined />} />
           </Card>
         </Col>
         <Col xs={24} sm={12} lg={6}>
           <Card loading={loading}>
-            <Statistic
-              title="UV"
-              value={totals.uv}
-              prefix={<UserOutlined />}
-            />
+            <Statistic title="UV" value={totals.uv} prefix={<UserOutlined />} />
           </Card>
         </Col>
         <Col xs={24} sm={12} lg={6}>
           <Card loading={loading}>
-            <Statistic
-              title="首扫"
-              value={totals.first_scans}
-              prefix={<RocketOutlined />}
-            />
+            <Statistic title="首扫" value={totals.first_scans} prefix={<RocketOutlined />} />
           </Card>
         </Col>
         <Col xs={24} sm={12} lg={6}>
           <Card loading={loading}>
-            <Statistic
-              title="复扫"
-              value={totals.rescans}
-              prefix={<RedoOutlined />}
-            />
+            <Statistic title="复扫" value={totals.rescans} prefix={<RedoOutlined />} />
           </Card>
         </Col>
       </Row>
