@@ -3,6 +3,7 @@ export interface Client {
   name: string;
   status: string;
   plan: string;
+  industry?: string | null;
   plan_expires_at: string | null;
   created_at: string;
 }
@@ -15,6 +16,7 @@ export interface Task {
   status: string;
   priority: string;
   due_date: string | null;
+  assigned_to?: string | null;
 }
 
 export interface ChecklistResult {
@@ -78,6 +80,13 @@ export interface AgencyWorkbenchResponse {
   total: number;
   page: number;
   page_size: number;
+}
+
+export interface IndustryTemplate {
+  id: number;
+  name: string;
+  template_type: string;
+  description: string;
 }
 
 export const STATUS_MAP: Record<string, { label: string; color: string }> = {
