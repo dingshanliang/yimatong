@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.core.dependencies import get_current_tenant
-from app.services.analytics import get_code_stats, get_dashboard, get_scan_stats
+from app.services.analytics import get_campaign_scan_stats, get_code_stats, get_dashboard, get_scan_stats
 
 analytics_router = APIRouter(prefix="/api/v1/analytics", tags=["analytics"])
 
@@ -39,3 +39,14 @@ async def get_dashboard_endpoint(
     tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
     return await get_dashboard(db, tenant_id, days_back=days_back)
+
+
+@analytics_router.get("/campaign-scan-stats", summary="获取活动维度扫码统计")
+async def get_campaign_scan_stats_endpoint(
+    campaign_id: uuid.UUID | None = Query(None),
+    start_date: date | None = Query(None),
+    end_date: date | None = Query(None),
+    db: AsyncSession = Depends(get_db),
+    tenant_id: uuid.UUID = Depends(get_current_tenant),
+):
+    return await get_campaign_scan_stats(db, tenant_id, campaign_id, start_date, end_date)

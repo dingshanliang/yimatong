@@ -2,6 +2,8 @@
 
 import asyncio
 import json
+import secrets
+import time
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -141,6 +143,9 @@ async def export_endpoint(
 # 每个 tenant 维护一个 SSE 客户端队列
 _sse_clients: dict[str, list[asyncio.Queue]] = {}
 
+# SSE ticket 存储（短期，内存中，5 分钟有效）
+_sse_tickets: dict[str, dict] = {}
+
 
 def _broadcast_alert(tenant_id: str, alert_data: dict) -> None:
     """向所有订阅该 tenant 的 SSE 客户端广播告警"""
@@ -152,23 +157,33 @@ def _broadcast_alert(tenant_id: str, alert_data: dict) -> None:
             pass  # 丢弃过旧消息
 
 
+@risk_dashboard_router.post("/alerts/ticket")
+async def create_sse_ticket(
+    tenant_id: uuid.UUID = Depends(get_current_tenant),
+):
+    """为 SSE 连接创建一次性短期 ticket（替代 URL 中的 JWT）"""
+    ticket = secrets.token_urlsafe(32)
+    _sse_tickets[ticket] = {
+        "tenant_id": str(tenant_id),
+        "exp": time.time() + 300,  # 5 分钟有效
+    }
+    return {"ticket": ticket}
+
+
 @risk_dashboard_router.get("/alerts/stream")
 async def alert_stream(
     request: Request,
-    token: str = Query(..., description="JWT access token (EventSource 不支持自定义 header)"),
+    ticket: str = Query(..., description="SSE ticket obtained from POST /alerts/ticket"),
 ):
-    """SSE 实时告警流。Admin 前端通过 EventSource 连接，使用 query parameter 认证。"""
+    """SSE 实时告警流。使用短期 ticket 认证，避免 JWT 暴露在 URL 中。"""
     from starlette.responses import JSONResponse
 
-    from app.utils.security import verify_access_token
+    # 验证 ticket
+    ticket_data = _sse_tickets.pop(ticket, None)
+    if not ticket_data or ticket_data["exp"] < time.time():
+        return JSONResponse(status_code=401, content={"detail": "Invalid or expired SSE ticket"})
 
-    payload = await verify_access_token(token)
-    if payload is None:
-        return JSONResponse(status_code=401, content={"detail": "Invalid or expired token"})
-
-    tid = payload.get("tenant_id")
-    if not tid:
-        return JSONResponse(status_code=401, content={"detail": "Tenant context not found"})
+    tid = ticket_data["tenant_id"]
 
     queue: asyncio.Queue = asyncio.Queue(maxsize=50)
 

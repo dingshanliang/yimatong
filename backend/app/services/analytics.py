@@ -178,3 +178,91 @@ async def aggregate_daily_stats(
 
     await db.flush()
     return {"date": str(target_date), "total": total, "first_scans": first}
+
+
+async def get_campaign_scan_stats(
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    campaign_id: uuid.UUID | None = None,
+    start_date: date | None = None,
+    end_date: date | None = None,
+) -> list[dict]:
+    """获取活动维度的扫码统计
+
+    通过 Campaign.product_id → CodeBatch.product_id → CodeItem → ScanEvent 关联
+    """
+    from datetime import UTC, datetime
+
+    from app.models.code import CodeBatch
+
+    if not start_date:
+        start_date = date.today() - timedelta(days=30)
+    if not end_date:
+        end_date = date.today()
+
+    # 找到匹配的码批次
+    batch_stmt = select(CodeBatch.id).where(CodeBatch.tenant_id == tenant_id)
+    if campaign_id:
+        # 通过 product_id 关联
+        from app.models.campaign import Campaign
+
+        campaign_result = await db.execute(
+            select(Campaign.product_id).where(
+                Campaign.id == campaign_id,
+                Campaign.tenant_id == tenant_id,
+            )
+        )
+        product_id = campaign_result.scalar_one_or_none()
+        if not product_id:
+            return []
+        batch_stmt = batch_stmt.where(CodeBatch.product_id == product_id)
+
+    batch_result = await db.execute(batch_stmt)
+    batch_ids = [row[0] for row in batch_result.all()]
+
+    if not batch_ids:
+        return []
+
+    # 查找这些批次关联的码的 public_id
+    code_stmt = select(CodeItem.public_id).where(
+        CodeItem.tenant_id == tenant_id,
+        CodeItem.code_batch_id.in_(batch_ids),
+    )
+    code_result = await db.execute(code_stmt)
+    public_ids = [row[0] for row in code_result.all()]
+
+    if not public_ids:
+        return []
+
+    # 按日期分组统计 scan_events
+    start_dt = datetime(start_date.year, start_date.month, start_date.day, tzinfo=UTC)
+    end_dt = datetime(end_date.year, end_date.month, end_date.day, tzinfo=UTC) + timedelta(days=1)
+
+    result = await db.execute(
+        select(
+            func.date_trunc("day", ScanEvent.scan_time).label("day"),
+            func.count().label("total_scans"),
+            func.count(ScanEvent.public_id.distinct()).label("uv"),
+            func.sum(ScanEvent.is_first_scan.cast(Integer)).label("first_scans"),
+        )
+        .where(
+            ScanEvent.tenant_id == tenant_id,
+            ScanEvent.public_id.in_(public_ids),
+            ScanEvent.scan_time >= start_dt,
+            ScanEvent.scan_time < end_dt,
+        )
+        .group_by("day")
+        .order_by("day")
+    )
+
+    rows = result.all()
+    return [
+        {
+            "date": str(row.day.date()) if row.day else "",
+            "total_scans": row.total_scans or 0,
+            "uv": row.uv or 0,
+            "first_scans": int(row.first_scans or 0),
+            "rescans": (row.total_scans or 0) - int(row.first_scans or 0),
+        }
+        for row in rows
+    ]

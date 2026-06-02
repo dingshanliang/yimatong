@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { App, Button, Card, Col, DatePicker, Row, Space, Statistic, Table, Typography } from "antd";
+import { App, Button, Card, Col, DatePicker, Empty, Row, Space, Statistic, Table, Typography } from "antd";
 import {
   ScanOutlined,
   UserOutlined,
@@ -11,7 +11,8 @@ import {
 } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
 import dayjs, { type Dayjs } from "dayjs";
-import api from "@/lib/api";
+import api, { extractErrorMessage } from "@/lib/api";
+import ScanTrendChart from "@/components/ScanTrendChart";
 
 const { Title } = Typography;
 const { RangePicker } = DatePicker;
@@ -42,9 +43,12 @@ export default function StatsPage() {
     api
       .get("/analytics/scan-stats", { params })
       .then((res) => setData(res.data || []))
-      .catch(() => setData([]))
+      .catch((err) => {
+        setData([]);
+        message.error(extractErrorMessage(err, "加载统计数据失败"));
+      })
       .finally(() => setLoading(false));
-  }, [dateRange]);
+  }, [dateRange, message]);
 
   const totals = data.reduce(
     (acc, row) => ({
@@ -56,25 +60,41 @@ export default function StatsPage() {
     { total_scans: 0, uv: 0, first_scans: 0, rescans: 0 },
   );
 
-  const handleExportCSV = () => {
+  const handleExport = async () => {
     if (data.length === 0) {
       message.warning("暂无数据可导出");
       return;
     }
-    const header = "日期,扫码量,独立用户,首扫数,重扫数";
-    const rows = data.map(
-      (r) => `${r.date},${r.total_scans},${r.uv},${r.first_scans},${r.rescans}`
-    );
-    const csv = [header, ...rows].join("\n");
-    const BOM = "﻿";
-    const blob = new Blob([BOM + csv], { type: "text/csv;charset=utf-8;" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `扫码统计_${dateRange[0].format("YYYYMMDD")}-${dateRange[1].format("YYYYMMDD")}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
-    message.success("导出成功");
+    try {
+      const params: Record<string, string> = {
+        export_type: "scan_stats",
+        format: "xlsx",
+        start_date: dateRange[0].format("YYYY-MM-DD"),
+        end_date: dateRange[1].format("YYYY-MM-DD"),
+      };
+      const response = await api.post("/analytics/exports", null, {
+        params,
+        responseType: "blob",
+      });
+      const blob = new Blob([response.data], {
+        type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      });
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `扫码统计_${dateRange[0].format("YYYYMMDD")}-${dateRange[1].format("YYYYMMDD")}.xlsx`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+      message.success("导出成功");
+    } catch (err) {
+      message.error(extractErrorMessage(err, "导出失败，请重试"));
+    }
+  };
+
+  const disabledDate = (current: Dayjs) => {
+    return current && current.isAfter(dayjs().endOf("day"));
   };
 
   const columns: ColumnsType<ScanStatsRow> = [
@@ -90,7 +110,7 @@ export default function StatsPage() {
       <Title level={4}>扫码统计</Title>
       <Row gutter={[16, 16]} className="mb-6">
         <Col xs={24} sm={12} lg={6}>
-          <Card>
+          <Card loading={loading}>
             <Statistic
               title="总扫码"
               value={totals.total_scans}
@@ -99,7 +119,7 @@ export default function StatsPage() {
           </Card>
         </Col>
         <Col xs={24} sm={12} lg={6}>
-          <Card>
+          <Card loading={loading}>
             <Statistic
               title="独立用户"
               value={totals.uv}
@@ -108,7 +128,7 @@ export default function StatsPage() {
           </Card>
         </Col>
         <Col xs={24} sm={12} lg={6}>
-          <Card>
+          <Card loading={loading}>
             <Statistic
               title="首扫数"
               value={totals.first_scans}
@@ -117,7 +137,7 @@ export default function StatsPage() {
           </Card>
         </Col>
         <Col xs={24} sm={12} lg={6}>
-          <Card>
+          <Card loading={loading}>
             <Statistic
               title="重扫数"
               value={totals.rescans}
@@ -126,6 +146,11 @@ export default function StatsPage() {
           </Card>
         </Col>
       </Row>
+      {data.length > 0 && (
+        <Card title="扫码趋势" size="small" className="mb-6">
+          <ScanTrendChart data={data} height={300} showMulti />
+        </Card>
+      )}
       <div className="mb-4">
         <Space>
           <RangePicker
@@ -135,9 +160,10 @@ export default function StatsPage() {
                 setDateRange([dates[0], dates[1]]);
               }
             }}
+            disabledDate={disabledDate}
           />
-          <Button icon={<DownloadOutlined />} onClick={handleExportCSV}>
-            导出 CSV
+          <Button icon={<DownloadOutlined />} onClick={handleExport}>
+            导出 Excel
           </Button>
         </Space>
       </div>
@@ -146,7 +172,12 @@ export default function StatsPage() {
         dataSource={data}
         rowKey="date"
         loading={loading}
-        pagination={false}
+        pagination={{ pageSize: 30, showTotal: (t) => `共 ${t} 天` }}
+        locale={{
+          emptyText: loading ? undefined : (
+            <Empty description="该日期范围内暂无扫码数据" />
+          ),
+        }}
       />
     </div>
   );
