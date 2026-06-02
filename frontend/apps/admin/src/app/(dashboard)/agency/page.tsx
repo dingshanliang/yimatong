@@ -43,6 +43,7 @@ export default function AgencyPage() {
   const [checklistModalOpen, setChecklistModalOpen] = useState(false);
   const [checklistData, setChecklistData] = useState<ChecklistResult | null>(null);
   const [checklistClientName, setChecklistClientName] = useState("");
+  const [checklistClientId, setChecklistClientId] = useState("");
   const [checklistLoading, setChecklistLoading] = useState(false);
 
   const [workbenchFilter, setWorkbenchFilter] = useState<{ q?: string; readiness?: string; task_status?: string }>({});
@@ -72,10 +73,32 @@ export default function AgencyPage() {
   useEffect(() => { fetchWorkbench({}); }, [fetchWorkbench]);
 
   const handleOpenChecklist = async (clientId: string, clientName: string) => {
-    setChecklistLoading(true); setChecklistClientName(clientName); setChecklistModalOpen(true);
-    try { const { data } = await api.get(`/ops/clients/${clientId}/launch-checklist`); setChecklistData(data); }
-    catch { setChecklistData(null); }
-    finally { setChecklistLoading(false); }
+    setChecklistLoading(true);
+    setChecklistClientName(clientName);
+    setChecklistClientId(clientId);
+    setChecklistModalOpen(true);
+    try {
+      const { data } = await api.get(`/ops/clients/${clientId}/launch-checklist`);
+      setChecklistData(data);
+    } catch {
+      setChecklistData(null);
+    } finally {
+      setChecklistLoading(false);
+    }
+  };
+
+  const handleRetryChecklist = async () => {
+    if (!checklistClientId) return;
+    setChecklistLoading(true);
+    setChecklistData(null);
+    try {
+      const { data } = await api.get(`/ops/clients/${checklistClientId}/launch-checklist`);
+      setChecklistData(data);
+    } catch {
+      setChecklistData(null);
+    } finally {
+      setChecklistLoading(false);
+    }
   };
 
   const handleUpdateTaskStatus = async (taskId: string, newStatus: string) => {
@@ -154,7 +177,14 @@ export default function AgencyPage() {
         initialTitle={taskInitialValues.title}
         onSuccess={() => { fetchWorkbench(workbenchFilter); }}
       />
-      <ChecklistModal open={checklistModalOpen} clientName={checklistClientName} onClose={() => { setChecklistModalOpen(false); setChecklistData(null); }} data={checklistData} loading={checklistLoading} />
+      <ChecklistModal
+        open={checklistModalOpen}
+        clientName={checklistClientName}
+        onClose={() => { setChecklistModalOpen(false); setChecklistData(null); setChecklistClientId(""); }}
+        data={checklistData}
+        loading={checklistLoading}
+        onRetry={handleRetryChecklist}
+      />
     </div>
   );
 }
