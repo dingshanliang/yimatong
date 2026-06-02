@@ -5,6 +5,7 @@ import { App, Badge, Button, Card, Col, Row, Select, Space, Statistic, Table, Ta
 import { DownloadOutlined, CheckOutlined, BellOutlined } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
 import api from "@/lib/api";
+import { useAuthStore } from "@/lib/auth";
 
 const { Title } = Typography;
 
@@ -18,25 +19,34 @@ function AlertIndicator({ tenantId }: { tenantId: string | null }) {
   useEffect(() => {
     if (!tenantId) return;
 
-    const token = typeof window !== "undefined" ? localStorage.getItem("token") : null;
-    if (!token) return;
+    let es: EventSource | null = null;
 
-    // SSE 连接（通过 query param 传递 token，因为 EventSource 不支持 header）
-    const base = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-    const es = new EventSource(`${base}/api/v1/risk-dashboard/alerts/stream?token=${token}`);
-    eventSourceRef.current = es;
-
-    es.onopen = () => setConnected(true);
-    es.onerror = () => setConnected(false);
-    es.onmessage = (e) => {
+    // 先通过 POST 获取一次性 ticket，再用 ticket 连接 SSE
+    (async () => {
       try {
-        const data = JSON.parse(e.data);
-        setAlerts((prev) => [data, ...prev].slice(0, 20));
-      } catch { /* ignore */ }
-    };
+        const { data } = await api.post("/risk-dashboard/alerts/ticket");
+        const ticket = data.ticket;
+        if (!ticket) return;
+
+        const base = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+        es = new EventSource(`${base}/api/v1/risk-dashboard/alerts/stream?ticket=${ticket}`);
+        eventSourceRef.current = es;
+
+        es.onopen = () => setConnected(true);
+        es.onerror = () => setConnected(false);
+        es.onmessage = (e) => {
+          try {
+            const msg = JSON.parse(e.data);
+            setAlerts((prev) => [msg, ...prev].slice(0, 20));
+          } catch { /* ignore */ }
+        };
+      } catch {
+        setConnected(false);
+      }
+    })();
 
     return () => {
-      es.close();
+      es?.close();
       eventSourceRef.current = null;
     };
   }, [tenantId]);
@@ -370,17 +380,8 @@ export default function RiskDashboardPage() {
     }
   };
 
-  // 简单获取 tenantId（从 localStorage 解析 JWT）
-  const [tenantId, setTenantId] = useState<string | null>(null);
-  useEffect(() => {
-    try {
-      const token = localStorage.getItem("token");
-      if (token) {
-        const payload = JSON.parse(atob(token.split(".")[1]));
-        setTenantId(payload.tenant_id || null);
-      }
-    } catch { /* ignore */ }
-  }, []);
+  // 从 auth store 获取 tenantId
+  const tenantId = useAuthStore((s) => s.user?.tenant_id ?? null);
 
   return (
     <div>
