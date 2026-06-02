@@ -20,6 +20,13 @@ depends_on: str | Sequence[str] | None = None
 
 def upgrade() -> None:
     op.alter_column("benefit_claims", "created_at", existing_type=sa.DateTime(timezone=True), nullable=True)
+    # Guard: benefit_deliveries table may not exist if migration 9965e0679a13 was not applied
+    conn = op.get_bind()
+    exists = conn.execute(
+        sa.text("SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = 'benefit_deliveries')")
+    ).scalar()
+    if not exists:
+        return
     op.add_column("benefit_deliveries", sa.Column("benefit_id", sa.Uuid(), nullable=True))
     op.add_column("benefit_deliveries", sa.Column("claim_id", sa.Uuid(), nullable=True))
     op.create_index(op.f("ix_benefit_deliveries_benefit_id"), "benefit_deliveries", ["benefit_id"], unique=False)

@@ -1,3 +1,59 @@
+# 演示数据增强 Implementation Plan
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+
+**Goal:** 创建一个独立的 `seed_demo.py` 脚本，生成中等规模、真实感强的演示数据，覆盖品牌/产品/码/扫码/渠道/活动/会员/风控/页面/统计全模块。
+
+**Architecture:** 单一脚本 `backend/scripts/seed_demo.py`，使用 SQLAlchemy async engine 直接操作数据库。采用 `ensure_*` 幂等模式（先查后建），批量插入提升性能。通过 `--clean` 参数支持清理重建。在现有 `seed.py` CLI 中增加 `demo` 子命令作为入口。
+
+**Tech Stack:** Python 3.13+, SQLAlchemy 2.0 async, Typer CLI, asyncio
+
+---
+
+## File Structure
+
+| 文件 | 操作 | 职责 |
+|------|------|------|
+| `backend/scripts/seed_demo.py` | 新建 | 主脚本：所有数据生成逻辑 |
+| `backend/app/cli/seed.py` | 修改 | 增加 `demo` 子命令委托调用新脚本 |
+
+---
+
+## 常量定义参考（贯穿所有 Task）
+
+所有模型枚举值精确映射：
+
+```python
+# CampaignStatus: "draft", "active", "paused", "ended"
+# BenefitType: "platform_coupon", "external_link", "private_domain", "form_benefit", "cash_red_packet"
+# CodeItemStatus: "created", "activated", "bound", "expired", "revoked", "frozen"
+# CodeBatchStatus: "pending", "generating", "completed", "activated", "failed"
+# TemplateType: "product_info", "traceability", "brand_story"
+# PageTemplateStatus: "active", "archived"
+# PageVersionStatus: "draft", "published", "archived"
+# MemberLevel: "normal", "silver", "gold", "platinum"
+# PointTransactionType: "earning", "spending", "expired"
+# RiskAlertType: "multi_location", "suspected_copy", "risk_frozen"
+# RiskRuleAction: "block", "warn"
+```
+
+---
+
+### Task 1: 脚本骨架 — CLI 入口、数据库连接、进度报告器
+
+**Files:**
+- Create: `backend/scripts/seed_demo.py`
+
+- [ ] **Step 1: 创建脚本骨架文件**
+
+创建 `backend/scripts/seed_demo.py`，包含：
+- 所有 import
+- DB engine/session 工厂
+- 进度报告器类
+- `main()` CLI 函数（typer）
+- 品牌定义常量（BRANDS、PRODUCTS、SKUS）
+
+```python
 """一码通演示数据生成器 — 生成中等规模真实感演示数据"""
 
 import asyncio
@@ -6,7 +62,7 @@ import random
 import sys
 import time
 import uuid
-from datetime import date, datetime, timedelta
+from datetime import date, timedelta
 from pathlib import Path
 
 import typer
@@ -27,7 +83,6 @@ from app.models.channel import (
     Store,
 )
 from app.models.code import CodeBatch, CodeItem, CodeItemStatus
-from app.models.connector import Connector  # noqa: F401 - register FK for Benefit.connector_id
 from app.models.member import (
     ConsumerProfile,
     MemberLevel,
@@ -39,7 +94,7 @@ from app.models.member import (
 )
 from app.models.page import PageTemplate, PageTemplateStatus, PageVersion, PageVersionStatus
 from app.models.product import Brand, Product, ProductionBatch, SKU
-from app.models.risk import InterceptionRecord, RiskAlert, RiskAlertType, RiskNotification, RiskRule
+from app.models.risk import InterceptionRecord, RiskAlert, RiskAlertType, RiskRule
 from app.models.scan import ScanEvent
 from app.models.tenant import Account, Organization, Role, Tenant, account_roles
 from app.services.analytics import aggregate_daily_stats
@@ -321,7 +376,7 @@ def _scan_count_for_day(day_index: int) -> int:
     return max(20, int((base + growth + noise) * weekday_factor))
 
 
-def _random_scan_time(day_index: int) -> datetime:
+def _random_scan_time(day_index: int) -> object:
     """生成第 day_index 天的一个随机扫码时间（集中在高峰时段）"""
     target_date = date.today() - timedelta(days=TOTAL_DAYS - 1 - day_index)
     hour_weights = [
@@ -342,12 +397,35 @@ def _random_scan_time(day_index: int) -> datetime:
     hour = random.randint(chosen_start, chosen_end - 1)
     minute = random.randint(0, 59)
     second = random.randint(0, 59)
+    from datetime import datetime
     return datetime(
         target_date.year, target_date.month, target_date.day,
         hour, minute, second,
     )
+```
 
+- [ ] **Step 2: 验证脚本语法正确**
 
+Run: `cd /Users/ericding/code/agriculture/yimatong/backend && python -c "import ast; ast.parse(open('scripts/seed_demo.py').read()); print('Syntax OK')"`
+Expected: `Syntax OK`
+
+- [ ] **Step 3: Commit**
+
+```bash
+git add backend/scripts/seed_demo.py
+git commit -m "feat(seed): add demo data generator script skeleton with constants"
+```
+
+---
+
+### Task 2: 租户与账号创建函数
+
+**Files:**
+- Modify: `backend/scripts/seed_demo.py` (追加函数)
+
+- [ ] **Step 1: 在文件末尾追加租户/账号创建函数**
+
+```python
 # ═══════════════════════════════════════════════════════
 # 阶段 1: 租户与账号
 # ═══════════════════════════════════════════════════════
@@ -362,10 +440,10 @@ async def _ensure_tenant(db: AsyncSession) -> Tenant:
         db,
         name=TENANT_NAME,
         slug=TENANT_SLUG,
-        plan="free",
         admin_email=DEMO_ACCOUNTS[0]["email"],
         admin_name=DEMO_ACCOUNTS[0]["name"],
         admin_password=DEMO_ACCOUNTS[0]["password"],
+        plan="free",
     )
     return tenant
 
@@ -431,8 +509,30 @@ async def _ensure_accounts(
         accounts.append(account)
     await db.flush()
     return accounts
+```
 
+- [ ] **Step 2: 验证语法**
 
+Run: `cd /Users/ericding/code/agriculture/yimatong/backend && python -c "import ast; ast.parse(open('scripts/seed_demo.py').read()); print('OK')"`
+Expected: `OK`
+
+- [ ] **Step 3: Commit**
+
+```bash
+git add backend/scripts/seed_demo.py
+git commit -m "feat(seed): add tenant and account creation functions"
+```
+
+---
+
+### Task 3: 品牌与产品创建函数
+
+**Files:**
+- Modify: `backend/scripts/seed_demo.py`
+
+- [ ] **Step 1: 追加品牌/产品/SKU/生产批次创建函数**
+
+```python
 # ═══════════════════════════════════════════════════════
 # 阶段 2: 品牌与产品
 # ═══════════════════════════════════════════════════════
@@ -520,8 +620,30 @@ async def _ensure_brands_products(
 
     await db.flush()
     return brand_records
+```
 
+- [ ] **Step 2: 验证语法**
 
+Run: `cd /Users/ericding/code/agriculture/yimatong/backend && python -c "import ast; ast.parse(open('scripts/seed_demo.py').read()); print('OK')"`
+Expected: `OK`
+
+- [ ] **Step 3: Commit**
+
+```bash
+git add backend/scripts/seed_demo.py
+git commit -m "feat(seed): add brand/product/SKU/production batch generation"
+```
+
+---
+
+### Task 4: 码批次生成函数
+
+**Files:**
+- Modify: `backend/scripts/seed_demo.py`
+
+- [ ] **Step 1: 追加码批次生成函数**
+
+```python
 # ═══════════════════════════════════════════════════════
 # 阶段 3: 码批次与码项
 # ═══════════════════════════════════════════════════════
@@ -608,8 +730,30 @@ async def _ensure_code_batches(
     await db.flush()
 
     return all_items
+```
 
+- [ ] **Step 2: 验证语法**
 
+Run: `cd /Users/ericding/code/agriculture/yimatong/backend && python -c "import ast; ast.parse(open('scripts/seed_demo.py').read()); print('OK')"`
+Expected: `OK`
+
+- [ ] **Step 3: Commit**
+
+```bash
+git add backend/scripts/seed_demo.py
+git commit -m "feat(seed): add code batch generation with status variety"
+```
+
+---
+
+### Task 5: 渠道体系创建函数
+
+**Files:**
+- Modify: `backend/scripts/seed_demo.py`
+
+- [ ] **Step 1: 追加渠道创建函数**
+
+```python
 # ═══════════════════════════════════════════════════════
 # 阶段 4: 渠道体系
 # ═══════════════════════════════════════════════════════
@@ -752,8 +896,32 @@ async def _ensure_channels(
         await create_account_scope(db, tenant_id, store_account.id, "store", store_id=stores[0].id)
 
     return {"distributors": distributors, "regions": regions, "stores": stores}
+```
 
+- [ ] **Step 2: 验证语法**
 
+Run: `cd /Users/ericding/code/agriculture/yimatong/backend && python -c "import ast; ast.parse(open('scripts/seed_demo.py').read()); print('OK')"`
+Expected: `OK`
+
+- [ ] **Step 3: Commit**
+
+```bash
+git add backend/scripts/seed_demo.py
+git commit -m "feat(seed): add channel system generation (distributors/regions/stores)"
+```
+
+---
+
+### Task 6: 扫码事件批量生成
+
+**Files:**
+- Modify: `backend/scripts/seed_demo.py`
+
+这是数据量最大的部分（~18,000 条 ScanEvent）。
+
+- [ ] **Step 1: 追加扫码事件批量生成函数**
+
+```python
 # ═══════════════════════════════════════════════════════
 # 阶段 5: 扫码事件
 # ═══════════════════════════════════════════════════════
@@ -805,20 +973,37 @@ async def _ensure_scan_events(
             if len(events_batch) >= batch_size:
                 db.add_all(events_batch)
                 await db.flush()
-                # 从 identity map 中移除，避免后续操作变慢
-                for e in events_batch:
-                    db.expunge(e)
                 events_batch = []
 
     if events_batch:
         db.add_all(events_batch)
         await db.flush()
-        for e in events_batch:
-            db.expunge(e)
 
     return total_events
+```
 
+- [ ] **Step 2: 验证语法**
 
+Run: `cd /Users/ericding/code/agriculture/yimatong/backend && python -c "import ast; ast.parse(open('scripts/seed_demo.py').read()); print('OK')"`
+Expected: `OK`
+
+- [ ] **Step 3: Commit**
+
+```bash
+git add backend/scripts/seed_demo.py
+git commit -m "feat(seed): add bulk scan event generation with realistic patterns"
+```
+
+---
+
+### Task 7: 活动与权益创建函数
+
+**Files:**
+- Modify: `backend/scripts/seed_demo.py`
+
+- [ ] **Step 1: 追加活动/权益/权益领取函数**
+
+```python
 # ═══════════════════════════════════════════════════════
 # 阶段 6: 活动与权益
 # ═══════════════════════════════════════════════════════
@@ -967,8 +1152,30 @@ async def _ensure_campaigns(
         campaigns.append(campaign)
 
     return campaigns
+```
 
+- [ ] **Step 2: 验证语法**
 
+Run: `cd /Users/ericding/code/agriculture/yimatong/backend && python -c "import ast; ast.parse(open('scripts/seed_demo.py').read()); print('OK')"`
+Expected: `OK`
+
+- [ ] **Step 3: Commit**
+
+```bash
+git add backend/scripts/seed_demo.py
+git commit -m "feat(seed): add campaign, benefit, and benefit claim generation"
+```
+
+---
+
+### Task 8: 消费者档案与积分
+
+**Files:**
+- Modify: `backend/scripts/seed_demo.py`
+
+- [ ] **Step 1: 追加消费者和积分生成函数**
+
+```python
 # ═══════════════════════════════════════════════════════
 # 阶段 7: 消费者与积分
 # ═══════════════════════════════════════════════════════
@@ -1011,8 +1218,13 @@ async def _ensure_consumers(
         return consumers, consumer_ids
 
     consumers = []
+    used_nicknames = set()
     for i in range(target_count):
         nickname = random.choice(NICKNAME_POOL)
+        # 避免完全重复昵称
+        while nickname in used_nicknames and len(used_nicknames) < len(NICKNAME_POOL):
+            nickname = random.choice(NICKNAME_POOL)
+        used_nicknames.add(nickname)
 
         level, points = _assign_member_level()
         consumer = ConsumerProfile(
@@ -1031,14 +1243,11 @@ async def _ensure_consumers(
 
     # 批量 flush
     await db.flush()
-    # 批量 refresh（一次查询获取所有 ID）
-    consumer_ids_db = [c.id for c in consumers]
-    result = await db.execute(
-        select(ConsumerProfile).where(ConsumerProfile.id.in_(consumer_ids_db))
-    )
-    consumers = list(result.scalars().all())
+    for c in consumers:
+        await db.refresh(c)
 
     # 为有积分的消费者创建积分流水
+    point_rules_added = False
     for consumer in consumers:
         if consumer.total_points > 0:
             # 模拟扫码获得的积分流水
@@ -1099,8 +1308,30 @@ async def _ensure_consumers(
 
     consumer_ids = [str(c.id) for c in consumers]
     return consumers, consumer_ids
+```
 
+- [ ] **Step 2: 验证语法**
 
+Run: `cd /Users/ericding/code/agriculture/yimatong/backend && python -c "import ast; ast.parse(open('scripts/seed_demo.py').read()); print('OK')"`
+Expected: `OK`
+
+- [ ] **Step 3: Commit**
+
+```bash
+git add backend/scripts/seed_demo.py
+git commit -m "feat(seed): add consumer profiles, points, rules, and point shop generation"
+```
+
+---
+
+### Task 9: 风控数据与页面模板
+
+**Files:**
+- Modify: `backend/scripts/seed_demo.py`
+
+- [ ] **Step 1: 追加风控数据和页面模板生成函数**
+
+```python
 # ═══════════════════════════════════════════════════════
 # 阶段 8: 风控数据
 # ═══════════════════════════════════════════════════════
@@ -1389,22 +1620,41 @@ async def _ensure_page_templates(
         templates.append(template)
 
     return templates
+```
 
+- [ ] **Step 2: 验证语法**
 
+Run: `cd /Users/ericding/code/agriculture/yimatong/backend && python -c "import ast; ast.parse(open('scripts/seed_demo.py').read()); print('OK')"`
+Expected: `OK`
+
+- [ ] **Step 3: Commit**
+
+```bash
+git add backend/scripts/seed_demo.py
+git commit -m "feat(seed): add risk data and page template generation"
+```
+
+---
+
+### Task 10: 统计聚合 + main 函数 + 清理功能
+
+**Files:**
+- Modify: `backend/scripts/seed_demo.py`
+
+- [ ] **Step 1: 追加统计聚合、main 函数和清理功能**
+
+```python
 # ═══════════════════════════════════════════════════════
 # 阶段 10: 统计聚合
 # ═══════════════════════════════════════════════════════
 
 async def _aggregate_stats(db: AsyncSession, tenant_id: uuid.UUID) -> int:
-    """批量聚合 60 天的 DailyScanStats"""
+    """为 60 天聚合 DailyScanStats"""
     days_done = 0
     for offset in range(TOTAL_DAYS):
-        target_date = date.today() - timedelta(days=offset)
+        target_date = (date.today() - timedelta(days=offset))
         await aggregate_daily_stats(db, tenant_id, target_date)
         days_done += 1
-        # 每 10 天 flush 一次，避免事务过大
-        if days_done % 10 == 0:
-            await db.flush()
     await db.flush()
     return days_done
 
@@ -1415,7 +1665,7 @@ async def _aggregate_stats(db: AsyncSession, tenant_id: uuid.UUID) -> int:
 
 async def _clean_demo_data(db: AsyncSession, tenant_id: uuid.UUID) -> None:
     """删除所有演示数据（保留租户本身）"""
-    typer.echo("\U0001f9f9 正在清理演示数据...")
+    typer.echo("🧹 正在清理演示数据...")
     # 按依赖顺序删除
     for model in [
         InterceptionRecord, RiskAlert, RiskRule, RiskNotification,
@@ -1445,13 +1695,11 @@ async def _clean_demo_data(db: AsyncSession, tenant_id: uuid.UUID) -> None:
 @app.command()
 def generate():
     """一键生成全部演示数据"""
-    typer.echo("\U0001f3ad 一码通演示数据生成器")
+    typer.echo("🎭 一码通演示数据生成器")
     typer.echo("=" * 50)
 
     async def _run():
         start = time.time()
-
-        # ── 阶段 A：基础数据（租户/品牌/码/渠道/扫码）──
         async with async_session() as db:
             p = Progress(10)
 
@@ -1460,62 +1708,46 @@ def generate():
             org = await _ensure_org(db, tenant.id)
             accounts = await _ensure_accounts(db, tenant.id, org.id)
             admin_account = next((a for a in accounts if a.email == "admin@demo.com"), accounts[0])
-            tenant_id = tenant.id
-            admin_id = admin_account.id
             p.step("租户与账号", f"({len(accounts)} 个账号)")
 
             # 2. 品牌与产品
-            brand_records = await _ensure_brands_products(db, tenant_id)
+            brand_records = await _ensure_brands_products(db, tenant.id)
             brand_count = len(brand_records)
             prod_count = sum(len(b["products"]) for b in brand_records)
             sku_count = sum(len(p_rec["skus"]) for b in brand_records for p_rec in b["products"])
             p.step("品牌与产品", f"({brand_count}品牌/{prod_count}产品/{sku_count}SKU)")
 
             # 3. 码批次
-            code_items = await _ensure_code_batches(db, tenant_id, admin_id, brand_records)
+            code_items = await _ensure_code_batches(db, tenant.id, admin_account.id, brand_records)
             activated = len([i for i in code_items if i.status == CodeItemStatus.activated])
             p.step("码批次", f"({len(code_items)} 码, {activated} 激活)")
-            # 保存 public_id 列表供后续使用
-            active_public_id = next(
-                (i.public_id for i in code_items if i.status == CodeItemStatus.activated), None
-            )
 
             # 4. 渠道
-            channels = await _ensure_channels(db, tenant_id, accounts, code_items)
+            channels = await _ensure_channels(db, tenant.id, accounts, code_items)
             p.step("渠道体系", f"({len(channels['distributors'])}经销商/{len(channels['regions'])}区域/{len(channels['stores'])}门店)")
 
             # 5. 扫码事件
-            event_count = await _ensure_scan_events(db, tenant_id, code_items)
+            event_count = await _ensure_scan_events(db, tenant.id, code_items)
             p.step("扫码事件", f"({event_count:,} 次)")
 
-            # 提交阶段 A，关闭 session 释放 identity map
-            await db.commit()
-
-        # ── 阶段 B：业务数据（消费者/活动/风控/页面/统计）── 新 session，干净的 identity map
-        async with async_session() as db:
-            # 6. 消费者
-            consumers, consumer_ids = await _ensure_consumers(db, tenant_id)
+            # 6. 消费者（在活动之前创建，因为活动需要 consumer_ids）
+            consumers, consumer_ids = await _ensure_consumers(db, tenant.id)
             p.step("消费者与积分", f"({len(consumers)} 人)")
 
             # 7. 活动与权益
-            campaigns = await _ensure_campaigns(db, tenant_id, consumer_ids)
+            campaigns = await _ensure_campaigns(db, tenant.id, consumer_ids)
             p.step("活动与权益", f"({len(campaigns)} 活动)")
 
-            # 8. 风控（需要重新查询 code_items）
-            code_items_b = list((
-                await db.execute(
-                    select(CodeItem).where(CodeItem.tenant_id == tenant_id).limit(100)
-                )
-            ).scalars().all())
-            await _ensure_risk_data(db, tenant_id, code_items_b, channels)
+            # 8. 风控
+            await _ensure_risk_data(db, tenant.id, code_items, channels)
             p.step("风控数据", "(告警/窜货/拦截)")
 
             # 9. 页面模板
-            await _ensure_page_templates(db, tenant_id, brand_records, admin_id)
-            p.step("页面模板", "(5 模板)")
+            await _ensure_page_templates(db, tenant.id, brand_records, admin_account.id)
+            p.step("页面模板", f"(5 模板)")
 
             # 10. 统计聚合
-            days = await _aggregate_stats(db, tenant_id)
+            days = await _aggregate_stats(db, tenant.id)
             p.step("统计聚合", f"({days} 天)")
 
             await db.commit()
@@ -1528,8 +1760,11 @@ def generate():
         for account in DEMO_ACCOUNTS:
             typer.echo(f"  {account['title']}: {account['email']} / {account['password']} ({account['role']})")
 
-        if active_public_id:
-            typer.echo(f"\n示例扫码 URL: /c/{active_public_id}")
+        # 打印示例扫码 URL
+        if code_items:
+            active = next((i for i in code_items if i.status == CodeItemStatus.activated), None)
+            if active:
+                typer.echo(f"\n示例扫码 URL: /c/{active.public_id}")
 
     asyncio.run(_run())
 
@@ -1570,3 +1805,149 @@ def reset():
 
 if __name__ == "__main__":
     app()
+```
+
+- [ ] **Step 2: 验证语法**
+
+Run: `cd /Users/ericding/code/agriculture/yimatong/backend && python -c "import ast; ast.parse(open('scripts/seed_demo.py').read()); print('OK')"`
+Expected: `OK`
+
+- [ ] **Step 3: Commit**
+
+```bash
+git add backend/scripts/seed_demo.py
+git commit -m "feat(seed): add stats aggregation, main CLI entry, clean and reset commands"
+```
+
+---
+
+### Task 11: 在现有 CLI 中增加 `demo` 子命令
+
+**Files:**
+- Modify: `backend/app/cli/seed.py`
+
+- [ ] **Step 1: 在 seed.py 末尾追加 demo 子命令**
+
+在 `backend/app/cli/seed.py` 文件末尾（`if __name__ == "__main__": app()` 之前）追加：
+
+```python
+@app.command()
+def demo(
+    clean: bool = typer.Option(False, "--clean", help="清理现有演示数据后重新生成"),
+):
+    """生成丰富演示数据（委托 scripts/seed_demo.py）"""
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    script = Path(__file__).resolve().parent.parent.parent / "scripts" / "seed_demo.py"
+    if not script.exists():
+        typer.echo(f"Demo script not found: {script}", err=True)
+        raise typer.Exit(code=1)
+
+    cmd = [sys.executable, str(script), "reset" if clean else "generate"]
+    result = subprocess.run(cmd, cwd=str(script.parent.parent))
+    raise typer.Exit(code=result.returncode)
+```
+
+- [ ] **Step 2: 验证 seed.py 语法**
+
+Run: `cd /Users/ericding/code/agriculture/yimatong/backend && python -c "import ast; ast.parse(open('app/cli/seed.py').read()); print('OK')"`
+Expected: `OK`
+
+- [ ] **Step 3: Commit**
+
+```bash
+git add backend/app/cli/seed.py
+git commit -m "feat(cli): add 'seed demo' subcommand to invoke demo data generator"
+```
+
+---
+
+### Task 12: 端到端验证
+
+**Files:** 无修改
+
+- [ ] **Step 1: 确认 Docker 服务运行中**
+
+Run: `docker compose -f backend/docker-compose.dev.yml ps`
+Expected: backend, postgres, redis 都在运行
+
+- [ ] **Step 2: 运行演示数据生成脚本**
+
+Run: `cd /Users/ericding/code/agriculture/yimatong/backend && source .venv/bin/activate && python scripts/seed_demo.py generate`
+Expected: 看到 10 个步骤全部 ✓，最终打印演示账号和扫码 URL
+
+- [ ] **Step 3: 验证数据量**
+
+Run: `docker compose -f backend/docker-compose.dev.yml exec backend /app/.venv/bin/python -c "
+import asyncio
+from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
+from app.core.config import settings
+from app.models.scan import ScanEvent
+from app.models.member import ConsumerProfile
+from app.models.code import CodeItem
+from app.models.campaign import Campaign
+
+async def check():
+    engine = create_async_engine(str(settings.database_url))
+    async with async_sessionmaker(engine, class_=AsyncSession)() as db:
+        scans = (await db.execute(select(func.count()).select_from(ScanEvent))).scalar_one()
+        consumers = (await db.execute(select(func.count()).select_from(ConsumerProfile))).scalar_one()
+        codes = (await db.execute(select(func.count()).select_from(CodeItem))).scalar_one()
+        campaigns = (await db.execute(select(func.count()).select_from(Campaign))).scalar_one()
+        print(f'ScanEvents: {scans}')
+        print(f'Consumers: {consumers}')
+        print(f'CodeItems: {codes}')
+        print(f'Campaigns: {campaigns}')
+
+asyncio.run(check())
+"`
+Expected: ScanEvents > 10000, Consumers ≈ 200, CodeItems > 1500, Campaigns = 5
+
+- [ ] **Step 4: 验证前端页面可正常展示**
+
+启动 admin 前端，登录 `admin@demo.com / Admin1234`，检查：
+- Dashboard 有数据
+- 产品列表有 10 个产品
+- 码管理有多个批次
+- 渠道管理有多个门店
+- 活动列表有 5 个活动
+- 会员列表有 200 人
+
+- [ ] **Step 5: Commit（如有修复）**
+
+```bash
+git add -A
+git commit -m "fix(seed): adjust demo data generation based on e2e verification"
+```
+
+---
+
+## Self-Review Checklist
+
+**1. Spec coverage:**
+- ✅ 3 brands / 10 products / 15 SKUs → Task 3
+- ✅ ~2000 codes across 8 batches → Task 4
+- ✅ 15000-20000 scan events over 60 days → Task 6
+- ✅ Environment distribution (wechat/browser/alipay/other) → Task 6
+- ✅ 4 distributors / 8 regions / 14 stores → Task 5
+- ✅ 5 campaigns with benefits and claims → Task 7
+- ✅ 200 consumer profiles with points → Task 8
+- ✅ Risk alerts, diversion clues, interception records → Task 9
+- ✅ 5 page templates with published versions → Task 9
+- ✅ 60-day DailyScanStats aggregation → Task 10
+- ✅ --clean parameter → Task 10
+- ✅ `demo` subcommand in existing CLI → Task 11
+
+**2. Placeholder scan:** No TBD/TODO/placeholders found.
+
+**3. Type consistency:**
+- `CampaignStatus.ACTIVE` / `CampaignStatus.DRAFT` / `CampaignStatus.ENDED` — matches `CampaignStatus` class attributes
+- `CodeItemStatus.activated` / `revoked` / `frozen` — matches `StrEnum` values
+- `BenefitType.EXTERNAL_LINK` / `PLATFORM_COUPON` etc. — matches `BenefitType` class attributes
+- `TemplateType.traceability` / `product_info` / `brand_story` — matches `TemplateType` class
+- All model field names match actual SQLAlchemy model definitions
+- `create_code_batch` receives `production_batch_id` (UUID) as 5th positional arg — matches actual signature
+- `create_brand` / `create_product` / `create_sku` signatures match `services/product.py`
