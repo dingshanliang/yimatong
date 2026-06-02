@@ -120,6 +120,23 @@ export default function AgencyPage() {
     fetchWorkbench(newFilter);
   };
 
+  const handleStatsCardClick = (filterType: "overdue" | "blocked" | "ready" | "pending") => {
+    switch (filterType) {
+      case "ready":
+        handleFilterChange({ ...workbenchFilter, readiness: "ready" });
+        break;
+      case "blocked":
+        handleFilterChange({ ...workbenchFilter, readiness: "blocked" });
+        break;
+      case "overdue":
+        handleFilterChange({ ...workbenchFilter, task_status: "overdue" });
+        break;
+      case "pending":
+        handleFilterChange({ ...workbenchFilter, task_status: "pending" });
+        break;
+    }
+  };
+
   const handleCreateTaskFromClient = (tenantId: string, title: string) => {
     setTaskInitialValues({ tenantId, title });
     setTaskModalOpen(true);
@@ -145,7 +162,35 @@ export default function AgencyPage() {
         </Space>
       </div>
 
-      <StatsCards summary={overview} />
+      <StatsCards summary={overview} onCardClick={handleStatsCardClick} />
+
+      {/* 即将到期客户提醒 */}
+      {clients.some((c) => {
+        if (!c.plan_expires_at) return false;
+        const daysLeft = Math.ceil((new Date(c.plan_expires_at).getTime() - Date.now()) / (1000 * 60 * 60 * 24));
+        return daysLeft >= 0 && daysLeft < 30;
+      }) && (
+        <Alert
+          className="mb-4"
+          type="warning"
+          showIcon
+          message="有客户套餐即将到期"
+          description={
+            <span>
+              以下客户套餐将在 30 天内到期：
+              {clients
+                .filter((c) => {
+                  if (!c.plan_expires_at) return false;
+                  const daysLeft = Math.ceil((new Date(c.plan_expires_at).getTime() - Date.now()) / (1000 * 60 * 60 * 24));
+                  return daysLeft >= 0 && daysLeft < 30;
+                })
+                .map((c) => ` ${c.name}`)
+                .join("、")}
+            </span>
+          }
+        />
+      )}
+
       {workbenchError && (
         <Alert
           className="mb-4"
