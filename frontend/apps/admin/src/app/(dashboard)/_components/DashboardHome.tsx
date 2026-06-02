@@ -4,11 +4,15 @@ import { useCallback, useEffect, useState } from "react";
 import { App, Button, Card, Col, DatePicker, Row, Space, Statistic, Table, Tag, Typography } from "antd";
 import {
   DownloadOutlined,
+  GiftOutlined,
+  LinkOutlined,
+  ReloadOutlined,
   RiseOutlined,
   RocketOutlined,
   ScanOutlined,
   TeamOutlined,
 } from "@ant-design/icons";
+import { useRouter } from "next/navigation";
 import type { ColumnsType } from "antd/es/table";
 import dayjs, { type Dayjs } from "dayjs";
 import api, { extractErrorMessage } from "@/lib/api";
@@ -79,20 +83,29 @@ export default function DashboardHome() {
     dayjs().subtract(6, "day"),
     dayjs(),
   ]);
+  const [exporting, setExporting] = useState(false);
+  const router = useRouter();
+  const [error, setError] = useState<string | null>(null);
+
+  const fetchDashboard = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await api.get("/analytics/dashboard");
+      setData(res.data);
+      setTrend(Array.isArray(res.data.trend) ? res.data.trend.slice(-7) : []);
+    } catch (err) {
+      setData(null);
+      setError(extractErrorMessage(err, "加载工作台数据失败"));
+      message.error(extractErrorMessage(err, "加载工作台数据失败"));
+    } finally {
+      setLoading(false);
+    }
+  }, [message]);
 
   useEffect(() => {
-    api
-      .get("/analytics/dashboard")
-      .then((res) => {
-        setData(res.data);
-        setTrend(Array.isArray(res.data.trend) ? res.data.trend.slice(-7) : []);
-      })
-      .catch((err) => {
-        setData(null);
-        message.error(extractErrorMessage(err, "加载工作台数据失败"));
-      })
-      .finally(() => setLoading(false));
-  }, [message]);
+    void fetchDashboard();
+  }, [fetchDashboard]);
 
   const fetchRecentBatches = useCallback(async () => {
     try {
@@ -139,7 +152,12 @@ export default function DashboardHome() {
         return <Tag color={info.color}>{info.label}</Tag>;
       },
     },
-    { title: "创建时间", dataIndex: "created_at", key: "created_at" },
+    {
+      title: "创建时间",
+      dataIndex: "created_at",
+      key: "created_at",
+      render: (val: string) => (val ? dayjs(val).format("YYYY-MM-DD HH:mm") : "—"),
+    },
   ];
 
   const campaignColumns: ColumnsType<Campaign> = [
@@ -159,10 +177,16 @@ export default function DashboardHome() {
         return <Tag color={info.color}>{info.label}</Tag>;
       },
     },
-    { title: "开始时间", dataIndex: "start_at", key: "start_at" },
+    {
+      title: "开始时间",
+      dataIndex: "start_at",
+      key: "start_at",
+      render: (val: string) => (val ? dayjs(val).format("YYYY-MM-DD HH:mm") : "—"),
+    },
   ];
 
   const handleExport = async () => {
+    setExporting(true);
     try {
       const end = exportRange[1].format("YYYY-MM-DD");
       const start = exportRange[0].format("YYYY-MM-DD");
@@ -170,11 +194,13 @@ export default function DashboardHome() {
         params: { export_type: "scan_events", start_date: start, end_date: end },
         responseType: "blob",
       });
-      const blob = new Blob([response.data], { type: "text/csv" });
+      const blob = new Blob([response.data], {
+        type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      });
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `scan-events-${start}-${end}.csv`;
+      a.download = `scan-events-${start}-${end}.xlsx`;
       document.body.appendChild(a);
       a.click();
       a.remove();
@@ -182,6 +208,8 @@ export default function DashboardHome() {
       message.success("导出成功");
     } catch (err) {
       message.error(extractErrorMessage(err, "导出失败，请确认您有管理员权限"));
+    } finally {
+      setExporting(false);
     }
   };
 
@@ -199,11 +227,36 @@ export default function DashboardHome() {
             }}
             disabledDate={(current) => current && current.isAfter(dayjs().endOf("day"))}
           />
-          <Button icon={<DownloadOutlined />} onClick={handleExport}>
+          <Button icon={<DownloadOutlined />} onClick={handleExport} loading={exporting}>
             导出扫码数据
+          </Button>
+          <Button icon={<ReloadOutlined />} onClick={() => { void fetchDashboard(); void fetchRecentBatches(); void fetchRecentCampaigns(); }}>
+            刷新
           </Button>
         </Space>
       </div>
+      {error && !loading && (
+        <Card className="mb-6">
+          <div className="flex items-center justify-between">
+            <span className="text-red-500">{error}</span>
+            <Button size="small" onClick={() => { void fetchDashboard(); }}>重试</Button>
+          </div>
+        </Card>
+      )}
+
+      {!error && !loading && data && data.cumulative_scans === 0 && batches.length === 0 && campaigns.length === 0 && (
+        <Card className="mb-6">
+          <div className="text-center py-8">
+            <Title level={5}>开始使用一码通</Title>
+            <p className="text-gray-500 mb-4">创建第一个码批次，开始追踪产品扫码数据</p>
+            <Space>
+              <Button type="primary" icon={<LinkOutlined />} onClick={() => router.push("/batches")}>创建码批次</Button>
+              <Button icon={<GiftOutlined />} onClick={() => router.push("/campaigns")}>创建营销活动</Button>
+            </Space>
+          </div>
+        </Card>
+      )}
+
       <Row gutter={[16, 16]} className="mb-6">
         <Col xs={24} sm={12} lg={6}>
           <Card loading={loading}>

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { App, Badge, Button, Card, Col, Row, Select, Space, Statistic, Table, Tag, Typography, InputNumber } from "antd";
 import { DownloadOutlined, CheckOutlined, BellOutlined } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
@@ -15,41 +15,67 @@ function AlertIndicator({ tenantId }: { tenantId: string | null }) {
   const [alerts, setAlerts] = useState<Record<string, unknown>[]>([]);
   const [connected, setConnected] = useState(false);
   const eventSourceRef = useRef<EventSource | null>(null);
+  const retryCountRef = useRef(0);
+  const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const connectRef = useRef<() => Promise<void>>(() => Promise.resolve());
+
+  const scheduleRetry = useCallback(() => {
+    const delay = Math.min(1000 * Math.pow(2, retryCountRef.current), 30000);
+    retryCountRef.current += 1;
+    retryTimerRef.current = setTimeout(() => {
+      void connectRef.current();
+    }, delay);
+  }, []);
 
   useEffect(() => {
-    if (!tenantId) return;
+    const doConnect = async () => {
+      if (!tenantId) return;
 
-    let es: EventSource | null = null;
-
-    // 先通过 POST 获取一次性 ticket，再用 ticket 连接 SSE
-    (async () => {
       try {
         const { data } = await api.post("/risk-dashboard/alerts/ticket");
         const ticket = data.ticket;
         if (!ticket) return;
 
+        eventSourceRef.current?.close();
+
         const base = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-        es = new EventSource(`${base}/api/v1/risk-dashboard/alerts/stream?ticket=${ticket}`);
+        const es = new EventSource(`${base}/api/v1/risk-dashboard/alerts/stream?ticket=${ticket}`);
         eventSourceRef.current = es;
 
-        es.onopen = () => setConnected(true);
-        es.onerror = () => setConnected(false);
+        es.onopen = () => {
+          setConnected(true);
+          retryCountRef.current = 0;
+        };
+        es.onerror = () => {
+          setConnected(false);
+          es.close();
+          eventSourceRef.current = null;
+          scheduleRetry();
+        };
         es.onmessage = (e) => {
           try {
             const msg = JSON.parse(e.data);
             setAlerts((prev) => [msg, ...prev].slice(0, 20));
-          } catch { /* ignore */ }
+          } catch { /* ignore parse errors */ }
         };
       } catch {
         setConnected(false);
+        scheduleRetry();
       }
-    })();
+    };
+
+    connectRef.current = doConnect;
+    void doConnect();
 
     return () => {
-      es?.close();
+      eventSourceRef.current?.close();
       eventSourceRef.current = null;
+      if (retryTimerRef.current) {
+        clearTimeout(retryTimerRef.current);
+        retryTimerRef.current = null;
+      }
     };
-  }, [tenantId]);
+  }, [tenantId, scheduleRetry]);
 
   return (
     <Badge count={alerts.length} size="small" offset={[2, 0]}>
@@ -63,24 +89,25 @@ function AlertIndicator({ tenantId }: { tenantId: string | null }) {
 /* ---------- Repeat Scans ---------- */
 
 function RepeatScansCard() {
+  const { message } = App.useApp();
   const [items, setItems] = useState<Record<string, unknown>[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
 
-  const fetch = async () => {
+  const fetchData = useCallback(async () => {
     setLoading(true);
     try {
       const { data } = await api.get("/risk-dashboard/repeat-scans", { params: { min_count: 5, page: 1, page_size: 10 } });
       setItems(data.items || []);
       setTotal(data.total || 0);
     } catch {
-      /* silent */
+      message.error("加载重复扫码数据失败");
     } finally {
       setLoading(false);
     }
-  };
+  }, [message]);
 
-  useEffect(() => { fetch(); }, []);
+  useEffect(() => { void fetchData(); }, [fetchData]);
 
   const columns: ColumnsType<Record<string, unknown>> = [
     { title: "码 ID", dataIndex: "public_id", key: "public_id" },
@@ -99,23 +126,24 @@ function RepeatScansCard() {
 /* ---------- Cross Region ---------- */
 
 function CrossRegionCard() {
+  const { message } = App.useApp();
   const [stats, setStats] = useState<Record<string, unknown>>({});
   const [daysBack, setDaysBack] = useState(30);
   const [loading, setLoading] = useState(false);
 
-  const fetch = async () => {
+  const fetchData = useCallback(async () => {
     setLoading(true);
     try {
       const { data } = await api.get("/risk-dashboard/cross-region", { params: { days_back: daysBack } });
       setStats(data || {});
     } catch {
-      /* silent */
+      message.error("加载跨区扫码数据失败");
     } finally {
       setLoading(false);
     }
-  };
+  }, [daysBack, message]);
 
-  useEffect(() => { fetch(); }, [daysBack]);
+  useEffect(() => { void fetchData(); }, [fetchData]);
 
   const byRegion = (stats.by_region || []) as Record<string, unknown>[];
   const byCity = (stats.by_detected_city || []) as Record<string, unknown>[];
@@ -178,23 +206,24 @@ function CrossRegionCard() {
 /* ---------- Channel Health Scores ---------- */
 
 function ChannelHealthCard() {
+  const { message } = App.useApp();
   const [scores, setScores] = useState<Record<string, unknown>[]>([]);
   const [dimension, setDimension] = useState<string>("distributor");
   const [loading, setLoading] = useState(false);
 
-  const fetch = async () => {
+  const fetchData = useCallback(async () => {
     setLoading(true);
     try {
       const { data } = await api.get("/channel-analytics/health-scores", { params: { dimension } });
       setScores(data.scores || []);
     } catch {
-      /* silent */
+      message.error("加载渠道健康评分失败");
     } finally {
       setLoading(false);
     }
-  };
+  }, [dimension, message]);
 
-  useEffect(() => { fetch(); }, [dimension]);
+  useEffect(() => { void fetchData(); }, [fetchData]);
 
   const columns: ColumnsType<Record<string, unknown>> = [
     { title: "渠道名称", dataIndex: "name", key: "name" },
@@ -236,23 +265,24 @@ function ChannelHealthCard() {
 /* ---------- Conversion Comparison ---------- */
 
 function ConversionCard() {
+  const { message } = App.useApp();
   const [data, setData] = useState<Record<string, unknown>[]>([]);
   const [dimension, setDimension] = useState<string>("distributor");
   const [loading, setLoading] = useState(false);
 
-  const fetch = async () => {
+  const fetchData = useCallback(async () => {
     setLoading(true);
     try {
       const { data: d } = await api.get("/channel-analytics/conversion-comparison", { params: { dimension } });
       setData(d.comparison || []);
     } catch {
-      /* silent */
+      message.error("加载渠道转化率数据失败");
     } finally {
       setLoading(false);
     }
-  };
+  }, [dimension, message]);
 
-  useEffect(() => { fetch(); }, [dimension]);
+  useEffect(() => { void fetchData(); }, [fetchData]);
 
   const columns: ColumnsType<Record<string, unknown>> = [
     { title: "渠道名称", dataIndex: "name", key: "name" },
@@ -292,31 +322,31 @@ function ConversionCard() {
 /* ---------- Diversion Summary ---------- */
 
 function DiversionCard() {
+  const { message } = App.useApp();
   const [items, setItems] = useState<Record<string, unknown>[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
-  const { message } = App.useApp();
 
-  const fetch = async () => {
+  const fetchData = useCallback(async () => {
     setLoading(true);
     try {
       const { data } = await api.get("/risk-dashboard/diversion-summary", { params: { page: 1, page_size: 20 } });
       setItems(data.items || []);
       setTotal(data.total || 0);
     } catch {
-      /* silent */
+      message.error("加载窜货线索数据失败");
     } finally {
       setLoading(false);
     }
-  };
+  }, [message]);
 
-  useEffect(() => { fetch(); }, []);
+  useEffect(() => { void fetchData(); }, [fetchData]);
 
   const handleResolve = async (id: string) => {
     try {
       await api.put(`/risk-dashboard/diversion-clues/${id}/resolve`);
       message.success("已标记为处理");
-      fetch();
+      void fetchData();
     } catch {
       message.error("操作失败");
     }
