@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Alert, App, Button, Space, Typography } from "antd";
 import { PlusOutlined } from "@ant-design/icons";
 import api, { extractErrorMessage } from "@/lib/api";
@@ -43,6 +43,7 @@ export default function AgencyPage() {
   const [checklistModalOpen, setChecklistModalOpen] = useState(false);
   const [checklistData, setChecklistData] = useState<ChecklistResult | null>(null);
   const [checklistClientName, setChecklistClientName] = useState("");
+  const [checklistClientId, setChecklistClientId] = useState("");
   const [checklistLoading, setChecklistLoading] = useState(false);
 
   const [workbenchFilter, setWorkbenchFilter] = useState<{ q?: string; readiness?: string; task_status?: string }>({});
@@ -72,10 +73,32 @@ export default function AgencyPage() {
   useEffect(() => { fetchWorkbench({}); }, [fetchWorkbench]);
 
   const handleOpenChecklist = async (clientId: string, clientName: string) => {
-    setChecklistLoading(true); setChecklistClientName(clientName); setChecklistModalOpen(true);
-    try { const { data } = await api.get(`/ops/clients/${clientId}/launch-checklist`); setChecklistData(data); }
-    catch { setChecklistData(null); }
-    finally { setChecklistLoading(false); }
+    setChecklistLoading(true);
+    setChecklistClientName(clientName);
+    setChecklistClientId(clientId);
+    setChecklistModalOpen(true);
+    try {
+      const { data } = await api.get(`/ops/clients/${clientId}/launch-checklist`);
+      setChecklistData(data);
+    } catch {
+      setChecklistData(null);
+    } finally {
+      setChecklistLoading(false);
+    }
+  };
+
+  const handleRetryChecklist = async () => {
+    if (!checklistClientId) return;
+    setChecklistLoading(true);
+    setChecklistData(null);
+    try {
+      const { data } = await api.get(`/ops/clients/${checklistClientId}/launch-checklist`);
+      setChecklistData(data);
+    } catch {
+      setChecklistData(null);
+    } finally {
+      setChecklistLoading(false);
+    }
   };
 
   const handleUpdateTaskStatus = async (taskId: string, newStatus: string) => {
@@ -88,6 +111,15 @@ export default function AgencyPage() {
     catch (e: unknown) { message.error(extractErrorMessage(e, "删除失败")); }
   };
 
+  const expiringClients = useMemo(
+    () => clients.filter((c) => {
+      if (!c.plan_expires_at) return false;
+      const daysLeft = Math.ceil((new Date(c.plan_expires_at).getTime() - Date.now()) / (1000 * 60 * 60 * 24));
+      return daysLeft >= 0 && daysLeft < 30;
+    }),
+    [clients],
+  );
+
   const confirmDeleteTask = (taskId: string, taskTitle: string) => {
     modal.confirm({ title: "确认删除", content: `确定删除任务"${taskTitle}"吗？`, okText: "删除", okButtonProps: { danger: true }, onOk: () => handleDeleteTask(taskId) });
   };
@@ -95,6 +127,23 @@ export default function AgencyPage() {
   const handleFilterChange = (newFilter: { q?: string; readiness?: string; task_status?: string }) => {
     setWorkbenchFilter(newFilter);
     fetchWorkbench(newFilter);
+  };
+
+  const handleStatsCardClick = (filterType: "overdue" | "blocked" | "ready" | "pending") => {
+    switch (filterType) {
+      case "ready":
+        handleFilterChange({ ...workbenchFilter, readiness: "ready" });
+        break;
+      case "blocked":
+        handleFilterChange({ ...workbenchFilter, readiness: "blocked" });
+        break;
+      case "overdue":
+        handleFilterChange({ ...workbenchFilter, task_status: "overdue" });
+        break;
+      case "pending":
+        handleFilterChange({ ...workbenchFilter, task_status: "pending" });
+        break;
+    }
   };
 
   const handleCreateTaskFromClient = (tenantId: string, title: string) => {
@@ -122,7 +171,24 @@ export default function AgencyPage() {
         </Space>
       </div>
 
-      <StatsCards summary={overview} />
+      <StatsCards summary={overview} onCardClick={handleStatsCardClick} />
+
+      {/* 即将到期客户提醒 */}
+      {expiringClients.length > 0 && (
+        <Alert
+          className="mb-4"
+          type="warning"
+          showIcon
+          message="有客户套餐即将到期"
+          description={
+            <span>
+              以下客户套餐将在 30 天内到期：
+              {expiringClients.map((c) => ` ${c.name}`).join("、")}
+            </span>
+          }
+        />
+      )}
+
       {workbenchError && (
         <Alert
           className="mb-4"
@@ -154,7 +220,14 @@ export default function AgencyPage() {
         initialTitle={taskInitialValues.title}
         onSuccess={() => { fetchWorkbench(workbenchFilter); }}
       />
-      <ChecklistModal open={checklistModalOpen} clientName={checklistClientName} onClose={() => { setChecklistModalOpen(false); setChecklistData(null); }} data={checklistData} loading={checklistLoading} />
+      <ChecklistModal
+        open={checklistModalOpen}
+        clientName={checklistClientName}
+        onClose={() => { setChecklistModalOpen(false); setChecklistData(null); setChecklistClientId(""); }}
+        data={checklistData}
+        loading={checklistLoading}
+        onRetry={handleRetryChecklist}
+      />
     </div>
   );
 }

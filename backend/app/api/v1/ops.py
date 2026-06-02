@@ -7,7 +7,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
-from app.core.dependencies import get_current_tenant
+from app.core.dependencies import get_ops_user
 from app.models.tenant import OpsTask, OpsTaskPriority, OpsTaskStatus, Tenant, TenantStatus
 from app.schemas.common import PaginatedResponse
 from app.schemas.tenant import OpsTaskCreate, OpsTaskRead, OpsTaskUpdate, OpsWorkbenchResponse
@@ -17,7 +17,10 @@ ops_router = APIRouter(prefix="/api/v1/ops", tags=["ops"])
 
 
 @ops_router.get("/overview", summary="代运营工作台概览")
-async def get_ops_overview(db: AsyncSession = Depends(get_db)):
+async def get_ops_overview(
+    _ops_user: tuple = Depends(get_ops_user),
+    db: AsyncSession = Depends(get_db),
+):
     total_clients = (await db.execute(select(func.count()).select_from(Tenant))).scalar() or 0
     active_clients = (
         await db.execute(select(func.count()).select_from(Tenant).where(Tenant.status == TenantStatus.active))
@@ -47,6 +50,7 @@ async def get_ops_overview(db: AsyncSession = Depends(get_db)):
 
 @ops_router.get("/workbench", response_model=OpsWorkbenchResponse, summary="代运营工作台聚合")
 async def get_ops_workbench_endpoint(
+    _ops_user: tuple = Depends(get_ops_user),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     q: str | None = Query(None, description="搜索客户名称"),
@@ -67,8 +71,8 @@ async def get_ops_workbench_endpoint(
 @ops_router.get("/clients/{tenant_id}/status")
 async def get_client_status(
     tenant_id: uuid.UUID,
+    _ops_user: tuple = Depends(get_ops_user),
     db: AsyncSession = Depends(get_db),
-    current_tenant: uuid.UUID = Depends(get_current_tenant),
 ):
     return await get_tenant_status(db, tenant_id)
 
@@ -76,8 +80,8 @@ async def get_client_status(
 @ops_router.get("/clients/{tenant_id}/launch-checklist", summary="获取 launch checklist")
 async def get_launch_checklist_endpoint(
     tenant_id: uuid.UUID,
+    _ops_user: tuple = Depends(get_ops_user),
     db: AsyncSession = Depends(get_db),
-    current_tenant: uuid.UUID = Depends(get_current_tenant),
 ):
     return await get_launch_checklist(db, tenant_id)
 
@@ -85,6 +89,7 @@ async def get_launch_checklist_endpoint(
 @ops_router.post("/tasks", response_model=OpsTaskRead, status_code=201, summary="创建 任务")
 async def create_task_endpoint(
     body: OpsTaskCreate,
+    _ops_user: tuple = Depends(get_ops_user),
     db: AsyncSession = Depends(get_db),
 ):
     task = OpsTask(
@@ -93,6 +98,7 @@ async def create_task_endpoint(
         description=body.description,
         priority=OpsTaskPriority(body.priority) if body.priority else OpsTaskPriority.medium,
         due_date=body.due_date,
+        assigned_to=body.assigned_to,
     )
     db.add(task)
     await db.flush()
@@ -102,6 +108,7 @@ async def create_task_endpoint(
 
 @ops_router.get("/tasks", response_model=PaginatedResponse, summary="任务 列表")
 async def list_tasks_endpoint(
+    _ops_user: tuple = Depends(get_ops_user),
     tenant_id: uuid.UUID | None = Query(None, description="按客户筛选"),
     status: str | None = Query(None, description="按状态筛选"),
     page: int = Query(1, ge=1),
@@ -143,6 +150,7 @@ async def list_tasks_endpoint(
 @ops_router.get("/tasks/{task_id}", response_model=OpsTaskRead, summary="获取 任务")
 async def get_task_endpoint(
     task_id: uuid.UUID,
+    _ops_user: tuple = Depends(get_ops_user),
     db: AsyncSession = Depends(get_db),
 ):
     result = await db.execute(select(OpsTask).where(OpsTask.id == task_id))
@@ -156,6 +164,7 @@ async def get_task_endpoint(
 async def update_task_endpoint(
     task_id: uuid.UUID,
     body: OpsTaskUpdate,
+    _ops_user: tuple = Depends(get_ops_user),
     db: AsyncSession = Depends(get_db),
 ):
     result = await db.execute(select(OpsTask).where(OpsTask.id == task_id))
@@ -182,6 +191,7 @@ async def update_task_endpoint(
 @ops_router.delete("/tasks/{task_id}", status_code=204, summary="删除 任务")
 async def delete_task_endpoint(
     task_id: uuid.UUID,
+    _ops_user: tuple = Depends(get_ops_user),
     db: AsyncSession = Depends(get_db),
 ):
     result = await db.execute(select(OpsTask).where(OpsTask.id == task_id))
