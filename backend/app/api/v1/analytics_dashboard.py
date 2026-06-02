@@ -250,6 +250,40 @@ async def create_export(
             headers={"Content-Disposition": f"attachment; filename={download_name}"},
         )
 
+    if export_type == "scan_stats":
+        from app.models.analytics import DailyScanStats
+
+        stmt = select(DailyScanStats).where(DailyScanStats.tenant_id == tenant_id)
+        if start_date:
+            stmt = stmt.where(DailyScanStats.date >= start_date)
+        if end_date:
+            stmt = stmt.where(DailyScanStats.date <= end_date)
+        stmt = stmt.order_by(DailyScanStats.date)
+        result = await db.execute(stmt)
+        stats = result.scalars().all()
+
+        headers = ["日期", "扫码量", "独立用户", "首扫数", "重扫数"]
+        rows = [
+            [str(s.date), s.total_scans, s.uv, s.first_scans, s.rescans]
+            for s in stats
+        ]
+
+        xlsx_bytes = _build_xlsx(headers, rows, sheet_name="扫码统计")
+        file_name = f"scan-stats-{tenant_id.hex[:8]}.xlsx"
+        download_name = "scan-stats.xlsx"
+
+        await log_export(
+            db, tenant_id, account_id, "scan_stats_xlsx",
+            file_name=file_name, row_count=len(stats),
+        )
+        await db.commit()
+
+        return StreamingResponse(
+            io.BytesIO(xlsx_bytes),
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": f"attachment; filename={download_name}"},
+        )
+
     if export_type == "campaign_dashboard":
         items, _ = await _get_campaign_stats(db, tenant_id, start_date=start_date, end_date=end_date)
 
