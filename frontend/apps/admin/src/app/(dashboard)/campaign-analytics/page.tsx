@@ -56,6 +56,7 @@ export default function CampaignAnalyticsPage() {
   const [selectedBatch, setSelectedBatch] = useState<string | undefined>(undefined);
   const [codeStats, setCodeStats] = useState<CodeStats | null>(null);
   const [codeStatsLoading, setCodeStatsLoading] = useState(false);
+  const [exporting, setExporting] = useState(false);
 
   const fetchTrend = useCallback(async () => {
     setLoading(true);
@@ -148,6 +149,7 @@ export default function CampaignAnalyticsPage() {
   );
 
   const handleExport = async () => {
+    setExporting(true);
     try {
       const params: Record<string, string> = {
         export_type: "campaign_dashboard",
@@ -175,6 +177,8 @@ export default function CampaignAnalyticsPage() {
       message.success("导出成功");
     } catch {
       message.error("导出失败，请确认您有管理员权限");
+    } finally {
+      setExporting(false);
     }
   };
 
@@ -220,7 +224,7 @@ export default function CampaignAnalyticsPage() {
               }
             }}
           />
-          <Button icon={<DownloadOutlined />} onClick={handleExport}>
+          <Button icon={<DownloadOutlined />} onClick={handleExport} loading={exporting}>
             导出 Excel
           </Button>
         </Space>
@@ -261,7 +265,7 @@ export default function CampaignAnalyticsPage() {
         />
       </Card>
 
-      <Card title="码批次统计" size="small">
+      <Card title="码批次统计" size="small" loading={codeStatsLoading}>
         <div className="mb-4">
           <Select
             placeholder="选择码批次"
