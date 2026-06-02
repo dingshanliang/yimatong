@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Alert, App, Button, Space, Typography } from "antd";
 import { PlusOutlined } from "@ant-design/icons";
 import api, { extractErrorMessage } from "@/lib/api";
@@ -111,6 +111,15 @@ export default function AgencyPage() {
     catch (e: unknown) { message.error(extractErrorMessage(e, "删除失败")); }
   };
 
+  const expiringClients = useMemo(
+    () => clients.filter((c) => {
+      if (!c.plan_expires_at) return false;
+      const daysLeft = Math.ceil((new Date(c.plan_expires_at).getTime() - Date.now()) / (1000 * 60 * 60 * 24));
+      return daysLeft >= 0 && daysLeft < 30;
+    }),
+    [clients],
+  );
+
   const confirmDeleteTask = (taskId: string, taskTitle: string) => {
     modal.confirm({ title: "确认删除", content: `确定删除任务"${taskTitle}"吗？`, okText: "删除", okButtonProps: { danger: true }, onOk: () => handleDeleteTask(taskId) });
   };
@@ -165,11 +174,7 @@ export default function AgencyPage() {
       <StatsCards summary={overview} onCardClick={handleStatsCardClick} />
 
       {/* 即将到期客户提醒 */}
-      {clients.some((c) => {
-        if (!c.plan_expires_at) return false;
-        const daysLeft = Math.ceil((new Date(c.plan_expires_at).getTime() - Date.now()) / (1000 * 60 * 60 * 24));
-        return daysLeft >= 0 && daysLeft < 30;
-      }) && (
+      {expiringClients.length > 0 && (
         <Alert
           className="mb-4"
           type="warning"
@@ -178,14 +183,7 @@ export default function AgencyPage() {
           description={
             <span>
               以下客户套餐将在 30 天内到期：
-              {clients
-                .filter((c) => {
-                  if (!c.plan_expires_at) return false;
-                  const daysLeft = Math.ceil((new Date(c.plan_expires_at).getTime() - Date.now()) / (1000 * 60 * 60 * 24));
-                  return daysLeft >= 0 && daysLeft < 30;
-                })
-                .map((c) => ` ${c.name}`)
-                .join("、")}
+              {expiringClients.map((c) => ` ${c.name}`).join("、")}
             </span>
           }
         />

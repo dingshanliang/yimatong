@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { Button, Card, Input, Select, Space, Table, Tag } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import type { AgencyClientRow, WorkbenchTask } from "./types";
@@ -18,18 +18,19 @@ export function TaskTable({ tasks, clients, onUpdateStatus, onDelete }: TaskTabl
   const [priorityFilter, setPriorityFilter] = useState<string>("all");
   const [searchText, setSearchText] = useState("");
 
-  const filteredTasks = tasks.filter((task) => {
-    if (statusFilter !== "all" && task.status !== statusFilter) return false;
-    if (priorityFilter !== "all" && task.priority !== priorityFilter) return false;
-    if (searchText && !task.title.toLowerCase().includes(searchText.toLowerCase())) return false;
-    return true;
-  });
-
-  const sortedTasks = [...filteredTasks].sort((a, b) => {
-    if (a.overdue !== b.overdue) return a.overdue ? -1 : 1;
-    if (a.priority !== b.priority) return a.priority === "high" ? -1 : 1;
-    return (a.due_date || "").localeCompare(b.due_date || "");
-  });
+  const sortedTasks = useMemo(() => {
+    const filtered = tasks.filter((task) => {
+      if (statusFilter !== "all" && task.status !== statusFilter) return false;
+      if (priorityFilter !== "all" && task.priority !== priorityFilter) return false;
+      if (searchText && !task.title.toLowerCase().includes(searchText.toLowerCase())) return false;
+      return true;
+    });
+    return [...filtered].sort((a, b) => {
+      if (a.overdue !== b.overdue) return a.overdue ? -1 : 1;
+      if (a.priority !== b.priority) return a.priority === "high" ? -1 : 1;
+      return (a.due_date || "").localeCompare(b.due_date || "");
+    });
+  }, [tasks, statusFilter, priorityFilter, searchText]);
 
   const columns: ColumnsType<WorkbenchTask> = [
     {
