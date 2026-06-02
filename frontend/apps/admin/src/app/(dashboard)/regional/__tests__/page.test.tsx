@@ -73,4 +73,28 @@ describe("RegionalPage", () => {
       expect(screen.queryByLabelText("成员租户 ID")).not.toBeInTheDocument();
     });
   });
+
+  it("uses a theme-aware selected row background for regional organizations", async () => {
+    render(<RegionalPage />);
+
+    await screen.findByTestId("regional-org-summary-regional-1");
+    fireEvent.click(screen.getByText("赣南脐橙协会"));
+
+    const selectedRow = screen.getByText("赣南脐橙协会").closest("tr");
+
+    expect(selectedRow).toHaveStyle({
+      background: "var(--admin-table-row-selected-bg)",
+    });
+  });
+
+  it("explains what shared templates are used for", async () => {
+    render(<RegionalPage />);
+
+    await screen.findByTestId("regional-org-summary-regional-1");
+    fireEvent.click(screen.getByText("赣南脐橙协会"));
+    fireEvent.click(screen.getByRole("tab", { name: "共享模板" }));
+
+    expect(screen.getByText(/统一沉淀区域品牌的页面或活动配置/)).toBeInTheDocument();
+    expect(screen.getByText(/下发给成员企业复用/)).toBeInTheDocument();
+  });
 });

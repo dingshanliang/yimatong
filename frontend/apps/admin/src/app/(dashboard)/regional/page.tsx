@@ -123,7 +123,7 @@ export default function RegionalPage() {
             onClick: () => setSelectedOrgId(record.id),
             style: {
               cursor: "pointer",
-              background: record.id === selectedOrgId ? "#e6f4ff" : undefined,
+              background: record.id === selectedOrgId ? "var(--admin-table-row-selected-bg)" : undefined,
             },
           })}
         />

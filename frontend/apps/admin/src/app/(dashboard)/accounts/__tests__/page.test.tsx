@@ -5,6 +5,7 @@ import AccountsPage from "../page";
 const mockMessage = { success: vi.fn(), error: vi.fn() };
 const mockGet = vi.fn();
 const mockPost = vi.fn();
+const mockClipboardWriteText = vi.fn();
 
 vi.mock("antd", async () => {
   const actual = await vi.importActual<typeof import("antd")>("antd");
@@ -27,6 +28,11 @@ vi.mock("@/lib/api", () => ({
 describe("AccountsPage", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText: mockClipboardWriteText },
+    });
+    mockClipboardWriteText.mockResolvedValue(undefined);
     mockGet.mockImplementation((url: string) => {
       if (url === "/organizations") {
         return Promise.resolve({
@@ -87,5 +93,27 @@ describe("AccountsPage", () => {
       });
       expect(screen.getByTestId("account-initial-password-alert")).toHaveTextContent("Ymt-Abc123456789");
     });
+
+    fireEvent.click(screen.getByRole("button", { name: "复制临时密码" }));
+
+    await waitFor(() => {
+      expect(mockClipboardWriteText).toHaveBeenCalledWith("Ymt-Abc123456789");
+      expect(mockMessage.success).toHaveBeenCalledWith("临时密码已复制");
+    });
+  });
+
+  it("explains what accounts are for and how passwords are issued", async () => {
+    render(<AccountsPage />);
+    await screen.findByTestId("org-account-count-org-1");
+
+    fireEvent.click(screen.getByRole("tab", { name: "账户管理" }));
+
+    expect(screen.getByText(/账户用于员工或渠道伙伴登录后台/)).toBeInTheDocument();
+    expect(screen.getByText(/所属组织决定账号可查看和操作的数据范围/)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /新建账户/ }));
+
+    expect(screen.getByText(/不需要手动设置密码/)).toBeInTheDocument();
+    expect(screen.getByText(/临时密码只在创建成功后显示一次/)).toBeInTheDocument();
   });
 });

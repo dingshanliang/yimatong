@@ -11,6 +11,7 @@
   --admin-border: #e7edf5;
   --admin-text-muted: #64748b;
   --admin-sider-bg: #06172a;
+  --admin-table-row-selected-bg: #e6f4ff;
   --admin-shadow: 0 10px 28px rgb(16 24 40 / 0.08);
 }
 
@@ -25,6 +26,7 @@ html[data-theme="dark"] {
   --admin-border: #23334d;
   --admin-text-muted: #a7b4c8;
   --admin-sider-bg: #06101d;
+  --admin-table-row-selected-bg: #17365a;
   --admin-shadow: 0 16px 36px rgb(0 0 0 / 0.32);
 }
 

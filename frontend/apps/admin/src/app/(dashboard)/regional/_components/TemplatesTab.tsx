@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import api from "@/lib/api";
-import { Button, Form, Input, Modal, Table, message } from "antd";
+import { Alert, Button, Form, Input, Modal, Table, message } from "antd";
 import { PlusOutlined, SendOutlined } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
 
@@ -78,6 +78,12 @@ export function TemplatesTab({ orgId }: { orgId: string }) {
 
   return (
     <>
+      <Alert
+        className="mb-4"
+        type="info"
+        showIcon
+        message="共享模板用于统一沉淀区域品牌的页面或活动配置，发布后可下发给成员企业复用，减少各成员重复配置。"
+      />
       <div className="mb-4 flex justify-end">
         <Button type="primary" icon={<PlusOutlined />} onClick={() => setOpen(true)}>
           新建模板
