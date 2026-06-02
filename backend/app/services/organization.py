@@ -2,6 +2,7 @@ import secrets
 import string
 import uuid
 
+from fastapi import HTTPException
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -52,9 +53,14 @@ async def create_account(
         select(Organization).where(Organization.id == organization_id, Organization.tenant_id == tenant_id)
     )
     if not org_result.scalar_one_or_none():
-        from fastapi import HTTPException
-
         raise HTTPException(status_code=400, detail="Organization does not belong to current tenant")
+
+    # Email uniqueness check within tenant
+    existing = await db.execute(
+        select(Account).where(Account.tenant_id == tenant_id, Account.email == email)
+    )
+    if existing.scalar_one_or_none():
+        raise HTTPException(status_code=409, detail="An account with this email already exists in this tenant")
 
     hashed = hash_password(password)
     account = Account(
