@@ -13,6 +13,7 @@ class OrganizationRead(BaseModel):
     tenant_id: uuid.UUID
     name: str
     parent_id: uuid.UUID | None = None
+    account_count: int = 0
 
     model_config = {"from_attributes": True}
 
@@ -20,7 +21,7 @@ class OrganizationRead(BaseModel):
 class AccountCreate(BaseModel):
     email: str = Field(..., max_length=255)
     name: str = Field(..., max_length=100)
-    password: str = Field(..., min_length=8)
+    password: str | None = Field(None, min_length=8)
     organization_id: uuid.UUID
     role_ids: list[uuid.UUID] = []
 
@@ -29,8 +30,10 @@ class AccountRead(BaseModel):
     id: uuid.UUID
     tenant_id: uuid.UUID
     organization_id: uuid.UUID
+    organization_name: str | None = None
     email: str
     name: str
+    initial_password: str | None = None
 
     model_config = {"from_attributes": True}
 

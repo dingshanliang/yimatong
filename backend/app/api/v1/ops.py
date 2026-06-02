@@ -8,12 +8,41 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.core.dependencies import get_current_tenant
-from app.models.tenant import OpsTask, OpsTaskPriority, OpsTaskStatus
+from app.models.tenant import OpsTask, OpsTaskPriority, OpsTaskStatus, Tenant, TenantStatus
 from app.schemas.common import PaginatedResponse
 from app.schemas.tenant import OpsTaskCreate, OpsTaskRead, OpsTaskUpdate
 from app.services.ops import get_launch_checklist, get_tenant_status
 
 ops_router = APIRouter(prefix="/api/v1/ops", tags=["ops"])
+
+
+@ops_router.get("/overview", summary="代运营工作台概览")
+async def get_ops_overview(db: AsyncSession = Depends(get_db)):
+    total_clients = (await db.execute(select(func.count()).select_from(Tenant))).scalar() or 0
+    active_clients = (
+        await db.execute(select(func.count()).select_from(Tenant).where(Tenant.status == TenantStatus.active))
+    ).scalar() or 0
+    onboarding_clients = (
+        await db.execute(
+            select(func.count())
+            .select_from(Tenant)
+            .where(Tenant.status == TenantStatus.active, Tenant.enabled_features.is_(None))
+        )
+    ).scalar() or 0
+    pending_tasks = (
+        await db.execute(select(func.count()).select_from(OpsTask).where(OpsTask.status == OpsTaskStatus.pending))
+    ).scalar() or 0
+    completed_tasks = (
+        await db.execute(select(func.count()).select_from(OpsTask).where(OpsTask.status == OpsTaskStatus.completed))
+    ).scalar() or 0
+    return {
+        "total_clients": total_clients,
+        "active_clients": active_clients,
+        "onboarding_clients": onboarding_clients,
+        "ready_clients": max(active_clients - onboarding_clients, 0),
+        "pending_tasks": pending_tasks,
+        "completed_tasks": completed_tasks,
+    }
 
 
 @ops_router.get("/clients/{tenant_id}/status")
@@ -61,7 +90,7 @@ async def list_tasks_endpoint(
     db: AsyncSession = Depends(get_db),
 ):
     """待办任务列表（支持按客户和状态筛选）"""
-    query = select(OpsTask)
+    query = select(OpsTask, Tenant.name.label("tenant_name")).join(Tenant, Tenant.id == OpsTask.tenant_id)
     count_query = select(func.count()).select_from(OpsTask)
 
     if tenant_id:
@@ -76,10 +105,16 @@ async def list_tasks_endpoint(
 
     query = query.order_by(OpsTask.created_at.desc()).offset((page - 1) * page_size).limit(page_size)
     result = await db.execute(query)
-    items = result.scalars().all()
+    rows = result.all()
 
     return PaginatedResponse(
-        items=[OpsTaskRead.model_validate(t) for t in items],
+        items=[
+            {
+                **OpsTaskRead.model_validate(task).model_dump(mode="json"),
+                "tenant_name": tenant_name,
+            }
+            for task, tenant_name in rows
+        ],
         total=total,
         page=page,
         page_size=page_size,

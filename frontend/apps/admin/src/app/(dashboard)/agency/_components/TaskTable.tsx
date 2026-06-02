@@ -1,6 +1,6 @@
 "use client";
 
-import { App, Button, Card, Select, Space, Table, Tag } from "antd";
+import { Button, Card, Select, Space, Table, Tag } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import type { Client, Task } from "./types";
 import { PRIORITY_MAP, TASK_STATUS_MAP } from "./types";
@@ -15,12 +15,10 @@ interface TaskTableProps {
 }
 
 export function TaskTable({ tasks, clients, taskFilter, onFilterChange, onUpdateStatus, onDelete }: TaskTableProps) {
-  const { modal } = App.useApp();
-
   const columns: ColumnsType<Task> = [
     { title: "任务", dataIndex: "title", key: "title" },
-    { title: "关联客户", dataIndex: "tenant_id", key: "tenant_id", render: (v: string) => {
-      const client = clients.find((c) => c.id === v); return client ? client.name : v?.slice(0, 8) + "...";
+    { title: "关联客户", dataIndex: "tenant_id", key: "tenant_id", render: (v: string, record) => {
+      const client = clients.find((c) => c.id === v); return record.tenant_name || client?.name || v?.slice(0, 8) + "...";
     }},
     { title: "优先级", dataIndex: "priority", key: "priority", render: (p: string) => {
       const info = PRIORITY_MAP[p] || { label: p, color: "default" }; return <Tag color={info.color}>{info.label}</Tag>;

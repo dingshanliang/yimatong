@@ -22,6 +22,7 @@ from app.services.regional import (
     list_regional_orgs,
     list_shared_templates,
     publish_template_to_members,
+    regional_org_summary,
     remove_member,
     set_whitelabel,
     update_member,
@@ -66,7 +67,7 @@ async def create_org_endpoint(
     tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
     org = await create_regional_org(db, tenant_id, body.name, body.org_type)
-    return {"id": str(org.id), "name": org.name, "org_type": org.org_type, "config": org.config}
+    return await regional_org_summary(db, org)
 
 
 @regional_router.get("/orgs", summary="组织列表")
@@ -75,7 +76,7 @@ async def list_orgs_endpoint(
     tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
     orgs = await list_regional_orgs(db, tenant_id)
-    return [{"id": str(o.id), "name": o.name, "org_type": o.org_type, "config": o.config} for o in orgs]
+    return [await regional_org_summary(db, org) for org in orgs]
 
 
 @regional_router.get("/orgs/{org_id}", summary="组织详情")
@@ -85,7 +86,7 @@ async def get_org_endpoint(
     tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
     org = await verify_org_access(db, org_id, tenant_id)
-    return {"id": str(org.id), "name": org.name, "org_type": org.org_type, "config": org.config}
+    return await regional_org_summary(db, org)
 
 
 # ── 成员企业 ──────────────────────────────────────

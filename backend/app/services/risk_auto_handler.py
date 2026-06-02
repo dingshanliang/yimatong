@@ -69,8 +69,7 @@ async def _build_scan_context(
     # 最近 10 分钟不同 IP 数
     since_10min = now - timedelta(minutes=10)
     r2 = await db.execute(
-        select(func.count(func.distinct(ScanEvent.ip_hash)))
-        .where(
+        select(func.count(func.distinct(ScanEvent.ip_hash))).where(
             ScanEvent.tenant_id == tenant_id,
             ScanEvent.public_id == public_id,
             ScanEvent.scan_time >= since_10min,
@@ -111,8 +110,9 @@ async def _build_cross_region_context(
 
     # 获取码的归属区域
     from app.services.channel import get_code_expected_region
+
     expected = await get_code_expected_region(db, public_id)
-    if not expected or not expected.get("city"):
+    if not expected or not (expected.get("coverage_label") or expected.get("city")):
         return None
 
     # 统计该码最近的跨区事件次数
@@ -130,7 +130,7 @@ async def _build_cross_region_context(
     cross_count = cross_count_result.scalar() or 0
 
     return {
-        "expected_region": expected["city"],
+        "expected_region": expected.get("expected_region") or expected.get("coverage_label") or expected.get("city"),
         "region_name": expected.get("region_name"),
         "store_id": expected.get("store_id"),
         "store_name": expected.get("store_name"),
@@ -150,6 +150,7 @@ async def _check_and_record_diversion(
         return None
 
     from app.services.channel import check_diversion
+
     try:
         clue = await check_diversion(db, tenant_id, public_id, ip)
         if clue:

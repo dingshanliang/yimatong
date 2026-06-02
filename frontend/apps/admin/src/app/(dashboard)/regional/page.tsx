@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Button, Form, Input, Modal, Table, Tabs, Typography } from "antd";
+import { Button, Card, Form, Input, Modal, Select, Table, Tabs, Tag, Typography } from "antd";
 import { PlusOutlined } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
 import api from "@/lib/api";
@@ -13,11 +13,36 @@ import { CampaignsTab } from "./_components/CampaignsTab";
 
 const { Title } = Typography;
 
-type Org = Record<string, unknown> & { id: string; name: string; org_type: string };
+type Org = Record<string, unknown> & {
+  id: string;
+  name: string;
+  org_type: string;
+  org_type_label?: string;
+  member_count?: number;
+  active_member_count?: number;
+  template_count?: number;
+  next_action?: string;
+};
 
 const orgColumns: ColumnsType<Org> = [
   { title: "组织名称", dataIndex: "name", key: "name" },
-  { title: "类型", dataIndex: "org_type", key: "org_type" },
+  { title: "类型", dataIndex: "org_type_label", key: "org_type_label", render: (v: string, record) => <Tag>{v || record.org_type}</Tag> },
+  {
+    title: "成员",
+    key: "members",
+    render: (_: unknown, record) => (
+      <span data-testid={`regional-org-summary-${record.id}`}>
+        {record.active_member_count || 0}/{record.member_count || 0}
+      </span>
+    ),
+  },
+  { title: "共享模板", dataIndex: "template_count", key: "template_count", render: (v: number) => v || 0 },
+  {
+    title: "下一步",
+    dataIndex: "next_action",
+    key: "next_action",
+    render: (v: string, record) => <Tag color="blue" data-testid={`regional-org-next-action-${record.id}`}>{v || "添加成员企业"}</Tag>,
+  },
 ];
 
 export default function RegionalPage() {
@@ -50,10 +75,9 @@ export default function RegionalPage() {
     }
   };
 
-  // 初次加载
-  if (orgs.length === 0 && !loading) {
+  useEffect(() => {
     fetchOrgs();
-  }
+  }, []);
 
   const selectedOrgName = orgs.find((o) => o.id === selectedOrgId)?.name || "";
 
@@ -76,7 +100,8 @@ export default function RegionalPage() {
 
   return (
     <div>
-      <Title level={4} className="!mb-4">区域品牌</Title>
+      <Title level={4} className="!mb-2">区域品牌</Title>
+      <div className="mb-4 text-sm text-gray-500">管理区域公用品牌、协会成员、统一模板和跨成员活动。</div>
 
       <div className="mb-4 flex justify-between items-center">
         <span className="text-sm text-gray-500">
@@ -87,20 +112,22 @@ export default function RegionalPage() {
         </Button>
       </div>
 
-      <Table
-        columns={orgColumns}
-        dataSource={orgs}
-        rowKey="id"
-        loading={loading}
-        pagination={false}
-        onRow={(record) => ({
-          onClick: () => setSelectedOrgId(record.id),
-          style: {
-            cursor: "pointer",
-            background: record.id === selectedOrgId ? "#e6f4ff" : undefined,
-          },
-        })}
-      />
+      <Card size="small" className="mb-6">
+        <Table
+          columns={orgColumns}
+          dataSource={orgs}
+          rowKey="id"
+          loading={loading}
+          pagination={false}
+          onRow={(record) => ({
+            onClick: () => setSelectedOrgId(record.id),
+            style: {
+              cursor: "pointer",
+              background: record.id === selectedOrgId ? "#e6f4ff" : undefined,
+            },
+          })}
+        />
+      </Card>
 
       {selectedOrgId && (
         <div className="mt-6">
@@ -109,12 +136,18 @@ export default function RegionalPage() {
       )}
 
       <Modal title="新建区域组织" open={open} onCancel={() => setOpen(false)} onOk={() => form.submit()} width={500}>
-        <Form form={form} layout="vertical" onFinish={handleCreate}>
+        <Form form={form} layout="vertical" onFinish={handleCreate} initialValues={{ org_type: "association" }}>
           <Form.Item name="name" label="组织名称" rules={[{ required: true }]}>
-            <Input />
+            <Input placeholder="例如：赣南脐橙协会" />
           </Form.Item>
           <Form.Item name="org_type" label="组织类型">
-            <Input placeholder="association / brand_group" />
+            <Select
+              options={[
+                { value: "association", label: "协会组织" },
+                { value: "brand_group", label: "区域品牌集团" },
+                { value: "brand", label: "区域品牌" },
+              ]}
+            />
           </Form.Item>
         </Form>
       </Modal>

@@ -2,6 +2,21 @@ import type { NextConfig } from "next";
 import path from "node:path";
 import withBundleAnalyzer from "@next/bundle-analyzer";
 
+function getApiConnectSources() {
+  if (process.env.NODE_ENV === "production") return "";
+
+  const sources = new Set(["http://localhost:8000"]);
+  const apiUrl = process.env.NEXT_PUBLIC_API_URL;
+  if (apiUrl) {
+    try {
+      sources.add(new URL(apiUrl).origin);
+    } catch {
+      sources.add(apiUrl);
+    }
+  }
+  return ` ${Array.from(sources).join(" ")}`;
+}
+
 const securityHeaders = [
   { key: "X-Frame-Options", value: "SAMEORIGIN" },
   { key: "X-Content-Type-Options", value: "nosniff" },
@@ -16,7 +31,7 @@ const securityHeaders = [
       "style-src 'self' 'unsafe-inline'",
       "img-src 'self' data: blob: https:",
       "font-src 'self'",
-      `connect-src 'self'${process.env.NODE_ENV !== "production" ? " http://localhost:8000" : ""}`,
+      `connect-src 'self'${getApiConnectSources()}`,
       "frame-ancestors 'self'",
       "base-uri 'self'",
       "form-action 'self'",

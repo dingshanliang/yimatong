@@ -10,6 +10,7 @@ export interface Client {
 export interface Task {
   id: string;
   tenant_id: string;
+  tenant_name?: string;
   title: string;
   status: string;
   priority: string;

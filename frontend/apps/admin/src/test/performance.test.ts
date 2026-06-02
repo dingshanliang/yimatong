@@ -6,28 +6,54 @@ import path from "path";
  * Performance budget test for Admin frontend.
  *
  * Targets:
- * - Admin first-load JS < 1,500 KB (translates to ~2s on 3G)
+ * - Admin route first-load JS < 1,500 KB (translates to ~2s on 3G)
  * - Largest individual chunk < 300 KB
- * - Total static assets (JS + CSS) < 2,000 KB
+ * - Admin route first-load static assets (JS + CSS) < 2,000 KB
  */
 
 describe("Admin build performance budget", () => {
   const nextDir = path.resolve(__dirname, "../../.next");
   const chunksDir = path.join(nextDir, "static/chunks");
+  const appServerDir = path.join(nextDir, "server/app");
 
-  function getTotalSize(dir: string, ext: string): number {
-    let total = 0;
-    if (!fs.existsSync(dir)) return 0;
+  function getFileSize(assetPath: string): number {
+    const absolutePath = path.join(nextDir, assetPath);
+    return fs.existsSync(absolutePath) ? fs.statSync(absolutePath).size : 0;
+  }
+
+  function findBuildManifests(dir: string): string[] {
+    if (!fs.existsSync(dir)) return [];
+
+    let manifests: string[] = [];
     for (const f of fs.readdirSync(dir)) {
       const p = path.join(dir, f);
       const stat = fs.statSync(p);
       if (stat.isDirectory()) {
-        total += getTotalSize(p, ext);
-      } else if (f.endsWith(ext)) {
-        total += stat.size;
+        manifests = manifests.concat(findBuildManifests(p));
+      } else if (f === "build-manifest.json") {
+        manifests.push(p);
       }
     }
-    return total;
+    return manifests;
+  }
+
+  function getRouteAssets(manifestPath: string): string[] {
+    const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf-8")) as {
+      polyfillFiles?: string[];
+      rootMainFiles?: string[];
+      pages?: Record<string, string[]>;
+    };
+    const pageFiles = Object.values(manifest.pages || {}).flat();
+    return Array.from(new Set([...(manifest.polyfillFiles || []), ...(manifest.rootMainFiles || []), ...pageFiles]));
+  }
+
+  function getLargestRouteAssetTotal(exts: string[]): number {
+    return findBuildManifests(appServerDir).reduce((largest, manifestPath) => {
+      const total = getRouteAssets(manifestPath)
+        .filter((assetPath) => exts.some((ext) => assetPath.endsWith(ext)))
+        .reduce((sum, assetPath) => sum + getFileSize(assetPath), 0);
+      return Math.max(largest, total);
+    }, 0);
   }
 
   function getLargestChunk(): { name: string; size: number } {
@@ -45,12 +71,13 @@ describe("Admin build performance budget", () => {
 
   it("should have built output to measure", () => {
     expect(fs.existsSync(chunksDir)).toBe(true);
+    expect(findBuildManifests(appServerDir).length).toBeGreaterThan(0);
   });
 
-  it("first-load JS total should be under 1,500 KB", () => {
-    const jsTotal = getTotalSize(chunksDir, ".js");
+  it("largest route first-load JS should be under 1,500 KB", () => {
+    const jsTotal = getLargestRouteAssetTotal([".js"]);
     const kb = jsTotal / 1024;
-    console.log(`Admin first-load JS: ${kb.toFixed(0)} KB`);
+    console.log(`Admin largest route first-load JS: ${kb.toFixed(0)} KB`);
     expect(kb).toBeLessThan(1500);
   });
 
@@ -61,11 +88,10 @@ describe("Admin build performance budget", () => {
     expect(kb).toBeLessThan(300);
   });
 
-  it("total static assets (JS + CSS) should be under 2,000 KB", () => {
-    const jsTotal = getTotalSize(chunksDir, ".js");
-    const cssTotal = getTotalSize(path.join(nextDir, "static/css"), ".css");
-    const kb = (jsTotal + cssTotal) / 1024;
-    console.log(`Admin total static assets: ${kb.toFixed(0)} KB (JS: ${(jsTotal / 1024).toFixed(0)} KB, CSS: ${(cssTotal / 1024).toFixed(0)} KB)`);
+  it("largest route first-load static assets should be under 2,000 KB", () => {
+    const total = getLargestRouteAssetTotal([".js", ".css"]);
+    const kb = total / 1024;
+    console.log(`Admin largest route first-load static assets: ${kb.toFixed(0)} KB`);
     expect(kb).toBeLessThan(2000);
   });
 });

@@ -102,6 +102,36 @@ class TestRegionalOrgCRUD:
         assert resp.status_code == 200
         assert len(resp.json()) >= 1
 
+    @pytest.mark.anyio
+    async def test_list_regional_orgs_includes_operational_summary(self, client: AsyncClient, setup_regional):
+        _, org_headers, m1_tid, _ = setup_regional
+        org_resp = await client.post(
+            "/api/v1/regional/orgs",
+            json={"name": "闭环协会", "org_type": "association"},
+            headers=org_headers,
+        )
+        org_id = org_resp.json()["id"]
+
+        await client.post(
+            f"/api/v1/regional/orgs/{org_id}/members",
+            json={"tenant_id": m1_tid, "member_name": "成员企业A"},
+            headers=org_headers,
+        )
+        await client.post(
+            f"/api/v1/regional/orgs/{org_id}/templates",
+            json={"name": "统一扫码页", "config": {"layout": "standard"}},
+            headers=org_headers,
+        )
+
+        resp = await client.get("/api/v1/regional/orgs", headers=org_headers)
+        assert resp.status_code == 200
+        item = next(item for item in resp.json() if item["id"] == org_id)
+        assert item["org_type_label"] == "协会组织"
+        assert item["member_count"] == 1
+        assert item["active_member_count"] == 1
+        assert item["template_count"] == 1
+        assert item["next_action"] == "配置统一活动"
+
 
 class TestMemberManagement:
     """W15-002: 成员企业关系管理"""

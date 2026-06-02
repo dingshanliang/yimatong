@@ -122,13 +122,13 @@ async def _ensure_demo_accounts(db: AsyncSession, tenant_id: uuid.UUID, org_id: 
             db,
             tenant_id,
             "distributor",
-            "经销商：查看自己负责的码段、扫码数据和异常线索。",
+            "经销商：查看自己负责的收货流向、扫码数据和异常线索。",
         ),
         "store_guide": await _ensure_role(
             db,
             tenant_id,
             "store_guide",
-            "门店：查看本店码段、扫码数据和线索统计。",
+            "门店：查看本店收货批次、扫码数据和线索统计。",
         ),
     }
     accounts: list[Account] = []
@@ -409,13 +409,42 @@ async def _ensure_demo_channels(
             code="DEMO-REG-SH",
             province="上海",
             city="上海",
+            coverage_type="city",
+            coverage_areas=[{"province": "上海", "city": "上海"}],
             distributor_id=distributor.id,
             status="active",
         )
         db.add(region)
         await db.flush()
     else:
+        region.coverage_type = "city"
+        region.coverage_areas = [{"province": "上海", "city": "上海"}]
         region.distributor_id = distributor.id
+        region.status = "active"
+
+    south_region = (
+        await db.execute(select(Region).where(Region.tenant_id == tenant_id, Region.code == "DEMO-REG-SU"))
+    ).scalar_one_or_none()
+    if not south_region:
+        south_region = Region(
+            tenant_id=tenant_id,
+            name="苏南区域",
+            code="DEMO-REG-SU",
+            province="江苏",
+            city=None,
+            coverage_type="province",
+            coverage_areas=[{"province": "江苏", "city": None}],
+            distributor_id=distributor.id,
+            status="active",
+        )
+        db.add(south_region)
+        await db.flush()
+    else:
+        south_region.city = None
+        south_region.coverage_type = "province"
+        south_region.coverage_areas = [{"province": "江苏", "city": None}]
+        south_region.distributor_id = distributor.id
+        south_region.status = "active"
 
     store = (
         await db.execute(select(Store).where(Store.tenant_id == tenant_id, Store.code == "DEMO-STORE-NJDL"))
@@ -451,14 +480,40 @@ async def _ensure_demo_channels(
         if existing_alloc:
             existing_alloc.quantity = 8
             existing_alloc.distributor_id = distributor.id
+            existing_alloc.region_id = region.id
         else:
             db.add(
                 CodeAllocation(
                     tenant_id=tenant_id,
                     batch_id=batch_id,
                     store_id=store.id,
+                    region_id=region.id,
                     distributor_id=distributor.id,
                     quantity=8,
+                    allocated_at=utcnow().replace(microsecond=0).isoformat(),
+                )
+            )
+        existing_region_alloc = (
+            await db.execute(
+                select(CodeAllocation).where(
+                    CodeAllocation.tenant_id == tenant_id,
+                    CodeAllocation.batch_id == batch_id,
+                    CodeAllocation.region_id == south_region.id,
+                    CodeAllocation.store_id.is_(None),
+                )
+            )
+        ).scalar_one_or_none()
+        if existing_region_alloc:
+            existing_region_alloc.quantity = 2
+            existing_region_alloc.distributor_id = distributor.id
+        else:
+            db.add(
+                CodeAllocation(
+                    tenant_id=tenant_id,
+                    batch_id=batch_id,
+                    region_id=south_region.id,
+                    distributor_id=distributor.id,
+                    quantity=2,
                     allocated_at=utcnow().replace(microsecond=0).isoformat(),
                 )
             )
@@ -480,6 +535,7 @@ async def _ensure_demo_channels(
                 expected_region="上海",
                 detected_city="北京",
                 distributor_id=distributor.id,
+                region_id=region.id,
                 ip_hash="demo-diversion-ip",
                 resolved=False,
             )

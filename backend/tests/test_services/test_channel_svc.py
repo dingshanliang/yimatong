@@ -14,8 +14,12 @@ class TestDistributorModel:
 
     def test_with_contact(self):
         dist = Distributor(
-            tenant_id=uuid.uuid4(), name="经销商A", code="A001",
-            contact_name="张三", contact_phone_encrypted="enc", contact_phone_hash="hash",
+            tenant_id=uuid.uuid4(),
+            name="经销商A",
+            code="A001",
+            contact_name="张三",
+            contact_phone_encrypted="enc",
+            contact_phone_hash="hash",
         )
         assert dist.contact_name == "张三"
         assert dist.contact_phone_encrypted == "enc"
@@ -45,8 +49,11 @@ class TestStoreModel:
         rid = uuid.uuid4()
         did = uuid.uuid4()
         store = Store(
-            tenant_id=uuid.uuid4(), name="门店A", code="A001",
-            region_id=rid, distributor_id=did,
+            tenant_id=uuid.uuid4(),
+            name="门店A",
+            code="A001",
+            region_id=rid,
+            distributor_id=did,
         )
         assert store.region_id == rid
         assert store.distributor_id == did

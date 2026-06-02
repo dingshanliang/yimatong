@@ -40,6 +40,8 @@ describe("StorePortalPage", () => {
 
     expect(screen.getByText("门店工作台")).toBeInTheDocument();
     await waitFor(() => expect(screen.getByText("南京东路店")).toBeInTheDocument());
+    expect(screen.getByText("本店收货批次")).toBeInTheDocument();
+    expect(screen.getByText("收货数量")).toBeInTheDocument();
     expect(screen.getByText("上海区域")).toBeInTheDocument();
     expect(screen.getByText("华东经销商")).toBeInTheDocument();
     expect(screen.getByText("CB-001")).toBeInTheDocument();

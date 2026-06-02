@@ -10,7 +10,7 @@ type Batch = Record<string, unknown> & { id: string; batch_code: string; quantit
 type Allocation = Record<string, unknown> & { id: string; batch_id: string; store_id: string; quantity: number };
 type Option = { label: string; value: string };
 
-/* ── 批次→渠道分配 ── */
+/* ── 批次→渠道流向 ── */
 
 function BatchAssignTab() {
   const { items: batches, total, page, loading, setPage, mutate } = useCrud<Batch>("/code-batches");
@@ -36,12 +36,12 @@ function BatchAssignTab() {
     if (!selectedBatch) return;
     try {
       await api.post(`/channels/code-batches/${selectedBatch}/assign`, values);
-      message.success("码段分配成功");
+      message.success("流向登记成功");
       setOpen(false);
       form.resetFields();
       mutate();
     } catch {
-      message.error("分配失败");
+      message.error("登记失败");
     }
   };
 
@@ -53,7 +53,7 @@ function BatchAssignTab() {
       title: "操作", key: "actions",
       render: (_: unknown, record: Batch) => (
         <Button size="small" type="link" onClick={() => { setSelectedBatch(record.id); setOpen(true); }}>
-          分配渠道
+          登记流向
         </Button>
       ),
     },
@@ -63,7 +63,7 @@ function BatchAssignTab() {
     <>
       <Table columns={columns} dataSource={batches} rowKey="id" loading={loading}
         pagination={{ current: page, total, pageSize: 20, onChange: setPage, showTotal: (t) => `共 ${t} 条` }} />
-      <Modal title="分配码段到渠道" open={open} onCancel={() => setOpen(false)} onOk={() => form.submit()} width={500}>
+      <Modal title="登记批次流向" open={open} onCancel={() => setOpen(false)} onOk={() => form.submit()} width={500}>
         <Form form={form} layout="vertical" onFinish={handleAssign}>
           <Form.Item name="distributor_id" label="经销商">
             <Select placeholder="选择经销商" allowClear options={distOptions} />
@@ -77,7 +77,7 @@ function BatchAssignTab() {
   );
 }
 
-/* ── 门店级分配 ── */
+/* ── 门店级流向登记 ── */
 
 function StoreAllocationTab() {
   const [allocs, setAllocs] = useState<Allocation[]>([]);
@@ -112,12 +112,12 @@ function StoreAllocationTab() {
   const handleAllocate = async (values: Record<string, unknown>) => {
     try {
       await api.post("/channels/code-allocations", values);
-      message.success("门店分配成功");
+      message.success("门店流向已登记");
       setOpen(false);
       form.resetFields();
       fetchAllocs();
     } catch {
-      message.error("分配失败");
+      message.error("登记失败");
     }
   };
 
@@ -125,16 +125,16 @@ function StoreAllocationTab() {
     { title: "批次 ID", dataIndex: "batch_id", key: "batch_id", render: (v: string) => v?.slice(0, 8) + "..." },
     { title: "门店 ID", dataIndex: "store_id", key: "store_id", render: (v: string) => v?.slice(0, 8) + "..." },
     { title: "数量", dataIndex: "quantity", key: "quantity" },
-    { title: "分配时间", dataIndex: "allocated_at", key: "allocated_at", render: (v: string) => v || "—" },
+    { title: "登记时间", dataIndex: "allocated_at", key: "allocated_at", render: (v: string) => v || "—" },
   ];
 
   return (
     <>
       <div className="mb-4 flex justify-end">
-        <Button type="primary" onClick={() => setOpen(true)}>新建门店分配</Button>
+        <Button type="primary" onClick={() => setOpen(true)}>新建门店流向</Button>
       </div>
       <Table columns={columns} dataSource={allocs} rowKey="id" loading={loading} pagination={false} size="small" />
-      <Modal title="门店码段分配" open={open} onCancel={() => setOpen(false)} onOk={() => form.submit()} width={500}>
+      <Modal title="门店流向登记" open={open} onCancel={() => setOpen(false)} onOk={() => form.submit()} width={500}>
         <Form form={form} layout="vertical" onFinish={handleAllocate}>
           <Form.Item name="batch_id" label="码批次" rules={[{ required: true }]}>
             <Select placeholder="选择批次" options={batchOptions} showSearch optionFilterProp="label" />
@@ -142,7 +142,7 @@ function StoreAllocationTab() {
           <Form.Item name="store_id" label="门店" rules={[{ required: true }]}>
             <Select placeholder="选择门店" options={storeOptions} showSearch optionFilterProp="label" />
           </Form.Item>
-          <Form.Item name="quantity" label="分配数量" rules={[{ required: true }]}>
+          <Form.Item name="quantity" label="登记数量" rules={[{ required: true }]}>
             <InputNumber min={1} style={{ width: "100%" }} />
           </Form.Item>
         </Form>
@@ -154,8 +154,8 @@ function StoreAllocationTab() {
 /* ── 主 Tab ── */
 
 const subTabs = [
-  { key: "batch", label: "批次→渠道", children: <BatchAssignTab /> },
-  { key: "store", label: "门店级分配", children: <StoreAllocationTab /> },
+  { key: "batch", label: "批次→渠道流向", children: <BatchAssignTab /> },
+  { key: "store", label: "门店级流向", children: <StoreAllocationTab /> },
 ];
 
 export function AssignTab() {

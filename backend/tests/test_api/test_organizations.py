@@ -96,6 +96,45 @@ class TestAccountCRUD:
         assert resp.json()["email"] == "user@test.com"
 
     @pytest.mark.anyio
+    async def test_create_account_can_generate_initial_password(self, client: AsyncClient, tenant_with_auth):
+        _, headers = tenant_with_auth
+        org_resp = await client.post("/api/v1/organizations", json={"name": "运营部"}, headers=headers)
+        org_id = org_resp.json()["id"]
+
+        resp = await client.post(
+            "/api/v1/accounts",
+            json={"email": "ops@test.com", "name": "运营账号", "organization_id": org_id},
+            headers=headers,
+        )
+
+        assert resp.status_code == 201
+        data = resp.json()
+        assert data["organization_name"] == "运营部"
+        assert len(data["initial_password"]) >= 12
+
+    @pytest.mark.anyio
+    async def test_lists_include_business_context(self, client: AsyncClient, tenant_with_auth):
+        _, headers = tenant_with_auth
+        org_resp = await client.post("/api/v1/organizations", json={"name": "销售部"}, headers=headers)
+        org_id = org_resp.json()["id"]
+        await client.post(
+            "/api/v1/accounts",
+            json={"email": "sales@test.com", "name": "销售账号", "organization_id": org_id},
+            headers=headers,
+        )
+
+        orgs_resp = await client.get("/api/v1/organizations", headers=headers)
+        accounts_resp = await client.get("/api/v1/accounts", headers=headers)
+
+        assert orgs_resp.status_code == 200
+        org_item = next(item for item in orgs_resp.json() if item["id"] == org_id)
+        assert org_item["account_count"] == 1
+        assert accounts_resp.status_code == 200
+        account_item = next(item for item in accounts_resp.json() if item["email"] == "sales@test.com")
+        assert account_item["organization_name"] == "销售部"
+        assert "initial_password" not in account_item
+
+    @pytest.mark.anyio
     async def test_list_accounts(self, client: AsyncClient, tenant_with_auth):
         _, headers = tenant_with_auth
         resp = await client.get("/api/v1/accounts", headers=headers)

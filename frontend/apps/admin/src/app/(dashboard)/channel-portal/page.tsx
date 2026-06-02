@@ -11,18 +11,29 @@ type Allocation = {
   id: string;
   batch_code?: string;
   product_name?: string;
+  distributor_name?: string;
+  region_name?: string;
   store_name?: string;
   quantity: number;
   remaining_quantity: number;
 };
 
+type RegionSummary = {
+  id: string;
+  name: string;
+  city?: string;
+  store_count: number;
+  allocated_quantity: number;
+};
+
 type DistributorSummary = {
-  scope: { type: "distributor"; id: string; name: string };
+  scope: { type: "distributor" | "region"; id: string; name: string };
   region_count: number;
   store_count: number;
   allocated_quantity: number;
   pending_diversion_count: number;
   allocation_count: number;
+  regions?: RegionSummary[];
   recent_allocations: Allocation[];
 };
 
@@ -52,9 +63,19 @@ export default function ChannelPortalPage() {
   const columns: ColumnsType<Allocation> = [
     { title: "码批次", dataIndex: "batch_code", render: (value) => value || "未命名批次" },
     { title: "产品", dataIndex: "product_name", render: (value) => value || "未命名产品" },
-    { title: "门店", dataIndex: "store_name", render: (value) => value || "未绑定门店" },
-    { title: "分配数量", dataIndex: "quantity", render: (value) => `${value || 0} 个` },
-    { title: "状态", dataIndex: "remaining_quantity", render: (value) => <Tag color="blue">剩余 {value || 0}</Tag> },
+    {
+      title: "流向范围",
+      render: (_, record) => record.store_name || record.region_name || record.distributor_name || "经销商范围",
+    },
+    { title: "收货数量", dataIndex: "quantity", render: (value) => `${value || 0} 个` },
+    { title: "批次余量", dataIndex: "remaining_quantity", render: (value) => <Tag color="blue">剩余 {value || 0}</Tag> },
+  ];
+
+  const regionColumns: ColumnsType<RegionSummary> = [
+    { title: "区域", dataIndex: "name" },
+    { title: "城市", dataIndex: "city", render: (value) => value || "-" },
+    { title: "门店数", dataIndex: "store_count", render: (value) => `${value || 0} 家` },
+    { title: "已收货码量", dataIndex: "allocated_quantity", render: (value) => `${value || 0} 个` },
   ];
 
   if (error) {
@@ -83,7 +104,7 @@ export default function ChannelPortalPage() {
         </Col>
         <Col xs={12} md={6}>
           <Card size="small">
-            <Statistic title="已分配码量" value={summary?.allocated_quantity || 0} loading={loading} />
+            <Statistic title="已收货码量" value={summary?.allocated_quantity || 0} loading={loading} />
           </Card>
         </Col>
         <Col xs={12} md={6}>
@@ -93,7 +114,17 @@ export default function ChannelPortalPage() {
         </Col>
       </Row>
 
-      <Card title="最近分配码段" size="small">
+      <Card title="区域覆盖" size="small" className="mb-5">
+        {summary?.regions?.length ? (
+          <Table columns={regionColumns} dataSource={summary.regions} rowKey="id" pagination={false} loading={loading} />
+        ) : (
+          <Space className="flex justify-center py-10">
+            <Empty description="暂无区域数据" />
+          </Space>
+        )}
+      </Card>
+
+      <Card title="最近收货流向" size="small">
         {summary?.recent_allocations?.length ? (
           <Table columns={columns} dataSource={summary.recent_allocations} rowKey="id" pagination={false} loading={loading} />
         ) : (

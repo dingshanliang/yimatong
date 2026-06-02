@@ -1,10 +1,17 @@
+import secrets
+import string
 import uuid
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.tenant import Account, Organization
 from app.utils.security import hash_password
+
+
+def generate_initial_password(length: int = 14) -> str:
+    alphabet = string.ascii_letters + string.digits
+    return "Ymt-" + "".join(secrets.choice(alphabet) for _ in range(length))
 
 
 async def create_organization(
@@ -22,15 +29,33 @@ async def list_organizations(db: AsyncSession, tenant_id: uuid.UUID) -> list[Org
     return list(result.scalars().all())
 
 
+async def count_accounts_by_org(db: AsyncSession, tenant_id: uuid.UUID) -> dict[uuid.UUID, int]:
+    result = await db.execute(
+        select(Account.organization_id, func.count())
+        .where(Account.tenant_id == tenant_id)
+        .group_by(Account.organization_id)
+    )
+    return {row[0]: row[1] for row in result.all()}
+
+
 async def create_account(
     db: AsyncSession,
     tenant_id: uuid.UUID,
     organization_id: uuid.UUID,
     email: str,
     name: str,
-    password: str,
+    password: str | None,
     role_ids: list[uuid.UUID] | None = None,
 ) -> Account:
+    password = password or generate_initial_password()
+    org_result = await db.execute(
+        select(Organization).where(Organization.id == organization_id, Organization.tenant_id == tenant_id)
+    )
+    if not org_result.scalar_one_or_none():
+        from fastapi import HTTPException
+
+        raise HTTPException(status_code=400, detail="Organization does not belong to current tenant")
+
     hashed = hash_password(password)
     account = Account(
         tenant_id=tenant_id,

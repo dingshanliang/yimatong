@@ -51,11 +51,11 @@ async def sample_tenants(client: AsyncClient):
         resp = await client.post(
             "/api/v1/tenants",
             json={
-                "name": f"测试客户{i+1}",
-                "slug": f"test-client-{i+1}",
+                "name": f"测试客户{i + 1}",
+                "slug": f"test-client-{i + 1}",
                 "plan": ["free", "starter", "pro"][i],
-                "admin_email": f"admin{i+1}@test.com",
-                "admin_name": f"管理员{i+1}",
+                "admin_email": f"admin{i + 1}@test.com",
+                "admin_name": f"管理员{i + 1}",
                 "admin_password": "Test1234",
             },
         )
@@ -182,6 +182,24 @@ class TestOpsTasks:
         assert resp.status_code == 200
         data = resp.json()
         assert data["total"] == 3
+        assert data["items"][0]["tenant_name"].startswith("测试客户")
+
+    @pytest.mark.anyio
+    async def test_ops_overview_summarizes_clients_and_tasks(self, platform_admin_client: AsyncClient, sample_tenants):
+        """AC: 代运营工作台顶部指标由后端聚合"""
+        await platform_admin_client.post(
+            "/api/v1/ops/tasks",
+            json={"tenant_id": sample_tenants[0]["id"], "title": "待跟进事项", "priority": "high"},
+        )
+
+        resp = await platform_admin_client.get("/api/v1/ops/overview")
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["total_clients"] >= 3
+        assert data["active_clients"] >= 3
+        assert data["pending_tasks"] >= 1
+        assert "ready_clients" in data
 
     @pytest.mark.anyio
     async def test_update_task_status(self, platform_admin_client: AsyncClient, sample_tenants):

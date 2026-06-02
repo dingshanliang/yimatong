@@ -218,6 +218,7 @@ async def resolve_diversion_clue(
     db: AsyncSession,
     tenant_id: uuid.UUID,
     clue_id: uuid.UUID,
+    resolution_action: str | None = None,
     resolution_note: str | None = None,
     resolved_by_account_id: uuid.UUID | None = None,
 ) -> DiversionClue | None:
@@ -232,6 +233,7 @@ async def resolve_diversion_clue(
     if not clue:
         return None
     clue.resolved = True
+    clue.resolution_action = resolution_action
     clue.resolution_note = resolution_note
     clue.resolved_by_account_id = resolved_by_account_id
     clue.resolved_at = datetime.now(UTC)

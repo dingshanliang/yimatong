@@ -13,6 +13,11 @@ type Member = Record<string, unknown> & {
   status: string;
 };
 
+type ClientOption = {
+  id: string;
+  name: string;
+};
+
 const statusMap: Record<string, { color: string; label: string }> = {
   active: { color: "green", label: "活跃" },
   suspended: { color: "orange", label: "暂停" },
@@ -38,6 +43,7 @@ export function MembersTab({ orgId }: { orgId: string }) {
   const [loading, setLoading] = useState(false);
   const [statusFilter, setStatusFilter] = useState<string | undefined>();
   const [open, setOpen] = useState(false);
+  const [clients, setClients] = useState<ClientOption[]>([]);
   const [form] = Form.useForm();
   const fetch = async () => {
     if (!orgId) return;
@@ -71,7 +77,7 @@ export function MembersTab({ orgId }: { orgId: string }) {
 
   const handleStatusChange = async (memberId: string, status: string) => {
     try {
-      await api.put(`/regional/orgs/${memberId}`, { orgId, member_id: memberId, status });
+      await api.put(`/regional/orgs/${orgId}/members/${memberId}`, { status });
       message.success("状态已更新");
       fetch();
     } catch {
@@ -81,12 +87,26 @@ export function MembersTab({ orgId }: { orgId: string }) {
 
   const handleRemove = async (memberId: string) => {
     try {
-      await api.delete(`/regional/orgs/${memberId}`);
+      await api.delete(`/regional/orgs/${orgId}/members/${memberId}`);
       message.success("成员已移除");
       fetch();
     } catch {
       message.error("移除失败");
     }
+  };
+
+  const fetchClients = async () => {
+    try {
+      const { data } = await api.get("/tenants", { params: { page: 1, page_size: 100 } });
+      setClients((data.items || []).map((item: Record<string, unknown>) => ({ id: String(item.id), name: String(item.name || "") })));
+    } catch {
+      setClients([]);
+    }
+  };
+
+  const openMemberModal = () => {
+    fetchClients();
+    setOpen(true);
   };
 
   const actionColumns: ColumnsType<Member> = [
@@ -123,7 +143,7 @@ export function MembersTab({ orgId }: { orgId: string }) {
             { label: "已移除", value: "expelled" },
           ]}
         />
-        <Button type="primary" icon={<PlusOutlined />} onClick={() => setOpen(true)}>
+        <Button type="primary" icon={<PlusOutlined />} onClick={openMemberModal}>
           添加成员
         </Button>
       </div>
@@ -136,11 +156,21 @@ export function MembersTab({ orgId }: { orgId: string }) {
       />
       <Modal title="添加成员企业" open={open} onCancel={() => setOpen(false)} onOk={() => form.submit()} width={500}>
         <Form form={form} layout="vertical" onFinish={handleAdd}>
-          <Form.Item name="tenant_id" label="成员租户 ID" rules={[{ required: true }]}>
-            <Input />
+          <Form.Item name="tenant_id" label="成员企业" rules={[{ required: true, message: "请选择成员企业" }]}>
+            <Select
+              data-testid="member-client-select"
+              showSearch
+              placeholder="选择已开通客户"
+              optionFilterProp="label"
+              options={clients.map((client) => ({ value: client.id, label: client.name }))}
+              onChange={(value) => {
+                const client = clients.find((item) => item.id === value);
+                if (client) form.setFieldValue("member_name", client.name);
+              }}
+            />
           </Form.Item>
           <Form.Item name="member_name" label="企业名称" rules={[{ required: true }]}>
-            <Input />
+            <Input placeholder="用于区域品牌成员列表展示" />
           </Form.Item>
         </Form>
       </Modal>

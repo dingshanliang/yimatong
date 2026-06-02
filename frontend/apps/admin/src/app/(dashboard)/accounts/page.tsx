@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
-import { App, Button, Card, Form, Input, Modal, Select, Space, Table, Tabs, Typography } from "antd";
+import { Alert, App, Button, Form, Input, Modal, Select, Table, Tabs, Tag, Typography } from "antd";
 import { PlusOutlined } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
 import api from "@/lib/api";
@@ -12,6 +12,7 @@ interface Organization {
   id: string;
   name: string;
   parent_id?: string;
+  account_count?: number;
 }
 
 interface Account {
@@ -19,7 +20,9 @@ interface Account {
   email: string;
   name: string;
   organization_id: string;
+  organization_name?: string;
   tenant_id: string;
+  initial_password?: string;
 }
 
 export default function AccountsPage() {
@@ -30,6 +33,7 @@ export default function AccountsPage() {
   const [loading, setLoading] = useState(false);
   const [orgModalOpen, setOrgModalOpen] = useState(false);
   const [accountModalOpen, setAccountModalOpen] = useState(false);
+  const [createdAccount, setCreatedAccount] = useState<Account | null>(null);
   const [orgForm] = Form.useForm();
   const [accountForm] = Form.useForm();
 
@@ -43,7 +47,7 @@ export default function AccountsPage() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [message]);
 
   const fetchAccounts = useCallback(async () => {
     setLoading(true);
@@ -55,7 +59,7 @@ export default function AccountsPage() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [message]);
 
   useEffect(() => {
     if (activeTab === "orgs") fetchOrgs();
@@ -76,11 +80,12 @@ export default function AccountsPage() {
 
   const handleCreateAccount = async (values: Record<string, string>) => {
     try {
-      await api.post("/accounts", values);
+      const { data } = await api.post("/accounts", values);
       message.success("账户创建成功");
-      setAccountModalOpen(false);
+      setCreatedAccount(data);
       accountForm.resetFields();
       fetchAccounts();
+      fetchOrgs();
     } catch {
       message.error("创建失败");
     }
@@ -88,14 +93,30 @@ export default function AccountsPage() {
 
   const orgColumns: ColumnsType<Organization> = [
     { title: "组织名称", dataIndex: "name", key: "name" },
-    { title: "ID", dataIndex: "id", key: "id", render: (v: string) => v.slice(0, 8) + "..." },
+    {
+      title: "账户数",
+      dataIndex: "account_count",
+      key: "account_count",
+      render: (v: number, record) => <Tag data-testid={`org-account-count-${record.id}`}>{v || 0}</Tag>,
+    },
   ];
 
   const accountColumns: ColumnsType<Account> = [
     { title: "姓名", dataIndex: "name", key: "name" },
     { title: "邮箱", dataIndex: "email", key: "email" },
-    { title: "组织 ID", dataIndex: "organization_id", key: "organization_id", render: (v: string) => v.slice(0, 8) + "..." },
+    {
+      title: "所属组织",
+      dataIndex: "organization_name",
+      key: "organization_name",
+      render: (v: string, record) => <span data-testid={`account-org-name-${record.id}`}>{v || "未分配"}</span>,
+    },
   ];
+
+  const openAccountModal = () => {
+    setCreatedAccount(null);
+    accountForm.setFieldsValue({ organization_id: orgs[0]?.id });
+    setAccountModalOpen(true);
+  };
 
   return (
     <div>
@@ -126,7 +147,7 @@ export default function AccountsPage() {
             children: (
               <>
                 <div className="mb-4">
-                  <Button type="primary" icon={<PlusOutlined />} onClick={() => setAccountModalOpen(true)}>
+                  <Button type="primary" icon={<PlusOutlined />} onClick={openAccountModal}>
                     新建账户
                   </Button>
                 </div>
@@ -143,7 +164,28 @@ export default function AccountsPage() {
           </Form.Item>
         </Form>
       </Modal>
-      <Modal title="新建账户" open={accountModalOpen} onCancel={() => setAccountModalOpen(false)} onOk={() => accountForm.submit()} width={500}>
+      <Modal
+        title="新建账户"
+        open={accountModalOpen}
+        onCancel={() => {
+          setAccountModalOpen(false);
+          setCreatedAccount(null);
+          accountForm.resetFields();
+        }}
+        onOk={() => accountForm.submit()}
+        okText="创建账户"
+        width={520}
+      >
+        {createdAccount?.initial_password && (
+          <Alert
+            className="mb-4"
+            data-testid="account-initial-password-alert"
+            type="success"
+            showIcon
+            message="账号已创建"
+            description={`登录邮箱：${createdAccount.email}，临时密码：${createdAccount.initial_password}`}
+          />
+        )}
         <Form form={accountForm} layout="vertical" onFinish={handleCreateAccount}>
           <Form.Item name="email" label="邮箱" rules={[{ required: true, type: "email", message: "请输入有效邮箱" }]}>
             <Input />
@@ -151,12 +193,10 @@ export default function AccountsPage() {
           <Form.Item name="name" label="姓名" rules={[{ required: true, message: "请输入姓名" }]}>
             <Input />
           </Form.Item>
-          <Form.Item name="password" label="密码" rules={[{ required: true, min: 8, message: "密码至少 8 位" }]}>
-            <Input.Password />
-          </Form.Item>
           <Form.Item name="organization_id" label="所属组织" rules={[{ required: true, message: "请选择组织" }]}>
             <Select placeholder="选择组织" options={orgs.map((o) => ({ value: o.id, label: o.name }))} />
           </Form.Item>
+          <Alert type="info" showIcon message="系统会生成一次性临时密码，创建后请立即交付给账号使用人。" />
         </Form>
       </Modal>
     </div>

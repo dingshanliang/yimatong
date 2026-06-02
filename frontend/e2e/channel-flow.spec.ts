@@ -1,7 +1,7 @@
 /**
  * Channel closed-loop E2E smoke.
  *
- * Flow: 品牌方创建渠道主数据 -> 绑定渠道账号 -> 分配码段 -> 渠道/门店入口查看范围内数据。
+ * Flow: 品牌方创建渠道主数据 -> 绑定渠道账号 -> 登记已赋码货品流向 -> 渠道/门店入口查看范围内数据。
  */
 
 import { expect, test } from "@playwright/test";
@@ -103,28 +103,26 @@ test.describe.serial("渠道管理闭环", () => {
 
     const distributor = await apiRequest("POST", "/api/v1/channels/distributors", ctx.token, {
       name: `E2E 经销商 ${suffix}`,
-      code: `E2E-DIST-${suffix}`,
       contact_name: "渠道负责人",
       contact_phone: "13800000000",
     });
     const region = await apiRequest("POST", "/api/v1/channels/regions", ctx.token, {
       name: `E2E 区域 ${suffix}`,
-      code: `E2E-REG-${suffix}`,
       province: "上海",
       city: "上海",
       distributor_id: distributor.id,
     });
     const store = await apiRequest("POST", "/api/v1/channels/stores", ctx.token, {
       name: `E2E 门店 ${suffix}`,
-      code: `E2E-STORE-${suffix}`,
       region_id: region.id,
       distributor_id: distributor.id,
       address: "上海市黄浦区测试路 1 号",
     });
     await apiRequest("POST", "/api/v1/channels/code-allocations", ctx.token, {
       batch_id: ctx.codeBatchId,
-      store_id: store.id,
-      quantity: 2,
+      target_type: "region",
+      region_id: region.id,
+      quantity: 1,
     });
 
     const org = await apiRequest("POST", "/api/v1/organizations", ctx.token, {
@@ -160,8 +158,8 @@ test.describe.serial("渠道管理闭环", () => {
     await page.goto("/channels");
     await expect(page.getByRole("heading", { name: "渠道管理" })).toBeVisible({ timeout: 15000 });
     await expect(page.getByText(distributor.name as string)).toBeVisible();
-    await page.getByRole("tab", { name: "码段分配" }).click();
-    await expect(page.getByText(store.name as string)).toBeVisible();
+    await page.getByRole("tab", { name: "流向登记" }).click();
+    await expect(page.getByText(region.name as string)).toBeVisible();
     await page.getByRole("tab", { name: "账号授权" }).click();
     await expect(page.getByText("E2E 经销商账号")).toBeVisible();
     await expect(page.getByText("E2E 门店账号")).toBeVisible();
@@ -180,7 +178,7 @@ test.describe.serial("渠道管理闭环", () => {
     await distPage.goto("/channel-portal");
     await expect(distPage.getByRole("heading", { name: "经销商工作台" })).toBeVisible({ timeout: 15000 });
     await expect(distPage.getByText(distributor.name as string)).toBeVisible();
-    await expect(distPage.getByText(store.name as string)).toBeVisible();
+    await expect(distPage.getByText(region.name as string).first()).toBeVisible();
     await distContext.close();
 
     const storeToken = await login(storeEmail, TEST_PASSWORD);

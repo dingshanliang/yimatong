@@ -34,8 +34,25 @@ api.interceptors.response.use(
 
 export function extractErrorMessage(err: unknown, fallback = "操作失败"): string {
   if (axios.isAxiosError(err)) {
-    const data = err.response?.data as { detail?: string } | undefined;
-    return data?.detail || fallback;
+    const data = err.response?.data as { detail?: unknown; message?: unknown } | undefined;
+    const detail = data?.detail ?? data?.message;
+    if (typeof detail === "string") {
+      return detail || fallback;
+    }
+    if (Array.isArray(detail)) {
+      const firstMessage = detail
+        .map((item) => {
+          if (typeof item === "string") return item;
+          if (item && typeof item === "object" && "msg" in item && typeof item.msg === "string") return item.msg;
+          return null;
+        })
+        .find(Boolean);
+      return firstMessage || fallback;
+    }
+    if (detail && typeof detail === "object" && "msg" in detail && typeof detail.msg === "string") {
+      return detail.msg || fallback;
+    }
+    return fallback;
   }
   if (err instanceof Error) return err.message || fallback;
   return fallback;

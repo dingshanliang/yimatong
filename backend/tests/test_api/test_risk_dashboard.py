@@ -261,12 +261,13 @@ class TestDiversionSummary:
 
         resp = await client.put(
             f"/api/v1/risk-dashboard/diversion-clues/{clue.id}/resolve",
-            json={"resolution_note": "已联系经销商核实为临时调货"},
+            json={"resolution_action": "confirmed_diversion", "resolution_note": "已联系经销商核实为临时调货"},
             headers=headers,
         )
         assert resp.status_code == 200
         data = resp.json()
         assert data["resolved"] is True
+        assert data["resolution_action"] == "confirmed_diversion"
         assert data["resolution_note"] == "已联系经销商核实为临时调货"
         assert data["resolved_by_account_id"] == "00000000-0000-0000-0000-000000000001"
         assert data["resolved_at"] is not None

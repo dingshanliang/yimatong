@@ -3,7 +3,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import BigInteger, DateTime, ForeignKey, Index, String, Text, func
+from sqlalchemy import JSON, BigInteger, DateTime, ForeignKey, Index, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column
 from uuid6 import uuid7
 
@@ -41,6 +41,8 @@ class Region(Base):
     code: Mapped[str] = mapped_column(String(50), nullable=False)
     province: Mapped[str | None] = mapped_column(String(50), nullable=True)
     city: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    coverage_type: Mapped[str] = mapped_column(String(30), nullable=False, default="city")
+    coverage_areas: Mapped[list[dict] | None] = mapped_column(JSON, nullable=True)
     distributor_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("distributors.id"),
         nullable=True,
@@ -89,7 +91,7 @@ class Store(Base):
 
 
 class CodeAllocation(Base):
-    """码段分配：将码批次（或部分）分配给门店/经销商"""
+    """渠道流向登记：记录已赋码货品流向经销商/区域/门店"""
 
     __tablename__ = "code_allocations"
 
@@ -102,6 +104,11 @@ class CodeAllocation(Base):
     )
     store_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("stores.id"),
+        nullable=True,
+        index=True,
+    )
+    region_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("regions.id"),
         nullable=True,
         index=True,
     )
@@ -131,8 +138,10 @@ class DiversionClue(Base):
     expected_region: Mapped[str | None] = mapped_column(String(200), nullable=True)
     detected_city: Mapped[str | None] = mapped_column(String(100), nullable=True)
     distributor_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True, index=True)
+    region_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True, index=True)
     ip_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     resolved: Mapped[bool] = mapped_column(default=False, nullable=False)
+    resolution_action: Mapped[str | None] = mapped_column(String(50), nullable=True)
     resolution_note: Mapped[str | None] = mapped_column(Text, nullable=True)
     resolved_by_account_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True, index=True)
     resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -151,6 +160,11 @@ class AccountChannelScope(Base):
     scope_type: Mapped[str] = mapped_column(String(20), nullable=False)
     distributor_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("distributors.id"),
+        nullable=True,
+        index=True,
+    )
+    region_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("regions.id"),
         nullable=True,
         index=True,
     )

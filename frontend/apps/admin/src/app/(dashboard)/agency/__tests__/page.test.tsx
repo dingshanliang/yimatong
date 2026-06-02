@@ -439,6 +439,9 @@ describe("AgencyPage", () => {
 
   it("shows related client name in task table", async () => {
     mockGet.mockImplementation((url: string) => {
+      if (url === "/ops/overview") {
+        return Promise.resolve({ data: { total_clients: 1, active_clients: 1, onboarding_clients: 0, pending_tasks: 1 } });
+      }
       if (url === "/tenants") {
         return Promise.resolve({
           data: { items: [{ id: "t1", name: "测试品牌", status: "active", plan: "pro", plan_expires_at: null, created_at: "2026-01-15T00:00:00Z" }], total: 1, page: 1, page_size: 20 },
@@ -447,7 +450,7 @@ describe("AgencyPage", () => {
       if (url === "/ops/tasks") {
         return Promise.resolve({
           data: {
-            items: [{ id: "task1", tenant_id: "t1", title: "配置品牌", status: "pending", priority: "high", due_date: null }],
+            items: [{ id: "task1", tenant_id: "t1", tenant_name: "测试品牌", title: "配置品牌", status: "pending", priority: "high", due_date: null }],
             total: 1, page: 1, page_size: 20,
           },
         });
@@ -460,6 +463,43 @@ describe("AgencyPage", () => {
     await waitFor(() => {
       const clientNameCells = screen.getAllByText("测试品牌");
       expect(clientNameCells.length).toBeGreaterThanOrEqual(2);
+    });
+  });
+
+  it("shows generated admin credentials after client initialization", async () => {
+    mockGet.mockImplementation((url: string) => {
+      if (url === "/ops/overview") {
+        return Promise.resolve({ data: { total_clients: 0, active_clients: 0, onboarding_clients: 0, pending_tasks: 0 } });
+      }
+      return Promise.resolve({ data: { items: [], total: 0, page: 1, page_size: 20 } });
+    });
+    mockPost.mockResolvedValue({
+      data: {
+        id: "tenant-1",
+        name: "新客户",
+        admin_email: "admin@new.test",
+        initial_password: "Ymt-NewClient123",
+      },
+    });
+
+    render(<AgencyPage />);
+    fireEvent.click(screen.getByRole("button", { name: /初始化新客户/ }));
+    fireEvent.change(screen.getByLabelText("客户名称"), { target: { value: "新客户" } });
+    fireEvent.change(screen.getByLabelText("联系人"), { target: { value: "张三" } });
+    fireEvent.change(screen.getByLabelText("联系电话"), { target: { value: "13800000000" } });
+    fireEvent.change(screen.getByLabelText("联系邮箱"), { target: { value: "admin@new.test" } });
+
+    fireEvent.click(screen.getByRole("button", { name: "下一步" }));
+    fireEvent.change(await screen.findByLabelText("品牌名称"), { target: { value: "新品牌" } });
+    fireEvent.click(screen.getByRole("button", { name: "下一步" }));
+    await screen.findByLabelText("扫码页模板");
+    fireEvent.click(screen.getByRole("button", { name: "下一步" }));
+    await screen.findByText("配置确认");
+    fireEvent.click(await screen.findByRole("button", { name: "完成初始化" }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("agency-init-credentials")).toHaveTextContent("admin@new.test");
+      expect(screen.getByTestId("agency-init-credentials")).toHaveTextContent("Ymt-NewClient123");
     });
   });
 });

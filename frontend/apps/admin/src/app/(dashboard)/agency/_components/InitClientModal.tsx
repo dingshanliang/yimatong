@@ -1,9 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import { App, Button, DatePicker, Form, Input, Modal, Select, Steps } from "antd";
+import { Alert, App, Button, Form, Input, Modal, Select, Steps } from "antd";
 import api, { extractErrorMessage } from "@/lib/api";
-import type { Client } from "./types";
 
 interface InitClientModalProps {
   open: boolean;
@@ -38,6 +37,9 @@ export function InitClientModal({ open, onClose, onSuccess }: InitClientModalPro
   const [form] = Form.useForm();
   const [currentStep, setCurrentStep] = useState(0);
   const [saving, setSaving] = useState(false);
+  const [credentials, setCredentials] = useState<{ email: string; password: string } | null>(null);
+
+  const generatePassword = () => `Ymt-${Math.random().toString(36).slice(2, 8)}${Date.now().toString().slice(-6)}`;
 
   const handleNext = async () => {
     if (currentStep < 3) {
@@ -55,22 +57,26 @@ export function InitClientModal({ open, onClose, onSuccess }: InitClientModalPro
     setSaving(true);
     try {
       const values = form.getFieldsValue(true);
-      await api.post("/tenants", {
+      const initialPassword = generatePassword();
+      const { data } = await api.post("/tenants", {
         name: values.client_name,
-        slug: values.client_name?.toLowerCase().replace(/\s+/g, "-").slice(0, 50),
+        slug: `client-${Date.now()}`,
         plan: values.plan || "free",
         admin_email: values.contact_email || `${values.client_name?.replace(/\s+/g, "").toLowerCase()}@example.com`,
         admin_name: values.contact_name || "管理员",
-        admin_password: "TempPass123!",
+        admin_password: initialPassword,
+      });
+      setCredentials({
+        email: data?.admin_email || values.contact_email || `${values.client_name?.replace(/\s+/g, "").toLowerCase()}@example.com`,
+        password: data?.initial_password || initialPassword,
       });
       message.success("客户初始化成功");
-      handleCancel();
       onSuccess();
     } catch (e: unknown) { message.error(extractErrorMessage(e, "初始化失败")); }
     finally { setSaving(false); }
   };
 
-  const handleCancel = () => { setCurrentStep(0); form.resetFields(); onClose(); };
+  const handleCancel = () => { setCurrentStep(0); setCredentials(null); form.resetFields(); onClose(); };
 
   const stepContent = [
     <div key="step1">
@@ -97,6 +103,16 @@ export function InitClientModal({ open, onClose, onSuccess }: InitClientModalPro
     <div key="step4" className="py-6 text-center">
       <div className="mb-2 text-lg font-medium">配置确认</div>
       <div className="text-gray-400">请确认以上配置信息无误，点击完成开始初始化</div>
+      {credentials && (
+        <Alert
+          className="mt-4 text-left"
+          data-testid="agency-init-credentials"
+          type="success"
+          showIcon
+          message="客户管理员账号已生成"
+          description={`登录邮箱：${credentials.email}，临时密码：${credentials.password}`}
+        />
+      )}
     </div>,
   ];
 
@@ -107,7 +123,7 @@ export function InitClientModal({ open, onClose, onSuccess }: InitClientModalPro
            currentStep > 0 && <Button key="prev" onClick={handlePrev}>上一步</Button>,
            <Button key="next" type="primary" onClick={handleNext}>下一步</Button>]
         : [<Button key="prev" onClick={handlePrev}>上一步</Button>,
-           <Button key="finish" type="primary" onClick={handleFinish} loading={saving}>完成</Button>]
+           <Button key="finish" type="primary" onClick={handleFinish} loading={saving}>完成初始化</Button>]
       }>
       <Steps current={currentStep} items={[{ title: "基础信息" }, { title: "产品配置" }, { title: "页面配置" }, { title: "完成" }]} className="mb-6" size="small" />
       {stepContent[currentStep]}

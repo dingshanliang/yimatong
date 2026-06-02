@@ -19,6 +19,7 @@ from app.services.channel import (
     create_store,
     delete_account_scope,
     delete_store,
+    diversion_clue_to_dict,
     get_channel_overview,
     get_distributor_portal_summary,
     get_distributor_stats,
@@ -31,20 +32,23 @@ from app.services.channel import (
     list_diversion_clues,
     list_regions,
     list_stores,
+    region_coverage_label,
     resolve_store_for_code,
     update_distributor,
     update_region,
     update_store,
 )
+from app.utils.crypto import CryptoError, decrypt_phone, mask_phone
 
 channel_router = APIRouter(prefix="/api/v1/channels", tags=["channels"])
 
 
 class DistributorCreate(BaseModel):
     name: str
-    code: str
+    code: str | None = None
     contact_name: str | None = None
     contact_phone: str | None = None
+    status: str = "active"
 
 
 class DistributorUpdate(BaseModel):
@@ -52,23 +56,35 @@ class DistributorUpdate(BaseModel):
     status: str | None = None
 
 
-class RegionCreate(BaseModel):
-    name: str
-    code: str
+class RegionCoverageArea(BaseModel):
     province: str | None = None
     city: str | None = None
+
+
+class RegionCreate(BaseModel):
+    name: str
+    code: str | None = None
+    province: str | None = None
+    city: str | None = None
+    coverage_type: str | None = Field("city", pattern="^(city|province|multi_province)$")
+    coverage_areas: list[RegionCoverageArea] | None = None
     distributor_id: uuid.UUID | None = None
+    status: str = "active"
 
 
 class RegionUpdate(BaseModel):
     name: str | None = None
+    province: str | None = None
+    city: str | None = None
+    coverage_type: str | None = Field(None, pattern="^(city|province|multi_province)$")
+    coverage_areas: list[RegionCoverageArea] | None = None
     distributor_id: uuid.UUID | None = None
     status: str | None = None
 
 
 class StoreCreate(BaseModel):
     name: str
-    code: str
+    code: str | None = None
     region_id: uuid.UUID | None = None
     distributor_id: uuid.UUID | None = None
     address: str | None = None
@@ -89,24 +105,35 @@ class BatchAssign(BaseModel):
 
 class StoreAllocation(BaseModel):
     batch_id: uuid.UUID
-    store_id: uuid.UUID
+    target_type: str | None = Field(None, pattern="^(distributor|region|store)$")
+    distributor_id: uuid.UUID | None = None
+    region_id: uuid.UUID | None = None
+    store_id: uuid.UUID | None = None
     quantity: int = Field(..., gt=0)
 
 
 class AccountScopeCreate(BaseModel):
     account_id: uuid.UUID
-    scope_type: str = Field(..., pattern="^(distributor|store)$")
+    scope_type: str = Field(..., pattern="^(distributor|region|store)$")
     distributor_id: uuid.UUID | None = None
+    region_id: uuid.UUID | None = None
     store_id: uuid.UUID | None = None
 
 
 def _distributor_item(dist, stats: dict | None = None) -> dict:
     stats = stats or {}
+    contact_phone_masked = None
+    if dist.contact_phone_encrypted:
+        try:
+            contact_phone_masked = mask_phone(decrypt_phone(dist.contact_phone_encrypted))
+        except CryptoError:
+            contact_phone_masked = None
     return {
         "id": str(dist.id),
         "name": dist.name,
         "code": dist.code,
         "contact_name": dist.contact_name,
+        "contact_phone_masked": contact_phone_masked,
         "status": dist.status,
         "region_count": stats.get("region_count", 0),
         "store_count": stats.get("store_count", 0),
@@ -123,10 +150,14 @@ def _region_item(region, stats: dict | None = None) -> dict:
         "code": region.code,
         "province": region.province,
         "city": region.city,
+        "coverage_type": region.coverage_type,
+        "coverage_areas": region.coverage_areas or [],
+        "coverage_label": region_coverage_label(region),
         "status": region.status,
         "distributor_id": str(region.distributor_id) if region.distributor_id else None,
         "distributor_name": stats.get("distributor_name"),
         "store_count": stats.get("store_count", 0),
+        "allocated_quantity": stats.get("allocated_quantity", 0),
         "updated_at": region.updated_at.isoformat() if region.updated_at else None,
     }
 
@@ -154,6 +185,7 @@ def _scope_item(scope) -> dict:
         "account_id": str(scope.account_id),
         "scope_type": scope.scope_type,
         "distributor_id": str(scope.distributor_id) if scope.distributor_id else None,
+        "region_id": str(scope.region_id) if scope.region_id else None,
         "store_id": str(scope.store_id) if scope.store_id else None,
         "updated_at": scope.updated_at.isoformat() if scope.updated_at else None,
     }
@@ -166,6 +198,7 @@ def _diversion_item(clue) -> dict:
         "expected_region": clue.expected_region,
         "detected_city": clue.detected_city,
         "distributor_id": str(clue.distributor_id) if clue.distributor_id else None,
+        "region_id": str(clue.region_id) if clue.region_id else None,
         "resolved": clue.resolved,
         "resolution_note": clue.resolution_note,
         "resolved_by_account_id": str(clue.resolved_by_account_id) if clue.resolved_by_account_id else None,
@@ -197,6 +230,7 @@ async def create_distributor_endpoint(
         body.code,
         contact_name=body.contact_name,
         contact_phone=body.contact_phone,
+        status=body.status,
     )
     return _distributor_item(dist)
 
@@ -244,15 +278,21 @@ async def create_region_endpoint(
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
-    region = await create_region(
-        db,
-        tenant_id,
-        body.name,
-        body.code,
-        province=body.province,
-        city=body.city,
-        distributor_id=body.distributor_id,
-    )
+    try:
+        region = await create_region(
+            db,
+            tenant_id,
+            body.name,
+            body.code,
+            province=body.province,
+            city=body.city,
+            coverage_type=body.coverage_type,
+            coverage_areas=[area.model_dump() for area in body.coverage_areas] if body.coverage_areas else None,
+            distributor_id=body.distributor_id,
+            status=body.status,
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
     stats = await get_region_stats(db, tenant_id, [region])
     return _region_item(region, stats.get(region.id))
 
@@ -293,14 +333,21 @@ async def update_region_endpoint(
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
-    region = await update_region(
-        db,
-        tenant_id,
-        region_id,
-        name=body.name,
-        distributor_id=body.distributor_id,
-        status=body.status,
-    )
+    try:
+        region = await update_region(
+            db,
+            tenant_id,
+            region_id,
+            name=body.name,
+            province=body.province,
+            city=body.city,
+            coverage_type=body.coverage_type,
+            coverage_areas=[area.model_dump() for area in body.coverage_areas] if body.coverage_areas else None,
+            distributor_id=body.distributor_id,
+            status=body.status,
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
     if not region:
         raise HTTPException(404, "Region not found")
     stats = await get_region_stats(db, tenant_id, [region])
@@ -316,15 +363,18 @@ async def create_store_endpoint(
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
-    store = await create_store(
-        db,
-        tenant_id,
-        body.name,
-        body.code,
-        region_id=body.region_id,
-        distributor_id=body.distributor_id,
-        address=body.address,
-    )
+    try:
+        store = await create_store(
+            db,
+            tenant_id,
+            body.name,
+            body.code,
+            region_id=body.region_id,
+            distributor_id=body.distributor_id,
+            address=body.address,
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
     stats = await get_store_stats(db, tenant_id, [store])
     return _store_item(store, stats.get(store.id))
 
@@ -367,16 +417,19 @@ async def update_store_endpoint(
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
-    store = await update_store(
-        db,
-        tenant_id,
-        store_id,
-        name=body.name,
-        region_id=body.region_id,
-        distributor_id=body.distributor_id,
-        address=body.address,
-        status=body.status,
-    )
+    try:
+        store = await update_store(
+            db,
+            tenant_id,
+            store_id,
+            name=body.name,
+            region_id=body.region_id,
+            distributor_id=body.distributor_id,
+            address=body.address,
+            status=body.status,
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
     if not store:
         raise HTTPException(404, "Store not found")
     stats = await get_store_stats(db, tenant_id, [store])
@@ -393,10 +446,10 @@ async def delete_store_endpoint(
     return {"success": ok}
 
 
-# ── 码段分配 ──────────────────────────────────────
+# ── 渠道流向登记 ──────────────────────────────────────
 
 
-@channel_router.post("/code-batches/{batch_id}/assign", summary="批次分配给经销商/区域")
+@channel_router.post("/code-batches/{batch_id}/assign", summary="批次流向登记到经销商/区域")
 async def assign_batch_endpoint(
     batch_id: uuid.UUID,
     body: BatchAssign,
@@ -415,14 +468,23 @@ async def assign_batch_endpoint(
     return result
 
 
-@channel_router.post("/code-allocations", status_code=201, summary="门店级码段分配")
+@channel_router.post("/code-allocations", status_code=201, summary="已赋码货品流向登记")
 async def allocate_to_store_endpoint(
     body: StoreAllocation,
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
     try:
-        alloc = await allocate_codes_to_store(db, tenant_id, body.batch_id, body.store_id, body.quantity)
+        target_type = body.target_type or ("store" if body.store_id else "region" if body.region_id else "distributor")
+        alloc = await allocate_codes_to_store(
+            db,
+            tenant_id,
+            body.batch_id,
+            body.store_id if target_type == "store" else None,
+            body.quantity,
+            distributor_id=body.distributor_id if target_type == "distributor" else None,
+            region_id=body.region_id if target_type == "region" else None,
+        )
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
     if not alloc:
@@ -430,10 +492,11 @@ async def allocate_to_store_endpoint(
     return await allocation_to_dict(db, tenant_id, alloc)
 
 
-@channel_router.get("/code-allocations", summary="码段分配列表")
+@channel_router.get("/code-allocations", summary="渠道流向登记列表")
 async def list_allocations_endpoint(
     batch_id: uuid.UUID | None = Query(None),
     store_id: uuid.UUID | None = Query(None),
+    region_id: uuid.UUID | None = Query(None),
     distributor_id: uuid.UUID | None = Query(None),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
@@ -445,6 +508,7 @@ async def list_allocations_endpoint(
         tenant_id,
         batch_id=batch_id,
         store_id=store_id,
+        region_id=region_id,
         distributor_id=distributor_id,
         page=page,
         page_size=page_size,
@@ -484,6 +548,7 @@ async def create_account_scope_endpoint(
             body.account_id,
             body.scope_type,
             distributor_id=body.distributor_id,
+            region_id=body.region_id,
             store_id=body.store_id,
         )
     except ValueError as exc:
@@ -539,7 +604,9 @@ async def store_portal_summary_endpoint(
 @channel_router.get("/diversion-clues", summary="窜货线索列表")
 async def list_diversion_clues_endpoint(
     resolved: bool | None = Query(None),
+    severity: str | None = Query(None, pattern="^(high|medium|low)$"),
     distributor_id: uuid.UUID | None = Query(None),
+    region_id: uuid.UUID | None = Query(None),
     q: str | None = Query(None),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
@@ -550,13 +617,15 @@ async def list_diversion_clues_endpoint(
         db,
         tenant_id,
         resolved=resolved,
+        severity=severity,
         distributor_id=distributor_id,
+        region_id=region_id,
         q=q,
         page=page,
         page_size=page_size,
     )
     return PaginatedResponse(
-        items=[_diversion_item(c) for c in clues],
+        items=[await diversion_clue_to_dict(db, tenant_id, c) for c in clues],
         total=total,
         page=page,
         page_size=page_size,

@@ -20,6 +20,12 @@ export default function AgencyPage() {
   const [loading, setLoading] = useState(false);
   const [initModalOpen, setInitModalOpen] = useState(false);
   const [taskModalOpen, setTaskModalOpen] = useState(false);
+  const [overview, setOverview] = useState<{
+    total_clients?: number;
+    active_clients?: number;
+    onboarding_clients?: number;
+    pending_tasks?: number;
+  }>({});
 
   const [checklistModalOpen, setChecklistModalOpen] = useState(false);
   const [checklistData, setChecklistData] = useState<ChecklistResult | null>(null);
@@ -42,6 +48,15 @@ export default function AgencyPage() {
     finally { setLoading(false); }
   };
 
+  const fetchOverview = async () => {
+    try {
+      const { data } = await api.get("/ops/overview");
+      setOverview(data || {});
+    } catch {
+      setOverview({});
+    }
+  };
+
   const fetchTasks = async (filter?: { tenant_id?: string; status?: string }) => {
     try {
       const params: Record<string, unknown> = { page: 1, page_size: 100 };
@@ -51,12 +66,13 @@ export default function AgencyPage() {
       const { data } = await api.get("/ops/tasks", { params });
       setTasks((data.items || []).map((t: Record<string, unknown>) => ({
         id: String(t.id), tenant_id: String(t.tenant_id || ""), title: String(t.title || ""),
+        tenant_name: t.tenant_name ? String(t.tenant_name) : undefined,
         status: String(t.status || "pending"), priority: String(t.priority || "medium"), due_date: t.due_date ? String(t.due_date) : null,
       })));
     } catch { setTasks([]); }
   };
 
-  useEffect(() => { fetchClients(); fetchTasks(); }, []);
+  useEffect(() => { fetchOverview(); fetchClients(); fetchTasks(); }, []);
 
   const handleOpenChecklist = async (clientId: string, clientName: string) => {
     setChecklistLoading(true); setChecklistClientName(clientName); setChecklistModalOpen(true);
@@ -66,12 +82,12 @@ export default function AgencyPage() {
   };
 
   const handleUpdateTaskStatus = async (taskId: string, newStatus: string) => {
-    try { await api.patch(`/ops/tasks/${taskId}`, { status: newStatus }); message.success("任务状态已更新"); fetchTasks(); }
+    try { await api.patch(`/ops/tasks/${taskId}`, { status: newStatus }); message.success("任务状态已更新"); fetchTasks(); fetchOverview(); }
     catch (e: unknown) { message.error(extractErrorMessage(e, "更新失败")); }
   };
 
   const handleDeleteTask = async (taskId: string) => {
-    try { await api.delete(`/ops/tasks/${taskId}`); message.success("任务已删除"); fetchTasks(); }
+    try { await api.delete(`/ops/tasks/${taskId}`); message.success("任务已删除"); fetchTasks(); fetchOverview(); }
     catch (e: unknown) { message.error(extractErrorMessage(e, "删除失败")); }
   };
 
@@ -84,9 +100,9 @@ export default function AgencyPage() {
     fetchTasks(newFilter);
   };
 
-  const activeClients = clients.filter((c) => c.status === "active").length;
-  const onboardingClients = clients.filter((c) => c.status === "onboarding").length;
-  const pendingTasks = tasks.filter((t) => t.status === "pending").length;
+  const activeClients = overview.active_clients ?? clients.filter((c) => c.status === "active").length;
+  const onboardingClients = overview.onboarding_clients ?? clients.filter((c) => c.status === "onboarding").length;
+  const pendingTasks = overview.pending_tasks ?? tasks.filter((t) => t.status === "pending").length;
 
   return (
     <div>
@@ -98,12 +114,12 @@ export default function AgencyPage() {
         </Space>
       </div>
 
-      <StatsCards totalClients={clients.length} activeClients={activeClients} onboardingClients={onboardingClients} pendingTasks={pendingTasks} />
+      <StatsCards totalClients={overview.total_clients ?? clients.length} activeClients={activeClients} onboardingClients={onboardingClients} pendingTasks={pendingTasks} />
       <ClientTable clients={clients} loading={loading} onSearch={(q) => fetchClients(q)} onOpenChecklist={handleOpenChecklist} />
       <TaskTable tasks={tasks} clients={clients} taskFilter={taskFilter} onFilterChange={handleFilterChange} onUpdateStatus={handleUpdateTaskStatus} onDelete={confirmDeleteTask} />
 
-      <InitClientModal open={initModalOpen} onClose={() => setInitModalOpen(false)} onSuccess={() => fetchClients()} />
-      <CreateTaskModal open={taskModalOpen} onClose={() => setTaskModalOpen(false)} clients={clients} onSuccess={() => fetchTasks()} />
+      <InitClientModal open={initModalOpen} onClose={() => setInitModalOpen(false)} onSuccess={() => { fetchOverview(); fetchClients(); }} />
+      <CreateTaskModal open={taskModalOpen} onClose={() => setTaskModalOpen(false)} clients={clients} onSuccess={() => { fetchOverview(); fetchTasks(); }} />
       <ChecklistModal open={checklistModalOpen} clientName={checklistClientName} onClose={() => { setChecklistModalOpen(false); setChecklistData(null); }} data={checklistData} loading={checklistLoading} />
     </div>
   );

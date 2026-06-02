@@ -25,6 +25,7 @@ risk_dashboard_router = APIRouter(prefix="/api/v1/risk-dashboard", tags=["risk-d
 
 
 class ResolveDiversionRequest(BaseModel):
+    resolution_action: str | None = None
     resolution_note: str | None = None
 
 
@@ -89,6 +90,7 @@ async def resolve_diversion_endpoint(
         db,
         tenant_id,
         clue_id,
+        resolution_action=body.resolution_action if body else None,
         resolution_note=body.resolution_note if body else None,
         resolved_by_account_id=account_id,
     )
@@ -97,6 +99,7 @@ async def resolve_diversion_endpoint(
     return {
         "id": str(clue.id),
         "resolved": clue.resolved,
+        "resolution_action": clue.resolution_action,
         "resolution_note": clue.resolution_note,
         "resolved_by_account_id": str(clue.resolved_by_account_id) if clue.resolved_by_account_id else None,
         "resolved_at": clue.resolved_at.isoformat() if clue.resolved_at else None,

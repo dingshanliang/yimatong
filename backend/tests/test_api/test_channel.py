@@ -93,6 +93,29 @@ class TestDistributorCRUD:
         assert resp.json()["code"] == "DIST-001"
 
     @pytest.mark.anyio
+    async def test_create_distributor_generates_code_when_omitted(self, client: AsyncClient, setup_tenant):
+        _tid, headers, *_ = setup_tenant
+        first = await client.post(
+            "/api/v1/channels/distributors",
+            json={"name": "自动编码经销商", "contact_name": "张三", "contact_phone": "13800138000"},
+            headers=headers,
+        )
+        second = await client.post(
+            "/api/v1/channels/distributors",
+            json={"name": "第二个经销商", "status": "inactive"},
+            headers=headers,
+        )
+
+        assert first.status_code == 201
+        assert first.json()["code"].startswith("DIST-")
+        assert first.json()["contact_name"] == "张三"
+        assert first.json()["contact_phone_masked"] == "138****8000"
+        assert second.status_code == 201
+        assert second.json()["code"].startswith("DIST-")
+        assert second.json()["code"] != first.json()["code"]
+        assert second.json()["status"] == "inactive"
+
+    @pytest.mark.anyio
     async def test_list_distributors(self, client: AsyncClient, setup_tenant):
         tid, headers, *_ = setup_tenant
         await client.post(
@@ -140,22 +163,107 @@ class TestRegionCRUD:
     """W11-002: 区域 CRUD"""
 
     @pytest.mark.anyio
-    async def test_create_region(self, client: AsyncClient, setup_tenant):
-        tid, headers, *_ = setup_tenant
+    async def test_create_region_generates_code_and_requires_no_store(self, client: AsyncClient, setup_tenant):
+        _tid, headers, *_ = setup_tenant
+        dist = await client.post(
+            "/api/v1/channels/distributors",
+            json={"name": "区域所属经销商"},
+            headers=headers,
+        )
         resp = await client.post(
             "/api/v1/channels/regions",
-            json={"name": "上海区域", "code": "REG-SH", "province": "上海", "city": "上海"},
+            json={
+                "name": "上海区域",
+                "province": "上海",
+                "city": "上海",
+                "distributor_id": dist.json()["id"],
+                "status": "active",
+            },
             headers=headers,
         )
         assert resp.status_code == 201
+        assert resp.json()["code"].startswith("REG-")
         assert resp.json()["city"] == "上海"
+        assert resp.json()["distributor_id"] == dist.json()["id"]
+        assert resp.json()["status"] == "active"
+        assert "store_id" not in resp.json()
+
+    @pytest.mark.anyio
+    async def test_create_region_supports_province_and_multi_province_coverage(self, client: AsyncClient, setup_tenant):
+        _tid, headers, *_ = setup_tenant
+        dist = await client.post(
+            "/api/v1/channels/distributors",
+            json={"name": "片区经销商"},
+            headers=headers,
+        )
+
+        province_region = await client.post(
+            "/api/v1/channels/regions",
+            json={
+                "name": "四川省区",
+                "coverage_type": "province",
+                "province": "四川",
+                "distributor_id": dist.json()["id"],
+            },
+            headers=headers,
+        )
+        assert province_region.status_code == 201
+        assert province_region.json()["coverage_type"] == "province"
+        assert province_region.json()["city"] is None
+        assert province_region.json()["coverage_label"] == "四川"
+        assert province_region.json()["coverage_areas"] == [{"province": "四川", "city": None}]
+
+        multi_region = await client.post(
+            "/api/v1/channels/regions",
+            json={
+                "name": "华东大区",
+                "coverage_type": "multi_province",
+                "coverage_areas": [{"province": "上海"}, {"province": "江苏"}, {"province": "浙江"}],
+                "distributor_id": dist.json()["id"],
+            },
+            headers=headers,
+        )
+        assert multi_region.status_code == 201
+        assert multi_region.json()["coverage_type"] == "multi_province"
+        assert multi_region.json()["coverage_label"] == "上海、江苏、浙江"
+        assert multi_region.json()["province"] == "上海"
+        assert multi_region.json()["city"] is None
+
+    @pytest.mark.anyio
+    async def test_create_region_rejects_missing_or_inactive_distributor(self, client: AsyncClient, setup_tenant):
+        _tid, headers, *_ = setup_tenant
+        missing = await client.post(
+            "/api/v1/channels/regions",
+            json={"name": "无主区域", "province": "上海", "city": "上海"},
+            headers=headers,
+        )
+        assert missing.status_code == 400
+        assert "经销商" in missing.json()["detail"]
+
+        dist = await client.post(
+            "/api/v1/channels/distributors",
+            json={"name": "停用经销商", "status": "inactive"},
+            headers=headers,
+        )
+        inactive = await client.post(
+            "/api/v1/channels/regions",
+            json={"name": "停用经销商区域", "province": "上海", "city": "上海", "distributor_id": dist.json()["id"]},
+            headers=headers,
+        )
+        assert inactive.status_code == 400
+        assert "启用" in inactive.json()["detail"]
 
     @pytest.mark.anyio
     async def test_list_regions(self, client: AsyncClient, setup_tenant):
-        tid, headers, *_ = setup_tenant
+        _tid, headers, *_ = setup_tenant
+        dist = await client.post(
+            "/api/v1/channels/distributors",
+            json={"name": "北京经销商", "code": "DIST-BJ"},
+            headers=headers,
+        )
         await client.post(
             "/api/v1/channels/regions",
-            json={"name": "北京区域", "code": "REG-BJ", "city": "北京"},
+            json={"name": "北京区域", "code": "REG-BJ", "city": "北京", "distributor_id": dist.json()["id"]},
             headers=headers,
         )
         resp = await client.get("/api/v1/channels/regions", headers=headers)
@@ -195,6 +303,7 @@ class TestRegionCRUD:
         item = resp.json()["items"][0]
         assert item["distributor_name"] == "华东经销商"
         assert item["store_count"] == 1
+        assert "allocated_quantity" in item
 
 
 class TestStoreCRUD:
@@ -214,9 +323,14 @@ class TestStoreCRUD:
     @pytest.mark.anyio
     async def test_patch_store_and_filter_by_region(self, client: AsyncClient, setup_tenant):
         _tid, headers, *_ = setup_tenant
+        dist = await client.post(
+            "/api/v1/channels/distributors",
+            json={"name": "门店经销商", "code": "DIST-STORE"},
+            headers=headers,
+        )
         region = await client.post(
             "/api/v1/channels/regions",
-            json={"name": "上海区域", "code": "REG-STORE", "city": "上海"},
+            json={"name": "上海区域", "code": "REG-STORE", "city": "上海", "distributor_id": dist.json()["id"]},
             headers=headers,
         )
         store = await client.post(
@@ -252,12 +366,17 @@ class TestBatchAssignment:
         client: AsyncClient,
         setup_tenant,
     ):
-        tid, headers, product_id, sku_id, production_batch_id = setup_tenant
+        _tid, headers, product_id, sku_id, production_batch_id = setup_tenant
 
         # 创建区域
+        dist = await client.post(
+            "/api/v1/channels/distributors",
+            json={"name": "分配经销商", "code": "DIST-ASSIGN"},
+            headers=headers,
+        )
         region = await client.post(
             "/api/v1/channels/regions",
-            json={"name": "上海区域", "code": "REG-TEST", "city": "上海"},
+            json={"name": "上海区域", "code": "REG-TEST", "city": "上海", "distributor_id": dist.json()["id"]},
             headers=headers,
         )
         region_id = region.json()["id"]
@@ -283,6 +402,66 @@ class TestBatchAssignment:
         )
         assert resp.status_code == 200
         assert resp.json()["region_id"] == region_id
+
+    @pytest.mark.anyio
+    async def test_code_allocation_targets_region_without_store(
+        self,
+        client: AsyncClient,
+        setup_tenant,
+    ):
+        _tid, headers, product_id, sku_id, production_batch_id = setup_tenant
+        dist = await client.post(
+            "/api/v1/channels/distributors",
+            json={"name": "区域分配经销商", "code": "DIST-REG-ALLOC"},
+            headers=headers,
+        )
+        region = await client.post(
+            "/api/v1/channels/regions",
+            json={
+                "name": "区域分配上海",
+                "code": "REG-ALLOC",
+                "province": "上海",
+                "city": "上海",
+                "distributor_id": dist.json()["id"],
+            },
+            headers=headers,
+        )
+        batch = await client.post(
+            "/api/v1/code-batches",
+            json={
+                "product_id": product_id,
+                "sku_id": sku_id,
+                "production_batch_id": production_batch_id,
+                "quantity": 10,
+            },
+            headers=headers,
+        )
+
+        allocation = await client.post(
+            "/api/v1/channels/code-allocations",
+            json={
+                "batch_id": batch.json()["id"],
+                "target_type": "region",
+                "region_id": region.json()["id"],
+                "quantity": 6,
+            },
+            headers=headers,
+        )
+        assert allocation.status_code == 201
+        data = allocation.json()
+        assert data["store_id"] is None
+        assert data["region_id"] == region.json()["id"]
+        assert data["region_name"] == "区域分配上海"
+        assert data["distributor_id"] == dist.json()["id"]
+        assert data["remaining_quantity"] == 4
+
+        list_resp = await client.get(
+            "/api/v1/channels/code-allocations",
+            params={"region_id": region.json()["id"]},
+            headers=headers,
+        )
+        assert list_resp.status_code == 200
+        assert list_resp.json()["total"] == 1
 
     @pytest.mark.anyio
     async def test_store_allocation_rejects_quantity_above_remaining(
@@ -410,6 +589,85 @@ class TestChannelAccountScopes:
         assert data["scope"]["name"] == "授权经销商"
         assert data["allocated_quantity"] == 8
         assert data["store_count"] == 1
+        assert data["regions"][0]["name"] == "授权区域"
+
+    @pytest.mark.anyio
+    async def test_region_scope_limits_distributor_portal_summary_without_store(
+        self,
+        client: AsyncClient,
+        setup_tenant,
+        db_session: AsyncSession,
+    ):
+        tid, headers, product_id, sku_id, production_batch_id = setup_tenant
+        dist = await client.post(
+            "/api/v1/channels/distributors",
+            json={"name": "区域账号经销商", "code": "DIST-REGION-SCOPE"},
+            headers=headers,
+        )
+        region = await client.post(
+            "/api/v1/channels/regions",
+            json={
+                "name": "区域账号上海",
+                "code": "REG-SCOPE",
+                "city": "上海",
+                "distributor_id": dist.json()["id"],
+            },
+            headers=headers,
+        )
+        batch = await client.post(
+            "/api/v1/code-batches",
+            json={
+                "product_id": product_id,
+                "sku_id": sku_id,
+                "production_batch_id": production_batch_id,
+                "quantity": 8,
+            },
+            headers=headers,
+        )
+        await client.post(
+            "/api/v1/channels/code-allocations",
+            json={
+                "batch_id": batch.json()["id"],
+                "target_type": "region",
+                "region_id": region.json()["id"],
+                "quantity": 8,
+            },
+            headers=headers,
+        )
+
+        org = Organization(tenant_id=UUID(tid), name="区域渠道组织")
+        db_session.add(org)
+        await db_session.flush()
+        account = Account(
+            tenant_id=UUID(tid),
+            organization_id=org.id,
+            email="region@test.com",
+            name="区域账号",
+            hashed_password=hash_password("Pass1234"),
+        )
+        db_session.add(account)
+        await db_session.flush()
+        await db_session.refresh(account)
+
+        scope_resp = await client.post(
+            "/api/v1/channels/account-scopes",
+            json={"account_id": str(account.id), "scope_type": "region", "region_id": region.json()["id"]},
+            headers=headers,
+        )
+        assert scope_resp.status_code == 201
+
+        scoped_token = create_access_token(tid, str(account.id), "distributor")
+        summary = await client.get(
+            "/api/v1/channels/portal/distributor/summary",
+            headers={"Authorization": f"Bearer {scoped_token}"},
+        )
+        assert summary.status_code == 200
+        data = summary.json()
+        assert data["scope"]["type"] == "region"
+        assert data["scope"]["name"] == "区域账号上海"
+        assert data["allocated_quantity"] == 8
+        assert data["store_count"] == 0
+        assert data["recent_allocations"][0]["store_id"] is None
 
     @pytest.mark.anyio
     async def test_account_scope_limits_store_portal_summary(
@@ -459,8 +717,14 @@ class TestChannelOverview:
     @pytest.mark.anyio
     async def test_overview_returns_channel_metrics(self, client: AsyncClient, setup_tenant):
         _tid, headers, *_ = setup_tenant
-        await client.post("/api/v1/channels/distributors", json={"name": "经销商", "code": "OV-D"}, headers=headers)
-        await client.post("/api/v1/channels/regions", json={"name": "区域", "code": "OV-R"}, headers=headers)
+        dist = await client.post(
+            "/api/v1/channels/distributors", json={"name": "经销商", "code": "OV-D"}, headers=headers
+        )
+        await client.post(
+            "/api/v1/channels/regions",
+            json={"name": "区域", "code": "OV-R", "distributor_id": dist.json()["id"]},
+            headers=headers,
+        )
         await client.post("/api/v1/channels/stores", json={"name": "门店", "code": "OV-S"}, headers=headers)
 
         resp = await client.get("/api/v1/channels/overview", headers=headers)
@@ -503,9 +767,14 @@ class TestDiversionDetection:
         tid, headers, product_id, sku_id, production_batch_id = setup_tenant
 
         # 创建上海区域
+        dist = await client.post(
+            "/api/v1/channels/distributors",
+            json={"name": "窜货经销商", "code": "DIST-DIV"},
+            headers=headers,
+        )
         region = await client.post(
             "/api/v1/channels/regions",
-            json={"name": "上海区域", "code": "REG-DIV", "city": "上海"},
+            json={"name": "上海区域", "code": "REG-DIV", "city": "上海", "distributor_id": dist.json()["id"]},
             headers=headers,
         )
         region_id = region.json()["id"]
@@ -543,7 +812,24 @@ class TestDiversionDetection:
         assert clue is not None
         assert clue.expected_region == "上海"
         assert clue.detected_city == "北京"
+        assert str(clue.region_id) == region_id
         assert clue.resolved is False
+
+        filtered = await client.get(
+            "/api/v1/channels/diversion-clues",
+            params={"region_id": region_id, "resolved": False},
+            headers=headers,
+        )
+        assert filtered.status_code == 200
+        item = filtered.json()["items"][0]
+        assert item["region_id"] == region_id
+        assert item["region_name"] == "上海区域"
+        assert item["distributor_name"] == "窜货经销商"
+        assert item["batch_code"] == batch.json()["batch_code"]
+        assert item["product_name"]
+        assert item["sku_name"]
+        assert item["severity"] == "high"
+        assert item["resolution_action"] is None
 
     @pytest.mark.anyio
     async def test_no_diversion_same_city(
@@ -554,9 +840,14 @@ class TestDiversionDetection:
     ):
         tid, headers, product_id, sku_id, production_batch_id = setup_tenant
 
+        dist = await client.post(
+            "/api/v1/channels/distributors",
+            json={"name": "同城经销商", "code": "DIST-SAME"},
+            headers=headers,
+        )
         region = await client.post(
             "/api/v1/channels/regions",
-            json={"name": "上海区域", "code": "REG-SAME", "city": "上海"},
+            json={"name": "上海区域", "code": "REG-SAME", "city": "上海", "distributor_id": dist.json()["id"]},
             headers=headers,
         )
         region_id = region.json()["id"]
@@ -589,6 +880,60 @@ class TestDiversionDetection:
 
         clue = await check_diversion(db_session, UUID(tid), public_id, "120.1.2.3")
         assert clue is None  # 上海 IP → 上海区域，不触发
+
+    @pytest.mark.anyio
+    async def test_diversion_respects_province_and_multi_province_coverage(
+        self,
+        client: AsyncClient,
+        setup_tenant,
+        db_session: AsyncSession,
+    ):
+        tid, headers, product_id, sku_id, production_batch_id = setup_tenant
+        dist = await client.post(
+            "/api/v1/channels/distributors",
+            json={"name": "大区窜货经销商", "code": "DIST-COVERAGE"},
+            headers=headers,
+        )
+        region = await client.post(
+            "/api/v1/channels/regions",
+            json={
+                "name": "沪粤大区",
+                "code": "REG-COVERAGE",
+                "coverage_type": "multi_province",
+                "coverage_areas": [{"province": "上海"}, {"province": "广东"}],
+                "distributor_id": dist.json()["id"],
+            },
+            headers=headers,
+        )
+        batch = await client.post(
+            "/api/v1/code-batches",
+            json={
+                "product_id": product_id,
+                "sku_id": sku_id,
+                "production_batch_id": production_batch_id,
+                "quantity": 5,
+            },
+            headers=headers,
+        )
+        batch_id = batch.json()["id"]
+        await client.post(
+            f"/api/v1/channels/code-batches/{batch_id}/assign",
+            json={"region_id": region.json()["id"]},
+            headers=headers,
+        )
+        await client.post(f"/api/v1/code-batches/{batch_id}/activate", headers=headers)
+        items_resp = await client.get(f"/api/v1/code-items?code_batch_id={batch_id}", headers=headers)
+        public_id = items_resp.json()["items"][0]["public_id"]
+
+        from app.services.channel import check_diversion
+
+        assert await check_diversion(db_session, UUID(tid), public_id, "113.1.2.3") is None
+
+        clue = await check_diversion(db_session, UUID(tid), public_id, "110.1.2.3")
+        assert clue is not None
+        assert clue.expected_region == "沪粤大区（上海、广东）"
+        assert clue.detected_city == "北京"
+        assert str(clue.region_id) == region.json()["id"]
 
     @pytest.mark.anyio
     async def test_list_diversion_clues(

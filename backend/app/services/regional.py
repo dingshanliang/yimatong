@@ -44,6 +44,48 @@ async def list_regional_orgs(
     return list(result.scalars().all())
 
 
+ORG_TYPE_LABELS = {
+    "association": "协会组织",
+    "brand_group": "区域品牌集团",
+    "brand": "区域品牌",
+}
+
+
+async def regional_org_summary(db: AsyncSession, org: RegionalOrg) -> dict:
+    member_count = (
+        await db.execute(select(func.count()).select_from(RegionalOrgMember).where(RegionalOrgMember.org_id == org.id))
+    ).scalar() or 0
+    active_member_count = (
+        await db.execute(
+            select(func.count())
+            .select_from(RegionalOrgMember)
+            .where(RegionalOrgMember.org_id == org.id, RegionalOrgMember.status == "active")
+        )
+    ).scalar() or 0
+    template_count = (
+        await db.execute(select(func.count()).select_from(RegionalTemplate).where(RegionalTemplate.org_id == org.id))
+    ).scalar() or 0
+
+    if active_member_count == 0:
+        next_action = "添加成员企业"
+    elif template_count == 0:
+        next_action = "创建共享模板"
+    else:
+        next_action = "配置统一活动"
+
+    return {
+        "id": str(org.id),
+        "name": org.name,
+        "org_type": org.org_type,
+        "org_type_label": ORG_TYPE_LABELS.get(org.org_type, org.org_type),
+        "config": org.config,
+        "member_count": member_count,
+        "active_member_count": active_member_count,
+        "template_count": template_count,
+        "next_action": next_action,
+    }
+
+
 async def get_org(db: AsyncSession, org_id: uuid.UUID) -> RegionalOrg | None:
     result = await db.execute(select(RegionalOrg).where(RegionalOrg.id == org_id))
     return result.scalar_one_or_none()
