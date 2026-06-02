@@ -27,6 +27,7 @@ ruff format .                              # 格式化
 
 ```bash
 cd frontend
+pnpm build:shared   # 先构建共享包（admin/h5 依赖此包）
 pnpm dev:admin      # 启动 Admin 开发服务器（端口 3000）
 pnpm dev:h5         # 启动 H5 开发服务器（端口 3001）
 pnpm build:admin    # 只构建 Admin
@@ -38,6 +39,13 @@ pnpm test:e2e       # Playwright E2E 测试
 pnpm test:e2e:ui    # E2E 测试（带 UI）
 pnpm test:e2e:debug # E2E 测试（调试模式）
 ```
+
+**Admin 单元测试：**
+```bash
+cd frontend/apps/admin && pnpm exec vitest run   # 运行 Vitest 单元/组件测试
+```
+
+**注意**：H5 Playwright E2E 测试使用端口 3003（非 dev 端口 3001），见 `playwright.config.ts`。
 
 ### Docker 本地环境
 
@@ -76,7 +84,7 @@ backend/
     test_models/     模型测试
     test_services/   服务层测试
     test_tasks/      异步任务测试
-  alembic/           数据库迁移（0001-0019+）
+  alembic/           数据库迁移（0001-0038+）
   docker-compose.dev.yml  完整本地环境
 
 frontend/
@@ -105,7 +113,7 @@ docs/
 
 | 层 | 选型 |
 |---|---|
-| 后端 API | FastAPI（Python 3.12+，uv 管理） |
+| 后端 API | FastAPI（Python 3.13+，uv 管理） |
 | 数据库 | PostgreSQL 16（SQLAlchemy 2.0 async，Alembic 迁移） |
 | 缓存/队列 | Redis 7（redis[hiredis]，arq 异步任务） |
 | 对象存储 | MinIO（boto3 兼容，本地）/ S3 兼容（生产） |
