@@ -2,11 +2,11 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { Alert, App, Button, Form, Input, Modal, Select, Table, Tabs, Tag, Typography } from "antd";
-import { PlusOutlined } from "@ant-design/icons";
+import { CopyOutlined, MoreOutlined, PlusOutlined } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
 import api from "@/lib/api";
 
-const { Title } = Typography;
+const { Text, Title } = Typography;
 
 interface Organization {
   id: string;
@@ -26,7 +26,7 @@ interface Account {
 }
 
 export default function AccountsPage() {
-  const { message } = App.useApp();
+  const { message, modal } = App.useApp();
   const [activeTab, setActiveTab] = useState("orgs");
   const [orgs, setOrgs] = useState<Organization[]>([]);
   const [accounts, setAccounts] = useState<Account[]>([]);
@@ -34,6 +34,9 @@ export default function AccountsPage() {
   const [orgModalOpen, setOrgModalOpen] = useState(false);
   const [accountModalOpen, setAccountModalOpen] = useState(false);
   const [createdAccount, setCreatedAccount] = useState<Account | null>(null);
+  const [resetLinkModalOpen, setResetLinkModalOpen] = useState(false);
+  const [resetLink, setResetLink] = useState("");
+  const [resetLoading, setResetLoading] = useState(false);
   const [orgForm] = Form.useForm();
   const [accountForm] = Form.useForm();
 
@@ -91,6 +94,47 @@ export default function AccountsPage() {
     }
   };
 
+  const copyInitialPassword = async (password: string) => {
+    try {
+      await navigator.clipboard.writeText(password);
+      message.success("临时密码已复制");
+    } catch {
+      message.error("复制失败，请手动复制");
+    }
+  };
+
+  const copyResetLink = async () => {
+    try {
+      await navigator.clipboard.writeText(resetLink);
+      message.success("重置链接已复制");
+    } catch {
+      message.error("复制失败，请手动复制");
+    }
+  };
+
+  const handleResetPassword = (account: Account) => {
+    modal.confirm({
+      title: "生成密码重置链接",
+      content: `确定为「${account.name}」（${account.email}）生成密码重置链接吗？`,
+      okText: "确定生成",
+      cancelText: "取消",
+      onOk: async () => {
+        setResetLoading(true);
+        try {
+          const { data } = await api.post("/auth/generate-reset-token", {
+            account_id: account.id,
+          });
+          setResetLink(data.reset_url);
+          setResetLinkModalOpen(true);
+        } catch {
+          message.error("生成重置链接失败");
+        } finally {
+          setResetLoading(false);
+        }
+      },
+    });
+  };
+
   const orgColumns: ColumnsType<Organization> = [
     { title: "组织名称", dataIndex: "name", key: "name" },
     {
@@ -109,6 +153,20 @@ export default function AccountsPage() {
       dataIndex: "organization_name",
       key: "organization_name",
       render: (v: string, record) => <span data-testid={`account-org-name-${record.id}`}>{v || "未分配"}</span>,
+    },
+    {
+      title: "操作",
+      key: "action",
+      width: 80,
+      render: (_: unknown, record: Account) => (
+        <Button
+          type="text"
+          icon={<MoreOutlined />}
+          onClick={() => handleResetPassword(record)}
+          loading={resetLoading}
+          aria-label={`操作菜单-${record.name}`}
+        />
+      ),
     },
   ];
 
@@ -146,6 +204,13 @@ export default function AccountsPage() {
             label: "账户管理",
             children: (
               <>
+                <Alert
+                  className="mb-4"
+                  type="info"
+                  showIcon
+                  message="账户用于员工或渠道伙伴登录后台"
+                  description="所属组织决定账号可查看和操作的数据范围。创建账户后，系统会发放一次性临时密码给使用人登录。"
+                />
                 <div className="mb-4">
                   <Button type="primary" icon={<PlusOutlined />} onClick={openAccountModal}>
                     新建账户
@@ -183,9 +248,32 @@ export default function AccountsPage() {
             type="success"
             showIcon
             message="账号已创建"
-            description={`登录邮箱：${createdAccount.email}，临时密码：${createdAccount.initial_password}`}
+            description={
+              <div>
+                <div>
+                  登录邮箱：{createdAccount.email}，临时密码：<Text code>{createdAccount.initial_password}</Text>。
+                  临时密码只在这里显示一次，请立即交付给账号使用人。
+                </div>
+                <Button
+                  className="mt-2"
+                  size="small"
+                  aria-label="复制临时密码"
+                  icon={<CopyOutlined />}
+                  onClick={() => copyInitialPassword(createdAccount.initial_password!)}
+                >
+                  复制临时密码
+                </Button>
+              </div>
+            }
           />
         )}
+        <Alert
+          className="mb-4"
+          type="info"
+          showIcon
+          message="不需要手动设置密码"
+          description="提交后系统会生成一次性临时密码。临时密码只在创建成功后显示一次，请当场交付给使用人。"
+        />
         <Form form={accountForm} layout="vertical" onFinish={handleCreateAccount}>
           <Form.Item name="email" label="邮箱" rules={[{ required: true, type: "email", message: "请输入有效邮箱" }]}>
             <Input />
@@ -196,8 +284,37 @@ export default function AccountsPage() {
           <Form.Item name="organization_id" label="所属组织" rules={[{ required: true, message: "请选择组织" }]}>
             <Select placeholder="选择组织" options={orgs.map((o) => ({ value: o.id, label: o.name }))} />
           </Form.Item>
-          <Alert type="info" showIcon message="系统会生成一次性临时密码，创建后请立即交付给账号使用人。" />
         </Form>
+      </Modal>
+      <Modal
+        title="密码重置链接"
+        open={resetLinkModalOpen}
+        onCancel={() => {
+          setResetLinkModalOpen(false);
+          setResetLink("");
+        }}
+        footer={
+          <Button type="primary" icon={<CopyOutlined />} onClick={copyResetLink}>
+            复制链接
+          </Button>
+        }
+        width={520}
+      >
+        <Alert
+          className="mb-4"
+          type="success"
+          showIcon
+          message="重置链接已生成"
+          description={
+            <div>
+              <div>请将此链接通过微信、企微等方式发送给账号使用人：</div>
+              <Text code className="mt-2 block break-all text-xs">
+                {resetLink}
+              </Text>
+              <div className="mt-2 text-xs text-gray-500">链接 1 小时内有效，用户设置新密码后自动失效。</div>
+            </div>
+          }
+        />
       </Modal>
     </div>
   );

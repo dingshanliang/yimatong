@@ -1,3 +1,4 @@
+import secrets
 import uuid
 from datetime import UTC, datetime, timedelta
 
@@ -9,12 +10,18 @@ from sqlalchemy.orm import selectinload
 
 from app.core.config import settings
 from app.core.database import get_db
-from app.core.dependencies import get_current_account_id
+from app.core.dependencies import get_current_account_id, get_current_tenant
 from app.models.tenant import Account
 from app.schemas.common import UNAUTHORIZED_EXAMPLE, ErrorDetail
 from app.services.redis_cache import AsyncRedisCache
 from app.utils import utcnow
-from app.utils.security import create_access_token, create_refresh_token, decode_token, verify_password
+from app.utils.security import (
+    create_access_token,
+    create_refresh_token,
+    decode_token,
+    hash_password,
+    verify_password,
+)
 
 router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
 
@@ -191,3 +198,125 @@ async def logout(request: Request):
     cache = AsyncRedisCache()
     await cache.revoke_token(jti, ttl=remaining)
     return {"status": "ok"}
+
+
+# ---------------------------------------------------------------------------
+# 密码重置（管理员生成一次性重置链接）
+# ---------------------------------------------------------------------------
+
+RESET_TOKEN_TTL = 3600  # 1 小时
+RESET_TOKEN_KEY_PREFIX = "reset"
+
+
+class GenerateResetTokenRequest(BaseModel):
+    account_id: str = Field(..., description="需要重置密码的账户 ID")
+
+
+class GenerateResetTokenResponse(BaseModel):
+    reset_token: str = Field(..., description="一次性重置令牌")
+    reset_url: str = Field(..., description="完整的重置链接（拼好 base_url）")
+
+
+@router.post(
+    "/generate-reset-token",
+    response_model=GenerateResetTokenResponse,
+    summary="管理员生成密码重置令牌",
+    responses={**AUTH_RESPONSES, 404: {"model": ErrorDetail}},
+)
+async def generate_reset_token(
+    body: GenerateResetTokenRequest,
+    db: AsyncSession = Depends(get_db),
+    tenant_id: uuid.UUID = Depends(get_current_tenant),
+):
+    """管理员为指定账户生成一次性密码重置令牌，存入 Redis（1 小时有效）。"""
+    try:
+        account_uuid = uuid.UUID(body.account_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid account_id")
+
+    account = await db.execute(
+        select(Account).where(Account.id == account_uuid, Account.tenant_id == tenant_id)
+    )
+    if not account.scalar_one_or_none():
+        raise HTTPException(status_code=404, detail="Account not found")
+
+    token = secrets.token_urlsafe(32)
+    cache = AsyncRedisCache()
+    await cache.set(
+        f"{RESET_TOKEN_KEY_PREFIX}:{account_uuid}",
+        {"token": token, "account_id": str(account_uuid)},
+        ttl=RESET_TOKEN_TTL,
+    )
+    reset_url = f"{settings.base_url}/api/v1/auth/reset-page?token={token}&account_id={account_uuid}"
+    return GenerateResetTokenResponse(reset_token=token, reset_url=reset_url)
+
+
+class ConfirmResetPasswordRequest(BaseModel):
+    token: str = Field(..., description="重置令牌")
+    account_id: str = Field(..., description="账户 ID")
+    new_password: str = Field(
+        ...,
+        min_length=8,
+        description="新密码（8 位以上，必须包含字母和数字）",
+    )
+
+
+@router.post(
+    "/confirm-reset-password",
+    summary="用户通过重置令牌设置新密码",
+    responses={400: {"model": ErrorDetail}},
+)
+async def confirm_reset_password(
+    body: ConfirmResetPasswordRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """用户通过重置令牌自助设置新密码。令牌验证后立即失效。"""
+    # 验证密码强度：必须包含字母和数字
+    has_letter = any(c.isalpha() for c in body.new_password)
+    has_digit = any(c.isdigit() for c in body.new_password)
+    if not (has_letter and has_digit):
+        raise HTTPException(status_code=400, detail="密码必须包含字母和数字")
+
+    # 从 Redis 取出 token 记录
+    try:
+        account_uuid = uuid.UUID(body.account_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid account_id")
+
+    cache = AsyncRedisCache()
+    record = await cache.get(f"{RESET_TOKEN_KEY_PREFIX}:{account_uuid}")
+    if not record:
+        raise HTTPException(status_code=400, detail="重置链接已过期或不存在，请联系管理员重新生成")
+
+    if record.get("token") != body.token or record.get("account_id") != body.account_id:
+        raise HTTPException(status_code=400, detail="重置令牌无效")
+
+    # 查找账户
+    result = await db.execute(select(Account).where(Account.id == account_uuid))
+    account = result.scalar_one_or_none()
+    if not account:
+        raise HTTPException(status_code=404, detail="Account not found")
+
+    # 更新密码
+    account.hashed_password = hash_password(body.new_password)
+    account.failed_login_attempts = 0
+    account.locked_until = None
+    await db.commit()
+
+    # 立即删除 token（一次性）
+    await cache.invalidate(f"{RESET_TOKEN_KEY_PREFIX}:{account_uuid}")
+
+    return {"status": "ok", "message": "密码已重置，请使用新密码登录"}
+
+
+@router.get(
+    "/reset-page",
+    summary="重置密码页面（重定向到前端）",
+)
+async def reset_page_redirect(token: str, account_id: str):
+    """将后端短链重定向到前端重置密码页面。"""
+    from fastapi.responses import RedirectResponse
+
+    # 从 base_url 推导前端地址（简单处理：用 cors_origins 的第一个）
+    frontend_url = settings.cors_origins.split(",")[0].strip()
+    return RedirectResponse(f"{frontend_url}/reset-password?token={token}&account_id={account_id}")

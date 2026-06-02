@@ -18,18 +18,77 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
+let isRefreshing = false;
+let failedQueue: Array<{
+  resolve: (token: string) => void;
+  reject: (error: unknown) => void;
+}> = [];
+
+function processQueue(error: unknown, token: string | null = null) {
+  failedQueue.forEach(({ resolve, reject }) => {
+    if (token) resolve(token);
+    else reject(error);
+  });
+  failedQueue = [];
+}
+
 api.interceptors.response.use(
   (res) => res,
-  (error) => {
-    if (error.response?.status === 401 && typeof window !== "undefined") {
-      // 委托给 auth store 的 logout，确保 localStorage + cookie 同步清除
-      import("./auth").then(({ useAuthStore }) => {
-        useAuthStore.getState().logout();
-        window.location.href = "/login";
+  async (error) => {
+    const originalRequest = error.config;
+
+    // 非 401 或已重试过，直接拒绝
+    if (error.response?.status !== 401 || originalRequest._retry) {
+      return Promise.reject(error);
+    }
+
+    // refresh 接口本身 401，说明 refresh_token 也过期了，直接登出
+    if (originalRequest.url?.includes("/auth/refresh")) {
+      if (typeof window !== "undefined") {
+        import("./auth").then(({ useAuthStore }) => {
+          useAuthStore.getState().logout();
+          window.location.href = "/login";
+        });
+      }
+      return Promise.reject(error);
+    }
+
+    if (isRefreshing) {
+      // 已有刷新请求进行中，排队等待
+      return new Promise((resolve, reject) => {
+        failedQueue.push({ resolve, reject });
+      }).then((token) => {
+        originalRequest.headers.Authorization = `Bearer ${token}`;
+        return api(originalRequest);
       });
     }
-    return Promise.reject(error);
-  }
+
+    originalRequest._retry = true;
+    isRefreshing = true;
+
+    try {
+      const { useAuthStore } = await import("./auth");
+      const newToken = await useAuthStore.getState().silentRefresh();
+
+      if (!newToken) {
+        // refresh 失败，登出
+        useAuthStore.getState().logout();
+        if (typeof window !== "undefined") {
+          window.location.href = "/login";
+        }
+        return Promise.reject(error);
+      }
+
+      processQueue(null, newToken);
+      originalRequest.headers.Authorization = `Bearer ${newToken}`;
+      return api(originalRequest);
+    } catch (refreshError) {
+      processQueue(refreshError);
+      return Promise.reject(refreshError);
+    } finally {
+      isRefreshing = false;
+    }
+  },
 );
 
 export function extractErrorMessage(err: unknown, fallback = "操作失败"): string {

@@ -145,6 +145,11 @@ export default function LoginPage() {
               手动登录
             </Button>
           </Form.Item>
+          <div className="text-center">
+            <Text type="secondary" className="text-sm">
+              忘记密码？请联系您的管理员重置
+            </Text>
+          </div>
         </Form>
       </Card>
     </div>
