@@ -29,6 +29,7 @@ export default function StatsPage() {
   const { message } = App.useApp();
   const [data, setData] = useState<ScanStatsRow[]>([]);
   const [loading, setLoading] = useState(false);
+  const [exporting, setExporting] = useState(false);
   const [dateRange, setDateRange] = useState<[Dayjs, Dayjs]>([
     dayjs().subtract(7, "day"),
     dayjs(),
@@ -65,6 +66,7 @@ export default function StatsPage() {
       message.warning("暂无数据可导出");
       return;
     }
+    setExporting(true);
     try {
       const params: Record<string, string> = {
         export_type: "scan_stats",
@@ -90,6 +92,8 @@ export default function StatsPage() {
       message.success("导出成功");
     } catch (err) {
       message.error(extractErrorMessage(err, "导出失败，请重试"));
+    } finally {
+      setExporting(false);
     }
   };
 
@@ -108,6 +112,22 @@ export default function StatsPage() {
   return (
     <div>
       <Title level={4}>扫码统计</Title>
+      <div className="mb-4">
+        <Space>
+          <RangePicker
+            value={dateRange}
+            onChange={(dates) => {
+              if (dates && dates[0] && dates[1]) {
+                setDateRange([dates[0], dates[1]]);
+              }
+            }}
+            disabledDate={disabledDate}
+          />
+          <Button icon={<DownloadOutlined />} onClick={handleExport} loading={exporting}>
+            导出 Excel
+          </Button>
+        </Space>
+      </div>
       <Row gutter={[16, 16]} className="mb-6">
         <Col xs={24} sm={12} lg={6}>
           <Card loading={loading}>
@@ -151,22 +171,6 @@ export default function StatsPage() {
           <ScanTrendChart data={data} height={300} showMulti />
         </Card>
       )}
-      <div className="mb-4">
-        <Space>
-          <RangePicker
-            value={dateRange}
-            onChange={(dates) => {
-              if (dates && dates[0] && dates[1]) {
-                setDateRange([dates[0], dates[1]]);
-              }
-            }}
-            disabledDate={disabledDate}
-          />
-          <Button icon={<DownloadOutlined />} onClick={handleExport}>
-            导出 Excel
-          </Button>
-        </Space>
-      </div>
       <Table
         columns={columns}
         dataSource={data}
