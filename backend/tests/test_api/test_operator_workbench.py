@@ -378,7 +378,6 @@ class TestLaunchChecklist:
 
         resp = await platform_admin_client.get(
             f"/api/v1/ops/clients/{tenant_id}/launch-checklist",
-            headers=tenant_headers,
         )
         data = resp.json()
         brand_check = next((c for c in data["checks"] if "品牌" in c["name"]), None)
