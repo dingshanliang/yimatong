@@ -3,7 +3,9 @@ import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import AgencyPage from "../page";
 
 const mockConfirm = vi.fn();
-// Mock Ant Design App
+const mockSuccess = vi.fn();
+const mockError = vi.fn();
+
 vi.mock("antd", async () => {
   const actual = await vi.importActual("antd");
   return {
@@ -11,14 +13,13 @@ vi.mock("antd", async () => {
     App: {
       ...actual.App,
       useApp: () => ({
-        message: { success: vi.fn(), error: vi.fn() },
+        message: { success: mockSuccess, error: mockError },
         modal: { confirm: mockConfirm },
       }),
     },
   };
 });
 
-// Mock api
 const mockGet = vi.fn();
 const mockPost = vi.fn();
 const mockPatch = vi.fn();
@@ -31,448 +32,274 @@ vi.mock("@/lib/api", () => ({
     patch: (...args: unknown[]) => mockPatch(...args),
     delete: (...args: unknown[]) => mockDelete(...args),
   },
+  extractErrorMessage: (_error: unknown, fallback: string) => fallback,
 }));
 
-// Mock next/link
-vi.mock("next/link", () => ({
-  default: ({ children, href }: { children: React.ReactNode; href: string }) => (
-    <a href={href} data-testid="link">{children}</a>
-  ),
-}));
+function summary(overrides = {}) {
+  return {
+    total_clients: 1,
+    active_clients: 1,
+    ready_clients: 0,
+    blocked_clients: 1,
+    pending_tasks: 1,
+    in_progress_tasks: 0,
+    overdue_tasks: 0,
+    ...overrides,
+  };
+}
+
+function client(overrides = {}) {
+  return {
+    id: "t1",
+    name: "客户A",
+    status: "active",
+    plan: "pro",
+    plan_expires_at: null,
+    created_at: "2026-01-15T00:00:00Z",
+    readiness: {
+      ready: false,
+      passed_count: 2,
+      total_count: 4,
+      percent: 50,
+      missing_keys: ["page_published", "code_batch_activated"],
+      missing_labels: ["发布扫码页", "激活码批次"],
+    },
+    task_summary: { pending: 1, in_progress: 0, overdue: 0, high_priority: 1 },
+    next_action: {
+      type: "page_published",
+      label: "发布扫码页",
+      href: "/pages",
+      task_title: "为客户A发布扫码页",
+    },
+    ...overrides,
+  };
+}
+
+function task(overrides = {}) {
+  return {
+    id: "task1",
+    tenant_id: "t1",
+    tenant_name: "客户A",
+    title: "配置品牌信息",
+    status: "pending",
+    priority: "high",
+    due_date: "2026-06-15T00:00:00Z",
+    overdue: false,
+    ...overrides,
+  };
+}
+
+function mockWorkbench({
+  clients = [client()],
+  tasks = [task()],
+  workbenchSummary = summary(),
+  checklist = {
+    tenant_id: "t1",
+    ready: false,
+    passed_count: 1,
+    total_count: 4,
+    checks: [
+      { name: "至少 1 个品牌已创建", passed: true, detail: "当前品牌数: 1" },
+      { name: "至少 1 个产品已创建", passed: false, detail: "当前产品数: 0" },
+    ],
+  },
+} = {}) {
+  mockGet.mockImplementation((url: string) => {
+    if (url === "/ops/workbench") {
+      return Promise.resolve({
+        data: {
+          summary: workbenchSummary,
+          clients,
+          tasks,
+          total: workbenchSummary.total_clients,
+          page: 1,
+          page_size: 100,
+        },
+      });
+    }
+    if (url.includes("/ops/clients/") && url.includes("/launch-checklist")) {
+      return Promise.resolve({ data: checklist });
+    }
+    return Promise.resolve({ data: { items: [], total: 0, page: 1, page_size: 20 } });
+  });
+}
 
 describe("AgencyPage", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockWorkbench();
   });
 
   it("renders agency workbench title", () => {
-    mockGet.mockResolvedValue({ data: { items: [], total: 0, page: 1, page_size: 20 } });
     render(<AgencyPage />);
     expect(screen.getByText("代运营工作台")).toBeInTheDocument();
   });
 
-  it("fetches and displays client list", async () => {
-    mockGet.mockImplementation((url: string) => {
-      if (url === "/tenants") {
-        return Promise.resolve({
-          data: {
-            items: [
-              {
-                id: "t1",
-                name: "客户A",
-                status: "active",
-                plan: "pro",
-                plan_expires_at: "2026-12-31T00:00:00Z",
-                created_at: "2026-01-15T00:00:00Z",
-              },
-              {
-                id: "t2",
-                name: "客户B",
-                status: "onboarding",
-                plan: "starter",
-                plan_expires_at: null,
-                created_at: "2026-05-01T00:00:00Z",
-              },
-            ],
-            total: 2,
-            page: 1,
-            page_size: 20,
-          },
-        });
-      }
-      if (url === "/ops/tasks") {
-        return Promise.resolve({
-          data: {
-            items: [
-              {
-                id: "task1",
-                tenant_id: "t1",
-                title: "配置品牌信息",
-                status: "pending",
-                priority: "high",
-                due_date: "2026-06-15T00:00:00Z",
-              },
-            ],
-            total: 1,
-            page: 1,
-            page_size: 20,
-          },
-        });
-      }
-      return Promise.resolve({ data: { items: [], total: 0 } });
-    });
-
+  it("loads the operator queue from the workbench endpoint", async () => {
     render(<AgencyPage />);
 
     await waitFor(() => {
+      expect(mockGet).toHaveBeenCalledWith("/ops/workbench", { params: { page: 1, page_size: 100 } });
       expect(screen.getAllByText("客户A").length).toBeGreaterThanOrEqual(1);
-      expect(screen.getByText("客户B")).toBeInTheDocument();
-    });
-
-    // Check status tags
-    expect(screen.getByText("活跃")).toBeInTheDocument();
-    expect(screen.getByText("配置中")).toBeInTheDocument();
-  });
-
-  it("displays statistics cards", async () => {
-    mockGet.mockResolvedValue({
-      data: { items: [], total: 0, page: 1, page_size: 20 },
-    });
-    render(<AgencyPage />);
-
-    expect(screen.getByText("客户总数")).toBeInTheDocument();
-    expect(screen.getByText("活跃客户")).toBeInTheDocument();
-    expect(screen.getByText("配置中客户")).toBeInTheDocument();
-    expect(screen.getByText("待办任务")).toBeInTheDocument();
-  });
-
-  it("fetches and displays tasks", async () => {
-    mockGet.mockImplementation((url: string) => {
-      if (url === "/tenants") {
-        return Promise.resolve({
-          data: { items: [], total: 0, page: 1, page_size: 20 },
-        });
-      }
-      if (url === "/ops/tasks") {
-        return Promise.resolve({
-          data: {
-            items: [
-              {
-                id: "task1",
-                tenant_id: "t1",
-                title: "配置品牌信息",
-                status: "pending",
-                priority: "high",
-                due_date: "2026-06-15T00:00:00Z",
-              },
-            ],
-            total: 1,
-            page: 1,
-            page_size: 20,
-          },
-        });
-      }
-      return Promise.resolve({ data: { items: [], total: 0 } });
-    });
-
-    render(<AgencyPage />);
-
-    await waitFor(() => {
-      expect(screen.getByText("配置品牌信息")).toBeInTheDocument();
+      expect(screen.getByText("2/4")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /发布扫码页/ })).toBeInTheDocument();
     });
   });
 
-  it("opens launch checklist modal when clicking checklist button", async () => {
-    mockGet.mockImplementation((url: string) => {
-      if (url === "/tenants") {
-        return Promise.resolve({
-          data: {
-            items: [
-              {
-                id: "t1",
-                name: "客户A",
-                status: "active",
-                plan: "pro",
-                plan_expires_at: null,
-                created_at: "2026-01-15T00:00:00Z",
-              },
-            ],
-            total: 1,
-            page: 1,
-            page_size: 20,
-          },
-        });
-      }
-      if (url === "/ops/tasks") {
-        return Promise.resolve({
-          data: { items: [], total: 0, page: 1, page_size: 20 },
-        });
-      }
-      if (url.includes("/ops/clients/") && url.includes("/launch-checklist")) {
-        return Promise.resolve({
-          data: {
-            tenant_id: "t1",
-            ready: false,
-            passed_count: 1,
-            total_count: 4,
-            checks: [
-              { name: "至少 1 个品牌已创建", passed: true, detail: "当前品牌数: 1" },
-              { name: "至少 1 个产品已创建", passed: false, detail: "当前产品数: 0" },
-            ],
-          },
-        });
-      }
-      return Promise.resolve({ data: { items: [], total: 0 } });
-    });
-
+  it("shows operator summary cards", async () => {
     render(<AgencyPage />);
 
     await waitFor(() => {
-      expect(screen.getByText("客户A")).toBeInTheDocument();
+      expect(screen.getByText("客户总数")).toBeInTheDocument();
+      expect(screen.getByText("已具备上线条件")).toBeInTheDocument();
+      expect(screen.getByText("需补齐配置")).toBeInTheDocument();
+      expect(screen.getByText("逾期任务")).toBeInTheDocument();
+      expect(screen.getByText("待办任务")).toBeInTheDocument();
     });
+  });
 
-    const checklistBtn = screen.getByText("检查清单");
-    fireEvent.click(checklistBtn);
+  it("shows launch readiness, missing items, and next action in the client queue", async () => {
+    render(<AgencyPage />);
 
     await waitFor(() => {
+      expect(screen.getByText("上线准备度")).toBeInTheDocument();
+      expect(screen.getByText("缺：发布扫码页、激活码批次")).toBeInTheDocument();
+      expect(screen.getByText("待办 1")).toBeInTheDocument();
+      expect(screen.getByText("高优先级 1")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /上线检查/ })).toBeInTheDocument();
+    });
+  });
+
+  it("opens launch checklist modal from a client row", async () => {
+    render(<AgencyPage />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /上线检查/ }));
+
+    await waitFor(() => {
+      expect(mockGet).toHaveBeenCalledWith("/ops/clients/t1/launch-checklist");
       expect(screen.getByText("上线检查清单 — 客户A")).toBeInTheDocument();
       expect(screen.getByText("至少 1 个品牌已创建")).toBeInTheDocument();
     });
   });
 
-  it("opens task create modal", async () => {
-    mockGet.mockResolvedValue({
-      data: { items: [], total: 0, page: 1, page_size: 20 },
-    });
+  it("prefills task creation from the row next action", async () => {
     render(<AgencyPage />);
 
-    const createTaskBtn = screen.getByText("新建任务");
-    fireEvent.click(createTaskBtn);
+    fireEvent.click(await screen.findByRole("button", { name: /发布扫码页/ }));
 
     await waitFor(() => {
       expect(screen.getByText("新建待办任务")).toBeInTheDocument();
+      expect(screen.getByLabelText("任务标题")).toHaveValue("为客户A发布扫码页");
     });
   });
 
-  it("shows plan expiration info", async () => {
-    mockGet.mockImplementation((url: string) => {
-      if (url === "/tenants") {
-        return Promise.resolve({
-          data: {
-            items: [
-              {
-                id: "t1",
-                name: "客户A",
-                status: "active",
-                plan: "pro",
-                plan_expires_at: "2026-12-31T00:00:00Z",
-                created_at: "2026-01-15T00:00:00Z",
-              },
-            ],
-            total: 1,
-            page: 1,
-            page_size: 20,
-          },
-        });
-      }
-      if (url === "/ops/tasks") {
-        return Promise.resolve({
-          data: { items: [], total: 0, page: 1, page_size: 20 },
-        });
-      }
-      return Promise.resolve({ data: { items: [], total: 0 } });
-    });
-
+  it("creates a prefilled task for the selected client", async () => {
+    mockPost.mockResolvedValue({ data: { id: "task-new" } });
     render(<AgencyPage />);
 
+    fireEvent.click(await screen.findByRole("button", { name: /发布扫码页/ }));
+    await screen.findByText("新建待办任务");
+    fireEvent.click(screen.getByTestId("agency-task-create-submit"));
+
     await waitFor(() => {
-      expect(screen.getByText("客户A")).toBeInTheDocument();
+      expect(mockPost).toHaveBeenCalledWith("/ops/tasks", {
+        tenant_id: "t1",
+        title: "为客户A发布扫码页",
+        priority: "medium",
+      });
     });
   });
 
-  it("renders task action buttons for pending tasks", async () => {
-    mockGet.mockImplementation((url: string) => {
-      if (url === "/tenants") {
-        return Promise.resolve({
-          data: { items: [{ id: "t1", name: "客户A", status: "active", plan: "pro", plan_expires_at: null, created_at: "2026-01-15T00:00:00Z" }], total: 1, page: 1, page_size: 20 },
-        });
-      }
-      if (url === "/ops/tasks") {
-        return Promise.resolve({
-          data: {
-            items: [{ id: "task1", tenant_id: "t1", title: "配置品牌", status: "pending", priority: "high", due_date: null }],
-            total: 1, page: 1, page_size: 20,
-          },
-        });
-      }
-      return Promise.resolve({ data: { items: [], total: 0 } });
-    });
-
-    render(<AgencyPage />);
-
-    await waitFor(() => {
-      expect(screen.getByText("开始")).toBeInTheDocument();
-      expect(screen.getByText("取消")).toBeInTheDocument();
-    });
-  });
-
-  it("renders complete button for in_progress tasks", async () => {
-    mockGet.mockImplementation((url: string) => {
-      if (url === "/tenants") {
-        return Promise.resolve({ data: { items: [], total: 0, page: 1, page_size: 20 } });
-      }
-      if (url === "/ops/tasks") {
-        return Promise.resolve({
-          data: {
-            items: [{ id: "task2", tenant_id: "t1", title: "配置页面", status: "in_progress", priority: "medium", due_date: null }],
-            total: 1, page: 1, page_size: 20,
-          },
-        });
-      }
-      return Promise.resolve({ data: { items: [], total: 0 } });
-    });
-
-    render(<AgencyPage />);
-
-    await waitFor(() => {
-      expect(screen.getByText("完成")).toBeInTheDocument();
-    });
-  });
-
-  it("renders delete button for completed tasks", async () => {
-    mockGet.mockImplementation((url: string) => {
-      if (url === "/tenants") {
-        return Promise.resolve({ data: { items: [], total: 0, page: 1, page_size: 20 } });
-      }
-      if (url === "/ops/tasks") {
-        return Promise.resolve({
-          data: {
-            items: [{ id: "task3", tenant_id: "t1", title: "已完成任务", status: "completed", priority: "low", due_date: null }],
-            total: 1, page: 1, page_size: 20,
-          },
-        });
-      }
-      return Promise.resolve({ data: { items: [], total: 0 } });
-    });
-
-    render(<AgencyPage />);
-
-    await waitFor(() => {
-      const deleteButtons = screen.getAllByText("删除");
-      expect(deleteButtons.length).toBeGreaterThan(0);
-    });
-  });
-
-  it("calls PATCH /ops/tasks/:id with correct status when clicking start", async () => {
+  it("updates pending task status to in progress", async () => {
     mockPatch.mockResolvedValue({ data: { id: "task1", status: "in_progress" } });
-    mockGet.mockImplementation((url: string) => {
-      if (url === "/tenants") {
-        return Promise.resolve({
-          data: { items: [{ id: "t1", name: "客户A", status: "active", plan: "pro", plan_expires_at: null, created_at: "2026-01-15T00:00:00Z" }], total: 1, page: 1, page_size: 20 },
-        });
-      }
-      if (url === "/ops/tasks") {
-        return Promise.resolve({
-          data: {
-            items: [{ id: "task1", tenant_id: "t1", title: "配置品牌", status: "pending", priority: "high", due_date: null }],
-            total: 1, page: 1, page_size: 20,
-          },
-        });
-      }
-      return Promise.resolve({ data: { items: [], total: 0 } });
-    });
-
     render(<AgencyPage />);
 
-    const startBtn = await screen.findByText("开始");
-    fireEvent.click(startBtn);
+    fireEvent.click(await screen.findByText("开始"));
 
     await waitFor(() => {
       expect(mockPatch).toHaveBeenCalledWith("/ops/tasks/task1", { status: "in_progress" });
+      expect(mockSuccess).toHaveBeenCalledWith("任务状态已更新");
     });
   });
 
-  it("calls PATCH with completed status when clicking complete on in_progress task", async () => {
+  it("updates in-progress task status to completed", async () => {
+    mockWorkbench({ tasks: [task({ id: "task2", title: "配置页面", status: "in_progress", priority: "medium" })] });
     mockPatch.mockResolvedValue({ data: { id: "task2", status: "completed" } });
-    mockGet.mockImplementation((url: string) => {
-      if (url === "/tenants") {
-        return Promise.resolve({ data: { items: [], total: 0, page: 1, page_size: 20 } });
-      }
-      if (url === "/ops/tasks") {
-        return Promise.resolve({
-          data: {
-            items: [{ id: "task2", tenant_id: "t1", title: "配置页面", status: "in_progress", priority: "medium", due_date: null }],
-            total: 1, page: 1, page_size: 20,
-          },
-        });
-      }
-      return Promise.resolve({ data: { items: [], total: 0 } });
-    });
-
     render(<AgencyPage />);
 
-    const completeBtn = await screen.findByText("完成");
-    fireEvent.click(completeBtn);
+    fireEvent.click(await screen.findByText("完成"));
 
     await waitFor(() => {
       expect(mockPatch).toHaveBeenCalledWith("/ops/tasks/task2", { status: "completed" });
     });
   });
 
-  it("calls DELETE /ops/tasks/:id when confirming delete on completed task", async () => {
+  it("deletes completed tasks after confirmation", async () => {
+    mockWorkbench({ tasks: [task({ id: "task3", title: "已完成任务", status: "completed", priority: "low" })] });
     mockDelete.mockResolvedValue({ status: 204 });
-    mockGet.mockImplementation((url: string) => {
-      if (url === "/tenants") {
-        return Promise.resolve({ data: { items: [], total: 0, page: 1, page_size: 20 } });
-      }
-      if (url === "/ops/tasks") {
-        return Promise.resolve({
-          data: {
-            items: [{ id: "task3", tenant_id: "t1", title: "已完成任务", status: "completed", priority: "low", due_date: null }],
-            total: 1, page: 1, page_size: 20,
-          },
-        });
-      }
-      return Promise.resolve({ data: { items: [], total: 0 } });
-    });
-
     render(<AgencyPage />);
 
-    const deleteBtn = await screen.findByText("删除");
-    fireEvent.click(deleteBtn);
-
-    await waitFor(() => {
-      expect(mockConfirm).toHaveBeenCalled();
-    });
+    fireEvent.click(await screen.findByText("删除"));
     const onOk = mockConfirm.mock.calls[0][0].onOk;
     await onOk();
+
     expect(mockDelete).toHaveBeenCalledWith("/ops/tasks/task3");
   });
 
-  it("renders client search input and task filter selects", async () => {
-    mockGet.mockResolvedValue({ data: { items: [], total: 0, page: 1, page_size: 20 } });
+  it("explains a failed workbench load", async () => {
+    mockGet.mockRejectedValue(new Error("network"));
+
     render(<AgencyPage />);
 
-    expect(screen.getByText("客户列表")).toBeInTheDocument();
-    expect(screen.getByText("任务列表")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByText("工作台数据加载失败")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /重新加载/ })).toBeInTheDocument();
+    });
   });
 
-  it("shows related client name in task table", async () => {
-    mockGet.mockImplementation((url: string) => {
-      if (url === "/ops/overview") {
-        return Promise.resolve({ data: { total_clients: 1, active_clients: 1, onboarding_clients: 0, pending_tasks: 1 } });
-      }
-      if (url === "/tenants") {
-        return Promise.resolve({
-          data: { items: [{ id: "t1", name: "测试品牌", status: "active", plan: "pro", plan_expires_at: null, created_at: "2026-01-15T00:00:00Z" }], total: 1, page: 1, page_size: 20 },
-        });
-      }
-      if (url === "/ops/tasks") {
-        return Promise.resolve({
-          data: {
-            items: [{ id: "task1", tenant_id: "t1", tenant_name: "测试品牌", title: "配置品牌", status: "pending", priority: "high", due_date: null }],
-            total: 1, page: 1, page_size: 20,
-          },
-        });
-      }
-      return Promise.resolve({ data: { items: [], total: 0 } });
+  it("explains when filters return no clients", async () => {
+    mockWorkbench({
+      clients: [],
+      tasks: [],
+      workbenchSummary: summary({ total_clients: 1, ready_clients: 1, blocked_clients: 0, pending_tasks: 0 }),
     });
 
     render(<AgencyPage />);
 
     await waitFor(() => {
-      const clientNameCells = screen.getAllByText("测试品牌");
-      expect(clientNameCells.length).toBeGreaterThanOrEqual(2);
+      expect(screen.getByText("没有符合当前条件的客户")).toBeInTheDocument();
+    });
+  });
+
+  it("shows no-client empty state", async () => {
+    mockWorkbench({
+      clients: [],
+      tasks: [],
+      workbenchSummary: summary({ total_clients: 0, active_clients: 0, ready_clients: 0, blocked_clients: 0, pending_tasks: 0 }),
+    });
+
+    render(<AgencyPage />);
+
+    await waitFor(() => {
+      expect(screen.getByText("还没有客户")).toBeInTheDocument();
+      expect(screen.getByText("初始化新客户后，这里会显示上线准备度和下一步动作。")).toBeInTheDocument();
+    });
+  });
+
+  it("sends workbench filters to the backend", async () => {
+    render(<AgencyPage />);
+
+    fireEvent.change(screen.getByPlaceholderText("搜索客户名称"), { target: { value: "客户A" } });
+    fireEvent.click(screen.getByRole("button", { name: "search" }));
+
+    await waitFor(() => {
+      expect(mockGet).toHaveBeenCalledWith("/ops/workbench", {
+        params: { page: 1, page_size: 100, q: "客户A" },
+      });
     });
   });
 
   it("shows generated admin credentials after client initialization", async () => {
-    mockGet.mockImplementation((url: string) => {
-      if (url === "/ops/overview") {
-        return Promise.resolve({ data: { total_clients: 0, active_clients: 0, onboarding_clients: 0, pending_tasks: 0 } });
-      }
-      return Promise.resolve({ data: { items: [], total: 0, page: 1, page_size: 20 } });
-    });
     mockPost.mockResolvedValue({
       data: {
         id: "tenant-1",

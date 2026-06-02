@@ -10,8 +10,8 @@ from app.core.database import get_db
 from app.core.dependencies import get_current_tenant
 from app.models.tenant import OpsTask, OpsTaskPriority, OpsTaskStatus, Tenant, TenantStatus
 from app.schemas.common import PaginatedResponse
-from app.schemas.tenant import OpsTaskCreate, OpsTaskRead, OpsTaskUpdate
-from app.services.ops import get_launch_checklist, get_tenant_status
+from app.schemas.tenant import OpsTaskCreate, OpsTaskRead, OpsTaskUpdate, OpsWorkbenchResponse
+from app.services.ops import get_launch_checklist, get_ops_workbench, get_tenant_status
 
 ops_router = APIRouter(prefix="/api/v1/ops", tags=["ops"])
 
@@ -43,6 +43,25 @@ async def get_ops_overview(db: AsyncSession = Depends(get_db)):
         "pending_tasks": pending_tasks,
         "completed_tasks": completed_tasks,
     }
+
+
+@ops_router.get("/workbench", response_model=OpsWorkbenchResponse, summary="代运营工作台聚合")
+async def get_ops_workbench_endpoint(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    q: str | None = Query(None, description="搜索客户名称"),
+    readiness: str = Query("all", pattern="^(all|ready|blocked)$"),
+    task_status: str = Query("all", pattern="^(all|pending|in_progress|overdue)$"),
+    db: AsyncSession = Depends(get_db),
+):
+    return await get_ops_workbench(
+        db,
+        page=page,
+        page_size=page_size,
+        q=q,
+        readiness=readiness,
+        task_status=task_status,
+    )
 
 
 @ops_router.get("/clients/{tenant_id}/status")

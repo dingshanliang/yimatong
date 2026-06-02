@@ -25,6 +25,61 @@ export interface ChecklistResult {
   checks: { name: string; passed: boolean; detail: string }[];
 }
 
+export interface ReadinessSummary {
+  ready: boolean;
+  passed_count: number;
+  total_count: number;
+  percent: number;
+  missing_keys: string[];
+  missing_labels: string[];
+}
+
+export interface TaskSummary {
+  pending: number;
+  in_progress: number;
+  overdue: number;
+  high_priority: number;
+}
+
+export interface NextAction {
+  type: string;
+  label: string;
+  href: string;
+  task_title: string;
+}
+
+export interface AgencyClientRow extends Client {
+  readiness: ReadinessSummary;
+  task_summary: TaskSummary;
+  next_action: NextAction;
+}
+
+export interface WorkbenchSummary {
+  total_clients: number;
+  active_clients: number;
+  ready_clients: number;
+  blocked_clients: number;
+  pending_tasks: number;
+  in_progress_tasks: number;
+  overdue_tasks: number;
+}
+
+export interface WorkbenchTask extends Task {
+  description?: string | null;
+  overdue: boolean;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+export interface AgencyWorkbenchResponse {
+  summary: WorkbenchSummary;
+  clients: AgencyClientRow[];
+  tasks: WorkbenchTask[];
+  total: number;
+  page: number;
+  page_size: number;
+}
+
 export const STATUS_MAP: Record<string, { label: string; color: string }> = {
   active: { label: "活跃", color: "green" },
   suspended: { label: "已暂停", color: "default" },

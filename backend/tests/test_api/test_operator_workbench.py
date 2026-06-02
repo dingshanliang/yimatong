@@ -243,6 +243,97 @@ class TestOpsTasks:
         assert get_resp.status_code == 404
 
 
+class TestOpsWorkbench:
+    @pytest.mark.anyio
+    async def test_ops_workbench_returns_client_queue_shape(
+        self,
+        platform_admin_client: AsyncClient,
+        sample_tenants,
+    ):
+        resp = await platform_admin_client.get("/api/v1/ops/workbench")
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "summary" in data
+        assert "clients" in data
+        assert "tasks" in data
+        assert "total" in data
+        assert data["clients"]
+
+        row = data["clients"][0]
+        assert {"id", "name", "readiness", "task_summary", "next_action"} <= set(row)
+        assert {"ready", "passed_count", "total_count", "percent", "missing_labels"} <= set(row["readiness"])
+        assert {"pending", "in_progress", "overdue", "high_priority"} <= set(row["task_summary"])
+        assert {"type", "label", "href", "task_title"} <= set(row["next_action"])
+
+    @pytest.mark.anyio
+    async def test_ops_workbench_prioritizes_missing_readiness_action(
+        self,
+        platform_admin_client: AsyncClient,
+        sample_tenants,
+    ):
+        tenant_id = sample_tenants[0]["id"]
+
+        resp = await platform_admin_client.get("/api/v1/ops/workbench")
+
+        assert resp.status_code == 200
+        row = next(client for client in resp.json()["clients"] if client["id"] == tenant_id)
+        assert row["readiness"]["ready"] is False
+        assert row["next_action"]["label"] == "配置品牌"
+        assert row["next_action"]["href"] == "/brands"
+
+    @pytest.mark.anyio
+    async def test_ops_workbench_marks_overdue_tasks(
+        self,
+        platform_admin_client: AsyncClient,
+        sample_tenants,
+    ):
+        await platform_admin_client.post(
+            "/api/v1/ops/tasks",
+            json={
+                "tenant_id": sample_tenants[0]["id"],
+                "title": "逾期配置产品",
+                "priority": "high",
+                "due_date": (datetime.now(UTC) - timedelta(days=1)).isoformat(),
+            },
+        )
+
+        resp = await platform_admin_client.get("/api/v1/ops/workbench")
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["summary"]["overdue_tasks"] >= 1
+        row = next(client for client in data["clients"] if client["id"] == sample_tenants[0]["id"])
+        assert row["task_summary"]["overdue"] == 1
+        assert row["next_action"]["label"] == "处理逾期任务"
+        assert row["next_action"]["href"] == "/agency"
+
+    @pytest.mark.anyio
+    async def test_ops_workbench_supports_search_filter(
+        self,
+        platform_admin_client: AsyncClient,
+        sample_tenants,
+    ):
+        resp = await platform_admin_client.get("/api/v1/ops/workbench?q=测试客户1")
+
+        assert resp.status_code == 200
+        names = [client["name"] for client in resp.json()["clients"]]
+        assert names
+        assert all("测试客户1" in name for name in names)
+
+    @pytest.mark.anyio
+    async def test_ops_workbench_supports_blocked_filter(
+        self,
+        platform_admin_client: AsyncClient,
+        sample_tenants,
+    ):
+        resp = await platform_admin_client.get("/api/v1/ops/workbench?readiness=blocked")
+
+        assert resp.status_code == 200
+        assert resp.json()["clients"]
+        assert all(client["readiness"]["ready"] is False for client in resp.json()["clients"])
+
+
 class TestLaunchChecklist:
     @pytest.mark.anyio
     async def test_launch_checklist_from_backend(self, platform_admin_client: AsyncClient, sample_tenants):

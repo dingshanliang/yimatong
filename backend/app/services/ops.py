@@ -1,6 +1,7 @@
 """代运营工作台与上线检查服务"""
 
 import uuid
+from datetime import UTC, datetime
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -9,6 +10,81 @@ from app.models.campaign import Campaign, CampaignStatus
 from app.models.code import CodeBatch
 from app.models.page import PageVersion, PageVersionStatus
 from app.models.product import Brand, Product
+from app.models.tenant import OpsTask, OpsTaskPriority, OpsTaskStatus, Tenant, TenantStatus
+from app.utils import escape_like_pattern
+
+READINESS_STEPS = [
+    ("brand_configured", "配置品牌", "/brands"),
+    ("product_created", "创建产品", "/products"),
+    ("page_published", "发布扫码页", "/pages"),
+    ("code_batch_activated", "激活码批次", "/codes"),
+]
+
+
+def _as_aware_utc(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)
+
+
+def _is_task_overdue(task: OpsTask, now: datetime) -> bool:
+    if task.status not in (OpsTaskStatus.pending, OpsTaskStatus.in_progress) or not task.due_date:
+        return False
+    return _as_aware_utc(task.due_date) < now
+
+
+def build_readiness_summary(status: dict) -> dict:
+    progress = status.get("onboarding_progress") or {}
+    derived = {
+        "brand_configured": status.get("brands", 0) >= 1,
+        "product_created": status.get("products", 0) >= 1,
+        "page_published": status.get("published_pages", 0) >= 1,
+        "code_batch_activated": status.get("activated_batches", 0) >= 1,
+    }
+    merged = {**derived, **progress}
+    missing = [(key, label, href) for key, label, href in READINESS_STEPS if not merged.get(key)]
+    total_count = len(READINESS_STEPS)
+    passed_count = total_count - len(missing)
+    return {
+        "ready": passed_count == total_count,
+        "passed_count": passed_count,
+        "total_count": total_count,
+        "percent": round((passed_count / total_count) * 100) if total_count else 0,
+        "missing_keys": [key for key, _, _ in missing],
+        "missing_labels": [label for _, label, _ in missing],
+    }
+
+
+def build_next_action(tenant_name: str, readiness: dict, task_summary: dict) -> dict:
+    if task_summary["overdue"] > 0:
+        return {
+            "type": "overdue_task",
+            "label": "处理逾期任务",
+            "href": "/agency",
+            "task_title": f"跟进{tenant_name}逾期任务",
+        }
+    if readiness["missing_keys"]:
+        missing_key = readiness["missing_keys"][0]
+        step = next((item for item in READINESS_STEPS if item[0] == missing_key), READINESS_STEPS[0])
+        return {
+            "type": missing_key,
+            "label": step[1],
+            "href": step[2],
+            "task_title": f"为{tenant_name}{step[1]}",
+        }
+    if task_summary["pending"] > 0 or task_summary["in_progress"] > 0:
+        return {
+            "type": "task",
+            "label": "处理任务",
+            "href": "/agency",
+            "task_title": f"跟进{tenant_name}待办任务",
+        }
+    return {
+        "type": "checklist",
+        "label": "查看上线检查",
+        "href": "/agency",
+        "task_title": f"复核{tenant_name}上线检查",
+    }
 
 
 async def get_tenant_status(
@@ -122,4 +198,143 @@ async def get_launch_checklist(
         "checks": checks,
         "passed_count": sum(1 for c in checks if c["passed"]),
         "total_count": len(checks),
+    }
+
+
+async def get_ops_workbench(
+    db: AsyncSession,
+    page: int = 1,
+    page_size: int = 20,
+    q: str | None = None,
+    readiness: str = "all",
+    task_status: str = "all",
+) -> dict:
+    tenant_query = select(Tenant).where(Tenant.status != TenantStatus.terminated)
+    count_query = select(func.count()).select_from(Tenant).where(Tenant.status != TenantStatus.terminated)
+
+    if q:
+        escaped = escape_like_pattern(q)
+        tenant_query = tenant_query.where(Tenant.name.ilike(f"%{escaped}%", escape="\\"))
+        count_query = count_query.where(Tenant.name.ilike(f"%{escaped}%", escape="\\"))
+
+    total = (await db.execute(count_query)).scalar() or 0
+    tenant_query = tenant_query.order_by(Tenant.created_at.desc()).offset((page - 1) * page_size).limit(page_size)
+    tenants = list((await db.execute(tenant_query)).scalars().all())
+    tenant_ids = [tenant.id for tenant in tenants]
+
+    task_rows: list[OpsTask] = []
+    if tenant_ids:
+        task_result = await db.execute(
+            select(OpsTask).where(OpsTask.tenant_id.in_(tenant_ids)).order_by(OpsTask.created_at.desc())
+        )
+        task_rows = list(task_result.scalars().all())
+
+    tasks_by_tenant: dict[uuid.UUID, list[OpsTask]] = {tenant.id: [] for tenant in tenants}
+    for task in task_rows:
+        tasks_by_tenant.setdefault(task.tenant_id, []).append(task)
+
+    now = datetime.now(UTC)
+    clients = []
+    ready_clients = 0
+    blocked_clients = 0
+    pending_tasks = 0
+    in_progress_tasks = 0
+    overdue_tasks = 0
+
+    for tenant in tenants:
+        status = await get_tenant_status(db, tenant.id)
+        readiness_summary = build_readiness_summary(status)
+        tenant_tasks = tasks_by_tenant.get(tenant.id, [])
+        task_summary = {
+            "pending": 0,
+            "in_progress": 0,
+            "overdue": 0,
+            "high_priority": 0,
+        }
+
+        for task in tenant_tasks:
+            is_open = task.status in (OpsTaskStatus.pending, OpsTaskStatus.in_progress)
+            if task.status == OpsTaskStatus.pending:
+                task_summary["pending"] += 1
+                pending_tasks += 1
+            if task.status == OpsTaskStatus.in_progress:
+                task_summary["in_progress"] += 1
+                in_progress_tasks += 1
+            if _is_task_overdue(task, now):
+                task_summary["overdue"] += 1
+                overdue_tasks += 1
+            if task.priority == OpsTaskPriority.high and is_open:
+                task_summary["high_priority"] += 1
+
+        if readiness_summary["ready"]:
+            ready_clients += 1
+        else:
+            blocked_clients += 1
+
+        if readiness == "ready" and not readiness_summary["ready"]:
+            continue
+        if readiness == "blocked" and readiness_summary["ready"]:
+            continue
+        if task_status != "all" and task_summary.get(task_status, 0) == 0:
+            continue
+
+        clients.append(
+            {
+                "id": tenant.id,
+                "name": tenant.name,
+                "status": tenant.status.value if hasattr(tenant.status, "value") else str(tenant.status),
+                "plan": tenant.plan.value if hasattr(tenant.plan, "value") else str(tenant.plan),
+                "plan_expires_at": tenant.plan_expires_at,
+                "created_at": tenant.created_at,
+                "readiness": readiness_summary,
+                "task_summary": task_summary,
+                "next_action": build_next_action(tenant.name, readiness_summary, task_summary),
+            }
+        )
+
+    actionable_tasks = []
+    for task in task_rows:
+        is_open = task.status in (OpsTaskStatus.pending, OpsTaskStatus.in_progress)
+        if not is_open:
+            continue
+        tenant = next((item for item in tenants if item.id == task.tenant_id), None)
+        actionable_tasks.append(
+            {
+                "id": task.id,
+                "tenant_id": task.tenant_id,
+                "tenant_name": tenant.name if tenant else None,
+                "title": task.title,
+                "description": task.description,
+                "status": task.status.value if hasattr(task.status, "value") else str(task.status),
+                "priority": task.priority.value if hasattr(task.priority, "value") else str(task.priority),
+                "due_date": task.due_date,
+                "created_at": task.created_at,
+                "updated_at": task.updated_at,
+                "overdue": _is_task_overdue(task, now),
+            }
+        )
+
+    actionable_tasks.sort(
+        key=lambda item: (
+            not item["overdue"],
+            item["priority"] != OpsTaskPriority.high.value,
+            _as_aware_utc(item["due_date"]) if item["due_date"] else datetime.max.replace(tzinfo=UTC),
+        )
+    )
+
+    return {
+        "summary": {
+            "total_clients": total,
+            "active_clients": sum(1 for tenant in tenants if tenant.status == TenantStatus.active),
+            "ready_clients": ready_clients,
+            "blocked_clients": blocked_clients,
+            "pending_tasks": pending_tasks,
+            "in_progress_tasks": in_progress_tasks,
+            "overdue_tasks": overdue_tasks,
+        },
+        "clients": clients,
+        "tasks": actionable_tasks,
+        "total": total,
+        "page": page,
+        "page_size": page_size,
     }

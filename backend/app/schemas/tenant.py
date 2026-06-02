@@ -99,3 +99,62 @@ class OpsTaskRead(BaseModel):
     updated_at: datetime | None = None
 
     model_config = {"from_attributes": True}
+
+
+class OpsReadinessSummary(BaseModel):
+    ready: bool
+    passed_count: int
+    total_count: int
+    percent: int
+    missing_keys: list[str] = Field(default_factory=list)
+    missing_labels: list[str] = Field(default_factory=list)
+
+
+class OpsTaskSummary(BaseModel):
+    pending: int = 0
+    in_progress: int = 0
+    overdue: int = 0
+    high_priority: int = 0
+
+
+class OpsNextAction(BaseModel):
+    type: str
+    label: str
+    href: str
+    task_title: str
+
+
+class OpsWorkbenchSummary(BaseModel):
+    total_clients: int = 0
+    active_clients: int = 0
+    ready_clients: int = 0
+    blocked_clients: int = 0
+    pending_tasks: int = 0
+    in_progress_tasks: int = 0
+    overdue_tasks: int = 0
+
+
+class OpsWorkbenchClient(BaseModel):
+    id: uuid.UUID
+    name: str
+    status: str
+    plan: str
+    plan_expires_at: datetime | None = None
+    created_at: datetime | None = None
+    readiness: OpsReadinessSummary
+    task_summary: OpsTaskSummary
+    next_action: OpsNextAction
+
+
+class OpsWorkbenchTask(OpsTaskRead):
+    tenant_name: str | None = None
+    overdue: bool = False
+
+
+class OpsWorkbenchResponse(BaseModel):
+    summary: OpsWorkbenchSummary
+    clients: list[OpsWorkbenchClient]
+    tasks: list[OpsWorkbenchTask]
+    total: int
+    page: int
+    page_size: int

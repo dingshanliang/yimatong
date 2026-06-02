@@ -1,7 +1,7 @@
 "use client";
 
-import { useState } from "react";
-import { App, Button, Checkbox, DatePicker, Form, Input, List, Modal, Progress, Select } from "antd";
+import { useEffect, useState } from "react";
+import { App, Button, Checkbox, DatePicker, Form, Input, List, Modal, Progress, Select, Space } from "antd";
 import api, { extractErrorMessage } from "@/lib/api";
 import type { Client, ChecklistResult } from "./types";
 
@@ -9,13 +9,24 @@ interface CreateTaskModalProps {
   open: boolean;
   onClose: () => void;
   clients: Client[];
+  initialTenantId?: string;
+  initialTitle?: string;
   onSuccess: () => void;
 }
 
-export function CreateTaskModal({ open, onClose, clients, onSuccess }: CreateTaskModalProps) {
+export function CreateTaskModal({ open, onClose, clients, initialTenantId, initialTitle, onSuccess }: CreateTaskModalProps) {
   const { message } = App.useApp();
   const [form] = Form.useForm();
   const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    if (!open) return;
+    form.setFieldsValue({
+      tenant_id: initialTenantId,
+      title: initialTitle,
+      priority: "medium",
+    });
+  }, [form, initialTenantId, initialTitle, open]);
 
   const handleCreate = async () => {
     setSaving(true);
@@ -35,7 +46,12 @@ export function CreateTaskModal({ open, onClose, clients, onSuccess }: CreateTas
   };
 
   return (
-    <Modal title="新建待办任务" open={open} onCancel={() => { form.resetFields(); onClose(); }} onOk={handleCreate} confirmLoading={saving} okText="创建">
+    <Modal
+      title="新建待办任务"
+      open={open}
+      onCancel={() => { form.resetFields(); onClose(); }}
+      footer={null}
+    >
       <Form form={form} layout="vertical">
         <Form.Item name="title" label="任务标题" rules={[{ required: true, message: "请输入任务标题" }]}><Input placeholder="任务标题" /></Form.Item>
         <Form.Item name="tenant_id" label="关联客户" rules={[{ required: true, message: "请选择客户" }]}>
@@ -46,6 +62,12 @@ export function CreateTaskModal({ open, onClose, clients, onSuccess }: CreateTas
         </Form.Item>
         <Form.Item name="due_date" label="截止日期"><DatePicker className="w-full" /></Form.Item>
       </Form>
+      <div className="mt-6 text-right">
+        <Space>
+          <Button onClick={() => { form.resetFields(); onClose(); }}>取消</Button>
+          <Button data-testid="agency-task-create-submit" type="primary" loading={saving} onClick={handleCreate}>创建</Button>
+        </Space>
+      </div>
     </Modal>
   );
 }
