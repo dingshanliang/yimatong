@@ -28,10 +28,10 @@ const securityHeaders = [
       "default-src 'self'",
       // dev mode needs unsafe-inline + unsafe-eval for Next.js HMR and inline hydration scripts
       `script-src 'self'${process.env.NODE_ENV !== "production" ? " 'unsafe-inline' 'unsafe-eval'" : ""}`,
-      "style-src 'self' 'unsafe-inline'",
+      `style-src 'self' 'unsafe-inline'${process.env.NODE_ENV !== "production" ? " https://fonts.googleapis.com" : ""}`,
       "img-src 'self' data: blob: https:",
-      "font-src 'self'",
-      `connect-src 'self'${getApiConnectSources()}`,
+      `font-src 'self'${process.env.NODE_ENV !== "production" ? " https://fonts.gstatic.com" : ""}`,
+      `connect-src 'self'${getApiConnectSources()}${process.env.NODE_ENV !== "production" ? " https://www.react-grab.com" : ""}`,
       "frame-ancestors 'self'",
       "base-uri 'self'",
       "form-action 'self'",
