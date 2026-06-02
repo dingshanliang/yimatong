@@ -57,6 +57,7 @@ export default function TenantSettingsPage() {
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [togglingFeature, setTogglingFeature] = useState<string | null>(null);
   const [form] = Form.useForm();
 
   const fetchTenant = useCallback(async () => {
@@ -100,7 +101,10 @@ export default function TenantSettingsPage() {
     if (!tenantId) return;
     setSaving(true);
     try {
-      const { data } = await api.patch<TenantApiResponse>(`/tenants/${tenantId}`, values);
+      const { data } = await api.patch<TenantApiResponse>(`/tenants/${tenantId}`, {
+        name: values.name,
+        compliance_settings: { contact_email: values.contact_email },
+      });
       setTenant({
         id: data.id,
         name: data.name,
@@ -127,6 +131,7 @@ export default function TenantSettingsPage() {
   /** 切换功能开关 */
   const handleFeatureToggle = async (featureKey: string, enabled: boolean) => {
     if (!tenantId || !tenant) return;
+    setTogglingFeature(featureKey);
     const currentFeatures = tenant.enabled_features ?? {};
     const newFeatures = { ...currentFeatures, [featureKey]: enabled };
 
@@ -141,6 +146,8 @@ export default function TenantSettingsPage() {
       message.success(`${enabled ? "已启用" : "已关闭"} ${FEATURE_FLAGS.find((f) => f.key === featureKey)?.label ?? featureKey}`);
     } catch {
       message.error("更新功能开关失败");
+    } finally {
+      setTogglingFeature(null);
     }
   };
 
@@ -265,6 +272,7 @@ export default function TenantSettingsPage() {
                   onChange={(checked) => handleFeatureToggle(feature.key, checked)}
                   checkedChildren="开"
                   unCheckedChildren="关"
+                  loading={togglingFeature === feature.key}
                 />
               </div>
             );

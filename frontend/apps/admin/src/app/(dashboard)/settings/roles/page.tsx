@@ -49,7 +49,7 @@ const PERMISSION_LABEL_MAP: Record<string, string> = {
 };
 
 export default function RolesPage() {
-  const { message } = App.useApp();
+  const { message, modal } = App.useApp();
   const {
     items: roles,
     total,
@@ -109,8 +109,16 @@ export default function RolesPage() {
     try {
       await removeRole(roleId);
       message.success("角色已删除");
-    } catch {
-      message.error("删除失败");
+    } catch (err) {
+      const data = (err as { response?: { data?: { detail?: string } } })?.response?.data;
+      if (data?.detail) {
+        modal.error({
+          title: "无法删除角色",
+          content: data.detail,
+        });
+      } else {
+        message.error("删除失败");
+      }
     }
   };
 
@@ -239,7 +247,24 @@ export default function RolesPage() {
             <Checkbox.Group style={{ width: "100%" }}>
               {PERMISSION_GROUPS.map((group) => (
                 <div key={group.label} className="mb-4">
-                  <div className="mb-2 font-medium">{group.label}</div>
+                  <div className="mb-2 flex items-center justify-between">
+                    <span className="font-medium">{group.label}</span>
+                    <Button
+                      type="link"
+                      size="small"
+                      onClick={() => {
+                        const currentPermissions = form.getFieldValue("permissions") as string[] || [];
+                        const groupPerms = group.permissions;
+                        const hasAll = groupPerms.every((p) => currentPermissions.includes(p));
+                        const newPermissions = hasAll
+                          ? currentPermissions.filter((p) => !groupPerms.includes(p))
+                          : [...new Set([...currentPermissions, ...groupPerms])];
+                        form.setFieldsValue({ permissions: newPermissions });
+                      }}
+                    >
+                      全选/取消
+                    </Button>
+                  </div>
                   <Space wrap>
                     {group.permissions.map((perm) => (
                       <Checkbox key={perm} value={perm}>
