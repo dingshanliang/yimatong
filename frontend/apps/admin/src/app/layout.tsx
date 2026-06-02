@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import Script from "next/script";
 import { AntdRegistry } from "@ant-design/nextjs-registry";
 import { AdminThemeProvider } from "@/lib/theme-provider";
 import "./globals.css";
@@ -15,6 +16,14 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="zh-CN" className="h-full" suppressHydrationWarning>
+      <head>
+        {process.env.NODE_ENV === "development" && (
+          <Script
+            src="/react-grab.js"
+            strategy="afterInteractive"
+          />
+        )}
+      </head>
       <body className="h-full min-h-screen">
         <script
           dangerouslySetInnerHTML={{

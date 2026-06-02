@@ -1,4 +1,5 @@
 import type { Metadata, Viewport } from "next";
+import Script from "next/script";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -19,6 +20,14 @@ export default function RootLayout({
 }) {
   return (
     <html lang="zh-CN">
+      <head>
+        {process.env.NODE_ENV === "development" && (
+          <Script
+            src="/react-grab.js"
+            strategy="afterInteractive"
+          />
+        )}
+      </head>
       <body className="bg-white text-gray-900 antialiased">{children}</body>
     </html>
   );
