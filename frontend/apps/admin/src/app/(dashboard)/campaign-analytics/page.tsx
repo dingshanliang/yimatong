@@ -26,9 +26,7 @@ interface ScanTrendRow {
 
 interface CodeStats {
   total: number;
-  activated: number;
-  bound: number;
-  exported: number;
+  by_status: Record<string, number>;
 }
 
 interface CodeBatch {
@@ -163,13 +161,10 @@ export default function CampaignAnalyticsPage() {
   ];
 
   const activatedPercent = codeStats?.total
-    ? Math.round((codeStats.activated / codeStats.total) * 100)
+    ? Math.round(((codeStats.by_status?.activated ?? 0) / codeStats.total) * 100)
     : 0;
   const boundPercent = codeStats?.total
-    ? Math.round((codeStats.bound / codeStats.total) * 100)
-    : 0;
-  const exportedPercent = codeStats?.total
-    ? Math.round((codeStats.exported / codeStats.total) * 100)
+    ? Math.round(((codeStats.by_status?.bound ?? 0) / codeStats.total) * 100)
     : 0;
 
   return (
@@ -265,7 +260,7 @@ export default function CampaignAnalyticsPage() {
               <Progress percent={100} size="small" className="mt-2" />
             </Col>
             <Col xs={24} md={8}>
-              <Statistic title="已激活" value={codeStats.activated} />
+              <Statistic title="已激活" value={codeStats.by_status?.activated ?? 0} />
               <Progress
                 percent={activatedPercent}
                 size="small"
@@ -274,7 +269,7 @@ export default function CampaignAnalyticsPage() {
               />
             </Col>
             <Col xs={24} md={8}>
-              <Statistic title="已绑定" value={codeStats.bound} />
+              <Statistic title="已绑定" value={codeStats.by_status?.bound ?? 0} />
               <Progress
                 percent={boundPercent}
                 size="small"
