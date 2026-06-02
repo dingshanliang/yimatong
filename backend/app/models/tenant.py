@@ -46,6 +46,8 @@ class Tenant(Base):
     status: Mapped[TenantStatus] = mapped_column(SQLEnum(TenantStatus), default=TenantStatus.active, nullable=False)
     plan: Mapped[TenantPlan] = mapped_column(SQLEnum(TenantPlan), default=TenantPlan.free, nullable=False)
     plan_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    industry: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    notes: Mapped[str | None] = mapped_column(String(1000), nullable=True)
     quota: Mapped[dict | None] = mapped_column(JSON, default=dict, nullable=True)
     compliance_settings: Mapped[dict | None] = mapped_column(JSON, default=dict, nullable=True)
     onboarding_progress: Mapped[dict | None] = mapped_column(JSON, default=dict, nullable=True)
@@ -127,6 +129,9 @@ class OpsTask(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid7)
     tenant_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("tenants.id"), nullable=False, index=True)
+    assigned_to: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("accounts.id"), nullable=True, index=True
+    )
     title: Mapped[str] = mapped_column(String(200), nullable=False)
     description: Mapped[str | None] = mapped_column(String(1000), nullable=True)
     status: Mapped[OpsTaskStatus] = mapped_column(
