@@ -1,8 +1,9 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
-import { Alert, App, Button, Form, Input, Modal, Select, Table, Tabs, Tag, Typography } from "antd";
-import { CopyOutlined, MoreOutlined, PlusOutlined } from "@ant-design/icons";
+import { Alert, App, Button, Dropdown, Form, Input, Modal, Select, Table, Tabs, Tag, Typography } from "antd";
+import type { MenuProps } from "antd";
+import { CopyOutlined, DownOutlined, EditOutlined, KeyOutlined, PlusOutlined } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
 import api from "@/lib/api";
 
@@ -39,6 +40,9 @@ export default function AccountsPage() {
   const [resetLoading, setResetLoading] = useState(false);
   const [orgForm] = Form.useForm();
   const [accountForm] = Form.useForm();
+  const [editModalOpen, setEditModalOpen] = useState(false);
+  const [editingAccount, setEditingAccount] = useState<Account | null>(null);
+  const [editForm] = Form.useForm();
 
   const fetchOrgs = useCallback(async () => {
     setLoading(true);
@@ -145,6 +149,28 @@ export default function AccountsPage() {
     },
   ];
 
+  const getAccountMenuItems = (record: Account): MenuProps["items"] => [
+    {
+      key: "edit",
+      label: "编辑账户",
+      icon: <EditOutlined />,
+      onClick: () => {
+        setEditingAccount(record);
+        editForm.setFieldsValue({
+          name: record.name,
+          organization_id: record.organization_id,
+        });
+        setEditModalOpen(true);
+      },
+    },
+    {
+      key: "reset",
+      label: "重置密码",
+      icon: <KeyOutlined />,
+      onClick: () => handleResetPassword(record),
+    },
+  ];
+
   const accountColumns: ColumnsType<Account> = [
     { title: "姓名", dataIndex: "name", key: "name" },
     { title: "邮箱", dataIndex: "email", key: "email" },
@@ -157,15 +183,11 @@ export default function AccountsPage() {
     {
       title: "操作",
       key: "action",
-      width: 80,
+      width: 100,
       render: (_: unknown, record: Account) => (
-        <Button
-          type="text"
-          icon={<MoreOutlined />}
-          onClick={() => handleResetPassword(record)}
-          loading={resetLoading}
-          aria-label={`操作菜单-${record.name}`}
-        />
+        <Dropdown menu={{ items: getAccountMenuItems(record) }}>
+          <Button type="text" icon={<DownOutlined />} aria-label={`操作菜单-${record.name}`} />
+        </Dropdown>
       ),
     },
   ];
@@ -174,6 +196,24 @@ export default function AccountsPage() {
     setCreatedAccount(null);
     accountForm.setFieldsValue({ organization_id: orgs[0]?.id });
     setAccountModalOpen(true);
+  };
+
+  const handleEditAccount = async (values: Record<string, string>) => {
+    if (!editingAccount) return;
+    try {
+      await api.patch(`/accounts/${editingAccount.id}`, {
+        name: values.name,
+        organization_id: values.organization_id,
+      });
+      message.success("账户更新成功");
+      setEditModalOpen(false);
+      setEditingAccount(null);
+      editForm.resetFields();
+      fetchAccounts();
+      fetchOrgs();
+    } catch {
+      message.error("更新失败");
+    }
   };
 
   return (
@@ -315,6 +355,27 @@ export default function AccountsPage() {
             </div>
           }
         />
+      </Modal>
+      <Modal
+        title="编辑账户"
+        open={editModalOpen}
+        onCancel={() => {
+          setEditModalOpen(false);
+          setEditingAccount(null);
+          editForm.resetFields();
+        }}
+        onOk={() => editForm.submit()}
+        okText="保存"
+        width={520}
+      >
+        <Form form={editForm} layout="vertical" onFinish={handleEditAccount}>
+          <Form.Item name="name" label="姓名" rules={[{ required: true, message: "请输入姓名" }]}>
+            <Input />
+          </Form.Item>
+          <Form.Item name="organization_id" label="所属组织" rules={[{ required: true, message: "请选择组织" }]}>
+            <Select placeholder="选择组织" options={orgs.map((o) => ({ value: o.id, label: o.name }))} />
+          </Form.Item>
+        </Form>
       </Modal>
     </div>
   );

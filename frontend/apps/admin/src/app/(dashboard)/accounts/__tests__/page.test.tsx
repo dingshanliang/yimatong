@@ -5,6 +5,7 @@ import AccountsPage from "../page";
 const mockMessage = { success: vi.fn(), error: vi.fn() };
 const mockGet = vi.fn();
 const mockPost = vi.fn();
+const mockPatch = vi.fn();
 const mockClipboardWriteText = vi.fn();
 
 vi.mock("antd", async () => {
@@ -22,6 +23,7 @@ vi.mock("@/lib/api", () => ({
   default: {
     get: (...args: unknown[]) => mockGet(...args),
     post: (...args: unknown[]) => mockPost(...args),
+    patch: (...args: unknown[]) => mockPatch(...args),
   },
 }));
 
@@ -33,6 +35,7 @@ describe("AccountsPage", () => {
       value: { writeText: mockClipboardWriteText },
     });
     mockClipboardWriteText.mockResolvedValue(undefined);
+    mockPatch.mockResolvedValue({ data: {} });
     mockGet.mockImplementation((url: string) => {
       if (url === "/organizations") {
         return Promise.resolve({
