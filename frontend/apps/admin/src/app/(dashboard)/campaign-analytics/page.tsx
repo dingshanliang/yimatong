@@ -12,6 +12,7 @@ import {
 import type { ColumnsType } from "antd/es/table";
 import dayjs, { type Dayjs } from "dayjs";
 import api from "@/lib/api";
+import ScanTrendChart from "@/components/ScanTrendChart";
 
 const { Title } = Typography;
 const { RangePicker } = DatePicker;
@@ -226,7 +227,8 @@ export default function CampaignAnalyticsPage() {
         </Col>
       </Row>
 
-      <Card title="扫码趋势明细" className="mb-6" size="small">
+      <Card title="扫码趋势" className="mb-6" size="small">
+        {trend.length > 0 && <ScanTrendChart data={trend} height={300} showMulti />}
         <Table
           columns={trendColumns}
           dataSource={trend}

@@ -12,6 +12,7 @@ import {
 import type { ColumnsType } from "antd/es/table";
 import dayjs, { type Dayjs } from "dayjs";
 import api, { extractErrorMessage } from "@/lib/api";
+import ScanTrendChart from "@/components/ScanTrendChart";
 
 const { Title } = Typography;
 const { RangePicker } = DatePicker;
@@ -145,6 +146,11 @@ export default function StatsPage() {
           </Card>
         </Col>
       </Row>
+      {data.length > 0 && (
+        <Card title="扫码趋势" size="small" className="mb-6">
+          <ScanTrendChart data={data} height={300} showMulti />
+        </Card>
+      )}
       <div className="mb-4">
         <Space>
           <RangePicker
