@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, waitFor, fireEvent } from "@testing-library/react";
+import dayjs from "dayjs";
 import DashboardHome from "../../_components/DashboardHome";
 
 const mockMessageSuccess = vi.fn();
@@ -31,6 +32,11 @@ vi.mock("@/lib/api", () => ({
 vi.mock("@ant-design/charts", () => ({
   Line: () => null,
   Pie: () => null,
+}));
+
+const mockPush = vi.fn();
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ push: mockPush }),
 }));
 
 describe("DashboardHome", () => {
@@ -118,5 +124,93 @@ describe("DashboardHome", () => {
 
     appendSpy.mockRestore();
     vi.unstubAllGlobals();
+  });
+
+  it("shows welcome guide when no data exists (all zeros)", async () => {
+    mockGet.mockImplementation((url: string) => {
+      if (url === "/analytics/dashboard") {
+        return Promise.resolve({
+          data: {
+            today_scans: 0,
+            cumulative_scans: 0,
+            cumulative_first_scans: 0,
+            trend: [],
+            environment_breakdown: {},
+          },
+        });
+      }
+      if (url === "/code-batches") {
+        return Promise.resolve({ data: { items: [], total: 0 } });
+      }
+      if (url === "/campaigns") {
+        return Promise.resolve({ data: { items: [], total: 0 } });
+      }
+      return Promise.resolve({ data: {} });
+    });
+
+    render(<DashboardHome />);
+    await waitFor(() => expect(screen.getByText("工作台")).toBeInTheDocument());
+    expect(screen.getByText(/开始使用一码通/)).toBeInTheDocument();
+  });
+
+  it("shows error state when dashboard API fails", async () => {
+    mockGet.mockImplementation((url: string) => {
+      if (url === "/analytics/dashboard") {
+        return Promise.reject(new Error("Network error"));
+      }
+      if (url === "/code-batches") {
+        return Promise.resolve({ data: { items: [], total: 0 } });
+      }
+      if (url === "/campaigns") {
+        return Promise.resolve({ data: { items: [], total: 0 } });
+      }
+      return Promise.resolve({ data: {} });
+    });
+
+    render(<DashboardHome />);
+    await waitFor(() => expect(mockMessageError).toHaveBeenCalled());
+  });
+
+  it("shows refresh button that reloads data", async () => {
+    render(<DashboardHome />);
+    await waitFor(() => expect(screen.getByText("今日扫码")).toBeInTheDocument());
+
+    const refreshButton = screen.getByRole("button", { name: /刷新/ });
+    expect(refreshButton).toBeInTheDocument();
+    fireEvent.click(refreshButton);
+    await waitFor(() =>
+      expect(mockGet.mock.calls.filter((c: unknown[]) => c[0] === "/analytics/dashboard").length).toBeGreaterThanOrEqual(2)
+    );
+  });
+
+  it("formats batch created_at to localized date string", async () => {
+    mockGet.mockImplementation((url: string) => {
+      if (url === "/analytics/dashboard") {
+        return Promise.resolve({
+          data: { today_scans: 5, cumulative_scans: 50, cumulative_first_scans: 30, trend: [], environment_breakdown: {} },
+        });
+      }
+      if (url === "/code-batches") {
+        return Promise.resolve({
+          data: {
+            items: [
+              { id: "b1", batch_code: "B001", quantity: 100, status: "completed", created_at: "2026-06-01T08:30:00.123456Z" },
+            ],
+            total: 1,
+          },
+        });
+      }
+      if (url === "/campaigns") {
+        return Promise.resolve({ data: { items: [], total: 0 } });
+      }
+      return Promise.resolve({ data: {} });
+    });
+
+    render(<DashboardHome />);
+    await waitFor(() => expect(screen.getByText("B001")).toBeInTheDocument());
+    expect(screen.queryByText(/2026-06-01T08:30:00/)).not.toBeInTheDocument();
+    // dayjs formats in local timezone; UTC 08:30 becomes 16:30 in UTC+8
+    const formatted = dayjs("2026-06-01T08:30:00.123456Z").format("YYYY-MM-DD HH:mm");
+    expect(screen.getByText(formatted)).toBeInTheDocument();
   });
 });
