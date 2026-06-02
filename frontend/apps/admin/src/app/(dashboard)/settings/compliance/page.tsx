@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { App, Button, Form, Input, InputNumber, Space, Switch, Tabs, Typography } from "antd";
+import { App, Button, Form, Input, InputNumber, Result, Space, Spin, Switch, Tabs, Typography } from "antd";
 import { SaveOutlined } from "@ant-design/icons";
 import api from "@/lib/api";
 
@@ -14,6 +14,7 @@ export default function CompliancePage() {
   const [retentionForm] = Form.useForm();
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
 
   const [phoneAuth, setPhoneAuth] = useState(true);
   const [locationAuth, setLocationAuth] = useState(false);
@@ -39,7 +40,8 @@ export default function CompliancePage() {
           setWechatAuth(compliance.wechat_auth !== false);
         }
       } catch {
-        /* Use defaults */
+        message.error("加载合规设置失败，请刷新页面重试");
+        setLoadError(true);
       } finally {
         setLoading(false);
       }
@@ -164,6 +166,28 @@ export default function CompliancePage() {
       ),
     },
   ];
+
+  if (loading) {
+    return (
+      <div className="flex justify-center py-12">
+        <Spin size="large" />
+      </div>
+    );
+  }
+
+  if (loadError) {
+    return (
+      <div>
+        <Title level={4}>合规设置</Title>
+        <Result
+          status="error"
+          title="加载失败"
+          subTitle="无法加载合规设置，请刷新页面重试"
+          extra={<Button type="primary" onClick={() => window.location.reload()}>刷新页面</Button>}
+        />
+      </div>
+    );
+  }
 
   return (
     <div>

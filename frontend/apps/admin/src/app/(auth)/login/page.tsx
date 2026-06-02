@@ -72,8 +72,16 @@ export default function LoginPage() {
       await login(values.email, values.password);
       message.success("登录成功");
       router.push(redirectTo);
-    } catch {
-      message.error("登录失败，请检查邮箱和密码");
+    } catch (err) {
+      const data = (err as { response?: { data?: { detail?: string } } })?.response?.data;
+      const detail = data?.detail;
+      if (detail?.toLowerCase().includes("locked")) {
+        message.error("账户已被锁定，请 15 分钟后再试");
+      } else if (detail) {
+        message.error(detail);
+      } else {
+        message.error("登录失败，请检查邮箱和密码");
+      }
     } finally {
       setLoading(false);
     }
