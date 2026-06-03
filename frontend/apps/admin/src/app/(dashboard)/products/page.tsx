@@ -8,6 +8,7 @@ import type { ColumnsType } from "antd/es/table";
 import ImageUploadInput from "@/components/ImageUploadInput";
 import api from "@/lib/api";
 import { useCrud } from "@/lib/hooks";
+import { useCategories } from "@/lib/use-categories";
 import { formatDate } from "@/lib/format";
 import { AIDrawer } from "./_components/AIDrawer";
 import type { Product, Brand } from "./_components/types";
@@ -38,6 +39,7 @@ export default function ProductsPage() {
   const [categorySearch, setCategorySearch] = useState("");
 
   const { items: products, total, page, loading, setPage, setFilter, update } = useCrud<Product>("/products");
+  const { categories: tenantCategories } = useCategories();
 
   const fetchBrands = useCallback(async () => {
     try {
@@ -53,11 +55,19 @@ export default function ProductsPage() {
   }, [fetchBrands]);
 
   const categoryOptions = useMemo(() => {
-    const values = products.map((product) => product.category).filter(Boolean) as string[];
+    const base = tenantCategories.slice();
+    const productCategories = products.map((p) => p.category).filter(Boolean) as string[];
+    for (const cat of productCategories) {
+      if (!base.some((c) => c.toLowerCase() === cat.toLowerCase())) {
+        base.push(cat);
+      }
+    }
     const typed = categorySearch.trim();
-    if (typed) values.push(typed);
-    return Array.from(new Set(values)).map((value) => ({ value, label: value }));
-  }, [categorySearch, products]);
+    if (typed && !base.some((c) => c.toLowerCase() === typed.toLowerCase())) {
+      base.push(typed);
+    }
+    return base.map((value) => ({ value, label: value }));
+  }, [categorySearch, products, tenantCategories]);
 
   const openCreate = () => {
     setEditItem(null);
