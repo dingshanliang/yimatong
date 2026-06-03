@@ -26,6 +26,7 @@ import ImageUploadInput from "@/components/ImageUploadInput";
 import ProductionBatchFormFields, { buildBatchPayload, formatBatchSkuLabel, type ProductionBatchFormValues } from "@/components/ProductionBatchFormFields";
 import SKUFormFields, { buildSkuPayload, type SKUFormValues } from "@/components/SKUFormFields";
 import api, { extractErrorMessage } from "@/lib/api";
+import { useCategories } from "@/lib/use-categories";
 import { createDefaultModules, createEmptyDSL } from "@/lib/page-dsl";
 import type { Brand, Product, ProductAsset, ProductAssetType, ProductionBatch, SKU } from "../_components/types";
 
@@ -251,6 +252,7 @@ export default function ProductWorkbenchPage() {
   const [pages, setPages] = useState<PageTemplate[]>([]);
   const [brands, setBrands] = useState<Brand[]>([]);
   const [loading, setLoading] = useState(true);
+  const { categories: tenantCategories } = useCategories();
 
   const [productForm] = Form.useForm();
   const [assetForm] = Form.useForm();
@@ -624,7 +626,14 @@ export default function ProductWorkbenchPage() {
                         options={brands.map((brand) => ({ value: brand.id, label: brand.name }))}
                       />
                     </Form.Item>
-                    <Form.Item name="category" label="品类"><Input /></Form.Item>
+                    <Form.Item name="category" label="品类">
+                      <Select
+                        showSearch
+                        allowClear
+                        placeholder="选择或输入品类"
+                        options={tenantCategories.map((v) => ({ value: v, label: v }))}
+                      />
+                    </Form.Item>
                     <Form.Item name="origin" label="产地"><Input placeholder="省/市/县/基地" /></Form.Item>
                     <Form.Item
                       name="image_url"
