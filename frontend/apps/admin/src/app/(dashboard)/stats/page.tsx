@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { App, Button, Card, Col, DatePicker, Empty, Row, Space, Statistic, Table, Typography } from "antd";
+import { App, Button, Card, Col, DatePicker, Empty, Row, Statistic, Table, Typography } from "antd";
 import {
   ScanOutlined,
   UserOutlined,
@@ -112,21 +112,19 @@ export default function StatsPage() {
   return (
     <div>
       <Title level={4}>扫码统计</Title>
-      <div className="mb-4">
-        <Space>
-          <RangePicker
-            value={dateRange}
-            onChange={(dates) => {
-              if (dates && dates[0] && dates[1]) {
-                setDateRange([dates[0], dates[1]]);
-              }
-            }}
-            disabledDate={disabledDate}
-          />
-          <Button icon={<DownloadOutlined />} onClick={handleExport} loading={exporting}>
-            导出 Excel
-          </Button>
-        </Space>
+      <div className="mb-4 flex flex-wrap items-center gap-3">
+        <RangePicker
+          value={dateRange}
+          onChange={(dates) => {
+            if (dates && dates[0] && dates[1]) {
+              setDateRange([dates[0], dates[1]]);
+            }
+          }}
+          disabledDate={disabledDate}
+        />
+        <Button icon={<DownloadOutlined />} onClick={handleExport} loading={exporting}>
+          导出 Excel
+        </Button>
       </div>
       <Row gutter={[16, 16]} className="mb-6">
         <Col xs={24} sm={12} lg={6}>
