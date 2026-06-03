@@ -2,9 +2,10 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { App, Button, Descriptions, Divider, Form, Input, Space, Spin, Switch, Typography } from "antd";
-import { EditOutlined, SaveOutlined } from "@ant-design/icons";
+import { DeleteOutlined, EditOutlined, PlusOutlined, SaveOutlined, ArrowUpOutlined, ArrowDownOutlined } from "@ant-design/icons";
 import { useAuthStore } from "@/lib/auth";
 import api from "@/lib/api";
+import { useCategories } from "@/lib/use-categories";
 
 const { Title, Text } = Typography;
 
@@ -59,6 +60,68 @@ export default function TenantSettingsPage() {
   const [saving, setSaving] = useState(false);
   const [togglingFeature, setTogglingFeature] = useState<string | null>(null);
   const [form] = Form.useForm();
+
+  // 品类管理
+  const { categories: savedCategories, mutate: mutateCategories } = useCategories();
+  const [localCategories, setLocalCategories] = useState<string[]>([]);
+  const [newCategory, setNewCategory] = useState("");
+  const [categoriesDirty, setCategoriesDirty] = useState(false);
+  const [savingCategories, setSavingCategories] = useState(false);
+
+  // 同步远程品类到本地编辑状态
+  useEffect(() => {
+    if (savedCategories.length > 0 || localCategories.length === 0) {
+      setLocalCategories(savedCategories);
+      setCategoriesDirty(false);
+    }
+  }, [savedCategories]);
+
+  const addCategory = () => {
+    const trimmed = newCategory.trim();
+    if (!trimmed) return;
+    if (localCategories.some((c) => c.toLowerCase() === trimmed.toLowerCase())) {
+      message.warning("该品类已存在");
+      return;
+    }
+    if (trimmed.length > 20) {
+      message.warning("品类名称不能超过 20 个字符");
+      return;
+    }
+    setLocalCategories((prev) => [...prev, trimmed]);
+    setNewCategory("");
+    setCategoriesDirty(true);
+  };
+
+  const removeCategory = (index: number) => {
+    setLocalCategories((prev) => prev.filter((_, i) => i !== index));
+    setCategoriesDirty(true);
+  };
+
+  const moveCategory = (index: number, direction: "up" | "down") => {
+    setLocalCategories((prev) => {
+      const next = [...prev];
+      const target = direction === "up" ? index - 1 : index + 1;
+      if (target < 0 || target >= next.length) return prev;
+      [next[index], next[target]] = [next[target], next[index]];
+      return next;
+    });
+    setCategoriesDirty(true);
+  };
+
+  const saveCategories = async () => {
+    if (!tenantId) return;
+    setSavingCategories(true);
+    try {
+      await api.patch(`/tenants/${tenantId}`, { categories: localCategories });
+      mutateCategories();
+      setCategoriesDirty(false);
+      message.success("品类配置已保存");
+    } catch {
+      message.error("保存品类失败");
+    } finally {
+      setSavingCategories(false);
+    }
+  };
 
   const fetchTenant = useCallback(async () => {
     if (!tenantId) return;
@@ -275,6 +338,78 @@ export default function TenantSettingsPage() {
             );
           })}
         </div>
+      </div>
+
+      <Divider />
+
+      <div className="max-w-lg">
+        <Title level={5} className="!mb-2">品类管理</Title>
+        <Text type="secondary" className="block mb-4">
+          管理产品品类选项，用于产品录入和 AI 助手中的品类下拉
+        </Text>
+
+        <div className="mb-3 flex gap-2">
+          <Input
+            placeholder="输入品类名称"
+            value={newCategory}
+            onChange={(e) => setNewCategory(e.target.value)}
+            onPressEnter={addCategory}
+            maxLength={20}
+            className="flex-1"
+          />
+          <Button icon={<PlusOutlined />} onClick={addCategory} disabled={!newCategory.trim()}>
+            添加
+          </Button>
+        </div>
+
+        {localCategories.length === 0 ? (
+          <div className="py-4 text-center text-text-muted">暂无品类，请添加</div>
+        ) : (
+          <div className="space-y-1">
+            {localCategories.map((cat, idx) => (
+              <div
+                key={`${cat}-${idx}`}
+                className="flex items-center justify-between rounded border border-border-subtle px-3 py-2"
+              >
+                <span className="flex-1">
+                  <Text type="secondary" className="mr-2 text-xs">{idx + 1}.</Text>
+                  {cat}
+                </span>
+                <Space size={4}>
+                  <Button
+                    type="text"
+                    size="small"
+                    icon={<ArrowUpOutlined />}
+                    disabled={idx === 0}
+                    onClick={() => moveCategory(idx, "up")}
+                  />
+                  <Button
+                    type="text"
+                    size="small"
+                    icon={<ArrowDownOutlined />}
+                    disabled={idx === localCategories.length - 1}
+                    onClick={() => moveCategory(idx, "down")}
+                  />
+                  <Button
+                    type="text"
+                    size="small"
+                    danger
+                    icon={<DeleteOutlined />}
+                    onClick={() => removeCategory(idx)}
+                  />
+                </Space>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {categoriesDirty && (
+          <div className="mt-3">
+            <Button type="primary" onClick={saveCategories} loading={savingCategories}>
+              保存品类
+            </Button>
+          </div>
+        )}
       </div>
     </div>
   );
