@@ -5,6 +5,7 @@ from datetime import datetime
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.constants.categories import get_default_categories
 from app.models.tenant import Account, Organization, Tenant, TenantPlan, TenantStatus, TenantType
 from app.utils.security import hash_password
 
@@ -43,6 +44,7 @@ async def create_tenant(
         industry=industry,
         notes=notes,
         quota={"max_codes": 10000, "max_campaigns": 50, "max_accounts": 10},
+        categories=get_default_categories(industry),
     )
     db.add(tenant)
     await db.flush()
@@ -64,8 +66,8 @@ async def create_tenant(
 
     # 应用行业模板（如果指定）
     if template_id is not None:
-        from app.services.industry_templates import ALL_TEMPLATES
         from app.models.page import PageTemplate, PageVersion, PageVersionStatus
+        from app.services.industry_templates import ALL_TEMPLATES
 
         if 0 <= template_id < len(ALL_TEMPLATES):
             template_def = ALL_TEMPLATES[template_id]
@@ -110,6 +112,7 @@ async def update_tenant(
     onboarding_progress: dict | None = None,
     enabled_features: dict | None = None,
     tenant_type: str | None = None,
+    categories: list[str] | None = None,
 ) -> Tenant | None:
     tenant = await get_tenant(db, tenant_id)
     if not tenant:
@@ -134,6 +137,8 @@ async def update_tenant(
         tenant.enabled_features = enabled_features
     if tenant_type is not None:
         tenant.tenant_type = TenantType(tenant_type)
+    if categories is not None:
+        tenant.categories = categories
     await db.flush()
     await db.refresh(tenant)
     return tenant

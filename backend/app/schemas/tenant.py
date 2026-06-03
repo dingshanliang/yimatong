@@ -34,6 +34,28 @@ class TenantUpdate(BaseModel):
     plan_expires_at: datetime | None = None
     onboarding_progress: dict | None = None
     enabled_features: dict | None = None
+    categories: list[str] | None = None
+
+    @field_validator("categories")
+    @classmethod
+    def validate_categories(cls, v: list[str] | None) -> list[str] | None:
+        if v is None:
+            return v
+        if len(v) > 100:
+            raise ValueError("品类数量不能超过 100 条")
+        cleaned: list[str] = []
+        seen: set[str] = set()
+        for item in v:
+            s = item.strip()
+            if not s:
+                continue
+            if len(s) > 20:
+                raise ValueError(f"品类名称不能超过 20 个字符: {s}")
+            key = s.lower()
+            if key not in seen:
+                seen.add(key)
+                cleaned.append(s)
+        return cleaned
 
 
 class TenantRead(BaseModel):
@@ -50,6 +72,7 @@ class TenantRead(BaseModel):
     compliance_settings: dict | None = Field(None, description="合规设置")
     onboarding_progress: dict | None = Field(None, description=" onboarding 进度")
     enabled_features: dict | None = Field(None, description="已启用功能")
+    categories: list[str] | None = Field(None, description="租户品类配置")
     created_at: datetime | None = Field(None, description="创建时间")
 
     model_config = {"from_attributes": True}

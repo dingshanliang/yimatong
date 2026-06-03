@@ -1,6 +1,8 @@
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel as PydanticBaseModel
+from pydantic import Field as PydanticField
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -21,6 +23,10 @@ TENANT_NOT_FOUND = {
 }
 
 router = APIRouter(prefix="/api/v1/tenants", tags=["tenants"])
+
+
+class CategoriesResponse(PydanticBaseModel):
+    categories: list[str] = PydanticField(default_factory=list, description="租户品类列表")
 
 
 @router.post(
@@ -94,6 +100,17 @@ async def get_current_tenant_endpoint(
     return tenant
 
 
+@router.get("/me/categories", response_model=CategoriesResponse, summary="获取当前租户品类列表")
+async def get_current_tenant_categories(
+    db: AsyncSession = Depends(get_db),
+    tenant_id: uuid.UUID = Depends(get_current_tenant),
+):
+    tenant = await get_tenant(db, tenant_id)
+    if not tenant:
+        raise HTTPException(status_code=404, detail="Tenant not found")
+    return CategoriesResponse(categories=tenant.categories or [])
+
+
 @router.patch("/me", response_model=TenantRead, summary="更新当前租户")
 async def update_current_tenant_endpoint(
     body: TenantUpdate,
@@ -112,6 +129,7 @@ async def update_current_tenant_endpoint(
         onboarding_progress=body.onboarding_progress,
         enabled_features=body.enabled_features,
         tenant_type=body.tenant_type,
+        categories=body.categories,
     )
     if not tenant:
         raise HTTPException(status_code=404, detail="Tenant not found")
@@ -140,6 +158,7 @@ async def update_tenant_endpoint(tenant_id: uuid.UUID, body: TenantUpdate, db: A
         onboarding_progress=body.onboarding_progress,
         enabled_features=body.enabled_features,
         tenant_type=body.tenant_type,
+        categories=body.categories,
     )
     if not tenant:
         raise HTTPException(status_code=404, detail="Tenant not found")

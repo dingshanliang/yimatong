@@ -62,6 +62,7 @@ class Tenant(Base):
     compliance_settings: Mapped[dict | None] = mapped_column(JSON, default=dict, nullable=True)
     onboarding_progress: Mapped[dict | None] = mapped_column(JSON, default=dict, nullable=True)
     enabled_features: Mapped[dict | None] = mapped_column(JSON, default=dict, nullable=True)
+    categories: Mapped[list | None] = mapped_column(JSON, default=list, nullable=True, comment="租户品类配置")
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False
     )
