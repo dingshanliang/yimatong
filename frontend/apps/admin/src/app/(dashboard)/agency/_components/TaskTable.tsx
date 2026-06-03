@@ -39,7 +39,7 @@ export function TaskTable({ tasks, clients, onUpdateStatus, onDelete }: TaskTabl
         <div>
           <div>{title}</div>
           {record.description && (
-            <div className="mt-1 text-xs text-gray-400 line-clamp-1">{record.description}</div>
+            <div className="mt-1 text-xs text-text-muted line-clamp-1">{record.description}</div>
           )}
         </div>
       ),

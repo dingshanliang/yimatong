@@ -192,7 +192,7 @@ export default function PageEditorPage() {
   }, [dsl, enabledModuleCount, message, modal, previewContext, refreshData, templateName, version]);
 
   if (!version) {
-    return <div className="flex h-screen items-center justify-center text-gray-400">加载中...</div>;
+    return <div className="flex h-screen items-center justify-center text-text-muted">加载中...</div>;
   }
 
   return (
@@ -210,7 +210,7 @@ export default function PageEditorPage() {
         onPublish={handlePublish}
       />
       <div className="flex flex-1 overflow-hidden">
-        <div className="w-[520px] shrink-0 overflow-y-auto border-r bg-white p-4">
+        <div className="w-[520px] shrink-0 overflow-y-auto border-r bg-bg-container p-4">
           {readiness.blockingIssues.length > 0 ? (
             <Alert
               className="mb-3"
@@ -275,7 +275,7 @@ export default function PageEditorPage() {
             ]}
           />
         </div>
-        <div className="flex-1 overflow-hidden bg-gray-50 p-4">
+        <div className="flex-1 overflow-hidden bg-bg-muted p-4">
           <PreviewPanel
             dsl={dsl}
             previewContext={previewContext}
@@ -319,7 +319,7 @@ function JSONEditor({
   return (
     <div>
       <div className="mb-2 flex items-center justify-between">
-        <span className="text-xs text-gray-500">直接编辑 JSON 配置</span>
+        <span className="text-xs text-text-muted">直接编辑 JSON 配置</span>
         {errors.length > 0 ? (
           <span className="text-xs text-red-500">{errors.length} 个错误</span>
         ) : (

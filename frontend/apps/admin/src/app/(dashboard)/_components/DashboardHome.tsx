@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { App, Button, Card, Col, DatePicker, Row, Space, Statistic, Table, Tag, Typography } from "antd";
+import { App, Button, Card, Col, DatePicker, Row, Space, Statistic, Table, Tag, Tooltip, Typography } from "antd";
 import {
   DownloadOutlined,
   GiftOutlined,
@@ -18,6 +18,7 @@ import dayjs, { type Dayjs } from "dayjs";
 import api, { extractErrorMessage } from "@/lib/api";
 import ScanTrendChart from "@/components/ScanTrendChart";
 import EnvBreakdownChart from "@/components/EnvBreakdownChart";
+import ChartPlaceholder from "@/components/ChartPlaceholder";
 
 const { Title } = Typography;
 const { RangePicker } = DatePicker;
@@ -216,7 +217,7 @@ export default function DashboardHome() {
   return (
     <div>
       <div className="mb-4 flex items-center justify-between">
-        <Title level={4} className="!mb-0">工作台</Title>
+        <Title level={4} style={{ marginBottom: 0 }}>工作台</Title>
         <Space>
           <RangePicker
             value={exportRange}
@@ -227,12 +228,12 @@ export default function DashboardHome() {
             }}
             disabledDate={(current) => current && current.isAfter(dayjs().endOf("day"))}
           />
-          <Button icon={<DownloadOutlined />} onClick={handleExport} loading={exporting}>
-            导出扫码数据
-          </Button>
-          <Button icon={<ReloadOutlined />} onClick={() => { void fetchDashboard(); void fetchRecentBatches(); void fetchRecentCampaigns(); }}>
-            刷新
-          </Button>
+          <Tooltip title="导出扫码数据">
+            <Button icon={<DownloadOutlined />} onClick={handleExport} loading={exporting} />
+          </Tooltip>
+          <Tooltip title="刷新数据">
+            <Button icon={<ReloadOutlined />} onClick={() => { void fetchDashboard(); void fetchRecentBatches(); void fetchRecentCampaigns(); }} />
+          </Tooltip>
         </Space>
       </div>
       {error && !loading && (
@@ -248,7 +249,7 @@ export default function DashboardHome() {
         <Card className="mb-6">
           <div className="text-center py-8">
             <Title level={5}>开始使用一码通</Title>
-            <p className="text-gray-500 mb-4">创建第一个码批次，开始追踪产品扫码数据</p>
+            <p className="text-text-muted mb-4">创建第一个码批次，开始追踪产品扫码数据</p>
             <Space>
               <Button type="primary" icon={<LinkOutlined />} onClick={() => router.push("/batches")}>创建码批次</Button>
               <Button icon={<GiftOutlined />} onClick={() => router.push("/campaigns")}>创建营销活动</Button>
@@ -259,8 +260,8 @@ export default function DashboardHome() {
 
       <Row gutter={[16, 16]} className="mb-6">
         <Col xs={24} sm={12} lg={6}>
-          <Card loading={loading}>
-            <Statistic title="今日扫码" value={data?.today_scans ?? 0} prefix={<ScanOutlined />} />
+          <Card loading={loading} style={{ borderLeft: "3px solid var(--color-primary)" }}>
+            <Statistic title="今日扫码" value={data?.today_scans ?? 0} prefix={<ScanOutlined />} styles={{ value: { color: "var(--color-primary)", fontWeight: 600 } }} />
           </Card>
         </Col>
         <Col xs={24} sm={12} lg={6}>
@@ -282,35 +283,33 @@ export default function DashboardHome() {
 
       <Row gutter={[16, 16]} className="mb-6">
         <Col xs={24} lg={8}>
-          <Card title="最近 7 天扫码趋势" size="small">
+          <Card title="最近 7 天扫码趋势" size="small" style={{ height: "100%" }}>
             {loading ? (
-              <div style={{ height: 250 }} className="flex items-center justify-center text-gray-400">
-                加载中...
-              </div>
+              <ChartPlaceholder loading height={250} />
             ) : (
               <ScanTrendChart data={trend} height={250} />
             )}
           </Card>
         </Col>
         <Col xs={24} lg={8}>
-          <Card title="最近码批次" size="small">
-            <Table columns={batchColumns} dataSource={batches} rowKey="id" pagination={false} size="small" />
+          <Card title="最近码批次" size="small" style={{ height: "100%" }}>
+            <div style={{ height: 250, overflow: "auto" }}>
+              <Table columns={batchColumns} dataSource={batches} rowKey="id" pagination={false} size="small" />
+            </div>
           </Card>
         </Col>
         <Col xs={24} lg={8}>
-          <Card title="扫码环境占比" size="small">
+          <Card title="扫码环境占比" size="small" style={{ height: "100%" }}>
             {data?.environment_breakdown && Object.keys(data.environment_breakdown).length > 0 ? (
               <EnvBreakdownChart data={data.environment_breakdown} height={250} />
             ) : (
-              <div style={{ height: 250 }} className="flex items-center justify-center text-gray-400">
-                暂无环境数据
-              </div>
+              <ChartPlaceholder height={250} emptyText="暂无环境数据" />
             )}
           </Card>
         </Col>
       </Row>
 
-      <Card title="最近活动" size="small">
+      <Card title="最近活动" size="small" className="mb-2">
         <Table columns={campaignColumns} dataSource={campaigns} rowKey="id" pagination={false} size="small" />
       </Card>
     </div>

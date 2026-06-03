@@ -77,16 +77,16 @@ export function PagePlanTab() {
           </Button>
         </Form.Item>
       </Form>
-      {loading && <div className="py-8 text-center"><Spin size="large" /><div className="mt-2 text-gray-500">AI 正在分析中...</div></div>}
+      {loading && <div className="py-8 text-center"><Spin size="large" /><div className="mt-2 text-text-muted">AI 正在分析中...</div></div>}
       {pageCopyResult && !loading && activeSubTab === "copy" && (
         <ResultCard title="页面文案方案" icon={<CheckCircleOutlined />} generationId={pageCopyResult.generation_id}>
           <Title level={5}>品牌故事</Title>
-          <Paragraph style={{ whiteSpace: "pre-wrap", lineHeight: 1.8 }} className="text-gray-700">{pageCopyResult.result.copywriting.brand_story}</Paragraph>
+          <Paragraph style={{ whiteSpace: "pre-wrap", lineHeight: 1.8 }} className="text-text-muted">{pageCopyResult.result.copywriting.brand_story}</Paragraph>
           <Divider />
           <Title level={5}>产品卖点</Title>
           <ul className="list-inside list-disc space-y-2 pl-2">
             {pageCopyResult.result.copywriting.selling_points.map((sp, idx) => (
-              <li key={idx} className="text-gray-700"><Text strong>{sp.title}</Text>：{sp.detail}</li>
+              <li key={idx} className="text-text-muted"><Text strong>{sp.title}</Text>：{sp.detail}</li>
             ))}
           </ul>
           <Divider />

@@ -308,7 +308,7 @@ export default function CampaignAnalyticsPage() {
           </Row>
         )}
         {selectedBatch && !codeStats && !codeStatsLoading && (
-          <div className="text-gray-400">暂无统计数据</div>
+          <div className="text-text-muted">暂无统计数据</div>
         )}
       </Card>
     </div>

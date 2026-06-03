@@ -64,7 +64,7 @@ export function InterceptionsTab() {
   return (
     <>
       <div className="flex items-center gap-4 mb-4">
-        <span className="text-sm text-gray-500">只看自动触发</span>
+        <span className="text-sm text-text-muted">只看自动触发</span>
         <Switch size="small" checked={autoOnly} onChange={handleAutoToggle} />
       </div>
       <Table

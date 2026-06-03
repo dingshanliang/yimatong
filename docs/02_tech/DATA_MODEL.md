@@ -41,6 +41,10 @@ erDiagram
 
   ScanEvent ||--o{ RiskAlert : may_trigger
   ConsumerProfile ||--o{ ConsentRecord : has
+
+  AgencyAuthorization }o--|| Tenant : "agency_tenant"
+  AgencyAuthorization }o--|| Tenant : "client_tenant"
+  AgencyAuthorization }o--o| Account : "granted_by"
 ```
 
 ## 2. 核心表
@@ -222,6 +226,23 @@ erDiagram
 | granted_at | datetime | 授权时间 |
 | withdrawn_at | datetime | 撤回时间 |
 | evidence_json | jsonb | 授权页面、版本、IP、UA |
+
+### agency_authorizations
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| id | uuid | 授权 ID |
+| agency_tenant_id | uuid | 代运营租户（FK → tenants.id） |
+| client_tenant_id | uuid | 品牌客户租户（FK → tenants.id） |
+| scope | json | 授权范围列表，如 ["pages", "campaigns", "analytics", "products", "codes"] |
+| status | enum | active, revoked, expired |
+| granted_by | uuid | 授权人（FK → accounts.id），NULL 表示系统授权 |
+| granted_at | datetime | 授权时间 |
+| revoked_at | datetime | 撤回时间 |
+| expires_at | datetime | 过期时间，NULL 表示永不过期 |
+| created_at | datetime | 创建时间 |
+
+**约束**：每个 (agency_tenant_id, client_tenant_id) 组合只允许一条 status='active' 的记录（部分唯一索引）。
 
 ## 3. 状态机
 

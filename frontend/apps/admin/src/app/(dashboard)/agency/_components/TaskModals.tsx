@@ -111,12 +111,12 @@ export function ChecklistModal({ open, clientName, onClose, data, loading, onRet
   return (
     <Modal title={`上线检查清单 — ${clientName}`} open={open} onCancel={onClose} footer={null} width={600}>
       {loading ? (
-        <div className="py-8 text-center text-gray-400">加载中...</div>
+        <div className="py-8 text-center text-text-muted">加载中...</div>
       ) : data ? (
         <>
           <div className="mb-4">
             <Progress percent={data.total_count ? Math.round((data.passed_count / data.total_count) * 100) : 0} status={data.ready ? "success" : "active"} />
-            <div className="mt-1 text-sm text-gray-400">{data.passed_count} / {data.total_count} 项通过</div>
+            <div className="mt-1 text-sm text-text-muted">{data.passed_count} / {data.total_count} 项通过</div>
           </div>
           <List
             dataSource={data.checks}
@@ -129,7 +129,7 @@ export function ChecklistModal({ open, clientName, onClose, data, loading, onRet
                     <CloseCircleFilled className="text-red-400 text-lg" />
                   )}
                   <span>{item.name}</span>
-                  <span className="ml-2 text-sm text-gray-400">{item.detail}</span>
+                  <span className="ml-2 text-sm text-text-muted">{item.detail}</span>
                 </div>
               </List.Item>
             )}
@@ -137,7 +137,7 @@ export function ChecklistModal({ open, clientName, onClose, data, loading, onRet
         </>
       ) : (
         <div className="py-8 text-center">
-          <div className="mb-4 text-gray-400">无法加载检查清单</div>
+          <div className="mb-4 text-text-muted">无法加载检查清单</div>
           <Button icon={<ReloadOutlined />} onClick={onRetry}>重试</Button>
         </div>
       )}

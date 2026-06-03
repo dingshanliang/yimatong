@@ -52,7 +52,7 @@ export function CampaignTab() {
         </Form.Item>
         <Form.Item><Button type="primary" htmlType="submit" loading={loading} icon={<GiftOutlined />}>生成活动方案</Button></Form.Item>
       </Form>
-      {loading && <div className="py-8 text-center"><Spin size="large" /><div className="mt-2 text-gray-500">AI 正在策划中...</div></div>}
+      {loading && <div className="py-8 text-center"><Spin size="large" /><div className="mt-2 text-text-muted">AI 正在策划中...</div></div>}
       {result && !loading && (
         <ResultCard title="活动方案" icon={<CheckCircleOutlined />} generationId={result.generation_id}>
           <Descriptions bordered column={1} size="small">

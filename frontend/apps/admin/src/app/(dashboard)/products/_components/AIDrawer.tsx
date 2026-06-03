@@ -115,7 +115,7 @@ export function AIDrawer({ open, onClose, form }: AIDrawerProps) {
             <Button onClick={handleGeneratePageCopy} loading={generating} icon={<RobotOutlined />}>生成页面文案和推荐模板</Button>
             {pageCopy && (
               <div className="space-y-4 mt-4">
-                <div><Text strong>品牌故事</Text><Paragraph className="mt-1 rounded bg-gray-50 p-3">{pageCopy.copywriting.brand_story}</Paragraph></div>
+                <div><Text strong>品牌故事</Text><Paragraph className="mt-1 rounded bg-bg-muted p-3">{pageCopy.copywriting.brand_story}</Paragraph></div>
                 <div><Text strong>核心卖点</Text>
                   <List className="mt-1" size="small" dataSource={pageCopy.copywriting.selling_points}
                     renderItem={(item) => <List.Item><Text strong>{item.title}</Text><Text className="ml-2">{item.detail}</Text></List.Item>} />

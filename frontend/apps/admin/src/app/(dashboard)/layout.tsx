@@ -46,24 +46,53 @@ const MENU_OPEN_KEY_RULES = [
   { key: "catalog-group", prefixes: ["/brands", "/products", "/skus", "/batches"] },
   { key: "traceability-group", prefixes: ["/codes", "/pages"] },
   { key: "growth-group", prefixes: ["/campaigns", "/benefits", "/members"] },
-  { key: "channels-group", prefixes: ["/channels", "/channel-portal", "/store-portal", "/regional", "/accounts", "/agency"] },
+  { key: "channels-group", prefixes: ["/channels", "/channel-portal", "/store-portal", "/regional", "/accounts"] },
   { key: "analytics-group", prefixes: ["/stats", "/campaign-analytics", "/gmv", "/risk-dashboard", "/exports"] },
   { key: "integrations-group", prefixes: ["/connectors", "/integrations", "/imports", "/crm-sync"] },
   { key: "governance-group", prefixes: ["/risk", "/launch-checklist"] },
   { key: "settings-group", prefixes: ["/settings", "/i18n"] },
 ];
 
-// --- Tenant type-based menu visibility ---
-const AGENCY_HIDDEN_KEYS = new Set([
-  "/brands", "/products", "/skus", "/batches",
-  "/codes", "/pages",
-  "/campaigns", "/benefits", "/members",
-  "/channels", "/regional", "/accounts",
-  "/integrations", "/connectors",
-  "/risk", "/launch-checklist",
-  "catalog-group", "traceability-group", "growth-group",
-  "channels-group", "integrations-group", "governance-group",
-]);
+// --- Menu Permission Configuration ---
+type TenantType = "brand" | "agency" | "regional_org";
+
+interface MenuPolicy {
+  mode: "allowlist" | "blocklist";
+  items: string[];
+}
+
+const MENU_PERMISSIONS: Record<TenantType, MenuPolicy> = {
+  brand: {
+    mode: "blocklist",
+    items: ["/agency"],
+  },
+  agency: {
+    mode: "allowlist",
+    items: [
+      "/", "/ai-assistant",
+      "/agency",
+      "/pages", "/campaigns", "/products", "/codes",
+      "/launch-checklist",
+      "/stats", "/campaign-analytics", "/gmv", "/exports",
+      "analytics-group",
+      "settings-group", "/settings/roles", "/settings/compliance", "/settings/tenant", "/settings/audit-logs", "/i18n",
+    ],
+  },
+  regional_org: {
+    mode: "blocklist",
+    items: [
+      "/agency", "/skus", "/batches", "/benefits", "/channels",
+      "/accounts", "/risk-dashboard", "/integrations", "/connectors",
+      "/risk", "/gmv", "/crm-sync", "/imports",
+    ],
+  },
+};
+
+// Role-based overrides for distributor/store_guide
+const ROLE_PORTAL_MAP: Record<string, string> = {
+  distributor: "/channel-portal",
+  store_guide: "/store-portal",
+};
 
 function DashboardInner({ children }: { children: React.ReactNode }) {
   const router = useRouter();
@@ -85,18 +114,11 @@ function DashboardInner({ children }: { children: React.ReactNode }) {
     .filter(({ prefixes }) => prefixes.some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`)))
     .map(({ key }) => key);
 
-  const isDistributorUser = user?.role === "distributor" || user?.role === "Distributor";
-  const isStoreUser = user?.role === "store_guide" || user?.role === "StoreGuide";
-  const channelMenuChildren: MenuProps["items"] = isDistributorUser
-    ? [{ key: "/channel-portal", icon: <ShopOutlined />, label: t("menu.channel-portal") }]
-    : isStoreUser
-      ? [{ key: "/store-portal", icon: <ShopOutlined />, label: t("menu.store-portal") }]
-      : [
-          { key: "/channels", icon: <ShopOutlined />, label: t("menu.channels") },
-          { key: "/regional", icon: <TeamOutlined />, label: t("menu.regional") },
-          { key: "/accounts", icon: <TeamOutlined />, label: t("menu.accounts") },
-          { key: "/agency", icon: <TeamOutlined />, label: t("menu.agency") },
-        ];
+  const channelMenuChildren: MenuProps["items"] = [
+    { key: "/channels", icon: <ShopOutlined />, label: t("menu.channels") },
+    { key: "/regional", icon: <TeamOutlined />, label: t("menu.regional") },
+    { key: "/accounts", icon: <TeamOutlined />, label: t("menu.accounts") },
+  ];
 
   const menuItems: MenuProps["items"] = [
     { key: "/", icon: <DashboardOutlined />, label: t("menu.dashboard") },
@@ -131,6 +153,7 @@ function DashboardInner({ children }: { children: React.ReactNode }) {
         { key: "/members", icon: <UserOutlined />, label: t("menu.members") },
       ],
     },
+    { key: "/agency", icon: <TeamOutlined />, label: t("menu.agency") },
     {
       key: "channels-group",
       icon: <ShopOutlined />,
@@ -181,23 +204,101 @@ function DashboardInner({ children }: { children: React.ReactNode }) {
     },
   ];
 
-  // --- Tenant type-based menu filtering ---
-  const tenantType = user?.tenant_type || "brand";
+  const tenantType = (user?.tenant_type || "brand") as TenantType;
+  const policy = MENU_PERMISSIONS[tenantType] || MENU_PERMISSIONS.brand;
+  const portalOverride = ROLE_PORTAL_MAP[user?.role?.toLowerCase() || ""];
 
   const filteredMenuItems = useMemo(() => {
     if (!menuItems) return menuItems;
 
-    return menuItems.filter((item) => {
-      if (!item || !("key" in item)) return true;
-      const key = item.key as string;
+    // Portal users (distributor/store_guide) see only their portal
+    if (portalOverride) {
+      return menuItems.filter(
+        (item): item is NonNullable<typeof item> =>
+          item != null && "key" in item && (item.key === "/" || item.key === portalOverride)
+      );
+    }
 
-      if (tenantType === "agency") {
-        return !AGENCY_HIDDEN_KEYS.has(key);
+    // Agency in client context: show brand-like menu filtered by agency_scope
+    if (tenantType === "agency" && user?.acting_tenant_id) {
+      const scope = user.agency_scope || [];
+      const scopeAllowlist = new Set([
+        "/", // always show dashboard
+        ...scope,
+        "analytics-group",
+        "settings-group",
+      ]);
+
+      function isScopeAllowed(key: string): boolean {
+        return scopeAllowlist.has(key);
       }
-      // brand, regional_org: hide /agency; platform sees everything
-      return tenantType === "platform" || key !== "/agency";
-    });
-  }, [menuItems, tenantType]);
+
+      function filterScopeItems(items: MenuProps["items"]): MenuProps["items"] {
+        if (!items) return items;
+        return items
+          .filter((item) => {
+            if (!item || !("key" in item)) return true;
+            const key = item.key as string;
+            // Hide agency menu when in client context
+            if (key === "/agency") return false;
+            if (!("children" in item)) return isScopeAllowed(key);
+            return true; // groups kept, children filtered below
+          })
+          .map((item) => {
+            if (!item || !("children" in item)) return item;
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const children = (item as any).children;
+            if (!Array.isArray(children)) return item;
+            const filtered = filterScopeItems(children) ?? [];
+            // Remove group if empty
+            if (filtered.length === 0) return null;
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            return { ...(item as any), children: filtered } as any;
+          })
+          .filter((item): item is NonNullable<typeof item> => item !== null);
+      }
+
+      return filterScopeItems(menuItems);
+    }
+
+    function isAllowed(key: string): boolean {
+      if (policy.mode === "allowlist") {
+        return policy.items.includes(key);
+      }
+      // blocklist
+      return !policy.items.includes(key);
+    }
+
+    function filterItems(items: MenuProps["items"]): MenuProps["items"] {
+      if (!items) return items;
+      return items
+        .filter((item) => {
+          if (!item || !("key" in item)) return true;
+          const key = item.key as string;
+          if (!("children" in item)) return isAllowed(key);
+          return true; // groups kept, children filtered below
+        })
+        .map((item) => {
+          if (!item || !("children" in item)) return item;
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const children = (item as any).children;
+          if (!Array.isArray(children)) return item;
+          const filtered = filterItems(children) ?? [];
+          // If group itself is not allowed and has no children, remove it
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const groupKey = (item as any).key as string;
+          if (filtered.length === 0 || !isAllowed(groupKey)) {
+            // Group is blocked or empty - remove if empty
+            if (filtered.length === 0) return null;
+          }
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          return { ...(item as any), children: filtered } as any;
+        })
+        .filter((item): item is NonNullable<typeof item> => item !== null);
+    }
+
+    return filterItems(menuItems);
+  }, [menuItems, policy, portalOverride, tenantType, user?.acting_tenant_id, user?.agency_scope]);
 
   if (!user) {
     return (
@@ -245,6 +346,32 @@ function DashboardInner({ children }: { children: React.ReactNode }) {
         </Sider>
         <Layout className="admin-workspace flex flex-col" style={{ minHeight: "100vh" }}>
           <Header className="admin-header flex items-center justify-between px-6">
+            {/* Agency context indicator */}
+            {user?.tenant_type === "agency" && user?.acting_tenant_id && (
+              <div style={{
+                background: "#722ed1",
+                color: "white",
+                padding: "4px 12px",
+                borderRadius: 4,
+                fontSize: 13,
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+              }}>
+                <span>客户: {user.acting_tenant_id}</span>
+                <Button
+                  size="small"
+                  type="text"
+                  style={{ color: "white", padding: "0 4px" }}
+                  onClick={() => {
+                    useAuthStore.getState().exitAgencyContext();
+                    router.push("/");
+                  }}
+                >
+                  退出客户
+                </Button>
+              </div>
+            )}
             <Select
               value={locale}
               onChange={setLocale}

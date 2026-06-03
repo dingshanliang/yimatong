@@ -1,5 +1,14 @@
 @import "tailwindcss";
 
+@theme inline {
+  --color-text-muted: var(--admin-text-muted);
+  --color-bg-container: var(--admin-bg-container);
+  --color-bg-muted: var(--admin-bg-muted);
+  --color-bg-layout: var(--admin-bg-layout);
+  --color-border-subtle: var(--admin-border);
+  --color-text-heading: var(--foreground);
+}
+
 :root {
   --background: #f4f7fb;
   --foreground: #172033;
@@ -66,18 +75,3 @@ body {
   border-color: var(--admin-border);
 }
 
-html[data-theme="dark"] .bg-white,
-html[data-theme="dark"] .bg-gray-50 {
-  background-color: var(--admin-bg-container) !important;
-}
-
-html[data-theme="dark"] .border-gray-200 {
-  border-color: var(--admin-border) !important;
-}
-
-html[data-theme="dark"] .text-gray-400,
-html[data-theme="dark"] .text-gray-500,
-html[data-theme="dark"] .text-gray-600,
-html[data-theme="dark"] .text-gray-700 {
-  color: var(--admin-text-muted) !important;
-}

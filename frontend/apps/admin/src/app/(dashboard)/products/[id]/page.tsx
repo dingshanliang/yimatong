@@ -583,7 +583,7 @@ export default function ProductWorkbenchPage() {
   ];
 
   if (!product) {
-    return <div className="py-20 text-center text-gray-400">{loading ? "加载中..." : "产品不存在"}</div>;
+    return <div className="py-20 text-center text-text-muted">{loading ? "加载中..." : "产品不存在"}</div>;
   }
 
   return (
@@ -595,7 +595,7 @@ export default function ProductWorkbenchPage() {
           <Text type="secondary">{product.brand_name || "未关联品牌"} · {product.category || "未填写品类"} · {product.origin || "未填写产地"}</Text>
         </Space>
         <div className="w-56">
-          <div className="mb-1 flex justify-between text-xs text-gray-500">
+          <div className="mb-1 flex justify-between text-xs text-text-muted">
             <span>资料完整度</span>
             <span>{completeness}%</span>
           </div>

@@ -74,7 +74,7 @@ export function ModuleItem({
         <span
           {...attributes}
           {...listeners}
-          className="cursor-grab text-gray-400 hover:text-gray-600 active:cursor-grabbing"
+          className="cursor-grab text-text-muted hover:text-text-heading active:cursor-grabbing"
           onClick={(event) => event.stopPropagation()}
         >
           <HolderOutlined />

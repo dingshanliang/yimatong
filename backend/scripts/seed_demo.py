@@ -41,7 +41,15 @@ from app.models.page import PageTemplate, PageTemplateStatus, PageVersion, PageV
 from app.models.product import Brand, Product, ProductionBatch, SKU
 from app.models.risk import InterceptionRecord, RiskAlert, RiskAlertType, RiskNotification, RiskRule
 from app.models.scan import ScanEvent
-from app.models.tenant import Account, Organization, Role, Tenant, account_roles
+from app.models.tenant import (
+    Account,
+    AgencyAuthorization,
+    AgencyAuthStatus,
+    Organization,
+    Role,
+    Tenant,
+    account_roles,
+)
 from app.services.analytics import aggregate_daily_stats
 from app.services.channel import create_account_scope
 from app.services.code import activate_batch, create_code_batch
@@ -1488,6 +1496,48 @@ def generate():
             # 5. 扫码事件
             event_count = await _ensure_scan_events(db, tenant_id, code_items)
             p.step("扫码事件", f"({event_count:,} 次)")
+
+            # --- Demo Agency Tenant ---
+            agency_slug = "demo-agency"
+            result = await db.execute(select(Tenant).where(Tenant.slug == agency_slug))
+            existing_agency = result.scalar_one_or_none()
+            if not existing_agency:
+                agency_tenant = Tenant(
+                    name="示例代运营服务商",
+                    slug=agency_slug,
+                    tenant_type="agency",
+                    plan="pro",
+                )
+                db.add(agency_tenant)
+                await db.flush()
+
+                agency_org = Organization(
+                    tenant_id=agency_tenant.id,
+                    name="示例代运营服务商",
+                )
+                db.add(agency_org)
+                await db.flush()
+
+                agency_admin = Account(
+                    tenant_id=agency_tenant.id,
+                    organization_id=agency_org.id,
+                    email="agency_admin@demo.com",
+                    hashed_password=hash_password("demopass"),
+                    name="代运营管理员",
+                )
+                db.add(agency_admin)
+                await db.flush()
+
+                auth = AgencyAuthorization(
+                    agency_tenant_id=agency_tenant.id,
+                    client_tenant_id=tenant.id,
+                    scope=["pages", "campaigns", "analytics", "products", "codes"],
+                    status=AgencyAuthStatus.active,
+                    granted_by=None,
+                )
+                db.add(auth)
+                await db.flush()
+                typer.echo(f"  Created demo agency tenant: {agency_slug}")
 
             # 提交阶段 A，关闭 session 释放 identity map
             await db.commit()

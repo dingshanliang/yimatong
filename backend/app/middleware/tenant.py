@@ -36,7 +36,8 @@ class TenantScopeMiddleware(BaseHTTPMiddleware):
             or request.url.path == "/api/v1/integrations/wecom/mock-added"
             or request.url.path == "/api/v1/platform/auth/login"
             or (request.url.path == "/api/v1/tenants" and request.method == "POST")
-            or request.url.path.startswith("/api/v1/connectors/connectors/") and request.url.path.endswith("/callback")
+            or request.url.path.startswith("/api/v1/connectors/connectors/")
+            and request.url.path.endswith("/callback")
             or request.url.path.startswith("/api/v1/wechat/")
         ):
             return await call_next(request)
@@ -61,16 +62,27 @@ class TenantScopeMiddleware(BaseHTTPMiddleware):
             return JSONResponse(status_code=401, content={"detail": "Invalid or expired token"})
 
         tenant_id = payload.get("tenant_id")
+        acting_tenant_id = payload.get("acting_tenant_id")
         request.state.tenant_id = tenant_id
         request.state.account_id = payload.get("sub")
         request.state.role = payload.get("role")
         request.state.tenant_type = payload.get("tenant_type", "brand")
         request.state.auth_method = "jwt"
 
+        # Agency context switching: if acting_tenant_id is present, use it for RLS
+        if acting_tenant_id:
+            request.state.acting_tenant_id = acting_tenant_id
+            request.state.original_tenant_id = tenant_id
+            rls_tenant_id = acting_tenant_id
+        else:
+            request.state.acting_tenant_id = None
+            request.state.original_tenant_id = None
+            rls_tenant_id = tenant_id
+
         # Set context var for RLS (consumed by get_db)
         from app.core.context import set_request_tenant_id
 
-        set_request_tenant_id(tenant_id)
+        set_request_tenant_id(rls_tenant_id)
         try:
             return await call_next(request)
         finally:

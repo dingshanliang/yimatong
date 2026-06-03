@@ -33,7 +33,7 @@ export function NotificationsTab() {
   return (
     <div>
       <div className="flex items-center justify-between mb-4">
-        <span className="text-sm text-gray-500">
+        <span className="text-sm text-text-muted">
           未读 <Badge count={unreadCount} /> / 共 {total} 条
         </span>
         <Button size="small" disabled={unreadCount === 0} onClick={markAllRead}>
@@ -67,7 +67,7 @@ export function NotificationsTab() {
                   <span className="font-medium">{item.title}</span>
                   {!item.read && <Badge status="processing" />}
                 </div>
-                <p className="text-sm text-gray-600 whitespace-pre-line">{item.detail}</p>
+                <p className="text-sm text-text-muted whitespace-pre-line">{item.detail}</p>
               </div>
             </div>
           </Card>

@@ -421,7 +421,7 @@ export default function BenefitsPage() {
         const info = BENEFIT_TYPE_MAP[record.benefit_type] || { label: record.benefit_type, color: "default", description: "" };
         return (
           <div>
-            <div className="font-medium text-gray-900">{record.name}</div>
+            <div className="font-medium text-text-heading">{record.name}</div>
             <Space size={6} className="mt-1">
               <Tag color={info.color}>{info.label}</Tag>
               <Text type="secondary" className="text-xs">{getBenefitValidityText(record)}</Text>
@@ -448,7 +448,7 @@ export default function BenefitsPage() {
         const percent = record.stock_total > 0 ? Math.round((record.stock_used / record.stock_total) * 100) : 0;
         return (
           <div className="min-w-[150px]">
-            <div className="mb-1 text-xs text-gray-500">已领 {record.stock_used} / {record.stock_total}，剩余 {remaining}</div>
+            <div className="mb-1 text-xs text-text-muted">已领 {record.stock_used} / {record.stock_total}，剩余 {remaining}</div>
             <Progress percent={percent} size="small" status={remaining <= 0 ? "exception" : percent >= 80 ? "active" : undefined} />
           </div>
         );
@@ -714,11 +714,11 @@ export default function BenefitsPage() {
           <Form.Item name="benefit_type" label="权益类型" rules={[{ required: true, message: "请选择权益类型" }]}>
             <Radio.Group className="grid w-full grid-cols-1 gap-2 md:grid-cols-2" data-testid="benefit-type-select">
               {Object.entries(BENEFIT_TYPE_MAP).map(([value, info]) => (
-                <Radio key={value} value={value} className="rounded border border-gray-200 p-3 [&>span:last-child]:w-full">
+                <Radio key={value} value={value} className="rounded border border-border-subtle p-3 [&>span:last-child]:w-full">
                   <div className="flex items-start justify-between gap-3">
                     <div>
                       <div className="font-medium">{info.label}</div>
-                      <div className="mt-1 text-xs text-gray-500">{info.description}</div>
+                      <div className="mt-1 text-xs text-text-muted">{info.description}</div>
                     </div>
                     <Tag color={info.color}>{info.label}</Tag>
                   </div>

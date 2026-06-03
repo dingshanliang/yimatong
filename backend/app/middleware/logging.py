@@ -31,14 +31,16 @@ class LoggingMiddleware(BaseHTTPMiddleware):
             response.status_code,
             duration_ms,
             get_request_tenant_id() or "-",
-            extra={"extra_data": {
-                "method": request.method,
-                "path": str(request.url.path),
-                "status_code": response.status_code,
-                "duration_ms": round(duration_ms, 1),
-                "request_id": get_request_id(),
-                "tenant_id": get_request_tenant_id(),
-            }},
+            extra={
+                "extra_data": {
+                    "method": request.method,
+                    "path": str(request.url.path),
+                    "status_code": response.status_code,
+                    "duration_ms": round(duration_ms, 1),
+                    "request_id": get_request_id(),
+                    "tenant_id": get_request_tenant_id(),
+                }
+            },
         )
 
         return response

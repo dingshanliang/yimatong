@@ -11,6 +11,7 @@ from app.models.code import CodeBatch
 from app.models.page import PageVersion, PageVersionStatus
 from app.models.product import Brand, Product
 from app.models.tenant import OpsTask, OpsTaskPriority, OpsTaskStatus, Tenant, TenantStatus
+from app.services.agency_auth import get_authorized_client_ids
 from app.utils import escape_like_pattern
 
 READINESS_STEPS = [
@@ -208,9 +209,34 @@ async def get_ops_workbench(
     q: str | None = None,
     readiness: str = "all",
     task_status: str = "all",
+    agency_tenant_id: uuid.UUID | None = None,
 ) -> dict:
     tenant_query = select(Tenant).where(Tenant.status != TenantStatus.terminated)
     count_query = select(func.count()).select_from(Tenant).where(Tenant.status != TenantStatus.terminated)
+
+    # Filter by authorized clients if agency_tenant_id is provided
+    authorized_client_ids: list[uuid.UUID] | None = None
+    if agency_tenant_id:
+        authorized_client_ids = await get_authorized_client_ids(db, agency_tenant_id)
+        if not authorized_client_ids:
+            return {
+                "summary": {
+                    "total_clients": 0,
+                    "active_clients": 0,
+                    "ready_clients": 0,
+                    "blocked_clients": 0,
+                    "pending_tasks": 0,
+                    "in_progress_tasks": 0,
+                    "overdue_tasks": 0,
+                },
+                "clients": [],
+                "tasks": [],
+                "total": 0,
+                "page": page,
+                "page_size": page_size,
+            }
+        tenant_query = tenant_query.where(Tenant.id.in_(authorized_client_ids))
+        count_query = count_query.where(Tenant.id.in_(authorized_client_ids))
 
     if q:
         escaped = escape_like_pattern(q)
@@ -245,32 +271,47 @@ async def get_ops_workbench(
     from app.models.code import CodeBatchStatus
 
     brand_counts = dict(
-        (await db.execute(
-            select(Brand.tenant_id, func.count()).group_by(Brand.tenant_id).where(Brand.tenant_id.in_(tenant_ids))
-        )).all()
+        (
+            await db.execute(
+                select(Brand.tenant_id, func.count()).group_by(Brand.tenant_id).where(Brand.tenant_id.in_(tenant_ids))
+            )
+        ).all()
     )
     product_counts = dict(
-        (await db.execute(
-            select(Product.tenant_id, func.count()).group_by(Product.tenant_id).where(Product.tenant_id.in_(tenant_ids))
-        )).all()
+        (
+            await db.execute(
+                select(Product.tenant_id, func.count())
+                .group_by(Product.tenant_id)
+                .where(Product.tenant_id.in_(tenant_ids))
+            )
+        ).all()
     )
     published_page_counts = dict(
-        (await db.execute(
-            select(PageVersion.tenant_id, func.count()).group_by(PageVersion.tenant_id)
-            .where(PageVersion.tenant_id.in_(tenant_ids), PageVersion.status == PageVersionStatus.published)
-        )).all()
+        (
+            await db.execute(
+                select(PageVersion.tenant_id, func.count())
+                .group_by(PageVersion.tenant_id)
+                .where(PageVersion.tenant_id.in_(tenant_ids), PageVersion.status == PageVersionStatus.published)
+            )
+        ).all()
     )
     activated_batch_counts = dict(
-        (await db.execute(
-            select(CodeBatch.tenant_id, func.count()).group_by(CodeBatch.tenant_id)
-            .where(CodeBatch.tenant_id.in_(tenant_ids), CodeBatch.status == CodeBatchStatus.completed)
-        )).all()
+        (
+            await db.execute(
+                select(CodeBatch.tenant_id, func.count())
+                .group_by(CodeBatch.tenant_id)
+                .where(CodeBatch.tenant_id.in_(tenant_ids), CodeBatch.status == CodeBatchStatus.completed)
+            )
+        ).all()
     )
     active_campaign_counts = dict(
-        (await db.execute(
-            select(Campaign.tenant_id, func.count()).group_by(Campaign.tenant_id)
-            .where(Campaign.tenant_id.in_(tenant_ids), Campaign.status == CampaignStatus.ACTIVE)
-        )).all()
+        (
+            await db.execute(
+                select(Campaign.tenant_id, func.count())
+                .group_by(Campaign.tenant_id)
+                .where(Campaign.tenant_id.in_(tenant_ids), Campaign.status == CampaignStatus.ACTIVE)
+            )
+        ).all()
     )
 
     task_rows: list[OpsTask] = []

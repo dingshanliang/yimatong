@@ -68,7 +68,7 @@ export function ExtractTab() {
           <Button type="primary" htmlType="submit" loading={loading} icon={<ExperimentOutlined />}>开始识别</Button>
         </Form.Item>
       </Form>
-      {loading && <div className="py-8 text-center"><Spin size="large" /><div className="mt-2 text-gray-500">AI 正在分析中...</div></div>}
+      {loading && <div className="py-8 text-center"><Spin size="large" /><div className="mt-2 text-text-muted">AI 正在分析中...</div></div>}
       {result && !loading && (
         <ResultCard title="识别结果" icon={<CheckCircleOutlined />} generationId={result.generation_id}>
           <Descriptions bordered column={1} size="small">

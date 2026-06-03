@@ -165,9 +165,9 @@ function CrossRegionCard() {
       size="small"
       extra={
         <Space>
-          <span className="text-gray-500 text-sm">近</span>
+          <span className="text-text-muted text-sm">近</span>
           <InputNumber min={1} max={365} value={daysBack} onChange={(v) => setDaysBack(v || 30)} size="small" style={{ width: 70 }} />
-          <span className="text-gray-500 text-sm">天</span>
+          <span className="text-text-muted text-sm">天</span>
         </Space>
       }
     >

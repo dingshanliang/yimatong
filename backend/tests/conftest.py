@@ -59,6 +59,7 @@ from app.models.scan import ScanEvent  # noqa: E402, F401
 from app.models.sync_mapping import SyncMapping  # noqa: E402, F401
 from app.models.tenant import (  # noqa: E402, F401
     Account,
+    AgencyAuthorization,
     Organization,
     Permission,
     Role,

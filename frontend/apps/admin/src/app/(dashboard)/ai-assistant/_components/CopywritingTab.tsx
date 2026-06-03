@@ -49,13 +49,13 @@ export function CopywritingTab() {
 
   const renderContent = (content: CopywritingResult["content"]) => {
     if (typeof content === "string") {
-      return <Paragraph style={{ whiteSpace: "pre-wrap", lineHeight: 1.8 }} className="text-gray-700">{content}</Paragraph>;
+      return <Paragraph style={{ whiteSpace: "pre-wrap", lineHeight: 1.8 }} className="text-text-muted">{content}</Paragraph>;
     }
     const items = content.items.map(normalizeItem);
     return (
       <ul className="list-inside list-disc space-y-2 pl-2">
         {items.map((item, idx) => (
-          <li key={idx} className="text-gray-700">
+          <li key={idx} className="text-text-muted">
             {item.title ? <strong>{item.title}</strong> : null}
             {item.title && item.detail ? "：" : null}
             {item.detail}
@@ -83,7 +83,7 @@ export function CopywritingTab() {
         <Form.Item name="keywords" label="关键词（用逗号分隔）"><Input placeholder="例: 有机, 五常, 大米, 绿色食品" /></Form.Item>
         <Form.Item><Button type="primary" htmlType="submit" loading={loading} icon={<CopyOutlined />}>生成文案</Button></Form.Item>
       </Form>
-      {loading && <div className="py-8 text-center"><Spin size="large" /><div className="mt-2 text-gray-500">AI 正在创作中...</div></div>}
+      {loading && <div className="py-8 text-center"><Spin size="large" /><div className="mt-2 text-text-muted">AI 正在创作中...</div></div>}
       {result && !loading && (
         <ResultCard title="文案结果" icon={<CheckCircleOutlined />} generationId={result.generation_id}>
           {renderContent(result.content)}

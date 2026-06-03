@@ -8,12 +8,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.core.dependencies import get_ops_user
+from app.core.permissions import require_tenant_type
 from app.models.tenant import OpsTask, OpsTaskPriority, OpsTaskStatus, Tenant, TenantStatus
 from app.schemas.common import PaginatedResponse
 from app.schemas.tenant import OpsTaskCreate, OpsTaskRead, OpsTaskUpdate, OpsWorkbenchResponse
 from app.services.ops import get_launch_checklist, get_ops_workbench, get_tenant_status
 
-ops_router = APIRouter(prefix="/api/v1/ops", tags=["ops"])
+ops_router = APIRouter(
+    prefix="/api/v1/ops",
+    tags=["ops"],
+    dependencies=[Depends(require_tenant_type("agency", "platform"))],
+)
 
 
 @ops_router.get("/overview", summary="代运营工作台概览")
@@ -58,6 +63,8 @@ async def get_ops_workbench_endpoint(
     task_status: str = Query("all", pattern="^(all|pending|in_progress|overdue)$"),
     db: AsyncSession = Depends(get_db),
 ):
+    _, _, tenant_id, tenant_type = _ops_user
+    agency_tenant_id = tenant_id if tenant_type == "agency" else None
     return await get_ops_workbench(
         db,
         page=page,
@@ -65,6 +72,7 @@ async def get_ops_workbench_endpoint(
         q=q,
         readiness=readiness,
         task_status=task_status,
+        agency_tenant_id=agency_tenant_id,
     )
 
 

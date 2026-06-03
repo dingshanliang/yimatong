@@ -163,7 +163,7 @@ export default function TenantSettingsPage() {
     return (
       <div>
         <Title level={4}>租户设置</Title>
-        <div className="text-gray-400">无法加载租户信息</div>
+        <div className="text-text-muted">无法加载租户信息</div>
       </div>
     );
   }
@@ -229,7 +229,7 @@ export default function TenantSettingsPage() {
             {tenant.name}
           </Descriptions.Item>
           <Descriptions.Item label="Slug">
-            <span className="text-gray-500">{tenant.slug}</span>
+            <span className="text-text-muted">{tenant.slug}</span>
           </Descriptions.Item>
           <Descriptions.Item label="套餐">
             {PLAN_MAP[tenant.plan] || tenant.plan}
@@ -259,11 +259,11 @@ export default function TenantSettingsPage() {
             return (
               <div
                 key={feature.key}
-                className="flex items-start justify-between rounded-lg border border-gray-200 p-4"
+                className="flex items-start justify-between rounded-lg border border-border-subtle p-4"
               >
                 <div>
                   <div className="font-medium">{feature.label}</div>
-                  <div className="mt-1 text-sm text-gray-500">
+                  <div className="mt-1 text-sm text-text-muted">
                     {feature.description}
                   </div>
                 </div>

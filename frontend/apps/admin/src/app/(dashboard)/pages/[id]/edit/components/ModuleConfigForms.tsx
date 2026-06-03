@@ -333,7 +333,7 @@ export function ModuleConfigForm({
       return (
         <div className="space-y-2">
           <Input size="small" placeholder="消费者 ID（可选）" value={String(config.consumer_id || "")} onChange={(e) => update("consumer_id", e.target.value)} />
-          <p className="text-xs text-gray-500">展示已上架的积分商品，消费者完成留资后可兑换。</p>
+          <p className="text-xs text-text-muted">展示已上架的积分商品，消费者完成留资后可兑换。</p>
         </div>
       );
 

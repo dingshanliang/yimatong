@@ -101,10 +101,10 @@ export default function RegionalPage() {
   return (
     <div>
       <Title level={4} className="!mb-2">区域品牌</Title>
-      <div className="mb-4 text-sm text-gray-500">管理区域公用品牌、协会成员、统一模板和跨成员活动。</div>
+      <div className="mb-4 text-sm text-text-muted">管理区域公用品牌、协会成员、统一模板和跨成员活动。</div>
 
       <div className="mb-4 flex justify-between items-center">
-        <span className="text-sm text-gray-500">
+        <span className="text-sm text-text-muted">
           {selectedOrgId ? `当前组织: ${selectedOrgName}` : "请选择一个组织"}
         </span>
         <Button type="primary" icon={<PlusOutlined />} onClick={() => setOpen(true)}>

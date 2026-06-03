@@ -412,7 +412,7 @@ export default function AccountsPage() {
               <Text code className="mt-2 block break-all text-xs">
                 {resetLink}
               </Text>
-              <div className="mt-2 text-xs text-gray-500">链接 1 小时内有效，用户设置新密码后自动失效。</div>
+              <div className="mt-2 text-xs text-text-muted">链接 1 小时内有效，用户设置新密码后自动失效。</div>
             </div>
           }
         />

@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { Button, Card, Empty, Input, Progress, Select, Space, Table, Tag } from "antd";
 import type { ColumnsType } from "antd/es/table";
+import { useAuthStore } from "@/lib/auth";
 import type { AgencyClientRow } from "./types";
 import { STATUS_MAP } from "./types";
 
@@ -25,7 +26,7 @@ function renderEmpty(hasAnyClients: boolean, hasError: boolean) {
         description={(
           <Space orientation="vertical" size={2}>
             <span>没有符合当前条件的客户</span>
-            <span className="text-sm text-gray-400">调整搜索词或筛选条件后再试。</span>
+            <span className="text-sm text-text-muted">调整搜索词或筛选条件后再试。</span>
           </Space>
         )}
       />
@@ -36,7 +37,7 @@ function renderEmpty(hasAnyClients: boolean, hasError: boolean) {
       description={(
         <Space orientation="vertical" size={2}>
           <span>还没有客户</span>
-          <span className="text-sm text-gray-400">初始化新客户后，这里会显示上线准备度和下一步动作。</span>
+          <span className="text-sm text-text-muted">初始化新客户后，这里会显示上线准备度和下一步动作。</span>
         </Space>
       )}
     />
@@ -95,7 +96,13 @@ export function ClientTable({
     }},
     { title: "下一步", key: "actions", render: (_: unknown, record) => (
       <Space size="small">
-        <Button size="small" type="primary" onClick={() => router.push(record.next_action.href)}>
+        <Button size="small" type="primary" onClick={async () => {
+          await useAuthStore.getState().switchAgencyContext(record.id);
+          router.push("/");
+        }}>
+          进入管理
+        </Button>
+        <Button size="small" onClick={() => router.push(record.next_action.href)}>
           {record.next_action.label}
         </Button>
         <Button size="small" onClick={() => onOpenChecklist(record.id, record.name)}>上线检查</Button>

@@ -100,7 +100,7 @@ export function ModuleList({
         <div className="mb-3 flex items-center justify-between">
           <div>
             <Text strong>模块工作区</Text>
-            <div className="text-xs text-gray-500">拖拽调整顺序，点击模块配置内容</div>
+            <div className="text-xs text-text-muted">拖拽调整顺序，点击模块配置内容</div>
           </div>
           <Button size="small" icon={<PlusOutlined />} onClick={addModule}>
             添加模块
@@ -138,13 +138,13 @@ export function ModuleList({
         )}
       </div>
 
-      <div className="min-h-0 flex-1 rounded border border-gray-200 bg-white p-3">
+      <div className="min-h-0 flex-1 rounded border border-border-subtle bg-bg-container p-3">
         {selectedModule ? (
           <div className="space-y-3">
             <div className="flex items-center justify-between gap-2">
               <div>
                 <Text strong>配置模块</Text>
-                <div className="text-xs text-gray-500">修改后请保存草稿，预览会实时刷新</div>
+                <div className="text-xs text-text-muted">修改后请保存草稿，预览会实时刷新</div>
               </div>
               <Select
                 size="small"
@@ -168,7 +168,7 @@ export function ModuleList({
                 title={statusById.get(selectedModule.id)?.issues[0] || "当前模块仍有配置项待完善"}
               />
             ) : null}
-            <div className="rounded bg-gray-50 p-3">
+            <div className="rounded bg-bg-muted p-3">
               <ModuleConfigForm
                 moduleType={selectedModule.type}
                 productId={productId}
@@ -178,7 +178,7 @@ export function ModuleList({
             </div>
           </div>
         ) : (
-          <div className="flex h-full items-center justify-center text-sm text-gray-500">
+          <div className="flex h-full items-center justify-center text-sm text-text-muted">
             选择一个模块后在这里配置内容
           </div>
         )}

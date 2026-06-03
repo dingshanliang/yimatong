@@ -297,7 +297,7 @@ export default function CodesPage() {
       render: (_: unknown, record: CodeBatch) => (
         <div>
           <div>{getProductDisplay(record)}</div>
-          <div className="text-xs text-gray-500">
+          <div className="text-xs text-text-muted">
             {getSkuDisplay(record)}
           </div>
         </div>
@@ -309,7 +309,7 @@ export default function CodesPage() {
       render: (_: unknown, record: CodeBatch) => (
         <div>
           <div>{record.production_batch_code || "未关联生产批次"}</div>
-          {record.production_date ? <div className="text-xs text-gray-500">{record.production_date}</div> : null}
+          {record.production_date ? <div className="text-xs text-text-muted">{record.production_date}</div> : null}
         </div>
       ),
     },

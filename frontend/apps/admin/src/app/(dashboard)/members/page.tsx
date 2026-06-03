@@ -598,7 +598,7 @@ function ProductsTab({ onChanged }: { onChanged: () => void }) {
       title: "商品",
       render: (_, record) => (
         <Space>
-          {record.image_url ? <Image src={record.image_url} alt={record.name} width={48} height={48} className="rounded object-cover" /> : <div className="h-12 w-12 rounded bg-gray-100" />}
+          {record.image_url ? <Image src={record.image_url} alt={record.name} width={48} height={48} className="rounded object-cover" /> : <div className="h-12 w-12 rounded bg-bg-muted" />}
           <div>
             <div className="font-medium">{record.name}</div>
             <Text type="secondary" className="text-xs">{record.description || "未填写描述"}</Text>

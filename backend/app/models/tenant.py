@@ -139,14 +139,10 @@ class OpsTask(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid7)
     tenant_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("tenants.id"), nullable=False, index=True)
-    assigned_to: Mapped[uuid.UUID | None] = mapped_column(
-        ForeignKey("accounts.id"), nullable=True, index=True
-    )
+    assigned_to: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("accounts.id"), nullable=True, index=True)
     title: Mapped[str] = mapped_column(String(200), nullable=False)
     description: Mapped[str | None] = mapped_column(String(1000), nullable=True)
-    status: Mapped[OpsTaskStatus] = mapped_column(
-        SQLEnum(OpsTaskStatus), default=OpsTaskStatus.pending, nullable=False
-    )
+    status: Mapped[OpsTaskStatus] = mapped_column(SQLEnum(OpsTaskStatus), default=OpsTaskStatus.pending, nullable=False)
     priority: Mapped[OpsTaskPriority] = mapped_column(
         SQLEnum(OpsTaskPriority), default=OpsTaskPriority.medium, nullable=False
     )
@@ -159,4 +155,39 @@ class OpsTask(Base):
         default=lambda: datetime.now(UTC),
         onupdate=lambda: datetime.now(UTC),
         nullable=False,
+    )
+
+
+class AgencyAuthScope(StrEnum):
+    pages = "pages"
+    campaigns = "campaigns"
+    analytics = "analytics"
+    products = "products"
+    codes = "codes"
+
+
+class AgencyAuthStatus(StrEnum):
+    active = "active"
+    revoked = "revoked"
+    expired = "expired"
+
+
+class AgencyAuthorization(Base):
+    __tablename__ = "agency_authorizations"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid7)
+    agency_tenant_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("tenants.id"), nullable=False, index=True)
+    client_tenant_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("tenants.id"), nullable=False, index=True)
+    scope: Mapped[dict] = mapped_column(JSON, default=list, nullable=False)
+    status: Mapped[AgencyAuthStatus] = mapped_column(
+        SQLEnum(AgencyAuthStatus), default=AgencyAuthStatus.active, nullable=False
+    )
+    granted_by: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("accounts.id"), nullable=True)
+    granted_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False
+    )
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False
     )

@@ -8,6 +8,9 @@ interface AuthUser {
   tenant_type: string;
   email: string;
   name: string;
+  // Agency context
+  acting_tenant_id: string | null;
+  agency_scope: string[] | null;
 }
 
 interface AuthState {
@@ -18,13 +21,17 @@ interface AuthState {
   logout: () => void;
   hydrate: () => void;
   silentRefresh: () => Promise<string | null>;
+  switchAgencyContext: (clientTenantId: string) => Promise<void>;
+  exitAgencyContext: () => Promise<void>;
 }
 
 let refreshPromise: Promise<string | null> | null = null;
 
-/** 确保 AuthUser 对象包含 tenant_type（向后兼容旧 localStorage 数据） */
+/** 确保 AuthUser 对象包含 tenant_type 和 agency context 字段（向后兼容旧 localStorage 数据） */
 function ensureTenantType(user: AuthUser): AuthUser {
   if (!user.tenant_type) user.tenant_type = "brand";
+  if (user.acting_tenant_id === undefined) user.acting_tenant_id = null;
+  if (user.agency_scope === undefined) user.agency_scope = null;
   return user;
 }
 
@@ -49,6 +56,8 @@ export const useAuthStore = create<AuthState>((set) => ({
         tenant_type: payload.tenant_type || "brand",
         email,
         name: payload.name || email,
+        acting_tenant_id: payload.acting_tenant_id || null,
+        agency_scope: payload.scope || null,
       };
       localStorage.setItem("auth_store", JSON.stringify(user));
       set({ user, token: access_token, loading: false });
@@ -64,6 +73,30 @@ export const useAuthStore = create<AuthState>((set) => ({
     localStorage.removeItem("auth_store");
     document.cookie = "access_token=; path=/; max-age=0";
     set({ user: null, token: null });
+  },
+
+  switchAgencyContext: async (clientTenantId: string) => {
+    const { data } = await api.post("/ops/authorizations/switch-context", { client_tenant_id: clientTenantId });
+    const stored = localStorage.getItem("auth_store");
+    const base = stored ? JSON.parse(stored) : {};
+    const updatedUser: AuthUser = {
+      ...base,
+      acting_tenant_id: data.acting_tenant_id || clientTenantId,
+      agency_scope: data.scope || null,
+    };
+    _applyTokenUpdate(data.access_token, updatedUser);
+  },
+
+  exitAgencyContext: async () => {
+    const { data } = await api.post("/ops/authorizations/exit-context");
+    const stored = localStorage.getItem("auth_store");
+    const base = stored ? JSON.parse(stored) : {};
+    const updatedUser: AuthUser = {
+      ...base,
+      acting_tenant_id: null,
+      agency_scope: null,
+    };
+    _applyTokenUpdate(data.access_token, updatedUser);
   },
 
   hydrate: () => {
@@ -94,12 +127,21 @@ export const useAuthStore = create<AuthState>((set) => ({
 }));
 
 /** 将 access_token 和 refresh_token 持久化到 localStorage + cookie */
-function _persistTokens(accessToken: string, refreshToken: string, _expiresIn: number) {
+function _persistTokens(accessToken: string, refreshToken: string, _expiresIn?: number) {
   localStorage.setItem("access_token", accessToken);
   localStorage.setItem("refresh_token", refreshToken);
   // cookie 供 Next.js middleware 读取，max-age 用 refresh token 的有效期（30天）
   const secure = window.location.protocol === "https:" ? "; Secure" : "";
   document.cookie = `access_token=${accessToken}; path=/; max-age=${30 * 24 * 3600}; SameSite=Lax${secure}`;
+}
+
+/** 切换 agency 上下文时更新 token 和用户状态 */
+function _applyTokenUpdate(accessToken: string, updatedUser: AuthUser) {
+  localStorage.setItem("auth_store", JSON.stringify(updatedUser));
+  localStorage.setItem("access_token", accessToken);
+  const secure = window.location.protocol === "https:" ? "; Secure" : "";
+  document.cookie = `access_token=${accessToken}; path=/; max-age=${30 * 24 * 3600}; SameSite=Lax${secure}`;
+  useAuthStore.setState({ user: updatedUser, token: accessToken });
 }
 
 async function _doSilentRefresh(): Promise<string | null> {
@@ -115,13 +157,16 @@ async function _doSilentRefresh(): Promise<string | null> {
     const stored = localStorage.getItem("auth_store");
     if (stored) {
       const payload = JSON.parse(atob(access_token.split(".")[1]));
-      const user = {
+      const parsedStored = JSON.parse(stored);
+      const user: AuthUser = {
         account_id: payload.sub,
         tenant_id: payload.tenant_id,
         role: payload.role,
         tenant_type: payload.tenant_type || "brand",
-        email: JSON.parse(stored).email,
-        name: JSON.parse(stored).name || JSON.parse(stored).email,
+        email: parsedStored.email,
+        name: parsedStored.name || parsedStored.email,
+        acting_tenant_id: payload.acting_tenant_id || parsedStored.acting_tenant_id || null,
+        agency_scope: payload.scope || parsedStored.agency_scope || null,
       };
       localStorage.setItem("auth_store", JSON.stringify(user));
       useAuthStore.setState({ user, token: access_token });

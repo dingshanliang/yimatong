@@ -3,6 +3,8 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.api.v1.agency_auth import _switch_router as agency_switch_router
+from app.api.v1.agency_auth import router as agency_auth_router
 from app.api.v1.ai import ai_router
 from app.api.v1.analytics import analytics_router
 from app.api.v1.analytics_dashboard import dashboard_router
@@ -100,6 +102,7 @@ OPENAPI_TAGS = [
     {"name": "risk-dashboard", "description": "风控仪表盘：风险数据可视化"},
     {"name": "risk-alerts", "description": "风控告警：风险告警与通知"},
     {"name": "tasks", "description": "异步任务：后台任务管理与状态查询"},
+    {"name": "agency-auth", "description": "Agency 授权：品牌授权代运营访问管理"},
     {"name": "ops", "description": "运维任务：平台运维与租户运营任务"},
     {"name": "channels", "description": "渠道管理：营销渠道配置与管理"},
     {"name": "password", "description": "密码管理：密码重置与修改"},
@@ -313,6 +316,8 @@ app.include_router(resolver_router)
 app.include_router(analytics_router)
 app.include_router(campaign_router)
 app.include_router(benefit_router)
+app.include_router(agency_auth_router)
+app.include_router(agency_switch_router)
 app.include_router(ops_router)
 app.include_router(risk_router)
 app.include_router(risk_notification_router)

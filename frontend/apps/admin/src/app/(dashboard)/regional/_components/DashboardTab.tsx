@@ -85,7 +85,7 @@ export function DashboardTab({ orgId, orgName }: { orgId: string; orgName: strin
     <div>
       <div className="mb-4 flex items-center justify-between">
         <Space>
-          <span className="text-sm text-gray-500">统计天数</span>
+          <span className="text-sm text-text-muted">统计天数</span>
           <InputNumber min={7} max={365} value={daysBack} onChange={(v) => v && setDaysBack(v)} />
         </Space>
         <Button onClick={handleExport}>导出 Excel</Button>

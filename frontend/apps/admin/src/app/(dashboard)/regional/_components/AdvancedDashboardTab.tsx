@@ -63,9 +63,9 @@ export function AdvancedDashboardTab({ orgId, orgName }: Props) {
     <div>
       <div className="mb-4 flex items-center justify-between">
         <Space>
-          <span className="text-sm text-gray-500">近</span>
+          <span className="text-sm text-text-muted">近</span>
           <InputNumber min={7} max={365} value={daysBack} onChange={(v) => setDaysBack(v || 30)} size="small" style={{ width: 70 }} />
-          <span className="text-sm text-gray-500">天</span>
+          <span className="text-sm text-text-muted">天</span>
           <Select value={drilldown} onChange={setDrilldown} size="small" style={{ width: 120 }}
             options={[
               { value: "member", label: "按成员企业" },
@@ -73,7 +73,7 @@ export function AdvancedDashboardTab({ orgId, orgName }: Props) {
             ]}
           />
         </Space>
-        <span className="text-sm text-gray-400">{orgName} · 高级看板</span>
+        <span className="text-sm text-text-muted">{orgName} · 高级看板</span>
       </div>
 
       <div className="mb-4 grid grid-cols-3 gap-4">

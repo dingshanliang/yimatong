@@ -33,11 +33,15 @@ ALLOWED_OPS_TENANT_TYPES = {"agency", "platform"}
 
 
 async def get_ops_user(
+    request: Request,
     account_id: uuid.UUID = Depends(get_current_account_id),
     role: str = Depends(get_current_role),
     tenant_type: str = Depends(get_current_tenant_type),
-) -> tuple[uuid.UUID, str]:
-    """Verify the current user is authenticated and has ops workbench access."""
+) -> tuple[uuid.UUID, str, uuid.UUID | None, str]:
+    """Verify the current user is authenticated and has ops workbench access.
+
+    Returns (account_id, role, tenant_id, tenant_type).
+    """
     if role not in ALLOWED_OPS_ROLES:
         raise HTTPException(
             status_code=403,
@@ -48,4 +52,6 @@ async def get_ops_user(
             status_code=403,
             detail="Tenant type not allowed to access operations workbench",
         )
-    return account_id, role
+    tenant_id_str = getattr(request.state, "tenant_id", None)
+    tenant_id = uuid.UUID(tenant_id_str) if tenant_id_str else None
+    return account_id, role, tenant_id, tenant_type

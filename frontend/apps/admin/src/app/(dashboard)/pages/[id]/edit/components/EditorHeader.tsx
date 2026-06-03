@@ -38,7 +38,7 @@ export function EditorHeader({
   const router = useRouter();
 
   return (
-    <div className="flex h-12 items-center justify-between border-b bg-white px-4">
+    <div className="flex h-12 items-center justify-between border-b bg-bg-container px-4">
       <div className="flex min-w-0 items-center gap-3">
         <Button
           type="text"

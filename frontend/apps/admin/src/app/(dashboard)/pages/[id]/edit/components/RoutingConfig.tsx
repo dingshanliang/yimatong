@@ -108,7 +108,7 @@ export function RoutingConfig({
           </div>
         ))}
         {periods.length === 0 && (
-          <div className="py-8 text-center text-gray-400">暂无活动期配置</div>
+          <div className="py-8 text-center text-text-muted">暂无活动期配置</div>
         )}
       </div>
     </div>

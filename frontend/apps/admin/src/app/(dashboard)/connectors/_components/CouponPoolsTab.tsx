@@ -55,7 +55,7 @@ export function CouponPoolsTab() {
       const percent = record.total_codes > 0 ? Math.round((used / record.total_codes) * 100) : 0;
       return (
         <div className="min-w-[100px]">
-          <div className="mb-1 text-xs text-gray-500">{record.remaining} / {record.total_codes}</div>
+          <div className="mb-1 text-xs text-text-muted">{record.remaining} / {record.total_codes}</div>
           <Progress percent={percent} size="small" status={record.remaining === 0 ? "exception" : undefined} />
         </div>
       );

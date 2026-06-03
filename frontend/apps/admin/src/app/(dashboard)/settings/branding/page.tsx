@@ -179,7 +179,7 @@ export default function BrandingSettingsPage() {
       }>
         <Table columns={domainCols} dataSource={domains} rowKey="id" loading={loading} size="small" pagination={false} />
         {domains.length === 0 && !loading && (
-          <p className="py-4 text-center text-sm text-gray-400">暂无自定义域名。请将域名的 CNAME 指向 cname.yimatong.cn</p>
+          <p className="py-4 text-center text-sm text-text-muted">暂无自定义域名。请将域名的 CNAME 指向 cname.yimatong.cn</p>
         )}
       </Card>
 
@@ -188,7 +188,7 @@ export default function BrandingSettingsPage() {
           <Form.Item name="domain" label="域名" rules={[{ required: true }]}>
             <Input placeholder="brand.example.com" />
           </Form.Item>
-          <p className="text-xs text-gray-400">请先将该域名的 CNAME 记录指向 cname.yimatong.cn</p>
+          <p className="text-xs text-text-muted">请先将该域名的 CNAME 记录指向 cname.yimatong.cn</p>
         </Form>
       </Modal>
     </div>

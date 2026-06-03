@@ -1,9 +1,10 @@
 "use client";
 
 import { useState } from "react";
-import { App, Button, Card, Form, Input, Space, Tag, Typography } from "antd";
-import { CrownOutlined, LockOutlined, MailOutlined, ShopOutlined, TeamOutlined, UserSwitchOutlined } from "@ant-design/icons";
+import { App, Button, Card, Divider, Form, Input, Space, Tag, Typography } from "antd";
+import { CrownOutlined, GlobalOutlined, LockOutlined, MailOutlined, ShopOutlined, TeamOutlined, UserSwitchOutlined } from "@ant-design/icons";
 import { useRouter } from "next/navigation";
+import axios from "axios";
 import { useAuthStore } from "@/lib/auth";
 
 const { Title, Text } = Typography;
@@ -56,6 +57,16 @@ const DEMO_ACCOUNTS = [
     icon: <ShopOutlined />,
     route: "/store-portal",
   },
+  {
+    key: "platform",
+    label: "平台管理员",
+    role: "platform_admin",
+    email: "platform@yimatong.cn",
+    password: "Platform1234",
+    description: "管理租户、套餐、审计日志和全局配置",
+    icon: <GlobalOutlined />,
+    platform: true,
+  },
 ];
 
 export default function LoginPage() {
@@ -88,10 +99,27 @@ export default function LoginPage() {
   };
 
   const handleDemoLogin = async (account: (typeof DEMO_ACCOUNTS)[number]) => {
-    form.setFieldsValue({ email: account.email, password: account.password });
     setLoadingAccount(account.key);
     try {
-      await onFinish({ email: account.email, password: account.password }, account.route ?? "/");
+      if (account.platform) {
+        // 平台管理员：使用独立登录端点和 cookie
+        const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+        const { data } = await axios.post(`${API_BASE}/api/v1/platform/auth/login`, {
+          email: account.email,
+          password: account.password,
+        });
+        const { access_token } = data;
+        localStorage.setItem("platform_access_token", access_token);
+        const secure = window.location.protocol === "https:" ? "; Secure" : "";
+        document.cookie = `platform_access_token=${access_token}; path=/; max-age=${30 * 24 * 3600}; SameSite=Lax${secure}`;
+        message.success("平台管理员登录成功，正在跳转…");
+        // 跳转到平台管理后台（端口 3002）
+        const platformUrl = process.env.NEXT_PUBLIC_PLATFORM_URL || "http://localhost:3002";
+        window.open(platformUrl, "_blank");
+      } else {
+        form.setFieldsValue({ email: account.email, password: account.password });
+        await onFinish({ email: account.email, password: account.password }, account.route ?? "/");
+      }
     } finally {
       setLoadingAccount(null);
     }
@@ -111,24 +139,26 @@ export default function LoginPage() {
           </div>
           <Space orientation="vertical" className="w-full" size={8}>
             {DEMO_ACCOUNTS.map((account) => (
-              <Button
-                key={account.key}
-                block
-                className="!h-auto !justify-start !py-3 text-left"
-                icon={account.icon}
-                loading={loadingAccount === account.key}
-                onClick={() => handleDemoLogin(account)}
-              >
-                <span className="flex w-full items-center justify-between gap-3">
-                  <span className="min-w-0">
-                    <span className="block font-medium">{account.label}</span>
-                    <span className="block truncate text-xs text-gray-500">{account.description}</span>
+              <span key={account.key}>
+                {account.platform && <Divider className="!my-2" plain><Text type="secondary" className="!text-xs">平台管理</Text></Divider>}
+                <Button
+                  block
+                  className="!h-auto !justify-start !py-3 text-left"
+                  icon={account.icon}
+                  loading={loadingAccount === account.key}
+                  onClick={() => handleDemoLogin(account)}
+                >
+                  <span className="flex w-full items-center justify-between gap-3">
+                    <span className="min-w-0">
+                      <span className="block font-medium">{account.label}</span>
+                      <span className="block truncate text-xs text-text-muted">{account.description}</span>
+                    </span>
+                    <Tag className="m-0" color={account.role === "platform_admin" ? "purple" : account.role === "admin" ? "gold" : "blue"}>
+                      {account.role}
+                    </Tag>
                   </span>
-                  <Tag className="m-0" color={account.role === "admin" ? "gold" : "blue"}>
-                    {account.role}
-                  </Tag>
-                </span>
-              </Button>
+                </Button>
+              </span>
             ))}
           </Space>
         </div>

@@ -159,7 +159,7 @@ export default function LaunchChecklistPage() {
           percent={Math.round((checkedCount / totalItems) * 100)}
           status={allRequiredDone ? "success" : "active"}
         />
-        <div className="mt-2 text-sm text-gray-400">
+        <div className="mt-2 text-sm text-text-muted">
           必填项：{requiredChecked} / {requiredItems.length}
         </div>
       </Card>
@@ -176,7 +176,7 @@ export default function LaunchChecklistPage() {
             title={
               <div className="flex items-center justify-between">
                 <span>{group.group}</span>
-                <span className="text-sm text-gray-400 font-normal">
+                <span className="text-sm text-text-muted font-normal">
                   {groupChecked} / {groupTotal}
                 </span>
               </div>

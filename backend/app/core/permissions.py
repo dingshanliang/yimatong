@@ -1,7 +1,10 @@
-"""角色→权限映射配置。
+"""角色→权限映射配置 及 租户类型守卫。
 
 角色系统用于 API Key 认证。每个角色映射到一组 resource:action 权限。
+租户类型守卫用于限制端点只能被特定 tenant_type 访问。
 """
+
+from fastapi import Depends, HTTPException, Request
 
 ROLE_PERMISSIONS: dict[str, list[str]] = {
     "data_reader": [
@@ -81,3 +84,28 @@ def get_permissions_for_role(role: str) -> list[str]:
 def role_has_permission(role: str, permission: str) -> bool:
     """检查角色是否包含指定权限。"""
     return permission in ROLE_PERMISSIONS.get(role, [])
+
+
+async def _get_tenant_type_from_request(request: Request) -> str:
+    """从 request.state 读取 tenant_type，默认 'brand'。"""
+    return getattr(request.state, "tenant_type", "brand")
+
+
+def require_tenant_type(*allowed_types: str):
+    """FastAPI 依赖：限制只有特定 tenant_type 可访问。
+
+    用法：
+        @router.get(..., dependencies=[Depends(require_tenant_type("agency", "platform"))])
+        或者作为函数参数依赖：
+        _guard = Depends(require_tenant_type("brand"))
+    """
+
+    async def _check(tenant_type: str = Depends(_get_tenant_type_from_request)):
+        if tenant_type not in allowed_types:
+            raise HTTPException(
+                status_code=403,
+                detail=f"该操作需要 {', '.join(allowed_types)} 类型租户",
+            )
+        return tenant_type
+
+    return _check

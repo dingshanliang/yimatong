@@ -123,21 +123,21 @@ export default function CompliancePage() {
             <div className="flex items-center justify-between p-4 border rounded">
               <div>
                 <div className="font-medium">手机号授权</div>
-                <div className="text-gray-400 text-sm">消费者扫码时是否需要授权手机号</div>
+                <div className="text-text-muted text-sm">消费者扫码时是否需要授权手机号</div>
               </div>
               <Switch checked={phoneAuth} onChange={setPhoneAuth} checkedChildren="开启" unCheckedChildren="关闭" />
             </div>
             <div className="flex items-center justify-between p-4 border rounded">
               <div>
                 <div className="font-medium">位置授权</div>
-                <div className="text-gray-400 text-sm">消费者扫码时是否需要授权地理位置</div>
+                <div className="text-text-muted text-sm">消费者扫码时是否需要授权地理位置</div>
               </div>
               <Switch checked={locationAuth} onChange={setLocationAuth} checkedChildren="开启" unCheckedChildren="关闭" />
             </div>
             <div className="flex items-center justify-between p-4 border rounded">
               <div>
                 <div className="font-medium">微信授权</div>
-                <div className="text-gray-400 text-sm">消费者扫码时是否需要微信授权（获取 openid）</div>
+                <div className="text-text-muted text-sm">消费者扫码时是否需要微信授权（获取 openid）</div>
               </div>
               <Switch checked={wechatAuth} onChange={setWechatAuth} checkedChildren="开启" unCheckedChildren="关闭" />
             </div>
