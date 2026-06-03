@@ -7,6 +7,7 @@ from sqlalchemy import Integer, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.analytics import DailyScanStats
+from app.models.campaign import BenefitClaim
 from app.models.code import CodeItem
 from app.models.scan import ScanEvent
 
@@ -117,29 +118,34 @@ async def get_dashboard(
 
     # 同期对比
     prev_start = seven_days_ago - timedelta(days=7)
-    prev_end = seven_days_ago - timedelta(days=1)
 
     # 一次查询同时获取当前和前一周期的总量
     current_and_prev = await db.execute(
         select(
-            func.coalesce(func.sum(
-                func.case((DailyScanStats.date >= seven_days_ago, DailyScanStats.total_scans), else_=0)
-            ), 0),
-            func.coalesce(func.sum(
-                func.case((DailyScanStats.date >= seven_days_ago, DailyScanStats.first_scans), else_=0)
-            ), 0),
-            func.coalesce(func.sum(
-                func.case(
-                    (DailyScanStats.date >= prev_start, DailyScanStats.total_scans),
-                    else_=0,
-                )
-            ), 0),
-            func.coalesce(func.sum(
-                func.case(
-                    (DailyScanStats.date >= prev_start, DailyScanStats.first_scans),
-                    else_=0,
-                )
-            ), 0),
+            func.coalesce(
+                func.sum(func.case((DailyScanStats.date >= seven_days_ago, DailyScanStats.total_scans), else_=0)), 0
+            ),
+            func.coalesce(
+                func.sum(func.case((DailyScanStats.date >= seven_days_ago, DailyScanStats.first_scans), else_=0)), 0
+            ),
+            func.coalesce(
+                func.sum(
+                    func.case(
+                        (DailyScanStats.date >= prev_start, DailyScanStats.total_scans),
+                        else_=0,
+                    )
+                ),
+                0,
+            ),
+            func.coalesce(
+                func.sum(
+                    func.case(
+                        (DailyScanStats.date >= prev_start, DailyScanStats.first_scans),
+                        else_=0,
+                    )
+                ),
+                0,
+            ),
         ).where(
             DailyScanStats.tenant_id == tenant_id,
             DailyScanStats.date >= prev_start,
@@ -156,6 +162,17 @@ async def get_dashboard(
         pct = round((current - previous) / previous * 100, 1)
         return {"value": pct, "direction": "up" if pct > 0 else "down" if pct < 0 else "flat"}
 
+    # 转化指标
+    claim_count_result = await db.execute(
+        select(func.count())
+        .select_from(BenefitClaim)
+        .where(
+            BenefitClaim.tenant_id == tenant_id,
+            BenefitClaim.status == "success",
+        )
+    )
+    period_claim_count = claim_count_result.scalar() or 0
+
     return {
         "today_scans": today_stats.total_scans if today_stats else 0,
         "today_uv": today_stats.uv if today_stats else 0,
@@ -167,6 +184,8 @@ async def get_dashboard(
             "weekly_scans_change": _calc_change(cur_scans, prev_scans),
             "weekly_first_scans_change": _calc_change(cur_first_scans, prev_first_scans),
         },
+        "period_claim_count": period_claim_count,
+        "period_claim_rate": round(period_claim_count / cumulative_scans * 100, 1) if cumulative_scans > 0 else 0.0,
     }
 
 
