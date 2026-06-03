@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { App, Badge, Button, Card, Col, Row, Select, Space, Statistic, Table, Tag, Typography, InputNumber } from "antd";
+import { Alert, App, Badge, Button, Card, Col, Row, Select, Space, Statistic, Table, Tag, Typography, InputNumber } from "antd";
 import { DownloadOutlined, CheckOutlined, BellOutlined } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
 import api from "@/lib/api";
@@ -78,11 +78,22 @@ function AlertIndicator({ tenantId }: { tenantId: string | null }) {
   }, [tenantId, scheduleRetry]);
 
   return (
-    <Badge count={alerts.length} size="small" offset={[2, 0]}>
+    <>
+      {!connected && retryCountRef.current > 0 && (
+        <Alert
+          type="warning"
+          message="实时推送已断开，正在重连..."
+          showIcon
+          banner
+          className="mb-4"
+        />
+      )}
+      <Badge count={alerts.length} size="small" offset={[2, 0]}>
       <Button icon={<BellOutlined />} type={connected ? "default" : "dashed"} size="small">
         {connected ? "实时告警" : "未连接"}
       </Button>
     </Badge>
+    </>
   );
 }
 
