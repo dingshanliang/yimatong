@@ -1,5 +1,9 @@
 # Channel Region Closed Loop Implementation Plan
 
+> **Status:** ⏸ Partial — basic channel/region models and API exist, advanced tracking/analytics not implemented
+> **Completed date:** —
+> **Evidence:** `backend/app/models/channel.py`, `backend/app/api/v1/channels.py` — basic CRUD only
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Make channel management close the business loop with distributor as the required responsibility owner, region as the primary operating scope, and store as an optional finer-grained capability.

@@ -1,3 +1,8 @@
+---
+status: active
+last_verified: 2026-06-03
+accuracy: high
+---
 # 一码通解决方案 PPT 脚本
 
 风格：咨询公司方案风为主，融合企业老板销售风。  

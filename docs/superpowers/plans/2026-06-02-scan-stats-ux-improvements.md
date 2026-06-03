@@ -1,5 +1,9 @@
 # 扫码统计 UX 改进 Implementation Plan
 
+> **Status:** ⏸ Partial — basic ScanTrendChart exists, no comprehensive statistics UI
+> **Completed date:** —
+> **Evidence:** `frontend/apps/admin/src/components/ScanTrendChart.tsx` — basic chart only
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 修复扫码统计模块的 3 个严重问题、5 个中等问题和核心优化建议，提升用户旅程评分从 2.8 到 4.0+。

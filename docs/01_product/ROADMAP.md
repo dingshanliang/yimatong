@@ -1,3 +1,8 @@
+---
+status: active
+last_verified: 2026-06-03
+accuracy: high
+---
 # 一码通产品路线图
 
 ## 1. 路线图原则

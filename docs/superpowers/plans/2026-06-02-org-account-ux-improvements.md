@@ -1,5 +1,9 @@
 # 组织账户 UX 改进 Implementation Plan
 
+> **Status:** ❌ Not started — no org/account UX components found
+> **Completed date:** —
+> **Evidence:** No dedicated org/account improvement components in frontend
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 修复组织账户模块的 5 个 Critical 问题、8 个 Moderate 问题和 10 个优化建议，提升用户旅程评分从 3.0 到 4.0+。

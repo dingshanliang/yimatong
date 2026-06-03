@@ -1,5 +1,9 @@
 # 演示数据增强 Implementation Plan
 
+> **Status:** ✅ Completed
+> **Completed date:** 2026-06 (estimated)
+> **Evidence:** `backend/scripts/seed_demo.py` — comprehensive demo data generation covering all modules
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 创建一个独立的 `seed_demo.py` 脚本，生成中等规模、真实感强的演示数据，覆盖品牌/产品/码/扫码/渠道/活动/会员/风控/页面/统计全模块。

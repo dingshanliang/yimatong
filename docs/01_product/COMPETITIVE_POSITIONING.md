@@ -1,3 +1,8 @@
+---
+status: active
+last_verified: 2026-06-03
+accuracy: high
+---
 # 市场定位与竞品分析
 
 ## 1. 市场类型

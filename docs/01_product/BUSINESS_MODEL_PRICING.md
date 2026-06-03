@@ -1,3 +1,8 @@
+---
+status: active
+last_verified: 2026-06-03
+accuracy: high
+---
 # 商业模式与计费方案
 
 ## 1. 商业模式

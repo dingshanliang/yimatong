@@ -1,3 +1,8 @@
+---
+status: active
+last_verified: 2026-06-03
+accuracy: high
+---
 # 一码通信息架构
 
 ## 1. 总体结构

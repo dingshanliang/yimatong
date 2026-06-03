@@ -1,3 +1,8 @@
+---
+status: active
+last_verified: 2026-06-03
+accuracy: high
+---
 # 用户旅程与核心流程
 
 ## 1. 消费者扫码旅程

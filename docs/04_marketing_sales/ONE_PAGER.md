@@ -1,3 +1,8 @@
+---
+status: active
+last_verified: 2026-06-03
+accuracy: high
+---
 # 一码通客户一页纸
 
 ## 把包装二维码变成增长入口

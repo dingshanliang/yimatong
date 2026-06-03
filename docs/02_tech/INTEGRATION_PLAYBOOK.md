@@ -1,3 +1,8 @@
+---
+status: active
+last_verified: 2026-06-03
+accuracy: high
+---
 # 外部系统与电商权益集成方案
 
 ## 1. 集成原则

@@ -1,3 +1,8 @@
+---
+status: active
+last_verified: 2026-06-03
+accuracy: high
+---
 # 企业微信添加客户能力配置说明
 
 ## 适用场景

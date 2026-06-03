@@ -1,3 +1,8 @@
+---
+status: active
+last_verified: 2026-06-03
+accuracy: high
+---
 # 代运营与客户成功手册
 
 ## 1. 代运营工作台目标

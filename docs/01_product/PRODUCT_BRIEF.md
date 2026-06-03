@@ -1,3 +1,8 @@
+---
+status: active
+last_verified: 2026-06-03
+accuracy: high
+---
 # 一码通产品一页纸
 
 ## 1. 产品定位

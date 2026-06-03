@@ -228,7 +228,7 @@ schemas/   → Pydantic V2 请求/响应模型
 | 场景 | 文件 |
 |---|---|
 | 开发策略设计（最新） | `docs/superpowers/specs/2026-05-27-development-strategy-design.md` |
-| 实施任务 | `docs/02_tech/TASKS.md` |
+| 实施任务 | `docs/02_tech/TASKS.md`（⚠️ 已归档，仅历史参考） |
 | 技术架构 | `docs/02_tech/ARCHITECTURE.md` |
 | 数据模型 | `docs/02_tech/DATA_MODEL.md` |
 | API 设计 | `docs/02_tech/API_DRAFT.md` |
@@ -238,6 +238,9 @@ schemas/   → Pydantic V2 请求/响应模型
 
 ## 已知环境陷阱
 
+- **API 路由提取**：`app/api/v1/` 中的文件使用多种 router 变量名（`router`、`brand_router`、`campaign_router`、`dashboard_router` 等），不能只 grep `@router.get`。正确方法：先 `grep "APIRouter" *.py` 找到所有 router 定义和 prefix，再用对应的 router 名 grep 路由。
+- **模型文件映射**：`consumer.py` 是空文件，`ConsumerProfile` 实际定义在 `member.py` 中。总共有 28 个模型文件、69 个模型类，不要假设文件名和内容一一对应。
+- **Shell noclobber**：用户 shell 启用了 `noclobber`，`mv` 覆盖已有文件会失败。批量文件操作用 Python 脚本代替 shell 重定向。
 - **端口 5432 冲突**：本地 PostgreSQL 可能占用 5432，导致 `localhost:5432` 连接到本地 PG 而非 Docker PG。Docker 容器通过内部网络 `postgres:5432` 连接。
 - **Docker 环境下所有数据库操作必须在容器内执行**：当后端跑在 Docker 中时，`seed_demo.py`、`alembic` 等脚本若在宿主机运行会写入本地 PG 而非 Docker PG，导致数据对后端不可见。正确做法：
   - 脚本：`docker exec yimatong-backend-1 /app/.venv/bin/python scripts/seed_demo.py generate`
@@ -245,3 +248,11 @@ schemas/   → Pydantic V2 请求/响应模型
   - SQL：`docker exec yimatong-postgres-1 psql -U yimatong -d yimatong_dev -c "..."`
 - **Redis 端口**：Docker Redis 映射到 `localhost:6380`（非默认 6379），但容器内部用 `redis:6379`。
 - **Alembic stamp**：如果数据库表已存在但 `alembic_version` 为空，用 `alembic stamp head` 标记版本而非重新迁移。
+
+## 文档治理
+
+- 所有 `docs/` 下的 Markdown 文件头部含治理元数据：`status`（active/stale/archived）、`last_verified`（日期）、`accuracy`（high/medium/low）
+- **修改涉及 API、数据模型、架构时，顺手更新对应文档的 `last_verified` 日期**
+- 完整文档治理索引见 `docs/MANIFEST.md`
+- `superpowers/plans/` 和 `superpowers/specs/` 文件头部有完成度标记（✅/⏸/❌），功能完成后应标记状态
+- 文档规模：46 个文档文件、7 个目录、约 18,000 行。代码规模：250+ API 路由、69 个数据模型、28 个模型文件。

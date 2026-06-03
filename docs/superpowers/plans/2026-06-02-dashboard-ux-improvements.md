@@ -1,5 +1,9 @@
 # 工作台（Dashboard）UX 改进实施计划
 
+> **Status:** ⏸ Partial — dashboard pages exist, specific UX improvements unclear
+> **Completed date:** —
+> **Evidence:** `frontend/apps/admin/src/app/(dashboard)/` — dashboard structure present
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 修复工作台模块的用户旅程审查发现的 2 个 Critical、5 个 Moderate 和 6 个优化建议问题

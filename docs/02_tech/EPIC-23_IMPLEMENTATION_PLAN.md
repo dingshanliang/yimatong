@@ -1,3 +1,8 @@
+---
+status: active
+last_verified: 2026-06-03
+accuracy: high
+---
 # EPIC-23 现金红包插件 — 实施计划
 
 > Issue: yimatong-f4c

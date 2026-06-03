@@ -1,5 +1,9 @@
 # Agency Workbench Optimization Implementation Plan
 
+> **Status:** ✅ Completed
+> **Completed date:** 2026-06 (estimated)
+> **Evidence:** `frontend/apps/admin/src/app/(dashboard)/agency/` — full workbench with client readiness and next-action UI
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Turn `/agency` from a passive client/task list into a complete operator workbench that shows client launch readiness, explains what blocks go-live, and gives the operator a clear next action for each client.

@@ -1,3 +1,8 @@
+---
+status: active
+last_verified: 2026-06-03
+accuracy: high
+---
 # 客户常见问题 FAQ
 
 ## Q1：一码通是不是普通二维码生成器？

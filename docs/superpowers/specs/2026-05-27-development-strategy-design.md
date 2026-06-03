@@ -1,5 +1,7 @@
 # 一码通完整开发推进策略设计
 
+> **Status:** ⏸ Partial — strategy partially followed; Alpha/Beta waves mostly done, some Phase 2 items incomplete
+
 > **版本**：v1.2（审查修订版）
 > **修订说明**：
 > - v1.0：初版

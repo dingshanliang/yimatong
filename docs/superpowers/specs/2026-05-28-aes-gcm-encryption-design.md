@@ -1,5 +1,7 @@
 # AES-GCM 手机号加密 + 安全加固 设计文档
 
+> **Status:** ✅ Completed — fully implemented in `backend/app/utils/crypto.py`
+
 日期：2026-05-28
 状态：待评审
 关联 PRD：关键设计约束 — 手机号 AES-GCM 加密 + HMAC-SHA256 哈希索引

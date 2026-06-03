@@ -1,3 +1,9 @@
+---
+status: active
+last_verified: 2026-06-03
+accuracy: high
+---
+
 # 外部资料与事实依据
 
 访问日期：2026-05-26

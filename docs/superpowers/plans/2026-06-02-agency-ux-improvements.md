@@ -1,5 +1,9 @@
 # 代运营工作台 UX 改进 Implementation Plan
 
+> **Status:** ✅ Completed
+> **Completed date:** 2026-06 (estimated)
+> **Evidence:** `frontend/apps/admin/src/app/(dashboard)/agency/` — stats cards, task management, client management, launch checklists
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 修复代运营工作台的 3 个 Critical 安全/功能问题、7 个 Moderate 体验问题，补齐行业/备注/负责人等业务字段，接入已有行业模板系统，将用户旅程评分从 3.2 提升到 4.0+。

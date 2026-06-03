@@ -1,5 +1,9 @@
 # 页面 DSL 可视化编辑器 实施计划
 
+> **Status:** ✅ Completed
+> **Completed date:** 2026-06 (estimated)
+> **Evidence:** `frontend/apps/admin/src/app/(dashboard)/pages/[id]/edit/` — full dnd-kit editor with preview panel
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 将 pages 模块从单文件 Drawer 编辑器重构为全屏拖拽编辑器 + iframe 实时预览的分屏布局

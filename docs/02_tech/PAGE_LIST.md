@@ -1,3 +1,8 @@
+---
+status: stale
+last_verified: 2026-06-03
+accuracy: medium
+---
 # 页面清单
 
 ## 1. 管理后台页面

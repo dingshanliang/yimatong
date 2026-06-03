@@ -1,5 +1,7 @@
 # 演示数据增强设计
 
+> **Status:** ✅ Completed — fully implemented in `backend/scripts/seed_demo.py`
+
 > 日期：2026-06-02
 > 状态：已批准
 

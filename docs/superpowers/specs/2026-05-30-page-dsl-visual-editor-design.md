@@ -1,5 +1,7 @@
 # 页面 DSL 可视化编辑器设计
 
+> **Status:** ✅ Completed — fully implemented in `frontend/apps/admin/src/app/(dashboard)/pages/[id]/edit/`
+
 > 日期：2026-05-30
 > 状态：已批准
 > 范围：整体优化 pages 模块，新增全屏拖拽编辑器 + 实时预览

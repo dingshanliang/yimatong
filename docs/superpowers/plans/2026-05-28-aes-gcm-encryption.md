@@ -1,5 +1,9 @@
 # AES-GCM 手机号加密 实施计划
 
+> **Status:** ✅ Completed
+> **Completed date:** 2026-06 (estimated)
+> **Evidence:** `backend/app/utils/crypto.py` — full AES-256-GCM + HMAC-SHA256 implementation with key rotation
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 实现 AES-256-GCM 加密存储消费者手机号 + HMAC-SHA256 哈希索引，支持 kid 密钥轮换，预留 KMS 接口。
