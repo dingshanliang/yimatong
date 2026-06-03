@@ -4,12 +4,14 @@ import { useState } from "react";
 import { App, Button, Col, Descriptions, Divider, Form, Input, Row, Select, Spin, Tag, Typography } from "antd";
 import { FileTextOutlined, BulbOutlined, CheckCircleOutlined } from "@ant-design/icons";
 import { generatePageCopy, suggestPageStructure, getAIErrorMessage, type PageCopyResult, type PageSuggestResult } from "@/lib/ai";
+import { useCategories } from "@/lib/use-categories";
 import { ResultCard } from "./shared";
 
 const { Title, Text, Paragraph } = Typography;
 
 export function PagePlanTab() {
   const { message } = App.useApp();
+  const { categories: tenantCategories } = useCategories();
   const [loading, setLoading] = useState(false);
   const [pageCopyResult, setPageCopyResult] = useState<PageCopyResult | null>(null);
   const [suggestResult, setSuggestResult] = useState<PageSuggestResult | null>(null);
@@ -63,7 +65,7 @@ export function PagePlanTab() {
           <Col span={12}>
             <Form.Item name="category" label="品类" rules={[{ required: true, message: "请选择品类" }]}>
               <Select showSearch allowClear placeholder="选择或输入品类"
-                options={["大米","面粉","食用油","茶叶","水果","蔬菜","肉类","乳制品","酒类","饮料","零食","保健品","其他"].map(v => ({ value: v, label: v }))}
+                options={tenantCategories.map(v => ({ value: v, label: v }))}
               />
             </Form.Item>
           </Col>
