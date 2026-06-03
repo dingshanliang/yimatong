@@ -90,7 +90,7 @@ accuracy: high
 | 2026-06-02-agency-workbench-optimization.md | ✅ Completed | 已实现 | 代运营工作台优化 |
 | 2026-06-02-dashboard-ux-improvements.md | ⏸ Partial | 不确定 | 工作台 UX 改进 |
 | 2026-06-02-demo-seed-data.md | ✅ Completed | 已实现 | 演示数据增强 |
-| 2026-06-02-org-account-ux-improvements.md | ❌ Not started | — | 组织账户 UX 改进 |
+| 2026-06-02-org-account-ux-improvements.md | ✅ Completed | 已实现 | 组织账户 UX 改进 |
 | 2026-06-02-scan-stats-ux-improvements.md | ⏸ Partial | 基础图表 | 扫码统计 UX 改进 |
 
 ## 根级文件

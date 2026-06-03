@@ -1,8 +1,8 @@
 # 组织账户 UX 改进 Implementation Plan
 
-> **Status:** ❌ Not started — no org/account UX components found
-> **Completed date:** —
-> **Evidence:** No dedicated org/account improvement components in frontend
+> **Status:** ✅ Completed — all 10 backend + frontend improvements verified in code
+> **Completed date:** 2026-06 (estimated)
+> **Evidence:** compliance_settings merge, email uniqueness, pagination, role deletion check, login error details, account dropdown/edit, compliance loading error, tenant contact_email fix, roles delete impact, login error display
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
