@@ -20,7 +20,7 @@ import ScanTrendChart from "@/components/ScanTrendChart";
 import EnvBreakdownChart from "@/components/EnvBreakdownChart";
 import ChartPlaceholder from "@/components/ChartPlaceholder";
 
-const { Title } = Typography;
+const { Title, Text } = Typography;
 const { RangePicker } = DatePicker;
 
 interface DashboardData {
@@ -86,6 +86,10 @@ export default function DashboardHome() {
   ]);
   const [exporting, setExporting] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const [comparison, setComparison] = useState<{
+    weekly_scans_change: { value: number; direction: string } | null;
+    weekly_first_scans_change: { value: number; direction: string } | null;
+  } | null>(null);
   const router = useRouter();
   const [error, setError] = useState<string | null>(null);
 
@@ -95,6 +99,7 @@ export default function DashboardHome() {
     try {
       const res = await api.get("/analytics/dashboard");
       setData(res.data);
+      if (res.data?.comparison) setComparison(res.data.comparison);
       setTrend(Array.isArray(res.data.trend) ? res.data.trend.slice(-7) : []);
     } catch (err) {
       setData(null);
@@ -282,11 +287,21 @@ export default function DashboardHome() {
         <Col xs={24} sm={12} lg={6}>
           <Card loading={loading}>
             <Statistic title="累计扫码" value={data?.cumulative_scans ?? 0} prefix={<RiseOutlined />} />
+            {comparison?.weekly_scans_change && (
+              <Text type={comparison.weekly_scans_change.direction === "up" ? "success" : "danger"} className="text-xs">
+                {comparison.weekly_scans_change.direction === "up" ? "↑" : "↓"} 较上周 {Math.abs(comparison.weekly_scans_change.value)}%
+              </Text>
+            )}
           </Card>
         </Col>
         <Col xs={24} sm={12} lg={6}>
           <Card loading={loading}>
             <Statistic title="累计首扫" value={data?.cumulative_first_scans ?? 0} prefix={<RocketOutlined />} />
+            {comparison?.weekly_first_scans_change && (
+              <Text type={comparison.weekly_first_scans_change.direction === "up" ? "success" : "danger"} className="text-xs">
+                {comparison.weekly_first_scans_change.direction === "up" ? "↑" : "↓"} 较上周 {Math.abs(comparison.weekly_first_scans_change.value)}%
+              </Text>
+            )}
           </Card>
         </Col>
         <Col xs={24} sm={12} lg={6}>
