@@ -260,6 +260,7 @@ export default function ChannelsPage() {
   const [batches, setBatches] = useState<Batch[]>([]);
   const [loading, setLoading] = useState(false);
   const [activeTab, setActiveTab] = useState("distributors");
+  const [tenantFeatures, setTenantFeatures] = useState<Record<string, boolean>>({});
   const [clueResolvedFilter, setClueResolvedFilter] = useState<"pending" | "resolved" | "all">("pending");
   const [clueSeverityFilter, setClueSeverityFilter] = useState<string | undefined>();
 
@@ -294,6 +295,15 @@ export default function ChannelsPage() {
     messageRef.current = appApi.message;
     modalRef.current = appApi.modal;
   }, [appApi.message, appApi.modal]);
+
+  useEffect(() => {
+    api
+      .get("/tenants/me")
+      .then(({ data }) => {
+        setTenantFeatures(data?.enabled_features || {});
+      })
+      .catch(() => {});
+  }, []);
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -968,7 +978,7 @@ export default function ChannelsPage() {
               </>
             ),
           },
-        ]}
+        ].filter((item) => item.key !== "stores" || tenantFeatures.channel_store)}
       />
 
       <Modal
