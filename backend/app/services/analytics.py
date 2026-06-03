@@ -116,23 +116,39 @@ async def get_dashboard(
     env_stats = {env or "unknown": count for env, count in env_result.all()}
 
     # 同期对比
-    period_days = (today - seven_days_ago).days + 1
-    prev_start = seven_days_ago - timedelta(days=period_days)
+    prev_start = seven_days_ago - timedelta(days=7)
     prev_end = seven_days_ago - timedelta(days=1)
 
-    prev_result = await db.execute(
+    # 一次查询同时获取当前和前一周期的总量
+    current_and_prev = await db.execute(
         select(
-            func.coalesce(func.sum(DailyScanStats.total_scans), 0),
-            func.coalesce(func.sum(DailyScanStats.first_scans), 0),
+            func.coalesce(func.sum(
+                func.case((DailyScanStats.date >= seven_days_ago, DailyScanStats.total_scans), else_=0)
+            ), 0),
+            func.coalesce(func.sum(
+                func.case((DailyScanStats.date >= seven_days_ago, DailyScanStats.first_scans), else_=0)
+            ), 0),
+            func.coalesce(func.sum(
+                func.case(
+                    (DailyScanStats.date >= prev_start, DailyScanStats.total_scans),
+                    else_=0,
+                )
+            ), 0),
+            func.coalesce(func.sum(
+                func.case(
+                    (DailyScanStats.date >= prev_start, DailyScanStats.first_scans),
+                    else_=0,
+                )
+            ), 0),
         ).where(
             DailyScanStats.tenant_id == tenant_id,
             DailyScanStats.date >= prev_start,
-            DailyScanStats.date <= prev_end,
+            DailyScanStats.date <= today,
         )
     )
-    prev_row = prev_result.one()
-    prev_scans = int(prev_row[0])
-    prev_first_scans = int(prev_row[1])
+    row = current_and_prev.one()
+    cur_scans, cur_first_scans = int(row[0]), int(row[1])
+    prev_scans, prev_first_scans = int(row[2]), int(row[3])
 
     def _calc_change(current: int, previous: int) -> dict | None:
         if previous == 0:
@@ -148,12 +164,8 @@ async def get_dashboard(
         "trend": trend,
         "environment_breakdown": env_stats,
         "comparison": {
-            "weekly_scans_change": _calc_change(
-                sum(s["total_scans"] for s in trend), prev_scans
-            ),
-            "weekly_first_scans_change": _calc_change(
-                sum(s["first_scans"] for s in trend), prev_first_scans
-            ),
+            "weekly_scans_change": _calc_change(cur_scans, prev_scans),
+            "weekly_first_scans_change": _calc_change(cur_first_scans, prev_first_scans),
         },
     }
 

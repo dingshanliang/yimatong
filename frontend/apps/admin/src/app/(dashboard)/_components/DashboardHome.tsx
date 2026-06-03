@@ -73,6 +73,15 @@ const CAMPAIGN_TYPE_MAP: Record<string, string> = {
   points: "积分",
 };
 
+function ChangeIndicator({ change }: { change: { value: number; direction: string } | null | undefined }) {
+  if (!change) return null;
+  return (
+    <Text type={change.direction === "up" ? "success" : "danger"} className="text-xs">
+      {change.direction === "up" ? "↑" : "↓"} 较上周 {Math.abs(change.value)}%
+    </Text>
+  );
+}
+
 export default function DashboardHome() {
   const { message } = App.useApp();
   const [data, setData] = useState<DashboardData | null>(null);
@@ -85,7 +94,6 @@ export default function DashboardHome() {
     dayjs(),
   ]);
   const [exporting, setExporting] = useState(false);
-  const [refreshing, setRefreshing] = useState(false);
   const [comparison, setComparison] = useState<{
     weekly_scans_change: { value: number; direction: string } | null;
     weekly_first_scans_change: { value: number; direction: string } | null;
@@ -93,14 +101,15 @@ export default function DashboardHome() {
   const router = useRouter();
   const [error, setError] = useState<string | null>(null);
 
-  const fetchDashboard = useCallback(async () => {
+  const fetchDashboard = useCallback(async (params?: Record<string, string>) => {
     setLoading(true);
     setError(null);
     try {
-      const res = await api.get("/analytics/dashboard");
+      const res = await api.get("/analytics/dashboard", { params });
       setData(res.data);
       if (res.data?.comparison) setComparison(res.data.comparison);
-      setTrend(Array.isArray(res.data.trend) ? res.data.trend.slice(-7) : []);
+      const trendData = Array.isArray(res.data.trend) ? res.data.trend : [];
+      setTrend(params ? trendData : trendData.slice(-7));
     } catch (err) {
       setData(null);
       setError(extractErrorMessage(err, "加载工作台数据失败"));
@@ -109,20 +118,6 @@ export default function DashboardHome() {
       setLoading(false);
     }
   }, [message]);
-
-  const handleRefresh = async () => {
-    setRefreshing(true);
-    try {
-      const res = await api.get("/analytics/dashboard", { params: { days_back: "30" } });
-      setData(res.data);
-      if (res.data.trend) setTrend(res.data.trend);
-      message.success("数据已刷新");
-    } catch {
-      message.error("刷新失败");
-    } finally {
-      setRefreshing(false);
-    }
-  };
 
   useEffect(() => {
     void fetchDashboard();
@@ -252,7 +247,7 @@ export default function DashboardHome() {
             <Button icon={<DownloadOutlined />} onClick={handleExport} loading={exporting} />
           </Tooltip>
           <Tooltip title="刷新数据">
-            <Button icon={<ReloadOutlined />} onClick={() => { void handleRefresh(); }} loading={refreshing} size="small">刷新</Button>
+            <Button icon={<ReloadOutlined />} onClick={() => { void fetchDashboard(); }} loading={loading} />
           </Tooltip>
         </Space>
       </div>
@@ -287,21 +282,13 @@ export default function DashboardHome() {
         <Col xs={24} sm={12} lg={6}>
           <Card loading={loading}>
             <Statistic title="累计扫码" value={data?.cumulative_scans ?? 0} prefix={<RiseOutlined />} />
-            {comparison?.weekly_scans_change && (
-              <Text type={comparison.weekly_scans_change.direction === "up" ? "success" : "danger"} className="text-xs">
-                {comparison.weekly_scans_change.direction === "up" ? "↑" : "↓"} 较上周 {Math.abs(comparison.weekly_scans_change.value)}%
-              </Text>
-            )}
+            <ChangeIndicator change={comparison?.weekly_scans_change} />
           </Card>
         </Col>
         <Col xs={24} sm={12} lg={6}>
           <Card loading={loading}>
             <Statistic title="累计首扫" value={data?.cumulative_first_scans ?? 0} prefix={<RocketOutlined />} />
-            {comparison?.weekly_first_scans_change && (
-              <Text type={comparison.weekly_first_scans_change.direction === "up" ? "success" : "danger"} className="text-xs">
-                {comparison.weekly_first_scans_change.direction === "up" ? "↑" : "↓"} 较上周 {Math.abs(comparison.weekly_first_scans_change.value)}%
-              </Text>
-            )}
+            <ChangeIndicator change={comparison?.weekly_first_scans_change} />
           </Card>
         </Col>
         <Col xs={24} sm={12} lg={6}>

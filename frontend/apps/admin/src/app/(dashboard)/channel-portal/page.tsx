@@ -45,26 +45,21 @@ export default function ChannelPortalPage() {
 
   useEffect(() => {
     let active = true;
-    api
-      .get("/channels/portal/distributor/summary")
-      .then(({ data }) => {
-        if (active) setSummary(data);
-      })
-      .catch(() => {
+    Promise.all([
+      api.get("/channels/portal/distributor/summary").catch(() => {
         if (active) setError(true);
-      })
-      .finally(() => {
-        if (active) setLoading(false);
-      });
-    api
-      .get("/risk-notifications", { params: { notification_type: "diversion_alert", page_size: 10 } })
-      .then(({ data }) => {
-        if (active) {
-          const items = Array.isArray(data) ? data : data?.items || data?.data || [];
-          setAlerts(items);
-        }
-      })
-      .catch(() => {});
+        return null;
+      }),
+      api
+        .get("/risk-notifications", { params: { notification_type: "diversion_alert", page_size: 10 } })
+        .then(({ data }) => data?.items ?? [])
+        .catch(() => []),
+    ]).then(([summaryRes, alertsData]) => {
+      if (!active) return;
+      if (summaryRes) setSummary(summaryRes.data);
+      setAlerts(alertsData);
+      setLoading(false);
+    });
     return () => {
       active = false;
     };
