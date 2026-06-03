@@ -1575,6 +1575,20 @@ async def check_diversion(
     db.add(clue)
     await db.flush()
     await db.refresh(clue)
+
+    # 自动创建风险通知
+    from app.models.risk import RiskNotification
+
+    notification = RiskNotification(
+        tenant_id=tenant_id,
+        notification_type="diversion_alert",
+        title=f"疑似窜货：码 {clue.public_id}",
+        detail=f"预期区域：{clue.expected_region or '未知'}，实际扫码城市：{clue.detected_city or '未知'}",
+        code_item_id=clue.code_item_id,
+        read=False,
+    )
+    db.add(notification)
+
     return clue
 
 
