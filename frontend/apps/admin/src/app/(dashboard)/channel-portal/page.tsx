@@ -41,6 +41,7 @@ export default function ChannelPortalPage() {
   const [summary, setSummary] = useState<DistributorSummary | null>(null);
   const [error, setError] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [alerts, setAlerts] = useState<Array<{ id: string; title: string; detail: string; read: boolean }>>([]);
 
   useEffect(() => {
     let active = true;
@@ -55,6 +56,15 @@ export default function ChannelPortalPage() {
       .finally(() => {
         if (active) setLoading(false);
       });
+    api
+      .get("/risk-notifications", { params: { notification_type: "diversion_alert", page_size: 10 } })
+      .then(({ data }) => {
+        if (active) {
+          const items = Array.isArray(data) ? data : data?.items || data?.data || [];
+          setAlerts(items);
+        }
+      })
+      .catch(() => {});
     return () => {
       active = false;
     };
@@ -121,6 +131,28 @@ export default function ChannelPortalPage() {
           <Space className="flex justify-center py-10">
             <Empty description="暂无区域数据" />
           </Space>
+        )}
+      </Card>
+
+      <Card title="窜货预警" size="small" className="mb-5">
+        {alerts.length > 0 ? (
+          <Table
+            columns={[
+              { title: "预警", dataIndex: "title" },
+              { title: "详情", dataIndex: "detail" },
+              {
+                title: "状态",
+                dataIndex: "read",
+                render: (v: boolean) => (v ? <Tag>已读</Tag> : <Tag color="red">未读</Tag>),
+              },
+            ]}
+            dataSource={alerts}
+            rowKey="id"
+            pagination={false}
+            loading={loading}
+          />
+        ) : (
+          <Empty description="暂无窜货预警" />
         )}
       </Card>
 
