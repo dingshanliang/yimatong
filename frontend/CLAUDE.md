@@ -7,6 +7,7 @@
 ```
 apps/admin/     管理后台 — Next.js 16 + Ant Design 6（端口 3000）
 apps/h5/        消费者扫码页 — Next.js 16 + Tailwind 4 + Headless UI（端口 3001）
+apps/platform/  平台管理后台 — Next.js 16 + Ant Design 6（端口 3002，紫色主题）
 packages/shared/ 共享 TypeScript 类型定义（@yimatong/shared）
 e2e/            Playwright E2E 测试
 ```
@@ -20,6 +21,9 @@ e2e/            Playwright E2E 测试
 | `apps/admin/src/lib/theme.ts` | Ant Design 主题配置 |
 | `apps/admin/src/middleware.ts` | Admin 路由守卫（cookie 检查） |
 | `apps/h5/src/middleware.ts` | H5 路由守卫 |
+| `apps/platform/src/lib/platform-auth.ts` | 平台管理员 Zustand auth store（独立 cookie 键） |
+| `apps/platform/src/lib/api.ts` | 平台 Axios 实例（读 platform_access_token） |
+| `apps/platform/src/middleware.ts` | Platform 路由守卫（cookie 检查） |
 
 ## Admin 路由模块
 
@@ -27,7 +31,8 @@ e2e/            Playwright E2E 测试
 
 ## 前端开发注意事项
 
-- **构建顺序**：`pnpm build:shared` 必须在 `pnpm dev:admin` 或 `pnpm build:admin` 之前执行，因为 admin/h5 依赖 `@yimatong/shared`
+- **构建顺序**：`pnpm build:shared` 必须在 `pnpm dev:admin` / `pnpm dev:platform` 或构建命令之前执行，因为所有应用依赖 `@yimatong/shared`
+- **Platform 认证**：使用独立的 cookie 键 `platform_access_token`，与 admin 的 `access_token` 隔离。登录端点为 `/platform/auth/login`（非 `/auth/login`）
 - **Ant Design 6**：API 与 v5 有 breaking changes，不确定的组件用法先查 context7-mcp
 - **Tailwind CSS 4**：配置方式与 v3 不同（CSS-first 配置），使用 `@theme` 指令而非 `tailwind.config.js`
 - **Admin 单元测试**：`cd frontend/apps/admin && pnpm exec vitest run`

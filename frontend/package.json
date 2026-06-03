@@ -4,12 +4,15 @@
   "scripts": {
     "dev:admin": "pnpm --filter @yimatong/admin dev",
     "dev:h5": "pnpm --filter @yimatong/h5 dev",
+    "dev:platform": "pnpm --filter @yimatong/platform dev",
     "build:admin": "pnpm --filter @yimatong/admin build",
     "build:h5": "pnpm --filter @yimatong/h5 build",
+    "build:platform": "pnpm --filter @yimatong/platform build",
     "build:shared": "pnpm --filter @yimatong/shared build",
-    "build": "pnpm build:shared && pnpm build:admin && pnpm build:h5",
+    "build": "pnpm build:shared && pnpm build:admin && pnpm build:h5 && pnpm build:platform",
     "lint:admin": "pnpm --filter @yimatong/admin lint",
     "lint:h5": "pnpm --filter @yimatong/h5 lint",
+    "lint:platform": "pnpm --filter @yimatong/platform lint",
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui",
     "test:e2e:debug": "playwright test --debug"
