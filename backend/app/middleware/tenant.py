@@ -64,6 +64,7 @@ class TenantScopeMiddleware(BaseHTTPMiddleware):
         request.state.tenant_id = tenant_id
         request.state.account_id = payload.get("sub")
         request.state.role = payload.get("role")
+        request.state.tenant_type = payload.get("tenant_type", "brand")
         request.state.auth_method = "jwt"
 
         # Set context var for RLS (consumed by get_db)
@@ -109,6 +110,7 @@ class TenantScopeMiddleware(BaseHTTPMiddleware):
             request.state.account_id = None
             request.state.role = key.role
             request.state.permissions = key.permissions
+            request.state.tenant_type = "brand"
             request.state.auth_method = "api_key"
             request.state.api_key_id = str(key.id)
 

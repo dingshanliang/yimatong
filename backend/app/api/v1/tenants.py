@@ -42,6 +42,7 @@ async def create_tenant_endpoint(body: TenantCreate, db: AsyncSession = Depends(
         industry=body.industry,
         notes=body.notes,
         template_id=body.template_id,
+        tenant_type=body.tenant_type,
     )
     return tenant
 
@@ -110,6 +111,7 @@ async def update_current_tenant_endpoint(
         plan_expires_at=body.plan_expires_at,
         onboarding_progress=body.onboarding_progress,
         enabled_features=body.enabled_features,
+        tenant_type=body.tenant_type,
     )
     if not tenant:
         raise HTTPException(status_code=404, detail="Tenant not found")
@@ -137,6 +139,7 @@ async def update_tenant_endpoint(tenant_id: uuid.UUID, body: TenantUpdate, db: A
         plan_expires_at=body.plan_expires_at,
         onboarding_progress=body.onboarding_progress,
         enabled_features=body.enabled_features,
+        tenant_type=body.tenant_type,
     )
     if not tenant:
         raise HTTPException(status_code=404, detail="Tenant not found")

@@ -5,6 +5,7 @@ interface AuthUser {
   account_id: string;
   tenant_id: string;
   role: string;
+  tenant_type: string;
   email: string;
   name: string;
 }
@@ -20,6 +21,12 @@ interface AuthState {
 }
 
 let refreshPromise: Promise<string | null> | null = null;
+
+/** 确保 AuthUser 对象包含 tenant_type（向后兼容旧 localStorage 数据） */
+function ensureTenantType(user: AuthUser): AuthUser {
+  if (!user.tenant_type) user.tenant_type = "brand";
+  return user;
+}
 
 export const useAuthStore = create<AuthState>((set) => ({
   user: null,
@@ -39,6 +46,7 @@ export const useAuthStore = create<AuthState>((set) => ({
         account_id: payload.sub,
         tenant_id: payload.tenant_id,
         role: payload.role,
+        tenant_type: payload.tenant_type || "brand",
         email,
         name: payload.name || email,
       };
@@ -64,7 +72,7 @@ export const useAuthStore = create<AuthState>((set) => ({
     const token = localStorage.getItem("access_token");
     if (stored && token) {
       try {
-        set({ user: JSON.parse(stored), token });
+        set({ user: ensureTenantType(JSON.parse(stored)), token });
       } catch {
         localStorage.removeItem("auth_store");
         localStorage.removeItem("access_token");
@@ -111,6 +119,7 @@ async function _doSilentRefresh(): Promise<string | null> {
         account_id: payload.sub,
         tenant_id: payload.tenant_id,
         role: payload.role,
+        tenant_type: payload.tenant_type || "brand",
         email: JSON.parse(stored).email,
         name: JSON.parse(stored).name || JSON.parse(stored).email,
       };
@@ -135,7 +144,7 @@ if (typeof window !== "undefined") {
   const stored = localStorage.getItem("auth_store");
   if (token && stored) {
     try {
-      useAuthStore.setState({ user: JSON.parse(stored), token });
+      useAuthStore.setState({ user: ensureTenantType(JSON.parse(stored)), token });
     } catch {
       // 自动 hydrate 失败静默忽略，留给运行时 hydrate 处理
     }

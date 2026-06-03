@@ -17,12 +17,13 @@ def verify_password(plain: str, hashed: str) -> bool:
     return bcrypt.checkpw(plain.encode(), hashed.encode())
 
 
-def create_access_token(tenant_id: str, account_id: str, role: str) -> str:
+def create_access_token(tenant_id: str, account_id: str, role: str, tenant_type: str = "brand") -> str:
     expire = datetime.now(UTC) + timedelta(minutes=settings.access_token_expire_minutes)
     payload = {
         "sub": str(account_id),
         "tenant_id": str(tenant_id),
         "role": role,
+        "tenant_type": tenant_type,
         "exp": expire,
         "type": "access",
         "jti": str(uuid.uuid4()),

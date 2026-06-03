@@ -37,6 +37,13 @@ class TenantPlan(StrEnum):
     enterprise = "enterprise"
 
 
+class TenantType(StrEnum):
+    brand = "brand"
+    agency = "agency"
+    regional_org = "regional_org"
+    platform = "platform"
+
+
 class Tenant(Base):
     __tablename__ = "tenants"
 
@@ -46,6 +53,9 @@ class Tenant(Base):
     status: Mapped[TenantStatus] = mapped_column(SQLEnum(TenantStatus), default=TenantStatus.active, nullable=False)
     plan: Mapped[TenantPlan] = mapped_column(SQLEnum(TenantPlan), default=TenantPlan.free, nullable=False)
     plan_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    tenant_type: Mapped[TenantType] = mapped_column(
+        SQLEnum(TenantType), default=TenantType.brand, nullable=False, server_default="brand"
+    )
     industry: Mapped[str | None] = mapped_column(String(50), nullable=True)
     notes: Mapped[str | None] = mapped_column(String(1000), nullable=True)
     quota: Mapped[dict | None] = mapped_column(JSON, default=dict, nullable=True)

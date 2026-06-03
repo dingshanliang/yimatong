@@ -5,7 +5,7 @@ from datetime import datetime
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.tenant import Account, Organization, Tenant, TenantPlan, TenantStatus
+from app.models.tenant import Account, Organization, Tenant, TenantPlan, TenantStatus, TenantType
 from app.utils.security import hash_password
 
 
@@ -29,6 +29,7 @@ async def create_tenant(
     industry: str | None = None,
     notes: str | None = None,
     template_id: int | None = None,
+    tenant_type: str = "brand",
 ) -> Tenant:
     if not slug:
         slug = _generate_slug(name)
@@ -38,6 +39,7 @@ async def create_tenant(
         slug=slug,
         status=TenantStatus.active,
         plan=TenantPlan(plan),
+        tenant_type=TenantType(tenant_type),
         industry=industry,
         notes=notes,
         quota={"max_codes": 10000, "max_campaigns": 50, "max_accounts": 10},
@@ -107,6 +109,7 @@ async def update_tenant(
     plan_expires_at: datetime | None = None,
     onboarding_progress: dict | None = None,
     enabled_features: dict | None = None,
+    tenant_type: str | None = None,
 ) -> Tenant | None:
     tenant = await get_tenant(db, tenant_id)
     if not tenant:
@@ -129,6 +132,8 @@ async def update_tenant(
         tenant.onboarding_progress = onboarding_progress
     if enabled_features is not None:
         tenant.enabled_features = enabled_features
+    if tenant_type is not None:
+        tenant.tenant_type = TenantType(tenant_type)
     await db.flush()
     await db.refresh(tenant)
     return tenant

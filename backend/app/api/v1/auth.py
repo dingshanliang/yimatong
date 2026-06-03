@@ -14,6 +14,7 @@ from app.core.dependencies import get_current_account_id, get_current_tenant
 from app.models.tenant import Account
 from app.schemas.common import UNAUTHORIZED_EXAMPLE, ErrorDetail
 from app.services.redis_cache import AsyncRedisCache
+from app.services.tenant import get_tenant
 from app.utils import utcnow
 from app.utils.security import (
     create_access_token,
@@ -90,7 +91,13 @@ async def login(body: LoginRequest, db: AsyncSession = Depends(get_db)):
     account.last_login_at = now
     await db.commit()
 
-    access = create_access_token(str(account.tenant_id), str(account.id), _resolve_account_role(account))
+    # Resolve tenant_type for JWT payload
+    tenant = await get_tenant(db, account.tenant_id)
+    tenant_type = tenant.tenant_type.value if tenant else "brand"
+
+    access = create_access_token(
+        str(account.tenant_id), str(account.id), _resolve_account_role(account), tenant_type
+    )
     refresh = create_refresh_token(str(account.id))
     return TokenResponse(
         access_token=access,
@@ -118,7 +125,14 @@ async def refresh(body: RefreshRequest, db: AsyncSession = Depends(get_db)):
     account = result.scalar_one_or_none()
     if not account:
         raise HTTPException(status_code=401, detail="Account not found")
-    access = create_access_token(str(account.tenant_id), str(account.id), _resolve_account_role(account))
+
+    # Resolve tenant_type for JWT payload
+    tenant = await get_tenant(db, account.tenant_id)
+    tenant_type = tenant.tenant_type.value if tenant else "brand"
+
+    access = create_access_token(
+        str(account.tenant_id), str(account.id), _resolve_account_role(account), tenant_type
+    )
     refresh = create_refresh_token(str(account.id))
     return TokenResponse(
         access_token=access,
@@ -134,6 +148,7 @@ class MeResponse(BaseModel):
     tenant_id: str = Field(..., description="租户 ID")
     organization_id: str | None = Field(None, description="组织 ID")
     role: str = Field(..., description="角色")
+    tenant_type: str = Field("brand", description="租户类型")
 
 
 @router.get(
@@ -165,6 +180,7 @@ async def me(
         tenant_id=str(account.tenant_id),
         organization_id=str(account.organization_id) if account.organization_id else None,
         role=request.state.role if hasattr(request.state, "role") else "admin",
+        tenant_type=getattr(request.state, "tenant_type", "brand"),
     )
 
 

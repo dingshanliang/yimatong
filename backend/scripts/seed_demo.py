@@ -366,6 +366,7 @@ async def _ensure_tenant(db: AsyncSession) -> Tenant:
         admin_email=DEMO_ACCOUNTS[0]["email"],
         admin_name=DEMO_ACCOUNTS[0]["name"],
         admin_password=DEMO_ACCOUNTS[0]["password"],
+        tenant_type="brand",
     )
     return tenant
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useMemo } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import { Button, ConfigProvider, Layout, Menu, Avatar, Dropdown, Select, Space, Spin, Tooltip } from "antd";
 import {
@@ -52,6 +52,18 @@ const MENU_OPEN_KEY_RULES = [
   { key: "governance-group", prefixes: ["/risk", "/launch-checklist"] },
   { key: "settings-group", prefixes: ["/settings", "/i18n"] },
 ];
+
+// --- Tenant type-based menu visibility ---
+const AGENCY_HIDDEN_KEYS = new Set([
+  "/brands", "/products", "/skus", "/batches",
+  "/codes", "/pages",
+  "/campaigns", "/benefits", "/members",
+  "/channels", "/regional", "/accounts",
+  "/integrations", "/connectors",
+  "/risk", "/launch-checklist",
+  "catalog-group", "traceability-group", "growth-group",
+  "channels-group", "integrations-group", "governance-group",
+]);
 
 function DashboardInner({ children }: { children: React.ReactNode }) {
   const router = useRouter();
@@ -169,6 +181,24 @@ function DashboardInner({ children }: { children: React.ReactNode }) {
     },
   ];
 
+  // --- Tenant type-based menu filtering ---
+  const tenantType = user?.tenant_type || "brand";
+
+  const filteredMenuItems = useMemo(() => {
+    if (!menuItems) return menuItems;
+
+    return menuItems.filter((item) => {
+      if (!item || !("key" in item)) return true;
+      const key = item.key as string;
+
+      if (tenantType === "agency") {
+        return !AGENCY_HIDDEN_KEYS.has(key);
+      }
+      // brand, regional_org: hide /agency; platform sees everything
+      return tenantType === "platform" || key !== "/agency";
+    });
+  }, [menuItems, tenantType]);
+
   if (!user) {
     return (
       <div className="flex min-h-screen items-center justify-center">
@@ -199,7 +229,7 @@ function DashboardInner({ children }: { children: React.ReactNode }) {
           className="admin-sider"
           style={{ minHeight: "100vh" }}
         >
-          <div className="my-4 flex h-10 items-center justify-center">
+          <div className="my-4 flex h-10 items-center justify-center border-b border-white/10 pb-4">
             <span className="text-lg font-bold text-white">{t("common.brand")}</span>
           </div>
           <Menu
@@ -207,13 +237,13 @@ function DashboardInner({ children }: { children: React.ReactNode }) {
             mode="inline"
             selectedKeys={selectedKeys}
             defaultOpenKeys={openKeys}
-            items={menuItems}
+            items={filteredMenuItems}
             onClick={({ key }) => {
               if (key.startsWith("/")) router.push(key);
             }}
           />
         </Sider>
-        <Layout className="admin-workspace" style={{ minHeight: "100vh" }}>
+        <Layout className="admin-workspace flex flex-col" style={{ minHeight: "100vh" }}>
           <Header className="admin-header flex items-center justify-between px-6">
             <Select
               value={locale}
@@ -245,8 +275,7 @@ function DashboardInner({ children }: { children: React.ReactNode }) {
             </Space>
           </Header>
           <Content
-            className="admin-content m-6 rounded-lg p-6"
-            style={{ minHeight: "calc(100vh - 112px)" }}
+            className="admin-content my-4 rounded-lg p-5 max-w-[1440px] mx-auto w-full flex-1"
           >
             {children}
           </Content>

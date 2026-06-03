@@ -43,12 +43,13 @@ async def setup_tenant(client: AsyncClient):
     )
     tid = resp.json()["id"]
     # tenant token for brand/product creation
-    tenant_token = create_access_token(tid, "00000000-0000-0000-0000-000000000001", "admin")
+    tenant_token = create_access_token(tid, "00000000-0000-0000-0000-000000000001", "admin", tenant_type="brand")
     # ops token for ops endpoints
     ops_token = create_access_token(
         "00000000-0000-0000-0000-000000000000",
         "00000000-0000-0000-0000-000000000001",
         "platform_admin",
+        tenant_type="platform",
     )
     return tid, {"Authorization": f"Bearer {tenant_token}"}, {"Authorization": f"Bearer {ops_token}"}
 

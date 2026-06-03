@@ -38,6 +38,7 @@ async def platform_admin_client(client: AsyncClient):
         "00000000-0000-0000-0000-000000000000",
         "00000000-0000-0000-0000-000000000001",
         "platform_admin",
+        tenant_type="platform",
     )
     client.headers["Authorization"] = f"Bearer {token}"
     return client
@@ -358,6 +359,7 @@ class TestLaunchChecklist:
             tenant_id,
             "00000000-0000-0000-0000-000000000001",
             "admin",
+            tenant_type="brand",
         )
         tenant_headers = {"Authorization": f"Bearer {tenant_token}"}
 

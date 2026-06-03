@@ -15,6 +15,7 @@ class TenantCreate(BaseModel):
         examples=["example-food"],
     )
     plan: str = Field("free", description="订阅计划", examples=["free", "pro", "enterprise"])
+    tenant_type: str = Field("brand", description="租户类型", examples=["brand", "agency", "regional_org", "platform"])
     admin_email: str = Field(..., max_length=255, description="管理员邮箱", examples=["admin@example.com"])
     admin_name: str = Field(..., max_length=100, description="管理员姓名", examples=["张三"])
     admin_password: str = Field(..., min_length=8, description="管理员密码", examples=["SecurePass123!"])
@@ -25,6 +26,7 @@ class TenantCreate(BaseModel):
 
 class TenantUpdate(BaseModel):
     name: str | None = Field(None, min_length=1, max_length=100)
+    tenant_type: str | None = Field(None, description="租户类型")
     industry: str | None = Field(None, max_length=50)
     notes: str | None = Field(None, max_length=1000)
     quota: dict | None = None
@@ -40,6 +42,7 @@ class TenantRead(BaseModel):
     slug: str = Field(..., description="租户唯一标识")
     status: str = Field(..., description="租户状态")
     plan: str = Field(..., description="订阅计划")
+    tenant_type: str = Field(..., description="租户类型")
     plan_expires_at: datetime | None = Field(None, description="计划过期时间")
     industry: str | None = Field(None, description="行业类别")
     notes: str | None = Field(None, description="备注")
@@ -58,6 +61,7 @@ class TenantListItem(BaseModel):
     slug: str
     status: str
     plan: str
+    tenant_type: str = "brand"
     plan_expires_at: datetime | None = None
     created_at: datetime | None = None
 
