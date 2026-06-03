@@ -1,9 +1,23 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
-import { Alert, App, Button, Dropdown, Form, Input, Modal, Select, Table, Tabs, Tag, Typography } from "antd";
+import { useEffect, useState, useCallback, useMemo } from "react";
+import {
+  Alert,
+  App,
+  Button,
+  Dropdown,
+  Form,
+  Input,
+  Modal,
+  Select,
+  Table,
+  Tabs,
+  Tag,
+  TreeSelect,
+  Typography,
+} from "antd";
 import type { MenuProps } from "antd";
-import { CopyOutlined, DownOutlined, EditOutlined, KeyOutlined, PlusOutlined } from "@ant-design/icons";
+import { CopyOutlined, DeleteOutlined, DownOutlined, EditOutlined, KeyOutlined, PlusOutlined } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
 import api from "@/lib/api";
 import { useCrud } from "@/lib/hooks";
@@ -15,6 +29,7 @@ interface Organization {
   name: string;
   parent_id?: string;
   account_count?: number;
+  children?: Organization[];
 }
 
 interface Account {
@@ -35,12 +50,58 @@ interface Role {
   is_active?: boolean;
 }
 
+/** Build tree structure from flat organization list */
+function buildOrgTree(orgs: Organization[]): Organization[] {
+  const map = new Map<string, Organization & { children: Organization[] }>();
+  const roots: Organization[] = [];
+
+  // First pass: create nodes with empty children
+  for (const org of orgs) {
+    map.set(org.id, { ...org, children: [] });
+  }
+
+  // Second pass: link children to parents
+  for (const org of orgs) {
+    const node = map.get(org.id)!;
+    if (org.parent_id && map.has(org.parent_id)) {
+      map.get(org.parent_id)!.children.push(node);
+    } else {
+      roots.push(node);
+    }
+  }
+
+  return roots;
+}
+
+/** Build TreeSelect data from flat org list, excluding self and descendants */
+function buildTreeSelectData(
+  orgs: Organization[],
+  excludeId?: string
+): { title: string; value: string; children?: { title: string; value: string }[] }[] {
+  const tree = buildOrgTree(orgs);
+
+  function filterNode(node: Organization): { title: string; value: string; children?: { title: string; value: string }[] } | null {
+    if (node.id === excludeId) return null;
+    const filteredChildren = (node.children || [])
+      .map(filterNode)
+      .filter(Boolean) as { title: string; value: string; children?: { title: string; value: string }[] }[];
+    return {
+      title: node.name,
+      value: node.id,
+      ...(filteredChildren.length > 0 ? { children: filteredChildren } : {}),
+    };
+  }
+
+  return tree.map(filterNode).filter(Boolean) as { title: string; value: string; children?: { title: string; value: string }[] }[];
+}
+
 export default function AccountsPage() {
   const { message, modal } = App.useApp();
   const [activeTab, setActiveTab] = useState("orgs");
   const [orgs, setOrgs] = useState<Organization[]>([]);
   const [orgsLoading, setOrgsLoading] = useState(false);
   const [orgModalOpen, setOrgModalOpen] = useState(false);
+  const [editingOrg, setEditingOrg] = useState<Organization | null>(null);
   const [accountModalOpen, setAccountModalOpen] = useState(false);
   const [createdAccount, setCreatedAccount] = useState<Account | null>(null);
   const [resetLinkModalOpen, setResetLinkModalOpen] = useState(false);
@@ -82,9 +143,18 @@ export default function AccountsPage() {
     if (activeTab === "orgs") fetchOrgs();
   }, [activeTab, fetchOrgs]);
 
-  const handleCreateOrg = async (values: { name: string }) => {
+  // Tree data for org table
+  const orgTreeData = useMemo(() => buildOrgTree(orgs), [orgs]);
+
+  // TreeSelect data for create/edit modals
+  const treeSelectData = useMemo(() => buildTreeSelectData(orgs, editingOrg?.id), [orgs, editingOrg?.id]);
+
+  const handleCreateOrg = async (values: { name: string; parent_id?: string }) => {
     try {
-      await api.post("/organizations", values);
+      await api.post("/organizations", {
+        name: values.name,
+        parent_id: values.parent_id || null,
+      });
       message.success("组织创建成功");
       setOrgModalOpen(false);
       orgForm.resetFields();
@@ -92,6 +162,42 @@ export default function AccountsPage() {
     } catch {
       message.error("创建失败");
     }
+  };
+
+  const handleEditOrg = async (values: { name: string; parent_id?: string }) => {
+    if (!editingOrg) return;
+    try {
+      await api.patch(`/organizations/${editingOrg.id}`, {
+        name: values.name,
+        parent_id: values.parent_id || null,
+      });
+      message.success("组织更新成功");
+      setEditingOrg(null);
+      orgForm.resetFields();
+      fetchOrgs();
+    } catch {
+      message.error("更新失败");
+    }
+  };
+
+  const handleDeleteOrg = (org: Organization) => {
+    modal.confirm({
+      title: "删除组织",
+      content: `确定删除「${org.name}」吗？删除后不可恢复。`,
+      okText: "确定删除",
+      okButtonProps: { danger: true },
+      cancelText: "取消",
+      onOk: async () => {
+        try {
+          await api.delete(`/organizations/${org.id}`);
+          message.success("组织已删除");
+          fetchOrgs();
+        } catch (err: unknown) {
+          const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+          message.error(detail || "删除失败");
+        }
+      },
+    });
   };
 
   const handleCreateAccount = async (values: Record<string, string>) => {
@@ -148,13 +254,49 @@ export default function AccountsPage() {
     });
   };
 
+  const openEditOrgModal = (org: Organization) => {
+    setEditingOrg(org);
+    orgForm.setFieldsValue({
+      name: org.name,
+      parent_id: org.parent_id || undefined,
+    });
+    setOrgModalOpen(true);
+  };
+
+  const getOrgMenuItems = (record: Organization): MenuProps["items"] => [
+    {
+      key: "edit",
+      label: "编辑组织",
+      icon: <EditOutlined />,
+      onClick: () => openEditOrgModal(record),
+    },
+    {
+      key: "delete",
+      label: "删除组织",
+      icon: <DeleteOutlined />,
+      danger: true,
+      onClick: () => handleDeleteOrg(record),
+    },
+  ];
+
   const orgColumns: ColumnsType<Organization> = [
     { title: "组织名称", dataIndex: "name", key: "name" },
     {
       title: "账户数",
       dataIndex: "account_count",
       key: "account_count",
+      width: 120,
       render: (v: number, record) => <Tag data-testid={`org-account-count-${record.id}`}>{v || 0}</Tag>,
+    },
+    {
+      title: "操作",
+      key: "action",
+      width: 80,
+      render: (_: unknown, record: Organization) => (
+        <Dropdown menu={{ items: getOrgMenuItems(record) }}>
+          <Button type="text" icon={<DownOutlined />} aria-label={`操作菜单-${record.name}`} />
+        </Dropdown>
+      ),
     },
   ];
 
@@ -240,7 +382,15 @@ export default function AccountsPage() {
             children: (
               <>
                 <div className="mb-4 flex items-center gap-4">
-                  <Button type="primary" icon={<PlusOutlined />} onClick={() => setOrgModalOpen(true)}>
+                  <Button
+                    type="primary"
+                    icon={<PlusOutlined />}
+                    onClick={() => {
+                      setEditingOrg(null);
+                      orgForm.resetFields();
+                      setOrgModalOpen(true);
+                    }}
+                  >
                     新建组织
                   </Button>
                   <Input.Search
@@ -256,7 +406,15 @@ export default function AccountsPage() {
                     }}
                   />
                 </div>
-                <Table columns={orgColumns} dataSource={orgs} rowKey="id" loading={orgsLoading} />
+                <Table
+                  columns={orgColumns}
+                  dataSource={orgTreeData}
+                  rowKey="id"
+                  loading={orgsLoading}
+                  pagination={false}
+                  indentSize={20}
+                  defaultExpandAllRows
+                />
               </>
             ),
           },
@@ -301,13 +459,38 @@ export default function AccountsPage() {
           },
         ]}
       />
-      <Modal title="新建组织" open={orgModalOpen} onCancel={() => setOrgModalOpen(false)} onOk={() => orgForm.submit()}>
-        <Form form={orgForm} layout="vertical" onFinish={handleCreateOrg}>
+
+      {/* Create/Edit Organization Modal */}
+      <Modal
+        title={editingOrg ? "编辑组织" : "新建组织"}
+        open={orgModalOpen}
+        onCancel={() => {
+          setOrgModalOpen(false);
+          setEditingOrg(null);
+          orgForm.resetFields();
+        }}
+        onOk={() => orgForm.submit()}
+        okText={editingOrg ? "保存" : "创建"}
+      >
+        <Form
+          form={orgForm}
+          layout="vertical"
+          onFinish={editingOrg ? handleEditOrg : handleCreateOrg}
+        >
           <Form.Item name="name" label="组织名称" rules={[{ required: true, message: "请输入组织名称" }]}>
             <Input />
           </Form.Item>
+          <Form.Item name="parent_id" label="上级组织">
+            <TreeSelect
+              placeholder="无（顶级组织）"
+              allowClear
+              treeData={treeSelectData}
+              treeDefaultExpandAll
+            />
+          </Form.Item>
         </Form>
       </Modal>
+
       <Modal
         title="新建账户"
         open={accountModalOpen}
@@ -375,7 +558,11 @@ export default function AccountsPage() {
             <Input />
           </Form.Item>
           <Form.Item name="organization_id" label="所属组织" rules={[{ required: true, message: "请选择组织" }]}>
-            <Select placeholder="选择组织" options={orgs.map((o) => ({ value: o.id, label: o.name }))} />
+            <TreeSelect
+              placeholder="选择组织"
+              treeData={buildTreeSelectData(orgs)}
+              treeDefaultExpandAll
+            />
           </Form.Item>
           <Form.Item name="role_ids" label="角色">
             <Select
@@ -434,7 +621,11 @@ export default function AccountsPage() {
             <Input />
           </Form.Item>
           <Form.Item name="organization_id" label="所属组织" rules={[{ required: true, message: "请选择组织" }]}>
-            <Select placeholder="选择组织" options={orgs.map((o) => ({ value: o.id, label: o.name }))} />
+            <TreeSelect
+              placeholder="选择组织"
+              treeData={buildTreeSelectData(orgs)}
+              treeDefaultExpandAll
+            />
           </Form.Item>
           <Form.Item name="role_ids" label="角色">
             <Select

@@ -76,9 +76,7 @@ async def create_account(
         raise HTTPException(status_code=400, detail="Organization does not belong to current tenant")
 
     # Email uniqueness check within tenant
-    existing = await db.execute(
-        select(Account).where(Account.tenant_id == tenant_id, Account.email == email)
-    )
+    existing = await db.execute(select(Account).where(Account.tenant_id == tenant_id, Account.email == email))
     if existing.scalar_one_or_none():
         raise HTTPException(status_code=409, detail="An account with this email already exists in this tenant")
 
@@ -117,12 +115,8 @@ async def list_accounts(
     count_query = select(func.count()).select_from(Account).where(Account.tenant_id == tenant_id)
 
     if q:
-        query = query.where(
-            (Account.name.ilike(f"%{q}%")) | (Account.email.ilike(f"%{q}%"))
-        )
-        count_query = count_query.where(
-            (Account.name.ilike(f"%{q}%")) | (Account.email.ilike(f"%{q}%"))
-        )
+        query = query.where((Account.name.ilike(f"%{q}%")) | (Account.email.ilike(f"%{q}%")))
+        count_query = count_query.where((Account.name.ilike(f"%{q}%")) | (Account.email.ilike(f"%{q}%")))
 
     total_result = await db.execute(count_query)
     total = total_result.scalar() or 0
@@ -132,6 +126,99 @@ async def list_accounts(
     items = list(result.scalars().all())
 
     return {"items": items, "total": total}
+
+
+async def update_organization(
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    org_id: uuid.UUID,
+    name: str | None,
+    parent_id: uuid.UUID | None,
+    parent_id_provided: bool = False,
+) -> Organization | None:
+    """Update organization fields.
+    - name: only updated if not None
+    - parent_id: only updated if parent_id_provided is True
+      (caller should set this based on exclude_unset)
+    """
+    result = await db.execute(
+        select(Organization).where(Organization.id == org_id, Organization.tenant_id == tenant_id)
+    )
+    org = result.scalar_one_or_none()
+    if not org:
+        return None
+
+    if name is not None:
+        org.name = name
+
+    if parent_id_provided:
+        # Circular reference check: new parent must not be self or a descendant
+        if parent_id is not None and parent_id == org_id:
+            raise HTTPException(status_code=400, detail="Organization cannot be its own parent")
+
+        if parent_id is not None:
+            # Walk up the ancestor chain to detect cycles
+            visited: set[uuid.UUID] = {org_id}
+            current_id = parent_id
+            while current_id is not None:
+                if current_id in visited:
+                    raise HTTPException(status_code=400, detail="Circular reference detected in organization hierarchy")
+                visited.add(current_id)
+                ancestor = await db.execute(select(Organization.parent_id).where(Organization.id == current_id))
+                current_id = ancestor.scalar_one_or_none()
+
+            # Verify parent belongs to same tenant
+            parent_result = await db.execute(
+                select(Organization).where(Organization.id == parent_id, Organization.tenant_id == tenant_id)
+            )
+            if not parent_result.scalar_one_or_none():
+                raise HTTPException(status_code=400, detail="Parent organization not found in current tenant")
+
+        org.parent_id = parent_id
+
+    await db.flush()
+    await db.refresh(org)
+    return org
+
+
+async def delete_organization(
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    org_id: uuid.UUID,
+) -> bool:
+    """Delete an organization. Rejects if it has children or associated accounts."""
+    result = await db.execute(
+        select(Organization).where(Organization.id == org_id, Organization.tenant_id == tenant_id)
+    )
+    org = result.scalar_one_or_none()
+    if not org:
+        raise HTTPException(status_code=404, detail="Organization not found")
+
+    # Check for child organizations
+    children_result = await db.execute(
+        select(func.count()).select_from(Organization).where(Organization.parent_id == org_id)
+    )
+    child_count = children_result.scalar() or 0
+    if child_count > 0:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Cannot delete: organization has {child_count} child organization(s)",
+        )
+
+    # Check for associated accounts
+    account_result = await db.execute(
+        select(func.count()).select_from(Account).where(Account.organization_id == org_id)
+    )
+    account_count = account_result.scalar() or 0
+    if account_count > 0:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Cannot delete: organization has {account_count} associated account(s)",
+        )
+
+    await db.delete(org)
+    await db.flush()
+    return True
 
 
 async def update_account(

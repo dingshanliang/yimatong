@@ -7,16 +7,25 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
 from app.core.dependencies import get_current_tenant
 from app.models.tenant import Organization
-from app.schemas.account import AccountCreate, AccountRead, AccountUpdate, OrganizationCreate, OrganizationRead
+from app.schemas.account import (
+    AccountCreate,
+    AccountRead,
+    AccountUpdate,
+    OrganizationCreate,
+    OrganizationRead,
+    OrganizationUpdate,
+)
 from app.schemas.common import PaginatedResponse
 from app.services.organization import (
     count_accounts_by_org,
     create_account,
     create_organization,
+    delete_organization,
     generate_initial_password,
     list_accounts,
     list_organizations,
     update_account,
+    update_organization,
 )
 
 router = APIRouter(prefix="/api/v1", tags=["organizations", "accounts"])
@@ -53,6 +62,48 @@ async def list_orgs_endpoint(
         for org in result["items"]
     ]
     return PaginatedResponse(items=items, total=result["total"], page=page, page_size=page_size)
+
+
+@router.patch("/organizations/{org_id}", response_model=OrganizationRead, summary="更新组织")
+async def update_org_endpoint(
+    org_id: uuid.UUID,
+    body: OrganizationUpdate,
+    db: AsyncSession = Depends(get_db),
+    tenant_id: uuid.UUID = Depends(get_current_tenant),
+):
+    updates = body.model_dump(exclude_unset=True)
+    name = updates.get("name")
+    parent_id = updates.get("parent_id")
+    parent_id_provided = "parent_id" in updates
+
+    org = await update_organization(
+        db,
+        tenant_id=tenant_id,
+        org_id=org_id,
+        name=name,
+        parent_id=parent_id,
+        parent_id_provided=parent_id_provided,
+    )
+    if not org:
+        raise HTTPException(status_code=404, detail="Organization not found")
+
+    account_counts = await count_accounts_by_org(db, tenant_id)
+    return {
+        "id": org.id,
+        "tenant_id": org.tenant_id,
+        "name": org.name,
+        "parent_id": org.parent_id,
+        "account_count": account_counts.get(org.id, 0),
+    }
+
+
+@router.delete("/organizations/{org_id}", status_code=204, summary="删除组织")
+async def delete_org_endpoint(
+    org_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    tenant_id: uuid.UUID = Depends(get_current_tenant),
+):
+    await delete_organization(db, tenant_id=tenant_id, org_id=org_id)
 
 
 @router.post(
