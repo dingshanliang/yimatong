@@ -324,7 +324,10 @@ export default function DashboardHome() {
         <Col xs={24} lg={8}>
           <Card title="最近码批次" size="small" style={{ height: "100%" }}>
             <div style={{ height: 250, overflow: "auto" }}>
-              <Table columns={batchColumns} dataSource={batches} rowKey="id" pagination={false} size="small" />
+              <Table columns={batchColumns} dataSource={batches} rowKey="id" pagination={false} size="small" onRow={(record: CodeBatch) => ({
+                onClick: () => router.push(`/batches/${record.id}`),
+                style: { cursor: "pointer" },
+              })} />
             </div>
           </Card>
         </Col>
@@ -340,7 +343,10 @@ export default function DashboardHome() {
       </Row>
 
       <Card title="最近活动" size="small" className="mb-2">
-        <Table columns={campaignColumns} dataSource={campaigns} rowKey="id" pagination={false} size="small" />
+        <Table columns={campaignColumns} dataSource={campaigns} rowKey="id" pagination={false} size="small" onRow={(record: Campaign) => ({
+          onClick: () => router.push(`/campaigns/${record.id}`),
+          style: { cursor: "pointer" },
+        })} />
       </Card>
     </div>
   );
