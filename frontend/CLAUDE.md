@@ -38,7 +38,8 @@ e2e/            Playwright E2E 测试
 - **Admin 单元测试**：`cd frontend/apps/admin && pnpm exec vitest run`
 - **E2E 测试端口**：H5 的 Playwright E2E 测试使用端口 3003（非 dev 端口 3001），配置见 `playwright.config.ts`
 - **共享包类型检查**：`pnpm --filter @yimatong/shared typecheck`
+- **Platform 命令**：`pnpm dev:platform`（端口 3002）、`pnpm build:platform`、`pnpm lint:platform`
 
 ## AGENTS.md
 
-@AGENTS.md
+本目录下的 `AGENTS.md` 包含 Next.js 16 兼容性警告和额外编码指南，开发时请参考。

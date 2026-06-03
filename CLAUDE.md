@@ -27,14 +27,17 @@ ruff format .                              # 格式化
 
 ```bash
 cd frontend
-pnpm build:shared   # 先构建共享包（admin/h5 依赖此包）
+pnpm build:shared   # 先构建共享包（admin/h5/platform 依赖此包）
 pnpm dev:admin      # 启动 Admin 开发服务器（端口 3000）
 pnpm dev:h5         # 启动 H5 开发服务器（端口 3001）
+pnpm dev:platform   # 启动平台管理后台（端口 3002）
 pnpm build:admin    # 只构建 Admin
 pnpm build:h5       # 只构建 H5
+pnpm build:platform # 只构建 Platform
 pnpm build          # 构建全部
 pnpm lint:admin     # Lint Admin
 pnpm lint:h5        # Lint H5
+pnpm lint:platform  # Lint Platform
 pnpm test:e2e       # Playwright E2E 测试
 pnpm test:e2e:ui    # E2E 测试（带 UI）
 pnpm test:e2e:debug # E2E 测试（调试模式）
@@ -80,10 +83,13 @@ backend/
     test_api/        API 端点测试
     test_auth/       认证模块测试
     test_cli/        CLI 工具测试
+    test_integration/ 端到端集成测试
+    test_isolation/   租户隔离测试
     test_middleware/  中间件测试
     test_models/     模型测试
     test_services/   服务层测试
     test_tasks/      异步任务测试
+    test_rls.py, test_health.py, test_docker_compose.py, test_alembic_migration.py  根级集成测试
   alembic/           数据库迁移（40+ 版本）
   docker-compose.dev.yml  完整本地环境
 
@@ -97,6 +103,10 @@ frontend/
       auth.ts        Zustand auth store（localStorage + cookie 双写）
       theme.ts       Ant Design 主题配置
     src/middleware.ts Next.js 中间件（cookie 检查 → 未认证重定向 /login）
+  apps/platform/     平台管理后台（Next.js App Router + Ant Design 6，端口 3002）
+    src/lib/platform-auth.ts  平台管理员 Zustand store（独立 cookie: platform_access_token）
+    src/lib/api.ts            平台 Axios 实例（读 platform_access_token）
+    src/middleware.ts          Platform 路由守卫
   apps/h5/           消费者扫码页（Next.js + Tailwind + Headless UI）
   packages/shared/   共享 TypeScript 类型（@yimatong/shared）
 
@@ -131,6 +141,13 @@ docs/
 - **中间件**：`TenantScopeMiddleware` 从 JWT 提取 `tenant_id`，写入 context var → `get_db()` 在事务中 `SET LOCAL`
 - **公开路由跳过认证**：`/api/v1/auth/login`、`/c/{public_id}`、`/health` 等
 - **所有业务表必须包含 `tenant_id`**（即使可从父表推导）
+
+### 平台管理后台认证
+
+- **独立登录端点**：`/platform/auth/login`（非 `/auth/login`）
+- **独立 cookie**：`platform_access_token`（与 admin 的 `access_token` 隔离）
+- **独立 auth store**：`platform-auth.ts`（Zustand）
+- **独立 axios 实例**：读取 `platform_access_token`
 
 ### 前端认证流
 
