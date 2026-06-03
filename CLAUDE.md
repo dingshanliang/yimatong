@@ -84,7 +84,7 @@ backend/
     test_models/     模型测试
     test_services/   服务层测试
     test_tasks/      异步任务测试
-  alembic/           数据库迁移（0001-0038+）
+  alembic/           数据库迁移（40+ 版本）
   docker-compose.dev.yml  完整本地环境
 
 frontend/
@@ -113,7 +113,7 @@ docs/
 
 | 层 | 选型 |
 |---|---|
-| 后端 API | FastAPI（Python 3.13+，uv 管理） |
+| 后端 API | FastAPI（Python ≥3.12，uv 管理） |
 | 数据库 | PostgreSQL 16（SQLAlchemy 2.0 async，Alembic 迁移） |
 | 缓存/队列 | Redis 7（redis[hiredis]，arq 异步任务） |
 | 对象存储 | MinIO（boto3 兼容，本地）/ S3 兼容（生产） |
@@ -177,6 +177,25 @@ schemas/   → Pydantic V2 请求/响应模型
 
 前端：`NEXT_PUBLIC_API_URL` 环境变量指定后端 API 地址（默认 http://localhost:8000）。
 
+## 代码风格与 PR 规范
+
+### 后端
+- **Lint/格式化**：ruff（`ruff check .` + `ruff format .`）
+- **Import 排序**：ruff isort 规则
+- **命名**：模型 PascalCase，函数/变量 snake_case，常量 UPPER_SNAKE
+- **Schema 命名**：`XxxCreate`、`XxxUpdate`、`XxxResponse`、`XxxListResponse`
+
+### 前端
+- **组件**：PascalCase，每个组件一个文件
+- **Hooks**：`useXxx` 命名
+- **API 函数**：camelCase，放在 `src/lib/api.ts` 或按模块拆分
+- **状态管理**：Zustand store，放在 `src/lib/` 下
+
+### Git 提交
+- **格式**：`type(scope): description`（如 `feat(campaign): add campaign analytics page`）
+- **类型**：feat / fix / refactor / test / docs / chore / style
+- **PR 目标**：feature/fix → dev → main
+
 ## 关键设计约束
 
 - 主键使用 UUID v7（时间排序），使用 uuid6 库
@@ -202,6 +221,10 @@ schemas/   → Pydantic V2 请求/响应模型
 
 ## 已知环境陷阱
 
-- **端口 5432 冲突**：本地 PostgreSQL 可能占用 5432，导致 `localhost:5432` 连接到本地 PG 而非 Docker PG。Docker 容器通过内部网络 `postgres:5432` 连接。操作 Docker 内的数据库数据时需用 `docker exec` 而非本地 psql。
+- **端口 5432 冲突**：本地 PostgreSQL 可能占用 5432，导致 `localhost:5432` 连接到本地 PG 而非 Docker PG。Docker 容器通过内部网络 `postgres:5432` 连接。
+- **Docker 环境下所有数据库操作必须在容器内执行**：当后端跑在 Docker 中时，`seed_demo.py`、`alembic` 等脚本若在宿主机运行会写入本地 PG 而非 Docker PG，导致数据对后端不可见。正确做法：
+  - 脚本：`docker exec yimatong-backend-1 /app/.venv/bin/python scripts/seed_demo.py generate`
+  - 迁移：`docker exec yimatong-backend-1 /app/.venv/bin/alembic upgrade head`
+  - SQL：`docker exec yimatong-postgres-1 psql -U yimatong -d yimatong_dev -c "..."`
 - **Redis 端口**：Docker Redis 映射到 `localhost:6380`（非默认 6379），但容器内部用 `redis:6379`。
 - **Alembic stamp**：如果数据库表已存在但 `alembic_version` 为空，用 `alembic stamp head` 标记版本而非重新迁移。

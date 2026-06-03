@@ -1,43 +1,15 @@
 # 一码通前端 Monorepo
 
-pnpm workspace monorepo，包含管理后台和消费者扫码页。
+通用开发命令、技术栈和架构说明见根目录 `CLAUDE.md`。本文件只补充前端特有的信息。
 
 ## 结构
 
 ```
-apps/admin/     管理后台 — Next.js + Ant Design（端口 3000）
-apps/h5/        消费者扫码页 — Next.js + Tailwind + Headless UI（端口 3001）
-packages/shared/ 共享 TypeScript 类型定义
+apps/admin/     管理后台 — Next.js 16 + Ant Design 6（端口 3000）
+apps/h5/        消费者扫码页 — Next.js 16 + Tailwind 4 + Headless UI（端口 3001）
+packages/shared/ 共享 TypeScript 类型定义（@yimatong/shared）
+e2e/            Playwright E2E 测试
 ```
-
-## 开发命令
-
-```bash
-pnpm dev:admin      # 启动 Admin 开发服务器
-pnpm dev:h5         # 启动 H5 开发服务器
-pnpm build          # 构建全部
-pnpm build:admin    # 只构建 Admin
-pnpm build:h5       # 只构建 H5
-pnpm build:shared   # 只构建共享包（admin/h5 依赖此包）
-pnpm lint:admin     # Lint Admin
-pnpm lint:h5        # Lint H5
-pnpm --filter @yimatong/shared typecheck  # 共享包类型检查
-pnpm test:e2e       # Playwright E2E 测试
-pnpm test:e2e:ui    # E2E 测试（带 UI）
-```
-
-## 技术约束
-
-- Next.js 16（App Router），React 19
-- Admin: Ant Design 6 + zustand + axios
-- H5: Tailwind CSS 4 + Headless UI + zustand + axios
-- 共享包 `@yimatong/shared` 使用 `workspace:*` 协议
-- 后端 API 地址：`NEXT_PUBLIC_API_URL` 环境变量（默认 http://localhost:8000）
-- H5 开发端口 3001，E2E 测试端口 3003（见 playwright.config.ts）
-
-## Admin 路由模块
-
-`(dashboard)/` 下业务模块：accounts, agency, ai-assistant, batches, benefits, brands, campaign-analytics, campaigns, channel-portal, channels, codes, connectors, crm-sync, exports, gmv, i18n, imports, integrations, launch-checklist, members, pages, products, regional, risk, risk-dashboard, settings, skus, stats, store-portal。另有 `_components` 共享组件目录。
 
 ## 关键文件
 
@@ -49,9 +21,18 @@ pnpm test:e2e:ui    # E2E 测试（带 UI）
 | `apps/admin/src/middleware.ts` | Admin 路由守卫（cookie 检查） |
 | `apps/h5/src/middleware.ts` | H5 路由守卫 |
 
-## E2E 测试
+## Admin 路由模块
 
-测试文件位于 `tests/e2e/`，使用 Playwright。配置见 `playwright.config.ts`。
+`(dashboard)/` 下业务模块：accounts, agency, ai-assistant, batches, benefits, brands, campaign-analytics, campaigns, channel-portal, channels, codes, connectors, crm-sync, exports, gmv, i18n, imports, integrations, launch-checklist, members, pages, products, regional, risk, risk-dashboard, settings, skus, stats, store-portal。另有 `_components` 共享组件目录。
+
+## 前端开发注意事项
+
+- **构建顺序**：`pnpm build:shared` 必须在 `pnpm dev:admin` 或 `pnpm build:admin` 之前执行，因为 admin/h5 依赖 `@yimatong/shared`
+- **Ant Design 6**：API 与 v5 有 breaking changes，不确定的组件用法先查 context7-mcp
+- **Tailwind CSS 4**：配置方式与 v3 不同（CSS-first 配置），使用 `@theme` 指令而非 `tailwind.config.js`
+- **Admin 单元测试**：`cd frontend/apps/admin && pnpm exec vitest run`
+- **E2E 测试端口**：H5 的 Playwright E2E 测试使用端口 3003（非 dev 端口 3001），配置见 `playwright.config.ts`
+- **共享包类型检查**：`pnpm --filter @yimatong/shared typecheck`
 
 ## AGENTS.md
 
