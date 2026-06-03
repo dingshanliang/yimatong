@@ -115,6 +115,31 @@ async def get_dashboard(
     )
     env_stats = {env or "unknown": count for env, count in env_result.all()}
 
+    # 同期对比
+    period_days = (today - seven_days_ago).days + 1
+    prev_start = seven_days_ago - timedelta(days=period_days)
+    prev_end = seven_days_ago - timedelta(days=1)
+
+    prev_result = await db.execute(
+        select(
+            func.coalesce(func.sum(DailyScanStats.total_scans), 0),
+            func.coalesce(func.sum(DailyScanStats.first_scans), 0),
+        ).where(
+            DailyScanStats.tenant_id == tenant_id,
+            DailyScanStats.date >= prev_start,
+            DailyScanStats.date <= prev_end,
+        )
+    )
+    prev_row = prev_result.one()
+    prev_scans = int(prev_row[0])
+    prev_first_scans = int(prev_row[1])
+
+    def _calc_change(current: int, previous: int) -> dict | None:
+        if previous == 0:
+            return None
+        pct = round((current - previous) / previous * 100, 1)
+        return {"value": pct, "direction": "up" if pct > 0 else "down" if pct < 0 else "flat"}
+
     return {
         "today_scans": today_stats.total_scans if today_stats else 0,
         "today_uv": today_stats.uv if today_stats else 0,
@@ -122,6 +147,14 @@ async def get_dashboard(
         "cumulative_first_scans": cumulative_first_scans,
         "trend": trend,
         "environment_breakdown": env_stats,
+        "comparison": {
+            "weekly_scans_change": _calc_change(
+                sum(s["total_scans"] for s in trend), prev_scans
+            ),
+            "weekly_first_scans_change": _calc_change(
+                sum(s["first_scans"] for s in trend), prev_first_scans
+            ),
+        },
     }
 
 
