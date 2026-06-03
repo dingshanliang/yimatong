@@ -1,6 +1,6 @@
 # 扫码统计 UX 改进 Implementation Plan
 
-> **Status:** ⏸ Partial — basic ScanTrendChart exists, no comprehensive statistics UI
+> **Status:** ✅ Completed — layout responsiveness, loading skeletons, SSE ticket auth tests
 > **Completed date:** —
 > **Evidence:** `frontend/apps/admin/src/components/ScanTrendChart.tsx` — basic chart only
 

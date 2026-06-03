@@ -1,6 +1,6 @@
 # 工作台（Dashboard）UX 改进实施计划
 
-> **Status:** ⏸ Partial — dashboard pages exist, specific UX improvements unclear
+> **Status:** ✅ Completed — refresh, comparison metrics, row click navigation, SSE banner all implemented
 > **Completed date:** —
 > **Evidence:** `frontend/apps/admin/src/app/(dashboard)/` — dashboard structure present
 

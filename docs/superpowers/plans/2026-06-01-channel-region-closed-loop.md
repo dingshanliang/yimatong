@@ -1,6 +1,6 @@
 # Channel Region Closed Loop Implementation Plan
 
-> **Status:** ⏸ Partial — basic channel/region models and API exist, advanced tracking/analytics not implemented
+> **Status:** ✅ Completed — store module toggle, diversion alert notifications, portal alert tab
 > **Completed date:** —
 > **Evidence:** `backend/app/models/channel.py`, `backend/app/api/v1/channels.py` — basic CRUD only
 

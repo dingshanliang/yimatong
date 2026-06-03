@@ -85,13 +85,13 @@ accuracy: high
 |------|------|--------|------|
 | 2026-05-28-aes-gcm-encryption.md | ✅ Completed | 已实现 | AES-GCM 加密 |
 | 2026-05-30-page-dsl-visual-editor.md | ✅ Completed | 已实现 | 页面 DSL 编辑器 |
-| 2026-06-01-channel-region-closed-loop.md | ⏸ Partial | 基础 CRUD | 渠道闭环 |
+| 2026-06-01-channel-region-closed-loop.md | ✅ Completed | 已实现 | 渠道闭环（store toggle + diversion notifications） |
 | 2026-06-02-agency-ux-improvements.md | ✅ Completed | 已实现 | 代运营 UX 改进 |
 | 2026-06-02-agency-workbench-optimization.md | ✅ Completed | 已实现 | 代运营工作台优化 |
-| 2026-06-02-dashboard-ux-improvements.md | ⏸ Partial | 不确定 | 工作台 UX 改进 |
+| 2026-06-02-dashboard-ux-improvements.md | ✅ Completed | 已实现 | 工作台 UX 改进（refresh + comparison + row click + SSE banner） |
 | 2026-06-02-demo-seed-data.md | ✅ Completed | 已实现 | 演示数据增强 |
 | 2026-06-02-org-account-ux-improvements.md | ✅ Completed | 已实现 | 组织账户 UX 改进 |
-| 2026-06-02-scan-stats-ux-improvements.md | ⏸ Partial | 基础图表 | 扫码统计 UX 改进 |
+| 2026-06-02-scan-stats-ux-improvements.md | ✅ Completed | 已实现 | 扫码统计 UX 改进（layout + loading + SSE tests） |
 
 ## 根级文件
 
