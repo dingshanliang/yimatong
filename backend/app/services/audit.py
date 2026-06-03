@@ -29,11 +29,13 @@ async def query_audit_logs(
     db: AsyncSession,
     start_time: datetime | None = None,
     end_time: datetime | None = None,
+    limit: int = 100,
 ) -> list[PlatformAuditLog]:
     stmt = select(PlatformAuditLog).order_by(PlatformAuditLog.timestamp.desc())
     if start_time:
         stmt = stmt.where(PlatformAuditLog.timestamp >= start_time)
     if end_time:
         stmt = stmt.where(PlatformAuditLog.timestamp <= end_time)
+    stmt = stmt.limit(limit)
     result = await db.execute(stmt)
     return list(result.scalars().all())
