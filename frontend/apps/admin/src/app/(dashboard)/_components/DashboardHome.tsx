@@ -85,6 +85,7 @@ export default function DashboardHome() {
     dayjs(),
   ]);
   const [exporting, setExporting] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const router = useRouter();
   const [error, setError] = useState<string | null>(null);
 
@@ -103,6 +104,20 @@ export default function DashboardHome() {
       setLoading(false);
     }
   }, [message]);
+
+  const handleRefresh = async () => {
+    setRefreshing(true);
+    try {
+      const res = await api.get("/analytics/dashboard", { params: { days_back: "30" } });
+      setData(res.data);
+      if (res.data.trend) setTrend(res.data.trend);
+      message.success("数据已刷新");
+    } catch {
+      message.error("刷新失败");
+    } finally {
+      setRefreshing(false);
+    }
+  };
 
   useEffect(() => {
     void fetchDashboard();
@@ -232,7 +247,7 @@ export default function DashboardHome() {
             <Button icon={<DownloadOutlined />} onClick={handleExport} loading={exporting} />
           </Tooltip>
           <Tooltip title="刷新数据">
-            <Button icon={<ReloadOutlined />} onClick={() => { void fetchDashboard(); void fetchRecentBatches(); void fetchRecentCampaigns(); }} />
+            <Button icon={<ReloadOutlined />} onClick={() => { void handleRefresh(); }} loading={refreshing} size="small">刷新</Button>
           </Tooltip>
         </Space>
       </div>
