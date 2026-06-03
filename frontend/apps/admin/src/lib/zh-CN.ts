@@ -22,6 +22,8 @@ const zhCN: Record<string, string> = {
   "menu.campaign-analytics": "活动看板",
   "menu.risk-dashboard": "风控看板",
   "menu.exports": "导出管理",
+  "menu.deep-analytics": "深度分析",
+  "menu.risk-center": "风控中心",
   "menu.channels": "渠道管理",
   "menu.channel-portal": "经销商入口",
   "menu.store-portal": "门店入口",

@@ -22,6 +22,8 @@ const enUS: Record<string, string> = {
   "menu.campaign-analytics": "Campaign Analytics",
   "menu.risk-dashboard": "Risk Dashboard",
   "menu.exports": "Exports",
+  "menu.deep-analytics": "Deep Analytics",
+  "menu.risk-center": "Risk Center",
   "menu.channels": "Channels",
   "menu.channel-portal": "Distributor Portal",
   "menu.store-portal": "Store Portal",
