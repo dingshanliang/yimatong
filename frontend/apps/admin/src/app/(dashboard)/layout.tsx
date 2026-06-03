@@ -47,7 +47,8 @@ const MENU_OPEN_KEY_RULES = [
   { key: "traceability-group", prefixes: ["/codes", "/pages"] },
   { key: "growth-group", prefixes: ["/campaigns", "/benefits", "/members"] },
   { key: "channels-group", prefixes: ["/channels", "/channel-portal", "/store-portal", "/regional", "/accounts"] },
-  { key: "analytics-group", prefixes: ["/stats", "/campaign-analytics", "/gmv", "/risk-dashboard", "/exports"] },
+  { key: "/analytics", prefixes: ["/analytics", "/campaign-analytics", "/gmv"] },
+  { key: "/risk-center", prefixes: ["/risk-center", "/risk-dashboard"] },
   { key: "integrations-group", prefixes: ["/connectors", "/integrations", "/imports", "/crm-sync"] },
   { key: "governance-group", prefixes: ["/risk", "/launch-checklist"] },
   { key: "settings-group", prefixes: ["/settings", "/i18n"] },
@@ -73,8 +74,7 @@ const MENU_PERMISSIONS: Record<TenantType, MenuPolicy> = {
       "/agency",
       "/pages", "/campaigns", "/products", "/codes",
       "/launch-checklist",
-      "/stats", "/campaign-analytics", "/gmv", "/exports",
-      "analytics-group",
+      "/analytics", "/exports",
       "settings-group", "/settings/roles", "/settings/compliance", "/settings/tenant", "/settings/audit-logs", "/i18n",
     ],
   },
@@ -82,8 +82,8 @@ const MENU_PERMISSIONS: Record<TenantType, MenuPolicy> = {
     mode: "blocklist",
     items: [
       "/agency", "/skus", "/batches", "/benefits", "/channels",
-      "/accounts", "/risk-dashboard", "/integrations", "/connectors",
-      "/risk", "/gmv", "/crm-sync", "/imports",
+      "/accounts", "/risk-center", "/integrations", "/connectors",
+      "/risk", "/crm-sync", "/imports",
     ],
   },
 };
@@ -160,18 +160,9 @@ function DashboardInner({ children }: { children: React.ReactNode }) {
       label: t("menu.group.channels"),
       children: channelMenuChildren,
     },
-    {
-      key: "analytics-group",
-      icon: <BarChartOutlined />,
-      label: t("menu.analytics"),
-      children: [
-        { key: "/stats", icon: <BarChartOutlined />, label: t("menu.stats") },
-        { key: "/campaign-analytics", icon: <LineChartOutlined />, label: t("menu.campaign-analytics") },
-        { key: "/gmv", icon: <LineChartOutlined />, label: t("menu.gmv") },
-        { key: "/risk-dashboard", icon: <SafetyCertificateOutlined />, label: t("menu.risk-dashboard") },
-        { key: "/exports", icon: <ExportOutlined />, label: t("menu.exports") },
-      ],
-    },
+    { key: "/analytics", icon: <LineChartOutlined />, label: t("menu.deep-analytics") },
+    { key: "/risk-center", icon: <SafetyCertificateOutlined />, label: t("menu.risk-center") },
+    { key: "/exports", icon: <ExportOutlined />, label: t("menu.exports") },
     {
       key: "integrations-group",
       icon: <DatabaseOutlined />,
@@ -225,7 +216,7 @@ function DashboardInner({ children }: { children: React.ReactNode }) {
       const scopeAllowlist = new Set([
         "/", // always show dashboard
         ...scope,
-        "analytics-group",
+        "/analytics",
         "settings-group",
       ]);
 
