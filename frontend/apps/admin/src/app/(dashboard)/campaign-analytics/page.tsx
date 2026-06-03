@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
-import { App, Button, Card, Col, DatePicker, Progress, Row, Select, Space, Statistic, Table, Typography } from "antd";
+import { App, Button, Card, Col, DatePicker, Progress, Row, Select, Skeleton, Space, Statistic, Table, Typography } from "antd";
 import {
   ScanOutlined,
   UserOutlined,
@@ -254,7 +254,11 @@ export default function CampaignAnalyticsPage() {
       </Row>
 
       <Card title="扫码趋势" className="mb-6" size="small">
-        {trend.length > 0 && <ScanTrendChart data={trend} height={300} showMulti />}
+        {loading ? (
+          <Skeleton active paragraph={{ rows: 4 }} />
+        ) : (
+          trend.length > 0 && <ScanTrendChart data={trend} height={300} showMulti />
+        )}
         <Table
           columns={trendColumns}
           dataSource={trend}
