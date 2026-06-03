@@ -1,8 +1,6 @@
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel as PydanticBaseModel
-from pydantic import Field as PydanticField
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -10,7 +8,7 @@ from app.core.database import get_db
 from app.core.dependencies import get_current_tenant
 from app.models.tenant import Tenant
 from app.schemas.common import NOT_FOUND_EXAMPLE, ErrorDetail, PaginatedResponse
-from app.schemas.tenant import TenantCreate, TenantRead, TenantUpdate
+from app.schemas.tenant import CategoriesResponse, TenantCreate, TenantRead, TenantUpdate
 from app.services.tenant import create_tenant, get_tenant, soft_delete_tenant, update_tenant
 from app.utils import escape_like_pattern
 
@@ -23,10 +21,6 @@ TENANT_NOT_FOUND = {
 }
 
 router = APIRouter(prefix="/api/v1/tenants", tags=["tenants"])
-
-
-class CategoriesResponse(PydanticBaseModel):
-    categories: list[str] = PydanticField(default_factory=list, description="租户品类列表")
 
 
 @router.post(

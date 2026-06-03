@@ -78,6 +78,10 @@ class TenantRead(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class CategoriesResponse(BaseModel):
+    categories: list[str] = Field(default_factory=list, description="租户品类列表")
+
+
 class TenantListItem(BaseModel):
     id: uuid.UUID
     name: str
