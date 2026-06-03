@@ -312,7 +312,7 @@ export default function DashboardHome() {
           <Card title="最近码批次" size="small" style={{ height: "100%" }}>
             <div style={{ height: 250, overflow: "auto" }}>
               <Table columns={batchColumns} dataSource={batches} rowKey="id" pagination={false} size="small" onRow={(record: CodeBatch) => ({
-                onClick: () => router.push(`/batches/${record.id}`),
+                onClick: () => router.push(`/codes/${record.id}`),
                 style: { cursor: "pointer" },
               })} />
             </div>
