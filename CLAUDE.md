@@ -53,12 +53,16 @@ cd frontend/apps/admin && pnpm exec vitest run   # 运行 Vitest 单元/组件�
 ### Docker 本地环境
 
 ```bash
-docker compose -f backend/docker-compose.dev.yml up -d   # 启动全部服务
-docker compose -f backend/docker-compose.dev.yml logs backend --tail 50  # 查看后端日志
-docker compose -f backend/docker-compose.dev.yml exec backend /app/.venv/bin/python -c "..."  # 容器内执行 Python
+createdb yimatong_dev_test && psql -d yimatong_dev_test -c "GRANT ALL ON SCHEMA public TO yimatong"  # 创建临时测试库
+DATABASE_URL="postgresql+asyncpg://yimatong:yimatong@localhost:5432/yimatong_dev_test" alembic upgrade head  # 从空库验证迁移链
+dropdb yimatong_dev_test  # 验证后清理
+docker compose -f docker-compose.dev.yml up -d   # 启动全部服务（项目根目录执行）
+docker compose -f docker-compose.dev.yml logs backend --tail 50  # 查看后端日志
+docker compose -f docker-compose.dev.yml exec backend /app/.venv/bin/python -c "..."  # 容器内执行 Python
 ```
 
 **注意**：如果本地已有 PostgreSQL 占用 5432 端口，`localhost:5432` 连接的是本地 PG 而非 Docker PG。Docker 容器内的后端通过 `postgres:5432`（Docker 内部网络）连接。
+- **docker-compose 在项目根目录**：所有 `docker compose` 命令必须在项目根目录执行，不是 `backend/`
 
 ## 项目结构
 
@@ -91,7 +95,8 @@ backend/
     test_tasks/      异步任务测试
     test_rls.py, test_health.py, test_docker_compose.py, test_alembic_migration.py  根级集成测试
   alembic/           数据库迁移（40+ 版本）
-  docker-compose.dev.yml  完整本地环境
+
+docker-compose.dev.yml  完整本地环境（项目根目录）
 
 frontend/
   apps/admin/        管理后台（Next.js App Router + Ant Design 6）
@@ -238,6 +243,8 @@ schemas/   → Pydantic V2 请求/响应模型
 
 ## 已知环境陷阱
 
+- **PG 16 新建库需要授权**：`createdb` 后需执行 `GRANT ALL ON SCHEMA public TO yimatong`，否则 alembic 会报 `permission denied for schema public`
+- **迁移链验证**：43 条迁移已验证可从空库完整运行到 head (`8ed6e2861a45`)。如需验证：创建临时库 → `alembic upgrade head` → 清理
 - **API 路由提取**：`app/api/v1/` 中的文件使用多种 router 变量名（`router`、`brand_router`、`campaign_router`、`dashboard_router` 等），不能只 grep `@router.get`。正确方法：先 `grep "APIRouter" *.py` 找到所有 router 定义和 prefix，再用对应的 router 名 grep 路由。
 - **模型文件映射**：`consumer.py` 是空文件，`ConsumerProfile` 实际定义在 `member.py` 中。总共有 28 个模型文件、69 个模型类，不要假设文件名和内容一一对应。
 - **Shell noclobber**：用户 shell 启用了 `noclobber`，`mv` 覆盖已有文件会失败。批量文件操作用 Python 脚本代替 shell 重定向。
