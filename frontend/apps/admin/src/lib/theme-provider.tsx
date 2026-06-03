@@ -1,8 +1,9 @@
 "use client";
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
-import { App, ConfigProvider } from "antd";
+import { App, ConfigProvider as AntdConfigProvider } from "antd";
 import zhCN from "antd/locale/zh_CN";
+import { ConfigProvider as ChartsConfigProvider } from "@ant-design/charts";
 import { SWRProvider } from "@/lib/swr-provider";
 import { adminThemes, type AdminThemeMode } from "@/lib/theme";
 
@@ -62,13 +63,38 @@ export function AdminThemeProvider({ children }: { children: React.ReactNode }) 
     [mode, setMode, toggleMode],
   );
 
+  const chartsTheme = useMemo(
+    () =>
+      mode === "dark"
+        ? {
+            theme: {
+              type: "dark" as const,
+              color: "#4c9dff",
+              category10: ["#4c9dff", "#5ad8a6", "#f6bd16", "#e86452", "#6dc8ec", "#945fb9", "#ff9845", "#1e9493", "#ff99c3", "#269a99"],
+              axis: {
+                labelFill: "#a7b4c8",
+                titleFill: "#a7b4c8",
+                gridStroke: "#1e2d45",
+                lineStroke: "#26364f",
+              },
+              legend: {
+                itemLabelFill: "#a7b4c8",
+              },
+            },
+          }
+        : undefined,
+    [mode],
+  );
+
   return (
     <AdminThemeContext.Provider value={value}>
-      <ConfigProvider theme={adminThemes[mode]} locale={zhCN}>
-        <SWRProvider>
-          <App className="admin-app min-h-screen">{children}</App>
-        </SWRProvider>
-      </ConfigProvider>
+      <AntdConfigProvider theme={adminThemes[mode]} locale={zhCN}>
+        <ChartsConfigProvider common={chartsTheme}>
+          <SWRProvider>
+            <App className="admin-app min-h-screen">{children}</App>
+          </SWRProvider>
+        </ChartsConfigProvider>
+      </AntdConfigProvider>
     </AdminThemeContext.Provider>
   );
 }

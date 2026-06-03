@@ -228,9 +228,6 @@ export default function TenantSettingsPage() {
           <Descriptions.Item label="租户名称">
             {tenant.name}
           </Descriptions.Item>
-          <Descriptions.Item label="Slug">
-            <span className="text-text-muted">{tenant.slug}</span>
-          </Descriptions.Item>
           <Descriptions.Item label="套餐">
             {PLAN_MAP[tenant.plan] || tenant.plan}
           </Descriptions.Item>
