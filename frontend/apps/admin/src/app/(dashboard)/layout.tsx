@@ -7,7 +7,6 @@ import {
   DashboardOutlined,
   AppstoreOutlined,
   QrcodeOutlined,
-  BarChartOutlined,
   FileTextOutlined,
   GiftOutlined,
   LogoutOutlined,
