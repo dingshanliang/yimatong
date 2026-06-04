@@ -48,6 +48,12 @@ export default function DashboardCharts({ initialTrend, loading: parentLoading }
     }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
+  useEffect(() => {
+    if (initialTrend && initialTrend.length > 0) {
+      setTrend(initialTrend);
+    }
+  }, [initialTrend]);
+
   const safeTrend = Array.isArray(trend) ? trend : [];
 
   const chartData = safeTrend.flatMap((row) => [

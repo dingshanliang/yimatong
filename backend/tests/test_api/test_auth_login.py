@@ -92,6 +92,43 @@ class TestLogin:
         assert payload["role"] == "operator"
 
     @pytest.mark.anyio
+    async def test_login_can_target_tenant_slug_when_email_is_duplicated(
+        self, client: AsyncClient, db_session: AsyncSession, seeded_account
+    ):
+        from uuid6 import uuid7
+
+        from app.models.tenant import Organization, Tenant
+
+        demo_tenant = Tenant(id=uuid7(), name="演示租户", slug="demo")
+        db_session.add(demo_tenant)
+        await db_session.flush()
+
+        demo_org = Organization(id=uuid7(), tenant_id=demo_tenant.id, name="演示部门")
+        db_session.add(demo_org)
+        await db_session.flush()
+
+        demo_account = Account(
+            id=uuid7(),
+            tenant_id=demo_tenant.id,
+            organization_id=demo_org.id,
+            email=seeded_account.email,
+            hashed_password=hash_password("DemoPassword1"),
+            name="演示用户",
+        )
+        db_session.add(demo_account)
+        await db_session.commit()
+
+        resp = await client.post(
+            "/api/v1/auth/login",
+            json={"email": seeded_account.email, "password": "DemoPassword1", "tenant_slug": "demo"},
+        )
+
+        assert resp.status_code == 200
+        payload = decode_token(resp.json()["access_token"])
+        assert payload["tenant_id"] == str(demo_tenant.id)
+        assert payload["sub"] == str(demo_account.id)
+
+    @pytest.mark.anyio
     async def test_login_failure_returns_401(self, client: AsyncClient, seeded_account):
         resp = await client.post(
             "/api/v1/auth/login",

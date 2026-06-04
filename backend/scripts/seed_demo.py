@@ -65,6 +65,7 @@ async_session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit
 TENANT_SLUG = "demo"
 TENANT_NAME = "青岭良仓演示租户"
 TOTAL_DAYS = 60
+DEMO_ENABLED_FEATURES = {"channel_store": True}
 
 # ─── 进度报告器 ──────────────────────────────────────────
 class Progress:
@@ -362,6 +363,7 @@ async def _ensure_tenant(db: AsyncSession) -> Tenant:
     result = await db.execute(select(Tenant).where(Tenant.slug == TENANT_SLUG))
     tenant = result.scalar_one_or_none()
     if tenant:
+        tenant.enabled_features = {**(tenant.enabled_features or {}), **DEMO_ENABLED_FEATURES}
         return tenant
     tenant = await create_tenant(
         db,
@@ -373,6 +375,7 @@ async def _ensure_tenant(db: AsyncSession) -> Tenant:
         admin_password=DEMO_ACCOUNTS[0]["password"],
         tenant_type="brand",
     )
+    tenant.enabled_features = {**(tenant.enabled_features or {}), **DEMO_ENABLED_FEATURES}
     return tenant
 
 
@@ -712,10 +715,18 @@ async def _ensure_channels(
     if activated_items and stores:
         # 获取所有码批次
         batch_ids = list({item.code_batch_id for item in activated_items})
-        for batch_id in batch_ids:
+        for batch_idx, batch_id in enumerate(batch_ids):
             batch_items = [i for i in activated_items if i.code_batch_id == batch_id]
             if not batch_items:
                 continue
+            primary_region = regions[batch_idx % len(regions)]
+            primary_dist = distributors[REGIONS_DATA[batch_idx % len(regions)]["dist"]]
+            result = await db.execute(select(CodeBatch).where(CodeBatch.id == batch_id))
+            code_batch = result.scalar_one_or_none()
+            if code_batch:
+                code_batch.distributor_id = primary_dist.id
+                code_batch.region_id = primary_region.id
+
             per_store = max(1, len(batch_items) // len(stores))
             now_str = utcnow().replace(microsecond=0).isoformat()
             for idx, store in enumerate(stores):

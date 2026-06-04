@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.campaign import BenefitClaim
 from app.models.channel import CodeAllocation, Distributor, Region, Store
 from app.models.code import CodeBatch, CodeItem
+from app.models.product import SKU, Product, ProductionBatch  # noqa: F401 - register CodeBatch relationships
 from app.models.scan import ScanEvent
 
 # ── 维度配置 ────────────────────────────────────────

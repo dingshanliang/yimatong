@@ -8,8 +8,27 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.campaign import BenefitClaim
 from app.models.member import ConsumerProfile
+from app.models.product import SKU, Product, ProductionBatch  # noqa: F401 - register CodeBatch relationships
 from app.models.scan import ScanEvent
 from app.models.tenant import Tenant
+
+
+def _as_date(value: date | datetime | str | None) -> date | None:
+    if not value:
+        return None
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    return date.fromisoformat(value[:10])
+
+
+def _as_iso_timestamp(value: date | datetime | str | None, fallback: datetime) -> str:
+    if not value:
+        return fallback.isoformat()
+    if isinstance(value, str):
+        return value
+    return value.isoformat()
 
 
 async def get_conversion_funnel(
@@ -149,8 +168,9 @@ async def get_alerts(
     active_count = 0
     for campaign in active_campaigns.scalars().all():
         active_count += 1
-        if campaign.end_at:
-            days_left = (campaign.end_at.date() - today).days
+        end_date = _as_date(campaign.end_at)
+        if end_date:
+            days_left = (end_date - today).days
             if 0 < days_left <= 7:
                 alerts.append(
                     {
@@ -328,7 +348,7 @@ async def get_recent_events(
             {
                 "event_type": "campaign_status_change",
                 "message": f"活动「{campaign.name}」进行中",
-                "timestamp": campaign.start_at.isoformat() if campaign.start_at else today_dt.isoformat(),
+                "timestamp": _as_iso_timestamp(campaign.start_at, today_dt),
                 "action_url": f"/campaigns/{campaign.id}",
             }
         )

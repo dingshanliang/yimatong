@@ -68,10 +68,16 @@ DEMO_ACCOUNTS = [
     },
 ]
 
+DEMO_ENABLED_FEATURES = {"channel_store": True}
+
 
 async def _get_tenant_by_slug(db: AsyncSession, slug: str) -> Tenant | None:
     result = await db.execute(select(Tenant).where(Tenant.slug == slug))
     return result.scalar_one_or_none()
+
+
+def _enable_demo_features(tenant: Tenant) -> None:
+    tenant.enabled_features = {**(tenant.enabled_features or {}), **DEMO_ENABLED_FEATURES}
 
 
 async def _generate_codes(db: AsyncSession, tenant_id: uuid.UUID, batch_code: str, count: int) -> int:
@@ -383,6 +389,8 @@ async def _ensure_demo_channels(
     accounts: list[Account],
     code_items: list[CodeItem],
 ) -> None:
+    from app.models.code import CodeBatch
+
     distributor = (
         await db.execute(
             select(Distributor).where(Distributor.tenant_id == tenant_id, Distributor.code == "DEMO-DIST-EAST")
@@ -468,6 +476,11 @@ async def _ensure_demo_channels(
 
     batch_id = code_items[0].code_batch_id if code_items else None
     if batch_id:
+        code_batch = (await db.execute(select(CodeBatch).where(CodeBatch.id == batch_id))).scalar_one_or_none()
+        if code_batch:
+            code_batch.distributor_id = distributor.id
+            code_batch.region_id = region.id
+
         existing_alloc = (
             await db.execute(
                 select(CodeAllocation).where(
@@ -662,6 +675,7 @@ def all(
                     plan="free",
                 )
                 typer.echo(f"Created tenant: {t.name} (id={t.id})")
+            _enable_demo_features(t)
 
             # 2. 创建品牌 + 产品 + SKU
             b = await create_brand_if_needed(db, t.id, brand)

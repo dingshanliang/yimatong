@@ -17,7 +17,7 @@ interface AuthState {
   user: AuthUser | null;
   token: string | null;
   loading: boolean;
-  login: (email: string, password: string) => Promise<void>;
+  login: (email: string, password: string, options?: { tenantSlug?: string }) => Promise<void>;
   logout: () => void;
   hydrate: () => void;
   silentRefresh: () => Promise<string | null>;
@@ -40,10 +40,14 @@ export const useAuthStore = create<AuthState>((set) => ({
   token: null,
   loading: false,
 
-  login: async (email, password) => {
+  login: async (email, password, options) => {
     set({ loading: true });
     try {
-      const { data } = await api.post("/auth/login", { email, password });
+      const { data } = await api.post("/auth/login", {
+        email,
+        password,
+        ...(options?.tenantSlug ? { tenant_slug: options.tenantSlug } : {}),
+      });
       const { access_token, refresh_token, expires_in } = data;
       _persistTokens(access_token, refresh_token, expires_in);
 

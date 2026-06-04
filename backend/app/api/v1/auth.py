@@ -11,7 +11,7 @@ from sqlalchemy.orm import selectinload
 from app.core.config import settings
 from app.core.database import get_db
 from app.core.dependencies import get_current_account_id, get_current_tenant
-from app.models.tenant import Account
+from app.models.tenant import Account, Tenant
 from app.schemas.common import UNAUTHORIZED_EXAMPLE, ErrorDetail
 from app.services.redis_cache import AsyncRedisCache
 from app.services.tenant import get_tenant
@@ -50,6 +50,7 @@ def _resolve_account_role(account: Account) -> str:
 class LoginRequest(BaseModel):
     email: str = Field(..., max_length=255, description="登录邮箱", examples=["admin@example.com"])
     password: str = Field(..., min_length=1, description="密码", examples=["SecurePass123!"])
+    tenant_slug: str | None = Field(None, max_length=100, description="租户标识，用于多租户同邮箱登录")
 
 
 class TokenResponse(BaseModel):
@@ -70,7 +71,10 @@ class RefreshRequest(BaseModel):
     response_description="登录成功，返回 JWT 令牌",
 )
 async def login(body: LoginRequest, db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(Account).options(selectinload(Account.roles)).where(Account.email == body.email))
+    query = select(Account).options(selectinload(Account.roles)).where(Account.email == body.email)
+    if body.tenant_slug:
+        query = query.join(Tenant, Tenant.id == Account.tenant_id).where(Tenant.slug == body.tenant_slug)
+    result = await db.execute(query)
     account = result.scalars().first()
 
     now = utcnow()

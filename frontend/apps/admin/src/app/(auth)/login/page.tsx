@@ -77,10 +77,10 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false);
   const [loadingAccount, setLoadingAccount] = useState<string | null>(null);
 
-  const onFinish = async (values: { email: string; password: string }, redirectTo = "/") => {
+  const onFinish = async (values: { email: string; password: string }, redirectTo = "/", tenantSlug?: string) => {
     setLoading(true);
     try {
-      await login(values.email, values.password);
+      await login(values.email, values.password, tenantSlug ? { tenantSlug } : undefined);
       message.success("登录成功");
       router.push(redirectTo);
     } catch (err) {
@@ -120,7 +120,7 @@ export default function LoginPage() {
         window.open(platformUrl, "_blank");
       } else {
         form.setFieldsValue({ email: account.email, password: account.password });
-        await onFinish({ email: account.email, password: account.password }, account.route ?? "/");
+        await onFinish({ email: account.email, password: account.password }, account.route ?? "/", "demo");
       }
     } finally {
       setLoadingAccount(null);
