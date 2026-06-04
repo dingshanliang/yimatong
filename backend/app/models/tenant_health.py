@@ -1,3 +1,4 @@
+import uuid
 from datetime import UTC, datetime
 
 from sqlalchemy import DateTime, ForeignKey, Integer, String
@@ -5,7 +6,6 @@ from sqlalchemy.orm import Mapped, mapped_column
 from uuid6 import uuid7
 
 from app.models.base import Base
-import uuid
 
 
 class TenantHealthMetrics(Base):

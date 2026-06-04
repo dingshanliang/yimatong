@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { App, Button, Card, Form, Input, Result, Typography } from "antd";
+import { Suspense, useEffect, useState } from "react";
+import { App, Button, Card, Form, Input, Result, Spin, Typography } from "antd";
 import { LockOutlined } from "@ant-design/icons";
 import { useRouter, useSearchParams } from "next/navigation";
 
@@ -11,7 +11,7 @@ const { Title, Text } = Typography;
 
 type PageState = "loading" | "form" | "success" | "error";
 
-export default function ResetPasswordPage() {
+function ResetPasswordForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { message } = App.useApp();
@@ -155,5 +155,19 @@ export default function ResetPasswordPage() {
         </Form>
       </Card>
     </div>
+  );
+}
+
+export default function ResetPasswordPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="flex min-h-screen items-center justify-center" style={{ background: "var(--admin-bg-layout)" }}>
+          <Spin size="large" />
+        </div>
+      }
+    >
+      <ResetPasswordForm />
+    </Suspense>
   );
 }

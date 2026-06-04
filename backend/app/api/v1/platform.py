@@ -3,14 +3,13 @@ from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, EmailStr
-from sqlalchemy import case, func, select, text
+from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.database import get_db_with_bypass
-from app.models.audit import PlatformAuditLog
-from app.models.tenant import Account, Organization, Tenant, TenantPlan, TenantStatus
 from app.models.plan import PlanDefinition
+from app.models.tenant import Account, Organization, Tenant, TenantPlan, TenantStatus
 from app.services.audit import query_audit_logs, write_audit_log
 from app.utils.rbac import require_role
 from app.utils.security import create_access_token, hash_password, verify_password
@@ -617,7 +616,7 @@ async def update_platform_config(
 
 
 from app.models.tenant_health import TenantHealthMetrics
-from app.services.tenant_health import refresh_tenant_health, refresh_all_health_metrics
+from app.services.tenant_health import refresh_all_health_metrics
 
 
 class HealthMetricsRead(BaseModel):

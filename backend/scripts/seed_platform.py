@@ -8,8 +8,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from sqlalchemy import select
-from app.core.database import async_session_factory, engine
-from app.core.database import _is_pg
+
+from app.core.database import _is_pg, async_session_factory
 
 
 async def seed():
@@ -18,8 +18,8 @@ async def seed():
         return
 
     async with async_session_factory() as db:
-        from app.models.plan import PlanDefinition
         from app.models.audit import PlatformAuditLog
+        from app.models.plan import PlanDefinition
 
         # Check if plans already exist
         result = await db.execute(select(PlanDefinition).limit(1))

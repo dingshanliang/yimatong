@@ -30,7 +30,6 @@ from app.models.code import CodeBatch, CodeItem, CodeItemStatus
 from app.models.connector import Connector  # noqa: F401 - register FK for Benefit.connector_id
 from app.models.member import (
     ConsumerProfile,
-    MemberLevel,
     PointProduct,
     PointRedemption,
     PointRule,
@@ -38,7 +37,7 @@ from app.models.member import (
     PointTransactionType,
 )
 from app.models.page import PageTemplate, PageTemplateStatus, PageVersion, PageVersionStatus
-from app.models.product import Brand, Product, ProductionBatch, SKU
+from app.models.product import SKU, Brand, Product, ProductionBatch
 from app.models.risk import InterceptionRecord, RiskAlert, RiskAlertType, RiskNotification, RiskRule
 from app.models.scan import ScanEvent
 from app.models.tenant import (
@@ -53,9 +52,7 @@ from app.models.tenant import (
 from app.services.analytics import aggregate_daily_stats
 from app.services.channel import create_account_scope
 from app.services.code import activate_batch, create_code_batch
-from app.services.member import award_points, get_or_create_consumer
 from app.services.product import create_brand, create_product, create_sku
-from app.services.public_id import generate_public_id
 from app.services.tenant import create_tenant
 from app.utils import utcnow
 from app.utils.security import hash_password

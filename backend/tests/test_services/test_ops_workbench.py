@@ -1,6 +1,5 @@
 """代运营工作台服务层测试"""
-import pytest
-from app.services.ops import build_readiness_summary, build_next_action
+from app.services.ops import build_next_action, build_readiness_summary
 
 
 def test_build_readiness_summary_all_passed():
