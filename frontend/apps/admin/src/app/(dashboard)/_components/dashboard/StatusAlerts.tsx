@@ -42,7 +42,7 @@ export default function StatusAlerts() {
   };
 
   return (
-    <Space direction="vertical" className="w-full mb-4">
+    <Space orientation="vertical" className="w-full mb-4">
       {alerts.map((alert, idx) => (
         <Alert
           key={idx}

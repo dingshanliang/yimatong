@@ -1,10 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Card, Spin, Typography } from "antd";
+import { Card, Empty, Progress, Spin, Typography } from "antd";
 import api from "@/lib/api";
 
-const { Text } = Typography;
+const { Text, Title } = Typography;
 
 interface FunnelStep {
   name: string;
@@ -50,51 +50,60 @@ export default function ConversionFunnel() {
     );
   }
 
-  if (!data || data.steps.length === 0 || data.steps[0].value === 0) {
+  const steps = Array.isArray(data?.steps) ? data.steps : [];
+
+  if (steps.length === 0 || steps[0].value === 0) {
     return (
       <Card title="核心转化漏斗（近 30 天）" size="small">
-        <div className="flex items-center justify-center text-gray-400" style={{ height: 120 }}>
-          暂无转化数据
+        <div className="flex items-center justify-center" style={{ minHeight: 148 }}>
+          <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无转化数据" />
         </div>
       </Card>
     );
   }
 
-  const maxValue = data.steps[0].value;
+  const maxValue = Math.max(steps[0].value, 1);
 
   return (
     <Card title="核心转化漏斗（近 30 天）" size="small">
-      <div className="flex items-end gap-2">
-        {data.steps.map((step, idx) => {
-          const widthPercent = Math.max((step.value / maxValue) * 100, 8);
+      <div
+        className="grid gap-3"
+        style={{
+          gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))",
+        }}
+      >
+        {steps.map((step, idx) => {
+          const progressPercent = Math.max((step.value / maxValue) * 100, step.value > 0 ? 6 : 0);
           return (
             <div
               key={step.name}
-              className="flex flex-col items-center"
-              style={{ flex: `0 0 ${widthPercent}%`, minWidth: 60 }}
+              className="rounded-md border px-3 py-3"
+              style={{
+                minWidth: 0,
+                background: "var(--ant-color-fill-quaternary)",
+                borderColor: "var(--ant-color-border-secondary)",
+              }}
             >
-              <div
-                style={{
-                  background: STEP_COLORS[idx] || "#d9d9d9",
-                  height: 80,
-                  width: "100%",
-                  borderRadius: "4px 4px 0 0",
-                  display: "flex",
-                  flexDirection: "column",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  color: "white",
-                  fontWeight: 600,
-                }}
-              >
-                <span style={{ fontSize: 16 }}>{step.value.toLocaleString()}</span>
+              <div className="mb-2 flex items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <Text type="secondary" style={{ fontSize: 12 }}>
+                    {idx + 1}. {step.name}
+                  </Text>
+                  <Title level={4} className="!mb-0 !mt-1">
+                    {step.value.toLocaleString()}
+                  </Title>
+                </div>
+                <Text strong style={{ color: STEP_COLORS[idx] || "#1677ff", whiteSpace: "nowrap" }}>
+                  {step.rate}%
+                </Text>
               </div>
-              <Text strong className="mt-1" style={{ fontSize: 12 }}>
-                {step.name}
-              </Text>
-              <Text type="secondary" style={{ fontSize: 11 }}>
-                {step.rate}%
-              </Text>
+              <Progress
+                percent={progressPercent}
+                showInfo={false}
+                strokeColor={STEP_COLORS[idx] || "#1677ff"}
+                railColor="var(--ant-color-fill-secondary)"
+                size={["100%", 8]}
+              />
             </div>
           );
         })}

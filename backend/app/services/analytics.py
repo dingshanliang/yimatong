@@ -3,7 +3,7 @@
 import uuid
 from datetime import date, timedelta
 
-from sqlalchemy import Integer, func, select
+from sqlalchemy import Integer, case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.analytics import DailyScanStats
@@ -123,14 +123,14 @@ async def get_dashboard(
     current_and_prev = await db.execute(
         select(
             func.coalesce(
-                func.sum(func.case((DailyScanStats.date >= seven_days_ago, DailyScanStats.total_scans), else_=0)), 0
+                func.sum(case((DailyScanStats.date >= seven_days_ago, DailyScanStats.total_scans), else_=0)), 0
             ),
             func.coalesce(
-                func.sum(func.case((DailyScanStats.date >= seven_days_ago, DailyScanStats.first_scans), else_=0)), 0
+                func.sum(case((DailyScanStats.date >= seven_days_ago, DailyScanStats.first_scans), else_=0)), 0
             ),
             func.coalesce(
                 func.sum(
-                    func.case(
+                    case(
                         (DailyScanStats.date >= prev_start, DailyScanStats.total_scans),
                         else_=0,
                     )
@@ -139,7 +139,7 @@ async def get_dashboard(
             ),
             func.coalesce(
                 func.sum(
-                    func.case(
+                    case(
                         (DailyScanStats.date >= prev_start, DailyScanStats.first_scans),
                         else_=0,
                     )

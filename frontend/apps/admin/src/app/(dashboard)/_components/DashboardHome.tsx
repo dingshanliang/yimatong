@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { App, Button, Col, Row, Statistic, Tooltip } from "antd";
+import { App, Button, Card, Col, Row, Space, Statistic, Tooltip, Typography } from "antd";
 import {
   ReloadOutlined,
   ScanOutlined,
@@ -18,6 +18,8 @@ import CampaignRanking from "./dashboard/CampaignRanking";
 import ChannelHealth from "./dashboard/ChannelHealth";
 import QuickActions from "./dashboard/QuickActions";
 import RecentEvents from "./dashboard/RecentEvents";
+
+const { Text, Title } = Typography;
 
 interface DashboardData {
   today_scans: number;
@@ -66,12 +68,18 @@ export default function DashboardHome() {
   }, [fetchDashboard]);
 
   return (
-    <div>
+    <div className="mx-auto w-full max-w-[1440px] overflow-hidden">
       {/* 标题栏 */}
-      <div className="mb-4 flex items-center justify-between">
-        <h4 className="mb-0" style={{ fontSize: 20, fontWeight: 600 }}>经营看板</h4>
+      <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <Title level={3} className="!mb-1">
+            经营看板
+          </Title>
+          <Text type="secondary">查看近 30 天扫码、转化和渠道健康表现</Text>
+        </div>
         <Tooltip title="刷新数据">
           <Button
+            aria-label="刷新数据"
             icon={<ReloadOutlined />}
             onClick={() => void fetchDashboard()}
             loading={loading}
@@ -90,23 +98,25 @@ export default function DashboardHome() {
       {/* 统计卡片 */}
       <Row gutter={[16, 16]} className="mb-6">
         <Col xs={24} sm={12} lg={6}>
-          <div style={{ borderLeft: "3px solid #1677ff", padding: "12px 16px", background: "var(--ant-color-bg-container)", borderRadius: 6 }}>
+          <Card size="small" className="h-full" style={{ borderLeft: "3px solid #1677ff" }}>
             <Statistic title="今日扫码" value={data?.today_scans ?? 0} prefix={<ScanOutlined />} loading={loading} />
-          </div>
+          </Card>
         </Col>
         <Col xs={24} sm={12} lg={6}>
-          <div style={{ padding: "12px 16px", background: "var(--ant-color-bg-container)", borderRadius: 6 }}>
+          <Card size="small" className="h-full">
             <Statistic title="今日 UV" value={data?.today_uv ?? 0} prefix={<TeamOutlined />} loading={loading} />
-          </div>
+          </Card>
         </Col>
         <Col xs={24} sm={12} lg={6}>
-          <div style={{ padding: "12px 16px", background: "var(--ant-color-bg-container)", borderRadius: 6 }}>
-            <Statistic title="累计扫码" value={data?.cumulative_scans ?? 0} prefix={<RiseOutlined />} loading={loading} />
-            <ChangeIndicator change={data?.comparison?.weekly_scans_change} />
-          </div>
+          <Card size="small" className="h-full">
+            <Space orientation="vertical" size={2} className="w-full">
+              <Statistic title="累计扫码" value={data?.cumulative_scans ?? 0} prefix={<RiseOutlined />} loading={loading} />
+              <ChangeIndicator change={data?.comparison?.weekly_scans_change} />
+            </Space>
+          </Card>
         </Col>
         <Col xs={24} sm={12} lg={6}>
-          <div style={{ padding: "12px 16px", background: "var(--ant-color-bg-container)", borderRadius: 6 }}>
+          <Card size="small" className="h-full">
             <Statistic
               title="期间领券"
               value={data?.period_claim_count ?? 0}
@@ -114,7 +124,7 @@ export default function DashboardHome() {
               prefix={<GiftOutlined />}
               loading={loading}
             />
-          </div>
+          </Card>
         </Col>
       </Row>
 

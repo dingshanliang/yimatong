@@ -1,9 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, waitFor, fireEvent } from "@testing-library/react";
-import dayjs from "dayjs";
 import DashboardHome from "../../_components/DashboardHome";
 
-const mockMessageSuccess = vi.fn();
 const mockMessageError = vi.fn();
 
 vi.mock("antd", async () => {
@@ -12,19 +10,17 @@ vi.mock("antd", async () => {
     ...actual,
     App: {
       useApp: () => ({
-        message: { success: mockMessageSuccess, error: mockMessageError },
+        message: { error: mockMessageError },
       }),
     },
   };
 });
 
 const mockGet = vi.fn();
-const mockPost = vi.fn();
 
 vi.mock("@/lib/api", () => ({
   default: {
     get: (...args: unknown[]) => mockGet(...args),
-    post: (...args: unknown[]) => mockPost(...args),
   },
   extractErrorMessage: (_err: unknown, fallback = "操作失败") => fallback,
 }));
@@ -39,178 +35,140 @@ vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: mockPush }),
 }));
 
+function mockResponseForUrl(url: string) {
+  if (url === "/analytics/dashboard") {
+    return Promise.resolve({ data: mockDashboard() });
+  }
+  if (url === "/analytics/conversion-funnel") {
+    return Promise.resolve({
+      data: {
+        steps: [
+          { name: "扫码", value: 100, rate: 100 },
+          { name: "领券", value: 25, rate: 25 },
+          { name: "核销", value: 10, rate: 10 },
+        ],
+        period_days: 30,
+      },
+    });
+  }
+  if (url === "/analytics/scan-stats") {
+    return Promise.resolve({ data: [] });
+  }
+  if (url === "/analytics/campaign-ranking") {
+    return Promise.resolve({
+      data: {
+        items: [
+          {
+            campaign_id: "campaign-1",
+            campaign_name: "E2E Campaign",
+            campaign_status: "draft",
+            scan_count: 10,
+            claim_count: 0,
+            conversion_rate: 0,
+          },
+        ],
+      },
+    });
+  }
+  if (url === "/channel-analytics/health-scores") {
+    return Promise.resolve({ data: { scores: [] } });
+  }
+  if (url === "/analytics/recent-events") {
+    return Promise.resolve({ data: { events: [] } });
+  }
+  if (url === "/analytics/alerts") {
+    return Promise.resolve({ data: { alerts: [] } });
+  }
+  return Promise.resolve({ data: {} });
+}
+
+function mockDashboard() {
+  return {
+    today_scans: 10,
+    today_uv: 7,
+    cumulative_scans: 100,
+    cumulative_first_scans: 80,
+    period_claim_count: 6,
+    period_claim_rate: 12,
+    trend: [],
+    environment_breakdown: {},
+    comparison: {
+      weekly_scans_change: { value: 8, direction: "up" },
+      weekly_first_scans_change: null,
+    },
+  };
+}
+
+function mockApiDefaults() {
+  mockGet.mockImplementation(mockResponseForUrl);
+}
+
 describe("DashboardHome", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockGet.mockImplementation((url: string) => {
-      if (url === "/analytics/dashboard") {
-        return Promise.resolve({
-          data: {
-            today_scans: 10,
-            cumulative_scans: 100,
-            cumulative_first_scans: 80,
-            trend: [],
-            environment_breakdown: {},
-          },
-        });
-      }
-      if (url === "/code-batches") {
-        return Promise.resolve({ data: { items: [], total: 0 } });
-      }
-      if (url === "/campaigns") {
-        return Promise.resolve({ data: { items: [], total: 0 } });
-      }
-      return Promise.resolve({ data: {} });
-    });
+    mockApiDefaults();
   });
 
   it("renders dashboard statistics after loading", async () => {
     render(<DashboardHome />);
-    await waitFor(() => expect(screen.getByText("今日扫码")).toBeInTheDocument());
-    expect(screen.getByText("10")).toBeInTheDocument();
-    expect(screen.getByText("100")).toBeInTheDocument();
+
+    await waitFor(() => expect(screen.getByText("经营看板")).toBeInTheDocument());
+    expect(screen.getByText("今日扫码")).toBeInTheDocument();
+    expect(screen.getByText("今日 UV")).toBeInTheDocument();
+    expect(screen.getByText("累计扫码")).toBeInTheDocument();
+    expect(screen.getByText("期间领券")).toBeInTheDocument();
+    expect(screen.getAllByText("10").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText("100").length).toBeGreaterThanOrEqual(1);
   });
 
-  it("exports xlsx with correct MIME type and file extension", async () => {
-    const mockCreateObjectURL = vi.fn(() => "blob:mock-url");
-    const mockRevokeObjectURL = vi.fn();
-    vi.stubGlobal("URL", {
-      createObjectURL: mockCreateObjectURL,
-      revokeObjectURL: mockRevokeObjectURL,
-    });
-
-    // Spy on appendChild before clicking to capture the <a> element before it's removed
-    const appendSpy = vi.spyOn(document.body, "appendChild");
-
-    const xlsxBuffer = new ArrayBuffer(8);
-    mockPost.mockResolvedValueOnce({
-      data: xlsxBuffer,
-    });
-
+  it("renders the main dashboard widgets", async () => {
     render(<DashboardHome />);
 
-    const exportButton = await screen.findByRole("button", { name: /导出扫码数据/ });
-    fireEvent.click(exportButton);
-
-    await waitFor(() => expect(mockPost).toHaveBeenCalledTimes(1));
-    expect(mockPost).toHaveBeenCalledWith(
-      "/analytics/exports",
-      null,
-      expect.objectContaining({
-        params: expect.objectContaining({ export_type: "scan_events" }),
-        responseType: "blob",
-      }),
-    );
-
-    await waitFor(() => expect(mockCreateObjectURL).toHaveBeenCalledTimes(1));
-    const blobArg = mockCreateObjectURL.mock.calls[0][0];
-    expect(blobArg).toBeInstanceOf(Blob);
-    expect(blobArg.type).toBe(
-      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    );
-
-    // The <a> element is appended then immediately removed, so we use the spy
-    await waitFor(() => {
-      const linkCalls = appendSpy.mock.calls.filter(
-        (call) => (call[0] as HTMLElement).tagName === "A",
-      );
-      expect(linkCalls.length).toBe(1);
-    });
-    const linkCall = appendSpy.mock.calls.find(
-      (call) => (call[0] as HTMLElement).tagName === "A",
-    );
-    const linkEl = linkCall![0] as HTMLAnchorElement;
-    expect(linkEl.download).toMatch(/\.xlsx$/);
-
-    appendSpy.mockRestore();
-    vi.unstubAllGlobals();
+    await waitFor(() => expect(screen.getByText("核心转化漏斗（近 30 天）")).toBeInTheDocument());
+    expect(screen.getByText("扫码趋势")).toBeInTheDocument();
+    expect(screen.getByText("活动排行 Top 5")).toBeInTheDocument();
+    expect(screen.getByText("渠道健康 Top 5")).toBeInTheDocument();
+    expect(screen.getByText("最近动态")).toBeInTheDocument();
   });
 
-  it("shows welcome guide when no data exists (all zeros)", async () => {
+  it("handles an empty conversion funnel response without crashing", async () => {
     mockGet.mockImplementation((url: string) => {
-      if (url === "/analytics/dashboard") {
-        return Promise.resolve({
-          data: {
-            today_scans: 0,
-            cumulative_scans: 0,
-            cumulative_first_scans: 0,
-            trend: [],
-            environment_breakdown: {},
-          },
-        });
+      if (url === "/analytics/conversion-funnel") {
+        return Promise.resolve({ data: {} });
       }
-      if (url === "/code-batches") {
-        return Promise.resolve({ data: { items: [], total: 0 } });
-      }
-      if (url === "/campaigns") {
-        return Promise.resolve({ data: { items: [], total: 0 } });
-      }
-      return Promise.resolve({ data: {} });
+      return mockResponseForUrl(url);
     });
 
     render(<DashboardHome />);
-    await waitFor(() => expect(screen.getByText("工作台")).toBeInTheDocument());
-    expect(screen.getByText(/开始使用一码通/)).toBeInTheDocument();
+
+    await waitFor(() => expect(screen.getByText("暂无转化数据")).toBeInTheDocument());
   });
 
-  it("shows error state when dashboard API fails", async () => {
+  it("shows an error message when dashboard API fails", async () => {
     mockGet.mockImplementation((url: string) => {
       if (url === "/analytics/dashboard") {
         return Promise.reject(new Error("Network error"));
       }
-      if (url === "/code-batches") {
-        return Promise.resolve({ data: { items: [], total: 0 } });
+      if (url === "/analytics/conversion-funnel") {
+        return Promise.resolve({ data: { steps: [] } });
       }
-      if (url === "/campaigns") {
-        return Promise.resolve({ data: { items: [], total: 0 } });
-      }
-      return Promise.resolve({ data: {} });
+      return mockResponseForUrl(url);
     });
 
     render(<DashboardHome />);
-    await waitFor(() => expect(mockMessageError).toHaveBeenCalled());
+
+    await waitFor(() => expect(mockMessageError).toHaveBeenCalledWith("加载工作台数据失败"));
   });
 
-  it("shows refresh button that reloads data", async () => {
+  it("reloads data from the refresh button", async () => {
     render(<DashboardHome />);
     await waitFor(() => expect(screen.getByText("今日扫码")).toBeInTheDocument());
 
-    const refreshButton = screen.getByRole("button", { name: /刷新/ });
-    expect(refreshButton).toBeInTheDocument();
-    fireEvent.click(refreshButton);
-    await waitFor(() =>
-      expect(mockGet.mock.calls.filter((c: unknown[]) => c[0] === "/analytics/dashboard").length).toBeGreaterThanOrEqual(2)
-    );
-  });
+    fireEvent.click(screen.getByRole("button", { name: /刷新/ }));
 
-  it("formats batch created_at to localized date string", async () => {
-    mockGet.mockImplementation((url: string) => {
-      if (url === "/analytics/dashboard") {
-        return Promise.resolve({
-          data: { today_scans: 5, cumulative_scans: 50, cumulative_first_scans: 30, trend: [], environment_breakdown: {} },
-        });
-      }
-      if (url === "/code-batches") {
-        return Promise.resolve({
-          data: {
-            items: [
-              { id: "b1", batch_code: "B001", quantity: 100, status: "completed", created_at: "2026-06-01T08:30:00.123456Z" },
-            ],
-            total: 1,
-          },
-        });
-      }
-      if (url === "/campaigns") {
-        return Promise.resolve({ data: { items: [], total: 0 } });
-      }
-      return Promise.resolve({ data: {} });
+    await waitFor(() => {
+      const dashboardCalls = mockGet.mock.calls.filter((call: unknown[]) => call[0] === "/analytics/dashboard");
+      expect(dashboardCalls.length).toBeGreaterThanOrEqual(2);
     });
-
-    render(<DashboardHome />);
-    await waitFor(() => expect(screen.getByText("B001")).toBeInTheDocument());
-    expect(screen.queryByText(/2026-06-01T08:30:00/)).not.toBeInTheDocument();
-    // dayjs formats in local timezone; UTC 08:30 becomes 16:30 in UTC+8
-    const formatted = dayjs("2026-06-01T08:30:00.123456Z").format("YYYY-MM-DD HH:mm");
-    expect(screen.getByText(formatted)).toBeInTheDocument();
   });
 });

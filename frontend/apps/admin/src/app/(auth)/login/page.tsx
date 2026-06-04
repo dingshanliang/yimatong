@@ -103,7 +103,9 @@ export default function LoginPage() {
     try {
       if (account.platform) {
         // 平台管理员：使用独立登录端点和 cookie
-        const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+        const API_BASE =
+          process.env.NEXT_PUBLIC_API_URL ||
+          (window.location.hostname === "127.0.0.1" ? "http://127.0.0.1:8000" : "http://localhost:8000");
         const { data } = await axios.post(`${API_BASE}/api/v1/platform/auth/login`, {
           email: account.email,
           password: account.password,

@@ -71,7 +71,7 @@ class RefreshRequest(BaseModel):
 )
 async def login(body: LoginRequest, db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(Account).options(selectinload(Account.roles)).where(Account.email == body.email))
-    account = result.scalar_one_or_none()
+    account = result.scalars().first()
 
     now = utcnow()
 

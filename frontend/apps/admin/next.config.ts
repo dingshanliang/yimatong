@@ -5,7 +5,12 @@ import withBundleAnalyzer from "@next/bundle-analyzer";
 function getApiConnectSources() {
   if (process.env.NODE_ENV === "production") return "";
 
-  const sources = new Set(["http://localhost:8000"]);
+  const sources = new Set([
+    "http://localhost:8000",
+    "http://127.0.0.1:8000",
+    "ws://localhost:3000",
+    "ws://127.0.0.1:3000",
+  ]);
   const apiUrl = process.env.NEXT_PUBLIC_API_URL;
   if (apiUrl) {
     try {
@@ -40,6 +45,7 @@ const securityHeaders = [
 ];
 
 const nextConfig: NextConfig = {
+  allowedDevOrigins: ["127.0.0.1"],
   transpilePackages: ["@yimatong/shared"],
   turbopack: {
     root: path.resolve(__dirname, "../.."),

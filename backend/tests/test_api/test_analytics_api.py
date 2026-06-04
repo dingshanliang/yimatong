@@ -1,5 +1,6 @@
 """统计 API 测试"""
 
+import uuid
 from collections.abc import AsyncGenerator
 
 import pytest
@@ -8,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db, get_db_with_bypass
 from app.main import app
+from app.models.member import ConsumerProfile
 from app.utils.security import create_access_token
 from tests.conftest import TestSessionLocal
 
@@ -91,6 +93,38 @@ async def test_dashboard(client: AsyncClient):
     data = resp.json()
     assert "today_scans" in data
     assert "cumulative_scans" in data
+
+
+@pytest.mark.asyncio
+async def test_conversion_funnel_counts_consumer_profiles_without_created_at(
+    client: AsyncClient, db_session: AsyncSession
+):
+    """留资统计不依赖 ConsumerProfile.created_at。"""
+    db_session.add(
+        ConsumerProfile(
+            tenant_id=uuid.UUID(TENANT_ID),
+            phone_hash="phone-hash-1",
+            nickname="测试消费者",
+        )
+    )
+    await db_session.commit()
+
+    resp = await client.get("/api/v1/analytics/conversion-funnel", headers=_auth_headers())
+
+    assert resp.status_code == 200
+    assert resp.json()["signup_count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_extended_dashboard_widgets_do_not_500(client: AsyncClient):
+    """工作台扩展组件端点在空数据下也应返回可渲染结构。"""
+    for endpoint, key in [
+        ("/api/v1/analytics/alerts", "alerts"),
+        ("/api/v1/analytics/recent-events", "events"),
+    ]:
+        resp = await client.get(endpoint, headers=_auth_headers())
+        assert resp.status_code == 200
+        assert key in resp.json()
 
 
 @pytest.mark.asyncio

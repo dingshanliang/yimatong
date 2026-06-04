@@ -14,7 +14,7 @@ export default function QuickActions() {
 
   return (
     <Card title="快速操作" size="small" style={{ height: "100%" }}>
-      <Space direction="vertical" className="w-full">
+      <Space orientation="vertical" className="w-full">
         <Button block icon={<LinkOutlined />} onClick={() => router.push("/codes")}>
           创建码批次
         </Button>

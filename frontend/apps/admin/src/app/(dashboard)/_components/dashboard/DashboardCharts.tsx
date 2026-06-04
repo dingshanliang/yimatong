@@ -1,6 +1,6 @@
 "use client";
 
-import { Card, DatePicker, Spin } from "antd";
+import { Card, DatePicker, Empty, Spin } from "antd";
 import { Line } from "@ant-design/charts";
 import { useCallback, useEffect, useState } from "react";
 import dayjs, { type Dayjs } from "dayjs";
@@ -34,7 +34,7 @@ export default function DashboardCharts({ initialTrend, loading: parentLoading }
           end_date: range[1].format("YYYY-MM-DD"),
         },
       });
-      setTrend(res.data || []);
+      setTrend(Array.isArray(res.data) ? res.data : []);
     } catch {
       // silent
     } finally {
@@ -48,7 +48,9 @@ export default function DashboardCharts({ initialTrend, loading: parentLoading }
     }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const chartData = trend.flatMap((row) => [
+  const safeTrend = Array.isArray(trend) ? trend : [];
+
+  const chartData = safeTrend.flatMap((row) => [
     { date: row.date, value: row.total_scans, type: "扫码量" },
     { date: row.date, value: row.uv || 0, type: "独立用户" },
   ]);
@@ -76,9 +78,11 @@ export default function DashboardCharts({ initialTrend, loading: parentLoading }
     <Card
       title="扫码趋势"
       size="small"
+      styles={{ body: { overflow: "hidden" } }}
       extra={
         <DatePicker.RangePicker
           size="small"
+          className="max-w-full"
           value={dateRange}
           onChange={(dates) => {
             if (dates && dates[0] && dates[1]) {
@@ -95,11 +99,13 @@ export default function DashboardCharts({ initialTrend, loading: parentLoading }
           <Spin />
         </div>
       ) : chartData.length === 0 ? (
-        <div className="flex items-center justify-center text-gray-400" style={{ height: 280 }}>
-          暂无趋势数据
+        <div className="flex items-center justify-center" style={{ height: 280 }}>
+          <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无趋势数据" />
         </div>
       ) : (
-        <Line {...config} />
+        <div className="min-w-0">
+          <Line {...config} />
+        </div>
       )}
     </Card>
   );

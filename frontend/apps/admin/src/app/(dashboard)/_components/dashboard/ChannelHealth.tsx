@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Card, Select, Spin, Table } from "antd";
+import { Card, Empty, Select, Spin, Table } from "antd";
 import { useRouter } from "next/navigation";
 import type { ColumnsType } from "antd/es/table";
 import api from "@/lib/api";
@@ -39,7 +39,7 @@ export default function ChannelHealth() {
   }, [fetchData]);
 
   const columns: ColumnsType<HealthScore> = [
-    { title: "渠道名称", dataIndex: "name", key: "name", ellipsis: true },
+    { title: "渠道名称", dataIndex: "name", key: "name", ellipsis: true, width: 180 },
     {
       title: "健康评分",
       dataIndex: "health_score",
@@ -66,13 +66,13 @@ export default function ChannelHealth() {
   return (
     <Card
       title={
-        <div className="flex items-center justify-between">
+        <div className="flex min-w-0 items-center justify-between gap-3">
           <span>渠道健康 Top 5</span>
           <Select
             size="small"
             value={dimension}
             onChange={setDimension}
-            style={{ width: 100 }}
+            style={{ width: 104 }}
             options={[
               { value: "distributor", label: "经销商" },
               { value: "region", label: "区域" },
@@ -83,14 +83,15 @@ export default function ChannelHealth() {
       }
       size="small"
       style={{ height: "100%" }}
+      styles={{ body: { overflow: "hidden" } }}
     >
       {loading ? (
         <div className="flex items-center justify-center" style={{ height: 200 }}>
           <Spin />
         </div>
       ) : scores.length === 0 ? (
-        <div className="flex items-center justify-center text-gray-400" style={{ height: 200 }}>
-          暂无渠道数据
+        <div className="flex items-center justify-center" style={{ height: 200 }}>
+          <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无渠道数据" />
         </div>
       ) : (
         <Table
@@ -99,6 +100,8 @@ export default function ChannelHealth() {
           rowKey="name"
           pagination={false}
           size="small"
+          scroll={{ x: 370 }}
+          tableLayout="fixed"
           onRow={() => ({
             onClick: () => router.push("/risk-center"),
             style: { cursor: "pointer" },

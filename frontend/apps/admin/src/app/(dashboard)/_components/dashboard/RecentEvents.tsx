@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Card, Spin, Timeline, Typography } from "antd";
+import { Card, Empty, Spin, Timeline, Typography } from "antd";
 import { useRouter } from "next/navigation";
 import api from "@/lib/api";
 
@@ -51,8 +51,8 @@ export default function RecentEvents() {
           <Spin />
         </div>
       ) : events.length === 0 ? (
-        <div className="flex items-center justify-center text-gray-400" style={{ height: 150 }}>
-          暂无动态
+        <div className="flex items-center justify-center" style={{ minHeight: 150 }}>
+          <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无动态" />
         </div>
       ) : (
         <Timeline

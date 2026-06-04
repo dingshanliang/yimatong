@@ -45,7 +45,6 @@ async def get_conversion_funnel(
         select(func.count()).where(
             ConsumerProfile.tenant_id == tenant_id,
             ConsumerProfile.phone_hash.isnot(None),
-            ConsumerProfile.created_at >= start_dt,
         )
     )
     signup_count = signup_result.scalar() or 0
@@ -114,13 +113,13 @@ async def get_alerts(
     today = date.today()
 
     # 1. 码余量预警
-    from app.models.code import CodeItem
+    from app.models.code import CodeItem, CodeItemStatus
 
     total_codes = await db.execute(select(func.count()).where(CodeItem.tenant_id == tenant_id))
     used_codes = await db.execute(
         select(func.count()).where(
             CodeItem.tenant_id == tenant_id,
-            CodeItem.status.in_(["activated", "scanned"]),
+            CodeItem.status.in_([CodeItemStatus.activated, CodeItemStatus.bound]),
         )
     )
     total = total_codes.scalar() or 0
@@ -313,26 +312,7 @@ async def get_recent_events(
                     }
                 )
 
-    # 2. 今日新增留资
-    today_signups = await db.execute(
-        select(func.count()).where(
-            ConsumerProfile.tenant_id == tenant_id,
-            ConsumerProfile.phone_hash.isnot(None),
-            ConsumerProfile.created_at >= today_dt,
-        )
-    )
-    signup_count = today_signups.scalar() or 0
-    if signup_count > 0:
-        events.append(
-            {
-                "event_type": "new_signup",
-                "message": f"今日新增 {signup_count} 位消费者留资",
-                "timestamp": datetime.now(UTC).isoformat(),
-                "action_url": "/members",
-            }
-        )
-
-    # 3. 进行中的活动
+    # 2. 进行中的活动
     from app.models.campaign import Campaign
 
     active_campaigns = await db.execute(

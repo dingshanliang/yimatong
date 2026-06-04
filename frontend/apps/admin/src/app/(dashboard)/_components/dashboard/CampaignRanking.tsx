@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Card, Spin, Table, Tag } from "antd";
+import { Card, Empty, Spin, Table, Tag } from "antd";
 import { useRouter } from "next/navigation";
 import type { ColumnsType } from "antd/es/table";
 import api from "@/lib/api";
@@ -54,7 +54,7 @@ export default function CampaignRanking() {
         </span>
       ),
     },
-    { title: "活动名称", dataIndex: "campaign_name", key: "name", ellipsis: true },
+    { title: "活动名称", dataIndex: "campaign_name", key: "name", ellipsis: true, width: 180 },
     {
       title: "状态",
       dataIndex: "campaign_status",
@@ -79,14 +79,14 @@ export default function CampaignRanking() {
   ];
 
   return (
-    <Card title="活动排行 Top 5" size="small" style={{ height: "100%" }}>
+    <Card title="活动排行 Top 5" size="small" style={{ height: "100%" }} styles={{ body: { overflow: "hidden" } }}>
       {loading ? (
         <div className="flex items-center justify-center" style={{ height: 200 }}>
           <Spin />
         </div>
       ) : items.length === 0 ? (
-        <div className="flex items-center justify-center text-gray-400" style={{ height: 200 }}>
-          暂无活动数据
+        <div className="flex items-center justify-center" style={{ height: 200 }}>
+          <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无活动数据" />
         </div>
       ) : (
         <Table
@@ -95,6 +95,8 @@ export default function CampaignRanking() {
           rowKey="campaign_id"
           pagination={false}
           size="small"
+          scroll={{ x: 390 }}
+          tableLayout="fixed"
           onRow={(record) => ({
             onClick: () => router.push(`/campaigns/${record.campaign_id}`),
             style: { cursor: "pointer" },

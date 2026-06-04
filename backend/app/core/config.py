@@ -19,7 +19,10 @@ class Settings(BaseSettings):
     base_url: str = "http://localhost:8000"
 
     # CORS 配置（逗号分隔的前端域名）
-    cors_origins: str = "http://localhost:3000,http://localhost:3001,http://localhost:3002"
+    cors_origins: str = (
+        "http://localhost:3000,http://localhost:3001,http://localhost:3002,"
+        "http://127.0.0.1:3000,http://127.0.0.1:3001,http://127.0.0.1:3002"
+    )
 
     # 平台管理员凭据
     platform_admin_email: str = "platform@yimatong.cn"
