@@ -1,6 +1,7 @@
 """风控通知 API"""
 
 import uuid
+from datetime import datetime
 
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
@@ -25,6 +26,7 @@ class RiskNotificationRead(BaseModel):
     campaign_id: uuid.UUID | None = None
     code_item_id: uuid.UUID | None = None
     read: bool
+    created_at: datetime | None = None
 
     model_config = {"from_attributes": True}
 

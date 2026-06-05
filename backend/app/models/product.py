@@ -2,7 +2,7 @@ import uuid
 from datetime import date
 from enum import StrEnum
 
-from sqlalchemy import JSON, Date, ForeignKey, String, Text
+from sqlalchemy import JSON, Date, DateTime, ForeignKey, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from uuid6 import uuid7
 
@@ -61,6 +61,10 @@ class Brand(Base, ExternalRefMixin):
     logo_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
     description: Mapped[str | None] = mapped_column(String(500), nullable=True)
     status: Mapped[BrandStatus] = mapped_column(default=BrandStatus.active, nullable=False)
+    created_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[DateTime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
 
     products = relationship("Product", back_populates="brand", lazy="selectin")
 
@@ -79,6 +83,10 @@ class Product(Base, ExternalRefMixin):
     story_content: Mapped[str | None] = mapped_column(Text, nullable=True)
     description: Mapped[str | None] = mapped_column(String(1000), nullable=True)
     status: Mapped[ProductStatus] = mapped_column(default=ProductStatus.active, nullable=False)
+    created_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[DateTime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
 
     brand = relationship("Brand", back_populates="products")
     skus = relationship("SKU", back_populates="product", lazy="selectin")
@@ -104,6 +112,10 @@ class SKU(Base, ExternalRefMixin):
     barcode: Mapped[str | None] = mapped_column(String(100), nullable=True)
     image_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
     status: Mapped[SKUStatus] = mapped_column(default=SKUStatus.active, nullable=False)
+    created_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[DateTime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
 
     product = relationship("Product", back_populates="skus")
     batches = relationship("ProductionBatch", back_populates="sku", lazy="selectin")
@@ -126,6 +138,10 @@ class ProductionBatch(Base, ExternalRefMixin):
     expiry_date: Mapped[date] = mapped_column(Date, nullable=False)
     origin: Mapped[str | None] = mapped_column(String(200), nullable=True)
     status: Mapped[BatchStatus] = mapped_column(default=BatchStatus.active, nullable=False)
+    created_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[DateTime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
 
     product = relationship("Product", back_populates="batches")
     sku = relationship("SKU", back_populates="batches")
@@ -162,5 +178,9 @@ class ProductAsset(Base, ExternalRefMixin):
     content_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     metadata_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     status: Mapped[ProductAssetStatus] = mapped_column(default=ProductAssetStatus.active, nullable=False)
+    created_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[DateTime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
 
     product = relationship("Product", back_populates="assets")

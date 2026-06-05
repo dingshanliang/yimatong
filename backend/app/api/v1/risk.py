@@ -1,6 +1,7 @@
 """风险预警 API"""
 
 import uuid
+from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
@@ -24,6 +25,7 @@ class RiskAlertRead(BaseModel):
     detail: str
     ip_hash: str | None = None
     resolved: bool
+    created_at: datetime | None = None
 
     model_config = {"from_attributes": True}
 

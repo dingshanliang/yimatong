@@ -1,4 +1,5 @@
 import uuid
+from datetime import datetime
 
 from pydantic import BaseModel, Field
 
@@ -14,6 +15,7 @@ class OrganizationRead(BaseModel):
     name: str
     parent_id: uuid.UUID | None = None
     account_count: int = 0
+    created_at: datetime | None = None
 
     model_config = {"from_attributes": True}
 
@@ -41,6 +43,7 @@ class AccountRead(BaseModel):
     email: str
     name: str
     initial_password: str | None = None
+    created_at: datetime | None = None
 
     model_config = {"from_attributes": True}
 

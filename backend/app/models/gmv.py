@@ -3,7 +3,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, Float, Index, String
+from sqlalchemy import DateTime, Float, Index, String, func
 from sqlalchemy.orm import Mapped, mapped_column
 from uuid6 import uuid7
 
@@ -23,6 +23,10 @@ class ExternalOrder(Base):
     matched: Mapped[bool] = mapped_column(default=False, nullable=False)
     channel: Mapped[str | None] = mapped_column(String(50), nullable=True, index=True)
     source_system: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
 
     __table_args__ = (Index("ix_ext_orders_tenant_ext_id", "tenant_id", "external_id"),)
 
@@ -42,6 +46,10 @@ class GmvAttribution(Base):
     scan_time: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     attribution_window_hours: Mapped[int] = mapped_column(default=168, nullable=False)
     confidence_score: Mapped[float] = mapped_column(Float, nullable=False, default=1.0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
 
     __table_args__ = (
         Index("ix_gmv_attr_tenant_order", "tenant_id", "external_order_id"),
@@ -61,6 +69,10 @@ class GmvDailyStats(Base):
     attributed_orders: Mapped[int] = mapped_column(nullable=False, default=0)
     scan_count: Mapped[int] = mapped_column(nullable=False, default=0)
     scan_uv: Mapped[int] = mapped_column(nullable=False, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
 
     __table_args__ = (
         Index("ix_gmv_daily_tenant_date", "tenant_id", "stat_date"),

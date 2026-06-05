@@ -119,6 +119,10 @@ class CodeAllocation(Base):
     )
     quantity: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
     allocated_at: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
 
     __table_args__ = (
         Index("ix_code_alloc_batch_store", "batch_id", "store_id"),
@@ -145,6 +149,10 @@ class DiversionClue(Base):
     resolution_note: Mapped[str | None] = mapped_column(Text, nullable=True)
     resolved_by_account_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True, index=True)
     resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
 
     __table_args__ = (Index("ix_diversion_clues_tenant_resolved", "tenant_id", "resolved"),)
 

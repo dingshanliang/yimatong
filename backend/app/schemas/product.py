@@ -86,6 +86,7 @@ class ProductRead(BaseModel):
     story_content: str | None = Field(None, description="品牌/产品故事正文")
     description: str | None = Field(None, description="产品描述")
     status: ProductStatus = Field(..., description="产品状态")
+    created_at: datetime | None = Field(None, description="创建时间")
 
     model_config = {"from_attributes": True}
 
@@ -122,6 +123,7 @@ class SKURead(BaseModel):
     barcode: str | None = Field(None, description="条形码/GTIN")
     image_url: str | None = Field(None, description="SKU 图片 URL")
     status: SKUStatus = Field(..., description="SKU 状态")
+    created_at: datetime | None = Field(None, description="创建时间")
 
     model_config = {"from_attributes": True}
 
@@ -156,6 +158,7 @@ class ProductionBatchRead(BaseModel):
     expiry_date: date = Field(..., description="保质期至")
     origin: str | None = Field(None, description="批次产地")
     status: BatchStatus = Field(..., description="批次状态")
+    created_at: datetime | None = Field(None, description="创建时间")
 
     model_config = {"from_attributes": True}
 
@@ -204,5 +207,6 @@ class ProductAssetRead(BaseModel):
     content_text: str | None = Field(None, description="正文内容")
     metadata_json: dict | None = Field(None, description="扩展元数据")
     status: ProductAssetStatus = Field(..., description="资料状态")
+    created_at: datetime | None = Field(None, description="创建时间")
 
     model_config = {"from_attributes": True}

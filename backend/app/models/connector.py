@@ -36,6 +36,10 @@ class CouponPool(Base):
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     total_codes: Mapped[int] = mapped_column(nullable=False, default=0)
     remaining: Mapped[int] = mapped_column(nullable=False, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
 
     __table_args__ = (Index("ix_coupon_pools_tenant", "tenant_id"),)
 
@@ -48,6 +52,10 @@ class CouponCode(Base):
     code: Mapped[str] = mapped_column(String(100), nullable=False)
     consumer_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
     distributed: Mapped[bool] = mapped_column(default=False, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
 
     __table_args__ = (Index("ix_coupon_codes_pool_dist", "pool_id", "distributed"),)
 

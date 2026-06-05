@@ -1,9 +1,9 @@
 """风险预警与风控规则模型"""
-
 import uuid
+from datetime import datetime
 from enum import StrEnum
 
-from sqlalchemy import JSON, Boolean, Index, String
+from sqlalchemy import JSON, Boolean, DateTime, Index, String, func
 from sqlalchemy.orm import Mapped, mapped_column
 from uuid6 import uuid7
 
@@ -27,6 +27,10 @@ class RiskAlert(Base):
     detail: Mapped[str] = mapped_column(String(500), nullable=False, default="")
     ip_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     resolved: Mapped[bool] = mapped_column(default=False, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
 
     __table_args__ = (
         Index("ix_risk_alerts_tenant_type", "tenant_id", "alert_type"),
@@ -49,6 +53,10 @@ class RiskRule(Base):
     action: Mapped[str] = mapped_column(String(20), nullable=False, default=RiskRuleAction.block)
     config: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     enabled: Mapped[bool] = mapped_column(default=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
 
     __table_args__ = (Index("ix_risk_rules_tenant_type", "tenant_id", "rule_type"),)
 
@@ -60,6 +68,10 @@ class CampaignRiskRule(Base):
     tenant_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
     campaign_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
     risk_rule_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
 
     __table_args__ = (Index("ix_campaign_risk_rules_unique", "campaign_id", "risk_rule_id", unique=True),)
 
@@ -77,6 +89,10 @@ class InterceptionRecord(Base):
     auto_triggered: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     action_taken: Mapped[str | None] = mapped_column(String(50), nullable=True)
     action_detail: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
 
     __table_args__ = (Index("ix_interceptions_tenant_rule", "tenant_id", "risk_rule_id"),)
 
@@ -93,6 +109,10 @@ class RiskNotification(Base):
     campaign_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True, index=True)
     code_item_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True, index=True)
     read: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
 
     __table_args__ = (
         Index("ix_risk_notif_tenant_read", "tenant_id", "read"),
