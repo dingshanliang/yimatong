@@ -40,6 +40,7 @@ from app.services.product import (
     delete_product_asset,
     get_brand_with_stats,
     get_product,
+    get_sku_detail,
     import_batches_csv,
     list_brand_production_batches,
     list_brands,
@@ -439,6 +440,18 @@ async def list_skus_endpoint(
         page=page,
         page_size=page_size,
     )
+
+
+@sku_router.get("/{sku_id}", response_model=SKURead, summary="SKU 详情")
+async def get_sku_endpoint(
+    sku_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    tenant_id: uuid.UUID = Depends(get_current_tenant),
+):
+    sku = await get_sku_detail(db, tenant_id, sku_id)
+    if not sku:
+        raise HTTPException(status_code=404, detail="SKU not found")
+    return sku
 
 
 @sku_router.patch("/{sku_id}", response_model=SKURead, summary="更新 SKU")

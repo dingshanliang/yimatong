@@ -1,8 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import { useCrud } from "@/lib/hooks";
-import { App, Button, Form, Modal, Select, Space, Switch, Table, Tag, Typography } from "antd";
+import { App, Button, Form, Modal, Select, Space, Switch, Table, Typography } from "antd";
 import { PlusOutlined } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
 import SKUFormFields, { buildSkuPayload, type SKUFormValues } from "@/components/SKUFormFields";
@@ -30,6 +31,7 @@ interface Product {
 
 export default function SKUsPage() {
   const { message } = App.useApp();
+  const router = useRouter();
   const [products, setProducts] = useState<Product[]>([]);
   const [modalOpen, setModalOpen] = useState(false);
   const [editItem, setEditItem] = useState<SKU | null>(null);
@@ -126,7 +128,10 @@ export default function SKUsPage() {
       title: "操作",
       key: "actions",
       render: (_: unknown, record: SKU) => (
-        <Button type="link" size="small" onClick={() => openEdit(record)}>编辑</Button>
+        <Space>
+          <Button type="link" size="small" onClick={() => router.push(`/skus/${record.id}`)}>详情</Button>
+          <Button type="link" size="small" onClick={() => openEdit(record)}>编辑</Button>
+        </Space>
       ),
     },
   ];

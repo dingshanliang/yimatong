@@ -62,6 +62,7 @@ class CodeBatchRead(BaseModel):
     production_batch_code: str | None = None
     production_date: date | None = None
     production_origin: str | None = None
+    created_at: datetime | None = None
 
     model_config = {"from_attributes": True}
 
@@ -77,6 +78,7 @@ class CodeItemRead(BaseModel):
     activated_at: datetime | None = None
     bound_at: datetime | None = None
     revoked_at: datetime | None = None
+    created_at: datetime | None = None
 
     model_config = {"from_attributes": True}
 
@@ -118,6 +120,7 @@ async def create_code_batch_endpoint(
 @code_batch_router.get("", summary="码批次 列表")
 async def list_code_batches_endpoint(
     product_id: uuid.UUID | None = Query(None),
+    sku_id: uuid.UUID | None = Query(None),
     status: str | None = Query(None),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
@@ -128,6 +131,7 @@ async def list_code_batches_endpoint(
         db,
         tenant_id,
         product_id=product_id,
+        sku_id=sku_id,
         status=status,
         page=page,
         page_size=page_size,

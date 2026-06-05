@@ -391,6 +391,20 @@ async def update_sku(
     return sku
 
 
+async def get_sku_detail(
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    sku_id: uuid.UUID,
+) -> SKU | None:
+    result = await db.execute(
+        select(SKU).options(selectinload(SKU.product)).where(SKU.id == sku_id, SKU.tenant_id == tenant_id)
+    )
+    sku = result.scalar_one_or_none()
+    if not sku:
+        return None
+    return sku
+
+
 async def create_production_batch(
     db: AsyncSession,
     tenant_id: uuid.UUID,

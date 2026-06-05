@@ -138,6 +138,7 @@ async def list_code_batches(
     db: AsyncSession,
     tenant_id: uuid.UUID,
     product_id: uuid.UUID | None = None,
+    sku_id: uuid.UUID | None = None,
     status: str | None = None,
     page: int = 1,
     page_size: int = 20,
@@ -152,6 +153,9 @@ async def list_code_batches(
     if product_id:
         stmt = stmt.where(CodeBatch.product_id == product_id)
         count_stmt = count_stmt.where(CodeBatch.product_id == product_id)
+    if sku_id:
+        stmt = stmt.where(CodeBatch.sku_id == sku_id)
+        count_stmt = count_stmt.where(CodeBatch.sku_id == sku_id)
     if status:
         stmt = stmt.where(CodeBatch.status == status)
         count_stmt = count_stmt.where(CodeBatch.status == status)
