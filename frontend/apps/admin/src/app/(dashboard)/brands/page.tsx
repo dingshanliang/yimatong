@@ -51,16 +51,6 @@ export default function BrandsPage() {
     setModalOpen(true);
   };
 
-  const openEdit = (brand: Brand) => {
-    setEditItem(brand);
-    setModalOpen(true);
-  };
-
-  const handleSuccess = () => {
-    setModalOpen(false);
-    mutate();
-  };
-
   const columns: ColumnsType<Brand> = [
     {
       title: "品牌名称",
