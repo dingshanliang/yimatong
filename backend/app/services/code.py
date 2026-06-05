@@ -164,6 +164,39 @@ async def list_code_batches(
     return list(result.scalars().all()), total
 
 
+async def list_brand_code_batches(
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    brand_id: uuid.UUID,
+    page: int = 1,
+    page_size: int = 20,
+) -> tuple[list[CodeBatch], int]:
+    product_ids_result = await db.execute(
+        select(Product.id).where(Product.tenant_id == tenant_id, Product.brand_id == brand_id)
+    )
+    product_ids = list(product_ids_result.scalars().all())
+
+    if not product_ids:
+        return [], 0
+
+    stmt = (
+        select(CodeBatch)
+        .options(selectinload(CodeBatch.product), selectinload(CodeBatch.sku), selectinload(CodeBatch.production_batch))
+        .where(CodeBatch.tenant_id == tenant_id, CodeBatch.product_id.in_(product_ids))
+    )
+    count_stmt = select(func.count()).select_from(CodeBatch).where(
+        CodeBatch.tenant_id == tenant_id,
+        CodeBatch.product_id.in_(product_ids),
+    )
+
+    total_result = await db.execute(count_stmt)
+    total = total_result.scalar() or 0
+
+    stmt = stmt.order_by(CodeBatch.id.desc()).offset((page - 1) * page_size).limit(page_size)
+    result = await db.execute(stmt)
+    return list(result.scalars().all()), total
+
+
 async def list_code_items(
     db: AsyncSession,
     tenant_id: uuid.UUID,

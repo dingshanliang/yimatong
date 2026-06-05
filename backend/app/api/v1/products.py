@@ -3,11 +3,14 @@ import uuid
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.v1.code_batches import CodeBatchRead
 from app.core.database import get_db
 from app.core.dependencies import get_current_tenant
 from app.schemas.product import (
     BrandCreate,
+    BrandDetailRead,
     BrandRead,
+    BrandStats,
     BrandUpdate,
     CSVImportResult,
     PaginatedResponse,
@@ -25,6 +28,8 @@ from app.schemas.product import (
     SKURead,
     SKUUpdate,
 )
+from app.services.campaign import list_brand_campaigns
+from app.services.code import list_brand_code_batches
 from app.services.product import (
     check_brand_has_products,
     create_brand,
@@ -33,8 +38,10 @@ from app.services.product import (
     create_production_batch,
     create_sku,
     delete_product_asset,
+    get_brand_with_stats,
     get_product,
     import_batches_csv,
+    list_brand_production_batches,
     list_brands,
     list_product_assets,
     list_production_batches,
@@ -104,7 +111,22 @@ async def update_brand_endpoint(
     return brand
 
 
-@brand_router.get("/{brand_id}/products")
+@brand_router.get("/{brand_id}", response_model=BrandDetailRead, summary="品牌 详情")
+async def get_brand_endpoint(
+    brand_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    tenant_id: uuid.UUID = Depends(get_current_tenant),
+):
+    brand, stats = await get_brand_with_stats(db, tenant_id, brand_id)
+    if not brand:
+        raise HTTPException(status_code=404, detail="Brand not found")
+    return BrandDetailRead(
+        **BrandRead.model_validate(brand).model_dump(),
+        stats=BrandStats(**stats),
+    )
+
+
+@brand_router.get("/{brand_id}/products", summary="品牌下 产品 列表")
 async def list_brand_products(
     brand_id: uuid.UUID,
     page: int = Query(1, ge=1),
@@ -121,6 +143,52 @@ async def list_brand_products(
     )
     return PaginatedResponse(
         items=[ProductRead.model_validate(p) for p in products],
+        total=total,
+        page=page,
+        page_size=page_size,
+    )
+
+
+@brand_router.get("/{brand_id}/campaigns", summary="品牌下 营销活动 列表")
+async def list_brand_campaigns_endpoint(
+    brand_id: uuid.UUID,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    db: AsyncSession = Depends(get_db),
+    tenant_id: uuid.UUID = Depends(get_current_tenant),
+):
+    items, total = await list_brand_campaigns(db, tenant_id, brand_id, page=page, page_size=page_size)
+    return PaginatedResponse(items=items, total=total, page=page, page_size=page_size)
+
+
+@brand_router.get("/{brand_id}/code-batches", summary="品牌下 溯源码批次 列表")
+async def list_brand_code_batches_endpoint(
+    brand_id: uuid.UUID,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    db: AsyncSession = Depends(get_db),
+    tenant_id: uuid.UUID = Depends(get_current_tenant),
+):
+    batches, total = await list_brand_code_batches(db, tenant_id, brand_id, page=page, page_size=page_size)
+    return PaginatedResponse(
+        items=[CodeBatchRead.model_validate(b) for b in batches],
+        total=total,
+        page=page,
+        page_size=page_size,
+    )
+
+
+@brand_router.get("/{brand_id}/production-batches", summary="品牌下 生产批次 列表")
+async def list_brand_production_batches_endpoint(
+    brand_id: uuid.UUID,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    db: AsyncSession = Depends(get_db),
+    tenant_id: uuid.UUID = Depends(get_current_tenant),
+):
+    batches, total = await list_brand_production_batches(db, tenant_id, brand_id, page=page, page_size=page_size)
+    return PaginatedResponse(
+        items=[ProductionBatchRead.model_validate(b) for b in batches],
         total=total,
         page=page,
         page_size=page_size,

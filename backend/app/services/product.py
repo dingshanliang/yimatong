@@ -4,6 +4,8 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.models.campaign import Campaign
+from app.models.code import CodeBatch
 from app.models.product import (
     SKU,
     Brand,
@@ -102,6 +104,60 @@ async def update_brand(
     await db.flush()
     await db.refresh(brand)
     return brand
+
+
+async def get_brand_with_stats(
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    brand_id: uuid.UUID,
+) -> tuple[Brand | None, dict[str, int]]:
+    result = await db.execute(select(Brand).where(Brand.id == brand_id, Brand.tenant_id == tenant_id))
+    brand = result.scalar_one_or_none()
+    if not brand:
+        return None, {}
+
+    product_result = await db.execute(
+        select(func.count()).select_from(Product).where(Product.tenant_id == tenant_id, Product.brand_id == brand_id)
+    )
+    product_count = product_result.scalar() or 0
+
+    campaign_result = await db.execute(
+        select(func.count()).select_from(Campaign).where(
+            Campaign.tenant_id == tenant_id,
+            Campaign.product_id.in_(
+                select(Product.id).where(Product.tenant_id == tenant_id, Product.brand_id == brand_id)
+            ),
+        )
+    )
+    campaign_count = campaign_result.scalar() or 0
+
+    code_batch_result = await db.execute(
+        select(func.count()).select_from(CodeBatch).where(
+            CodeBatch.tenant_id == tenant_id,
+            CodeBatch.product_id.in_(
+                select(Product.id).where(Product.tenant_id == tenant_id, Product.brand_id == brand_id)
+            ),
+        )
+    )
+    code_batch_count = code_batch_result.scalar() or 0
+
+    batch_result = await db.execute(
+        select(func.count()).select_from(ProductionBatch).where(
+            ProductionBatch.tenant_id == tenant_id,
+            ProductionBatch.product_id.in_(
+                select(Product.id).where(Product.tenant_id == tenant_id, Product.brand_id == brand_id)
+            ),
+        )
+    )
+    batch_count = batch_result.scalar() or 0
+
+    stats = {
+        "product_count": product_count,
+        "campaign_count": campaign_count,
+        "code_batch_count": code_batch_count,
+        "batch_count": batch_count,
+    }
+    return brand, stats
 
 
 async def create_product(
@@ -645,3 +701,36 @@ async def check_brand_has_products(db: AsyncSession, tenant_id: uuid.UUID, brand
         select(func.count()).select_from(Product).where(Product.tenant_id == tenant_id, Product.brand_id == brand_id)
     )
     return (result.scalar() or 0) > 0
+
+
+async def list_brand_production_batches(
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    brand_id: uuid.UUID,
+    page: int = 1,
+    page_size: int = 20,
+) -> tuple[list[ProductionBatch], int]:
+    product_ids_result = await db.execute(
+        select(Product.id).where(Product.tenant_id == tenant_id, Product.brand_id == brand_id)
+    )
+    product_ids = list(product_ids_result.scalars().all())
+
+    if not product_ids:
+        return [], 0
+
+    stmt = (
+        select(ProductionBatch)
+        .options(selectinload(ProductionBatch.product), selectinload(ProductionBatch.sku))
+        .where(ProductionBatch.tenant_id == tenant_id, ProductionBatch.product_id.in_(product_ids))
+    )
+    count_stmt = select(func.count()).select_from(ProductionBatch).where(
+        ProductionBatch.tenant_id == tenant_id,
+        ProductionBatch.product_id.in_(product_ids),
+    )
+
+    total_result = await db.execute(count_stmt)
+    total = total_result.scalar() or 0
+
+    stmt = stmt.order_by(ProductionBatch.id.desc()).offset((page - 1) * page_size).limit(page_size)
+    result = await db.execute(stmt)
+    return list(result.scalars().all()), total

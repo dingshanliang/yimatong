@@ -224,6 +224,41 @@ async def list_campaigns(
     return [_campaign_to_dict(c, product_names=product_names, stats=stats) for c in campaigns], total
 
 
+async def list_brand_campaigns(
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    brand_id: uuid.UUID,
+    page: int = 1,
+    page_size: int = 20,
+) -> tuple[list[dict], int]:
+    from app.models.product import Product
+
+    product_ids_result = await db.execute(
+        select(Product.id).where(Product.tenant_id == tenant_id, Product.brand_id == brand_id)
+    )
+    product_ids = list(product_ids_result.scalars().all())
+
+    if not product_ids:
+        return [], 0
+
+    stmt = select(Campaign).where(
+        Campaign.tenant_id == tenant_id,
+        Campaign.product_id.in_(product_ids),
+    )
+    count_stmt = select(func.count()).select_from(Campaign).where(
+        Campaign.tenant_id == tenant_id,
+        Campaign.product_id.in_(product_ids),
+    )
+
+    total = (await db.execute(count_stmt)).scalar() or 0
+    stmt = stmt.order_by(Campaign.id.desc()).offset((page - 1) * page_size).limit(page_size)
+    result = await db.execute(stmt)
+    campaigns = result.scalars().all()
+    product_names = await _load_product_names(db, tenant_id, campaigns)
+    stats = await _load_campaign_stats(db, tenant_id, [c.id for c in campaigns])
+    return [_campaign_to_dict(c, product_names=product_names, stats=stats) for c in campaigns], total
+
+
 async def get_campaign(
     db: AsyncSession,
     tenant_id: uuid.UUID,

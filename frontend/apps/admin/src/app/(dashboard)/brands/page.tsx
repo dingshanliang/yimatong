@@ -1,10 +1,11 @@
 "use client";
 
 import { useState } from "react";
-import { App, Button, Form, Input, Modal, Space, Table, Tag, Typography } from "antd";
+import { useRouter } from "next/navigation";
+import { App, Button, Input, Space, Table, Tag, Typography } from "antd";
 import { PlusOutlined, SearchOutlined } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
-import ImageUploadInput from "@/components/ImageUploadInput";
+import BrandFormModal from "./_components/BrandFormModal";
 import { useCrud } from "@/lib/hooks";
 import { formatDate } from "@/lib/format";
 
@@ -20,15 +21,14 @@ interface Brand {
 }
 
 export default function BrandsPage() {
-  const { message } = App.useApp();
+  const router = useRouter();
   const [search, setSearch] = useState("");
   const [modalOpen, setModalOpen] = useState(false);
   const [editItem, setEditItem] = useState<Brand | null>(null);
-  const [form] = Form.useForm();
 
   const {
     items: brands, total, page, loading, setPage,
-    setFilter, create, update,
+    setFilter, mutate,
   } = useCrud<Brand>("/brands");
 
   const handleSearch = (value: string) => {
@@ -38,34 +38,30 @@ export default function BrandsPage() {
 
   const openCreate = () => {
     setEditItem(null);
-    form.resetFields();
     setModalOpen(true);
   };
 
   const openEdit = (brand: Brand) => {
     setEditItem(brand);
-    form.setFieldsValue(brand);
     setModalOpen(true);
   };
 
-  const handleSubmit = async (values: Record<string, string>) => {
-    try {
-      if (editItem) {
-        await update(editItem.id, values);
-        message.success("品牌更新成功");
-      } else {
-        await create(values);
-        message.success("品牌创建成功");
-      }
-      setModalOpen(false);
-      form.resetFields();
-    } catch {
-      message.error(editItem ? "更新失败" : "创建失败");
-    }
+  const handleSuccess = () => {
+    setModalOpen(false);
+    mutate();
   };
 
   const columns: ColumnsType<Brand> = [
-    { title: "品牌名称", dataIndex: "name", key: "name" },
+    {
+      title: "品牌名称",
+      dataIndex: "name",
+      key: "name",
+      render: (v: string, record: Brand) => (
+        <Button type="link" className="!px-0" onClick={() => router.push(`/brands/${record.id}`)}>
+          {v}
+        </Button>
+      ),
+    },
     { title: "描述", dataIndex: "description", key: "description", ellipsis: true },
     {
       title: "状态",
@@ -85,7 +81,9 @@ export default function BrandsPage() {
       title: "操作",
       key: "actions",
       render: (_: unknown, record: Brand) => (
-        <Button type="link" size="small" onClick={() => openEdit(record)}>编辑</Button>
+        <Button type="link" size="small" onClick={() => router.push(`/brands/${record.id}`)}>
+          查看
+        </Button>
       ),
     },
   ];
@@ -117,29 +115,13 @@ export default function BrandsPage() {
           showTotal: (t) => `共 ${t} 条`,
         }}
       />
-      <Modal
-        title={editItem ? "编辑品牌" : "新建品牌"}
+      <BrandFormModal
         open={modalOpen}
+        initialValues={editItem || undefined}
+        mode={editItem ? "edit" : "create"}
+        onSuccess={handleSuccess}
         onCancel={() => setModalOpen(false)}
-        onOk={() => form.submit()}
-      >
-        <Form form={form} layout="vertical" onFinish={handleSubmit}>
-          <Form.Item name="name" label="品牌名称" rules={[{ required: true, message: "请输入品牌名称" }]}>
-            <Input />
-          </Form.Item>
-          <Form.Item
-            name="logo_url"
-            label="品牌 Logo 图片（可选）"
-            extra="用于溯源码页面和品牌展示。可直接上传，也可粘贴公开可访问的图片链接。"
-            rules={[{ type: "url", message: "请输入以 http:// 或 https:// 开头的图片链接" }]}
-          >
-            <ImageUploadInput module="brand-logo" previewAlt="品牌 Logo 预览" />
-          </Form.Item>
-          <Form.Item name="description" label="描述">
-            <Input.TextArea rows={3} />
-          </Form.Item>
-        </Form>
-      </Modal>
+      />
     </div>
   );
 }

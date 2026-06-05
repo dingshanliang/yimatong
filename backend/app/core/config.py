@@ -39,6 +39,12 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     log_format: str = "human"  # "human" | "json"
 
+    # MinIO / S3
+    minio_endpoint: str = "http://localhost:9000"
+    minio_access_key: str = "minioadmin"
+    minio_secret_key: str = "minioadmin"
+    minio_bucket: str = "yimatong"
+
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 
 

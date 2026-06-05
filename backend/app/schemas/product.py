@@ -1,5 +1,5 @@
 import uuid
-from datetime import date
+from datetime import date, datetime
 
 from pydantic import BaseModel, Field
 
@@ -34,8 +34,20 @@ class BrandRead(BaseModel):
     logo_url: str | None = Field(None, description="品牌 Logo URL")
     description: str | None = Field(None, description="品牌描述")
     status: BrandStatus = Field(..., description="品牌状态")
+    created_at: datetime | None = Field(None, description="创建时间")
 
     model_config = {"from_attributes": True}
+
+
+class BrandStats(BaseModel):
+    product_count: int = Field(0, description="产品数量")
+    campaign_count: int = Field(0, description="营销活动数量")
+    code_batch_count: int = Field(0, description="溯源码批次数量")
+    batch_count: int = Field(0, description="生产批次数量")
+
+
+class BrandDetailRead(BrandRead):
+    stats: BrandStats = Field(default_factory=BrandStats, description="品牌统计数据")
 
 
 class ProductCreate(BaseModel):
