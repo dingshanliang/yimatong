@@ -563,7 +563,6 @@ function ProductsTab({ onChanged }: { onChanged: () => void }) {
       points_cost: values.points_cost,
       stock: values.stock,
       benefit_id: values.benefit_id || null,
-      enabled: values.enabled ?? true,
       starts_at: range?.[0]?.toISOString() || null,
       ends_at: range?.[1]?.toISOString() || null,
       per_consumer_limit: values.per_consumer_limit_unlimited ? 0 : values.per_consumer_limit || 1,
@@ -611,7 +610,26 @@ function ProductsTab({ onChanged }: { onChanged: () => void }) {
     { title: "每人限兑", dataIndex: "per_consumer_limit", render: (value: number) => value > 0 ? value : "不限制" },
     { title: "有效期", render: (_, record) => `${formatDate(record.starts_at)} 至 ${formatDate(record.ends_at)}` },
     { title: "关联权益", dataIndex: "benefit_id", render: (value) => value ? benefitName[value] || value : "未关联" },
-    { title: "状态", dataIndex: "enabled", render: (enabled) => <Tag color={enabled ? "green" : "default"}>{enabled ? "上架" : "下架"}</Tag> },
+    {
+      title: "状态",
+      dataIndex: "enabled",
+      render: (enabled: boolean, record: PointProduct) => (
+        <Switch
+          checked={enabled}
+          checkedChildren="上架"
+          unCheckedChildren="下架"
+          onChange={async (checked) => {
+            try {
+              await api.put(`/members/point-products/${record.id}`, { enabled: checked });
+              message.success(checked ? "已上架" : "已下架");
+              await fetchProducts(page);
+            } catch {
+              message.error("操作失败");
+            }
+          }}
+        />
+      ),
+    },
     {
       title: "操作",
       width: 120,
@@ -665,10 +683,7 @@ function ProductsTab({ onChanged }: { onChanged: () => void }) {
           <Form.Item name="benefit_id" label="关联权益">
             <Select allowClear showSearch optionFilterProp="label" options={benefits.map((item) => ({ value: item.id, label: item.name }))} />
           </Form.Item>
-          <div className="grid grid-cols-2 gap-4">
-            <Form.Item name="sort_order" label="排序"><InputNumber min={0} className="w-full" /></Form.Item>
-            <Form.Item name="enabled" label="上架" valuePropName="checked"><Switch /></Form.Item>
-          </div>
+          <Form.Item name="sort_order" label="排序"><InputNumber min={0} className="w-full" /></Form.Item>
         </Form>
       </Modal>
     </div>

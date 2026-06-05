@@ -52,14 +52,6 @@ export function ConnectorsTab({ connectors, loading, connectorTypes, onRefresh }
     }
   };
 
-  const handleToggleEnabled = async (record: Connector) => {
-    try {
-      await api.patch(`/connectors/connectors/${record.id}`, { enabled: !record.enabled });
-      message.success(record.enabled ? "已禁用" : "已启用");
-      onRefresh();
-    } catch (err) { message.error(extractErrorMessage(err, "操作失败")); }
-  };
-
   const handleTestConnection = async (record: Connector) => {
     try {
       const { data } = await api.post(`/connectors/connectors/${record.id}/test`);
@@ -78,7 +70,25 @@ export function ConnectorsTab({ connectors, loading, connectorTypes, onRefresh }
   const columns = [
     { title: "名称", dataIndex: "name", key: "name" },
     { title: "类型", dataIndex: "connector_type", key: "type", render: (type: string) => <Tag color="blue">{TYPE_LABELS[type] || type}</Tag> },
-    { title: "状态", dataIndex: "enabled", key: "enabled", render: (enabled: boolean) => <Tag color={enabled ? "green" : "default"}>{enabled ? "启用" : "禁用"}</Tag> },
+    {
+      title: "状态",
+      dataIndex: "enabled",
+      key: "enabled",
+      render: (enabled: boolean, record: Connector) => (
+        <Switch
+          checked={enabled}
+          checkedChildren="启用"
+          unCheckedChildren="禁用"
+          onChange={async () => {
+            try {
+              await api.patch(`/connectors/connectors/${record.id}`, { enabled: !record.enabled });
+              message.success(record.enabled ? "已禁用" : "已启用");
+              onRefresh();
+            } catch (err) { message.error(extractErrorMessage(err, "操作失败")); }
+          }}
+        />
+      ),
+    },
     { title: "库存", key: "stock", render: (_: unknown, record: Connector) => { const stock = record.config?.stock as { available?: number } | undefined; return stock ? `${stock.available}` : "-"; } },
     { title: "创建时间", dataIndex: "created_at", key: "created_at", render: (v: string) => (v ? new Date(v).toLocaleString("zh-CN") : "-") },
     { title: "操作", key: "actions", render: (_: unknown, record: Connector) => (
@@ -86,9 +96,6 @@ export function ConnectorsTab({ connectors, loading, connectorTypes, onRefresh }
         <Button size="small" onClick={() => handleTestConnection(record)}><ExperimentOutlined /> 测试</Button>
         {record.connector_type === "generic_http" && <Button size="small" onClick={() => handleSyncStock(record)}><ReloadOutlined /> 同步库存</Button>}
         <Button size="small" onClick={() => handleEdit(record)}>编辑</Button>
-        <Popconfirm title={record.enabled ? "确认禁用？" : "确认启用？"} onConfirm={() => handleToggleEnabled(record)}>
-          <Button size="small" danger={record.enabled}>{record.enabled ? "禁用" : "启用"}</Button>
-        </Popconfirm>
       </Space>
     )},
   ];
@@ -110,7 +117,6 @@ export function ConnectorsTab({ connectors, loading, connectorTypes, onRefresh }
               {connectorTypes.map((t) => <Select.Option key={t} value={t}>{TYPE_LABELS[t] || t}</Select.Option>)}
             </Select>
           </Form.Item>
-          {editing && <Form.Item name="enabled" label="启用状态" valuePropName="checked"><Switch /></Form.Item>}
         </Form>
       </Modal>
     </>

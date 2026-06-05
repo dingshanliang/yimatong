@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { App, Button, Divider, Form, Input, Modal, Progress, Select, Space, Table, Tag, Typography } from "antd";
+import { App, Button, Divider, Form, Input, Modal, Progress, Select, Space, Switch, Table, Tag, Typography } from "antd";
 import { PlusOutlined, SearchOutlined, RobotOutlined, ProfileOutlined } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
 import ImageUploadInput from "@/components/ImageUploadInput";
@@ -162,7 +162,31 @@ export default function ProductsPage() {
         return <Progress percent={Math.round((completed / 6) * 100)} size="small" />;
       },
     },
-    { title: "状态", dataIndex: "status", key: "status", render: (status: string) => <Tag color={status === "active" ? "green" : "default"}>{status === "active" ? "启用" : status}</Tag> },
+    {
+      title: "状态",
+      dataIndex: "status",
+      key: "status",
+      render: (status: string, record: Product) => {
+        if (status === "draft") {
+          return <Tag color="orange">草稿</Tag>;
+        }
+        return (
+          <Switch
+            checked={status === "active"}
+            checkedChildren="启用"
+            unCheckedChildren="禁用"
+            onChange={async (checked) => {
+              try {
+                await update(record.id, { status: checked ? "active" : "inactive" });
+                message.success(checked ? "已启用" : "已禁用");
+              } catch {
+                message.error("状态更新失败");
+              }
+            }}
+          />
+        );
+      },
+    },
     { title: "创建时间", dataIndex: "created_at", key: "created_at", render: (v?: string) => formatDate(v) },
     {
       title: "操作",

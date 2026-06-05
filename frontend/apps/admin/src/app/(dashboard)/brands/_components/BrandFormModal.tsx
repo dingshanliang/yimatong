@@ -69,17 +69,6 @@ export default function BrandFormModal({ open, initialValues, onSuccess, onCance
         <Form.Item name="description" label="描述">
           <Input.TextArea rows={3} />
         </Form.Item>
-        {mode === "edit" && (
-          <Form.Item name="status" label="状态" rules={[{ required: true, message: "请选择状态" }]}>
-            <Select
-              placeholder="请选择状态"
-              options={[
-                { label: "启用", value: "active" },
-                { label: "停用", value: "inactive" },
-              ]}
-            />
-          </Form.Item>
-        )}
       </Form>
     </Modal>
   );

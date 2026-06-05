@@ -18,6 +18,7 @@ import {
   Select,
   Space,
   Statistic,
+  Switch,
   Table,
   Tabs,
   Tag,
@@ -580,24 +581,6 @@ export default function ChannelsPage() {
     openEntityModal("store", undefined, { region_id: region.id, distributor_id: region.distributor_id });
   };
 
-  const toggleStatus = (type: "distributor" | "region" | "store", record: Distributor | Region | Store) => {
-    const next = record.status === "active" ? "inactive" : "active";
-    modalRef.current.confirm({
-      title: next === "active" ? "启用该记录？" : "停用该记录？",
-      content: next === "active" ? "启用后可继续用于渠道分配和统计。" : "停用后不会出现在默认启用列表中。",
-      onOk: async () => {
-        const paths = {
-          distributor: "/channels/distributors",
-          region: "/channels/regions",
-          store: "/channels/stores",
-        };
-        await api.patch(`${paths[type]}/${record.id}`, { status: next });
-        messageRef.current.success(next === "active" ? "已启用" : "已停用");
-        loadData();
-      },
-    });
-  };
-
   const createAllocation = async (values: Record<string, unknown>) => {
     try {
       await api.post("/channels/code-allocations", values);
@@ -651,7 +634,26 @@ export default function ChannelsPage() {
     },
     { title: "组织规模", render: (_, record) => `${record.region_count} 个区域 / ${record.store_count} 个门店` },
     { title: "已登记码量", render: (_, record) => `${record.allocated_quantity} 个码` },
-    { title: "状态", dataIndex: "status", render: statusTag },
+    {
+      title: "状态",
+      dataIndex: "status",
+      render: (s: string, record: Distributor) => (
+        <Switch
+          checked={s === "active"}
+          checkedChildren="启用"
+          unCheckedChildren="停用"
+          onChange={async (checked) => {
+            try {
+              await api.patch(`/channels/distributors/${record.id}`, { status: checked ? "active" : "inactive" });
+              messageRef.current.success(checked ? "已启用" : "已停用");
+              loadData();
+            } catch (err) {
+              messageRef.current.error(extractErrorMessage(err, "操作失败"));
+            }
+          }}
+        />
+      ),
+    },
     {
       title: "操作",
       render: (_, record) => (
@@ -661,9 +663,6 @@ export default function ChannelsPage() {
           </Button>
           <Button size="small" type="link" onClick={() => openEntityModal("region", undefined, { distributor_id: record.id })}>
             创建区域
-          </Button>
-          <Button size="small" type="link" onClick={() => toggleStatus("distributor", record)}>
-            {record.status === "active" ? "停用" : "启用"}
           </Button>
         </Space>
       ),
@@ -684,16 +683,32 @@ export default function ChannelsPage() {
     { title: "经销商", dataIndex: "distributor_name", render: (value) => value || "未绑定" },
     { title: "门店数", dataIndex: "store_count", render: (value) => `${value || 0} 个` },
     { title: "已登记码量", dataIndex: "allocated_quantity", render: (value) => `${value || 0} 个码` },
-    { title: "状态", dataIndex: "status", render: statusTag },
+    {
+      title: "状态",
+      dataIndex: "status",
+      render: (s: string, record: Region) => (
+        <Switch
+          checked={s === "active"}
+          checkedChildren="启用"
+          unCheckedChildren="停用"
+          onChange={async (checked) => {
+            try {
+              await api.patch(`/channels/regions/${record.id}`, { status: checked ? "active" : "inactive" });
+              messageRef.current.success(checked ? "已启用" : "已停用");
+              loadData();
+            } catch (err) {
+              messageRef.current.error(extractErrorMessage(err, "操作失败"));
+            }
+          }}
+        />
+      ),
+    },
     {
       title: "操作",
       render: (_, record) => (
         <Space>
           <Button size="small" type="link" icon={<EditOutlined />} onClick={() => openEntityModal("region", record)}>
             编辑
-          </Button>
-          <Button size="small" type="link" onClick={() => toggleStatus("region", record)}>
-            {record.status === "active" ? "停用" : "启用"}
           </Button>
         </Space>
       ),
@@ -705,16 +720,32 @@ export default function ChannelsPage() {
     { title: "区域", dataIndex: "region_name", render: (value) => value || "未绑定" },
     { title: "经销商", dataIndex: "distributor_name", render: (value) => value || "未绑定" },
     { title: "已登记码量", dataIndex: "allocated_quantity", render: (value) => `${value || 0} 个码` },
-    { title: "状态", dataIndex: "status", render: statusTag },
+    {
+      title: "状态",
+      dataIndex: "status",
+      render: (s: string, record: Store) => (
+        <Switch
+          checked={s === "active"}
+          checkedChildren="启用"
+          unCheckedChildren="停用"
+          onChange={async (checked) => {
+            try {
+              await api.patch(`/channels/stores/${record.id}`, { status: checked ? "active" : "inactive" });
+              messageRef.current.success(checked ? "已启用" : "已停用");
+              loadData();
+            } catch (err) {
+              messageRef.current.error(extractErrorMessage(err, "操作失败"));
+            }
+          }}
+        />
+      ),
+    },
     {
       title: "操作",
       render: (_, record) => (
         <Space>
           <Button size="small" type="link" icon={<EditOutlined />} onClick={() => openEntityModal("store", record)}>
             编辑
-          </Button>
-          <Button size="small" type="link" onClick={() => toggleStatus("store", record)}>
-            {record.status === "active" ? "停用" : "启用"}
           </Button>
         </Space>
       ),
@@ -1070,14 +1101,6 @@ export default function ChannelsPage() {
                 >
                   <Input placeholder="用于渠道协同联系" />
                 </Form.Item>
-                <Form.Item name="status" label="状态">
-                  <Select
-                    options={[
-                      { label: "启用", value: "active" },
-                      { label: "停用", value: "inactive" },
-                    ]}
-                  />
-                </Form.Item>
               </>
             )}
             {entityModal?.type === "region" && (
@@ -1136,14 +1159,6 @@ export default function ChannelsPage() {
                 )}
                 <Form.Item name="distributor_id" label="所属经销商">
                   <Select allowClear options={distributorOptions} />
-                </Form.Item>
-                <Form.Item name="status" label="状态">
-                  <Select
-                    options={[
-                      { label: "启用", value: "active" },
-                      { label: "停用", value: "inactive" },
-                    ]}
-                  />
                 </Form.Item>
               </>
             )}

@@ -455,7 +455,28 @@ export default function BenefitsPage() {
       },
     },
     { title: "每位限领", dataIndex: "per_person_limit", key: "per_person_limit", width: 96 },
-    { title: "状态", dataIndex: "status", key: "status", width: 96, render: (s: string) => { const info = BENEFIT_STATUS_MAP[s] || { label: s, color: "default" }; return <Tag color={info.color}>{info.label}</Tag>; } },
+    {
+      title: "状态",
+      dataIndex: "status",
+      key: "status",
+      width: 96,
+      render: (s: string, record: Benefit) => (
+        <Switch
+          checked={s === "active"}
+          checkedChildren="启用"
+          unCheckedChildren="停用"
+          onChange={async (checked) => {
+            try {
+              await updateBenefit(record.id, { status: checked ? "active" : "inactive" });
+              message.success(checked ? "权益已启用" : "权益已停用");
+              refreshAll();
+            } catch {
+              message.error("操作失败");
+            }
+          }}
+        />
+      ),
+    },
     { title: "创建时间", dataIndex: "created_at", key: "created_at", width: 180, render: formatDate },
     {
       title: "操作",
@@ -470,9 +491,6 @@ export default function BenefitsPage() {
             </Popconfirm>
           )}
           <Button size="small" onClick={() => openEdit(record)}>编辑</Button>
-          <Popconfirm title={record.status === "active" ? "停用后消费者将不能继续领取，确认停用？" : "确认启用此权益？"} onConfirm={() => handleToggleStatus(record)}>
-            <Button size="small" danger={record.status === "active"}>{record.status === "active" ? "停用" : "启用"}</Button>
-          </Popconfirm>
           <Popconfirm title="仅未使用且无领取记录的权益可删除，确认删除？" onConfirm={() => handleDelete(record)}>
             <Button size="small" danger>删除</Button>
           </Popconfirm>

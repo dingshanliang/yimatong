@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { App, Button, Input, Space, Table, Tag, Typography } from "antd";
+import { App, Button, Input, Space, Switch, Table, Tag, Typography } from "antd";
 import { PlusOutlined, SearchOutlined } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
 import BrandFormModal from "./_components/BrandFormModal";
@@ -26,9 +26,19 @@ export default function BrandsPage() {
   const [modalOpen, setModalOpen] = useState(false);
   const [editItem, setEditItem] = useState<Brand | null>(null);
 
+  const openEdit = (brand: Brand) => {
+    setEditItem(brand);
+    setModalOpen(true);
+  };
+
+  const handleSuccess = () => {
+    setModalOpen(false);
+    mutate();
+  };
+
   const {
     items: brands, total, page, loading, setPage,
-    setFilter, mutate,
+    setFilter, update, mutate,
   } = useCrud<Brand>("/brands");
 
   const handleSearch = (value: string) => {
@@ -67,8 +77,20 @@ export default function BrandsPage() {
       title: "状态",
       dataIndex: "status",
       key: "status",
-      render: (s: string) => (
-        <Tag color={s === "active" ? "green" : "default"}>{s === "active" ? "启用" : "停用"}</Tag>
+      render: (s: string, record: Brand) => (
+        <Switch
+          checked={s === "active"}
+          checkedChildren="启用"
+          unCheckedChildren="停用"
+          onChange={async (checked) => {
+            try {
+              await update(record.id, { status: checked ? "active" : "inactive" });
+              message.success(checked ? "已启用" : "已停用");
+            } catch {
+              message.error("状态更新失败");
+            }
+          }}
+        />
       ),
     },
     {
@@ -81,9 +103,12 @@ export default function BrandsPage() {
       title: "操作",
       key: "actions",
       render: (_: unknown, record: Brand) => (
-        <Button type="link" size="small" onClick={() => router.push(`/brands/${record.id}`)}>
-          查看
-        </Button>
+        <Space>
+          <Button type="link" size="small" onClick={() => router.push(`/brands/${record.id}`)}>
+            查看
+          </Button>
+          <Button type="link" size="small" onClick={() => openEdit(record)}>编辑</Button>
+        </Space>
       ),
     },
   ];

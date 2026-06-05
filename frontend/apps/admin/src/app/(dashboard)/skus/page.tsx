@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useCrud } from "@/lib/hooks";
-import { App, Button, Form, Modal, Select, Space, Table, Tag, Typography } from "antd";
+import { App, Button, Form, Modal, Select, Space, Switch, Table, Tag, Typography } from "antd";
 import { PlusOutlined } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
 import SKUFormFields, { buildSkuPayload, type SKUFormValues } from "@/components/SKUFormFields";
@@ -106,8 +106,20 @@ export default function SKUsPage() {
       title: "状态",
       dataIndex: "status",
       key: "status",
-      render: (s: string) => (
-        <Tag color={s === "active" ? "green" : "default"}>{s === "active" ? "启用" : "停用"}</Tag>
+      render: (s: string, record: SKU) => (
+        <Switch
+          checked={s === "active"}
+          checkedChildren="启用"
+          unCheckedChildren="停用"
+          onChange={async (checked) => {
+            try {
+              await update(record.id, { status: checked ? "active" : "inactive" });
+              message.success(checked ? "已启用" : "已停用");
+            } catch {
+              message.error("状态更新失败");
+            }
+          }}
+        />
       ),
     },
     {
