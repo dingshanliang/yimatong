@@ -58,7 +58,7 @@ export default function RecentEvents() {
         <Timeline
           items={events.map((event) => ({
             color: EVENT_COLORS[event.event_type] || "gray",
-            children: (
+            content: (
               <div
                 style={{ cursor: event.action_url ? "pointer" : "default" }}
                 onClick={() => {
