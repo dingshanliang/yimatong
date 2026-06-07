@@ -78,10 +78,21 @@ const ACTION_STYLES: Record<
 export function PrivateDomainButtons({ buttons }: PrivateDomainButtonsProps) {
   if (!buttons.length) return null;
 
+  const isWeChat = typeof navigator !== "undefined" && /MicroMessenger/i.test(navigator.userAgent);
+
   const handleClick = (btn: PrivateDomainButton) => {
-    if (btn.url && /^https?:\/\//i.test(btn.url)) {
-      window.open(btn.url, "_blank", "noopener,noreferrer");
+    const url = btn.url;
+    if (!url || !/^https?:\/\//i.test(url)) return;
+    if (isWeChat) {
+      // 微信内打开外链提示用户复制到浏览器
+      if (navigator.clipboard) {
+        navigator.clipboard.writeText(url).then(() => {
+          alert("链接已复制，请在浏览器中打开");
+        });
+      }
+      return;
     }
+    window.open(url, "_blank", "noopener,noreferrer");
   };
 
   return (
