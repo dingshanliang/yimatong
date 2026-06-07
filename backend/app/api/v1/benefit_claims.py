@@ -3,22 +3,16 @@
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
+from app.schemas.benefit_claim import BenefitClaimRequest
 from app.services.redis_cache import AsyncRedisCache
 
 benefit_claim_router = APIRouter(prefix="/api/v1", tags=["benefit-claims"])
 
 _claim_cache = AsyncRedisCache(prefix="claim", default_ttl=300)
-
-
-class BenefitClaimRequest(BaseModel):
-    benefit_id: str
-    scan_token: str | None = None
-    phone: str | None = None
 
 
 @benefit_claim_router.post("/benefit-claims", status_code=201)
@@ -138,6 +132,8 @@ async def claim_benefit_h5(
         return {"status": "claimed", "benefit_id": str(benefit_id)}
     if result["status"] == "inactive":
         raise HTTPException(status_code=409, detail="权益已停用")
+    if result["status"] == "campaign_inactive":
+        raise HTTPException(status_code=409, detail="活动已结束")
     if result["status"] == "out_of_stock":
         raise HTTPException(status_code=410, detail="权益已抢光")
     if result["status"] == "limit_reached":
@@ -212,6 +208,18 @@ async def _handle_cash_red_packet_claim(
     rp_config = benefit.config_json
     daily_limit = rp_config.get("daily_limit_per_user", 3)
     total_limit = rp_config.get("total_limit_per_user", 10)
+
+    # 1.2 原子化限额检查：使用 SELECT FOR UPDATE 锁定权益行
+    # 确保同一用户的并发领取请求串行化，防止限额绕过
+    from app.models.campaign import Benefit as BenefitModel
+
+    # 锁定权益行，防止并发读取到相同的 claimed_count
+    locked_benefit = await db.execute(
+        select(BenefitModel)
+        .where(BenefitModel.id == benefit.id)
+        .with_for_update()
+    )
+    _locked = locked_benefit.scalar_one_or_none()
 
     total_count_result = await db.execute(
         select(func.count()).select_from(BenefitClaim).where(

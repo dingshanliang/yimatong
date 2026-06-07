@@ -3,11 +3,17 @@
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel, Field, field_validator, model_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.core.dependencies import get_current_tenant
+from app.schemas.campaign import (
+    BenefitCreateRequest,
+    CampaignCreateRequest,
+    CampaignStatusRequest,
+    CampaignUpdateRequest,
+    ClaimRequest,
+)
 from app.schemas.common import PaginatedResponse
 from app.services.campaign import (
     attach_benefit_to_campaign,
@@ -23,22 +29,10 @@ from app.services.campaign import (
     list_benefits,
     list_campaigns,
     update_campaign,
-    validate_benefit_config_shape,
-    validate_campaign_rules_shape,
 )
 from app.services.campaign_analytics import get_campaign_comparison, get_campaign_funnel
 
 campaign_router = APIRouter(prefix="/api/v1/campaigns", tags=["campaigns"])
-
-
-REQUIRED_RULES_FIELDS = [
-    "participation_conditions",
-    "claim_limits",
-    "validity_period",
-    "disclaimer",
-    "minor_notice",
-    "customer_service_contact",
-]
 
 
 def _request_product_id(product_id: uuid.UUID | None, rules_json: dict | None) -> uuid.UUID | None:
@@ -51,74 +45,6 @@ def _request_product_id(product_id: uuid.UUID | None, rules_json: dict | None) -
         return uuid.UUID(str(raw))
     except ValueError:
         return None
-
-
-class CampaignCreateRequest(BaseModel):
-    name: str
-    campaign_type: str
-    product_id: uuid.UUID | None = None
-    start_at: str
-    end_at: str
-    rules_json: dict
-    description: str | None = None
-
-    @field_validator("rules_json")
-    @classmethod
-    def validate_rules_json(cls, v: dict) -> dict:
-        missing = [f for f in REQUIRED_RULES_FIELDS if f not in v]
-        if missing:
-            raise ValueError(f"rules_json 缺少必填字段: {', '.join(missing)}")
-        return validate_campaign_rules_shape(v)
-
-
-class CampaignUpdateRequest(BaseModel):
-    name: str | None = None
-    campaign_type: str | None = None
-    product_id: uuid.UUID | None = None
-    start_at: str | None = None
-    end_at: str | None = None
-    rules_json: dict | None = None
-    description: str | None = None
-
-    @field_validator("rules_json")
-    @classmethod
-    def validate_rules_json(cls, v: dict | None) -> dict | None:
-        if v is None:
-            return v
-        return validate_campaign_rules_shape(v)
-
-
-class CampaignStatusRequest(BaseModel):
-    status: str
-
-    @field_validator("status")
-    @classmethod
-    def validate_status(cls, v: str) -> str:
-        allowed = {"draft", "active", "paused", "ended"}
-        if v not in allowed:
-            raise ValueError(f"status must be one of: {', '.join(sorted(allowed))}")
-        return v
-
-
-class BenefitCreateRequest(BaseModel):
-    name: str = Field(min_length=1, max_length=200)
-    benefit_type: str
-    config_json: dict = Field(default_factory=dict)
-    stock_total: int = Field(ge=1)
-    per_person_limit: int = Field(default=1, ge=1)
-    connector_id: uuid.UUID | None = None
-
-    @model_validator(mode="after")
-    def validate_benefit(self):
-        if self.benefit_type == "cash_red_packet" and self.connector_id is None:
-            raise ValueError("connector_id is required for cash_red_packet")
-        self.config_json = validate_benefit_config_shape(self.config_json, self.benefit_type)
-        return self
-
-
-class ClaimRequest(BaseModel):
-    consumer_id: str
-    idempotency_key: str
 
 
 @campaign_router.post("", status_code=201, summary="创建活动")
@@ -215,7 +141,10 @@ async def change_campaign_status_endpoint(
             raise HTTPException(status_code=404, detail="Campaign not found")
         if blockers:
             raise HTTPException(status_code=400, detail="；".join(blockers))
-    data = await change_campaign_status(db, tenant_id, campaign_id, body.status)
+    try:
+        data = await change_campaign_status(db, tenant_id, campaign_id, body.status)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     if not data:
         raise HTTPException(status_code=404, detail="Campaign not found")
     return data
@@ -320,6 +249,8 @@ async def claim_benefit_endpoint(
         raise HTTPException(status_code=410, detail="权益已抢光")
     if result["status"] == "inactive":
         raise HTTPException(status_code=409, detail="权益已停用")
+    if result["status"] == "campaign_inactive":
+        raise HTTPException(status_code=409, detail="活动已结束")
     if result["status"] == "limit_reached":
         raise HTTPException(status_code=403, detail="您已达到本次活动领取上限")
     return result
