@@ -152,9 +152,19 @@ export interface Campaign {
   name: string;
   campaign_type: CampaignType;
   status: CampaignStatus;
-  start_at?: string;
-  end_at?: string;
-  rules?: Record<string, unknown>;
+  product_id?: string | null;
+  product_name?: string;
+  start_at: string;
+  end_at: string;
+  rules_json: Record<string, unknown>;
+  description?: string | null;
+  // 统计字段（列表接口返回）
+  benefit_count?: number;
+  stock_total?: number;
+  stock_used?: number;
+  claim_count?: number;
+  wecom_add_count?: number;
+  computed_status?: string;
   created_at: string;
   updated_at: string;
 }
@@ -162,23 +172,31 @@ export interface Campaign {
 export interface CampaignCreateRequest {
   name: string;
   campaign_type: CampaignType;
-  start_at?: string;
-  end_at?: string;
-  rules?: Record<string, unknown>;
+  start_at: string;
+  end_at: string;
+  product_id?: string | null;
+  rules_json?: Record<string, unknown>;
+  description?: string | null;
 }
 
 // ─── Benefit ─────────────────────────────────
 
+export type BenefitStatus = "active" | "inactive";
+
 export interface Benefit {
   id: string;
   tenant_id: string;
-  campaign_id: string;
+  campaign_id?: string | null;
   name: string;
   benefit_type: string;
-  total_quota: number;
-  claimed_count: number;
-  is_active: boolean;
+  config_json: Record<string, unknown>;
+  connector_id?: string | null;
+  stock_total: number;
+  stock_used: number;
+  per_person_limit: number;
+  status: BenefitStatus;
   created_at: string;
+  updated_at: string;
 }
 
 // ─── Organization & Account ──────────────────

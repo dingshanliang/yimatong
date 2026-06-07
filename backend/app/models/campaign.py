@@ -4,6 +4,7 @@ import uuid
 
 from sqlalchemy import (
     JSON,
+    CheckConstraint,
     DateTime,
     ForeignKey,
     Index,
@@ -41,7 +42,10 @@ class Campaign(Base):
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
 
-    __table_args__ = (Index("ix_campaigns_tenant_status", "tenant_id", "status"),)
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "name", name="uq_campaign_tenant_name"),
+        Index("ix_campaigns_tenant_status", "tenant_id", "status"),
+    )
 
 
 class BenefitType:
@@ -58,7 +62,7 @@ class Benefit(Base):
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     tenant_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
     campaign_id: Mapped[uuid.UUID | None] = mapped_column(
-        ForeignKey("campaigns.id"),
+        ForeignKey("campaigns.id", ondelete="SET NULL"),
         nullable=True,
         index=True,
     )
@@ -66,7 +70,7 @@ class Benefit(Base):
     benefit_type: Mapped[str] = mapped_column(String(50), nullable=False)
     config_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     connector_id: Mapped[uuid.UUID | None] = mapped_column(
-        ForeignKey("connectors.id"),
+        ForeignKey("connectors.id", ondelete="SET NULL"),
         nullable=True,
         index=True,
     )
@@ -79,7 +83,12 @@ class Benefit(Base):
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
 
-    __table_args__ = (Index("ix_benefits_stock", "stock_total", "stock_used"),)
+    __table_args__ = (
+        CheckConstraint("stock_used <= stock_total", name="check_benefit_stock_not_exceeded"),
+        CheckConstraint("stock_total >= 0", name="check_benefit_stock_total_non_negative"),
+        CheckConstraint("per_person_limit >= 1", name="check_benefit_per_person_limit_min"),
+        Index("ix_benefits_stock", "stock_total", "stock_used"),
+    )
 
 
 class BenefitClaim(Base):
@@ -88,12 +97,12 @@ class BenefitClaim(Base):
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     tenant_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
     benefit_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("benefits.id"),
+        ForeignKey("benefits.id", ondelete="RESTRICT"),
         nullable=False,
         index=True,
     )
     campaign_id: Mapped[uuid.UUID | None] = mapped_column(
-        ForeignKey("campaigns.id"),
+        ForeignKey("campaigns.id", ondelete="SET NULL"),
         nullable=True,
         index=True,
     )

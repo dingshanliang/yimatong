@@ -22,7 +22,10 @@ export function sanitizeHtml(dirty: string): string {
     ALLOWED_TAGS,
     ALLOWED_ATTR,
     ALLOW_DATA_ATTR: false,
-    FORBID_TAGS: ["script", "iframe", "object", "embed", "form", "input", "style", "link"],
-    FORBID_ATTR: ["onerror", "onload", "onclick", "onmouseover", "onfocus", "onblur", "onsubmit"],
+    FORBID_TAGS: ["script", "iframe", "object", "embed", "form", "input", "style", "link", "base", "meta"],
+    FORBID_ATTR: ["onerror", "onload", "onclick", "onmouseover", "onfocus", "onblur", "onsubmit",
+      "onchange", "oninput", "onkeydown", "onkeyup", "onkeypress", "onmousedown",
+      "onmouseup", "ondblclick", "oncontextmenu", "onwheel", "ondrag", "ondrop",
+      "oncopy", "oncut", "onpaste", "ontouchstart", "ontouchend", "ontouchmove"],
   });
 }

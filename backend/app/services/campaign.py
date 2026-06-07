@@ -1,47 +1,37 @@
 """活动与权益服务层"""
 
+import logging
 import uuid
 from datetime import datetime
+from typing import TypedDict
 
 from sqlalchemy import and_, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.constants.campaign import (
+    ALLOWED_CAMPAIGN_TRANSITIONS,
+    BENEFIT_STATUSES,
+    BENEFIT_TYPES,
+    BENEFIT_VALIDITY_TYPES,
+    CAMPAIGN_GOALS,
+    CASH_RED_PACKET_AMOUNT_TYPES,
+    PARTICIPATION_CONDITION_TYPES,
+    WECOM_MODES,
+    CampaignStatus,
+)
 from app.core.event_bus import event_bus
-from app.models.campaign import Benefit, BenefitClaim, Campaign, CampaignStatus
+from app.models.campaign import Benefit, BenefitClaim, Campaign
 from app.models.connector import BenefitDelivery
 from app.models.product import Product
 
-CAMPAIGN_GOALS = {
-    "first_scan_coupon",
-    "lottery",
-    "points",
-    "private_domain_repurchase",
-    "festival",
-    "custom",
-}
+logger = logging.getLogger(__name__)
 
-PARTICIPATION_CONDITION_TYPES = {
-    "first_scan",
-    "any_scan",
-    "member_only",
-}
 
-BENEFIT_VALIDITY_TYPES = {
-    "campaign_period",
-    "after_claim_days",
-    "fixed_range",
-}
+class ClaimResult(TypedDict, total=False):
+    """claim_benefit 返回类型"""
 
-WECOM_MODES = {"none", "guide", "required"}
-BENEFIT_TYPES = {
-    "platform_coupon",
-    "external_link",
-    "private_domain",
-    "form_benefit",
-    "cash_red_packet",
-}
-BENEFIT_STATUSES = {"active", "inactive"}
-CASH_RED_PACKET_AMOUNT_TYPES = {"fixed", "random", "lucky"}
+    status: str
+    claim: dict
 
 
 def validate_campaign_rules_shape(rules_json: dict) -> dict:
@@ -316,6 +306,17 @@ async def change_campaign_status(
     c = result.scalar_one_or_none()
     if not c:
         return None
+
+    # 1.3 状态转换验证
+    current_status = c.status
+    allowed = ALLOWED_CAMPAIGN_TRANSITIONS.get(current_status, [])
+    if new_status not in allowed:
+        raise ValueError(
+            f"活动状态不允许从 '{current_status}' 转换到 '{new_status}'，"
+            f"当前状态允许的转换目标为: {allowed or '无（终态）'}"
+        )
+
+    logger.info("Campaign status changed: campaign_id=%s, %s -> %s", campaign_id, current_status, new_status)
     c.status = new_status
     await db.flush()
     await db.refresh(c)
@@ -744,7 +745,13 @@ async def claim_benefit(
     consumer_id: str,
     idempotency_key: str,
 ) -> dict:
-    """领取权益，带幂等控制和库存校验"""
+    """领取权益，带幂等控制和库存校验。
+
+    并发安全设计：
+    - 库存扣减使用原子 SQL（UPDATE ... WHERE stock_used < stock_total RETURNING）
+    - 每人限额检查在库存扣减成功后执行，失败时回滚库存
+    - 整个流程在单个事务中，flush 失败时数据库自动回滚
+    """
     # 幂等检查
     existing = await db.execute(
         select(BenefitClaim).where(
@@ -757,22 +764,48 @@ async def claim_benefit(
     if existing_claim:
         return {"status": "idempotent", "claim": _claim_to_dict(existing_claim)}
 
-    # 查询权益
+    # 查询权益（含活动状态校验）
     benefit_result = await db.execute(
-        select(Benefit).where(Benefit.id == benefit_id, Benefit.tenant_id == tenant_id),
+        select(Benefit)
+        .where(Benefit.id == benefit_id, Benefit.tenant_id == tenant_id)
+        .join(Campaign, Campaign.id == Benefit.campaign_id, isouter=True),
     )
     benefit = benefit_result.scalar_one_or_none()
     if not benefit:
         return {"status": "not_found"}
 
-    # 库存检查
     if benefit.status != "active":
         return {"status": "inactive"}
 
-    if benefit.stock_used >= benefit.stock_total:
+    # 1.4 检查关联活动状态：已结束的活动不允许领取
+    # 注意：draft/paused 活动的权益仍可领取（支持测试和内部管理场景）
+    if benefit.campaign_id:
+        campaign_result = await db.execute(
+            select(Campaign).where(Campaign.id == benefit.campaign_id, Campaign.tenant_id == tenant_id),
+        )
+        campaign = campaign_result.scalar_one_or_none()
+        if campaign and campaign.status == CampaignStatus.ENDED:
+            return {"status": "campaign_inactive"}
+
+    # 1.1 原子库存扣减：UPDATE ... WHERE stock_used < stock_total
+    # 数据库层面保证不会超卖，无需应用层锁
+    atomic_result = await db.execute(
+        update(Benefit)
+        .where(
+            Benefit.id == benefit_id,
+            Benefit.tenant_id == tenant_id,
+            Benefit.stock_used < Benefit.stock_total,
+        )
+        .values(stock_used=Benefit.stock_used + 1)
+        .returning(Benefit.stock_used)
+    )
+    row = atomic_result.one_or_none()
+    if not row:
+        # 原子操作未更新任何行，说明库存不足
+        logger.warning("Stock exhausted: benefit_id=%s", benefit_id)
         return {"status": "out_of_stock"}
 
-    # 每人限额检查
+    # 每人限额检查（库存已扣减，需在限额超限时回滚）
     count_result = await db.execute(
         select(func.count())
         .select_from(BenefitClaim)
@@ -783,10 +816,12 @@ async def claim_benefit(
     )
     claimed_count = count_result.scalar() or 0
     if claimed_count >= benefit.per_person_limit:
+        # 回滚库存：减回 1
+        await db.execute(
+            update(Benefit).where(Benefit.id == benefit_id).values(stock_used=Benefit.stock_used - 1)
+        )
+        logger.info("Benefit limit reached: benefit_id=%s, consumer_id=%s", benefit_id, consumer_id)
         return {"status": "limit_reached"}
-
-    # 扣减库存
-    await db.execute(update(Benefit).where(Benefit.id == benefit_id).values(stock_used=Benefit.stock_used + 1))
 
     # 创建领取记录
     claim = BenefitClaim(
@@ -805,6 +840,7 @@ async def claim_benefit(
         {"claim_id": str(claim.id), "benefit_id": str(benefit_id), "consumer_id": consumer_id},
         str(tenant_id),
     )
+    logger.info("Benefit claimed: benefit_id=%s, consumer_id=%s", benefit_id, consumer_id)
     return {"status": "success", "claim": _claim_to_dict(claim)}
 
 
@@ -974,6 +1010,7 @@ def _parse_campaign_datetime(value: str | None) -> datetime | None:
     try:
         return datetime.fromisoformat(value.replace("Z", "+00:00"))
     except ValueError:
+        logger.warning("Failed to parse datetime: %r", value)
         return None
 
 
