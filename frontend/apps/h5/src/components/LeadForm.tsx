@@ -12,10 +12,10 @@ interface LeadFormProps {
   fields?: string[];
 }
 
-const FIELD_CONFIG: Record<string, { label: string; type: string; placeholder: string }> = {
+const FIELD_CONFIG: Record<string, { label: string; type: string; placeholder: string; inputMode?: string; autoComplete?: string }> = {
   name: { label: "姓名", type: "text", placeholder: "请输入姓名" },
-  phone: { label: "手机号", type: "tel", placeholder: "请输入手机号" },
-  region: { label: "所在地区", type: "text", placeholder: "请输入所在地区" },
+  phone: { label: "手机号", type: "tel", placeholder: "请输入手机号", inputMode: "tel", autoComplete: "tel" },
+  region: { label: "所在地区", type: "text", placeholder: "请输入所在地区", autoComplete: "address-level1" },
   intention: { label: "意向说明", type: "text", placeholder: "请简述您的需求" },
 };
 
@@ -30,11 +30,14 @@ export function LeadForm({
   fields: configuredFields,
 }: LeadFormProps) {
   const [submitted, setSubmitted] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState("");
   const activeFields = configuredFields?.length ? configuredFields : DEFAULT_FIELDS;
 
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
+    if (isSubmitting) return;
+    setIsSubmitting(true);
     setError("");
     const fd = new FormData(e.currentTarget);
     const body: Record<string, unknown> = { public_id: publicId };
@@ -52,6 +55,8 @@ export function LeadForm({
       setSubmitted(true);
     } catch {
       setError("提交失败，请稍后重试");
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -84,6 +89,8 @@ export function LeadForm({
                 id={`lead-${f}`}
                 name={f}
                 type={cfg.type}
+                inputMode={(cfg as { inputMode?: string }).inputMode as React.InputHTMLAttributes<HTMLInputElement>["inputMode"]}
+                autoComplete={(cfg as { autoComplete?: string }).autoComplete as string}
                 placeholder={cfg.placeholder}
                 className="mt-1 block w-full rounded-xl border border-gray-200 px-3 py-2.5 text-sm text-gray-900 placeholder:text-gray-400 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 focus:outline-none"
               />
@@ -93,9 +100,14 @@ export function LeadForm({
         {error && <p className="text-xs text-red-500">{error}</p>}
         <button
           type="submit"
-          className="w-full rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-blue-700 active:bg-blue-800 transition-colors"
+          disabled={isSubmitting}
+          className={`w-full rounded-xl px-4 py-2.5 text-sm font-medium text-white transition-colors ${
+            isSubmitting
+              ? "bg-blue-400 cursor-not-allowed"
+              : "bg-blue-600 hover:bg-blue-700 active:bg-blue-800"
+          }`}
         >
-          {submitLabel || "提交"}
+          {isSubmitting ? "提交中..." : submitLabel || "提交"}
         </button>
       </form>
     </div>
