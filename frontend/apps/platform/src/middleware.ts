@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
+import { parseJwtPayload } from "@yimatong/shared";
 
 const PUBLIC_PATHS = ["/login"];
 
@@ -24,16 +25,8 @@ export function middleware(request: NextRequest) {
   }
 
   // 基本验证：检查 token 格式和过期
-  try {
-    const parts = token.split(".");
-    if (parts.length !== 3) {
-      return NextResponse.redirect(new URL("/login", request.url));
-    }
-    const payload = JSON.parse(atob(parts[1]));
-    if (payload.exp && payload.exp * 1000 < Date.now()) {
-      return NextResponse.redirect(new URL("/login", request.url));
-    }
-  } catch {
+  const payload = parseJwtPayload(token);
+  if (!payload || (payload.exp && payload.exp * 1000 < Date.now())) {
     return NextResponse.redirect(new URL("/login", request.url));
   }
 

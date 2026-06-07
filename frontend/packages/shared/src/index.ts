@@ -297,3 +297,8 @@ export interface ResolveResponse {
     primary_color?: string;
   };
 }
+
+// ─── JWT Utilities ───────────────────────────
+
+export { parseJwtPayload, isJwtExpired } from "./jwt";
+export type { JwtPayload } from "./jwt";

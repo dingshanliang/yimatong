@@ -106,18 +106,18 @@ async def login(body: LoginRequest, request: Request, db: AsyncSession = Depends
 
     now = utcnow()
 
-    # 时序攻击修复：无论账户是否存在都执行 bcrypt 验证（恒定时间）
-    if not account:
-        # 用假 hash 保持与存在账户相同的验证时间
-        verify_password("timing-resistant-dummy", "$2b$12$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
+    # 时序攻击修复：恒定时间路径 — 始终执行一次 verify_password
+    target_hash = account.hashed_password if account else "$2b$12$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+    if not verify_password(body.password, target_hash):
+        if account:
+            account.failed_login_attempts += 1
+            if account.failed_login_attempts >= MAX_FAILED_ATTEMPTS:
+                account.locked_until = now + timedelta(minutes=LOCK_DURATION_MINUTES)
+            await db.commit()
         raise HTTPException(status_code=401, detail="邮箱或密码不正确")
 
-    if not verify_password(body.password, account.hashed_password):
-        account.failed_login_attempts += 1
-        if account.failed_login_attempts >= MAX_FAILED_ATTEMPTS:
-            account.locked_until = now + timedelta(minutes=LOCK_DURATION_MINUTES)
-        await db.commit()
-        raise HTTPException(status_code=401, detail="邮箱或密码不正确")
+    # account 为 None 时在上面的 if-not-verify 中已返回，走到这里 account 一定存在
+    assert account is not None  # type: narrow for mypy
 
     if account.locked_until and account.locked_until > now:
         raise HTTPException(status_code=401, detail="邮箱或密码不正确")
