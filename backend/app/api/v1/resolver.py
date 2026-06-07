@@ -5,7 +5,7 @@ import uuid
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import HTMLResponse, JSONResponse
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
@@ -26,6 +26,7 @@ from app.services.resolver import (
     resolve_public_code,
 )
 from app.services.scan_event import parse_environment, record_scan_event
+from app.models.scan import ScanEvent
 from app.services.scan_token import create_scan_token
 
 resolver_router = APIRouter(tags=["resolver"])
@@ -97,6 +98,12 @@ async def resolve_code_endpoint(
         user_agent = request.headers.get("user-agent")
         ip_hash = hashlib.sha256(client_ip.encode()).hexdigest() if client_ip != "unknown" else None
         try:
+            # 先查询本次扫码之前的事件数（不含本次）
+            count_before = await db.execute(
+                select(func.count()).select_from(ScanEvent).where(ScanEvent.public_id == public_id)
+            )
+            scan_info["scan_count"] = count_before.scalar() or 0
+            # 记录本次扫码事件
             event = await record_scan_event(
                 db=db,
                 tenant_id=uuid.UUID(data["tenant_id"]),
@@ -185,7 +192,8 @@ async def _build_json_response(
                 product_data = {
                     "name": product.name,
                     "description": product.description,
-                    "images": product.images if hasattr(product, "images") and product.images else [],
+                    "image_url": product.image_url or "",
+                    "origin": product.origin or "",
                 }
                 brand_data = {"name": brand.name, "logo_url": brand.logo_url or ""}
                 await _product_cache.set(f"pb:{product_id}", {
@@ -215,6 +223,31 @@ async def _build_json_response(
             if version:
                 await _page_config_cache.set(f"pv:{template_id}", version.config_json)
                 result["page_config"] = version.config_json
+
+    # 查询码批次关联的生产批次溯源信息
+    code_batch_id = data.get("code_batch_id")
+    if code_batch_id:
+        from app.models.code import CodeBatch
+        from app.models.product import ProductionBatch
+
+        cb_result = await db.execute(
+            select(CodeBatch).where(CodeBatch.id == uuid.UUID(code_batch_id))
+        )
+        code_batch = cb_result.scalar_one_or_none()
+        if code_batch and code_batch.production_batch_id:
+            pb_result = await db.execute(
+                select(ProductionBatch).where(
+                    ProductionBatch.id == code_batch.production_batch_id
+                )
+            )
+            prod_batch = pb_result.scalar_one_or_none()
+            if prod_batch:
+                result["batch"] = {
+                    "batch_code": prod_batch.batch_code,
+                    "production_date": str(prod_batch.production_date),
+                    "expiry_date": str(prod_batch.expiry_date),
+                    "origin": prod_batch.origin or "",
+                }
 
     # 查询当前产品可用活动，供 H5 展示权益与活动规则
     if product_id:
