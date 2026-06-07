@@ -34,6 +34,7 @@ const STATUS_CONFIG: Record<
         viewBox="0 0 24 24"
         stroke="currentColor"
         strokeWidth={2}
+        aria-hidden="true"
       >
         <path
           strokeLinecap="round"
@@ -58,6 +59,7 @@ const STATUS_CONFIG: Record<
         viewBox="0 0 24 24"
         stroke="currentColor"
         strokeWidth={2}
+        aria-hidden="true"
       >
         <path
           strokeLinecap="round"
@@ -82,6 +84,7 @@ const STATUS_CONFIG: Record<
         viewBox="0 0 24 24"
         stroke="currentColor"
         strokeWidth={2}
+        aria-hidden="true"
       >
         <path
           strokeLinecap="round"
@@ -127,6 +130,12 @@ export function VerifyStatus({
   return (
     <div
       className={`rounded-2xl border ${config.border} ${config.bg} p-4 shadow-sm`}
+      role="status"
+      aria-label={
+        status === "first_scan" ? "首次扫码验证"
+        : status === "repeat_scan" ? "重复扫码提醒"
+        : "验证失败"
+      }
     >
       {/* 状态标识 */}
       <div className="flex items-center gap-3">
@@ -159,6 +168,7 @@ export function VerifyStatus({
                 viewBox="0 0 24 24"
                 stroke="currentColor"
                 strokeWidth={2}
+                aria-hidden="true"
               >
                 <path
                   strokeLinecap="round"
@@ -179,6 +189,7 @@ export function VerifyStatus({
                 viewBox="0 0 24 24"
                 stroke="currentColor"
                 strokeWidth={2}
+                aria-hidden="true"
               >
                 <path
                   strokeLinecap="round"
