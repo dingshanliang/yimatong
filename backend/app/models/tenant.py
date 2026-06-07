@@ -2,7 +2,7 @@ import uuid
 from datetime import UTC, datetime
 from enum import StrEnum
 
-from sqlalchemy import JSON, Column, DateTime, ForeignKey, String, Table, func
+from sqlalchemy import JSON, Column, DateTime, ForeignKey, String, Table, UniqueConstraint, func
 from sqlalchemy import Enum as SQLEnum
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from uuid6 import uuid7
@@ -91,9 +91,12 @@ class Organization(Base):
 
 class Account(Base):
     __tablename__ = "accounts"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "email", name="uq_account_tenant_email"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid7)
-    tenant_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("tenants.id"), nullable=False, index=True)
     organization_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("organizations.id"), nullable=False, index=True)
     email: Mapped[str] = mapped_column(String(255), nullable=False)
     hashed_password: Mapped[str] = mapped_column(String(255), nullable=False)
@@ -114,7 +117,7 @@ class Role(Base):
     __tablename__ = "roles"
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid7)
-    tenant_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("tenants.id"), nullable=False, index=True)
     name: Mapped[str] = mapped_column(String(50), nullable=False)
     description: Mapped[str | None] = mapped_column(String(255), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
@@ -130,7 +133,7 @@ class Permission(Base):
     __tablename__ = "permissions"
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid7)
-    tenant_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("tenants.id"), nullable=False, index=True)
     code: Mapped[str] = mapped_column(String(100), nullable=False)
     description: Mapped[str | None] = mapped_column(String(255), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
@@ -198,7 +201,7 @@ class AgencyAuthorization(Base):
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid7)
     agency_tenant_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("tenants.id"), nullable=False, index=True)
     client_tenant_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("tenants.id"), nullable=False, index=True)
-    scope: Mapped[dict] = mapped_column(JSON, default=list, nullable=False)
+    scope: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
     status: Mapped[AgencyAuthStatus] = mapped_column(
         SQLEnum(AgencyAuthStatus), default=AgencyAuthStatus.active, nullable=False
     )
