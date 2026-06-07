@@ -605,8 +605,7 @@ class PlatformConfigUpdate(BaseModel):
     compliance_defaults: dict | None = None
 
 
-# Simple key-value config store (using a dedicated table would be better for production)
-_platform_config: dict = {
+_DEFAULTS = {
     "feature_flags": {"ai_assistant": True, "risk_module": True, "channel_portal": True},
     "notification_settings": {"email_enabled": True, "webhook_enabled": True},
     "compliance_defaults": {"data_retention_days": 365},
@@ -615,10 +614,20 @@ _platform_config: dict = {
 
 @router.get("/config", response_model=PlatformConfigRead)
 async def get_platform_config(
+    db: AsyncSession = Depends(get_db_with_bypass),
     _role: str = Depends(require_role("platform_admin")),
 ):
     """读取平台级系统配置"""
-    return PlatformConfigRead(**_platform_config)
+    from app.models.platform_config import PlatformConfig
+
+    result = await db.execute(select(PlatformConfig))
+    configs = result.scalars().all()
+    data = {c.key: c.value for c in configs}
+    return PlatformConfigRead(
+        feature_flags=data.get("feature_flags", _DEFAULTS["feature_flags"]),
+        notification_settings=data.get("notification_settings", _DEFAULTS["notification_settings"]),
+        compliance_defaults=data.get("compliance_defaults", _DEFAULTS["compliance_defaults"]),
+    )
 
 
 @router.patch("/config", response_model=PlatformConfigRead)
@@ -628,12 +637,21 @@ async def update_platform_config(
     _role: str = Depends(require_role("platform_admin")),
 ):
     """更新系统配置"""
+    from app.models.platform_config import PlatformConfig
+
     for key, value in body.model_dump(exclude_unset=True).items():
-        _platform_config[key] = value
+        existing = await db.execute(select(PlatformConfig).where(PlatformConfig.key == key))
+        config = existing.scalar_one_or_none()
+        if config:
+            config.value = value
+        else:
+            db.add(PlatformConfig(key=key, value=value))
+    await db.flush()
 
     await write_audit_log(db, "platform-admin", "platform", "update_config", "platform_config")
     await db.flush()
-    return PlatformConfigRead(**_platform_config)
+
+    return await get_platform_config(db=db, _role=_role)
 
 
 # ---------------------------------------------------------------------------

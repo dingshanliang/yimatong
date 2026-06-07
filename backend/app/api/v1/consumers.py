@@ -68,7 +68,10 @@ async def lead_capture(
         raise HTTPException(status_code=401, detail="unauthorized")
 
     token = auth_header[7:]
-    payload = verify_scan_token(token, body.public_id)
+    client_ip = request.headers.get("X-Forwarded-For", request.client.host if request.client else "unknown").split(",")[0].strip()
+    import hashlib
+    ip_hash = hashlib.sha256(client_ip.encode()).hexdigest() if client_ip != "unknown" else None
+    payload = verify_scan_token(token, body.public_id, expected_ip_hash=ip_hash)
     if payload is None:
         raise HTTPException(status_code=401, detail="invalid_token")
 

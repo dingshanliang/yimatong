@@ -30,7 +30,9 @@ async def create_consent(
     tenant_id = None
     if auth_header.startswith("Bearer "):
         token = auth_header[7:]
-        payload = verify_scan_token(token, body.public_id)
+        client_ip = request.headers.get("X-Forwarded-For", request.client.host if request.client else "unknown").split(",")[0].strip()
+        ip_hash = hashlib.sha256(client_ip.encode()).hexdigest() if client_ip != "unknown" else None
+        payload = verify_scan_token(token, body.public_id, expected_ip_hash=ip_hash)
         if payload:
             tenant_id = payload.get("tenant_id")
 
@@ -76,7 +78,9 @@ async def withdraw_consent_endpoint(
         token = auth_header[7:]
         from app.services.scan_token import verify_scan_token
 
-        payload = verify_scan_token(token)
+        client_ip = request.headers.get("X-Forwarded-For", request.client.host if request.client else "unknown").split(",")[0].strip()
+        ip_hash = hashlib.sha256(client_ip.encode()).hexdigest() if client_ip != "unknown" else None
+        payload = verify_scan_token(token, expected_ip_hash=ip_hash)
         if payload:
             tenant_id = payload.get("tenant_id")
 

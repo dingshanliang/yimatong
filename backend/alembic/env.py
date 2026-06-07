@@ -44,6 +44,7 @@ from app.models.risk import CampaignRiskRule, InterceptionRecord, RiskAlert, Ris
 from app.models.scan import ScanEvent  # noqa: F401
 from app.models.sync_mapping import SyncMapping  # noqa: F401
 from app.models.tenant import Account, Organization, Permission, Role, Tenant, account_roles, role_permissions  # noqa: F401
+from app.models.platform_config import PlatformConfig  # noqa: F401
 from app.models.webhook import ApiKey, WebhookDelivery, WebhookEndpoint  # noqa: F401
 from app.models.wecom import WeComContactWay, WeComExternalContact  # noqa: F401
 

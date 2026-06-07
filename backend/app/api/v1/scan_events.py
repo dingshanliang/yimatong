@@ -32,7 +32,10 @@ async def report_scan_event(
     auth_header = request.headers.get("Authorization", "")
     if auth_header.startswith("Bearer "):
         token = auth_header[7:]
-        payload = verify_scan_token(token, body.public_id)
+        # Compute IP hash for verification
+        client_ip_for_token = request.headers.get("X-Forwarded-For", request.client.host if request.client else "unknown").split(",")[0].strip()
+        ip_hash_for_token = hashlib.sha256(client_ip_for_token.encode()).hexdigest() if client_ip_for_token != "unknown" else None
+        payload = verify_scan_token(token, body.public_id, expected_ip_hash=ip_hash_for_token)
         if payload is None:
             return {"status": "ignored", "reason": "invalid_token"}
 
