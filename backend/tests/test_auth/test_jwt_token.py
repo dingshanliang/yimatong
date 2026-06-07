@@ -64,15 +64,15 @@ class TestRefreshToken:
         assert payload["type"] == "refresh"
         assert "jti" in payload
 
-    def test_verify_refresh_token_success(self):
+    async def test_verify_refresh_token_success(self):
         token = create_refresh_token("a-001")
-        payload = verify_refresh_token(token)
+        payload = await verify_refresh_token(token)
         assert payload is not None
         assert payload["type"] == "refresh"
 
-    def test_verify_refresh_token_rejects_access(self):
+    async def test_verify_refresh_token_rejects_access(self):
         token = create_access_token("t-001", "a-001", "admin")
-        result = verify_refresh_token(token)
+        result = await verify_refresh_token(token)
         assert result is None
 
     def test_refresh_token_has_jti(self):

@@ -72,11 +72,19 @@ async def verify_access_token(token: str) -> dict | None:
         return None
 
 
-def verify_refresh_token(token: str) -> dict | None:
+async def verify_refresh_token(token: str) -> dict | None:
+    """验证 refresh token，检查黑名单。"""
     try:
         payload = decode_token(token)
         if payload.get("type") != "refresh":
             return None
+        jti = payload.get("jti")
+        if jti:
+            from app.services.redis_cache import AsyncRedisCache
+
+            cache = AsyncRedisCache()
+            if await cache.is_token_revoked(jti):
+                return None
         return payload
     except JWTError:
         return None

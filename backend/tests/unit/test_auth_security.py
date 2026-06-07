@@ -91,3 +91,40 @@ async def test_load_permissions_returns_empty_for_no_account():
         permissions = await middleware._load_permissions("nonexistent-id", "admin")
 
     assert permissions == []
+
+
+@pytest.mark.asyncio
+async def test_verify_refresh_token_rejects_blacklisted():
+    """已撤销的 refresh token 应被拒绝"""
+    from app.utils.security import create_refresh_token, decode_token, verify_refresh_token
+
+    token = create_refresh_token("test-account-id")
+
+    # 未撤销时应该能解码
+    payload = decode_token(token)
+    assert payload is not None
+    assert payload.get("type") == "refresh"
+
+    # 模拟 token 已被撤销（AsyncRedisCache 在函数内延迟导入，需 patch 源模块）
+    with patch("app.services.redis_cache.AsyncRedisCache") as mock_cache_cls:
+        mock_cache = AsyncMock()
+        mock_cache.is_token_revoked.return_value = True
+        mock_cache_cls.return_value = mock_cache
+        result = await verify_refresh_token(token)
+        assert result is None  # 应被拒绝
+
+
+@pytest.mark.asyncio
+async def test_verify_refresh_token_accepts_valid():
+    """未撤销的 refresh token 应被接受"""
+    from app.utils.security import create_refresh_token, verify_refresh_token
+
+    token = create_refresh_token("test-account-id")
+
+    with patch("app.services.redis_cache.AsyncRedisCache") as mock_cache_cls:
+        mock_cache = AsyncMock()
+        mock_cache.is_token_revoked.return_value = False
+        mock_cache_cls.return_value = mock_cache
+        result = await verify_refresh_token(token)
+        assert result is not None
+        assert result.get("type") == "refresh"

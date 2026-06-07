@@ -119,9 +119,21 @@ async def login(body: LoginRequest, db: AsyncSession = Depends(get_db)):
 async def refresh(body: RefreshRequest, db: AsyncSession = Depends(get_db)):
     from app.utils.security import verify_refresh_token
 
-    payload = verify_refresh_token(body.refresh_token)
+    payload = await verify_refresh_token(body.refresh_token)
     if not payload:
         raise HTTPException(status_code=401, detail="Invalid refresh token")
+
+    # 将旧 refresh token 加入黑名单（轮换）
+    old_jti = payload.get("jti")
+    if old_jti:
+        old_exp = payload.get("exp")
+        if old_exp:
+            remaining = max(1, int(old_exp - datetime.now(UTC).timestamp()))
+        else:
+            remaining = settings.refresh_token_expire_days * 86400
+        cache = AsyncRedisCache()
+        await cache.revoke_token(old_jti, ttl=remaining)
+
     account_id = payload["sub"]
     result = await db.execute(
         select(Account).options(selectinload(Account.roles)).where(Account.id == uuid.UUID(account_id))
@@ -217,6 +229,31 @@ async def logout(request: Request):
 
     cache = AsyncRedisCache()
     await cache.revoke_token(jti, ttl=remaining)
+
+    # 同时撤销关联的 refresh token
+    refresh_token_str = request.cookies.get("refresh_token") or ""
+    if not refresh_token_str:
+        # Try request body as fallback (legacy clients)
+        try:
+            body = await request.json()
+            refresh_token_str = body.get("refresh_token", "")
+        except Exception:
+            pass
+    if refresh_token_str:
+        try:
+            refresh_payload = decode_token(refresh_token_str)
+            refresh_jti = refresh_payload.get("jti")
+            if refresh_jti:
+                refresh_exp = refresh_payload.get("exp")
+                refresh_remaining = (
+                    max(1, int(refresh_exp - datetime.now(UTC).timestamp()))
+                    if refresh_exp
+                    else settings.refresh_token_expire_days * 86400
+                )
+                await cache.revoke_token(refresh_jti, ttl=refresh_remaining)
+        except Exception:
+            pass  # refresh token invalid or malformed, ignore
+
     return {"status": "ok"}
 
 
