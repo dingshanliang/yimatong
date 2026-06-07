@@ -175,6 +175,7 @@ function ModuleRenderer({
         <ProductCard
           productName={(product.name as string) || ""}
           description={(product.description as string) || ""}
+          image_url={(product.image_url as string) || ""}
           images={product.images as string[] | undefined}
           imageUrl={((product.images as string[])?.[0])}
           showBadge={config.show_verify_badge as boolean}
@@ -530,10 +531,17 @@ function DefaultRender({
   productImage?: string;
   codeData: Record<string, unknown>;
 }) {
+  const _product = codeData.product as Record<string, unknown> | undefined;
   return (
     <div className="mx-auto max-w-md min-h-screen bg-gray-50">
       <BrandHeader name={brandName} logoUrl={brandLogo} primaryColor={primaryColor} />
-      <ProductCard productName={productName} description={productDesc} imageUrl={productImage} showBadge />
+      <ProductCard
+        productName={productName}
+        description={productDesc}
+        imageUrl={productImage}
+        image_url={(_product?.image_url as string) || ""}
+        showBadge
+      />
       <TraceabilitySection codeData={codeData} />
       <div className="px-4 pb-6">
         <LeadForm publicId={publicId} scanToken={scanToken} />

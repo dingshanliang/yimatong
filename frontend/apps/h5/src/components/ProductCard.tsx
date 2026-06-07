@@ -1,27 +1,37 @@
+"use client";
+
+import { useState } from "react";
+
 interface ProductCardProps {
   productName: string;
   description: string;
+  image_url?: string;
   imageUrl?: string;
   images?: string[];
   showBadge?: boolean;
 }
 
-export function ProductCard({ productName, description, imageUrl, images, showBadge }: ProductCardProps) {
-  const allImages = images?.length ? images : imageUrl ? [imageUrl] : [];
+export function ProductCard({ productName, description, image_url, imageUrl, images, showBadge }: ProductCardProps) {
+  const [imgError, setImgError] = useState(false);
+
+  // 确定图片源：优先 image_url，兜底 imageUrl，最后 images[0]
+  const imageSource = image_url || imageUrl || (images?.[0]) || "";
+  const showImage = imageSource && !imgError;
 
   return (
     <div className="mx-4 mt-4 rounded-2xl bg-white p-4 shadow-sm">
-      {allImages.length > 1 ? (
-        <div className="mb-3 flex snap-x snap-mandatory overflow-x-auto rounded-xl scrollbar-hide">
-          {allImages.map((url, i) => (
-            <div key={i} className="w-full shrink-0 snap-center">
-              <img src={url} alt={`${productName} ${i + 1}`} className="h-48 w-full rounded-xl object-cover" />
-            </div>
-          ))}
+      {showImage ? (
+        <img
+          src={imageSource}
+          alt={productName || "产品图片"}
+          className="mb-3 h-48 w-full rounded-xl object-cover"
+          onError={() => setImgError(true)}
+        />
+      ) : (
+        <div className="mb-3 flex h-48 items-center justify-center rounded-xl bg-gray-100">
+          <span className="text-5xl text-gray-300">🌾</span>
         </div>
-      ) : allImages[0] ? (
-        <img src={allImages[0]} alt={productName} className="mb-3 h-48 w-full rounded-xl object-cover" />
-      ) : null}
+      )}
       <h1 className="text-xl font-bold text-gray-900">{productName || "产品信息"}</h1>
       {description && <p className="mt-1 text-sm text-gray-500 leading-relaxed">{description}</p>}
       {showBadge && (
