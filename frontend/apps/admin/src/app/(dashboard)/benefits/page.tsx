@@ -22,6 +22,7 @@ import {
   Select,
   Space,
   Statistic,
+  Switch,
   Table,
   Tabs,
   Tag,

@@ -135,7 +135,7 @@ export default function SKUDetailPage() {
       "code-batches": "/code-batches",
     };
 
-    const setters: Record<Exclude<TabKey, "profile">, (s: TabState<unknown>) => void> = {
+    const setters: Record<Exclude<TabKey, "profile">, (s: TabState<any>) => void> = {
       batches: (s) => setBatches(s),
       "code-batches": (s) => setCodeBatches(s),
     };

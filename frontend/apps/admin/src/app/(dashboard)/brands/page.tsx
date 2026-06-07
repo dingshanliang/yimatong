@@ -22,6 +22,7 @@ interface Brand {
 
 export default function BrandsPage() {
   const router = useRouter();
+  const { message } = App.useApp();
   const [search, setSearch] = useState("");
   const [modalOpen, setModalOpen] = useState(false);
   const [editItem, setEditItem] = useState<Brand | null>(null);
