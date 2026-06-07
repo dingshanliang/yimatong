@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import api from "@/lib/api";
+import { OrderConversionRateHeader, OrderConversionRateTitle } from "../../_components/MetricHeaders";
 import { Button, Card, DatePicker, Row, Col, Statistic, Table, Tag, Typography } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import type { Dayjs } from "dayjs";
@@ -39,7 +40,7 @@ const columns: ColumnsType<ROIItem> = [
   { title: "扫码 UV", dataIndex: "scan_uv", key: "scan_uv", width: 80 },
   { title: "扫码成本", dataIndex: "scan_cost", key: "scan_cost", width: 100, render: (v: number) => v ? `¥${v.toFixed(2)}` : "—" },
   {
-    title: "转化率", dataIndex: "conversion_rate", key: "conversion_rate", width: 90,
+    title: <OrderConversionRateHeader />, dataIndex: "conversion_rate", key: "conversion_rate", width: 90,
     render: (v: number) => <Text type={v >= 5 ? "success" : v >= 1 ? "warning" : "danger"}>{v}%</Text>,
   },
   {
@@ -108,7 +109,7 @@ export function ROITab() {
           <Card size="small"><Statistic title="平均 ROI" value={avgRoi} suffix="x" precision={2} loading={loading} /></Card>
         </Col>
         <Col span={6}>
-          <Card size="small"><Statistic title="平均转化率" value={avgConversion} suffix="%" precision={2} loading={loading} /></Card>
+          <Card size="small"><Statistic title={<OrderConversionRateTitle />} value={avgConversion} suffix="%" precision={2} loading={loading} /></Card>
         </Col>
       </Row>
 

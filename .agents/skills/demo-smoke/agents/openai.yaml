@@ -1,0 +1,2 @@
+name: demo-smoke
+summary: Verify Yimatong demo readiness across dev stack, seeded accounts, backend health, Admin, and H5 flows.

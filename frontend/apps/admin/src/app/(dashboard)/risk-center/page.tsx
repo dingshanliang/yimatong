@@ -19,6 +19,7 @@ import {
   useRiskExport,
   useAuthStore,
 } from "../risk-dashboard/_components/RiskDashboardComponents";
+import { ChannelHealthScoreTitle } from "../_components/HealthScoreHeader";
 
 const { Title } = Typography;
 
@@ -91,7 +92,7 @@ function SummaryIndicators() {
       <Col xs={24} sm={8}>
         <Card loading={loading}>
           <Statistic
-            title="渠道平均健康评分"
+            title={<ChannelHealthScoreTitle />}
             value={avgHealthScore ?? "—"}
             prefix={<HeartOutlined />}
             valueStyle={

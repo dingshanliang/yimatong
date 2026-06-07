@@ -1,0 +1,17 @@
+{
+  "review_id": "admin-content-layout_20260602_143000",
+  "target": "frontend/apps/admin/src/app/(dashboard)/layout.tsx + _components/DashboardHome.tsx",
+  "focus_areas": ["visual"],
+  "context": "综合用途（数据展示 + 数据录入 + 导航）",
+  "platform": "desktop",
+  "status": "complete",
+  "started_at": "2026-06-02T14:30:00+08:00",
+  "completed_at": "2026-06-02T14:45:00+08:00",
+  "issues_found": 12,
+  "severity_counts": {
+    "critical": 2,
+    "major": 4,
+    "minor": 4,
+    "suggestion": 2
+  }
+}

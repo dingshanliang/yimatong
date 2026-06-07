@@ -1,0 +1,88 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: yimatong
+      POSTGRES_PASSWORD: yimatong
+      POSTGRES_DB: yimatong_dev
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U yimatong -d yimatong_dev"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6380:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  minio-init:
+    image: minio/mc:latest
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set myminio http://minio:9000 minioadmin minioadmin;
+      mc mb myminio/yimatong --ignore-existing;
+      mc mb myminio/yimatong-uploads --ignore-existing;
+      mc mb myminio/yimatong-exports --ignore-existing;
+      echo 'MinIO buckets created';
+      "
+
+  mock-sms:
+    image: node:22-alpine
+    working_dir: /mock
+    command:
+      [
+        "node",
+        "-e",
+        "const http=require('http');http.createServer((req,res)=>{res.writeHead(200);res.end(JSON.stringify({code:0,msg:'mock ok'}));}).listen(3001,()=>console.log('mock-sms on 3001'));",
+      ]
+    ports:
+      - "3099:3001"
+
+  mock-wechat:
+    image: node:22-alpine
+    working_dir: /mock
+    command:
+      [
+        "node",
+        "-e",
+        "const http=require('http');http.createServer((req,res)=>{res.writeHead(200);res.end(JSON.stringify({access_token:'mock_token_123',openid:'mock_openid'}));}).listen(3002,()=>console.log('mock-wechat on 3002'));",
+      ]
+    ports:
+      - "3098:3002"
+
+volumes:
+  postgres_data:
+  redis_data:
+  minio_data:

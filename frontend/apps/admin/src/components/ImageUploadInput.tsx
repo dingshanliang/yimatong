@@ -86,7 +86,7 @@ export default function ImageUploadInput({
               <Text type="secondary" className="text-xs">暂无图片</Text>
             )}
           </div>
-          <Space direction="vertical" size={4}>
+          <Space orientation="vertical" size={4}>
             {uploadButton}
             <Button
               type="link"

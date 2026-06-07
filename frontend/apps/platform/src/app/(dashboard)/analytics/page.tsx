@@ -3,6 +3,7 @@
 import { Card, Col, Row, Statistic, Typography, Empty } from "antd";
 import { BarChartOutlined, ScanOutlined, TeamOutlined } from "@ant-design/icons";
 import useSWR from "swr";
+import { TenantHealthScoreTitle } from "../_components/HealthScoreHeader";
 
 const { Title, Text } = Typography;
 
@@ -56,7 +57,7 @@ export default function AnalyticsPage() {
         <Col xs={24} sm={8}>
           <Card>
             <Statistic
-              title="平均健康评分"
+              title={<TenantHealthScoreTitle />}
               value={avgScore}
               prefix={<BarChartOutlined />}
               suffix="/ 100"

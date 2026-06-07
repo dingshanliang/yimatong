@@ -5,6 +5,7 @@ import { Card, Empty, Spin, Table, Tag } from "antd";
 import { useRouter } from "next/navigation";
 import type { ColumnsType } from "antd/es/table";
 import api from "@/lib/api";
+import { OrderConversionRateHeader } from "../MetricHeaders";
 
 interface RankingItem {
   campaign_id: string;
@@ -66,7 +67,7 @@ export default function CampaignRanking() {
       },
     },
     {
-      title: "转化率",
+      title: <OrderConversionRateHeader />,
       dataIndex: "conversion_rate",
       key: "rate",
       width: 80,

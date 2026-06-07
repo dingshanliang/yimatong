@@ -6,6 +6,8 @@ import { CheckOutlined, BellOutlined } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
 import api from "@/lib/api";
 import { useAuthStore } from "@/lib/auth";
+import { ChannelHealthScoreHeader } from "../../_components/HealthScoreHeader";
+import { ChannelConversionRateHeader } from "../../_components/MetricHeaders";
 
 /* ---------- SSE Alert Indicator ---------- */
 
@@ -239,7 +241,7 @@ export function ChannelHealthCard() {
     { title: "扫码量", dataIndex: "scan_count", key: "scan_count" },
     { title: "UV", dataIndex: "scan_uv", key: "scan_uv" },
     {
-      title: "健康评分",
+      title: <ChannelHealthScoreHeader />,
       dataIndex: "health_score",
       key: "health_score",
       render: (v: number) => {
@@ -297,7 +299,7 @@ export function ConversionCard() {
     { title: "渠道名称", dataIndex: "name", key: "name" },
     { title: "扫码 UV", dataIndex: "scan_uv", key: "scan_uv" },
     { title: "预估领取", dataIndex: "estimated_claims", key: "estimated_claims" },
-    { title: "转化率%", dataIndex: "conversion_rate", key: "conversion_rate", render: (v: number) => `${v}%` },
+    { title: <ChannelConversionRateHeader />, dataIndex: "conversion_rate", key: "conversion_rate", render: (v: number) => `${v}%` },
     {
       title: "vs 平均",
       dataIndex: "vs_average",

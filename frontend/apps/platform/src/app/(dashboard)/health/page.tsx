@@ -15,6 +15,7 @@ import useSWR, { mutate } from "swr";
 import api from "@/lib/api";
 import { extractErrorMessage } from "@/lib/api";
 import { useState } from "react";
+import { TenantHealthScoreHeader } from "../_components/HealthScoreHeader";
 import { message } from "antd";
 
 const { Title } = Typography;
@@ -76,7 +77,7 @@ export default function HealthPage() {
       ),
     },
     {
-      title: "健康评分",
+      title: <TenantHealthScoreHeader />,
       dataIndex: "health_score",
       key: "health_score",
       width: 100,

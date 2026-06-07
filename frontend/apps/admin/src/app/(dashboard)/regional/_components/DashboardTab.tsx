@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import api from "@/lib/api";
+import { ClaimConversionRateHeader } from "../../_components/MetricHeaders";
 import { Button, Card, Col, InputNumber, Row, Space, Statistic, Table, Typography } from "antd";
 import type { ColumnsType } from "antd/es/table";
 
@@ -22,7 +23,7 @@ const memberColumns: ColumnsType<DashboardData["by_member"][0]> = [
   { title: "扫码量", dataIndex: "scan_count", key: "scan_count", sorter: (a, b) => a.scan_count - b.scan_count },
   { title: "领取量", dataIndex: "claim_count", key: "claim_count", sorter: (a, b) => a.claim_count - b.claim_count },
   {
-    title: "转化率", key: "conversion",
+    title: <ClaimConversionRateHeader />, key: "conversion",
     render: (_: unknown, r: DashboardData["by_member"][0]) => {
       const rate = r.scan_count ? (r.claim_count / r.scan_count * 100).toFixed(1) : "0";
       const num = parseFloat(rate);

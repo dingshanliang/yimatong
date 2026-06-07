@@ -5,6 +5,7 @@ import { Card, Empty, Select, Spin, Table } from "antd";
 import { useRouter } from "next/navigation";
 import type { ColumnsType } from "antd/es/table";
 import api from "@/lib/api";
+import { ChannelHealthScoreHeader } from "../HealthScoreHeader";
 
 interface HealthScore {
   name: string;
@@ -41,7 +42,7 @@ export default function ChannelHealth() {
   const columns: ColumnsType<HealthScore> = [
     { title: "渠道名称", dataIndex: "name", key: "name", ellipsis: true, width: 180 },
     {
-      title: "健康评分",
+      title: <ChannelHealthScoreHeader />,
       dataIndex: "health_score",
       key: "score",
       width: 90,
