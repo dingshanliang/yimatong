@@ -22,6 +22,8 @@ from app.services.code import (
     get_code_item,
     list_code_batches,
     list_code_items,
+    mark_delivered,
+    mark_printing,
     resolve_code_by_public_id,
     revoke_code_item,
     update_batch,
@@ -239,6 +241,32 @@ async def void_batch_endpoint(
     tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
     return await void_batch(db, tenant_id, batch_id)
+
+
+@code_batch_router.post("/{batch_id}/mark-printing", summary="标记印刷中")
+async def mark_printing_endpoint(
+    batch_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    tenant_id: uuid.UUID = Depends(get_current_tenant),
+):
+    try:
+        result = await mark_printing(db, tenant_id, batch_id)
+        return {"status": result["status"]}
+    except ValueError as e:
+        raise HTTPException(status_code=409, detail=str(e)) from e
+
+
+@code_batch_router.post("/{batch_id}/mark-delivered", summary="标记已交付")
+async def mark_delivered_endpoint(
+    batch_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    tenant_id: uuid.UUID = Depends(get_current_tenant),
+):
+    try:
+        result = await mark_delivered(db, tenant_id, batch_id)
+        return {"status": result["status"]}
+    except ValueError as e:
+        raise HTTPException(status_code=409, detail=str(e)) from e
 
 
 @code_item_router.get("/public/{public_id}", summary="解析 code by public id")

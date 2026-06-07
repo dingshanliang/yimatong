@@ -11,31 +11,28 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
 from app.middleware.rate_limit import rate_limiter
 from app.models.code import CodeItemStatus, CodeType
-from app.models.page import PageVersion, PageVersionStatus
+from app.models.scan import ScanEvent
 from app.services.page_render import render_page
-from app.services.public_id import validate_public_id
-from app.services.redis_cache import AsyncRedisCache
-from app.services.resolve_cache import resolve_cache
-from app.services.resolver import (
+from app.services.page_templates import (
     INNER_VERIFY_PAGE,
     NOT_ACTIVE_PAGE,
     NOT_FOUND_PAGE,
     OUTER_LANDING_PAGE,
     REVOKED_PAGE,
     RISK_FROZEN_PAGE,
-    resolve_public_code,
+    build_code_page,
 )
+from app.services.public_id import validate_public_id
+from app.services.resolve_cache import resolve_cache
+from app.services.resolver import resolve_public_code
+from app.services.resolver_response import build_json_response
 from app.services.scan_event import parse_environment, record_scan_event
-from app.models.scan import ScanEvent
 from app.services.scan_token import create_scan_token
 
 resolver_router = APIRouter(tags=["resolver"])
 
-_product_cache = AsyncRedisCache(prefix="product", default_ttl=600)
-_page_config_cache = AsyncRedisCache(prefix="pagecfg", default_ttl=600)
 
-
-@resolver_router.get("/c/{public_id}", summary="解析 码")
+@resolver_router.get("/c/{public_id}", summary="解析码")
 async def resolve_code_endpoint(
     public_id: str,
     request: Request,
@@ -44,7 +41,7 @@ async def resolve_code_endpoint(
     accept = request.headers.get("accept", "")
     want_json = "application/json" in accept
 
-    # 1. 限流检查
+    # 1. 限流 + 格式校验
     client_ip = request.client.host if request.client else "unknown"
     rate_result = rate_limiter.check_resolver(client_ip, public_id)
     if not rate_result.allowed:
@@ -54,29 +51,49 @@ async def resolve_code_endpoint(
             headers={"Retry-After": str(rate_result.retry_after)},
         )
 
-    # 2. public_id 格式校验（Luhn）
     if not validate_public_id(public_id):
-        if want_json:
-            return JSONResponse(status_code=404, content={"detail": "not_found"})
-        return HTMLResponse(content=NOT_FOUND_PAGE, status_code=404)
+        return _not_found(want_json)
 
-    # 3. 缓存查询
+    # 2. 缓存查询 -> DB 回退
     cached = await resolve_cache.get(f"resolve:{public_id}")
-    if cached:
-        data = cached
-    else:
-        data = await resolve_public_code(db, public_id)
-        if data:
-            await resolve_cache.set(f"resolve:{public_id}", data)
+    data = cached or await resolve_public_code(db, public_id)
+    if data and not cached:
+        await resolve_cache.set(f"resolve:{public_id}", data)
 
     if not data:
-        if want_json:
-            return JSONResponse(status_code=404, content={"detail": "not_found"})
-        return HTMLResponse(content=NOT_FOUND_PAGE, status_code=404)
+        return _not_found(want_json)
 
     status = data["status"]
 
-    # 错误状态统一处理
+    # 3. 错误状态
+    if status in (CodeItemStatus.revoked, CodeItemStatus.frozen, CodeItemStatus.created):
+        return _error_status(status, public_id, want_json)
+
+    # 4. 记录扫码事件 + 生成 scan_token
+    user_agent = request.headers.get("user-agent", "")
+    scan_info = await _record_scan(db, data, public_id, client_ip, user_agent, status)
+    ip_hash_val = hashlib.sha256(client_ip.encode()).hexdigest() if client_ip != "unknown" else ""
+    scan_token = create_scan_token(public_id, ip_hash_val)
+
+    # 5. JSON 模式
+    if want_json:
+        resp = await build_json_response(db, data, scan_token, scan_info)
+        return JSONResponse(content=resp)
+
+    # 6. HTML 模式
+    return await _html_response(db, data, public_id)
+
+
+# -- 内部辅助函数 --
+
+
+def _not_found(want_json: bool):
+    if want_json:
+        return JSONResponse(status_code=404, content={"detail": "not_found"})
+    return HTMLResponse(content=NOT_FOUND_PAGE, status_code=404)
+
+
+def _error_status(status: str, public_id: str, want_json: bool):
     if status == CodeItemStatus.revoked:
         if want_json:
             return JSONResponse(status_code=410, content={"code_data": {"status": "revoked", "public_id": public_id}})
@@ -87,45 +104,45 @@ async def resolve_code_endpoint(
             return JSONResponse(status_code=403, content={"code_data": {"status": "frozen", "public_id": public_id}})
         return HTMLResponse(content=RISK_FROZEN_PAGE, status_code=403)
 
-    if status == CodeItemStatus.created:
-        if want_json:
-            return JSONResponse(content={"code_data": {"status": "not_active", "public_id": public_id}})
-        return HTMLResponse(content=NOT_ACTIVE_PAGE, status_code=200)
-
-    # 4. 记录扫码事件（仅对已激活的码）
-    scan_info = {"is_first_scan": False, "scan_count": 0}
-    if status == CodeItemStatus.activated:
-        user_agent = request.headers.get("user-agent")
-        ip_hash = hashlib.sha256(client_ip.encode()).hexdigest() if client_ip != "unknown" else None
-        try:
-            # 先查询本次扫码之前的事件数（不含本次）
-            count_before = await db.execute(
-                select(func.count()).select_from(ScanEvent).where(ScanEvent.public_id == public_id)
-            )
-            scan_info["scan_count"] = count_before.scalar() or 0
-            # 记录本次扫码事件
-            event = await record_scan_event(
-                db=db,
-                tenant_id=uuid.UUID(data["tenant_id"]),
-                public_id=public_id,
-                ip_hash=ip_hash,
-                user_agent=user_agent,
-                environment=parse_environment(user_agent),
-            )
-            scan_info["is_first_scan"] = event.is_first_scan
-        except Exception:
-            pass
-
-    # 5. 生成 scan_token
-    ip_hash_val = hashlib.sha256(client_ip.encode()).hexdigest() if client_ip != "unknown" else ""
-    scan_token = create_scan_token(public_id, ip_hash_val)
-
-    # 6. JSON 响应模式（H5 前端使用）
+    # CodeItemStatus.created
     if want_json:
-        resp = await _build_json_response(db, data, scan_token, scan_info)
-        return JSONResponse(content=resp)
+        return JSONResponse(content={"code_data": {"status": "not_active", "public_id": public_id}})
+    return HTMLResponse(content=NOT_ACTIVE_PAGE, status_code=200)
 
-    # --- HTML 响应模式（向后兼容 / 直连浏览器） ---
+
+async def _record_scan(
+    db: AsyncSession,
+    data: dict,
+    public_id: str,
+    client_ip: str,
+    user_agent: str,
+    status: str,
+) -> dict:
+    scan_info: dict = {"is_first_scan": False, "scan_count": 0}
+    if status != CodeItemStatus.activated:
+        return scan_info
+
+    ip_hash = hashlib.sha256(client_ip.encode()).hexdigest() if client_ip != "unknown" else None
+    try:
+        count_before = await db.execute(
+            select(func.count()).select_from(ScanEvent).where(ScanEvent.public_id == public_id)
+        )
+        scan_info["scan_count"] = count_before.scalar() or 0
+        event = await record_scan_event(
+            db=db,
+            tenant_id=uuid.UUID(data["tenant_id"]),
+            public_id=public_id,
+            ip_hash=ip_hash,
+            user_agent=user_agent,
+            environment=parse_environment(user_agent),
+        )
+        scan_info["is_first_scan"] = event.is_first_scan
+    except Exception:
+        pass
+    return scan_info
+
+
+async def _html_response(db: AsyncSession, data: dict, public_id: str):
     code_type = data.get("code_type", CodeType.single)
 
     if code_type == CodeType.outer:
@@ -140,6 +157,7 @@ async def resolve_code_endpoint(
                 return HTMLResponse(content=html)
         return HTMLResponse(content=INNER_VERIFY_PAGE.format(public_id=public_id))
 
+    # single 类型：尝试渲染页面模板，否则降级
     template_id = data.get("template_id")
     tenant_id = data.get("tenant_id")
     if template_id and tenant_id:
@@ -147,165 +165,4 @@ async def resolve_code_endpoint(
         if html:
             return HTMLResponse(content=html)
 
-    return HTMLResponse(content=_build_code_page(data))
-
-
-async def _build_json_response(
-    db: AsyncSession,
-    data: dict,
-    scan_token: str,
-    scan_info: dict,
-) -> dict:
-    """构建 H5 前端所需的 JSON 响应"""
-    uuid.UUID(data["tenant_id"])
-    product_id = data.get("product_id")
-
-    result: dict = {
-        "scan_token": scan_token,
-        "code_data": {
-            "public_id": data["public_id"],
-            "status": data["status"],
-            "code_type": data.get("code_type", "single"),
-        },
-        "scan_info": scan_info,
-    }
-
-    # 查询品牌信息（缓存优先）
-    if product_id:
-        from app.models.product import Brand, Product
-
-        cached_pb = await _product_cache.get(f"pb:{product_id}")
-        if cached_pb:
-            result["code_data"]["product"] = cached_pb["product"]
-            if cached_pb.get("brand"):
-                result["brand"] = cached_pb["brand"]
-                result["tenant_branding"] = cached_pb["brand"]
-        else:
-            prod_result = await db.execute(
-                select(Product, Brand)
-                .join(Brand, Product.brand_id == Brand.id)
-                .where(Product.id == uuid.UUID(product_id))
-            )
-            row = prod_result.one_or_none()
-            if row:
-                product, brand = row
-                product_data = {
-                    "name": product.name,
-                    "description": product.description,
-                    "image_url": product.image_url or "",
-                    "origin": product.origin or "",
-                }
-                brand_data = {"name": brand.name, "logo_url": brand.logo_url or ""}
-                await _product_cache.set(f"pb:{product_id}", {
-                    "product": product_data,
-                    "brand": brand_data,
-                })
-                result["code_data"]["product"] = product_data
-                result["brand"] = brand_data
-                result["tenant_branding"] = brand_data
-
-    # 查询页面配置（缓存优先）
-    template_id = data.get("template_id")
-    if template_id:
-        cached_config = await _page_config_cache.get(f"pv:{template_id}")
-        if cached_config:
-            result["page_config"] = cached_config
-        else:
-            ver_result = await db.execute(
-                select(PageVersion)
-                .where(
-                    PageVersion.page_template_id == uuid.UUID(template_id),
-                    PageVersion.status == PageVersionStatus.published,
-                )
-                .limit(1)
-            )
-            version = ver_result.scalar_one_or_none()
-            if version:
-                await _page_config_cache.set(f"pv:{template_id}", version.config_json)
-                result["page_config"] = version.config_json
-
-    # 查询码批次关联的生产批次溯源信息
-    code_batch_id = data.get("code_batch_id")
-    if code_batch_id:
-        from app.models.code import CodeBatch
-        from app.models.product import ProductionBatch
-
-        cb_result = await db.execute(
-            select(CodeBatch).where(CodeBatch.id == uuid.UUID(code_batch_id))
-        )
-        code_batch = cb_result.scalar_one_or_none()
-        if code_batch and code_batch.production_batch_id:
-            pb_result = await db.execute(
-                select(ProductionBatch).where(
-                    ProductionBatch.id == code_batch.production_batch_id
-                )
-            )
-            prod_batch = pb_result.scalar_one_or_none()
-            if prod_batch:
-                result["batch"] = {
-                    "batch_code": prod_batch.batch_code,
-                    "production_date": str(prod_batch.production_date),
-                    "expiry_date": str(prod_batch.expiry_date),
-                    "origin": prod_batch.origin or "",
-                }
-
-    # 查询当前产品可用活动，供 H5 展示权益与活动规则
-    if product_id:
-        from app.models.campaign import Benefit, Campaign, CampaignStatus
-
-        campaign_result = await db.execute(
-            select(Campaign)
-            .where(
-                Campaign.product_id == uuid.UUID(product_id),
-                Campaign.status == CampaignStatus.ACTIVE,
-            )
-            .order_by(Campaign.id.desc())
-            .limit(1)
-        )
-        campaign = campaign_result.scalar_one_or_none()
-        if campaign:
-            benefit_result = await db.execute(
-                select(Benefit)
-                .where(Benefit.campaign_id == campaign.id, Benefit.tenant_id == campaign.tenant_id)
-                .order_by(Benefit.id.desc())
-                .limit(1)
-            )
-            benefit = benefit_result.scalar_one_or_none()
-            result["campaign"] = {
-                "id": str(campaign.id),
-                "name": campaign.name,
-                "rules": campaign.rules_json,
-                "benefit": {
-                    "id": str(benefit.id),
-                    "name": benefit.name,
-                    "benefit_type": benefit.benefit_type,
-                    "config_json": benefit.config_json,
-                    "description": benefit.config_json.get("description"),
-                }
-                if benefit
-                else None,
-            }
-
-    return result
-
-
-def _build_code_page(data: dict) -> str:
-    return f"""<!DOCTYPE html>
-<html lang="zh-CN">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>产品信息</title>
-<style>
-body {{ font-family: sans-serif; margin: 0; padding: 16px; }}
-.info {{ background: #f5f5f5; padding: 12px; border-radius: 8px; margin-top: 12px; }}
-</style>
-</head>
-<body>
-<h2>产品信息</h2>
-<div class="info">
-<p>码编号: {data["public_id"]}</p>
-<p>状态: {data["status"]}</p>
-</div>
-</body>
-</html>"""
+    return HTMLResponse(content=build_code_page(data))

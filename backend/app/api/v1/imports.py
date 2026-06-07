@@ -198,13 +198,14 @@ async def import_existing_codes(
     tenant_id: uuid.UUID = Depends(get_current_tenant),
     account_id: uuid.UUID = Depends(get_current_account_id),
 ):
-    """CSV 导入既有码（接管已有印刷码）"""
-    if not code_batch_id:
-        raise HTTPException(status_code=400, detail="code_batch_id is required")
-
+    """CSV 导入既有码（接管已有印刷码），幂等保护"""
     from sqlalchemy import select
 
     from app.models.code import CodeBatch
+    from app.schemas.code import ExistingCodeImportResponse
+
+    if not code_batch_id:
+        raise HTTPException(status_code=400, detail="code_batch_id is required")
 
     result = await db.execute(
         select(CodeBatch).where(
@@ -221,19 +222,49 @@ async def import_existing_codes(
     reader = csv.DictReader(io.StringIO(text))
 
     imported = 0
-    for row in reader:
+    skipped = 0
+    failed = 0
+    total = 0
+    errors: list[dict] = []
+
+    for row_num, row in enumerate(reader, start=2):
+        total += 1
         public_id = row.get("public_id", "").strip()
         if not public_id:
+            failed += 1
+            errors.append({"row": row_num, "message": "public_id 为空"})
             continue
-        item = CodeItem(
-            tenant_id=tenant_id,
-            code_batch_id=code_batch_id,
-            public_id=public_id,
-            status=CodeItemStatus.activated,
-            code_type=batch.code_type,
-        )
-        db.add(item)
-        imported += 1
+
+        try:
+            existing = await db.execute(
+                select(CodeItem.id).where(
+                    CodeItem.public_id == public_id,
+                    CodeItem.tenant_id == tenant_id,
+                )
+            )
+            if existing.scalar_one_or_none() is not None:
+                skipped += 1
+                continue
+
+            item = CodeItem(
+                tenant_id=tenant_id,
+                code_batch_id=code_batch_id,
+                public_id=public_id,
+                status=CodeItemStatus.activated,
+                code_type=batch.code_type,
+            )
+            db.add(item)
+            imported += 1
+        except Exception as e:
+            failed += 1
+            errors.append({"row": row_num, "public_id": public_id, "message": str(e)})
 
     await db.commit()
-    return {"imported": imported, "batch_id": str(code_batch_id)}
+    return ExistingCodeImportResponse(
+        imported=imported,
+        skipped=skipped,
+        failed=failed,
+        total=total,
+        batch_id=str(code_batch_id),
+        errors=errors,
+    )

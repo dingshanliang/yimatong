@@ -65,6 +65,9 @@ const STATUS_MAP: Record<string, { label: string; color: string }> = {
   pending: { label: "待生成", color: "default" },
   generating: { label: "生成中", color: "blue" },
   completed: { label: "已生成", color: "green" },
+  exported: { label: "已导出", color: "cyan" },
+  printing: { label: "印刷中", color: "orange" },
+  delivered: { label: "已交付", color: "purple" },
   activated: { label: "已激活", color: "blue" },
   failed: { label: "失败", color: "red" },
 };
@@ -72,6 +75,9 @@ const STATUS_MAP: Record<string, { label: string; color: string }> = {
 const FILTER_STATUS_OPTIONS = [
   { value: "generating", label: STATUS_MAP.generating.label },
   { value: "completed", label: STATUS_MAP.completed.label },
+  { value: "exported", label: STATUS_MAP.exported.label },
+  { value: "printing", label: STATUS_MAP.printing.label },
+  { value: "delivered", label: STATUS_MAP.delivered.label },
   { value: "activated", label: STATUS_MAP.activated.label },
   { value: "failed", label: STATUS_MAP.failed.label },
 ];
@@ -138,6 +144,8 @@ export default function CodesPage() {
   const [creating, setCreating] = useState(false);
   const [activatingId, setActivatingId] = useState<string | undefined>(undefined);
   const [exportingId, setExportingId] = useState<string | undefined>(undefined);
+  const [markingPrintingId, setMarkingPrintingId] = useState<string | undefined>(undefined);
+  const [markingDeliveredId, setMarkingDeliveredId] = useState<string | undefined>(undefined);
 
   const generationMode = Form.useWatch("generation_mode", form) || "item_level";
   const codeType = Form.useWatch("code_type", form) || "single";
@@ -289,6 +297,32 @@ export default function CodesPage() {
     });
   };
 
+  const handleMarkPrinting = async (id: string) => {
+    setMarkingPrintingId(id);
+    try {
+      await api.post(`/code-batches/${id}/mark-printing`);
+      message.success("已标记为印刷中");
+      mutate();
+    } catch {
+      message.error("标记印刷中失败");
+    } finally {
+      setMarkingPrintingId(undefined);
+    }
+  };
+
+  const handleMarkDelivered = async (id: string) => {
+    setMarkingDeliveredId(id);
+    try {
+      await api.post(`/code-batches/${id}/mark-delivered`);
+      message.success("已标记为已交付");
+      mutate();
+    } catch {
+      message.error("标记已交付失败");
+    } finally {
+      setMarkingDeliveredId(undefined);
+    }
+  };
+
   const columns: ColumnsType<CodeBatch> = [
     { title: "批次号", dataIndex: "batch_code", key: "batch_code" },
     {
@@ -346,7 +380,7 @@ export default function CodesPage() {
       key: "actions",
       render: (_: unknown, record: CodeBatch) => (
         <Space>
-          {(record.status === "activated" || record.status === "completed") && (
+          {["activated", "completed", "exported", "printing", "delivered"].includes(record.status) && (
             <Button
               size="small"
               icon={<DownloadOutlined />}
@@ -366,7 +400,35 @@ export default function CodesPage() {
               激活码批次
             </Button>
           )}
-          {record.status !== "activated" && record.status !== "completed" && (
+          {record.status === "completed" && (
+            <Button
+              size="small"
+              loading={markingPrintingId === record.id}
+              onClick={() => handleMarkPrinting(record.id)}
+            >
+              标记印刷中
+            </Button>
+          )}
+          {record.status === "printing" && (
+            <Button
+              size="small"
+              loading={markingDeliveredId === record.id}
+              onClick={() => handleMarkDelivered(record.id)}
+            >
+              标记已交付
+            </Button>
+          )}
+          {record.status === "delivered" && (
+            <Button
+              size="small"
+              type="primary"
+              loading={activatingId === record.id}
+              onClick={() => showActivateConfirm(record)}
+            >
+              激活码批次
+            </Button>
+          )}
+          {!["activated", "completed", "exported", "printing", "delivered"].includes(record.status) && (
             <Typography.Text type="secondary">暂无可用操作</Typography.Text>
           )}
         </Space>

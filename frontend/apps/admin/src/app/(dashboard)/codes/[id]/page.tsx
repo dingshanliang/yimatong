@@ -48,8 +48,16 @@ const STATUS_MAP: Record<string, { label: string; color: string }> = {
   pending: { label: "待生成", color: "default" },
   generating: { label: "生成中", color: "blue" },
   completed: { label: "已生成", color: "green" },
+  exported: { label: "已导出", color: "cyan" },
+  printing: { label: "印刷中", color: "orange" },
+  delivered: { label: "已交付", color: "purple" },
   activated: { label: "已激活", color: "blue" },
   failed: { label: "失败", color: "red" },
+  created: { label: "已创建", color: "default" },
+  bound: { label: "已绑定", color: "green" },
+  expired: { label: "已过期", color: "default" },
+  revoked: { label: "已撤销", color: "red" },
+  frozen: { label: "已冻结", color: "orange" },
 };
 
 const CODE_TYPE_OPTIONS: Record<string, string> = {
@@ -73,6 +81,8 @@ export default function CodeBatchDetailPage() {
   const [loading, setLoading] = useState(true);
   const [activating, setActivating] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const [markingPrinting, setMarkingPrinting] = useState(false);
+  const [markingDelivered, setMarkingDelivered] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -156,6 +166,34 @@ export default function CodeBatchDetailPage() {
     }
   };
 
+  const handleMarkPrinting = async () => {
+    if (!batch) return;
+    setMarkingPrinting(true);
+    try {
+      await api.post(`/code-batches/${batch.id}/mark-printing`);
+      message.success("已标记为印刷中");
+      load();
+    } catch {
+      message.error("标记印刷中失败");
+    } finally {
+      setMarkingPrinting(false);
+    }
+  };
+
+  const handleMarkDelivered = async () => {
+    if (!batch) return;
+    setMarkingDelivered(true);
+    try {
+      await api.post(`/code-batches/${batch.id}/mark-delivered`);
+      message.success("已标记为已交付");
+      load();
+    } catch {
+      message.error("标记已交付失败");
+    } finally {
+      setMarkingDelivered(false);
+    }
+  };
+
   if (loading) {
     return (
       <div className="flex justify-center py-20">
@@ -235,7 +273,7 @@ export default function CodeBatchDetailPage() {
 
           <Card title="操作" size="small">
             <Space direction="vertical" style={{ width: "100%" }}>
-              {(batch.status === "activated" || batch.status === "completed") && (
+              {["activated", "completed", "exported", "printing", "delivered"].includes(batch.status) && (
                 <Button
                   block
                   icon={<DownloadOutlined />}
@@ -246,6 +284,34 @@ export default function CodeBatchDetailPage() {
                 </Button>
               )}
               {batch.status === "completed" && (
+                <>
+                  <Button
+                    block
+                    type="primary"
+                    onClick={showActivateConfirm}
+                    loading={activating}
+                  >
+                    激活码批次
+                  </Button>
+                  <Button
+                    block
+                    onClick={handleMarkPrinting}
+                    loading={markingPrinting}
+                  >
+                    标记印刷中
+                  </Button>
+                </>
+              )}
+              {batch.status === "printing" && (
+                <Button
+                  block
+                  onClick={handleMarkDelivered}
+                  loading={markingDelivered}
+                >
+                  标记已交付
+                </Button>
+              )}
+              {batch.status === "delivered" && (
                 <Button
                   block
                   type="primary"
@@ -255,7 +321,7 @@ export default function CodeBatchDetailPage() {
                   激活码批次
                 </Button>
               )}
-              {batch.status !== "activated" && batch.status !== "completed" && (
+              {!["activated", "completed", "exported", "printing", "delivered"].includes(batch.status) && (
                 <Text type="secondary">当前状态暂无可用操作</Text>
               )}
             </Space>

@@ -1,6 +1,6 @@
 """A6-008: 熔断降级测试"""
 
-from app.services.resolver import (
+from app.services.page_templates import (
     NOT_ACTIVE_PAGE,
     NOT_FOUND_PAGE,
     REVOKED_PAGE,

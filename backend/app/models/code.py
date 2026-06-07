@@ -15,6 +15,9 @@ class CodeBatchStatus(StrEnum):
     pending = "pending"
     generating = "generating"
     completed = "completed"
+    exported = "exported"
+    printing = "printing"
+    delivered = "delivered"
     activated = "activated"
     failed = "failed"
 

@@ -15,6 +15,12 @@ from app.models.code import (
     CodeType,
 )
 from app.models.product import SKU, Product, ProductionBatch
+from app.schemas.code import (
+    CodeBatchActivateResponse,
+    CodeBatchDetailRead,
+    CodeBatchFreezeResponse,
+    CodeBatchVoidResponse,
+)
 from app.services.public_id import generate_public_id
 from app.utils import utcnow
 
@@ -231,7 +237,7 @@ async def get_code_batch(
     db: AsyncSession,
     tenant_id: uuid.UUID,
     batch_id: uuid.UUID,
-) -> dict | None:
+) -> CodeBatchDetailRead | None:
     result = await db.execute(
         select(CodeBatch)
         .options(selectinload(CodeBatch.product), selectinload(CodeBatch.sku), selectinload(CodeBatch.production_batch))
@@ -247,26 +253,27 @@ async def get_code_batch(
     )
     stats = {str(status): count for status, count in stats_result.all()}
 
-    return {
-        "id": str(batch.id),
-        "tenant_id": str(batch.tenant_id),
-        "product_id": str(batch.product_id),
-        "sku_id": str(batch.sku_id),
-        "production_batch_id": str(batch.production_batch_id) if batch.production_batch_id else None,
-        "batch_code": batch.batch_code,
-        "quantity": batch.quantity,
-        "status": batch.status,
-        "code_type": batch.code_type,
-        "generation_mode": batch.generation_mode,
-        "created_by": str(batch.created_by),
-        "product_name": batch.product_name,
-        "sku_name": batch.sku_name,
-        "sku_code": batch.sku_code,
-        "production_batch_code": batch.production_batch_code,
-        "production_date": batch.production_date.isoformat() if batch.production_date else None,
-        "production_origin": batch.production_origin,
-        "stats": stats,
-    }
+    return CodeBatchDetailRead(
+        id=batch.id,
+        tenant_id=batch.tenant_id,
+        product_id=batch.product_id,
+        sku_id=batch.sku_id,
+        production_batch_id=batch.production_batch_id,
+        batch_code=batch.batch_code,
+        quantity=batch.quantity,
+        status=batch.status,
+        code_type=batch.code_type,
+        generation_mode=batch.generation_mode,
+        created_by=batch.created_by,
+        product_name=batch.product_name,
+        sku_name=batch.sku_name,
+        sku_code=batch.sku_code,
+        production_batch_code=batch.production_batch_code,
+        production_date=batch.production_date,
+        production_origin=batch.production_origin,
+        created_at=batch.created_at,
+        stats=stats,
+    )
 
 
 async def get_code_item(
@@ -307,7 +314,7 @@ async def resolve_code_by_public_id(
     }
 
 
-async def activate_batch(db: AsyncSession, tenant_id: uuid.UUID, batch_id: uuid.UUID) -> dict:
+async def activate_batch(db: AsyncSession, tenant_id: uuid.UUID, batch_id: uuid.UUID) -> CodeBatchActivateResponse:
     from sqlalchemy import update as sa_update
 
     from app.services.code_state import InvalidStateTransitionError, can_transition
@@ -349,7 +356,7 @@ async def activate_batch(db: AsyncSession, tenant_id: uuid.UUID, batch_id: uuid.
         raise InvalidStateTransitionError("No generated codes can be activated")
     batch.status = CodeBatchStatus.activated
     await db.flush()
-    return {"activated": r.rowcount}
+    return CodeBatchActivateResponse(activated=r.rowcount)
 
 
 async def revoke_code_item(db: AsyncSession, tenant_id: uuid.UUID, item_id: uuid.UUID) -> CodeItem:
@@ -388,10 +395,10 @@ async def bind_code_item(db: AsyncSession, tenant_id: uuid.UUID, item_id: uuid.U
     return item
 
 
-async def freeze_batch(db: AsyncSession, tenant_id: uuid.UUID, batch_id: uuid.UUID) -> dict:
+async def freeze_batch(db: AsyncSession, tenant_id: uuid.UUID, batch_id: uuid.UUID) -> CodeBatchFreezeResponse:
     from sqlalchemy import update as sa_update
 
-    from app.services.code_state import can_transition
+    from app.services.code_state import InvalidStateTransitionError, can_transition
 
     # Validate current state before bulk update
     sample_result = await db.execute(
@@ -405,9 +412,11 @@ async def freeze_batch(db: AsyncSession, tenant_id: uuid.UUID, batch_id: uuid.UU
     )
     sample = sample_result.scalar_one_or_none()
     if sample is not None:
-        can_transition(sample, CodeItemStatus.frozen, raise_on_invalid=True)
+        try:
+            can_transition(sample, CodeItemStatus.frozen, raise_on_invalid=True)
+        except Exception as e:
+            raise InvalidStateTransitionError(str(e)) from e
 
-    utcnow()
     stmt = (
         sa_update(CodeItem)
         .where(
@@ -419,10 +428,10 @@ async def freeze_batch(db: AsyncSession, tenant_id: uuid.UUID, batch_id: uuid.UU
     )
     r = await db.execute(stmt)
     await db.flush()
-    return {"frozen": r.rowcount}
+    return CodeBatchFreezeResponse(frozen=r.rowcount)
 
 
-async def void_batch(db: AsyncSession, tenant_id: uuid.UUID, batch_id: uuid.UUID) -> dict:
+async def void_batch(db: AsyncSession, tenant_id: uuid.UUID, batch_id: uuid.UUID) -> CodeBatchVoidResponse:
     from sqlalchemy import update as sa_update
 
     now = utcnow()
@@ -437,7 +446,41 @@ async def void_batch(db: AsyncSession, tenant_id: uuid.UUID, batch_id: uuid.UUID
     )
     r = await db.execute(stmt)
     await db.flush()
-    return {"voided": r.rowcount}
+    return CodeBatchVoidResponse(voided=r.rowcount)
+
+
+async def mark_printing(db: AsyncSession, tenant_id: uuid.UUID, batch_id: uuid.UUID) -> dict:
+    """标记码批次为印刷中（completed -> printing）"""
+    result = await db.execute(select(CodeBatch).where(CodeBatch.id == batch_id, CodeBatch.tenant_id == tenant_id))
+    batch = result.scalar_one_or_none()
+    if not batch:
+        raise ValueError("Code batch not found")
+    if batch.status != CodeBatchStatus.completed:
+        raise ValueError(f"Cannot mark printing from status '{batch.status.value}', expected 'completed'")
+
+    batch.status = CodeBatchStatus.printing
+    await db.flush()
+    detail = await get_code_batch(db, tenant_id, batch_id)
+    if detail is None:
+        raise ValueError("Code batch not found after update")
+    return detail
+
+
+async def mark_delivered(db: AsyncSession, tenant_id: uuid.UUID, batch_id: uuid.UUID) -> dict:
+    """标记码批次为已交付（printing -> delivered）"""
+    result = await db.execute(select(CodeBatch).where(CodeBatch.id == batch_id, CodeBatch.tenant_id == tenant_id))
+    batch = result.scalar_one_or_none()
+    if not batch:
+        raise ValueError("Code batch not found")
+    if batch.status != CodeBatchStatus.printing:
+        raise ValueError(f"Cannot mark delivered from status '{batch.status.value}', expected 'printing'")
+
+    batch.status = CodeBatchStatus.delivered
+    await db.flush()
+    detail = await get_code_batch(db, tenant_id, batch_id)
+    if detail is None:
+        raise ValueError("Code batch not found after update")
+    return detail
 
 
 _BATCH_ALLOWED_FIELDS = {"batch_code"}
@@ -448,7 +491,7 @@ async def update_batch(
     tenant_id: uuid.UUID,
     batch_id: uuid.UUID,
     **kwargs,
-) -> dict | None:
+) -> CodeBatchDetailRead | None:
     batch = await get_code_batch(db, tenant_id, batch_id)
     if not batch:
         return None
