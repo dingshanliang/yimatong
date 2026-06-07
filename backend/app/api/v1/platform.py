@@ -2,6 +2,7 @@ import uuid
 from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, EmailStr
 from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -144,7 +145,19 @@ async def platform_login(body: PlatformLoginRequest, request: Request):
     except Exception:
         pass  # 审计失败不影响登录
 
-    return PlatformTokenResponse(access_token=token)
+    response = JSONResponse(content={"access_token": token, "token_type": "bearer"})
+    # Platform uses separate cookie name
+    response.set_cookie(
+        "platform_access_token",
+        token,
+        max_age=settings.access_token_expire_minutes * 60,
+        httponly=True,
+        secure=settings.cookie_secure,
+        samesite=settings.cookie_samesite,
+        domain=settings.cookie_domain or None,
+        path="/",
+    )
+    return response
 
 
 # ---------------------------------------------------------------------------

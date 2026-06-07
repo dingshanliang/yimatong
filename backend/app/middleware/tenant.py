@@ -51,11 +51,16 @@ class TenantScopeMiddleware(BaseHTTPMiddleware):
     async def _authenticate_jwt(self, request: Request, call_next):
         from starlette.responses import JSONResponse
 
-        auth_header = request.headers.get("Authorization", "")
-        if not auth_header.startswith("Bearer "):
+        # 优先从 cookie 读取，回退到 Authorization header
+        token = request.cookies.get("access_token")
+        if not token:
+            auth_header = request.headers.get("Authorization", "")
+            if auth_header.startswith("Bearer "):
+                token = auth_header[7:]
+
+        if not token:
             return JSONResponse(status_code=401, content={"detail": "Missing or invalid token"})
 
-        token = auth_header[7:]
         payload = await verify_access_token(token)
         if payload is None:
             return JSONResponse(status_code=401, content={"detail": "Invalid or expired token"})

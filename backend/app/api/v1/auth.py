@@ -3,6 +3,7 @@ import uuid
 from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -17,10 +18,12 @@ from app.services.redis_cache import AsyncRedisCache
 from app.services.tenant import get_tenant
 from app.utils import utcnow
 from app.utils.security import (
+    clear_auth_cookies,
     create_access_token,
     create_refresh_token,
     decode_token,
     hash_password,
+    set_auth_cookies,
     verify_password,
 )
 
@@ -61,7 +64,7 @@ class TokenResponse(BaseModel):
 
 
 class RefreshRequest(BaseModel):
-    refresh_token: str = Field(..., description="刷新令牌", examples=["eyJhbGciOiJIUzI1NiIs..."])
+    refresh_token: str | None = Field(None, description="刷新令牌")
 
 
 @router.post(
@@ -120,11 +123,16 @@ async def login(body: LoginRequest, request: Request, db: AsyncSession = Depends
         str(account.tenant_id), str(account.id), _resolve_account_role(account), tenant_type
     )
     refresh = create_refresh_token(str(account.id))
-    return TokenResponse(
-        access_token=access,
-        refresh_token=refresh,
-        expires_in=settings.access_token_expire_minutes * 60,
+    response = JSONResponse(
+        content={
+            "access_token": access,
+            "refresh_token": refresh,
+            "token_type": "bearer",
+            "expires_in": settings.access_token_expire_minutes * 60,
+        }
     )
+    set_auth_cookies(response, access, refresh)
+    return response
 
 
 @router.post(
@@ -133,10 +141,21 @@ async def login(body: LoginRequest, request: Request, db: AsyncSession = Depends
     summary="刷新 Token",
     response_description="刷新成功，返回新的 JWT 令牌",
 )
-async def refresh(body: RefreshRequest, db: AsyncSession = Depends(get_db)):
+async def refresh(
+    request: Request,
+    body: RefreshRequest | None = None,
+    db: AsyncSession = Depends(get_db),
+):
     from app.utils.security import verify_refresh_token
 
-    payload = await verify_refresh_token(body.refresh_token)
+    # 优先从 cookie 获取，回退到 body
+    refresh_token = request.cookies.get("refresh_token")
+    if not refresh_token and body:
+        refresh_token = body.refresh_token
+    if not refresh_token:
+        raise HTTPException(status_code=401, detail="Missing refresh token")
+
+    payload = await verify_refresh_token(refresh_token)
     if not payload:
         raise HTTPException(status_code=401, detail="Invalid refresh token")
 
@@ -166,12 +185,18 @@ async def refresh(body: RefreshRequest, db: AsyncSession = Depends(get_db)):
     access = create_access_token(
         str(account.tenant_id), str(account.id), _resolve_account_role(account), tenant_type
     )
-    refresh = create_refresh_token(str(account.id))
-    return TokenResponse(
-        access_token=access,
-        refresh_token=refresh,
-        expires_in=settings.access_token_expire_minutes * 60,
+    new_refresh = create_refresh_token(str(account.id))
+
+    response = JSONResponse(
+        content={
+            "access_token": access,
+            "refresh_token": new_refresh,
+            "token_type": "bearer",
+            "expires_in": settings.access_token_expire_minutes * 60,
+        }
     )
+    set_auth_cookies(response, access, new_refresh)
+    return response
 
 
 class MeResponse(BaseModel):
@@ -225,18 +250,30 @@ async def me(
 async def logout(request: Request):
     """登出端点：将当前 access token 的 jti 加入黑名单"""
     auth_header = request.headers.get("Authorization", "")
-    if not auth_header.startswith("Bearer "):
-        return {"status": "ok"}
+    token = None
+    if auth_header.startswith("Bearer "):
+        token = auth_header[7:]
+    else:
+        token = request.cookies.get("access_token")
+
+    if not token:
+        response = JSONResponse(content={"status": "ok"})
+        clear_auth_cookies(response)
+        return response
 
     try:
-        payload = decode_token(auth_header[7:])
+        payload = decode_token(token)
     except Exception:
         # Token malformed — already unusable, return ok to client
-        return {"status": "ok"}
+        response = JSONResponse(content={"status": "ok"})
+        clear_auth_cookies(response)
+        return response
 
     jti = payload.get("jti")
     if not jti:
-        return {"status": "ok"}
+        response = JSONResponse(content={"status": "ok"})
+        clear_auth_cookies(response)
+        return response
 
     exp = payload.get("exp")
     if exp:
@@ -271,7 +308,9 @@ async def logout(request: Request):
         except Exception:
             pass  # refresh token invalid or malformed, ignore
 
-    return {"status": "ok"}
+    response = JSONResponse(content={"status": "ok"})
+    clear_auth_cookies(response)
+    return response
 
 
 # ---------------------------------------------------------------------------

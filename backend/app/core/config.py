@@ -46,6 +46,11 @@ class Settings(BaseSettings):
     minio_secret_key: str = "minioadmin"
     minio_bucket: str = "yimatong"
 
+    # Cookie 安全配置
+    cookie_domain: str = ""
+    cookie_secure: bool = False  # 生产环境必须设为 True
+    cookie_samesite: str = "Lax"  # 或 "Strict"
+
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 
     @model_validator(mode="after")
