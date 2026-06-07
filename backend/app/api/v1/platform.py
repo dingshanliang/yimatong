@@ -12,7 +12,7 @@ from app.models.plan import PlanDefinition
 from app.models.tenant import Account, Organization, Tenant, TenantPlan, TenantStatus
 from app.services.audit import query_audit_logs, write_audit_log
 from app.services.redis_cache import AsyncRedisCache
-from app.utils.rbac import require_role
+from app.utils.auth_rbac import require_role
 from app.utils.security import create_access_token, hash_password, verify_password
 
 router = APIRouter(prefix="/api/v1/platform", tags=["platform"])

@@ -49,6 +49,6 @@ class TestPlatformAdminCrossTenant:
     @pytest.mark.anyio
     async def test_platform_admin_role_exists_in_rbac(self):
         """场景4（部分）：RBAC 系统中存在 platform_admin 角色"""
-        from app.utils.rbac import ROLES
+        from app.utils.auth_rbac import WEB_ROLE_PERMISSIONS
 
-        assert "platform_admin" in ROLES
+        assert "platform_admin" in WEB_ROLE_PERMISSIONS

@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
 from app.core.dependencies import get_current_tenant
 from app.models.tenant import Permission, Role, account_roles, role_permissions
-from app.utils.rbac import require_role
+from app.utils.auth_rbac import require_role
 
 router = APIRouter(prefix="/api/v1/roles", tags=["roles"])
 

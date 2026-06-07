@@ -1,6 +1,6 @@
 """A1-008: 最小 RBAC 验收测试"""
 
-from app.utils.rbac import require_role
+from app.utils.auth_rbac import WEB_ROLE_PERMISSIONS, require_role
 
 
 class TestRBAC:
@@ -8,22 +8,16 @@ class TestRBAC:
         assert callable(require_role)
 
     def test_predefined_roles(self):
-        from app.utils.rbac import ROLES
-
-        assert "admin" in ROLES
-        assert "operator" in ROLES
+        assert "admin" in WEB_ROLE_PERMISSIONS
+        assert "operator" in WEB_ROLE_PERMISSIONS
 
     def test_admin_has_all_permissions(self):
-        from app.utils.rbac import ROLES
-
-        admin_perms = set(ROLES["admin"])
+        admin_perms = set(WEB_ROLE_PERMISSIONS["admin"])
         assert "tenant:manage" in admin_perms
         assert "code:generate" in admin_perms
         assert "product:create" in admin_perms
 
     def test_operator_has_limited_permissions(self):
-        from app.utils.rbac import ROLES
-
-        operator_perms = set(ROLES["operator"])
+        operator_perms = set(WEB_ROLE_PERMISSIONS["operator"])
         assert "code:generate" in operator_perms
         assert "tenant:manage" not in operator_perms

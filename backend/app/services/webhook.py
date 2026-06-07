@@ -6,7 +6,7 @@ import uuid
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.permissions import VALID_ROLES, get_permissions_for_role
+from app.utils.auth_rbac import VALID_ROLES, get_permissions_for_role
 from app.models.webhook import ApiKey, WebhookDelivery, WebhookEndpoint
 
 

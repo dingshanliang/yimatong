@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.core.dependencies import get_current_tenant
-from app.middleware.auth import require_permission
+from app.utils.auth_rbac import require_permission
 from app.schemas.common import PaginatedResponse
 
 open_api_router = APIRouter(prefix="/open/v1", tags=["open-api"])
