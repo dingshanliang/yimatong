@@ -6,13 +6,18 @@ const api = axios.create({
   baseURL: `${API_BASE}/api/v1`,
   timeout: 15000,
   headers: { "Content-Type": "application/json" },
+  withCredentials: true,
 });
 
 api.interceptors.request.use((config) => {
   if (typeof window !== "undefined") {
-    const token = localStorage.getItem("platform_access_token");
-    if (token) {
-      config.headers.Authorization = `Bearer ${token}`;
+    // HttpOnly cookie 自动携带，回退到 localStorage
+    const cookieToken = document.cookie.includes("platform_access_token=");
+    if (!cookieToken) {
+      const token = localStorage.getItem("platform_access_token");
+      if (token) {
+        config.headers.Authorization = `Bearer ${token}`;
+      }
     }
   }
   return config;

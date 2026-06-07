@@ -26,6 +26,7 @@ interface AuthState {
 }
 
 let refreshPromise: Promise<string | null> | null = null;
+const lastLoginRef = { current: 0 };
 
 /** 确保 AuthUser 对象包含 tenant_type 和 agency context 字段（向后兼容旧 localStorage 数据） */
 function ensureTenantType(user: AuthUser): AuthUser {
@@ -41,6 +42,11 @@ export const useAuthStore = create<AuthState>((set) => ({
   loading: false,
 
   login: async (email, password, options) => {
+    const now = Date.now();
+    if (now - lastLoginRef.current < 2000) {
+      throw new Error("请勿频繁点击登录");
+    }
+    lastLoginRef.current = now;
     set({ loading: true });
     try {
       const { data } = await api.post("/auth/login", {
@@ -80,7 +86,7 @@ export const useAuthStore = create<AuthState>((set) => ({
   },
 
   switchAgencyContext: async (clientTenantId: string) => {
-    const { data } = await api.post("/ops/authorizations/switch-context", { client_tenant_id: clientTenantId });
+    const { data } = await api.post("/agency/switch-context", { client_tenant_id: clientTenantId });
     const stored = localStorage.getItem("auth_store");
     const base = stored ? JSON.parse(stored) : {};
     const updatedUser: AuthUser = {
@@ -92,7 +98,7 @@ export const useAuthStore = create<AuthState>((set) => ({
   },
 
   exitAgencyContext: async () => {
-    const { data } = await api.post("/ops/authorizations/exit-context");
+    const { data } = await api.post("/agency/exit-context");
     const stored = localStorage.getItem("auth_store");
     const base = stored ? JSON.parse(stored) : {};
     const updatedUser: AuthUser = {
@@ -149,11 +155,9 @@ function _applyTokenUpdate(accessToken: string, updatedUser: AuthUser) {
 }
 
 async function _doSilentRefresh(): Promise<string | null> {
-  const refreshToken = localStorage.getItem("refresh_token");
-  if (!refreshToken) return null;
-
   try {
-    const { data } = await api.post("/auth/refresh", { refresh_token: refreshToken });
+    // 使用 cookie 自动携带 refresh_token，body 为空
+    const { data } = await api.post("/auth/refresh", {});
     const { access_token, refresh_token: newRefreshToken, expires_in } = data;
     _persistTokens(access_token, newRefreshToken, expires_in);
 
