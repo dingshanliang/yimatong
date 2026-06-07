@@ -68,6 +68,10 @@ class TenantScopeMiddleware(BaseHTTPMiddleware):
         request.state.role = payload.get("role")
         request.state.tenant_type = payload.get("tenant_type", "brand")
         request.state.auth_method = "jwt"
+        # 加载数据库中的权限到 request.state.permissions
+        request.state.permissions = await self._load_permissions(
+            payload.get("sub"), payload.get("role")
+        )
 
         # Agency context switching: if acting_tenant_id is present, use it for RLS
         if acting_tenant_id:
@@ -134,3 +138,32 @@ class TenantScopeMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
         finally:
             set_request_tenant_id(None)
+
+    async def _load_permissions(self, account_id: str | None, role: str | None) -> list[str]:
+        """从数据库加载账户的权限列表"""
+        if not account_id:
+            return []
+        try:
+            from app.core.database import async_session_factory
+            from app.models.tenant import Account, Role
+            from sqlalchemy import select
+            from sqlalchemy.orm import selectinload
+            import uuid
+
+            async with async_session_factory() as db:
+                result = await db.execute(
+                    select(Account)
+                    .options(selectinload(Account.roles).selectinload(Role.permissions))
+                    .where(Account.id == uuid.UUID(account_id))
+                )
+                account = result.scalar_one_or_none()
+                if not account:
+                    return []
+                permissions = set()
+                for role_obj in account.roles:
+                    for perm in role_obj.permissions:
+                        permissions.add(perm.code)
+                return list(permissions)
+        except Exception:
+            # 权限加载失败不应阻断请求，降级为空权限
+            return []
