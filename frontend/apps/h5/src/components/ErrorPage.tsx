@@ -153,10 +153,18 @@ export function ErrorPage({ errorCode, publicId, onRetry }: ErrorPageProps) {
       {/* 操作按钮 */}
       <div className="mt-8 flex w-full flex-col gap-3">
         {/* 重试按钮 */}
-        {onRetry && (
+        {onRetry ? (
           <button
             type="button"
             onClick={onRetry}
+            className="w-full rounded-xl bg-blue-600 py-3 text-sm font-semibold text-white transition-colors active:bg-blue-700"
+          >
+            重新扫码
+          </button>
+        ) : (
+          <button
+            type="button"
+            onClick={() => window.location.reload()}
             className="w-full rounded-xl bg-blue-600 py-3 text-sm font-semibold text-white transition-colors active:bg-blue-700"
           >
             重新扫码
