@@ -11,10 +11,10 @@ const FIELD_LABELS: Record<string, string> = {
   origin: "产地",
   production_date: "生产日期",
   expiry_date: "保质期至",
-  batch_no: "生产批次",
+  batch_code: "生产批次",
 };
 
-const DEFAULT_FIELDS = ["origin", "production_date", "expiry_date", "batch_no"];
+const DEFAULT_FIELDS = ["origin", "production_date", "expiry_date", "batch_code"];
 
 export function TraceabilitySection({ codeData, config }: TraceabilitySectionProps) {
   const batch = codeData?.batch as Record<string, unknown> | undefined;
@@ -26,7 +26,7 @@ export function TraceabilitySection({ codeData, config }: TraceabilitySectionPro
     if (f === "origin") data[f] = (product?.origin as string) || (batch?.origin as string) || "";
     else if (f === "production_date") data[f] = (batch?.production_date as string) || "";
     else if (f === "expiry_date") data[f] = (batch?.expiry_date as string) || "";
-    else if (f === "batch_no") data[f] = (batch?.batch_no as string) || "";
+    else if (f === "batch_code") data[f] = (batch?.batch_code as string) || "";
   }
 
   const hasData = Object.values(data).some(Boolean);
