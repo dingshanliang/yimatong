@@ -57,26 +57,28 @@ async def get_campaign_comparison(
     tenant_id: uuid.UUID,
     campaign_ids: list[uuid.UUID],
 ) -> list[dict]:
-    """获取多活动对比数据"""
-    results = []
-    for cid in campaign_ids:
-        claims_count = await db.execute(
-            select(func.count())
-            .select_from(BenefitClaim)
-            .where(
-                BenefitClaim.campaign_id == cid,
-                BenefitClaim.tenant_id == tenant_id,
-            )
+    """获取多活动对比数据（单次查询，避免 N+1）"""
+    if not campaign_ids:
+        return []
+
+    # 一次性获取所有活动的名称和领取数
+    rows = await db.execute(
+        select(
+            Campaign.id,
+            Campaign.name,
+            func.count(BenefitClaim.id).label("claims"),
         )
-        campaign_name = await db.execute(
-            select(Campaign.name).where(Campaign.id == cid, Campaign.tenant_id == tenant_id)
-        )
-        name = campaign_name.scalar() or "Unknown"
-        results.append(
-            {
-                "campaign_id": str(cid),
-                "campaign_name": name,
-                "claims": claims_count.scalar() or 0,
-            }
-        )
-    return results
+        .outerjoin(BenefitClaim, (BenefitClaim.campaign_id == Campaign.id) & (BenefitClaim.tenant_id == tenant_id))
+        .where(Campaign.id.in_(campaign_ids), Campaign.tenant_id == tenant_id)
+        .group_by(Campaign.id, Campaign.name)
+    )
+
+    # 保持原始 campaign_ids 顺序
+    result_map = {
+        row.id: {"campaign_id": str(row.id), "campaign_name": row.name, "claims": row.claims}
+        for row in rows.all()
+    }
+    return [
+        result_map.get(cid, {"campaign_id": str(cid), "campaign_name": "Unknown", "claims": 0})
+        for cid in campaign_ids
+    ]
