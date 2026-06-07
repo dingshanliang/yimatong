@@ -2,6 +2,10 @@ import type { NextConfig } from "next";
 import path from "node:path";
 import withBundleAnalyzer from "@next/bundle-analyzer";
 
+const connectSrc = process.env.NODE_ENV !== "production"
+  ? "'self' http://localhost:* http://127.0.0.1:*"
+  : "'self'";
+
 const frameAncestors = process.env.H5_FRAME_ANCESTORS ||
   (process.env.NODE_ENV !== "production"
     ? "'self' http://localhost:3000 http://127.0.0.1:3000"
@@ -19,7 +23,7 @@ const securityHeaders = [
       "style-src 'self' 'unsafe-inline'",
       "img-src 'self' data: blob: https:",
       "font-src 'self'",
-      "connect-src 'self'",
+      `connect-src ${connectSrc}`,
       `frame-ancestors ${frameAncestors}`,
       "base-uri 'self'",
       "form-action 'self'",
@@ -46,10 +50,8 @@ const nextConfig: NextConfig = {
         source: "/api/v1/:path*",
         destination: `${backendUrl}/api/v1/:path*`,
       },
-      {
-        source: "/c/:publicId",
-        destination: `${backendUrl}/c/:publicId`,
-      },
+      // /c/:publicId 由 Next.js page.tsx SSR 处理
+      // page.tsx 内部通过 API_BASE 直接 fetch 后端获取数据并渲染 React 组件
     ];
   },
 };
