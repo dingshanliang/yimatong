@@ -14,6 +14,13 @@ from app.services.scan_token import create_scan_token
 from app.utils.security import create_access_token
 from tests.conftest import TestSessionLocal
 
+def _platform_admin_headers() -> dict:
+    from app.utils.security import create_access_token
+    token = create_access_token("platform", "platform-admin", "platform_admin")
+    return {"Authorization": f"Bearer {token}"}
+
+
+
 RULES_JSON = {
     "participation_conditions": "扫码即可参与",
     "claim_limits": "每人限领1次",
@@ -52,6 +59,7 @@ async def auth_setup(client: AsyncClient):
             "admin_name": "Admin",
             "admin_password": "Pass1234",
         },
+        headers=_platform_admin_headers(),
     )
     tenant_id = resp.json()["id"]
     token = create_access_token(tenant_id, "00000000-0000-0000-0000-000000000001", "admin")

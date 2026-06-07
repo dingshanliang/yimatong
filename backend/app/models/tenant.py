@@ -63,6 +63,9 @@ class Tenant(Base):
     onboarding_progress: Mapped[dict | None] = mapped_column(JSON, default=dict, nullable=True)
     enabled_features: Mapped[dict | None] = mapped_column(JSON, default=dict, nullable=True)
     categories: Mapped[list | None] = mapped_column(JSON, default=list, nullable=True, comment="租户品类配置")
+    custom_domain: Mapped[str | None] = mapped_column(String(255), nullable=True, comment="自定义域名")
+    invite_code: Mapped[str | None] = mapped_column(String(50), nullable=True, comment="注册邀请码")
+    invite_code_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, comment="邀请码过期时间")
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False
     )

@@ -215,7 +215,9 @@ async def get_dashboard(
 # ---------------------------------------------------------------------------
 
 
-@router.get("/tenants", response_model=list[TenantRead])
+from app.schemas.common import PaginatedResponse
+
+@router.get("/tenants", response_model=PaginatedResponse)
 async def list_tenants(
     db: AsyncSession = Depends(get_db_with_bypass),
     page: int = Query(1, ge=1),
@@ -227,17 +229,32 @@ async def list_tenants(
 ):
     """租户列表（分页、筛选）"""
     stmt = select(Tenant).order_by(Tenant.created_at.desc())
+    count_stmt = select(func.count()).select_from(Tenant)
 
     if status:
         stmt = stmt.where(Tenant.status == status)
+        count_stmt = count_stmt.where(Tenant.status == status)
     if plan:
         stmt = stmt.where(Tenant.plan == plan)
+        count_stmt = count_stmt.where(Tenant.plan == plan)
     if search:
-        stmt = stmt.where(Tenant.name.ilike(f"%{search}%") | Tenant.slug.ilike(f"%{search}%"))
+        filter_expr = Tenant.name.ilike(f"%{search}%") | Tenant.slug.ilike(f"%{search}%")
+        stmt = stmt.where(filter_expr)
+        count_stmt = count_stmt.where(filter_expr)
+
+    total_result = await db.execute(count_stmt)
+    total = total_result.scalar() or 0
 
     stmt = stmt.offset((page - 1) * page_size).limit(page_size)
     result = await db.execute(stmt)
-    return list(result.scalars().all())
+    items = list(result.scalars().all())
+
+    return PaginatedResponse(
+        items=[TenantRead.model_validate(t) for t in items],
+        total=total,
+        page=page,
+        page_size=page_size,
+    )
 
 
 @router.post("/tenants", response_model=TenantRead, status_code=201)
@@ -495,6 +512,7 @@ class QuotaUsageItem(BaseModel):
     plan: str
     quota: dict | None
     status: str
+    usage: dict = {}
 
 
 @router.get("/plans", response_model=list[PlanRead])
@@ -584,21 +602,50 @@ async def list_quota_usage(
     db: AsyncSession = Depends(get_db_with_bypass),
     _role: str = Depends(require_role("platform_admin")),
 ):
-    """全租户额度使用汇总"""
+    """全租户额度使用汇总（含实际用量）"""
+    from sqlalchemy import func, select
+    from app.models.campaign import Campaign
+    from app.models.code import CodeItem
+    from app.models.product import Product
+    from app.models.tenant import Account
+
     result = await db.execute(
         select(Tenant).where(Tenant.status != TenantStatus.terminated).order_by(Tenant.name)
     )
     tenants = list(result.scalars().all())
-    return [
-        QuotaUsageItem(
-            tenant_id=str(t.id),
-            tenant_name=t.name,
-            plan=t.plan.value,
-            quota=t.quota,
-            status=t.status.value,
+
+    items = []
+    for t in tenants:
+        tid = t.id
+        campaigns = (
+            await db.execute(select(func.count(Campaign.id)).where(Campaign.tenant_id == tid))
+        ).scalar() or 0
+        products = (
+            await db.execute(select(func.count(Product.id)).where(Product.tenant_id == tid))
+        ).scalar() or 0
+        accounts = (
+            await db.execute(select(func.count(Account.id)).where(Account.tenant_id == tid))
+        ).scalar() or 0
+        codes = (
+            await db.execute(select(func.count(CodeItem.id)).where(CodeItem.tenant_id == tid))
+        ).scalar() or 0
+
+        items.append(
+            QuotaUsageItem(
+                tenant_id=str(t.id),
+                tenant_name=t.name,
+                plan=t.plan.value,
+                quota=t.quota,
+                status=t.status.value,
+                usage={
+                    "campaigns": campaigns,
+                    "products": products,
+                    "accounts": accounts,
+                    "codes": codes,
+                },
+            )
         )
-        for t in tenants
-    ]
+    return items
 
 
 # ---------------------------------------------------------------------------
@@ -776,20 +823,34 @@ async def list_service_providers(
     _role: str = Depends(require_role("platform_admin")),
 ):
     """服务商列表（agency 类型租户）"""
-    # For now, check tenant_type column or use a naming convention
-    # Since tenant_type may not be populated yet, return empty list with a note
+    from sqlalchemy import select
+    from app.models.tenant import AgencyAuthorization, TenantType
+
     result = await db.execute(
-        select(Tenant).where(Tenant.status == TenantStatus.active).order_by(Tenant.name)
+        select(Tenant)
+        .where(Tenant.status == TenantStatus.active, Tenant.tenant_type == TenantType.agency)
+        .order_by(Tenant.name)
     )
-    tenants = list(result.scalars().all())
-    # Filter to agency-type tenants when tenant_type is available
-    return [
-        ProviderRead(
-            id=str(t.id),
-            name=t.name,
-            slug=t.slug,
-            status=t.status.value,
-            managed_client_ids=[],
+    agencies = list(result.scalars().all())
+
+    # Fetch managed clients for each agency
+    providers = []
+    for agency in agencies:
+        auth_result = await db.execute(
+            select(AgencyAuthorization.client_tenant_id)
+            .where(
+                AgencyAuthorization.agency_tenant_id == agency.id,
+                AgencyAuthorization.status == "active",
+            )
         )
-        for t in tenants
-    ]
+        client_ids = [str(row[0]) for row in auth_result.all()]
+        providers.append(
+            ProviderRead(
+                id=str(agency.id),
+                name=agency.name,
+                slug=agency.slug,
+                status=agency.status.value,
+                managed_client_ids=client_ids,
+            )
+        )
+    return providers

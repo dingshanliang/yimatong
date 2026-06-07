@@ -16,6 +16,13 @@ from app.main import app
 from app.utils.security import create_access_token
 from tests.conftest import TestSessionLocal
 
+def _platform_admin_headers() -> dict:
+    from app.utils.security import create_access_token
+    token = create_access_token("platform", "platform-admin", "platform_admin")
+    return {"Authorization": f"Bearer {token}"}
+
+
+
 
 @pytest.fixture
 async def db_session() -> AsyncGenerator[AsyncSession, None]:
@@ -53,6 +60,7 @@ class TestAPIIsolation:
                 "admin_name": "A",
                 "admin_password": "Pass1234",
             },
+            headers=_platform_admin_headers(),
         )
         assert resp_a.status_code == 201
         tenant_a_id = resp_a.json()["id"]
@@ -69,6 +77,7 @@ class TestAPIIsolation:
                 "admin_name": "B",
                 "admin_password": "Pass1234",
             },
+            headers=_platform_admin_headers(),
         )
         tenant_b_id = resp_b.json()["id"]
         headers_b = _auth_headers(tenant_b_id)

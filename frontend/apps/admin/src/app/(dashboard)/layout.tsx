@@ -33,6 +33,7 @@ import { I18nProvider, useI18n } from "@/lib/i18n";
 import { useAdminTheme } from "@/lib/theme-provider";
 import zhCN from "antd/locale/zh_CN";
 import enUS from "antd/locale/en_US";
+import OnboardingWizard from "./_components/OnboardingWizard";
 
 const { Header, Sider, Content } = Layout;
 
@@ -394,6 +395,7 @@ function DashboardInner({ children }: { children: React.ReactNode }) {
           <Content
             className="admin-content my-4 rounded-lg p-5 max-w-[1440px] mx-auto w-full flex-1"
           >
+            {user?.tenant_type === "brand" && <OnboardingWizard />}
             {children}
           </Content>
         </Layout>

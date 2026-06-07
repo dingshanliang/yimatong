@@ -11,6 +11,13 @@ from app.main import app
 from app.utils.security import create_access_token
 from tests.conftest import TestSessionLocal
 
+def _platform_admin_headers() -> dict:
+    from app.utils.security import create_access_token
+    token = create_access_token("platform", "platform-admin", "platform_admin")
+    return {"Authorization": f"Bearer {token}"}
+
+
+
 
 @pytest.fixture
 async def db_session() -> AsyncGenerator[AsyncSession, None]:
@@ -42,6 +49,7 @@ async def setup_regional(client: AsyncClient):
             "admin_name": "RegionalAdmin",
             "admin_password": "Pass1234",
         },
+        headers=_platform_admin_headers(),
     )
     org_tid = org_resp.json()["id"]
     org_token = create_access_token(org_tid, "00000000-0000-0000-0000-000000000001", "admin")
@@ -56,6 +64,7 @@ async def setup_regional(client: AsyncClient):
             "admin_name": "Member1",
             "admin_password": "Pass1234",
         },
+        headers=_platform_admin_headers(),
     )
     m1_tid = m1_resp.json()["id"]
 
@@ -68,6 +77,7 @@ async def setup_regional(client: AsyncClient):
             "admin_name": "Member2",
             "admin_password": "Pass1234",
         },
+        headers=_platform_admin_headers(),
     )
     m2_tid = m2_resp.json()["id"]
 
