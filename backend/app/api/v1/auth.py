@@ -70,7 +70,24 @@ class RefreshRequest(BaseModel):
     summary="账号登录",
     response_description="登录成功，返回 JWT 令牌",
 )
-async def login(body: LoginRequest, db: AsyncSession = Depends(get_db)):
+async def login(body: LoginRequest, request: Request, db: AsyncSession = Depends(get_db)):
+    # IP 速率限制：每 IP 每分钟最多 20 次登录尝试
+    client_ip = (
+        request.headers.get("X-Forwarded-For", request.client.host if request.client else "unknown")
+        .split(",")[0]
+        .strip()
+    )
+    cache = AsyncRedisCache()
+    allowed, remaining = await cache.rate_limit_check(
+        f"login_rate:{client_ip}", max_attempts=20, window_seconds=60
+    )
+    if not allowed:
+        raise HTTPException(
+            status_code=429,
+            detail="登录尝试过于频繁，请稍后再试",
+            headers={"Retry-After": "60"},
+        )
+
     query = select(Account).options(selectinload(Account.roles)).where(Account.email == body.email)
     if body.tenant_slug:
         query = query.join(Tenant, Tenant.id == Account.tenant_id).where(Tenant.slug == body.tenant_slug)
@@ -325,9 +342,22 @@ class ConfirmResetPasswordRequest(BaseModel):
 )
 async def confirm_reset_password(
     body: ConfirmResetPasswordRequest,
+    request: Request,
     db: AsyncSession = Depends(get_db),
 ):
     """用户通过重置令牌自助设置新密码。令牌验证后立即失效。"""
+    # 速率限制：每 account_id 每分钟最多 5 次尝试
+    cache = AsyncRedisCache()
+    allowed, _ = await cache.rate_limit_check(
+        f"reset_rate:{body.account_id}", max_attempts=5, window_seconds=60
+    )
+    if not allowed:
+        raise HTTPException(
+            status_code=429,
+            detail="重置尝试过于频繁，请稍后再试",
+            headers={"Retry-After": "60"},
+        )
+
     # 验证密码强度：必须包含字母和数字
     has_letter = any(c.isalpha() for c in body.new_password)
     has_digit = any(c.isdigit() for c in body.new_password)
@@ -340,7 +370,6 @@ async def confirm_reset_password(
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid account_id")
 
-    cache = AsyncRedisCache()
     record = await cache.get(f"{RESET_TOKEN_KEY_PREFIX}:{account_uuid}")
     if not record:
         raise HTTPException(status_code=400, detail="重置链接已过期或不存在，请联系管理员重新生成")

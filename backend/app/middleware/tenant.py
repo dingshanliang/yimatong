@@ -35,7 +35,6 @@ class TenantScopeMiddleware(BaseHTTPMiddleware):
             or request.url.path == "/api/v1/integrations/wecom/contact-way"
             or request.url.path == "/api/v1/integrations/wecom/mock-added"
             or request.url.path == "/api/v1/platform/auth/login"
-            or (request.url.path == "/api/v1/tenants" and request.method == "POST")
             or request.url.path.startswith("/api/v1/connectors/connectors/")
             and request.url.path.endswith("/callback")
             or request.url.path.startswith("/api/v1/wechat/")

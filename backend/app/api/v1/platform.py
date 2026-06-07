@@ -1,7 +1,7 @@
 import uuid
 from datetime import UTC, datetime, timedelta
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, EmailStr
 from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -11,6 +11,7 @@ from app.core.database import get_db_with_bypass
 from app.models.plan import PlanDefinition
 from app.models.tenant import Account, Organization, Tenant, TenantPlan, TenantStatus
 from app.services.audit import query_audit_logs, write_audit_log
+from app.services.redis_cache import AsyncRedisCache
 from app.utils.rbac import require_role
 from app.utils.security import create_access_token, hash_password, verify_password
 
@@ -104,8 +105,21 @@ class DashboardSummary(BaseModel):
 
 
 @router.post("/auth/login", response_model=PlatformTokenResponse)
-async def platform_login(body: PlatformLoginRequest):
+async def platform_login(body: PlatformLoginRequest, request: Request):
     """平台管理员独立认证路径"""
+    # IP 速率限制
+    client_ip = (
+        request.headers.get("X-Forwarded-For", request.client.host if request.client else "unknown")
+        .split(",")[0]
+        .strip()
+    )
+    cache = AsyncRedisCache()
+    allowed, _ = await cache.rate_limit_check(
+        f"platform_login_rate:{client_ip}", max_attempts=10, window_seconds=300
+    )
+    if not allowed:
+        raise HTTPException(status_code=429, detail="尝试过于频繁", headers={"Retry-After": "300"})
+
     if not settings.platform_admin_password_hash:
         raise HTTPException(status_code=500, detail="Platform admin not configured")
     if (
@@ -113,11 +127,23 @@ async def platform_login(body: PlatformLoginRequest):
         or not verify_password(body.password, settings.platform_admin_password_hash)
     ):
         raise HTTPException(status_code=401, detail="Invalid credentials")
+
     token = create_access_token(
         tenant_id="platform",
         account_id="platform-admin",
         role="platform_admin",
     )
+
+    # 审计日志
+    try:
+        from app.core.database import async_session_factory
+
+        async with async_session_factory() as db:
+            await write_audit_log(db, "platform-admin", "platform", "platform_login", f"ip:{client_ip}")
+            await db.commit()
+    except Exception:
+        pass  # 审计失败不影响登录
+
     return PlatformTokenResponse(access_token=token)
 
 
