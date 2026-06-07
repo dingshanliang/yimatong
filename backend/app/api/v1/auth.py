@@ -165,11 +165,11 @@ async def refresh(
     if not refresh_token and body:
         refresh_token = body.refresh_token
     if not refresh_token:
-        raise HTTPException(status_code=401, detail="Missing refresh token")
+        raise HTTPException(status_code=401, detail="缺少刷新令牌")
 
     payload = await verify_refresh_token(refresh_token)
     if not payload:
-        raise HTTPException(status_code=401, detail="Invalid refresh token")
+        raise HTTPException(status_code=401, detail="刷新令牌无效")
 
     # 将旧 refresh token 加入黑名单（轮换）
     old_jti = payload.get("jti")
@@ -188,7 +188,7 @@ async def refresh(
     )
     account = result.scalar_one_or_none()
     if not account:
-        raise HTTPException(status_code=401, detail="Account not found")
+        raise HTTPException(status_code=401, detail="账户不存在")
 
     # Resolve tenant_type for JWT payload
     tenant = await get_tenant(db, account.tenant_id)
@@ -242,7 +242,7 @@ async def me(
     result = await db.execute(select(Account).where(Account.id == account_id))
     account = result.scalar_one_or_none()
     if not account:
-        raise HTTPException(status_code=404, detail="Account not found")
+        raise HTTPException(status_code=404, detail="账户不存在")
     return MeResponse(
         id=str(account.id),
         email=account.email,
@@ -357,13 +357,13 @@ async def generate_reset_token(
     try:
         account_uuid = uuid.UUID(body.account_id)
     except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid account_id")
+        raise HTTPException(status_code=400, detail="账户 ID 格式无效")
 
     account = await db.execute(
         select(Account).where(Account.id == account_uuid, Account.tenant_id == tenant_id)
     )
     if not account.scalar_one_or_none():
-        raise HTTPException(status_code=404, detail="Account not found")
+        raise HTTPException(status_code=404, detail="账户不存在")
 
     token = secrets.token_urlsafe(32)
     cache = AsyncRedisCache()
@@ -419,7 +419,7 @@ async def confirm_reset_password(
     try:
         account_uuid = uuid.UUID(body.account_id)
     except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid account_id")
+        raise HTTPException(status_code=400, detail="账户 ID 格式无效")
 
     record = await cache.get(f"{RESET_TOKEN_KEY_PREFIX}:{account_uuid}")
     if not record:
@@ -432,7 +432,7 @@ async def confirm_reset_password(
     result = await db.execute(select(Account).where(Account.id == account_uuid))
     account = result.scalar_one_or_none()
     if not account:
-        raise HTTPException(status_code=404, detail="Account not found")
+        raise HTTPException(status_code=404, detail="账户不存在")
 
     # 更新密码
     account.hashed_password = hash_password(body.new_password)

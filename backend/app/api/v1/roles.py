@@ -53,7 +53,7 @@ async def create_role(
 ):
     existing = await db.execute(select(Role).where(Role.tenant_id == tenant_id, Role.name == body.name))
     if existing.scalar_one_or_none():
-        raise HTTPException(status_code=409, detail="Role name already exists")
+        raise HTTPException(status_code=409, detail="角色名称已存在")
 
     role = Role(tenant_id=tenant_id, name=body.name, description=body.description)
     db.add(role)
@@ -88,7 +88,7 @@ async def create_permission(
         select(Permission).where(Permission.tenant_id == tenant_id, Permission.code == body.code)
     )
     if existing.scalar_one_or_none():
-        raise HTTPException(status_code=409, detail="Permission code already exists")
+        raise HTTPException(status_code=409, detail="权限代码已存在")
 
     perm = Permission(tenant_id=tenant_id, code=body.code, description=body.description)
     db.add(perm)
@@ -107,16 +107,16 @@ async def assign_permission(
 ):
     role = await db.get(Role, role_id)
     if not role or role.tenant_id != tenant_id:
-        raise HTTPException(status_code=404, detail="Role not found")
+        raise HTTPException(status_code=404, detail="角色不存在")
     perm = await db.get(Permission, permission_id)
     if not perm or perm.tenant_id != tenant_id:
-        raise HTTPException(status_code=404, detail="Permission not found")
+        raise HTTPException(status_code=404, detail="权限不存在")
 
     try:
         await db.execute(role_permissions.insert().values(role_id=role_id, permission_id=permission_id))
         await db.commit()
     except IntegrityError:
-        raise HTTPException(status_code=409, detail="Permission already assigned to this role")
+        raise HTTPException(status_code=409, detail="该角色已拥有此权限")
     return {"ok": True}
 
 
@@ -129,7 +129,7 @@ async def delete_role(
 ):
     role = await db.get(Role, role_id)
     if not role or role.tenant_id != tenant_id:
-        raise HTTPException(status_code=404, detail="Role not found")
+        raise HTTPException(status_code=404, detail="角色不存在")
 
     # Check if any accounts are using this role
     result = await db.execute(
