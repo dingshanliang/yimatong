@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useRef } from "react";
 import { apiClient } from "@/lib/api";
 
 /** 权益类型 */
@@ -132,6 +132,7 @@ export function BenefitClaimCard({
   const [wecomPrompt, setWecomPrompt] = useState<{ message: string; qrCode?: string } | null>(null);
   // 红包领取成功后的金额展示（分）
   const [redPacketAmount, setRedPacketAmount] = useState<number | null>(null);
+  const lastClickRef = useRef(0);
 
   const normalizedBenefitType = normalizeBenefitType(benefitType);
   const style = BENEFIT_STYLES[normalizedBenefitType] ?? BENEFIT_STYLES.platform_coupon;
@@ -139,6 +140,9 @@ export function BenefitClaimCard({
 
   const handleClaim = useCallback(async () => {
     if (loading || claimed) return;
+    const now = Date.now();
+    if (now - lastClickRef.current < 1000) return; // 1秒防抖
+    lastClickRef.current = now;
     setLoading(true);
     setError(null);
 
