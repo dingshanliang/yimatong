@@ -7,6 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
+from app.middleware.rate_limit import rate_limiter
 from app.schemas.benefit_claim import BenefitClaimRequest
 from app.services.redis_cache import AsyncRedisCache
 
@@ -22,6 +23,15 @@ async def claim_benefit_h5(
     db: AsyncSession = Depends(get_db),
 ):
     """H5 端权益领取（scan_token 鉴权，无需 admin token）"""
+    # 0. IP 级速率限制：每 IP 每分钟最多 20 次领取请求
+    client_ip = request.client.host if request.client else "unknown"
+    if not rate_limiter.ip_limiter.check(f"claim:{client_ip}"):
+        retry_after = rate_limiter.ip_limiter.get_retry_after(f"claim:{client_ip}")
+        raise HTTPException(
+            status_code=429,
+            detail=f"请求过于频繁，请 {retry_after} 秒后再试",
+            headers={"Retry-After": str(retry_after)},
+        )
     # 1. 验证 scan_token
     auth_header = request.headers.get("Authorization", "")
     token = body.scan_token
