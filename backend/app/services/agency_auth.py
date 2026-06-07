@@ -102,14 +102,22 @@ async def authorize_agency(
     return auth
 
 
-async def revoke_authorization(db: AsyncSession, auth_id: uuid.UUID) -> AgencyAuthorization | None:
-    """撤销授权"""
+async def revoke_authorization(
+    db: AsyncSession, auth_id: uuid.UUID, client_tenant_id: uuid.UUID | None = None
+) -> AgencyAuthorization | None:
+    """撤销授权。若提供 client_tenant_id，则同时验证归属。"""
     result = await db.execute(select(AgencyAuthorization).where(AgencyAuthorization.id == auth_id))
     auth = result.scalar_one_or_none()
-    if auth and auth.status == AgencyAuthStatus.active:
-        auth.status = AgencyAuthStatus.revoked
-        auth.revoked_at = datetime.now(UTC)
-        await db.flush()
+    if not auth:
+        return None
+    if auth.status != AgencyAuthStatus.active:
+        return None
+    # 归属校验：确保只能撤销属于自己的授权
+    if client_tenant_id and auth.client_tenant_id != client_tenant_id:
+        return None
+    auth.status = AgencyAuthStatus.revoked
+    auth.revoked_at = datetime.now(UTC)
+    await db.flush()
     return auth
 
 

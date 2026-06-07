@@ -87,12 +87,13 @@ async def create_authorization(
 async def revoke_auth(
     auth_id: uuid.UUID,
     tenant_type: str = Depends(get_current_tenant_type),
+    tenant_id: uuid.UUID = Depends(get_current_tenant),
     db: AsyncSession = Depends(get_db),
 ):
     """Brand 撤销 agency 授权"""
     _require_brand(tenant_type)
 
-    auth = await revoke_authorization(db, auth_id)
+    auth = await revoke_authorization(db, auth_id, client_tenant_id=tenant_id)
     if not auth:
         raise HTTPException(status_code=404, detail="授权记录不存在")
     await db.flush()

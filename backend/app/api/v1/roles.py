@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
 from app.core.dependencies import get_current_tenant
 from app.models.tenant import Permission, Role, account_roles, role_permissions
+from app.utils.rbac import require_role
 
 router = APIRouter(prefix="/api/v1/roles", tags=["roles"])
 
@@ -48,6 +49,7 @@ async def create_role(
     body: RoleCreateRequest,
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
+    _role: str = Depends(require_role("admin")),
 ):
     existing = await db.execute(select(Role).where(Role.tenant_id == tenant_id, Role.name == body.name))
     if existing.scalar_one_or_none():
@@ -80,6 +82,7 @@ async def create_permission(
     body: PermissionCreateRequest,
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
+    _role: str = Depends(require_role("admin")),
 ):
     existing = await db.execute(
         select(Permission).where(Permission.tenant_id == tenant_id, Permission.code == body.code)
@@ -100,6 +103,7 @@ async def assign_permission(
     permission_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
+    _role: str = Depends(require_role("admin")),
 ):
     role = await db.get(Role, role_id)
     if not role or role.tenant_id != tenant_id:
@@ -121,6 +125,7 @@ async def delete_role(
     role_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
+    _role: str = Depends(require_role("admin")),
 ):
     role = await db.get(Role, role_id)
     if not role or role.tenant_id != tenant_id:
