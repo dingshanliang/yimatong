@@ -1,3 +1,4 @@
+import hashlib
 import secrets
 import uuid
 from datetime import UTC, datetime, timedelta
@@ -42,12 +43,18 @@ MAX_FAILED_ATTEMPTS = 5
 LOCK_DURATION_MINUTES = 15
 
 
+def _hash_reset_token(token: str) -> str:
+    """密码重置令牌的 SHA-256 哈希"""
+    return hashlib.sha256(token.encode()).hexdigest()
+
+
 def _resolve_account_role(account: Account) -> str:
     role_names = {role.name for role in account.roles}
     for role in ("platform_admin", "admin", "operator"):
         if role in role_names:
             return role
-    return sorted(role_names)[0] if role_names else "admin"
+    # 安全 fallback：无匹配角色时返回最低权限
+    return "operator" if "operator" in role_names else "viewer"
 
 
 class LoginRequest(BaseModel):
@@ -99,16 +106,21 @@ async def login(body: LoginRequest, request: Request, db: AsyncSession = Depends
 
     now = utcnow()
 
-    if not account or not verify_password(body.password, account.hashed_password):
-        if account:
-            account.failed_login_attempts += 1
-            if account.failed_login_attempts >= MAX_FAILED_ATTEMPTS:
-                account.locked_until = now + timedelta(minutes=LOCK_DURATION_MINUTES)
-            await db.commit()
-        raise HTTPException(status_code=401, detail="Invalid credentials")
+    # 时序攻击修复：无论账户是否存在都执行 bcrypt 验证（恒定时间）
+    if not account:
+        # 用假 hash 保持与存在账户相同的验证时间
+        verify_password("timing-resistant-dummy", "$2b$12$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
+        raise HTTPException(status_code=401, detail="邮箱或密码不正确")
+
+    if not verify_password(body.password, account.hashed_password):
+        account.failed_login_attempts += 1
+        if account.failed_login_attempts >= MAX_FAILED_ATTEMPTS:
+            account.locked_until = now + timedelta(minutes=LOCK_DURATION_MINUTES)
+        await db.commit()
+        raise HTTPException(status_code=401, detail="邮箱或密码不正确")
 
     if account.locked_until and account.locked_until > now:
-        raise HTTPException(status_code=401, detail="Invalid credentials")
+        raise HTTPException(status_code=401, detail="邮箱或密码不正确")
 
     account.failed_login_attempts = 0
     account.locked_until = None
@@ -357,7 +369,7 @@ async def generate_reset_token(
     cache = AsyncRedisCache()
     await cache.set(
         f"{RESET_TOKEN_KEY_PREFIX}:{account_uuid}",
-        {"token": token, "account_id": str(account_uuid)},
+        {"token_hash": _hash_reset_token(token), "account_id": str(account_uuid)},
         ttl=RESET_TOKEN_TTL,
     )
     reset_url = f"{settings.base_url}/api/v1/auth/reset-page?token={token}&account_id={account_uuid}"
@@ -413,7 +425,7 @@ async def confirm_reset_password(
     if not record:
         raise HTTPException(status_code=400, detail="重置链接已过期或不存在，请联系管理员重新生成")
 
-    if record.get("token") != body.token or record.get("account_id") != body.account_id:
+    if record.get("token_hash") != _hash_reset_token(body.token) or record.get("account_id") != body.account_id:
         raise HTTPException(status_code=400, detail="重置令牌无效")
 
     # 查找账户
@@ -430,6 +442,20 @@ async def confirm_reset_password(
 
     # 立即删除 token（一次性）
     await cache.invalidate(f"{RESET_TOKEN_KEY_PREFIX}:{account_uuid}")
+
+    # 审计日志
+    try:
+        from app.services.audit import write_audit_log
+        await write_audit_log(
+            db,
+            operator_id=str(account_uuid),
+            target_tenant_id=str(account.tenant_id) if account.tenant_id else "",
+            action="password_reset",
+            resource=f"account:{account_uuid}",
+        )
+        await db.commit()
+    except Exception:
+        pass  # 审计失败不影响密码重置
 
     return {"status": "ok", "message": "密码已重置，请使用新密码登录"}
 
