@@ -577,3 +577,114 @@ class TestExpiredCampaignClaim:
             "idem_1",
         )
         assert result["status"] == "campaign_inactive", f"Expected campaign_inactive, got {result['status']}"
+
+
+# ── 跨租户隔离测试 ──────────────────────────────────
+
+
+class TestCrossTenantIsolation:
+    """验证活动模块的租户隔离：Tenant A 不能操作 Tenant B 的数据"""
+
+    @pytest.fixture
+    async def two_tenants(self, db_session):
+        """创建两个租户的活动+权益"""
+        from app.services.campaign import create_benefit, create_campaign
+
+        tenant_a = uuid.uuid4()
+        tenant_b = uuid.uuid4()
+        rules = {
+            "participation_conditions": "any_scan",
+            "claim_limits": "1",
+            "validity_period": "campaign_period",
+            "disclaimer": "",
+            "minor_notice": "",
+            "customer_service_contact": "",
+        }
+        camp_a = await create_campaign(
+            db_session,
+            tenant_a,
+            "TenantA活动",
+            "coupon",
+            "2025-01-01T00:00:00Z",
+            "2027-12-31T23:59:59Z",
+            rules,
+            None,
+        )
+        camp_b = await create_campaign(
+            db_session,
+            tenant_b,
+            "TenantB活动",
+            "coupon",
+            "2025-01-01T00:00:00Z",
+            "2027-12-31T23:59:59Z",
+            rules,
+            None,
+        )
+        ben_a = await create_benefit(
+            db_session,
+            tenant_a,
+            uuid.UUID(camp_a["id"]),
+            "A权益",
+            "platform_coupon",
+            {"url": "https://a.com"},
+            100,
+            1,
+        )
+        ben_b = await create_benefit(
+            db_session,
+            tenant_b,
+            uuid.UUID(camp_b["id"]),
+            "B权益",
+            "platform_coupon",
+            {"url": "https://b.com"},
+            100,
+            1,
+        )
+        await db_session.commit()
+        return {
+            "tenant_a": tenant_a,
+            "tenant_b": tenant_b,
+            "camp_a": camp_a,
+            "camp_b": camp_b,
+            "ben_a": ben_a,
+            "ben_b": ben_b,
+        }
+
+    @pytest.mark.anyio
+    async def test_tenant_a_cannot_read_tenant_b_campaign(self, db_session, two_tenants):
+        from app.services.campaign import get_campaign
+
+        result = await get_campaign(db_session, two_tenants["tenant_a"], uuid.UUID(two_tenants["camp_b"]["id"]))
+        assert result is None
+
+    @pytest.mark.anyio
+    async def test_tenant_a_cannot_update_tenant_b_campaign(self, db_session, two_tenants):
+        from app.services.campaign import update_campaign
+
+        result = await update_campaign(
+            db_session,
+            two_tenants["tenant_a"],
+            uuid.UUID(two_tenants["camp_b"]["id"]),
+            name="hacked",
+        )
+        assert result is None
+
+    @pytest.mark.anyio
+    async def test_tenant_a_cannot_delete_tenant_b_campaign(self, db_session, two_tenants):
+        from app.services.campaign import delete_campaign
+
+        result = await delete_campaign(db_session, two_tenants["tenant_a"], uuid.UUID(two_tenants["camp_b"]["id"]))
+        assert result is False
+
+    @pytest.mark.anyio
+    async def test_tenant_a_cannot_claim_tenant_b_benefit(self, db_session, two_tenants):
+        from app.services.campaign import claim_benefit
+
+        result = await claim_benefit(
+            db_session,
+            two_tenants["tenant_a"],
+            uuid.UUID(two_tenants["ben_b"]["id"]),
+            "consumer_a",
+            "idem_a",
+        )
+        assert result["status"] == "not_found"
