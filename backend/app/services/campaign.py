@@ -784,8 +784,13 @@ async def claim_benefit(
             select(Campaign).where(Campaign.id == benefit.campaign_id, Campaign.tenant_id == tenant_id),
         )
         campaign = campaign_result.scalar_one_or_none()
-        if campaign and campaign.status == CampaignStatus.ENDED:
-            return {"status": "campaign_inactive"}
+        if campaign:
+            if campaign.status == CampaignStatus.ENDED:
+                return {"status": "campaign_inactive"}
+            # 同时检查时间过期：status='active' 但 end_at 已过
+            computed = _compute_campaign_status(campaign)
+            if computed == CampaignStatus.ENDED:
+                return {"status": "campaign_inactive"}
 
     # 1.1 原子库存扣减：UPDATE ... WHERE stock_used < stock_total
     # 数据库层面保证不会超卖，无需应用层锁
@@ -816,9 +821,15 @@ async def claim_benefit(
     )
     claimed_count = count_result.scalar() or 0
     if claimed_count >= benefit.per_person_limit:
-        # 回滚库存：减回 1
+        # 回滚库存：原子递减，防止并发回滚导致 stock_used < 0
         await db.execute(
-            update(Benefit).where(Benefit.id == benefit_id).values(stock_used=Benefit.stock_used - 1)
+            update(Benefit)
+            .where(
+                Benefit.id == benefit_id,
+                Benefit.tenant_id == tenant_id,
+                Benefit.stock_used > 0,
+            )
+            .values(stock_used=Benefit.stock_used - 1)
         )
         logger.info("Benefit limit reached: benefit_id=%s, consumer_id=%s", benefit_id, consumer_id)
         return {"status": "limit_reached"}

@@ -514,3 +514,66 @@ class TestH5ClaimTenantIsolation:
         )
         assert resp.status_code == 409
         assert "停用" in resp.json()["detail"]
+
+
+class TestExpiredCampaignClaim:
+    """验证时间过期但 status 仍为 active 的活动不允许领取"""
+
+    @pytest.mark.anyio
+    async def test_claim_rejected_for_time_expired_active_campaign(self, db_session: AsyncSession):
+        """status='active' 但 end_at 已过的活动应拒绝领取"""
+        from datetime import UTC, datetime, timedelta
+
+        from sqlalchemy import update as sa_update
+
+        from app.models.campaign import Campaign, CampaignStatus
+        from app.services.campaign import claim_benefit, create_benefit, create_campaign
+
+        tenant_id = uuid.uuid4()
+        now = datetime.now(UTC)
+        two_days_ago = (now - timedelta(days=2)).isoformat()
+        yesterday = (now - timedelta(days=1)).isoformat()
+
+        campaign = await create_campaign(
+            db_session,
+            tenant_id,
+            "过期活动",
+            "coupon",
+            two_days_ago,
+            yesterday,
+            {
+                "participation_conditions": "any_scan",
+                "claim_limits": "1",
+                "validity_period": "campaign_period",
+                "disclaimer": "",
+                "minor_notice": "",
+                "customer_service_contact": "",
+            },
+            "测试",
+        )
+        benefit = await create_benefit(
+            db_session,
+            tenant_id,
+            uuid.UUID(campaign["id"]),
+            "测试权益",
+            "platform_coupon",
+            {"url": "https://example.com"},
+            stock_total=100,
+            per_person_limit=10,
+        )
+        # 手动设 status 为 active（绕过激活检查）
+        await db_session.execute(
+            sa_update(Campaign)
+            .where(Campaign.id == uuid.UUID(campaign["id"]))
+            .values(status=CampaignStatus.ACTIVE)
+        )
+        await db_session.commit()
+
+        result = await claim_benefit(
+            db_session,
+            tenant_id,
+            uuid.UUID(benefit["id"]),
+            "consumer_1",
+            "idem_1",
+        )
+        assert result["status"] == "campaign_inactive", f"Expected campaign_inactive, got {result['status']}"
