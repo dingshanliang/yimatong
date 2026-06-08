@@ -144,6 +144,7 @@ export interface PageVersion {
 // ─── Campaign ────────────────────────────────
 
 export type CampaignStatus = "draft" | "active" | "paused" | "ended";
+export type ComputedCampaignStatus = CampaignStatus | "pending";
 export type CampaignType = "coupon" | "lottery" | "points";
 
 export interface Campaign {
@@ -152,19 +153,19 @@ export interface Campaign {
   name: string;
   campaign_type: CampaignType;
   status: CampaignStatus;
+  computed_status?: ComputedCampaignStatus;
   product_id?: string | null;
-  product_name?: string;
+  product_name?: string | null;
   start_at: string;
   end_at: string;
   rules_json: Record<string, unknown>;
   description?: string | null;
-  // 统计字段（列表接口返回）
-  benefit_count?: number;
-  stock_total?: number;
-  stock_used?: number;
-  claim_count?: number;
+  // 统计字段
+  benefit_count: number;
+  stock_total: number;
+  stock_used: number;
+  claim_count: number;
   wecom_add_count?: number;
-  computed_status?: string;
   created_at: string;
   updated_at: string;
 }
@@ -194,7 +195,7 @@ export interface Benefit {
   stock_total: number;
   stock_used: number;
   per_person_limit: number;
-  status: BenefitStatus;
+  status: BenefitStatus | string;
   created_at: string;
   updated_at: string;
 }

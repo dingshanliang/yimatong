@@ -19,37 +19,9 @@ import {
 import { ArrowLeftOutlined } from "@ant-design/icons";
 import api, { extractErrorMessage } from "@/lib/api";
 import { formatDateTime } from "@/lib/format";
+import type { Campaign, Benefit } from "@yimatong/shared";
 
 const { Title, Text } = Typography;
-
-interface CampaignDetail {
-  id: string;
-  name: string;
-  campaign_type: string;
-  status: string;
-  computed_status?: string;
-  product_id?: string;
-  product_name?: string;
-  start_at?: string;
-  end_at?: string;
-  rules_json?: Record<string, unknown>;
-  description?: string;
-  benefit_count: number;
-  stock_total: number;
-  stock_used: number;
-  claim_count: number;
-  wecom_add_count: number;
-}
-
-interface Benefit {
-  id: string;
-  name: string;
-  benefit_type: string;
-  stock_total: number;
-  stock_used: number;
-  per_person_limit: number;
-  status: string;
-}
 
 const STATUS_MAP: Record<string, { label: string; color: string }> = {
   draft: { label: "草稿", color: "default" },
@@ -76,7 +48,7 @@ export default function CampaignDetailPage() {
   const router = useRouter();
   const { message } = App.useApp();
 
-  const [campaign, setCampaign] = useState<CampaignDetail | null>(null);
+  const [campaign, setCampaign] = useState<Campaign | null>(null);
   const [benefits, setBenefits] = useState<Benefit[]>([]);
   const [loading, setLoading] = useState(true);
 
