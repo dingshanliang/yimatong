@@ -1,5 +1,6 @@
 """权益领取端点（H5 前端使用，scan_token 鉴权）"""
 
+import hashlib
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -10,6 +11,8 @@ from app.core.database import get_db
 from app.middleware.rate_limit import rate_limiter
 from app.schemas.benefit_claim import BenefitClaimRequest
 from app.services.redis_cache import AsyncRedisCache
+from app.services.scan_token import verify_scan_token
+from app.utils.client_ip import get_client_ip
 
 benefit_claim_router = APIRouter(prefix="/api/v1", tags=["benefit-claims"])
 
@@ -23,15 +26,18 @@ async def claim_benefit_h5(
     db: AsyncSession = Depends(get_db),
 ):
     """H5 端权益领取（scan_token 鉴权，无需 admin token）"""
-    # 0. IP 级速率限制：每 IP 每分钟最多 20 次领取请求
-    client_ip = request.client.host if request.client else "unknown"
-    if not rate_limiter.ip_limiter.check(f"claim:{client_ip}"):
-        retry_after = rate_limiter.ip_limiter.get_retry_after(f"claim:{client_ip}")
+    # 0. IP 级速率限制
+    client_ip = get_client_ip(request)
+    ip_rate, _ = await rate_limiter._cache.rate_limit_check(
+        f"claim:{client_ip}", 20, 60,
+    )
+    if not ip_rate:
         raise HTTPException(
             status_code=429,
-            detail=f"请求过于频繁，请 {retry_after} 秒后再试",
-            headers={"Retry-After": str(retry_after)},
+            detail="请求过于频繁，请稍后再试",
+            headers={"Retry-After": "60"},
         )
+
     # 1. 验证 scan_token
     auth_header = request.headers.get("Authorization", "")
     token = body.scan_token
@@ -41,19 +47,10 @@ async def claim_benefit_h5(
     if not token:
         raise HTTPException(status_code=401, detail="scan_token required")
 
-    import jwt
-
-    from app.core.config import settings
-
-    try:
-        payload = jwt.decode(token, settings.secret_key, algorithms=["HS256"])
-    except jwt.exceptions.DecodeError:
+    ip_hash = hashlib.sha256(client_ip.encode()).hexdigest() if client_ip != "unknown" else None
+    payload = verify_scan_token(token, expected_ip_hash=ip_hash)
+    if payload is None:
         raise HTTPException(status_code=401, detail="invalid token")
-    except jwt.exceptions.ExpiredSignatureError:
-        raise HTTPException(status_code=401, detail="token expired")
-
-    if payload.get("type") != "scan_token":
-        raise HTTPException(status_code=401, detail="invalid token type")
 
     # 2. 查找权益
     from app.models.campaign import Benefit
