@@ -1,3 +1,8 @@
+import uuid
+
+from sqlalchemy.ext.asyncio import AsyncSession
+
+
 class QuotaExceededError(Exception):
     pass
 
@@ -11,6 +16,32 @@ QUOTA_KEYS = {
     "max_active_campaigns",
     "max_codes_per_batch",
 }
+
+
+async def check_quota_for_tenant(
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    resource_type: str,
+    model_cls: type,
+) -> None:
+    """Check if creating one more resource would exceed tenant quota.
+
+    Queries the tenant's current usage and raises QuotaExceededError if the
+    quota limit would be exceeded.
+    """
+    from sqlalchemy import func, select
+
+    from app.models.tenant import Tenant
+
+    tenant = await db.get(Tenant, tenant_id)
+    if not tenant or not tenant.quota:
+        return
+    total = (
+        await db.execute(
+            select(func.count()).select_from(model_cls).where(model_cls.tenant_id == tenant_id)
+        )
+    ).scalar() or 0
+    check_quota_incremental(tenant.quota, resource_type, total, 1)
 
 
 def check_quota(quota: dict | None, resource_type: str, amount: int) -> None:

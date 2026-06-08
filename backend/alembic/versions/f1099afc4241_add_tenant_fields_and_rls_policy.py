@@ -19,23 +19,10 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    # 1. Add new columns to tenants table
+    # 1. Add custom_domain to tenants table
     op.add_column(
         "tenants",
         sa.Column("custom_domain", sa.String(length=255), nullable=True, comment="自定义域名"),
-    )
-    op.add_column(
-        "tenants",
-        sa.Column("invite_code", sa.String(length=50), nullable=True, comment="注册邀请码"),
-    )
-    op.add_column(
-        "tenants",
-        sa.Column(
-            "invite_code_expires_at",
-            postgresql.TIMESTAMP(timezone=True),
-            nullable=True,
-            comment="邀请码过期时间",
-        ),
     )
 
     # 2. Enable RLS on tenants table
@@ -67,7 +54,5 @@ def downgrade() -> None:
     op.execute("DROP POLICY IF EXISTS tenant_isolation ON tenants")
     op.execute("ALTER TABLE tenants DISABLE ROW LEVEL SECURITY")
 
-    # 2. Drop new columns
-    op.drop_column("tenants", "invite_code_expires_at")
-    op.drop_column("tenants", "invite_code")
+    # 2. Drop custom_domain column
     op.drop_column("tenants", "custom_domain")

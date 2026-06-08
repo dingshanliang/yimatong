@@ -16,7 +16,6 @@ from app.schemas.campaign import (
     ClaimRequest,
 )
 from app.schemas.common import PaginatedResponse
-from app.models.tenant import Tenant
 from app.services.campaign import (
     attach_benefit_to_campaign,
     campaign_product_exists,
@@ -33,8 +32,7 @@ from app.services.campaign import (
     update_campaign,
 )
 from app.services.campaign_analytics import get_campaign_comparison, get_campaign_funnel
-from app.services.quota import QuotaExceededError, check_quota_incremental
-from sqlalchemy import func, select
+from app.services.quota import QuotaExceededError, check_quota_for_tenant
 
 campaign_router = APIRouter(prefix="/api/v1/campaigns", tags=["campaigns"])
 
@@ -58,17 +56,10 @@ async def create_campaign_endpoint(
     tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
     # Quota check
-    tenant = await db.get(Tenant, tenant_id)
-    if tenant and tenant.quota:
-        total_campaigns = (
-            await db.execute(
-                select(func.count()).select_from(Campaign).where(Campaign.tenant_id == tenant_id)
-            )
-        ).scalar() or 0
-        try:
-            check_quota_incremental(tenant.quota, "max_campaigns", total_campaigns, 1)
-        except QuotaExceededError as e:
-            raise HTTPException(status_code=429, detail=str(e))
+    try:
+        await check_quota_for_tenant(db, tenant_id, "max_campaigns", Campaign)
+    except QuotaExceededError as e:
+        raise HTTPException(status_code=429, detail=str(e))
 
     product_id = _request_product_id(body.product_id, body.rules_json)
     if product_id and not await campaign_product_exists(db, tenant_id, product_id):

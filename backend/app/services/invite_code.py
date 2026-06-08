@@ -51,7 +51,11 @@ async def create_invite_code(
 
 
 async def validate_invite_code(db: AsyncSession, code: str) -> TenantInviteCode | None:
-    """Validate an invite code. Returns the code if valid, None otherwise."""
+    """Validate an invite code. Returns the code if valid, None otherwise.
+
+    This is a read-only validation; it does NOT mutate invite status.
+    Callers should handle status transitions (expired / depleted) explicitly.
+    """
     result = await db.execute(
         select(TenantInviteCode).where(TenantInviteCode.code == code)
     )
@@ -59,11 +63,9 @@ async def validate_invite_code(db: AsyncSession, code: str) -> TenantInviteCode 
     if not invite:
         return None
 
-    # Check status
     if invite.status != InviteCodeStatus.active:
         return None
 
-    # Check expiration (handle SQLite naive datetimes)
     if invite.expires_at:
         now = datetime.now(UTC)
         expires_at = invite.expires_at
@@ -71,14 +73,9 @@ async def validate_invite_code(db: AsyncSession, code: str) -> TenantInviteCode 
             from datetime import timezone
             expires_at = expires_at.replace(tzinfo=timezone.utc)
         if expires_at < now:
-            invite.status = InviteCodeStatus.expired
-            await db.flush()
             return None
 
-    # Check usage limit
     if invite.used_count >= invite.max_uses:
-        invite.status = InviteCodeStatus.depleted
-        await db.flush()
         return None
 
     return invite

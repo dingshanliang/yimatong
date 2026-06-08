@@ -9,7 +9,14 @@ from app.core.dependencies import get_current_tenant
 from app.models.tenant import Tenant
 from app.schemas.common import NOT_FOUND_EXAMPLE, ErrorDetail, PaginatedResponse
 from app.schemas.tenant import CategoriesResponse, TenantCreate, TenantRead, TenantUpdate
-from app.services.tenant import create_tenant, get_tenant, soft_delete_tenant, update_tenant
+from app.services.tenant import (
+    complete_onboarding_step,
+    create_tenant,
+    get_onboarding_progress_data,
+    get_tenant,
+    soft_delete_tenant,
+    update_tenant,
+)
 from app.utils import escape_like_pattern
 from app.utils.auth_rbac import require_role
 
@@ -199,15 +206,6 @@ async def update_current_tenant_endpoint(
 # Onboarding向导
 # ---------------------------------------------------------------------------
 
-ONBOARDING_STEPS = [
-    "create_product",
-    "create_batch",
-    "create_page",
-    "create_campaign",
-    "activate",
-]
-
-
 @router.get("/me/onboarding", summary="获取初始化向导进度")
 async def get_onboarding_progress(
     db: AsyncSession = Depends(get_db),
@@ -216,32 +214,19 @@ async def get_onboarding_progress(
     tenant = await get_tenant(db, tenant_id)
     if not tenant:
         raise HTTPException(status_code=404, detail="Tenant not found")
-    progress = tenant.onboarding_progress or {}
-    completed = progress.get("completed_steps", [])
-    return {
-        "steps": ONBOARDING_STEPS,
-        "completed_steps": completed,
-        "current_step": next((s for s in ONBOARDING_STEPS if s not in completed), None),
-        "is_complete": all(s in completed for s in ONBOARDING_STEPS),
-    }
+    return get_onboarding_progress_data(tenant)
 
 
 @router.post("/me/onboarding/step/{step}", summary="完成初始化向导某一步")
-async def complete_onboarding_step(
+async def complete_onboarding_step_endpoint(
     step: str,
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
-    if step not in ONBOARDING_STEPS:
-        raise HTTPException(status_code=400, detail=f"Invalid step: {step}")
-    tenant = await get_tenant(db, tenant_id)
+    try:
+        tenant = await complete_onboarding_step(db, tenant_id, step)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     if not tenant:
         raise HTTPException(status_code=404, detail="Tenant not found")
-    progress = tenant.onboarding_progress or {}
-    completed = set(progress.get("completed_steps", []))
-    completed.add(step)
-    progress["completed_steps"] = list(completed)
-    tenant.onboarding_progress = progress
-    await db.flush()
-    await db.refresh(tenant)
     return {"step": step, "completed": True}

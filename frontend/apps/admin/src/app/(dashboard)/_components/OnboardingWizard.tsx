@@ -63,12 +63,10 @@ export default function OnboardingWizard() {
   const [visible, setVisible] = useState(false);
   const [loading, setLoading] = useState(false);
   const [data, setData] = useState<OnboardingData | null>(null);
-  const [dismissed, setDismissed] = useState(false);
 
   useEffect(() => {
     // Check if user has dismissed wizard in this session
     if (sessionStorage.getItem("onboarding_dismissed") === "1") {
-      setDismissed(true);
       return;
     }
 
@@ -106,11 +104,10 @@ export default function OnboardingWizard() {
 
   const handleDismiss = () => {
     setVisible(false);
-    setDismissed(true);
     sessionStorage.setItem("onboarding_dismissed", "1");
   };
 
-  if (!visible || dismissed || !data || data.is_complete) return null;
+  if (!visible || !data || data.is_complete) return null;
 
   const currentIndex = data.steps.findIndex((s) => s === data.current_step);
   const activeStep = currentIndex >= 0 ? currentIndex : data.steps.length;

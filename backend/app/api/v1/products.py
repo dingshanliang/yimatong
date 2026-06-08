@@ -1,7 +1,6 @@
 import uuid
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
-from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.v1.code_batches import CodeBatchRead
@@ -32,8 +31,7 @@ from app.schemas.product import (
 from app.services.campaign import list_brand_campaigns
 from app.services.code import list_brand_code_batches
 from app.models.product import Product
-from app.models.tenant import Tenant
-from app.services.quota import QuotaExceededError, check_quota_incremental
+from app.services.quota import QuotaExceededError, check_quota_for_tenant
 from app.services.product import (
     check_brand_has_products,
     create_brand,
@@ -221,17 +219,10 @@ async def create_product_endpoint(
     tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
     # Quota check
-    tenant = await db.get(Tenant, tenant_id)
-    if tenant and tenant.quota:
-        total_products = (
-            await db.execute(
-                select(func.count()).select_from(Product).where(Product.tenant_id == tenant_id)
-            )
-        ).scalar() or 0
-        try:
-            check_quota_incremental(tenant.quota, "max_products", total_products, 1)
-        except QuotaExceededError as e:
-            raise HTTPException(status_code=429, detail=str(e))
+    try:
+        await check_quota_for_tenant(db, tenant_id, "max_products", Product)
+    except QuotaExceededError as e:
+        raise HTTPException(status_code=429, detail=str(e))
 
     return await create_product(
         db,
