@@ -39,3 +39,45 @@ class TestScanToken:
         tampered = token[:-5] + "XXXXX"
         result = verify_scan_token(tampered, "ABC123")
         assert result is None
+
+    def test_create_with_tenant_id(self):
+        token = create_scan_token(
+            public_id="ABC123",
+            ip_hash="abc123hash",
+            tenant_id="tenant-001",
+        )
+        result = verify_scan_token(token, "ABC123")
+        assert result is not None
+        assert result["tenant_id"] == "tenant-001"
+
+    def test_verify_with_expected_tenant_id(self):
+        token = create_scan_token(
+            public_id="ABC123",
+            ip_hash="abc123hash",
+            tenant_id="tenant-001",
+        )
+        # 匹配
+        result = verify_scan_token(token, "ABC123", expected_tenant_id="tenant-001")
+        assert result is not None
+        # 不匹配
+        result = verify_scan_token(token, "ABC123", expected_tenant_id="tenant-999")
+        assert result is None
+
+    def test_default_ttl_is_1800(self):
+        token = create_scan_token(public_id="ABC123", ip_hash="hash")
+        result = verify_scan_token(token, "ABC123")
+        assert result["exp"] - int(time.time()) <= 1800
+        assert result["exp"] - int(time.time()) > 1700
+
+    def test_ip_hash_none_is_valid(self):
+        """ip_hash=None 应被正常存入 token"""
+        token = create_scan_token(public_id="ABC123", ip_hash=None)
+        result = verify_scan_token(token, "ABC123")
+        assert result is not None
+        assert result["ip_hash"] is None
+
+    def test_ip_hash_verification_with_none_skips(self):
+        """expected_ip_hash=None 时应跳过 IP 验证"""
+        token = create_scan_token(public_id="ABC123", ip_hash="some_hash")
+        result = verify_scan_token(token, "ABC123", expected_ip_hash=None)
+        assert result is not None
