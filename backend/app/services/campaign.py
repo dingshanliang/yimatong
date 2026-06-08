@@ -320,7 +320,7 @@ async def change_campaign_status(
     c.status = new_status
     await db.flush()
     await db.refresh(c)
-    event_name = "campaign.started" if new_status in ("ACTIVE", "active") else "campaign.ended"
+    event_name = f"campaign.{new_status}"
     await event_bus.emit(
         event_name,
         {"campaign_id": str(campaign_id), "status": new_status},
