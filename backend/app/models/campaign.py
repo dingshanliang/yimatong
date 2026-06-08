@@ -14,7 +14,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
-from app.constants.campaign import BenefitType, CampaignStatus
+from app.constants.campaign import CampaignStatus
 from app.models.base import Base
 
 

@@ -12,9 +12,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.core.dependencies import get_current_tenant
-from app.utils.auth_rbac import require_permission
-from app.schemas.common import PaginatedResponse
 from app.schemas.campaign import CampaignStatusRequest as ValidatedCampaignStatusRequest
+from app.schemas.common import PaginatedResponse
+from app.utils.auth_rbac import require_permission
 
 open_api_router = APIRouter(prefix="/open/v1", tags=["open-api"])
 
