@@ -18,6 +18,7 @@ from app.models.product import (
     ProductStatus,
     SKUStatus,
 )
+from app.core.exceptions import BadRequestError, ConflictError, NotFoundError
 from app.utils import escape_like_pattern
 
 
@@ -30,9 +31,7 @@ async def create_brand(
 ) -> Brand:
     existing = await db.execute(select(Brand).where(Brand.tenant_id == tenant_id, Brand.name == name))
     if existing.scalar_one_or_none():
-        from fastapi import HTTPException
-
-        raise HTTPException(status_code=409, detail="Brand name already exists in this tenant")
+        raise ConflictError("Brand name already exists in this tenant")
 
     brand = Brand(
         tenant_id=tenant_id,
@@ -90,9 +89,9 @@ async def update_brand(
             select(Brand).where(Brand.tenant_id == tenant_id, Brand.name == name, Brand.id != brand_id)
         )
         if existing.scalar_one_or_none():
-            from fastapi import HTTPException
+            
 
-            raise HTTPException(status_code=409, detail="Brand name already exists in this tenant")
+            raise ConflictError("Brand name already exists in this tenant")
         brand.name = name
     if logo_url is not None:
         brand.logo_url = logo_url
@@ -257,7 +256,7 @@ async def update_product(
     if brand_id is not None:
         brand_result = await db.execute(select(Brand).where(Brand.id == brand_id, Brand.tenant_id == tenant_id))
         if not brand_result.scalar_one_or_none():
-            raise ValueError("Brand not found")
+            raise NotFoundError("Brand not found")
         product.brand_id = brand_id
     if name is not None:
         product.name = name
@@ -297,9 +296,9 @@ async def create_sku(
     product = product_result.scalar_one_or_none()
     existing = await db.execute(select(SKU).where(SKU.product_id == product_id, SKU.code == code))
     if existing.scalar_one_or_none():
-        from fastapi import HTTPException
+        
 
-        raise HTTPException(status_code=409, detail="SKU code already exists for this product")
+        raise ConflictError("SKU code already exists for this product")
 
     sku = SKU(
         tenant_id=tenant_id,
@@ -368,9 +367,9 @@ async def update_sku(
             )
         )
         if existing.scalar_one_or_none():
-            from fastapi import HTTPException
+            
 
-            raise HTTPException(status_code=409, detail="SKU code already exists for this product")
+            raise ConflictError("SKU code already exists for this product")
         sku.code = code
     if name is not None:
         sku.name = name
@@ -416,25 +415,25 @@ async def create_production_batch(
     origin: str | None = None,
 ) -> ProductionBatch:
     if expiry_date < production_date:
-        raise ValueError("Expiry date cannot be earlier than production date")
+        raise BadRequestError("Expiry date cannot be earlier than production date")
 
     product_result = await db.execute(select(Product).where(Product.id == product_id, Product.tenant_id == tenant_id))
     product = product_result.scalar_one_or_none()
     sku_result = await db.execute(select(SKU).where(SKU.id == sku_id, SKU.tenant_id == tenant_id))
     sku = sku_result.scalar_one_or_none()
     if not product:
-        raise ValueError("Product not found")
+        raise NotFoundError("Product not found")
     if not sku:
-        raise ValueError("SKU not found")
+        raise NotFoundError("SKU not found")
     if sku.product_id != product_id:
-        raise ValueError("SKU does not belong to selected product")
+        raise BadRequestError("SKU does not belong to selected product")
     existing = await db.execute(
         select(ProductionBatch).where(ProductionBatch.tenant_id == tenant_id, ProductionBatch.batch_code == batch_code)
     )
     if existing.scalar_one_or_none():
-        from fastapi import HTTPException
+        
 
-        raise HTTPException(status_code=409, detail="Batch code already exists in this tenant")
+        raise ConflictError("Batch code already exists in this tenant")
 
     batch = ProductionBatch(
         tenant_id=tenant_id,
@@ -486,9 +485,9 @@ async def update_production_batch(
             )
         )
         if existing.scalar_one_or_none():
-            from fastapi import HTTPException
+            
 
-            raise HTTPException(status_code=409, detail="Batch code already exists in this tenant")
+            raise ConflictError("Batch code already exists in this tenant")
         batch.batch_code = batch_code
     if production_date is not None:
         batch.production_date = production_date
@@ -499,7 +498,7 @@ async def update_production_batch(
     if status is not None:
         batch.status = status
     if batch.expiry_date < batch.production_date:
-        raise ValueError("Expiry date cannot be earlier than production date")
+        raise BadRequestError("Expiry date cannot be earlier than production date")
 
     await db.flush()
     await db.refresh(batch)
@@ -715,6 +714,106 @@ async def check_brand_has_products(db: AsyncSession, tenant_id: uuid.UUID, brand
         select(func.count()).select_from(Product).where(Product.tenant_id == tenant_id, Product.brand_id == brand_id)
     )
     return (result.scalar() or 0) > 0
+
+
+async def delete_brand(
+    db: AsyncSession, tenant_id: uuid.UUID, brand_id: uuid.UUID
+) -> tuple[bool, str | None]:
+    """删除品牌。返回 (是否成功, 冲突原因)。"""
+    result = await db.execute(select(Brand).where(Brand.id == brand_id, Brand.tenant_id == tenant_id))
+    brand = result.scalar_one_or_none()
+    if not brand:
+        return False, None
+
+    has_products = await check_brand_has_products(db, tenant_id, brand_id)
+    if has_products:
+        return False, "Brand has associated products"
+
+    await db.delete(brand)
+    await db.flush()
+    return True, None
+
+
+async def delete_product(
+    db: AsyncSession, tenant_id: uuid.UUID, product_id: uuid.UUID
+) -> tuple[bool, str | None]:
+    """删除产品。返回 (是否成功, 冲突原因)。"""
+    result = await db.execute(select(Product).where(Product.id == product_id, Product.tenant_id == tenant_id))
+    product = result.scalar_one_or_none()
+    if not product:
+        return False, None
+
+    sku_count_result = await db.execute(
+        select(func.count()).select_from(SKU).where(SKU.tenant_id == tenant_id, SKU.product_id == product_id)
+    )
+    if (sku_count_result.scalar() or 0) > 0:
+        return False, "Product has associated SKUs"
+
+    batch_count_result = await db.execute(
+        select(func.count()).select_from(ProductionBatch).where(
+            ProductionBatch.tenant_id == tenant_id, ProductionBatch.product_id == product_id
+        )
+    )
+    if (batch_count_result.scalar() or 0) > 0:
+        return False, "Product has associated production batches"
+
+    asset_count_result = await db.execute(
+        select(func.count()).select_from(ProductAsset).where(
+            ProductAsset.tenant_id == tenant_id, ProductAsset.product_id == product_id
+        )
+    )
+    if (asset_count_result.scalar() or 0) > 0:
+        return False, "Product has associated assets"
+
+    await db.delete(product)
+    await db.flush()
+    return True, None
+
+
+async def delete_sku(
+    db: AsyncSession, tenant_id: uuid.UUID, sku_id: uuid.UUID
+) -> tuple[bool, str | None]:
+    """删除 SKU。返回 (是否成功, 冲突原因)。"""
+    result = await db.execute(select(SKU).where(SKU.id == sku_id, SKU.tenant_id == tenant_id))
+    sku = result.scalar_one_or_none()
+    if not sku:
+        return False, None
+
+    batch_count_result = await db.execute(
+        select(func.count()).select_from(ProductionBatch).where(
+            ProductionBatch.tenant_id == tenant_id, ProductionBatch.sku_id == sku_id
+        )
+    )
+    if (batch_count_result.scalar() or 0) > 0:
+        return False, "SKU has associated production batches"
+
+    await db.delete(sku)
+    await db.flush()
+    return True, None
+
+
+async def delete_production_batch(
+    db: AsyncSession, tenant_id: uuid.UUID, batch_id: uuid.UUID
+) -> tuple[bool, str | None]:
+    """删除生产批次。返回 (是否成功, 冲突原因)。"""
+    result = await db.execute(
+        select(ProductionBatch).where(ProductionBatch.id == batch_id, ProductionBatch.tenant_id == tenant_id)
+    )
+    batch = result.scalar_one_or_none()
+    if not batch:
+        return False, None
+
+    code_batch_count_result = await db.execute(
+        select(func.count()).select_from(CodeBatch).where(
+            CodeBatch.tenant_id == tenant_id, CodeBatch.production_batch_id == batch_id
+        )
+    )
+    if (code_batch_count_result.scalar() or 0) > 0:
+        return False, "Production batch has associated code batches"
+
+    await db.delete(batch)
+    await db.flush()
+    return True, None
 
 
 async def list_brand_production_batches(

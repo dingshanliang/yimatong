@@ -2,11 +2,11 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { App, Button, Divider, Form, Input, Modal, Progress, Select, Space, Switch, Table, Tag, Typography } from "antd";
-import { PlusOutlined, SearchOutlined, RobotOutlined, ProfileOutlined } from "@ant-design/icons";
+import { App, Button, Divider, Form, Input, Modal, Popconfirm, Progress, Select, Space, Switch, Table, Tag, Typography } from "antd";
+import { PlusOutlined, SearchOutlined, RobotOutlined, ProfileOutlined, DeleteOutlined } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
 import ImageUploadInput from "@/components/ImageUploadInput";
-import api from "@/lib/api";
+import api, { extractErrorMessage } from "@/lib/api";
 import { useCrud } from "@/lib/hooks";
 import { useCategories } from "@/lib/use-categories";
 import { formatDate } from "@/lib/format";
@@ -38,7 +38,7 @@ export default function ProductsPage() {
   const [brandCreating, setBrandCreating] = useState(false);
   const [categorySearch, setCategorySearch] = useState("");
 
-  const { items: products, total, page, loading, setPage, setFilter, update } = useCrud<Product>("/products");
+  const { items: products, total, page, loading, setPage, setFilter, update, remove } = useCrud<Product>("/products");
   const { categories: tenantCategories } = useCategories();
 
   const fetchBrands = useCallback(async () => {
@@ -195,6 +195,22 @@ export default function ProductsPage() {
         <Space>
           <Button type="link" size="small" onClick={() => openEdit(record)}>基础信息</Button>
           <Button type="link" size="small" icon={<ProfileOutlined />} onClick={() => router.push(`/products/${record.id}`)}>工作台</Button>
+          <Popconfirm
+            title="确认删除"
+            description={`删除产品「${record.name}」？有关联资源时将被阻止。`}
+            onConfirm={async () => {
+              try {
+                await remove(record.id);
+                message.success("产品已删除");
+              } catch (err) {
+                message.error(extractErrorMessage(err, "删除失败，请检查是否有关联资源"));
+              }
+            }}
+            okText="删除"
+            okButtonProps={{ danger: true }}
+          >
+            <Button type="link" size="small" danger icon={<DeleteOutlined />}>删除</Button>
+          </Popconfirm>
         </Space>
       ),
     },

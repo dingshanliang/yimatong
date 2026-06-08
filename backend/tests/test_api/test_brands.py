@@ -116,3 +116,37 @@ class TestBrandCRUD:
         await client.post("/api/v1/brands", json={"name": "唯一品牌"}, headers=headers)
         resp = await client.post("/api/v1/brands", json={"name": "唯一品牌"}, headers=headers)
         assert resp.status_code == 409
+
+    @pytest.mark.anyio
+    async def test_delete_brand_success(self, client: AsyncClient, tenant_with_auth):
+        _, headers = tenant_with_auth
+        resp = await client.post("/api/v1/brands", json={"name": "待删品牌"}, headers=headers)
+        brand_id = resp.json()["id"]
+
+        resp = await client.delete(f"/api/v1/brands/{brand_id}", headers=headers)
+        assert resp.status_code == 204
+
+        get_resp = await client.get(f"/api/v1/brands/{brand_id}", headers=headers)
+        assert get_resp.status_code == 404
+
+    @pytest.mark.anyio
+    async def test_delete_brand_with_products_blocked(self, client: AsyncClient, tenant_with_auth):
+        _, headers = tenant_with_auth
+        brand_resp = await client.post("/api/v1/brands", json={"name": "有产品品牌"}, headers=headers)
+        brand_id = brand_resp.json()["id"]
+        await client.post(
+            "/api/v1/products",
+            json={"brand_id": brand_id, "name": "关联产品"},
+            headers=headers,
+        )
+
+        resp = await client.delete(f"/api/v1/brands/{brand_id}", headers=headers)
+        assert resp.status_code == 409
+        assert "product" in resp.json()["detail"].lower() or "关联" in resp.json()["detail"]
+
+    @pytest.mark.anyio
+    async def test_delete_brand_not_found(self, client: AsyncClient, tenant_with_auth):
+        _, headers = tenant_with_auth
+        fake_id = "00000000-0000-0000-0000-000000000000"
+        resp = await client.delete(f"/api/v1/brands/{fake_id}", headers=headers)
+        assert resp.status_code == 404

@@ -39,7 +39,11 @@ from app.services.product import (
     create_product_asset,
     create_production_batch,
     create_sku,
+    delete_brand,
+    delete_product,
     delete_product_asset,
+    delete_production_batch,
+    delete_sku,
     get_brand_with_stats,
     get_product,
     get_sku_detail,
@@ -204,9 +208,11 @@ async def delete_brand_endpoint(
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
-    has_products = await check_brand_has_products(db, tenant_id, brand_id)
-    if has_products:
-        raise HTTPException(status_code=409, detail="Cannot delete brand with existing products")
+    deleted, conflict = await delete_brand(db, tenant_id, brand_id)
+    if conflict:
+        raise HTTPException(status_code=409, detail=conflict)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Brand not found")
 
 
 # --- Product endpoints ---
@@ -284,23 +290,20 @@ async def update_product_endpoint(
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
-    try:
-        product = await update_product(
-            db,
-            tenant_id,
-            product_id,
-            brand_id=body.brand_id,
-            name=body.name,
-            category=body.category,
-            origin=body.origin,
-            image_url=body.image_url,
-            story_title=body.story_title,
-            story_content=body.story_content,
-            description=body.description,
-            status=body.status,
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    product = await update_product(
+        db,
+        tenant_id,
+        product_id,
+        brand_id=body.brand_id,
+        name=body.name,
+        category=body.category,
+        origin=body.origin,
+        image_url=body.image_url,
+        story_title=body.story_title,
+        story_content=body.story_content,
+        description=body.description,
+        status=body.status,
+    )
     if not product:
         raise HTTPException(status_code=404, detail="Product not found")
     return product
@@ -405,6 +408,19 @@ async def list_product_batches(
     )
 
 
+@product_router.delete("/{product_id}", status_code=204, summary="删除 产品")
+async def delete_product_endpoint(
+    product_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    tenant_id: uuid.UUID = Depends(get_current_tenant),
+):
+    deleted, conflict = await delete_product(db, tenant_id, product_id)
+    if conflict:
+        raise HTTPException(status_code=409, detail=conflict)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Product not found")
+
+
 # --- SKU endpoints ---
 
 
@@ -487,6 +503,19 @@ async def update_sku_endpoint(
     return sku
 
 
+@sku_router.delete("/{sku_id}", status_code=204, summary="删除 SKU")
+async def delete_sku_endpoint(
+    sku_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    tenant_id: uuid.UUID = Depends(get_current_tenant),
+):
+    deleted, conflict = await delete_sku(db, tenant_id, sku_id)
+    if conflict:
+        raise HTTPException(status_code=409, detail=conflict)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="SKU not found")
+
+
 # --- ProductionBatch endpoints ---
 
 
@@ -496,19 +525,16 @@ async def create_batch_endpoint(
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
-    try:
-        return await create_production_batch(
-            db,
-            tenant_id,
-            body.product_id,
-            body.sku_id,
-            body.batch_code,
-            body.production_date,
-            body.expiry_date,
-            origin=body.origin,
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return await create_production_batch(
+        db,
+        tenant_id,
+        body.product_id,
+        body.sku_id,
+        body.batch_code,
+        body.production_date,
+        body.expiry_date,
+        origin=body.origin,
+    )
 
 
 @batch_router.get("", summary="批次 列表")
@@ -543,20 +569,17 @@ async def update_batch_endpoint(
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
-    try:
-        batch = await update_production_batch(
-            db,
-            tenant_id,
-            batch_id,
-            batch_code=body.batch_code,
-            production_date=body.production_date,
-            expiry_date=body.expiry_date,
-            origin=body.origin,
-            status=getattr(body, "status", None),
-            fields_to_update=body.model_fields_set,
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    batch = await update_production_batch(
+        db,
+        tenant_id,
+        batch_id,
+        batch_code=body.batch_code,
+        production_date=body.production_date,
+        expiry_date=body.expiry_date,
+        origin=body.origin,
+        status=getattr(body, "status", None),
+        fields_to_update=body.model_fields_set,
+    )
     if not batch:
         raise HTTPException(status_code=404, detail="Batch not found")
     return batch
@@ -579,6 +602,19 @@ async def import_csv_endpoint(
         content,
     )
     return CSVImportResult(imported=imported, errors=errors)
+
+
+@batch_router.delete("/{batch_id}", status_code=204, summary="删除 批次")
+async def delete_batch_endpoint(
+    batch_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    tenant_id: uuid.UUID = Depends(get_current_tenant),
+):
+    deleted, conflict = await delete_production_batch(db, tenant_id, batch_id)
+    if conflict:
+        raise HTTPException(status_code=409, detail=conflict)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Batch not found")
 
 
 @asset_router.patch("/{asset_id}", response_model=ProductAssetRead, summary="更新 产品资料")
