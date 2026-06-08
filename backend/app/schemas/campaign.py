@@ -4,7 +4,7 @@ import uuid
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-from app.services.campaign import validate_benefit_config_shape, validate_campaign_rules_shape
+from app.utils.campaign_validation import validate_benefit_config_shape, validate_campaign_rules_shape
 
 REQUIRED_RULES_FIELDS = [
     "participation_conditions",
