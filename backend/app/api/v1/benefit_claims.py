@@ -52,10 +52,7 @@ async def claim_benefit_h5(
     # 2. 查找权益（带租户隔离：只能领取 scan_token 所属租户的权益）
     from app.models.campaign import Benefit
 
-    try:
-        benefit_id = uuid.UUID(body.benefit_id)
-    except ValueError:
-        raise HTTPException(status_code=400, detail="invalid benefit_id")
+    benefit_id = body.benefit_id  # Pydantic 已验证为 UUID
 
     # 从 scan_token payload 中提取 tenant_id，确保只能领取同租户的权益
     token_tenant_id = payload.get("tenant_id")
