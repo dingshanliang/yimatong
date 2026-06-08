@@ -6,9 +6,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.campaign import Benefit, Campaign, CampaignStatus
-from app.models.code import CodeBatch
 from app.models.page import PageVersion, PageVersionStatus
-from app.models.product import Brand, ProductionBatch, Product
+from app.models.product import Brand, Product, ProductionBatch
 from app.services.redis_cache import AsyncRedisCache
 
 _product_cache = AsyncRedisCache(prefix="product", default_ttl=600)
@@ -62,10 +61,13 @@ async def build_json_response(
                     "origin": product.origin or "",
                 }
                 brand_data = {"name": brand.name, "logo_url": brand.logo_url or ""}
-                await _product_cache.set(f"pb:{product_id}", {
-                    "product": product_data,
-                    "brand": brand_data,
-                })
+                await _product_cache.set(
+                    f"pb:{product_id}",
+                    {
+                        "product": product_data,
+                        "brand": brand_data,
+                    },
+                )
                 result["code_data"]["product"] = product_data
                 result["brand"] = brand_data
                 result["tenant_branding"] = brand_data
@@ -94,9 +96,7 @@ async def build_json_response(
     production_batch_id = data.get("production_batch_id")
     if production_batch_id:
         pb_result = await db.execute(
-            select(ProductionBatch).where(
-                ProductionBatch.id == uuid.UUID(production_batch_id)
-            )
+            select(ProductionBatch).where(ProductionBatch.id == uuid.UUID(production_batch_id))
         )
         prod_batch = pb_result.scalar_one_or_none()
         if prod_batch:
@@ -136,7 +136,9 @@ async def build_json_response(
                     "name": benefit.name,
                     "benefit_type": benefit.benefit_type,
                     "config_json": benefit.config_json,
-                    "description": benefit.config_json.get("description") if isinstance(benefit.config_json, dict) else None,
+                    "description": (
+                        benefit.config_json.get("description") if isinstance(benefit.config_json, dict) else None
+                    ),
                 }
                 if benefit
                 else None,
