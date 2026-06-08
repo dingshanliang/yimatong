@@ -14,6 +14,7 @@ from app.core.database import get_db
 from app.core.dependencies import get_current_tenant
 from app.utils.auth_rbac import require_permission
 from app.schemas.common import PaginatedResponse
+from app.schemas.campaign import CampaignStatusRequest as ValidatedCampaignStatusRequest
 
 open_api_router = APIRouter(prefix="/open/v1", tags=["open-api"])
 
@@ -265,19 +266,22 @@ async def redeem_coupon(
 # --- Full Access Operations ---
 
 
-class CampaignStatusRequest(BaseModel):
-    status: str
-
-
 @open_api_router.patch("/campaigns/{campaign_id}/status")
 async def update_campaign_status(
     campaign_id: uuid.UUID,
-    body: CampaignStatusRequest,
+    body: ValidatedCampaignStatusRequest,
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
     _: None = Depends(require_permission("campaign:status")),
 ):
-    from app.services.campaign import change_campaign_status
+    from app.services.campaign import change_campaign_status, get_campaign_activation_blockers
+
+    if body.status == "active":
+        blockers = await get_campaign_activation_blockers(db, tenant_id, campaign_id)
+        if blockers is None:
+            raise HTTPException(status_code=404, detail="Campaign not found")
+        if blockers:
+            raise HTTPException(status_code=400, detail="；".join(blockers))
 
     result = await change_campaign_status(db, tenant_id, campaign_id, body.status)
     if not result:
