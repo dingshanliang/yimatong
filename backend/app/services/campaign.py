@@ -27,6 +27,11 @@ from app.models.product import Product
 logger = logging.getLogger(__name__)
 
 
+def _escape_like(value: str) -> str:
+    """转义 SQL LIKE/ILIKE 通配符，防止用户输入干扰模式匹配"""
+    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
 class ClaimResult(TypedDict, total=False):
     """claim_benefit 返回类型"""
 
@@ -201,9 +206,9 @@ async def list_campaigns(
             stmt = stmt.where(status_conditions)
             count_stmt = count_stmt.where(status_conditions)
     if q:
-        pattern = f"%{q}%"
-        stmt = stmt.where(Campaign.name.ilike(pattern))
-        count_stmt = count_stmt.where(Campaign.name.ilike(pattern))
+        pattern = f"%{_escape_like(q)}%"
+        stmt = stmt.where(Campaign.name.ilike(pattern, escape="\\"))
+        count_stmt = count_stmt.where(Campaign.name.ilike(pattern, escape="\\"))
 
     total = (await db.execute(count_stmt)).scalar() or 0
     stmt = stmt.order_by(Campaign.id.desc()).offset((page - 1) * page_size).limit(page_size)
@@ -271,6 +276,8 @@ async def update_campaign(
     campaign_id: uuid.UUID,
     **fields,
 ) -> dict | None:
+    from app.constants.campaign import UPDATABLE_CAMPAIGN_FIELDS
+
     result = await db.execute(
         select(Campaign).where(Campaign.id == campaign_id, Campaign.tenant_id == tenant_id),
     )
@@ -278,6 +285,8 @@ async def update_campaign(
     if not c:
         return None
     for k, v in fields.items():
+        if k not in UPDATABLE_CAMPAIGN_FIELDS | {"product_id"}:  # product_id handled separately
+            continue
         if k == "rules_json" and isinstance(v, dict):
             v = _rules_with_product_id(v, fields.get("product_id", c.product_id))
         if k == "product_id":
@@ -509,9 +518,9 @@ async def list_all_benefits(
         )
     )
     if q:
-        pattern = f"%{q}%"
-        stmt = stmt.where(Benefit.name.ilike(pattern))
-        count_stmt = count_stmt.where(Benefit.name.ilike(pattern))
+        pattern = f"%{_escape_like(q)}%"
+        stmt = stmt.where(Benefit.name.ilike(pattern, escape="\\"))
+        count_stmt = count_stmt.where(Benefit.name.ilike(pattern, escape="\\"))
     if benefit_type:
         stmt = stmt.where(Benefit.benefit_type == benefit_type)
         count_stmt = count_stmt.where(Benefit.benefit_type == benefit_type)
@@ -585,6 +594,8 @@ async def update_benefit(
     benefit_id: uuid.UUID,
     **fields,
 ) -> dict | None:
+    from app.constants.campaign import UPDATABLE_BENEFIT_FIELDS
+
     result = await db.execute(
         select(Benefit).where(Benefit.id == benefit_id, Benefit.tenant_id == tenant_id),
     )
@@ -599,6 +610,8 @@ async def update_benefit(
     if fields.get("stock_total") is not None and fields["stock_total"] < b.stock_used:
         raise ValueError("stock_total cannot be less than stock_used")
     for k, v in fields.items():
+        if k not in UPDATABLE_BENEFIT_FIELDS:
+            continue
         if v is not None:
             setattr(b, k, v)
     await db.flush()
@@ -677,9 +690,13 @@ async def list_benefit_claims_admin(
     )
     filters = [BenefitClaim.tenant_id == tenant_id]
     if q:
-        pattern = f"%{q}%"
+        pattern = f"%{_escape_like(q)}%"
         filters.append(
-            or_(BenefitClaim.consumer_id.ilike(pattern), Benefit.name.ilike(pattern), Campaign.name.ilike(pattern))
+            or_(
+                BenefitClaim.consumer_id.ilike(pattern, escape="\\"),
+                Benefit.name.ilike(pattern, escape="\\"),
+                Campaign.name.ilike(pattern, escape="\\"),
+            )
         )
     if benefit_id:
         filters.append(BenefitClaim.benefit_id == benefit_id)
