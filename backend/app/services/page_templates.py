@@ -85,6 +85,14 @@ body { font-family: sans-serif; text-align: center; padding: 40px 16px; backgrou
 </body>
 </html>"""
 
+EXPIRED_PAGE = """<!DOCTYPE html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>码已过期</title></head>
+<body style="font-family:sans-serif;text-align:center;padding:40px 16px;">
+<h2>该二维码已过期</h2><p>产品保质期已过，如有疑问请联系客服</p>
+</body></html>"""
+
 DEFAULT_PAGE = """<!DOCTYPE html>
 <html lang="zh-CN">
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
