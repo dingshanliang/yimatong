@@ -1,6 +1,6 @@
 ---
 status: active
-last_verified: 2026-06-03
+last_verified: 2026-06-08
 accuracy: high
 ---
 
@@ -144,27 +144,33 @@ DELETE /api/v1/product-assets/{asset_id}      → 删除产品资料
 
 ### 码批次
 
+> **权限要求**：创建/激活/冻结/作废 需 `code:manage`；导出 需 `code:export`；列表/详情 需登录。
+
 ```
-POST   /api/v1/code-batches                  → 创建码批次
+POST   /api/v1/code-batches                  → 创建码批次 (code:generate)
 GET    /api/v1/code-batches                  → 码批次列表
 GET    /api/v1/code-batches/{batch_id}       → 码批次详情
 PATCH  /api/v1/code-batches/{batch_id}       → 更新码批次
-POST   /api/v1/code-batches/{batch_id}/activate → 激活
-POST   /api/v1/code-batches/{batch_id}/export   → 导出
-POST   /api/v1/code-batches/{batch_id}/freeze   → 冻结
-POST   /api/v1/code-batches/{batch_id}/void      → 作废
+POST   /api/v1/code-batches/{batch_id}/activate → 激活 (code:manage)
+POST   /api/v1/code-batches/{batch_id}/export   → 导出 (code:export)
+POST   /api/v1/code-batches/{batch_id}/freeze   → 冻结 (code:manage)
+POST   /api/v1/code-batches/{batch_id}/void      → 作废 (code:manage)
+POST   /api/v1/code-batches/{batch_id}/mark-printing  → 标记印刷中 (code:manage)
+POST   /api/v1/code-batches/{batch_id}/mark-delivered → 标记已交付 (code:manage)
 ```
 
 ### 码项
+
+> **状态机保护**：码项 `status` 字段**禁止**通过 `PATCH /code-items/{id}` 直接修改，必须通过专用端点（`/bind`、`/revoke`、`/activate`）变更。
 
 ```
 GET    /api/v1/code-items                    → 码项列表
 GET    /api/v1/code-items/public/{public_id} → 按 public_id 查询
 GET    /api/v1/code-items/{item_id}          → 码项详情
-PATCH  /api/v1/code-items/{item_id}          → 更新码项
+PATCH  /api/v1/code-items/{item_id}          → 更新码项（禁止直接改 status）
 GET    /api/v1/code-items/{item_id}/pair     → 获取配对码
-POST   /api/v1/code-items/{item_id}/revoke   → 撤销码项
-POST   /api/v1/code-items/{item_id}/bind     → 绑定码项
+POST   /api/v1/code-items/{item_id}/revoke   → 撤销码项 (code:manage)
+POST   /api/v1/code-items/{item_id}/bind     → 绑定码项 (code:manage)
 ```
 
 ## 6. 码解析与消费者 H5（resolver.py + scan_events.py + consents.py + consumers.py + public_pages.py）

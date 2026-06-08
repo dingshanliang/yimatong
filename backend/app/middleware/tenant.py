@@ -145,15 +145,19 @@ class TenantScopeMiddleware(BaseHTTPMiddleware):
             set_request_tenant_id(None)
 
     async def _load_permissions(self, account_id: str | None, role: str | None) -> list[str]:
-        """从数据库加载账户的权限列表"""
+        """从数据库加载账户的权限列表。账户不存在时回退到角色默认权限。"""
+        from app.utils.auth_rbac import get_permissions_for_role
+
         if not account_id:
-            return []
+            return get_permissions_for_role(role) if role else []
         try:
-            from app.core.database import async_session_factory
-            from app.models.tenant import Account, Role
+            import uuid
+
             from sqlalchemy import select
             from sqlalchemy.orm import selectinload
-            import uuid
+
+            from app.core.database import async_session_factory
+            from app.models.tenant import Account, Role
 
             async with async_session_factory() as db:
                 result = await db.execute(
@@ -163,12 +167,13 @@ class TenantScopeMiddleware(BaseHTTPMiddleware):
                 )
                 account = result.scalar_one_or_none()
                 if not account:
-                    return []
+                    # 账户不存在时回退到角色默认权限
+                    return get_permissions_for_role(role) if role else []
                 permissions = set()
                 for role_obj in account.roles:
                     for perm in role_obj.permissions:
                         permissions.add(perm.code)
                 return list(permissions)
         except Exception:
-            # 权限加载失败不应阻断请求，降级为空权限
-            return []
+            # 权限加载失败不应阻断请求，降级为角色默认权限
+            return get_permissions_for_role(role) if role else []

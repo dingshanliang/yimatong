@@ -1,6 +1,7 @@
 """码解析公开路由"""
 
 import hashlib
+import logging
 import uuid
 
 from fastapi import APIRouter, Depends, Request
@@ -28,6 +29,9 @@ from app.services.resolver import resolve_public_code
 from app.services.resolver_response import build_json_response
 from app.services.scan_event import parse_environment, record_scan_event
 from app.services.scan_token import create_scan_token
+from app.utils.client_ip import get_client_ip
+
+logger = logging.getLogger(__name__)
 
 resolver_router = APIRouter(tags=["resolver"])
 
@@ -42,8 +46,8 @@ async def resolve_code_endpoint(
     want_json = "application/json" in accept
 
     # 1. 限流 + 格式校验
-    client_ip = request.client.host if request.client else "unknown"
-    rate_result = rate_limiter.check_resolver(client_ip, public_id)
+    client_ip = get_client_ip(request)
+    rate_result = await rate_limiter.check_resolver(client_ip, public_id)
     if not rate_result.allowed:
         return JSONResponse(
             status_code=429,
@@ -138,7 +142,7 @@ async def _record_scan(
         )
         scan_info["is_first_scan"] = event.is_first_scan
     except Exception:
-        pass
+        logger.exception("Failed to record scan event for public_id=%s", public_id)
     return scan_info
 
 

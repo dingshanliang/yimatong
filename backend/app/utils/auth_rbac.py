@@ -14,7 +14,7 @@ WEB_ROLE_PERMISSIONS: dict[str, list[str]] = {
     "admin": [
         "tenant:manage", "account:manage", "role:manage",
         "product:create", "product:update", "product:delete",
-        "code:generate", "code:export",
+        "code:generate", "code:export", "code:manage",
         "page:create", "page:publish",
         "campaign:create", "campaign:manage",
         "analytics:view", "export:run",
@@ -28,7 +28,7 @@ WEB_ROLE_PERMISSIONS: dict[str, list[str]] = {
     "platform_admin": [
         "platform:admin", "tenant:manage", "account:manage", "role:manage",
         "product:create", "product:update", "product:delete",
-        "code:generate", "code:export",
+        "code:generate", "code:export", "code:manage",
         "page:create", "page:publish",
         "campaign:create", "campaign:manage",
         "analytics:view", "export:run",

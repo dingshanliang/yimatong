@@ -59,7 +59,7 @@ async def test_jwt_auth_loads_permissions_to_request_state():
 
 @pytest.mark.asyncio
 async def test_load_permissions_returns_empty_on_failure():
-    """权限加载失败应降级为空列表"""
+    """权限加载失败应降级为角色默认权限"""
     from app.middleware.tenant import TenantScopeMiddleware
 
     middleware = TenantScopeMiddleware(app=MagicMock())
@@ -67,12 +67,13 @@ async def test_load_permissions_returns_empty_on_failure():
     with patch("app.core.database.async_session_factory", side_effect=Exception("DB error")):
         permissions = await middleware._load_permissions("some-id", "admin")
 
-    assert permissions == []
+    from app.utils.auth_rbac import get_permissions_for_role
+    assert permissions == get_permissions_for_role("admin")
 
 
 @pytest.mark.asyncio
-async def test_load_permissions_returns_empty_for_no_account():
-    """找不到账户应返回空列表"""
+async def test_load_permissions_returns_role_defaults_for_no_account():
+    """找不到账户应返回角色默认权限"""
     from app.middleware.tenant import TenantScopeMiddleware
 
     middleware = TenantScopeMiddleware(app=MagicMock())
@@ -90,7 +91,8 @@ async def test_load_permissions_returns_empty_for_no_account():
     with patch("app.core.database.async_session_factory", return_value=mock_session):
         permissions = await middleware._load_permissions("nonexistent-id", "admin")
 
-    assert permissions == []
+    from app.utils.auth_rbac import get_permissions_for_role
+    assert permissions == get_permissions_for_role("admin")
 
 
 @pytest.mark.asyncio

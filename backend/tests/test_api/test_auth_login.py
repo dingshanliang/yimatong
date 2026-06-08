@@ -135,7 +135,7 @@ class TestLogin:
             json={"email": "login@test.com", "password": "wrong"},
         )
         assert resp.status_code == 401
-        assert resp.json()["detail"] == "Invalid credentials"
+        assert resp.json()["detail"] == "邮箱或密码不正确"
 
     @pytest.mark.anyio
     async def test_login_nonexistent_email_returns_401(self, client: AsyncClient, seeded_account):

@@ -28,16 +28,22 @@ async def report_scan_event(
     db: AsyncSession = Depends(get_db),
 ):
     """H5 前端上报扫码事件（view/click 等）"""
-    # 验证 scan_token（可选，有则校验）
+    # 验证 scan_token（必须）
     auth_header = request.headers.get("Authorization", "")
-    if auth_header.startswith("Bearer "):
-        token = auth_header[7:]
-        # Compute IP hash for verification
-        client_ip_for_token = request.headers.get("X-Forwarded-For", request.client.host if request.client else "unknown").split(",")[0].strip()
-        ip_hash_for_token = hashlib.sha256(client_ip_for_token.encode()).hexdigest() if client_ip_for_token != "unknown" else None
-        payload = verify_scan_token(token, body.public_id, expected_ip_hash=ip_hash_for_token)
-        if payload is None:
-            return {"status": "ignored", "reason": "invalid_token"}
+    if not auth_header.startswith("Bearer "):
+        return {"status": "ignored", "reason": "missing_token"}
+    token = auth_header[7:]
+    # Compute IP hash for verification
+    raw_ip = request.headers.get("X-Forwarded-For", request.client.host if request.client else "unknown")
+    client_ip_for_token = raw_ip.split(",")[0].strip()
+    ip_hash_for_token = (
+        hashlib.sha256(client_ip_for_token.encode()).hexdigest()
+        if client_ip_for_token != "unknown"
+        else None
+    )
+    payload = verify_scan_token(token, body.public_id, expected_ip_hash=ip_hash_for_token)
+    if payload is None:
+        return {"status": "ignored", "reason": "invalid_token"}
 
     # 获取客户端信息
     client_ip = request.client.host if request.client else "unknown"

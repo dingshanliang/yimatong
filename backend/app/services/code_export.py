@@ -8,6 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.core.exceptions import NotFoundError
 from app.models.code import CodeBatch, CodeItem
 
 # 导出上限：超过此数量分批处理
@@ -32,7 +33,7 @@ async def generate_code_csv(
     )
     batch = batch_result.scalar_one_or_none()
     if not batch:
-        return ""
+        raise NotFoundError("Code batch not found")
 
     # 预提取批次级信息（所有码项共享）
     product_name = batch.product.name if batch.product else ""

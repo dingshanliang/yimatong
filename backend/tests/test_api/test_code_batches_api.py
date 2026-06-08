@@ -328,8 +328,8 @@ class TestExportCodeBatchAPI:
             "/api/v1/code-batches/00000000-0000-0000-0000-000000000999/export",
             headers=headers,
         )
-        # export 返回空 CSV 或 200，不会 404（因为 generate_code_csv 找不到时返回 ""）
-        assert resp.status_code == 200
+        # 导出不存在的批次应返回 404
+        assert resp.status_code == 404
 
 
 class TestFreezeCodeBatchAPI:

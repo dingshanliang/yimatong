@@ -16,6 +16,9 @@ from app.core.dependencies import get_current_account_id, get_current_tenant
 from app.models.campaign import BenefitClaim, Campaign
 from app.models.scan import ScanEvent
 
+# 导出行数上限，防止大数据量导致内存溢出
+_EXPORT_ROW_LIMIT = 50_000
+
 dashboard_router = APIRouter(prefix="/api/v1/analytics", tags=["analytics-dashboards"])
 
 
@@ -220,6 +223,7 @@ async def create_export(
         if end_date:
             end_dt = datetime(end_date.year, end_date.month, end_date.day, tzinfo=UTC) + timedelta(days=1)
             stmt = stmt.where(ScanEvent.scan_time < end_dt)
+        stmt = stmt.limit(_EXPORT_ROW_LIMIT)
         result = await db.execute(stmt)
         events = result.scalars().all()
 
@@ -258,7 +262,7 @@ async def create_export(
             stmt = stmt.where(DailyScanStats.date >= start_date)
         if end_date:
             stmt = stmt.where(DailyScanStats.date <= end_date)
-        stmt = stmt.order_by(DailyScanStats.date)
+        stmt = stmt.order_by(DailyScanStats.date).limit(_EXPORT_ROW_LIMIT)
         result = await db.execute(stmt)
         stats = result.scalars().all()
 
@@ -312,7 +316,7 @@ async def create_export(
     if export_type == "risk_dashboard":
         from app.models.risk import RiskAlert
 
-        stmt = select(RiskAlert).where(RiskAlert.tenant_id == tenant_id)
+        stmt = select(RiskAlert).where(RiskAlert.tenant_id == tenant_id).limit(_EXPORT_ROW_LIMIT)
         result = await db.execute(stmt)
         alerts = result.scalars().all()
 
@@ -341,7 +345,7 @@ async def create_export(
     if export_type == "regional_dashboard":
         from app.models.channel import DiversionClue
 
-        stmt = select(DiversionClue).where(DiversionClue.tenant_id == tenant_id)
+        stmt = select(DiversionClue).where(DiversionClue.tenant_id == tenant_id).limit(_EXPORT_ROW_LIMIT)
         result = await db.execute(stmt)
         clues = result.scalars().all()
 

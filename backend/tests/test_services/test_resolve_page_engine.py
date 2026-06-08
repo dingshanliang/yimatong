@@ -69,12 +69,20 @@ async def full_setup(client: AsyncClient):
     )
     sku_id = sku.json()["id"]
 
+    # 创建生产批次（码批次需要 production_batch_id）
+    pb = await client.post(
+        "/api/v1/production-batches",
+        json={"product_id": product_id, "sku_id": sku_id, "batch_code": "E-001", "production_date": "2024-01-01"},
+        headers=headers,
+    )
+    production_batch_id = pb.json()["id"]
+
     batch = await client.post(
         "/api/v1/code-batches",
         json={
             "product_id": product_id,
             "sku_id": sku_id,
-            "batch_code": "E-001",
+            "production_batch_id": production_batch_id,
             "quantity": 2,
         },
         headers=headers,

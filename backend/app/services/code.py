@@ -76,20 +76,30 @@ async def create_code_batch(
     total_generated = 0
 
     def _build_items():
+        used_ids: set[str] = set()
+
+        def _unique_public_id() -> str:
+            for _ in range(10):
+                pid = generate_public_id()
+                if pid not in used_ids:
+                    used_ids.add(pid)
+                    return pid
+            raise RuntimeError("Failed to generate unique public_id after 10 retries")
+
         if code_type == CodeType.paired:
             for _ in range(quantity):
                 pair_id = uuid.uuid4()
                 yield CodeItem(
                     tenant_id=tenant_id,
                     code_batch_id=batch.id,
-                    public_id=generate_public_id(),
+                    public_id=_unique_public_id(),
                     code_type=CodeType.outer,
                     pair_id=pair_id,
                 )
                 yield CodeItem(
                     tenant_id=tenant_id,
                     code_batch_id=batch.id,
-                    public_id=generate_public_id(),
+                    public_id=_unique_public_id(),
                     code_type=CodeType.inner,
                     pair_id=pair_id,
                 )
@@ -98,7 +108,7 @@ async def create_code_batch(
                 yield CodeItem(
                     tenant_id=tenant_id,
                     code_batch_id=batch.id,
-                    public_id=generate_public_id(),
+                    public_id=_unique_public_id(),
                     code_type=CodeType.single,
                 )
 
@@ -451,12 +461,13 @@ async def void_batch(db: AsyncSession, tenant_id: uuid.UUID, batch_id: uuid.UUID
 
 async def mark_printing(db: AsyncSession, tenant_id: uuid.UUID, batch_id: uuid.UUID) -> dict:
     """标记码批次为印刷中（completed -> printing）"""
+    from app.services.batch_state import can_transition_batch
+
     result = await db.execute(select(CodeBatch).where(CodeBatch.id == batch_id, CodeBatch.tenant_id == tenant_id))
     batch = result.scalar_one_or_none()
     if not batch:
         raise ValueError("Code batch not found")
-    if batch.status != CodeBatchStatus.completed:
-        raise ValueError(f"Cannot mark printing from status '{batch.status.value}', expected 'completed'")
+    can_transition_batch(batch.status, CodeBatchStatus.printing, raise_on_invalid=True)
 
     batch.status = CodeBatchStatus.printing
     await db.flush()
@@ -468,12 +479,13 @@ async def mark_printing(db: AsyncSession, tenant_id: uuid.UUID, batch_id: uuid.U
 
 async def mark_delivered(db: AsyncSession, tenant_id: uuid.UUID, batch_id: uuid.UUID) -> dict:
     """标记码批次为已交付（printing -> delivered）"""
+    from app.services.batch_state import can_transition_batch
+
     result = await db.execute(select(CodeBatch).where(CodeBatch.id == batch_id, CodeBatch.tenant_id == tenant_id))
     batch = result.scalar_one_or_none()
     if not batch:
         raise ValueError("Code batch not found")
-    if batch.status != CodeBatchStatus.printing:
-        raise ValueError(f"Cannot mark delivered from status '{batch.status.value}', expected 'printing'")
+    can_transition_batch(batch.status, CodeBatchStatus.delivered, raise_on_invalid=True)
 
     batch.status = CodeBatchStatus.delivered
     await db.flush()
@@ -506,7 +518,7 @@ async def update_batch(
     return await get_code_batch(db, tenant_id, batch_id)
 
 
-_ITEM_ALLOWED_FIELDS = {"status"}
+_ITEM_ALLOWED_FIELDS = set()
 
 
 async def update_code_item(
@@ -515,10 +527,17 @@ async def update_code_item(
     item_id: uuid.UUID,
     **kwargs,
 ) -> CodeItem | None:
+    from app.core.exceptions import BadRequestError
+
     result = await db.execute(select(CodeItem).where(CodeItem.id == item_id, CodeItem.tenant_id == tenant_id))
     item = result.scalar_one_or_none()
     if not item:
         return None
+    if "status" in kwargs:
+        raise BadRequestError(
+            "Direct status modification is not allowed. "
+            "Use dedicated endpoints: /bind, /revoke, /activate."
+        )
     for k, v in kwargs.items():
         if k in _ITEM_ALLOWED_FIELDS and v is not None:
             setattr(item, k, v)
