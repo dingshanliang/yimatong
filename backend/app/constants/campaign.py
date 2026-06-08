@@ -76,13 +76,3 @@ UPDATABLE_BENEFIT_FIELDS = {
     "name", "benefit_type", "config_json", "stock_total",
     "per_person_limit", "connector_id", "status", "campaign_id",
 }
-
-# campaign_type 合法值
-CAMPAIGN_TYPES = {
-    "coupon", "discount", "trial", "presale", "event",
-    "lottery", "points", "private_domain_repurchase", "festival", "custom",
-}
-
-# 计算状态常量
-COMPUTED_STATUS_PENDING = "pending"
-COMPUTED_STATUS_VALUES = {"draft", "active", "paused", "ended", "pending"}

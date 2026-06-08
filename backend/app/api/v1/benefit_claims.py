@@ -56,14 +56,14 @@ async def claim_benefit_h5(
 
     # 从 scan_token payload 中提取 tenant_id，确保只能领取同租户的权益
     token_tenant_id = payload.get("tenant_id")
-    benefit_filter = [Benefit.id == benefit_id]
-    if token_tenant_id:
-        try:
-            benefit_filter.append(Benefit.tenant_id == uuid.UUID(token_tenant_id))
-        except ValueError:
-            pass
+    if not token_tenant_id:
+        raise HTTPException(status_code=401, detail="invalid token: missing tenant_id")
+    try:
+        tid = uuid.UUID(token_tenant_id)
+    except ValueError:
+        raise HTTPException(status_code=401, detail="invalid token: corrupt tenant_id")
 
-    result = await db.execute(select(Benefit).where(*benefit_filter))
+    result = await db.execute(select(Benefit).where(Benefit.id == benefit_id, Benefit.tenant_id == tid))
     benefit = result.scalar_one_or_none()
     if not benefit:
         raise HTTPException(status_code=404, detail="benefit not found")

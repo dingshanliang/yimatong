@@ -3,7 +3,6 @@
 import logging
 import uuid
 from datetime import datetime
-from typing import TypedDict
 
 from sqlalchemy import and_, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -12,27 +11,18 @@ from app.constants.campaign import (
     ALLOWED_CAMPAIGN_TRANSITIONS,
     BENEFIT_STATUSES,
     BENEFIT_TYPES,
+    UPDATABLE_BENEFIT_FIELDS,
+    UPDATABLE_CAMPAIGN_FIELDS,
     CampaignStatus,
 )
 from app.core.event_bus import event_bus
 from app.models.campaign import Benefit, BenefitClaim, Campaign
 from app.models.connector import BenefitDelivery
 from app.models.product import Product
+from app.utils import escape_like_pattern
 from app.utils.campaign_validation import validate_benefit_config_shape
 
 logger = logging.getLogger(__name__)
-
-
-def _escape_like(value: str) -> str:
-    """转义 SQL LIKE/ILIKE 通配符，防止用户输入干扰模式匹配"""
-    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-
-
-class ClaimResult(TypedDict, total=False):
-    """claim_benefit 返回类型"""
-
-    status: str
-    claim: dict
 
 
 async def create_campaign(
@@ -100,7 +90,7 @@ async def list_campaigns(
             stmt = stmt.where(status_conditions)
             count_stmt = count_stmt.where(status_conditions)
     if q:
-        pattern = f"%{_escape_like(q)}%"
+        pattern = f"%{escape_like_pattern(q)}%"
         stmt = stmt.where(Campaign.name.ilike(pattern, escape="\\"))
         count_stmt = count_stmt.where(Campaign.name.ilike(pattern, escape="\\"))
 
@@ -170,8 +160,6 @@ async def update_campaign(
     campaign_id: uuid.UUID,
     **fields,
 ) -> dict | None:
-    from app.constants.campaign import UPDATABLE_CAMPAIGN_FIELDS
-
     result = await db.execute(
         select(Campaign).where(Campaign.id == campaign_id, Campaign.tenant_id == tenant_id),
     )
@@ -179,13 +167,13 @@ async def update_campaign(
     if not c:
         return None
     for k, v in fields.items():
-        if k not in UPDATABLE_CAMPAIGN_FIELDS | {"product_id"}:  # product_id handled separately
-            continue
-        if k == "rules_json" and isinstance(v, dict):
-            v = _rules_with_product_id(v, fields.get("product_id", c.product_id))
         if k == "product_id":
             c.product_id = v
             continue
+        if k not in UPDATABLE_CAMPAIGN_FIELDS:
+            continue
+        if k == "rules_json" and isinstance(v, dict):
+            v = _rules_with_product_id(v, fields.get("product_id", c.product_id))
         if v is not None:
             setattr(c, k, v)
     if "product_id" in fields:
@@ -428,7 +416,7 @@ async def list_all_benefits(
         )
     )
     if q:
-        pattern = f"%{_escape_like(q)}%"
+        pattern = f"%{escape_like_pattern(q)}%"
         stmt = stmt.where(Benefit.name.ilike(pattern, escape="\\"))
         count_stmt = count_stmt.where(Benefit.name.ilike(pattern, escape="\\"))
     if benefit_type:
@@ -504,8 +492,6 @@ async def update_benefit(
     benefit_id: uuid.UUID,
     **fields,
 ) -> dict | None:
-    from app.constants.campaign import UPDATABLE_BENEFIT_FIELDS
-
     result = await db.execute(
         select(Benefit).where(Benefit.id == benefit_id, Benefit.tenant_id == tenant_id),
     )
@@ -600,7 +586,7 @@ async def list_benefit_claims_admin(
     )
     filters = [BenefitClaim.tenant_id == tenant_id]
     if q:
-        pattern = f"%{_escape_like(q)}%"
+        pattern = f"%{escape_like_pattern(q)}%"
         filters.append(
             or_(
                 BenefitClaim.consumer_id.ilike(pattern, escape="\\"),
@@ -711,13 +697,8 @@ async def claim_benefit(
             select(Campaign).where(Campaign.id == benefit.campaign_id, Campaign.tenant_id == tenant_id),
         )
         campaign = campaign_result.scalar_one_or_none()
-        if campaign:
-            if campaign.status == CampaignStatus.ENDED:
-                return {"status": "campaign_inactive"}
-            # 同时检查时间过期：status='active' 但 end_at 已过
-            computed = _compute_campaign_status(campaign)
-            if computed == CampaignStatus.ENDED:
-                return {"status": "campaign_inactive"}
+        if campaign and _compute_campaign_status(campaign) == CampaignStatus.ENDED:
+            return {"status": "campaign_inactive"}
 
     # 1.1 原子库存扣减：UPDATE ... WHERE stock_used < stock_total
     # 数据库层面保证不会超卖，无需应用层锁

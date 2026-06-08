@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.core.dependencies import get_current_tenant
-from app.schemas.campaign import CampaignStatusRequest as ValidatedCampaignStatusRequest
+from app.schemas.campaign import CampaignStatusRequest
 from app.schemas.common import PaginatedResponse
 from app.utils.auth_rbac import require_permission
 
@@ -269,7 +269,7 @@ async def redeem_coupon(
 @open_api_router.patch("/campaigns/{campaign_id}/status")
 async def update_campaign_status(
     campaign_id: uuid.UUID,
-    body: ValidatedCampaignStatusRequest,
+    body: CampaignStatusRequest,
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
     _: None = Depends(require_permission("campaign:status")),
