@@ -15,6 +15,7 @@ from app.models.code import CodeItemStatus, CodeType
 from app.models.scan import ScanEvent
 from app.services.page_render import render_page
 from app.services.page_templates import (
+    EXPIRED_PAGE,
     INNER_VERIFY_PAGE,
     NOT_ACTIVE_PAGE,
     NOT_FOUND_PAGE,
@@ -34,6 +35,14 @@ from app.utils.client_ip import get_client_ip
 logger = logging.getLogger(__name__)
 
 resolver_router = APIRouter(tags=["resolver"])
+
+# 不允许扫码的状态（返回提示页，不颁发 token）
+_BLOCKED_STATUSES = frozenset({
+    CodeItemStatus.revoked,
+    CodeItemStatus.frozen,
+    CodeItemStatus.created,
+    CodeItemStatus.expired,
+})
 
 
 @resolver_router.get("/c/{public_id}", summary="解析码")
@@ -69,22 +78,30 @@ async def resolve_code_endpoint(
 
     status = data["status"]
 
-    # 3. 错误状态
-    if status in (CodeItemStatus.revoked, CodeItemStatus.frozen, CodeItemStatus.created):
+    # 3. 阻断状态（revoked/frozen/created/expired）
+    if status in _BLOCKED_STATUSES:
         return _error_status(status, public_id, want_json)
 
-    # 4. 记录扫码事件 + 生成 scan_token
-    user_agent = request.headers.get("user-agent", "")
-    scan_info = await _record_scan(db, data, public_id, client_ip, user_agent, status)
-    ip_hash_val = hashlib.sha256(client_ip.encode()).hexdigest() if client_ip != "unknown" else ""
-    scan_token = create_scan_token(public_id, ip_hash_val)
+    # 4. 计算 IP hash（一次，复用）
+    ip_hash = hashlib.sha256(client_ip.encode()).hexdigest() if client_ip != "unknown" else None
 
-    # 5. JSON 模式
+    # 5. 记录扫码事件
+    user_agent = request.headers.get("user-agent", "")
+    scan_info = await _record_scan(db, data, public_id, ip_hash, user_agent, status)
+
+    # 6. 生成 scan_token（含 tenant_id）
+    scan_token = create_scan_token(
+        public_id=public_id,
+        ip_hash=ip_hash,
+        tenant_id=data["tenant_id"],
+    )
+
+    # 7. JSON 模式
     if want_json:
         resp = await build_json_response(db, data, scan_token, scan_info)
         return JSONResponse(content=resp)
 
-    # 6. HTML 模式
+    # 8. HTML 模式
     return await _html_response(db, data, public_id)
 
 
@@ -108,6 +125,11 @@ def _error_status(status: str, public_id: str, want_json: bool):
             return JSONResponse(status_code=403, content={"code_data": {"status": "frozen", "public_id": public_id}})
         return HTMLResponse(content=RISK_FROZEN_PAGE, status_code=403)
 
+    if status == CodeItemStatus.expired:
+        if want_json:
+            return JSONResponse(status_code=410, content={"code_data": {"status": "expired", "public_id": public_id}})
+        return HTMLResponse(content=EXPIRED_PAGE, status_code=410)
+
     # CodeItemStatus.created
     if want_json:
         return JSONResponse(content={"code_data": {"status": "not_active", "public_id": public_id}})
@@ -118,7 +140,7 @@ async def _record_scan(
     db: AsyncSession,
     data: dict,
     public_id: str,
-    client_ip: str,
+    ip_hash: str | None,
     user_agent: str,
     status: str,
 ) -> dict:
@@ -126,7 +148,6 @@ async def _record_scan(
     if status != CodeItemStatus.activated:
         return scan_info
 
-    ip_hash = hashlib.sha256(client_ip.encode()).hexdigest() if client_ip != "unknown" else None
     try:
         count_before = await db.execute(
             select(func.count()).select_from(ScanEvent).where(ScanEvent.public_id == public_id)

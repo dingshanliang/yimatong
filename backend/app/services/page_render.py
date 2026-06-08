@@ -25,31 +25,50 @@ async def render_page(
     tenant_id: uuid.UUID,
     template_id: uuid.UUID,
     context: dict | None = None,
+    version_id: uuid.UUID | None = None,
 ) -> str | None:
-    """渲染页面模板为 HTML"""
-    # 检查缓存
-    cache_key = f"page:{template_id}"
-    if context is None:
+    """渲染页面模板为 HTML
+
+    Args:
+        version_id: 可选，指定渲染的版本 ID（用于草稿预览）。
+                    不传时渲染 published 版本。
+    """
+    # 检查缓存（仅 published + 无自定义上下文时缓存）
+    cache_key = f"page:{tenant_id}:{template_id}"
+    if context is None and version_id is None:
         cached = await _render_cache.get(cache_key)
         if cached:
             return cached["html"]
 
-    # 获取已发布版本
-    ver_result = await db.execute(
-        select(PageVersion)
-        .where(
-            PageVersion.page_template_id == template_id,
-            PageVersion.tenant_id == tenant_id,
-            PageVersion.status == PageVersionStatus.published,
+    # 获取版本
+    if version_id:
+        ver_result = await db.execute(
+            select(PageVersion).where(
+                PageVersion.id == version_id,
+                PageVersion.tenant_id == tenant_id,
+            )
         )
-        .limit(1)
-    )
+    else:
+        ver_result = await db.execute(
+            select(PageVersion)
+            .where(
+                PageVersion.page_template_id == template_id,
+                PageVersion.tenant_id == tenant_id,
+                PageVersion.status == PageVersionStatus.published,
+            )
+            .limit(1)
+        )
     version = ver_result.scalar_one_or_none()
     if not version:
         return None
 
-    # 获取模板信息
-    tmpl_result = await db.execute(select(PageTemplate).where(PageTemplate.id == template_id))
+    # 获取模板信息（含 tenant_id 校验）
+    tmpl_result = await db.execute(
+        select(PageTemplate).where(
+            PageTemplate.id == template_id,
+            PageTemplate.tenant_id == tenant_id,
+        )
+    )
     template = tmpl_result.scalar_one_or_none()
     if not template:
         return None
@@ -68,16 +87,16 @@ async def render_page(
 
     html = tmpl.render(**render_ctx)
 
-    # 缓存（无自定义上下文时）
-    if context is None:
+    # 缓存（仅 published + 无自定义上下文时）
+    if context is None and version_id is None:
         await _render_cache.set(cache_key, {"html": html})
 
     return html
 
 
-async def invalidate_cache(template_id: uuid.UUID) -> None:
+async def invalidate_cache(tenant_id: uuid.UUID, template_id: uuid.UUID) -> None:
     """模板变更后失效缓存"""
-    cache_key = f"page:{template_id}"
+    cache_key = f"page:{tenant_id}:{template_id}"
     await _render_cache.invalidate(cache_key)
 
 

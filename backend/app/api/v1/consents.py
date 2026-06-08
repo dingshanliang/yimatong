@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
 from app.services.consent import grant_consent, withdraw_consent
 from app.services.scan_token import verify_scan_token
+from app.utils.client_ip import get_client_ip
 
 consent_router = APIRouter(tags=["consents"])
 
@@ -30,7 +31,7 @@ async def create_consent(
     tenant_id = None
     if auth_header.startswith("Bearer "):
         token = auth_header[7:]
-        client_ip = request.headers.get("X-Forwarded-For", request.client.host if request.client else "unknown").split(",")[0].strip()
+        client_ip = get_client_ip(request)
         ip_hash = hashlib.sha256(client_ip.encode()).hexdigest() if client_ip != "unknown" else None
         payload = verify_scan_token(token, body.public_id, expected_ip_hash=ip_hash)
         if payload:
@@ -47,7 +48,7 @@ async def create_consent(
     if not tenant_id:
         return {"status": "ignored", "reason": "cannot_determine_tenant"}
 
-    client_ip = request.client.host if request.client else None
+    client_ip = get_client_ip(request)
     ip_hash = hashlib.sha256(client_ip.encode()).hexdigest() if client_ip else None
 
     record = await grant_consent(
@@ -78,7 +79,7 @@ async def withdraw_consent_endpoint(
         token = auth_header[7:]
         from app.services.scan_token import verify_scan_token
 
-        client_ip = request.headers.get("X-Forwarded-For", request.client.host if request.client else "unknown").split(",")[0].strip()
+        client_ip = get_client_ip(request)
         ip_hash = hashlib.sha256(client_ip.encode()).hexdigest() if client_ip != "unknown" else None
         payload = verify_scan_token(token, expected_ip_hash=ip_hash)
         if payload:

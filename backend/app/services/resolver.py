@@ -36,6 +36,7 @@ async def resolve_public_code(
     if batch:
         data["product_id"] = str(batch.product_id)
         data["sku_id"] = str(batch.sku_id)
+        data["production_batch_id"] = str(batch.production_batch_id) if batch.production_batch_id else None
 
         # 查找产品关联的页面模板
         tmpl_result = await db.execute(

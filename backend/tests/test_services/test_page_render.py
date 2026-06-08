@@ -121,7 +121,7 @@ class TestPageRender:
         html1 = await render_page(db, tid, tmpl_id)
         html2 = await render_page(db, tid, tmpl_id)
         assert html1 == html2
-        cached = await _render_cache.get(f"page:{tmpl_id}")
+        cached = await _render_cache.get(f"page:{tid}:{tmpl_id}")
         assert cached is not None
 
     @pytest.mark.anyio
@@ -135,11 +135,11 @@ class TestPageRender:
             },
         )
         await render_page(db, tid, tmpl_id)
-        cached = await _render_cache.get(f"page:{tmpl_id}")
+        cached = await _render_cache.get(f"page:{tid}:{tmpl_id}")
         assert cached is not None
 
-        await invalidate_cache(tmpl_id)
-        cached_after = await _render_cache.get(f"page:{tmpl_id}")
+        await invalidate_cache(tid, tmpl_id)
+        cached_after = await _render_cache.get(f"page:{tid}:{tmpl_id}")
         assert cached_after is None
 
     @pytest.mark.anyio

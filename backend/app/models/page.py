@@ -3,7 +3,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import JSON, DateTime, Index, String, func
+from sqlalchemy import JSON, DateTime, Index, String, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base
@@ -75,4 +75,11 @@ class PageVersion(Base):
         nullable=False,
     )
 
-    __table_args__ = (Index("ix_page_versions_template_status", "page_template_id", "status"),)
+    __table_args__ = (
+        Index("ix_page_versions_template_status", "page_template_id", "status"),
+        UniqueConstraint(
+            "page_template_id",
+            "version",
+            name="uq_page_versions_template_version",
+        ),
+    )

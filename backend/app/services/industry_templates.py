@@ -1,20 +1,43 @@
-"""行业模板预置数据"""
+"""行业模板预置数据 — 使用前端模块化 DSL 格式"""
 
 FOOD_TRACEABILITY_TEMPLATE = {
     "name": "食品溯源页",
     "template_type": "traceability",
     "description": "食品行业标准模板：产品卡 + 溯源时间线 + 检测报告 + 企业资质",
     "config_json": {
-        "dsl_version": "1.0",
-        "title": "食品安全溯源",
-        "theme": {"primary_color": "#1677ff", "background": "#ffffff"},
         "modules": [
-            {"type": "product_card", "visible": True, "order": 1},
-            {"type": "traceability_timeline", "visible": True, "order": 2},
-            {"type": "inspection_report", "visible": True, "order": 3},
-            {"type": "company_credentials", "visible": True, "order": 4},
-            {"type": "activity_zone", "visible": False, "order": 5},
+            {
+                "id": "food_hero",
+                "type": "product_hero",
+                "enabled": True,
+                "config": {"show_verify_badge": True},
+            },
+            {
+                "id": "food_trace",
+                "type": "light_traceability",
+                "enabled": True,
+                "config": {"fields": ["origin", "production_date", "batch_no"]},
+            },
+            {
+                "id": "food_reports",
+                "type": "test_reports",
+                "enabled": True,
+                "config": {},
+            },
+            {
+                "id": "food_certs",
+                "type": "certificates",
+                "enabled": True,
+                "config": {},
+            },
+            {
+                "id": "food_cta",
+                "type": "cta_group",
+                "enabled": False,
+                "config": {},
+            },
         ],
+        "routing": {"default_page": True, "campaign_periods": [{"mode": "evergreen"}]},
     },
 }
 
@@ -23,16 +46,39 @@ AGRICULTURE_TEMPLATE = {
     "template_type": "traceability",
     "description": "农产品行业模板：强调产地信息、种植/采摘流程、质量认证",
     "config_json": {
-        "dsl_version": "1.0",
-        "title": "农产品溯源",
-        "theme": {"primary_color": "#52c41a", "background": "#f6ffed"},
         "modules": [
-            {"type": "product_card", "visible": True, "order": 1},
-            {"type": "origin_info", "visible": True, "order": 2},
-            {"type": "planting_timeline", "visible": True, "order": 3},
-            {"type": "quality_certification", "visible": True, "order": 4},
-            {"type": "traceability_timeline", "visible": True, "order": 5},
+            {
+                "id": "agri_hero",
+                "type": "product_hero",
+                "enabled": True,
+                "config": {"show_verify_badge": True},
+            },
+            {
+                "id": "agri_trace",
+                "type": "light_traceability",
+                "enabled": True,
+                "config": {"fields": ["origin", "production_date", "expiry_date", "batch_no"]},
+            },
+            {
+                "id": "agri_media",
+                "type": "media_section",
+                "enabled": True,
+                "config": {},
+            },
+            {
+                "id": "agri_certs",
+                "type": "certificates",
+                "enabled": True,
+                "config": {},
+            },
+            {
+                "id": "agri_legal",
+                "type": "legal_terms",
+                "enabled": True,
+                "config": {"show_privacy_policy": True},
+            },
         ],
+        "routing": {"default_page": True, "campaign_periods": [{"mode": "evergreen"}]},
     },
 }
 
@@ -41,16 +87,39 @@ GIFT_BOX_TEMPLATE = {
     "template_type": "brand_story",
     "description": "礼盒行业模板：强调品牌故事、礼盒内容物、节日活动推广",
     "config_json": {
-        "dsl_version": "1.0",
-        "title": "精品礼盒",
-        "theme": {"primary_color": "#cf1322", "background": "#fff1f0"},
         "modules": [
-            {"type": "product_card", "visible": True, "order": 1},
-            {"type": "brand_story", "visible": True, "order": 2},
-            {"type": "gift_contents", "visible": True, "order": 3},
-            {"type": "festival_promotion", "visible": True, "order": 4},
-            {"type": "activity_zone", "visible": True, "order": 5},
+            {
+                "id": "gift_hero",
+                "type": "product_hero",
+                "enabled": True,
+                "config": {"show_verify_badge": True},
+            },
+            {
+                "id": "gift_media",
+                "type": "media_section",
+                "enabled": True,
+                "config": {},
+            },
+            {
+                "id": "gift_trace",
+                "type": "light_traceability",
+                "enabled": True,
+                "config": {"fields": ["origin", "production_date", "batch_no"]},
+            },
+            {
+                "id": "gift_benefit",
+                "type": "benefit_card",
+                "enabled": True,
+                "config": {},
+            },
+            {
+                "id": "gift_cta",
+                "type": "cta_group",
+                "enabled": True,
+                "config": {},
+            },
         ],
+        "routing": {"default_page": True, "campaign_periods": [{"mode": "evergreen"}]},
     },
 }
 
