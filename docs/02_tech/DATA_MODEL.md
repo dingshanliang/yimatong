@@ -1,6 +1,6 @@
 ---
 status: active
-last_verified: 2026-06-03
+last_verified: 2026-06-08
 accuracy: high
 ---
 
@@ -227,10 +227,13 @@ erDiagram
 | public_id | string | 对外短码 ID，不可枚举 |
 | code_type | enum | single, outer, inner, box |
 | pair_id | uuid | 内外码配对 |
-| status | enum | generated, exported, active, first_scanned, repeated_scanned, risk_frozen, voided |
+| status | enum | created, activated, bound, expired, revoked, frozen |
 | activated_at | datetime | 激活时间 |
 | bound_at | datetime | 绑定时间 |
 | revoked_at | datetime | 撤销时间 |
+| first_scanned_at | datetime | 首次扫码时间（用于原子首扫判断） |
+
+> **索引**：`ix_code_items_public_id` (UNIQUE), `ix_code_items_tenant_batch`, `ix_code_items_tenant_status`, `ix_code_items_pair`
 
 ## 5. 页面引擎（page.py）
 
@@ -381,7 +384,10 @@ erDiagram
 | ip_hash | string | IP 哈希 |
 | user_agent | string | UA |
 | is_first_scan | boolean | 是否首扫 |
-| environment | jsonb | 扫码环境 |
+| environment | string | 扫码环境 (wechat/alipay/browser) |
+
+> **索引**：`ix_scan_events_public_id`, `ix_scan_events_tenant_time`, `ix_scan_events_ip`, `ix_scan_events_environment`
+> > **分区策略**：按月分区（`scan_events_YYYY_MM`），分区键 `scan_time`
 
 ## 9. 渠道与区域（channel.py）
 

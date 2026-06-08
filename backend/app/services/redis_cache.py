@@ -108,6 +108,50 @@ class AsyncRedisCache:
     async def is_token_revoked(self, jti: str) -> bool:
         return await self.get(f"revoked:{jti}") is not None
 
+    async def rate_limit_check(self, key: str, max_attempts: int, window_seconds: int) -> tuple[bool, int]:
+        """滑动窗口速率限制。返回 (allowed, remaining_attempts)。"""
+        now = time.time()
+        window_start = now - window_seconds
+
+        r = await get_redis_pool()
+        if r:
+            try:
+                pipe = r.pipeline()
+                pipe.zremrangebyscore(key, 0, window_start)
+                pipe.zcard(key)
+                pipe.zadd(key, {str(now): now})
+                pipe.expire(key, window_seconds)
+                results = await pipe.execute()
+                current_count = results[1]
+                remaining = max(0, max_attempts - current_count - 1)
+                allowed = current_count < max_attempts
+                return allowed, remaining
+            except Exception:
+                pass  # Fall through to in-memory
+
+        # In-memory fallback
+        mem_key = self._key(f"rl:{key}")
+        entry = self._mem_store.get(mem_key)
+        if entry:
+            val, expire_at = entry
+            if time.time() > expire_at:
+                del self._mem_store[mem_key]
+                entry = None
+
+        if entry:
+            count = int(json.loads(entry[0]).get("count", 0))
+        else:
+            count = 0
+
+        allowed = count < max_attempts
+        new_count = count + 1
+        self._mem_store[mem_key] = (
+            json.dumps({"count": new_count}),
+            time.time() + window_seconds,
+        )
+        remaining = max(0, max_attempts - new_count)
+        return allowed, remaining
+
     async def set_idempotent(self, key: str, ttl: int = 60) -> bool:
         """设置幂等键，返回 True 表示首次设置，False 表示已存在"""
         full_key = self._key(f"idem:{key}")

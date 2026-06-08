@@ -1,3 +1,4 @@
+import uuid
 from collections.abc import AsyncGenerator
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
@@ -22,10 +23,17 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
         if tenant_id and _is_pg:
             from sqlalchemy import text
 
-            # asyncpg does not support parameterized SET LOCAL, but UUID v7
-            # only contains [0-9a-f-] so f-string is safe here.
+            # asyncpg does not support parameterized SET LOCAL.
+            # Validate strict UUID format before f-string to prevent injection.
+            # Also allow known safe non-UUID identifiers (e.g. "platform").
+            validated_id = str(tenant_id)
+            if validated_id not in ("platform",):
+                try:
+                    uuid.UUID(validated_id)
+                except ValueError:
+                    raise ValueError(f"Invalid tenant_id format: {validated_id}")
             await session.execute(
-                text(f"SET LOCAL app.tenant_id = '{str(tenant_id)}'")
+                text(f"SET LOCAL app.tenant_id = '{validated_id}'")
             )
         try:
             yield session

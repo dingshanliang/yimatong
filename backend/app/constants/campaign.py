@@ -66,3 +66,13 @@ ALLOWED_CAMPAIGN_TRANSITIONS: dict[str, list[str]] = {
     CampaignStatus.PAUSED: [CampaignStatus.ACTIVE, CampaignStatus.ENDED],
     CampaignStatus.ENDED: [],  # 不可逆
 }
+
+# 可更新字段白名单（防止 mass assignment）
+UPDATABLE_CAMPAIGN_FIELDS = {
+    "name", "campaign_type", "start_at", "end_at", "rules_json", "description",
+}
+
+UPDATABLE_BENEFIT_FIELDS = {
+    "name", "benefit_type", "config_json", "stock_total",
+    "per_person_limit", "connector_id", "status", "campaign_id",
+}

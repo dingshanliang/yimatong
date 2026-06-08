@@ -12,6 +12,13 @@ from app.main import app
 from app.utils.security import create_access_token
 from tests.conftest import TestSessionLocal
 
+def _platform_admin_headers() -> dict:
+    from app.utils.security import create_access_token
+    token = create_access_token("platform", "platform-admin", "platform_admin")
+    return {"Authorization": f"Bearer {token}"}
+
+
+
 
 @pytest.fixture
 async def db_session() -> AsyncGenerator[AsyncSession, None]:
@@ -59,6 +66,7 @@ async def sample_tenants(client: AsyncClient):
                 "admin_name": f"管理员{i + 1}",
                 "admin_password": "Test1234",
             },
+            headers=_platform_admin_headers(),
         )
         assert resp.status_code == 201
         tenants.append(resp.json())

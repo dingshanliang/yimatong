@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
 from app.core.dependencies import get_current_tenant
 from app.models.tenant import Permission, Role, account_roles, role_permissions
+from app.utils.auth_rbac import require_role
 
 router = APIRouter(prefix="/api/v1/roles", tags=["roles"])
 
@@ -48,10 +49,11 @@ async def create_role(
     body: RoleCreateRequest,
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
+    _role: str = Depends(require_role("admin")),
 ):
     existing = await db.execute(select(Role).where(Role.tenant_id == tenant_id, Role.name == body.name))
     if existing.scalar_one_or_none():
-        raise HTTPException(status_code=409, detail="Role name already exists")
+        raise HTTPException(status_code=409, detail="角色名称已存在")
 
     role = Role(tenant_id=tenant_id, name=body.name, description=body.description)
     db.add(role)
@@ -80,12 +82,13 @@ async def create_permission(
     body: PermissionCreateRequest,
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
+    _role: str = Depends(require_role("admin")),
 ):
     existing = await db.execute(
         select(Permission).where(Permission.tenant_id == tenant_id, Permission.code == body.code)
     )
     if existing.scalar_one_or_none():
-        raise HTTPException(status_code=409, detail="Permission code already exists")
+        raise HTTPException(status_code=409, detail="权限代码已存在")
 
     perm = Permission(tenant_id=tenant_id, code=body.code, description=body.description)
     db.add(perm)
@@ -100,19 +103,20 @@ async def assign_permission(
     permission_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
+    _role: str = Depends(require_role("admin")),
 ):
     role = await db.get(Role, role_id)
     if not role or role.tenant_id != tenant_id:
-        raise HTTPException(status_code=404, detail="Role not found")
+        raise HTTPException(status_code=404, detail="角色不存在")
     perm = await db.get(Permission, permission_id)
     if not perm or perm.tenant_id != tenant_id:
-        raise HTTPException(status_code=404, detail="Permission not found")
+        raise HTTPException(status_code=404, detail="权限不存在")
 
     try:
         await db.execute(role_permissions.insert().values(role_id=role_id, permission_id=permission_id))
         await db.commit()
     except IntegrityError:
-        raise HTTPException(status_code=409, detail="Permission already assigned to this role")
+        raise HTTPException(status_code=409, detail="该角色已拥有此权限")
     return {"ok": True}
 
 
@@ -121,10 +125,11 @@ async def delete_role(
     role_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
+    _role: str = Depends(require_role("admin")),
 ):
     role = await db.get(Role, role_id)
     if not role or role.tenant_id != tenant_id:
-        raise HTTPException(status_code=404, detail="Role not found")
+        raise HTTPException(status_code=404, detail="角色不存在")
 
     # Check if any accounts are using this role
     result = await db.execute(

@@ -1,6 +1,9 @@
 packages:
-  - "apps/*"
-  - "packages/*"
+  - apps/*
+  - packages/*
+
 allowBuilds:
   sharp: true
   unrs-resolver: true
+
+storeDir: /Users/ericding/Library/pnpm/store/v11

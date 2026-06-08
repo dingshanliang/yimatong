@@ -3,6 +3,7 @@ from datetime import UTC, datetime, timedelta
 
 import bcrypt
 from jose import JWTError, jwt
+from starlette.responses import Response
 
 from app.core.config import settings
 
@@ -72,11 +73,61 @@ async def verify_access_token(token: str) -> dict | None:
         return None
 
 
-def verify_refresh_token(token: str) -> dict | None:
+async def verify_refresh_token(token: str) -> dict | None:
+    """验证 refresh token，检查黑名单。"""
     try:
         payload = decode_token(token)
         if payload.get("type") != "refresh":
             return None
+        jti = payload.get("jti")
+        if jti:
+            from app.services.redis_cache import AsyncRedisCache
+
+            cache = AsyncRedisCache()
+            if await cache.is_token_revoked(jti):
+                return None
         return payload
     except JWTError:
         return None
+
+
+def set_auth_cookies(
+    response: Response,
+    access_token: str,
+    refresh_token: str | None = None,
+    max_age_access: int = 900,
+    max_age_refresh: int = 30 * 86400,
+) -> None:
+    """设置 HttpOnly 认证 cookie。"""
+    domain = settings.cookie_domain or None
+    secure = settings.cookie_secure
+    samesite = settings.cookie_samesite
+
+    response.set_cookie(
+        "access_token",
+        access_token,
+        max_age=max_age_access,
+        httponly=True,
+        secure=secure,
+        samesite=samesite,
+        domain=domain,
+        path="/",
+    )
+    if refresh_token:
+        response.set_cookie(
+            "refresh_token",
+            refresh_token,
+            max_age=max_age_refresh,
+            httponly=True,
+            secure=secure,
+            samesite=samesite,
+            domain=domain,
+            path="/api/v1/auth/refresh",  # 只在刷新时发送
+        )
+
+
+def clear_auth_cookies(response: Response) -> None:
+    """清除认证 cookie。"""
+    domain = settings.cookie_domain or None
+    response.delete_cookie("access_token", domain=domain, path="/")
+    response.delete_cookie("refresh_token", domain=domain, path="/api/v1/auth/refresh")

@@ -26,6 +26,13 @@ from app.models.scan import ScanEvent
 from app.utils.security import create_access_token
 from tests.conftest import TestSessionLocal
 
+def _platform_admin_headers() -> dict:
+    from app.utils.security import create_access_token
+    token = create_access_token("platform", "platform-admin", "platform_admin")
+    return {"Authorization": f"Bearer {token}"}
+
+
+
 
 @pytest.fixture
 async def db_session() -> AsyncGenerator[AsyncSession, None]:
@@ -57,6 +64,7 @@ async def full_setup(client: AsyncClient, db_session: AsyncSession):
             "admin_name": "FoodAdmin",
             "admin_password": "Pass1234",
         },
+        headers=_platform_admin_headers(),
     )
     assert resp.status_code in (200, 201), f"创建租户失败: {resp.text}"
     tenant_id = resp.json()["id"]

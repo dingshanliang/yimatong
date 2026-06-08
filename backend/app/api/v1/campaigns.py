@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.core.dependencies import get_current_tenant
+from app.models.campaign import Campaign
 from app.schemas.campaign import (
     BenefitCreateRequest,
     CampaignCreateRequest,
@@ -31,6 +32,7 @@ from app.services.campaign import (
     update_campaign,
 )
 from app.services.campaign_analytics import get_campaign_comparison, get_campaign_funnel
+from app.services.quota import QuotaExceededError, check_quota_for_tenant
 
 campaign_router = APIRouter(prefix="/api/v1/campaigns", tags=["campaigns"])
 
@@ -53,6 +55,12 @@ async def create_campaign_endpoint(
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
+    # Quota check
+    try:
+        await check_quota_for_tenant(db, tenant_id, "max_campaigns", Campaign)
+    except QuotaExceededError as e:
+        raise HTTPException(status_code=429, detail=str(e))
+
     product_id = _request_product_id(body.product_id, body.rules_json)
     if product_id and not await campaign_product_exists(db, tenant_id, product_id):
         raise HTTPException(status_code=400, detail="Product not found")
@@ -172,17 +180,20 @@ async def create_benefit_endpoint(
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
-    return await create_benefit(
-        db,
-        tenant_id,
-        campaign_id,
-        body.name,
-        body.benefit_type,
-        body.config_json,
-        body.stock_total,
-        body.per_person_limit,
-        connector_id=body.connector_id,
-    )
+    try:
+        return await create_benefit(
+            db,
+            tenant_id,
+            campaign_id,
+            body.name,
+            body.benefit_type,
+            body.config_json,
+            body.stock_total,
+            body.per_person_limit,
+            connector_id=body.connector_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @campaign_router.post("/{campaign_id}/benefits/{benefit_id}/attach", summary="活动使用权益")

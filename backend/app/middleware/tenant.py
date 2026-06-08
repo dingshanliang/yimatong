@@ -20,6 +20,7 @@ class TenantScopeMiddleware(BaseHTTPMiddleware):
             "/api/v1/auth/refresh",
             "/api/v1/consumers/lead-capture",
             "/api/v1/consumers/me",
+            "/api/v1/invite-codes/register",
         }
         # SSE 端点使用 query-param 认证，不走 middleware JWT
         query_auth_paths = {"/api/v1/risk-dashboard/alerts/stream"}
@@ -35,7 +36,6 @@ class TenantScopeMiddleware(BaseHTTPMiddleware):
             or request.url.path == "/api/v1/integrations/wecom/contact-way"
             or request.url.path == "/api/v1/integrations/wecom/mock-added"
             or request.url.path == "/api/v1/platform/auth/login"
-            or (request.url.path == "/api/v1/tenants" and request.method == "POST")
             or request.url.path.startswith("/api/v1/connectors/connectors/")
             and request.url.path.endswith("/callback")
             or request.url.path.startswith("/api/v1/wechat/")
@@ -52,11 +52,16 @@ class TenantScopeMiddleware(BaseHTTPMiddleware):
     async def _authenticate_jwt(self, request: Request, call_next):
         from starlette.responses import JSONResponse
 
-        auth_header = request.headers.get("Authorization", "")
-        if not auth_header.startswith("Bearer "):
+        # 优先从 cookie 读取，回退到 Authorization header
+        token = request.cookies.get("access_token")
+        if not token:
+            auth_header = request.headers.get("Authorization", "")
+            if auth_header.startswith("Bearer "):
+                token = auth_header[7:]
+
+        if not token:
             return JSONResponse(status_code=401, content={"detail": "Missing or invalid token"})
 
-        token = auth_header[7:]
         payload = await verify_access_token(token)
         if payload is None:
             return JSONResponse(status_code=401, content={"detail": "Invalid or expired token"})
@@ -68,6 +73,10 @@ class TenantScopeMiddleware(BaseHTTPMiddleware):
         request.state.role = payload.get("role")
         request.state.tenant_type = payload.get("tenant_type", "brand")
         request.state.auth_method = "jwt"
+        # 加载数据库中的权限到 request.state.permissions
+        request.state.permissions = await self._load_permissions(
+            payload.get("sub"), payload.get("role")
+        )
 
         # Agency context switching: if acting_tenant_id is present, use it for RLS
         if acting_tenant_id:
@@ -134,3 +143,37 @@ class TenantScopeMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
         finally:
             set_request_tenant_id(None)
+
+    async def _load_permissions(self, account_id: str | None, role: str | None) -> list[str]:
+        """从数据库加载账户的权限列表。账户不存在时回退到角色默认权限。"""
+        from app.utils.auth_rbac import get_permissions_for_role
+
+        if not account_id:
+            return get_permissions_for_role(role) if role else []
+        try:
+            import uuid
+
+            from sqlalchemy import select
+            from sqlalchemy.orm import selectinload
+
+            from app.core.database import async_session_factory
+            from app.models.tenant import Account, Role
+
+            async with async_session_factory() as db:
+                result = await db.execute(
+                    select(Account)
+                    .options(selectinload(Account.roles).selectinload(Role.permissions))
+                    .where(Account.id == uuid.UUID(account_id))
+                )
+                account = result.scalar_one_or_none()
+                if not account:
+                    # 账户不存在时回退到角色默认权限
+                    return get_permissions_for_role(role) if role else []
+                permissions = set()
+                for role_obj in account.roles:
+                    for perm in role_obj.permissions:
+                        permissions.add(perm.code)
+                return list(permissions)
+        except Exception:
+            # 权限加载失败不应阻断请求，降级为角色默认权限
+            return get_permissions_for_role(role) if role else []

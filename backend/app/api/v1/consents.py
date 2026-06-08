@@ -1,6 +1,5 @@
 """消费者同意记录端点（公开，H5 使用）"""
 
-import hashlib
 import uuid
 
 from fastapi import APIRouter, Depends, Request
@@ -10,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
 from app.services.consent import grant_consent, withdraw_consent
 from app.services.scan_token import verify_scan_token
+from app.utils.client_ip import compute_ip_hash, get_client_ip
 
 consent_router = APIRouter(tags=["consents"])
 
@@ -26,11 +26,14 @@ async def create_consent(
     db: AsyncSession = Depends(get_db),
 ):
     """消费者授予同意（隐私政策、营销等）"""
+    client_ip = get_client_ip(request)
+    ip_hash = compute_ip_hash(client_ip)
+
     auth_header = request.headers.get("Authorization", "")
     tenant_id = None
     if auth_header.startswith("Bearer "):
         token = auth_header[7:]
-        payload = verify_scan_token(token, body.public_id)
+        payload = verify_scan_token(token, body.public_id, expected_ip_hash=ip_hash)
         if payload:
             tenant_id = payload.get("tenant_id")
 
@@ -44,9 +47,6 @@ async def create_consent(
 
     if not tenant_id:
         return {"status": "ignored", "reason": "cannot_determine_tenant"}
-
-    client_ip = request.client.host if request.client else None
-    ip_hash = hashlib.sha256(client_ip.encode()).hexdigest() if client_ip else None
 
     record = await grant_consent(
         db=db,
@@ -70,13 +70,14 @@ async def withdraw_consent_endpoint(
     db: AsyncSession = Depends(get_db),
 ):
     """消费者撤回同意"""
+    client_ip = get_client_ip(request)
+    ip_hash = compute_ip_hash(client_ip)
+
     auth_header = request.headers.get("Authorization", "")
     tenant_id = None
     if auth_header.startswith("Bearer "):
         token = auth_header[7:]
-        from app.services.scan_token import verify_scan_token
-
-        payload = verify_scan_token(token)
+        payload = verify_scan_token(token, expected_ip_hash=ip_hash)
         if payload:
             tenant_id = payload.get("tenant_id")
 

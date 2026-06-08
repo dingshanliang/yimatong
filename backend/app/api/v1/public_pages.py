@@ -7,7 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
-from app.models.page import PageVersion
+from app.models.page import PageVersion, PageVersionStatus
 
 public_page_router = APIRouter(tags=["public-pages"])
 
@@ -17,14 +17,24 @@ async def get_public_page(
     version_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
 ):
-    """H5 获取页面配置 DSL（公开端点，无需认证）"""
-    result = await db.execute(select(PageVersion).where(PageVersion.id == version_id))
+    """H5 获取页面配置 DSL（公开端点，无需认证）
+
+    安全约束：
+    - 仅返回 published 状态的版本
+    - 不暴露 tenant_id 等内部信息
+    """
+    result = await db.execute(
+        select(PageVersion).where(
+            PageVersion.id == version_id,
+            PageVersion.status == PageVersionStatus.published,
+        )
+    )
     version = result.scalar_one_or_none()
     if not version:
         raise HTTPException(status_code=404, detail="Page version not found")
+
     return {
         "id": str(version.id),
         "version": version.version,
         "config_json": version.config_json,
-        "status": version.status,
     }

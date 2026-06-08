@@ -20,6 +20,13 @@ from app.models.scan import ScanEvent
 from app.utils.security import create_access_token
 from tests.conftest import TestSessionLocal
 
+def _platform_admin_headers() -> dict:
+    from app.utils.security import create_access_token
+    token = create_access_token("platform", "platform-admin", "platform_admin")
+    return {"Authorization": f"Bearer {token}"}
+
+
+
 
 @pytest.fixture
 async def db_session() -> AsyncGenerator[AsyncSession, None]:
@@ -49,6 +56,7 @@ async def dashboard_setup(client: AsyncClient, db_session: AsyncSession):
             "admin_name": "Admin",
             "admin_password": "Pass1234",
         },
+        headers=_platform_admin_headers(),
     )
     tid = resp.json()["id"]
     token = create_access_token(tid, "00000000-0000-0000-0000-000000000001", "admin")
@@ -98,6 +106,7 @@ class TestDashboardAPI:
                 "admin_name": "Admin",
                 "admin_password": "Pass1234",
             },
+            headers=_platform_admin_headers(),
         )
         tid = resp.json()["id"]
         token = create_access_token(tid, "00000000-0000-0000-0000-000000000001", "admin")

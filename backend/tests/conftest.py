@@ -27,6 +27,7 @@ from app.models.connector import BenefitDelivery, Connector, CouponCode, CouponP
 from app.models.consent import ConsentRecord  # noqa: E402, F401
 from app.models.export_log import ExportLog  # noqa: E402, F401
 from app.models.gmv import ExternalOrder, GmvAttribution  # noqa: E402, F401
+from app.models.invite_code import TenantInviteCode  # noqa: E402, F401
 from app.models.i18n import Translation  # noqa: E402, F401
 from app.models.integration import SyncRecord  # noqa: E402, F401
 from app.models.member import (  # noqa: E402, F401

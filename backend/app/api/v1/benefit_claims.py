@@ -10,6 +10,8 @@ from app.core.database import get_db
 from app.middleware.rate_limit import rate_limiter
 from app.schemas.benefit_claim import BenefitClaimRequest
 from app.services.redis_cache import AsyncRedisCache
+from app.services.scan_token import verify_scan_token
+from app.utils.client_ip import compute_ip_hash, get_client_ip
 
 benefit_claim_router = APIRouter(prefix="/api/v1", tags=["benefit-claims"])
 
@@ -23,15 +25,16 @@ async def claim_benefit_h5(
     db: AsyncSession = Depends(get_db),
 ):
     """H5 端权益领取（scan_token 鉴权，无需 admin token）"""
-    # 0. IP 级速率限制：每 IP 每分钟最多 20 次领取请求
-    client_ip = request.client.host if request.client else "unknown"
-    if not rate_limiter.ip_limiter.check(f"claim:{client_ip}"):
-        retry_after = rate_limiter.ip_limiter.get_retry_after(f"claim:{client_ip}")
+    # 0. IP 级速率限制
+    client_ip = get_client_ip(request)
+    rate_result = await rate_limiter.check(f"claim:{client_ip}", 20, 60)
+    if not rate_result.allowed:
         raise HTTPException(
             status_code=429,
-            detail=f"请求过于频繁，请 {retry_after} 秒后再试",
-            headers={"Retry-After": str(retry_after)},
+            detail="请求过于频繁，请稍后再试",
+            headers={"Retry-After": str(rate_result.retry_after)},
         )
+
     # 1. 验证 scan_token
     auth_header = request.headers.get("Authorization", "")
     token = body.scan_token
@@ -41,38 +44,39 @@ async def claim_benefit_h5(
     if not token:
         raise HTTPException(status_code=401, detail="scan_token required")
 
-    import jwt
-
-    from app.core.config import settings
-
-    try:
-        payload = jwt.decode(token, settings.secret_key, algorithms=["HS256"])
-    except jwt.exceptions.DecodeError:
+    ip_hash = compute_ip_hash(client_ip)
+    payload = verify_scan_token(token, expected_ip_hash=ip_hash)
+    if payload is None:
         raise HTTPException(status_code=401, detail="invalid token")
-    except jwt.exceptions.ExpiredSignatureError:
-        raise HTTPException(status_code=401, detail="token expired")
 
-    if payload.get("type") != "scan_token":
-        raise HTTPException(status_code=401, detail="invalid token type")
-
-    # 2. 查找权益
+    # 2. 查找权益（带租户隔离：只能领取 scan_token 所属租户的权益）
     from app.models.campaign import Benefit
 
-    try:
-        benefit_id = uuid.UUID(body.benefit_id)
-    except ValueError:
-        raise HTTPException(status_code=400, detail="invalid benefit_id")
+    benefit_id = body.benefit_id  # Pydantic 已验证为 UUID
 
-    result = await db.execute(select(Benefit).where(Benefit.id == benefit_id))
+    # 从 scan_token payload 中提取 tenant_id，确保只能领取同租户的权益
+    token_tenant_id = payload.get("tenant_id")
+    if not token_tenant_id:
+        raise HTTPException(status_code=401, detail="invalid token: missing tenant_id")
+    try:
+        tid = uuid.UUID(token_tenant_id)
+    except ValueError:
+        raise HTTPException(status_code=401, detail="invalid token: corrupt tenant_id")
+
+    result = await db.execute(select(Benefit).where(Benefit.id == benefit_id, Benefit.tenant_id == tid))
     benefit = result.scalar_one_or_none()
     if not benefit:
         raise HTTPException(status_code=404, detail="benefit not found")
 
-    # 3. 红包类权益特殊处理：需要走 OAuth 获取 OpenID
+    # 3. 权益状态检查（对所有类型生效，包括红包）
+    if benefit.status != "active":
+        raise HTTPException(status_code=409, detail="权益已停用")
+
+    # 4. 红包类权益特殊处理：需要走 OAuth 获取 OpenID
     if benefit.benefit_type == "cash_red_packet":
         return await _handle_cash_red_packet_claim(benefit, token, payload, db)
 
-    # 4. 企业微信添加门槛：只以后端收到的企业微信事件为准
+    # 5. 企业微信添加门槛：只以后端收到的企业微信事件为准
     from app.models.campaign import Campaign
     from app.services.wecom_integration import (
         WeComIntegrationError,
@@ -115,14 +119,14 @@ async def claim_benefit_h5(
                 },
             )
 
-    # 5. 如果需要手机号，先提示补全，避免提前占用幂等 key
+    # 6. 如果需要手机号，先提示补全，避免提前占用幂等 key
     if benefit.config_json.get("require_phone") and not body.phone:
         raise HTTPException(
             status_code=403,
             detail={"code": "require_auth", "message": "需要授权手机号"},
         )
 
-    # 6. 双层幂等：Redis 缓存层 + DB 唯一约束
+    # 7. 双层幂等：Redis 缓存层 + DB 唯一约束
     idempotency_key = f"claim:{token[:16]}:{benefit_id}"
     if not await _claim_cache.set_idempotent(idempotency_key, ttl=300):
         raise HTTPException(status_code=409, detail="already claimed")
@@ -224,15 +228,13 @@ async def _handle_cash_red_packet_claim(
     from app.models.campaign import Benefit as BenefitModel
 
     # 锁定权益行，防止并发读取到相同的 claimed_count
-    locked_benefit = await db.execute(
-        select(BenefitModel)
-        .where(BenefitModel.id == benefit.id)
-        .with_for_update()
-    )
+    locked_benefit = await db.execute(select(BenefitModel).where(BenefitModel.id == benefit.id).with_for_update())
     _locked = locked_benefit.scalar_one_or_none()
 
     total_count_result = await db.execute(
-        select(func.count()).select_from(BenefitClaim).where(
+        select(func.count())
+        .select_from(BenefitClaim)
+        .where(
             BenefitClaim.benefit_id == benefit.id,
             BenefitClaim.consumer_id == str(consumer.id),
         )
@@ -245,7 +247,9 @@ async def _handle_cash_red_packet_claim(
 
     today_start = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
     daily_count_result = await db.execute(
-        select(func.count()).select_from(BenefitClaim).where(
+        select(func.count())
+        .select_from(BenefitClaim)
+        .where(
             BenefitClaim.benefit_id == benefit.id,
             BenefitClaim.consumer_id == str(consumer.id),
             BenefitClaim.created_at >= today_start,

@@ -12,6 +12,13 @@ from app.main import app
 from app.utils.security import create_access_token
 from tests.conftest import TestSessionLocal
 
+def _platform_admin_headers() -> dict:
+    from app.utils.security import create_access_token
+    token = create_access_token("platform", "platform-admin", "platform_admin")
+    return {"Authorization": f"Bearer {token}"}
+
+
+
 
 @pytest.fixture
 async def db_session() -> AsyncGenerator[AsyncSession, None]:
@@ -41,6 +48,7 @@ async def tenant_with_auth(client: AsyncClient):
             "admin_name": "Admin",
             "admin_password": "Pass1234",
         },
+        headers=_platform_admin_headers(),
     )
     tid = resp.json()["id"]
     token = create_access_token(tid, "00000000-0000-0000-0000-000000000001", "admin")
@@ -280,3 +288,34 @@ class TestProductionBatchCRUD:
         data = resp.json()
         assert data["imported"] == 2
         assert len(data["errors"]) == 0
+
+    @pytest.mark.anyio
+    async def test_delete_batch_success(self, client: AsyncClient, tenant_with_auth, sku_id):
+        product_id, sid = sku_id
+        _, headers = tenant_with_auth
+        resp = await client.post(
+            "/api/v1/production-batches",
+            json={
+                "product_id": product_id,
+                "sku_id": sid,
+                "batch_code": "DEL-BATCH-001",
+                "production_date": "2026-01-01",
+                "expiry_date": "2027-01-01",
+            },
+            headers=headers,
+        )
+        batch_id = resp.json()["id"]
+
+        del_resp = await client.delete(f"/api/v1/production-batches/{batch_id}", headers=headers)
+        assert del_resp.status_code == 204
+
+        list_resp = await client.get("/api/v1/production-batches", headers=headers)
+        assert list_resp.status_code == 200
+        assert not any(b["id"] == batch_id for b in list_resp.json()["items"])
+
+    @pytest.mark.anyio
+    async def test_delete_batch_not_found(self, client: AsyncClient, tenant_with_auth):
+        _, headers = tenant_with_auth
+        fake_id = "00000000-0000-0000-0000-000000000000"
+        resp = await client.delete(f"/api/v1/production-batches/{fake_id}", headers=headers)
+        assert resp.status_code == 404

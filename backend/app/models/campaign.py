@@ -14,14 +14,8 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
+from app.constants.campaign import CampaignStatus
 from app.models.base import Base
-
-
-class CampaignStatus:
-    DRAFT = "draft"
-    ACTIVE = "active"
-    PAUSED = "paused"
-    ENDED = "ended"
 
 
 class Campaign(Base):
@@ -46,14 +40,6 @@ class Campaign(Base):
         UniqueConstraint("tenant_id", "name", name="uq_campaign_tenant_name"),
         Index("ix_campaigns_tenant_status", "tenant_id", "status"),
     )
-
-
-class BenefitType:
-    PLATFORM_COUPON = "platform_coupon"
-    EXTERNAL_LINK = "external_link"
-    PRIVATE_DOMAIN = "private_domain"
-    FORM_BENEFIT = "form_benefit"
-    CASH_RED_PACKET = "cash_red_packet"
 
 
 class Benefit(Base):

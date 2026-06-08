@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
+import { parseJwtPayload } from "@yimatong/shared";
 
 const PUBLIC_PATHS = ["/login"];
 
@@ -11,11 +12,22 @@ export function middleware(request: NextRequest) {
   }
 
   // 从 cookie 读取 platform_access_token
-  const token = request.cookies.get("platform_access_token")?.value;
+  let token = request.cookies.get("platform_access_token")?.value;
+
+  if (!token) {
+    // 回退到 legacy access_token
+    token = request.cookies.get("access_token")?.value;
+  }
 
   if (!token) {
     const loginUrl = new URL("/login", request.url);
     return NextResponse.redirect(loginUrl);
+  }
+
+  // 基本验证：检查 token 格式和过期
+  const payload = parseJwtPayload(token);
+  if (!payload || (payload.exp && payload.exp * 1000 < Date.now())) {
+    return NextResponse.redirect(new URL("/login", request.url));
   }
 
   return NextResponse.next();

@@ -3,11 +3,11 @@
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel, Field, model_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.core.dependencies import get_current_tenant
+from app.schemas.campaign import BenefitCreateRequest, BenefitUpdateRequest
 from app.schemas.common import PaginatedResponse
 from app.services.campaign import (
     create_benefit,
@@ -17,44 +17,9 @@ from app.services.campaign import (
     list_all_benefits,
     list_benefit_claims_admin,
     update_benefit,
-    validate_benefit_config_shape,
 )
 
 benefit_router = APIRouter(prefix="/api/v1/benefits", tags=["benefits"])
-
-
-class BenefitUpdateRequest(BaseModel):
-    name: str | None = Field(default=None, min_length=1, max_length=200)
-    benefit_type: str | None = None
-    config_json: dict | None = None
-    stock_total: int | None = Field(default=None, ge=1)
-    per_person_limit: int | None = Field(default=None, ge=1)
-    status: str | None = None
-    connector_id: uuid.UUID | None = None
-
-    @model_validator(mode="after")
-    def validate_benefit_update(self):
-        if self.status is not None and self.status not in {"active", "inactive"}:
-            raise ValueError("status must be one of: active, inactive")
-        if self.config_json is not None:
-            self.config_json = validate_benefit_config_shape(self.config_json, self.benefit_type)
-        return self
-
-
-class BenefitCreateRequest(BaseModel):
-    name: str = Field(min_length=1, max_length=200)
-    benefit_type: str
-    config_json: dict = Field(default_factory=dict)
-    stock_total: int = Field(ge=1)
-    per_person_limit: int = Field(default=1, ge=1)
-    connector_id: uuid.UUID | None = None
-
-    @model_validator(mode="after")
-    def validate_benefit(self):
-        if self.benefit_type == "cash_red_packet" and self.connector_id is None:
-            raise ValueError("connector_id is required for cash_red_packet")
-        self.config_json = validate_benefit_config_shape(self.config_json, self.benefit_type)
-        return self
 
 
 @benefit_router.post("", status_code=201, summary="创建权益")
@@ -163,7 +128,7 @@ async def update_benefit_endpoint(
             db,
             tenant_id,
             benefit_id,
-            **body.model_dump(exclude_none=True),
+            **body.model_dump(exclude_unset=True),
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

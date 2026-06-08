@@ -1,6 +1,6 @@
 """码解析公开路由"""
 
-import hashlib
+import logging
 import uuid
 
 from fastapi import APIRouter, Depends, Request
@@ -14,6 +14,7 @@ from app.models.code import CodeItemStatus, CodeType
 from app.models.scan import ScanEvent
 from app.services.page_render import render_page
 from app.services.page_templates import (
+    EXPIRED_PAGE,
     INNER_VERIFY_PAGE,
     NOT_ACTIVE_PAGE,
     NOT_FOUND_PAGE,
@@ -28,8 +29,21 @@ from app.services.resolver import resolve_public_code
 from app.services.resolver_response import build_json_response
 from app.services.scan_event import parse_environment, record_scan_event
 from app.services.scan_token import create_scan_token
+from app.utils.client_ip import compute_ip_hash, get_client_ip
+
+logger = logging.getLogger(__name__)
 
 resolver_router = APIRouter(tags=["resolver"])
+
+# 不允许扫码的状态（返回提示页，不颁发 token）
+_BLOCKED_STATUSES = frozenset(
+    {
+        CodeItemStatus.revoked,
+        CodeItemStatus.frozen,
+        CodeItemStatus.created,
+        CodeItemStatus.expired,
+    }
+)
 
 
 @resolver_router.get("/c/{public_id}", summary="解析码")
@@ -42,8 +56,8 @@ async def resolve_code_endpoint(
     want_json = "application/json" in accept
 
     # 1. 限流 + 格式校验
-    client_ip = request.client.host if request.client else "unknown"
-    rate_result = rate_limiter.check_resolver(client_ip, public_id)
+    client_ip = get_client_ip(request)
+    rate_result = await rate_limiter.check_resolver(client_ip, public_id)
     if not rate_result.allowed:
         return JSONResponse(
             status_code=429,
@@ -65,22 +79,30 @@ async def resolve_code_endpoint(
 
     status = data["status"]
 
-    # 3. 错误状态
-    if status in (CodeItemStatus.revoked, CodeItemStatus.frozen, CodeItemStatus.created):
+    # 3. 阻断状态（revoked/frozen/created/expired）
+    if status in _BLOCKED_STATUSES:
         return _error_status(status, public_id, want_json)
 
-    # 4. 记录扫码事件 + 生成 scan_token
-    user_agent = request.headers.get("user-agent", "")
-    scan_info = await _record_scan(db, data, public_id, client_ip, user_agent, status)
-    ip_hash_val = hashlib.sha256(client_ip.encode()).hexdigest() if client_ip != "unknown" else ""
-    scan_token = create_scan_token(public_id, ip_hash_val)
+    # 4. 计算 IP hash（一次，复用）
+    ip_hash = compute_ip_hash(client_ip)
 
-    # 5. JSON 模式
+    # 5. 记录扫码事件
+    user_agent = request.headers.get("user-agent", "")
+    scan_info = await _record_scan(db, data, public_id, ip_hash, user_agent, status)
+
+    # 6. 生成 scan_token（含 tenant_id）
+    scan_token = create_scan_token(
+        public_id=public_id,
+        ip_hash=ip_hash,
+        tenant_id=data["tenant_id"],
+    )
+
+    # 7. JSON 模式
     if want_json:
         resp = await build_json_response(db, data, scan_token, scan_info)
         return JSONResponse(content=resp)
 
-    # 6. HTML 模式
+    # 8. HTML 模式
     return await _html_response(db, data, public_id)
 
 
@@ -93,28 +115,31 @@ def _not_found(want_json: bool):
     return HTMLResponse(content=NOT_FOUND_PAGE, status_code=404)
 
 
+# 阻断状态映射：(HTTP 状态码, HTML 模板)
+_ERROR_MAP: dict[str, tuple[int, str]] = {
+    CodeItemStatus.revoked: (410, REVOKED_PAGE),
+    CodeItemStatus.frozen: (403, RISK_FROZEN_PAGE),
+    CodeItemStatus.expired: (410, EXPIRED_PAGE),
+    CodeItemStatus.created: (200, NOT_ACTIVE_PAGE),
+}
+
+
 def _error_status(status: str, public_id: str, want_json: bool):
-    if status == CodeItemStatus.revoked:
-        if want_json:
-            return JSONResponse(status_code=410, content={"code_data": {"status": "revoked", "public_id": public_id}})
-        return HTMLResponse(content=REVOKED_PAGE, status_code=410)
-
-    if status == CodeItemStatus.frozen:
-        if want_json:
-            return JSONResponse(status_code=403, content={"code_data": {"status": "frozen", "public_id": public_id}})
-        return HTMLResponse(content=RISK_FROZEN_PAGE, status_code=403)
-
-    # CodeItemStatus.created
+    http_code, html_page = _ERROR_MAP.get(status, (200, NOT_ACTIVE_PAGE))
+    json_status = "not_active" if status == CodeItemStatus.created else status
     if want_json:
-        return JSONResponse(content={"code_data": {"status": "not_active", "public_id": public_id}})
-    return HTMLResponse(content=NOT_ACTIVE_PAGE, status_code=200)
+        return JSONResponse(
+            status_code=http_code,
+            content={"code_data": {"status": json_status, "public_id": public_id}},
+        )
+    return HTMLResponse(content=html_page, status_code=http_code)
 
 
 async def _record_scan(
     db: AsyncSession,
     data: dict,
     public_id: str,
-    client_ip: str,
+    ip_hash: str | None,
     user_agent: str,
     status: str,
 ) -> dict:
@@ -122,7 +147,6 @@ async def _record_scan(
     if status != CodeItemStatus.activated:
         return scan_info
 
-    ip_hash = hashlib.sha256(client_ip.encode()).hexdigest() if client_ip != "unknown" else None
     try:
         count_before = await db.execute(
             select(func.count()).select_from(ScanEvent).where(ScanEvent.public_id == public_id)
@@ -138,7 +162,7 @@ async def _record_scan(
         )
         scan_info["is_first_scan"] = event.is_first_scan
     except Exception:
-        pass
+        logger.exception("Failed to record scan event for public_id=%s", public_id)
     return scan_info
 
 
@@ -148,21 +172,16 @@ async def _html_response(db: AsyncSession, data: dict, public_id: str):
     if code_type == CodeType.outer:
         return HTMLResponse(content=OUTER_LANDING_PAGE.format(public_id=public_id))
 
-    if code_type == CodeType.inner:
-        template_id = data.get("template_id")
-        tenant_id = data.get("tenant_id")
-        if template_id and tenant_id:
-            html = await render_page(db, uuid.UUID(tenant_id), uuid.UUID(template_id))
-            if html:
-                return HTMLResponse(content=html)
-        return HTMLResponse(content=INNER_VERIFY_PAGE.format(public_id=public_id))
-
-    # single 类型：尝试渲染页面模板，否则降级
+    # inner 和 single 共享模板渲染逻辑
     template_id = data.get("template_id")
     tenant_id = data.get("tenant_id")
     if template_id and tenant_id:
         html = await render_page(db, uuid.UUID(tenant_id), uuid.UUID(template_id))
         if html:
             return HTMLResponse(content=html)
+
+    # 模板渲染失败时的降级页
+    if code_type == CodeType.inner:
+        return HTMLResponse(content=INNER_VERIFY_PAGE.format(public_id=public_id))
 
     return HTMLResponse(content=build_code_page(data))

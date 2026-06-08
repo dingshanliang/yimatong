@@ -11,6 +11,13 @@ from app.main import app
 from app.utils.security import create_access_token
 from tests.conftest import TestSessionLocal
 
+def _platform_admin_headers() -> dict:
+    from app.utils.security import create_access_token
+    token = create_access_token("platform", "platform-admin", "platform_admin")
+    return {"Authorization": f"Bearer {token}"}
+
+
+
 
 @pytest.fixture
 async def db_session() -> AsyncGenerator[AsyncSession, None]:
@@ -47,6 +54,7 @@ async def sample_tenant(client: AsyncClient):
             "admin_name": "管理员",
             "admin_password": "Test1234",
         },
+        headers=_platform_admin_headers(),
     )
     assert resp.status_code == 201
     return resp.json()
@@ -63,6 +71,7 @@ class TestCreateTenant:
                 "admin_name": "Admin",
                 "admin_password": "Pass1234",
             },
+            headers=_platform_admin_headers(),
         )
         assert resp.status_code == 201
         data = resp.json()
@@ -82,6 +91,7 @@ class TestCreateTenant:
                 "admin_name": "Admin",
                 "admin_password": "Pass1234",
             },
+            headers=_platform_admin_headers(),
         )
         assert resp.status_code == 201
         assert resp.json()["slug"] == "my-company"
@@ -96,6 +106,7 @@ class TestCreateTenant:
                 "admin_name": "Admin",
                 "admin_password": "Pass1234",
             },
+            headers=_platform_admin_headers(),
         )
         assert resp.status_code == 201
         assert "hello" in resp.json()["slug"]
@@ -104,37 +115,39 @@ class TestCreateTenant:
 class TestGetTenant:
     @pytest.mark.anyio
     async def test_get_existing_tenant(self, client: AsyncClient, sample_tenant):
-        headers = _auth_headers(sample_tenant["id"])
-        resp = await client.get(f"/api/v1/tenants/{sample_tenant['id']}", headers=headers)
+        resp = await client.get(
+            f"/api/v1/tenants/{sample_tenant['id']}",
+            headers=_platform_admin_headers(),
+        )
         assert resp.status_code == 200
         assert resp.json()["name"] == "测试租户"
 
     @pytest.mark.anyio
     async def test_get_nonexistent_tenant(self, client: AsyncClient):
-        headers = _auth_headers("00000000-0000-0000-0000-000000000000")
-        resp = await client.get("/api/v1/tenants/00000000-0000-0000-0000-000000000000", headers=headers)
+        resp = await client.get(
+            "/api/v1/tenants/00000000-0000-0000-0000-000000000000",
+            headers=_platform_admin_headers(),
+        )
         assert resp.status_code == 404
 
 
 class TestUpdateTenant:
     @pytest.mark.anyio
     async def test_update_tenant_name(self, client: AsyncClient, sample_tenant):
-        headers = _auth_headers(sample_tenant["id"])
         resp = await client.patch(
             f"/api/v1/tenants/{sample_tenant['id']}",
             json={"name": "更新后的名称"},
-            headers=headers,
+            headers=_platform_admin_headers(),
         )
         assert resp.status_code == 200
         assert resp.json()["name"] == "更新后的名称"
 
     @pytest.mark.anyio
     async def test_update_nonexistent_tenant(self, client: AsyncClient):
-        headers = _auth_headers("00000000-0000-0000-0000-000000000000")
         resp = await client.patch(
             "/api/v1/tenants/00000000-0000-0000-0000-000000000000",
             json={"name": "不存在"},
-            headers=headers,
+            headers=_platform_admin_headers(),
         )
         assert resp.status_code == 404
 
@@ -142,9 +155,14 @@ class TestUpdateTenant:
 class TestDeleteTenant:
     @pytest.mark.anyio
     async def test_soft_delete_tenant(self, client: AsyncClient, sample_tenant):
-        headers = _auth_headers(sample_tenant["id"])
-        resp = await client.delete(f"/api/v1/tenants/{sample_tenant['id']}", headers=headers)
+        resp = await client.delete(
+            f"/api/v1/tenants/{sample_tenant['id']}",
+            headers=_platform_admin_headers(),
+        )
         assert resp.status_code == 204
 
-        resp = await client.get(f"/api/v1/tenants/{sample_tenant['id']}", headers=headers)
+        resp = await client.get(
+            f"/api/v1/tenants/{sample_tenant['id']}",
+            headers=_platform_admin_headers(),
+        )
         assert resp.json()["status"] == "terminated"

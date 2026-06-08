@@ -16,6 +16,13 @@ from app.models.connector import BenefitDelivery
 from app.utils.security import create_access_token
 from tests.conftest import TestSessionLocal
 
+def _platform_admin_headers() -> dict:
+    from app.utils.security import create_access_token
+    token = create_access_token("platform", "platform-admin", "platform_admin")
+    return {"Authorization": f"Bearer {token}"}
+
+
+
 RULES_JSON = {
     "participation_conditions": "扫码即可参与",
     "claim_limits": "每人限领1次",
@@ -54,6 +61,7 @@ async def auth_setup(client: AsyncClient):
             "admin_name": "Admin",
             "admin_password": "Pass1234",
         },
+        headers=_platform_admin_headers(),
     )
     tid = resp.json()["id"]
     token = create_access_token(tid, "00000000-0000-0000-0000-000000000001", "admin")
@@ -439,3 +447,77 @@ class TestBenefitClaimsAdmin:
         assert claim["latest_delivery_status"] == "failed"
         assert claim["delivery_retry_count"] == 2
         assert claim["delivery_next_retry_at"].startswith("2026-06-01T12:00:00")
+
+
+class TestBenefitTypeValidation:
+    """验证不同权益类型的配置验证"""
+
+    @pytest.mark.anyio
+    async def test_cash_red_packet_requires_connector(self, client: AsyncClient, auth_setup):
+        """现金红包必须关联 connector_id"""
+        _, headers = auth_setup
+        resp = await client.post(
+            "/api/v1/benefits",
+            json={
+                "name": "红包测试",
+                "benefit_type": "cash_red_packet",
+                "config_json": {"amount_type": "fixed", "fixed_amount": 100},
+                "stock_total": 100,
+                "per_person_limit": 1,
+            },
+            headers=headers,
+        )
+        assert resp.status_code == 422
+
+    @pytest.mark.anyio
+    async def test_private_domain_requires_qr_image(self, client: AsyncClient, auth_setup):
+        """私域权益必须提供 qr_image_url"""
+        _, headers = auth_setup
+        resp = await client.post(
+            "/api/v1/benefits",
+            json={
+                "name": "私域测试",
+                "benefit_type": "private_domain",
+                "config_json": {},
+                "stock_total": 100,
+                "per_person_limit": 1,
+            },
+            headers=headers,
+        )
+        assert resp.status_code == 422
+
+    @pytest.mark.anyio
+    async def test_benefit_status_toggle(self, client: AsyncClient, auth_setup):
+        """权益状态切换 active → inactive → active"""
+        _, headers = auth_setup
+        resp = await client.post(
+            "/api/v1/benefits",
+            json={
+                "name": "状态切换测试",
+                "benefit_type": "platform_coupon",
+                "config_json": {"url": "https://example.com"},
+                "stock_total": 100,
+                "per_person_limit": 1,
+            },
+            headers=headers,
+        )
+        assert resp.status_code == 201
+        bid = resp.json()["id"]
+
+        # 切为 inactive
+        resp = await client.patch(
+            f"/api/v1/benefits/{bid}",
+            json={"status": "inactive"},
+            headers=headers,
+        )
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "inactive"
+
+        # 切回 active
+        resp = await client.patch(
+            f"/api/v1/benefits/{bid}",
+            json={"status": "active"},
+            headers=headers,
+        )
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "active"

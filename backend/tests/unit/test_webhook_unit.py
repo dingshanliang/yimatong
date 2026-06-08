@@ -6,7 +6,7 @@ import hmac
 import pytest
 
 from app.core.event_bus import _EventBus
-from app.core.permissions import (
+from app.utils.auth_rbac import (
     ROLE_PERMISSIONS,
     VALID_ROLES,
     get_permissions_for_role,

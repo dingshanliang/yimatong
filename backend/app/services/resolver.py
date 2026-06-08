@@ -2,8 +2,9 @@
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
-from app.models.code import CodeBatch, CodeItem
+from app.models.code import CodeItem
 from app.models.page import PageTemplate
 
 
@@ -11,8 +12,12 @@ async def resolve_public_code(
     db: AsyncSession,
     public_id: str,
 ) -> dict | None:
-    """解析公开码，返回码信息+关联数据"""
-    result = await db.execute(select(CodeItem).where(CodeItem.public_id == public_id))
+    """解析公开码，返回码信息+关联数据（使用 selectinload 预加载 CodeBatch）"""
+    result = await db.execute(
+        select(CodeItem)
+        .options(selectinload(CodeItem.code_batch))
+        .where(CodeItem.public_id == public_id)
+    )
     item = result.scalar_one_or_none()
     if not item:
         return None
@@ -26,12 +31,12 @@ async def resolve_public_code(
         "pair_id": str(item.pair_id) if item.pair_id else None,
     }
 
-    # 获取批次和产品信息
-    batch_result = await db.execute(select(CodeBatch).where(CodeBatch.id == item.code_batch_id))
-    batch = batch_result.scalar_one_or_none()
+    # 批次已预加载
+    batch = item.code_batch
     if batch:
         data["product_id"] = str(batch.product_id)
         data["sku_id"] = str(batch.sku_id)
+        data["production_batch_id"] = str(batch.production_batch_id) if batch.production_batch_id else None
 
         # 查找产品关联的页面模板
         tmpl_result = await db.execute(

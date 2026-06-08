@@ -11,8 +11,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.core.dependencies import get_current_account_id, get_current_tenant
+from app.core.exceptions import BadRequestError
 from app.models.code import CodeGenerationMode, CodeItemStatus, CodeType
 from app.schemas.common import PaginatedResponse
+from app.services.batch_state import InvalidBatchStateTransitionError
 from app.services.code import (
     activate_batch,
     bind_code_item,
@@ -31,6 +33,7 @@ from app.services.code import (
     void_batch,
 )
 from app.services.code_export import generate_code_csv
+from app.utils.auth_rbac import require_permission
 
 code_batch_router = APIRouter(prefix="/api/v1/code-batches", tags=["code-batches"])
 code_item_router = APIRouter(prefix="/api/v1/code-items", tags=["code-items"])
@@ -91,6 +94,7 @@ async def create_code_batch_endpoint(
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
     account_id: uuid.UUID = Depends(get_current_account_id),
+    _: None = Depends(require_permission("code:generate")),
 ):
     from app.models.tenant import Tenant
     from app.services.quota import QuotaExceededError, check_quota
@@ -163,6 +167,7 @@ async def activate_batch_endpoint(
     batch_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
+    _: None = Depends(require_permission("code:manage")),
 ):
     from app.services.code_state import InvalidStateTransitionError
 
@@ -180,8 +185,14 @@ async def export_code_batch_endpoint(
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
     account_id: uuid.UUID = Depends(get_current_account_id),
+    _: None = Depends(require_permission("code:export")),
 ):
-    csv_content = await generate_code_csv(db, tenant_id, batch_id)
+    from app.core.exceptions import NotFoundError
+
+    try:
+        csv_content = await generate_code_csv(db, tenant_id, batch_id)
+    except NotFoundError as e:
+        raise HTTPException(status_code=404, detail=e.detail) from e
     # 记录导出审计日志
     from app.services.export_audit import log_export
 
@@ -230,6 +241,7 @@ async def freeze_batch_endpoint(
     batch_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
+    _: None = Depends(require_permission("code:manage")),
 ):
     return await freeze_batch(db, tenant_id, batch_id)
 
@@ -239,6 +251,7 @@ async def void_batch_endpoint(
     batch_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
+    _: None = Depends(require_permission("code:manage")),
 ):
     return await void_batch(db, tenant_id, batch_id)
 
@@ -251,8 +264,10 @@ async def mark_printing_endpoint(
 ):
     try:
         result = await mark_printing(db, tenant_id, batch_id)
-        return {"status": result["status"]}
+        return {"status": result.status}
     except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    except InvalidBatchStateTransitionError as e:
         raise HTTPException(status_code=409, detail=str(e)) from e
 
 
@@ -264,8 +279,10 @@ async def mark_delivered_endpoint(
 ):
     try:
         result = await mark_delivered(db, tenant_id, batch_id)
-        return {"status": result["status"]}
+        return {"status": result.status}
     except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    except InvalidBatchStateTransitionError as e:
         raise HTTPException(status_code=409, detail=str(e)) from e
 
 
@@ -293,8 +310,12 @@ async def update_code_item_endpoint(
     body: CodeItemUpdateRequest,
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
+    _: None = Depends(require_permission("code:manage")),
 ):
-    item = await update_code_item(db, tenant_id, item_id, status=body.status)
+    try:
+        item = await update_code_item(db, tenant_id, item_id, status=body.status)
+    except BadRequestError as e:
+        raise HTTPException(status_code=400, detail=e.detail) from e
     if not item:
         raise HTTPException(status_code=404, detail="Code item not found")
     return CodeItemRead.model_validate(item)
@@ -346,6 +367,7 @@ async def revoke_code_item_endpoint(
     item_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
+    _: None = Depends(require_permission("code:manage")),
 ):
     from app.services.code_state import InvalidStateTransitionError
 
@@ -360,6 +382,7 @@ async def bind_code_item_endpoint(
     item_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
+    _: None = Depends(require_permission("code:manage")),
 ):
     from app.services.code_state import InvalidStateTransitionError
 

@@ -4,7 +4,7 @@ import uuid
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-from app.services.campaign import validate_benefit_config_shape, validate_campaign_rules_shape
+from app.utils.campaign_validation import validate_benefit_config_shape, validate_campaign_rules_shape
 
 REQUIRED_RULES_FIELDS = [
     "participation_conditions",
@@ -17,13 +17,13 @@ REQUIRED_RULES_FIELDS = [
 
 
 class CampaignCreateRequest(BaseModel):
-    name: str
-    campaign_type: str
+    name: str = Field(min_length=1, max_length=200)
+    campaign_type: str = Field(min_length=1, max_length=50)
     product_id: uuid.UUID | None = None
-    start_at: str
-    end_at: str
+    start_at: str = Field(min_length=1)
+    end_at: str = Field(min_length=1)
     rules_json: dict
-    description: str | None = None
+    description: str | None = Field(default=None, max_length=500)
 
     @field_validator("rules_json")
     @classmethod
@@ -35,13 +35,13 @@ class CampaignCreateRequest(BaseModel):
 
 
 class CampaignUpdateRequest(BaseModel):
-    name: str | None = None
-    campaign_type: str | None = None
+    name: str | None = Field(default=None, min_length=1, max_length=200)
+    campaign_type: str | None = Field(default=None, min_length=1, max_length=50)
     product_id: uuid.UUID | None = None
-    start_at: str | None = None
-    end_at: str | None = None
+    start_at: str | None = Field(default=None, min_length=1)
+    end_at: str | None = Field(default=None, min_length=1)
     rules_json: dict | None = None
-    description: str | None = None
+    description: str | None = Field(default=None, max_length=500)
 
     @field_validator("rules_json")
     @classmethod
@@ -76,6 +76,22 @@ class BenefitCreateRequest(BaseModel):
         if self.benefit_type == "cash_red_packet" and self.connector_id is None:
             raise ValueError("connector_id is required for cash_red_packet")
         self.config_json = validate_benefit_config_shape(self.config_json, self.benefit_type)
+        return self
+
+
+class BenefitUpdateRequest(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=200)
+    benefit_type: str | None = Field(default=None, min_length=1, max_length=50)
+    config_json: dict | None = None
+    stock_total: int | None = Field(default=None, ge=0)
+    per_person_limit: int | None = Field(default=None, ge=1)
+    connector_id: uuid.UUID | None = None
+    status: str | None = None
+
+    @model_validator(mode="after")
+    def validate_benefit(self):
+        if self.benefit_type and self.config_json:
+            self.config_json = validate_benefit_config_shape(self.config_json, self.benefit_type)
         return self
 
 

@@ -28,4 +28,6 @@ class ScanEvent(Base):
     __table_args__ = (
         Index("ix_scan_events_ip", "ip_hash"),
         Index("ix_scan_events_environment", "environment"),
+        Index("ix_scan_events_public_id", "public_id"),
+        Index("ix_scan_events_tenant_time", "tenant_id", "scan_time"),
     )

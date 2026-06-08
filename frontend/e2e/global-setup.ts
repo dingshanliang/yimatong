@@ -135,15 +135,27 @@ export default async function globalSetup() {
   const TEST_EMAIL = generateUniqueEmail();
   const slug = generateUniqueSlug();
 
-  // 1. Create tenant (open endpoint — no auth required)
-  const tenantRes = await apiPost("/api/v1/tenants", {
-    name: "E2E Test Tenant",
-    slug,
-    plan: "free",
-    admin_email: TEST_EMAIL,
-    admin_name: "E2E Admin",
-    admin_password: TEST_PASSWORD,
+  // 1. Platform admin login
+  const platformLoginRes = await apiPost("/api/v1/platform/auth/login", {
+    email: "platform@yimatong.cn",
+    password: "platform_admin_2026",
   });
+  const platformToken = platformLoginRes.access_token as string;
+  console.log("[global-setup] Platform admin logged in");
+
+  // 2. Create tenant via platform endpoint
+  const tenantRes = await apiPost(
+    "/api/v1/platform/tenants",
+    {
+      name: "E2E Test Tenant",
+      slug,
+      plan: "free",
+      admin_email: TEST_EMAIL,
+      admin_name: "E2E Admin",
+      admin_password: TEST_PASSWORD,
+    },
+    platformToken
+  );
   const tenantId = tenantRes.id as string;
   console.log(`[global-setup] Tenant created: ${tenantId} (slug=${slug})`);
 

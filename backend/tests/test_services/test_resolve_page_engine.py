@@ -11,6 +11,13 @@ from app.main import app
 from app.utils.security import create_access_token
 from tests.conftest import TestSessionLocal
 
+def _platform_admin_headers() -> dict:
+    from app.utils.security import create_access_token
+    token = create_access_token("platform", "platform-admin", "platform_admin")
+    return {"Authorization": f"Bearer {token}"}
+
+
+
 
 @pytest.fixture
 async def db_session() -> AsyncGenerator[AsyncSession, None]:
@@ -41,6 +48,7 @@ async def full_setup(client: AsyncClient):
             "admin_name": "Admin",
             "admin_password": "Pass1234",
         },
+        headers=_platform_admin_headers(),
     )
     tid = resp.json()["id"]
     token = create_access_token(tid, "00000000-0000-0000-0000-000000000001", "admin")
@@ -61,12 +69,20 @@ async def full_setup(client: AsyncClient):
     )
     sku_id = sku.json()["id"]
 
+    # 创建生产批次（码批次需要 production_batch_id）
+    pb = await client.post(
+        "/api/v1/production-batches",
+        json={"product_id": product_id, "sku_id": sku_id, "batch_code": "E-001", "production_date": "2024-01-01"},
+        headers=headers,
+    )
+    production_batch_id = pb.json()["id"]
+
     batch = await client.post(
         "/api/v1/code-batches",
         json={
             "product_id": product_id,
             "sku_id": sku_id,
-            "batch_code": "E-001",
+            "production_batch_id": production_batch_id,
             "quantity": 2,
         },
         headers=headers,
@@ -132,6 +148,7 @@ class TestResolvePageEngine:
                 "admin_name": "Admin",
                 "admin_password": "Pass1234",
             },
+            headers=_platform_admin_headers(),
         )
         tid = resp.json()["id"]
         token = create_access_token(tid, "00000000-0000-0000-0000-000000000001", "admin")

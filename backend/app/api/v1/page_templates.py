@@ -4,7 +4,7 @@ import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import HTMLResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
@@ -12,6 +12,8 @@ from app.core.dependencies import get_current_account_id, get_current_tenant
 from app.schemas.common import PaginatedResponse
 from app.services.industry_templates import ALL_TEMPLATES
 from app.services.page import (
+    VersionImmutableError,
+    VersionStateError,
     archive_page_version,
     create_page_template,
     create_page_version,
@@ -176,15 +178,23 @@ async def delete_page_template_endpoint(
 async def preview_page_template_endpoint(
     template_id: uuid.UUID,
     mock_brand: str | None = Query(None),
+    version_id: uuid.UUID | None = Query(None, description="指定版本 ID 用于草稿预览"),
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
     context = {}
     if mock_brand:
         context["mock_brand"] = mock_brand
-    html = await render_page(db, tenant_id, template_id, context=context or None)
+    html = await render_page(
+        db,
+        tenant_id,
+        template_id,
+        context=context or None,
+        version_id=version_id,
+    )
     if not html:
-        raise HTTPException(status_code=404, detail="No published version found")
+        detail = "Version not found" if version_id else "No published version found"
+        raise HTTPException(status_code=404, detail=detail)
     return HTMLResponse(content=html)
 
 
@@ -196,13 +206,16 @@ async def create_page_version_endpoint(
     tenant_id: uuid.UUID = Depends(get_current_tenant),
     account_id: uuid.UUID = Depends(get_current_account_id),
 ):
-    return await create_page_version(
-        db,
-        tenant_id,
-        template_id,
-        body.config_json,
-        account_id,
-    )
+    try:
+        return await create_page_version(
+            db,
+            tenant_id,
+            template_id,
+            body.config_json,
+            account_id,
+        )
+    except ValidationError as e:
+        raise HTTPException(status_code=422, detail=e.errors()) from e
 
 
 @page_template_router.get("/{template_id}/versions", summary="页面版本 列表")
@@ -221,7 +234,12 @@ async def update_page_version_endpoint(
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
-    data = await update_page_version(db, tenant_id, version_id, body.config_json)
+    try:
+        data = await update_page_version(db, tenant_id, version_id, body.config_json)
+    except VersionImmutableError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except ValidationError as e:
+        raise HTTPException(status_code=422, detail=e.errors()) from e
     if not data:
         raise HTTPException(status_code=404, detail="Page version not found")
     return data
@@ -233,12 +251,15 @@ async def publish_page_version_endpoint(
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
-    data = await publish_page_version(db, tenant_id, version_id)
+    try:
+        data = await publish_page_version(db, tenant_id, version_id)
+    except VersionStateError as e:
+        raise HTTPException(status_code=409, detail=str(e)) from e
     if not data:
         raise HTTPException(status_code=404, detail="Page version not found")
     from app.services.page_render import invalidate_cache
 
-    await invalidate_cache(uuid.UUID(data["page_template_id"]))
+    await invalidate_cache(tenant_id, uuid.UUID(data["page_template_id"]))
     return data
 
 
@@ -248,12 +269,15 @@ async def archive_page_version_endpoint(
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
-    data = await archive_page_version(db, tenant_id, version_id)
+    try:
+        data = await archive_page_version(db, tenant_id, version_id)
+    except VersionStateError as e:
+        raise HTTPException(status_code=409, detail=str(e)) from e
     if not data:
         raise HTTPException(status_code=404, detail="Page version not found")
     from app.services.page_render import invalidate_cache
 
-    await invalidate_cache(uuid.UUID(data["page_template_id"]))
+    await invalidate_cache(tenant_id, uuid.UUID(data["page_template_id"]))
     return data
 
 
@@ -276,5 +300,5 @@ async def rollback_page_version_endpoint(
         raise HTTPException(status_code=404, detail="Target version not found")
     from app.services.page_render import invalidate_cache
 
-    await invalidate_cache(template_id)
+    await invalidate_cache(tenant_id, template_id)
     return data

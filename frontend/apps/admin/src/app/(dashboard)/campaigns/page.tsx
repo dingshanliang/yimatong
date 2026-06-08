@@ -29,34 +29,13 @@ import {
 import { BarChartOutlined, CopyOutlined, GiftOutlined, PlusOutlined } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
 import dayjs, { type Dayjs } from "dayjs";
-import api from "@/lib/api";
+import api, { extractErrorMessage } from "@/lib/api";
 import { useCrud } from "@/lib/hooks";
+import type { Campaign, CampaignStatus, ComputedCampaignStatus } from "@yimatong/shared";
 
 const { RangePicker } = DatePicker;
 const { Text, Title } = Typography;
 const { TextArea } = Input;
-
-type CampaignStatus = "draft" | "active" | "paused" | "ended";
-type ComputedCampaignStatus = CampaignStatus | "pending";
-
-interface Campaign {
-  id: string;
-  name: string;
-  campaign_type: string;
-  status: CampaignStatus;
-  computed_status: ComputedCampaignStatus;
-  product_id?: string | null;
-  product_name?: string | null;
-  start_at: string;
-  end_at: string;
-  description?: string | null;
-  rules_json?: Record<string, unknown>;
-  benefit_count: number;
-  stock_total: number;
-  stock_used: number;
-  claim_count: number;
-  wecom_add_count?: number;
-}
 
 interface ProductOption {
   id: string;
@@ -705,21 +684,18 @@ export default function CampaignsPage() {
           }
         }
         message.success(createdBenefit ? "活动草稿和基础权益已创建" : "活动草稿已创建，请继续配置权益后上线");
-        setDetailItem({
-          ...createdCampaign,
-          benefit_count: createdBenefit ? 1 : getBenefitCount(createdCampaign),
-          stock_total: createdBenefit ? values.benefit_stock_total || 0 : getStockTotal(createdCampaign),
-          stock_used: getStockUsed(createdCampaign),
-          claim_count: getClaimCount(createdCampaign),
-          wecom_add_count: createdCampaign.wecom_add_count || 0,
-        });
+        try {
+          const { data: freshData } = await api.get(`/campaigns/${createdCampaign.id}`);
+          setDetailItem(freshData);
+        } catch {
+          setDetailItem(createdCampaign);
+        }
         mutate();
       }
       setModalOpen(false);
       form.resetFields();
-    } catch (e: unknown) {
-      const err = e as { response?: { data?: { detail?: string } } };
-      message.error(err.response?.data?.detail || (editItem ? "更新活动失败" : "创建活动失败"));
+    } catch (err) {
+      message.error(extractErrorMessage(err, editItem ? "更新活动失败" : "创建活动失败"));
     }
   };
 
@@ -728,9 +704,8 @@ export default function CampaignsPage() {
       await api.post(`/campaigns/${record.id}/status`, { status });
       message.success(successText);
       mutate();
-    } catch (e: unknown) {
-      const err = e as { response?: { data?: { detail?: string } } };
-      message.error(err.response?.data?.detail || "操作失败");
+    } catch (err) {
+      message.error(extractErrorMessage(err, "操作失败"));
     }
   };
 
@@ -824,7 +799,7 @@ export default function CampaignsPage() {
       key: "name",
       width: 220,
       render: (name: string, record) => (
-        <Space orientation="vertical" size={2}>
+        <Space direction="vertical" size={2}>
           <Button type="link" className="h-auto !p-0 text-left" onClick={() => setDetailItem(record)}>
             {name}
           </Button>
@@ -865,7 +840,7 @@ export default function CampaignsPage() {
       render: (_, record) => {
         const time = formatCampaignTime(record);
         return (
-          <Space orientation="vertical" size={2}>
+          <Space direction="vertical" size={2}>
             <Text>{time.range}</Text>
             {time.hint && <Text type="secondary" className="text-xs">{time.hint}</Text>}
           </Space>
@@ -882,7 +857,7 @@ export default function CampaignsPage() {
         const benefitCount = getBenefitCount(record);
         const percent = stockTotal > 0 ? Math.round((stockUsed / stockTotal) * 100) : 0;
         return (
-          <Space orientation="vertical" size={2} className="min-w-[140px]">
+          <Space direction="vertical" size={2} className="min-w-[140px]">
             <Text>{benefitCount > 0 ? `${benefitCount} 个权益` : "未配置权益"}</Text>
             {stockTotal > 0 && <Progress percent={percent} size="small" showInfo={false} />}
             <Text type="secondary" className="text-xs">库存 {stockUsed}/{stockTotal}</Text>
@@ -895,7 +870,7 @@ export default function CampaignsPage() {
       key: "claims",
       width: 130,
       render: (_, record) => (
-        <Space orientation="vertical" size={2}>
+        <Space direction="vertical" size={2}>
           <Text>{getClaimCount(record)} 次领取</Text>
           {Boolean(record.wecom_add_count) && <Text type="secondary" className="text-xs">企微添加 {record.wecom_add_count} 人</Text>}
           <Button size="small" type="link" className="h-auto !p-0" onClick={() => setDetailItem(record)}>
@@ -1025,7 +1000,7 @@ export default function CampaignsPage() {
         okText={editItem ? "保存活动" : "创建草稿并配置权益"}
         cancelText="取消"
         width={720}
-        destroyOnHidden
+        destroyOnClose
       >
         <Form
           form={form}
@@ -1323,7 +1298,7 @@ export default function CampaignsPage() {
         size="large"
       >
         {detailItem && (
-          <Space orientation="vertical" size="large" className="w-full">
+          <Space direction="vertical" size="large" className="w-full">
             <Descriptions column={1} bordered size="small">
               <Descriptions.Item label="活动名称">{detailItem.name}</Descriptions.Item>
               <Descriptions.Item label="关联产品">{detailItem.product_name || "未关联产品"}</Descriptions.Item>

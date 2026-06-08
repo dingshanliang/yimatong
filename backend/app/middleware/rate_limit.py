@@ -1,8 +1,8 @@
-"""限流策略实现"""
+"""限流策略实现（Redis 优先，内存降级）"""
 
-import time
-from collections import defaultdict
 from dataclasses import dataclass
+
+from app.services.redis_cache import AsyncRedisCache
 
 
 @dataclass
@@ -11,39 +11,8 @@ class RateLimitResult:
     retry_after: int = 0
 
 
-class SlidingWindowCounter:
-    """滑动窗口计数器（内存实现，可替换为 Redis）"""
-
-    def __init__(self, max_requests: int, window_seconds: int):
-        self.max_requests = max_requests
-        self.window_seconds = window_seconds
-        self._windows: dict[str, list[float]] = defaultdict(list)
-
-    def check(self, key: str) -> bool:
-        now = time.time()
-        cutoff = now - self.window_seconds
-
-        # 清理过期记录
-        self._windows[key] = [t for t in self._windows[key] if t > cutoff]
-
-        if len(self._windows[key]) >= self.max_requests:
-            return False
-
-        self._windows[key].append(now)
-        return True
-
-    def get_retry_after(self, key: str) -> int:
-        now = time.time()
-        cutoff = now - self.window_seconds
-        records = [t for t in self._windows[key] if t > cutoff]
-        if records:
-            oldest = min(records)
-            return int(oldest + self.window_seconds - now) + 1
-        return 0
-
-
 class RateLimiter:
-    """码解析限流器"""
+    """码解析限流器（统一使用 AsyncRedisCache，自带 Redis + 内存降级）"""
 
     def __init__(
         self,
@@ -51,28 +20,38 @@ class RateLimiter:
         code_limit: int = 10,
         window_seconds: int = 60,
     ):
-        self.ip_limiter = SlidingWindowCounter(ip_limit, window_seconds)
-        self.code_limiter = SlidingWindowCounter(code_limit, window_seconds)
+        self.ip_limit = ip_limit
+        self.code_limit = code_limit
+        self.window_seconds = window_seconds
+        self._cache = AsyncRedisCache(prefix="rate_limit", default_ttl=window_seconds)
 
-    def check_ip(self, ip: str) -> bool:
-        return self.ip_limiter.check(f"ip:{ip}")
+    async def check_resolver(self, ip: str, public_id: str) -> RateLimitResult:
+        ip_key = f"resolver:ip:{ip}"
+        code_key = f"resolver:code:{public_id}"
 
-    def check_code(self, key: str) -> bool:
-        return self.code_limiter.check(f"code:{key}")
-
-    def check_resolver(self, ip: str, public_id: str) -> RateLimitResult:
-        if not self.check_ip(ip):
+        # IP 级限流
+        ip_allowed, _ = await self._cache.rate_limit_check(ip_key, self.ip_limit, self.window_seconds)
+        if not ip_allowed:
             return RateLimitResult(
                 allowed=False,
-                retry_after=self.ip_limiter.get_retry_after(f"ip:{ip}"),
+                retry_after=self.window_seconds,
             )
 
-        if not self.check_code(public_id):
+        # 码级限流
+        code_allowed, _ = await self._cache.rate_limit_check(code_key, self.code_limit, self.window_seconds)
+        if not code_allowed:
             return RateLimitResult(
                 allowed=False,
-                retry_after=self.code_limiter.get_retry_after(f"code:{public_id}"),
+                retry_after=self.window_seconds,
             )
 
+        return RateLimitResult(allowed=True)
+
+    async def check(self, key: str, limit: int, window: int) -> RateLimitResult:
+        """通用限流检查（用于非 resolver 场景，如 claim 等）"""
+        allowed, _ = await self._cache.rate_limit_check(key, limit, window)
+        if not allowed:
+            return RateLimitResult(allowed=False, retry_after=window)
         return RateLimitResult(allowed=True)
 
 

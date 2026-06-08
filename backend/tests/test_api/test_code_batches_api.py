@@ -21,6 +21,13 @@ from app.main import app
 from app.utils.security import create_access_token
 from tests.conftest import TestSessionLocal
 
+def _platform_admin_headers() -> dict:
+    from app.utils.security import create_access_token
+    token = create_access_token("platform", "platform-admin", "platform_admin")
+    return {"Authorization": f"Bearer {token}"}
+
+
+
 
 @pytest.fixture
 async def db_session() -> AsyncGenerator[AsyncSession, None]:
@@ -51,6 +58,7 @@ async def auth_setup(client: AsyncClient):
             "admin_name": "Admin",
             "admin_password": "Pass1234",
         },
+        headers=_platform_admin_headers(),
     )
     assert resp.status_code in (200, 201)
     tid = resp.json()["id"]
@@ -320,8 +328,8 @@ class TestExportCodeBatchAPI:
             "/api/v1/code-batches/00000000-0000-0000-0000-000000000999/export",
             headers=headers,
         )
-        # export 返回空 CSV 或 200，不会 404（因为 generate_code_csv 找不到时返回 ""）
-        assert resp.status_code == 200
+        # 导出不存在的批次应返回 404
+        assert resp.status_code == 404
 
 
 class TestFreezeCodeBatchAPI:

@@ -11,6 +11,13 @@ from app.main import app
 from app.utils.security import create_access_token
 from tests.conftest import TestSessionLocal
 
+def _platform_admin_headers() -> dict:
+    from app.utils.security import create_access_token
+    token = create_access_token("platform", "platform-admin", "platform_admin")
+    return {"Authorization": f"Bearer {token}"}
+
+
+
 
 @pytest.fixture
 async def db_session() -> AsyncGenerator[AsyncSession, None]:
@@ -40,6 +47,7 @@ async def auth_setup(client: AsyncClient):
             "admin_name": "Admin",
             "admin_password": "Pass1234",
         },
+        headers=_platform_admin_headers(),
     )
     tid = resp.json()["id"]
     token = create_access_token(tid, "00000000-0000-0000-0000-000000000001", "admin")
@@ -73,7 +81,10 @@ class TestIndustryTemplates:
         data = resp.json()
         assert data["template"]["name"] == "食品溯源页"
         assert data["version"]["status"] == "draft"
-        assert data["version"]["config_json"]["dsl_version"] == "1.0"
+        # 验证克隆后的 config_json 是模块化 DSL 格式
+        config = data["version"]["config_json"]
+        assert "modules" in config
+        assert any(m["type"] == "product_hero" for m in config["modules"])
 
     @pytest.mark.anyio
     async def test_clone_invalid_index_404(self, client: AsyncClient, auth_setup):
@@ -93,6 +104,6 @@ class TestIndustryTemplates:
         )
         food = resp.json()[0]
         module_types = [m["type"] for m in food["config_json"]["modules"]]
-        assert "product_card" in module_types
-        assert "traceability_timeline" in module_types
-        assert "inspection_report" in module_types
+        assert "product_hero" in module_types
+        assert "light_traceability" in module_types
+        assert "test_reports" in module_types

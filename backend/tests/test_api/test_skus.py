@@ -11,6 +11,13 @@ from app.main import app
 from app.utils.security import create_access_token
 from tests.conftest import TestSessionLocal
 
+def _platform_admin_headers() -> dict:
+    from app.utils.security import create_access_token
+    token = create_access_token("platform", "platform-admin", "platform_admin")
+    return {"Authorization": f"Bearer {token}"}
+
+
+
 
 @pytest.fixture
 async def db_session() -> AsyncGenerator[AsyncSession, None]:
@@ -40,6 +47,7 @@ async def tenant_with_auth(client: AsyncClient):
             "admin_name": "Admin",
             "admin_password": "Pass1234",
         },
+        headers=_platform_admin_headers(),
     )
     tid = resp.json()["id"]
     token = create_access_token(tid, "00000000-0000-0000-0000-000000000001", "admin")
@@ -188,3 +196,51 @@ class TestSKUCRUD:
         assert clear_resp.json()["package_type"] is None
         assert clear_resp.json()["barcode"] is None
         assert clear_resp.json()["image_url"] is None
+
+    @pytest.mark.anyio
+    async def test_delete_sku_success(self, client: AsyncClient, tenant_with_auth, product_id):
+        _, headers = tenant_with_auth
+        resp = await client.post(
+            "/api/v1/skus",
+            json={"product_id": product_id, "code": "DEL-001", "name": "待删SKU"},
+            headers=headers,
+        )
+        sku_id = resp.json()["id"]
+
+        del_resp = await client.delete(f"/api/v1/skus/{sku_id}", headers=headers)
+        assert del_resp.status_code == 204
+
+        get_resp = await client.get(f"/api/v1/skus/{sku_id}", headers=headers)
+        assert get_resp.status_code == 404
+
+    @pytest.mark.anyio
+    async def test_delete_sku_with_batches_blocked(self, client: AsyncClient, tenant_with_auth, product_id):
+        _, headers = tenant_with_auth
+        resp = await client.post(
+            "/api/v1/skus",
+            json={"product_id": product_id, "code": "DEL-BATCH-001", "name": "有批次SKU"},
+            headers=headers,
+        )
+        sku_id = resp.json()["id"]
+        await client.post(
+            "/api/v1/production-batches",
+            json={
+                "product_id": product_id,
+                "sku_id": sku_id,
+                "batch_code": "BATCH-DEL-001",
+                "production_date": "2026-01-01",
+                "expiry_date": "2027-01-01",
+            },
+            headers=headers,
+        )
+
+        del_resp = await client.delete(f"/api/v1/skus/{sku_id}", headers=headers)
+        assert del_resp.status_code == 409
+        assert "batch" in del_resp.json()["detail"].lower()
+
+    @pytest.mark.anyio
+    async def test_delete_sku_not_found(self, client: AsyncClient, tenant_with_auth):
+        _, headers = tenant_with_auth
+        fake_id = "00000000-0000-0000-0000-000000000000"
+        resp = await client.delete(f"/api/v1/skus/{fake_id}", headers=headers)
+        assert resp.status_code == 404

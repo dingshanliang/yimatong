@@ -76,20 +76,30 @@ async def create_code_batch(
     total_generated = 0
 
     def _build_items():
+        used_ids: set[str] = set()
+
+        def _unique_public_id() -> str:
+            for _ in range(10):
+                pid = generate_public_id()
+                if pid not in used_ids:
+                    used_ids.add(pid)
+                    return pid
+            raise RuntimeError("Failed to generate unique public_id after 10 retries")
+
         if code_type == CodeType.paired:
             for _ in range(quantity):
                 pair_id = uuid.uuid4()
                 yield CodeItem(
                     tenant_id=tenant_id,
                     code_batch_id=batch.id,
-                    public_id=generate_public_id(),
+                    public_id=_unique_public_id(),
                     code_type=CodeType.outer,
                     pair_id=pair_id,
                 )
                 yield CodeItem(
                     tenant_id=tenant_id,
                     code_batch_id=batch.id,
-                    public_id=generate_public_id(),
+                    public_id=_unique_public_id(),
                     code_type=CodeType.inner,
                     pair_id=pair_id,
                 )
@@ -98,7 +108,7 @@ async def create_code_batch(
                 yield CodeItem(
                     tenant_id=tenant_id,
                     code_batch_id=batch.id,
-                    public_id=generate_public_id(),
+                    public_id=_unique_public_id(),
                     code_type=CodeType.single,
                 )
 
@@ -194,9 +204,13 @@ async def list_brand_code_batches(
         .options(selectinload(CodeBatch.product), selectinload(CodeBatch.sku), selectinload(CodeBatch.production_batch))
         .where(CodeBatch.tenant_id == tenant_id, CodeBatch.product_id.in_(product_ids))
     )
-    count_stmt = select(func.count()).select_from(CodeBatch).where(
-        CodeBatch.tenant_id == tenant_id,
-        CodeBatch.product_id.in_(product_ids),
+    count_stmt = (
+        select(func.count())
+        .select_from(CodeBatch)
+        .where(
+            CodeBatch.tenant_id == tenant_id,
+            CodeBatch.product_id.in_(product_ids),
+        )
     )
 
     total_result = await db.execute(count_stmt)
@@ -359,6 +373,33 @@ async def activate_batch(db: AsyncSession, tenant_id: uuid.UUID, batch_id: uuid.
     return CodeBatchActivateResponse(activated=r.rowcount)
 
 
+async def _invalidate_resolve_cache(public_id: str) -> None:
+    """清除单个码的解析缓存"""
+    from app.services.resolve_cache import resolve_cache
+
+    await resolve_cache.invalidate(f"resolve:{public_id}")
+
+
+async def _invalidate_batch_cache(
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    batch_id: uuid.UUID,
+    status: str,
+) -> None:
+    """批量清除码批次中指定状态的解析缓存"""
+    from app.services.resolve_cache import resolve_cache
+
+    affected = await db.execute(
+        select(CodeItem.public_id).where(
+            CodeItem.tenant_id == tenant_id,
+            CodeItem.code_batch_id == batch_id,
+            CodeItem.status == status,
+        )
+    )
+    for (pid,) in affected.all():
+        await resolve_cache.invalidate(f"resolve:{pid}")
+
+
 async def revoke_code_item(db: AsyncSession, tenant_id: uuid.UUID, item_id: uuid.UUID) -> CodeItem:
 
     from app.services.code_state import can_transition
@@ -373,6 +414,8 @@ async def revoke_code_item(db: AsyncSession, tenant_id: uuid.UUID, item_id: uuid
     item.status = CodeItemStatus.revoked
     item.revoked_at = utcnow()
     await db.flush()
+    # 清除解析缓存，确保下次扫码立即看到 revoked 状态
+    await _invalidate_resolve_cache(item.public_id)
     await db.refresh(item)
     return item
 
@@ -428,6 +471,8 @@ async def freeze_batch(db: AsyncSession, tenant_id: uuid.UUID, batch_id: uuid.UU
     )
     r = await db.execute(stmt)
     await db.flush()
+    # 批量清除被冻结码的解析缓存
+    await _invalidate_batch_cache(db, tenant_id, batch_id, CodeItemStatus.frozen)
     return CodeBatchFreezeResponse(frozen=r.rowcount)
 
 
@@ -446,17 +491,20 @@ async def void_batch(db: AsyncSession, tenant_id: uuid.UUID, batch_id: uuid.UUID
     )
     r = await db.execute(stmt)
     await db.flush()
+    # 批量清除被作废码的解析缓存
+    await _invalidate_batch_cache(db, tenant_id, batch_id, CodeItemStatus.revoked)
     return CodeBatchVoidResponse(voided=r.rowcount)
 
 
 async def mark_printing(db: AsyncSession, tenant_id: uuid.UUID, batch_id: uuid.UUID) -> dict:
     """标记码批次为印刷中（completed -> printing）"""
+    from app.services.batch_state import can_transition_batch
+
     result = await db.execute(select(CodeBatch).where(CodeBatch.id == batch_id, CodeBatch.tenant_id == tenant_id))
     batch = result.scalar_one_or_none()
     if not batch:
         raise ValueError("Code batch not found")
-    if batch.status != CodeBatchStatus.completed:
-        raise ValueError(f"Cannot mark printing from status '{batch.status.value}', expected 'completed'")
+    can_transition_batch(batch.status, CodeBatchStatus.printing, raise_on_invalid=True)
 
     batch.status = CodeBatchStatus.printing
     await db.flush()
@@ -468,12 +516,13 @@ async def mark_printing(db: AsyncSession, tenant_id: uuid.UUID, batch_id: uuid.U
 
 async def mark_delivered(db: AsyncSession, tenant_id: uuid.UUID, batch_id: uuid.UUID) -> dict:
     """标记码批次为已交付（printing -> delivered）"""
+    from app.services.batch_state import can_transition_batch
+
     result = await db.execute(select(CodeBatch).where(CodeBatch.id == batch_id, CodeBatch.tenant_id == tenant_id))
     batch = result.scalar_one_or_none()
     if not batch:
         raise ValueError("Code batch not found")
-    if batch.status != CodeBatchStatus.printing:
-        raise ValueError(f"Cannot mark delivered from status '{batch.status.value}', expected 'printing'")
+    can_transition_batch(batch.status, CodeBatchStatus.delivered, raise_on_invalid=True)
 
     batch.status = CodeBatchStatus.delivered
     await db.flush()
@@ -506,7 +555,7 @@ async def update_batch(
     return await get_code_batch(db, tenant_id, batch_id)
 
 
-_ITEM_ALLOWED_FIELDS = {"status"}
+_ITEM_ALLOWED_FIELDS = set()
 
 
 async def update_code_item(
@@ -515,10 +564,16 @@ async def update_code_item(
     item_id: uuid.UUID,
     **kwargs,
 ) -> CodeItem | None:
+    from app.core.exceptions import BadRequestError
+
     result = await db.execute(select(CodeItem).where(CodeItem.id == item_id, CodeItem.tenant_id == tenant_id))
     item = result.scalar_one_or_none()
     if not item:
         return None
+    if "status" in kwargs:
+        raise BadRequestError(
+            "Direct status modification is not allowed. Use dedicated endpoints: /bind, /revoke, /activate."
+        )
     for k, v in kwargs.items():
         if k in _ITEM_ALLOWED_FIELDS and v is not None:
             setattr(item, k, v)

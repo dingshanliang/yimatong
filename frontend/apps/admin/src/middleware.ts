@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
+import { parseJwtPayload } from "@yimatong/shared";
 
 const PUBLIC_PATHS = ["/login"];
 
@@ -33,7 +34,10 @@ export function middleware(request: NextRequest) {
 
   // Decode JWT to get tenant_type (without verification - just for routing decisions)
   try {
-    const payload = JSON.parse(atob(token.split(".")[1]));
+    const payload = parseJwtPayload(token);
+    if (!payload) {
+      return NextResponse.redirect(new URL("/login", request.url));
+    }
     const tenantType = payload.tenant_type || "brand";
     const role = (payload.role || "").toLowerCase();
 

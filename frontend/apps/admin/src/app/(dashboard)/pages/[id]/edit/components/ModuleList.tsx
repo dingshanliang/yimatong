@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef } from "react";
+
 import {
   DndContext,
   closestCenter,
@@ -41,7 +41,6 @@ export function ModuleList({
 }) {
   const selectedModule = modules.find((module) => module.id === selectedModuleId) || null;
   const statusById = new Map(moduleStatuses.map((status) => [status.moduleId, status]));
-  const nextIdRef = useRef(0);
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
@@ -60,8 +59,7 @@ export function ModuleList({
   };
 
   const addModule = () => {
-    nextIdRef.current += 1;
-    const id = `mod_new_${nextIdRef.current}`;
+    const id = crypto.randomUUID();
     const newModule: ModuleConfig = { id, type: "product_hero", enabled: true, config: {} };
     onChange([newModule, ...modules]);
     onSelectModule(id);
@@ -72,8 +70,7 @@ export function ModuleList({
   };
 
   const duplicateModule = (module: ModuleConfig) => {
-    nextIdRef.current += 1;
-    const id = `mod_copy_${nextIdRef.current}`;
+    const id = crypto.randomUUID();
     const newModule = {
       ...module,
       id,

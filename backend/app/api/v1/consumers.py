@@ -7,9 +7,9 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.config import settings
 from app.core.database import get_db_with_bypass
 from app.services.scan_token import verify_scan_token
+from app.utils.client_ip import compute_ip_hash, get_client_ip
 
 consumer_router = APIRouter(prefix="/api/v1/consumers", tags=["consumers"])
 
@@ -36,17 +36,14 @@ def _extract_bearer_token(request: Request) -> str:
 
 async def _resolve_scan_tenant(request: Request, db: AsyncSession) -> uuid.UUID:
     token = _extract_bearer_token(request)
-    import jwt
-
-    try:
-        payload = jwt.decode(token, settings.secret_key, algorithms=["HS256"])
-    except jwt.exceptions.DecodeError:
+    payload = verify_scan_token(token)
+    if not payload or not payload.get("public_id"):
         raise HTTPException(status_code=401, detail="invalid token")
-    except jwt.exceptions.ExpiredSignatureError:
-        raise HTTPException(status_code=401, detail="token expired")
 
-    if payload.get("type") != "scan_token" or not payload.get("public_id"):
-        raise HTTPException(status_code=401, detail="invalid token type")
+    # 优先从 token payload 获取 tenant_id（减少 DB 查询）
+    tid = payload.get("tenant_id")
+    if tid:
+        return uuid.UUID(tid)
 
     from app.services.resolver import resolve_public_code
 
@@ -68,7 +65,9 @@ async def lead_capture(
         raise HTTPException(status_code=401, detail="unauthorized")
 
     token = auth_header[7:]
-    payload = verify_scan_token(token, body.public_id)
+    client_ip = get_client_ip(request)
+    ip_hash = compute_ip_hash(client_ip)
+    payload = verify_scan_token(token, body.public_id, expected_ip_hash=ip_hash)
     if payload is None:
         raise HTTPException(status_code=401, detail="invalid_token")
 
@@ -126,8 +125,6 @@ async def lead_capture(
                 existing.update(extra)
                 profile.extra_data = existing
         await db.commit()
-
-        await db.flush()
 
     return {"status": "ok", "consumer_id": str(profile.id) if phone_hash and profile else None}
 

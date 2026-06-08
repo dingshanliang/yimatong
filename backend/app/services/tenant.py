@@ -144,6 +144,46 @@ async def update_tenant(
     return tenant
 
 
+ONBOARDING_STEPS = [
+    "create_product",
+    "create_batch",
+    "create_page",
+    "create_campaign",
+    "activate",
+]
+
+
+def get_onboarding_progress_data(tenant: Tenant) -> dict:
+    """Compute onboarding progress from tenant state."""
+    progress = tenant.onboarding_progress or {}
+    completed = progress.get("completed_steps", [])
+    return {
+        "steps": ONBOARDING_STEPS,
+        "completed_steps": completed,
+        "current_step": next((s for s in ONBOARDING_STEPS if s not in completed), None),
+        "is_complete": all(s in completed for s in ONBOARDING_STEPS),
+    }
+
+
+async def complete_onboarding_step(
+    db: AsyncSession, tenant_id: uuid.UUID, step: str
+) -> Tenant | None:
+    """Mark an onboarding step as completed for a tenant."""
+    if step not in ONBOARDING_STEPS:
+        raise ValueError(f"Invalid step: {step}")
+    tenant = await get_tenant(db, tenant_id)
+    if not tenant:
+        return None
+    progress = tenant.onboarding_progress or {}
+    completed = set(progress.get("completed_steps", []))
+    completed.add(step)
+    progress["completed_steps"] = list(completed)
+    tenant.onboarding_progress = progress
+    await db.flush()
+    await db.refresh(tenant)
+    return tenant
+
+
 async def soft_delete_tenant(db: AsyncSession, tenant_id: uuid.UUID) -> bool:
     tenant = await get_tenant(db, tenant_id)
     if not tenant:

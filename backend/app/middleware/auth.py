@@ -37,17 +37,3 @@ async def authenticate_api_key(
     await db.flush()
 
     return key.tenant_id, key.role, key.permissions
-
-
-def require_permission(permission: str):
-    """FastAPI 依赖：检查当前请求的权限。
-
-    用法: endpoint(..., permission_check: None = Depends(require_permission("scan:list")))
-    """
-
-    async def _check(request: Request) -> None:
-        permissions: list[str] = getattr(request.state, "permissions", [])
-        if permission not in permissions:
-            raise HTTPException(status_code=403, detail=f"Missing permission: {permission}")
-
-    return _check

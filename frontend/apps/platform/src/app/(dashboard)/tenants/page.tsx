@@ -76,7 +76,7 @@ export default function TenantsPage() {
     return `/platform/tenants?${p.toString()}`;
   }, [page, pageSize, statusFilter, planFilter, search]);
 
-  const { data, mutate, isLoading } = useSWR<Tenant[]>(swrKey);
+  const { data, mutate, isLoading } = useSWR<{ items: Tenant[]; total: number }>(swrKey);
 
   const [form] = Form.useForm<TenantFormValues>();
 
@@ -232,11 +232,12 @@ export default function TenantsPage() {
         <Table<Tenant>
           rowKey="id"
           columns={columns}
-          dataSource={data ?? []}
+          dataSource={data?.items ?? []}
           loading={isLoading}
           pagination={{
             current: page,
             pageSize,
+            total: data?.total,
             showSizeChanger: true,
             showTotal: (t) => `共 ${t} 个租户`,
             onChange: (p, ps) => { setPage(p); setPageSize(ps); },

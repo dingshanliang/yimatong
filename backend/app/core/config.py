@@ -1,10 +1,11 @@
+from pydantic import model_validator
 from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
     database_url: str = "postgresql+asyncpg://yimatong:yimatong@localhost:5432/yimatong_dev?ssl=disable"
     redis_url: str = "redis://localhost:6379/0"
-    secret_key: str = "dev-secret-key-change-in-production"
+    secret_key: str = ""  # 必须通过环境变量 SECRET_KEY 设置
     access_token_expire_minutes: int = 15
     refresh_token_expire_days: int = 30
 
@@ -45,7 +46,21 @@ class Settings(BaseSettings):
     minio_secret_key: str = "minioadmin"
     minio_bucket: str = "yimatong"
 
+    # Cookie 安全配置
+    cookie_domain: str = ""
+    cookie_secure: bool = False  # 生产环境必须设为 True
+    cookie_samesite: str = "Lax"  # 或 "Strict"
+
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
+
+    @model_validator(mode="after")
+    def _validate_auth_config(self) -> "Settings":
+        if not self.secret_key:
+            raise ValueError(
+                "SECRET_KEY 环境变量未设置。"
+                "生成方法: python -c 'import secrets; print(secrets.token_urlsafe(32))'"
+            )
+        return self
 
 
 settings = Settings()

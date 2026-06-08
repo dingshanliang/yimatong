@@ -11,6 +11,7 @@ import {
   Form,
   Input,
   Modal,
+  Popconfirm,
   Progress,
   Select,
   Space,
@@ -19,7 +20,7 @@ import {
   Tag,
   Typography,
 } from "antd";
-import { ArrowLeftOutlined, EditOutlined, FileTextOutlined, PlusOutlined } from "@ant-design/icons";
+import { ArrowLeftOutlined, DeleteOutlined, EditOutlined, FileTextOutlined, PlusOutlined } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
 import FileUploadInput from "@/components/FileUploadInput";
 import ImageUploadInput from "@/components/ImageUploadInput";
@@ -267,6 +268,9 @@ export default function ProductWorkbenchPage() {
   const [editingSku, setEditingSku] = useState<SKU | null>(null);
   const [editingBatch, setEditingBatch] = useState<ProductionBatch | null>(null);
   const [activeTab, setActiveTab] = useState("profile");
+  const [importModalOpen, setImportModalOpen] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const [importResult, setImportResult] = useState<{ imported: number; errors: string[] } | null>(null);
   const skuSubmitModeRef = useRef<"close" | "continue">("close");
   const watchedAssetType = Form.useWatch<ProductAssetType>("asset_type", assetForm);
   const assetFormType = watchedAssetType || editingAsset?.asset_type || "test_report";
@@ -498,6 +502,25 @@ export default function ProductWorkbenchPage() {
     }
   };
 
+  const handleImportCsv = async (values: { sku_id: string; file: File }) => {
+    setImporting(true);
+    try {
+      const formData = new FormData();
+      formData.append("product_id", productId);
+      formData.append("sku_id", values.sku_id);
+      formData.append("file", values.file as unknown as Blob);
+      const { data } = await api.post("/production-batches/import-csv", formData, {
+        headers: { "Content-Type": "multipart/form-data" },
+      });
+      setImportResult(data);
+      load();
+    } catch (err) {
+      message.error(extractErrorMessage(err, "导入失败"));
+    } finally {
+      setImporting(false);
+    }
+  };
+
   const handlePageCreate = async (values: Record<string, string>) => {
     try {
       const { data: tpl } = await api.post("/page-templates", { ...values, product_id: productId });
@@ -539,7 +562,32 @@ export default function ProductWorkbenchPage() {
         ) : "未上传";
       },
     },
-    { title: "操作", key: "actions", render: (_: unknown, record) => <Button type="link" size="small" onClick={() => openAssetModal(record)}>编辑</Button> },
+    {
+      title: "操作",
+      key: "actions",
+      render: (_: unknown, record: ProductAsset) => (
+        <Space>
+          <Button type="link" size="small" onClick={() => openAssetModal(record)}>编辑</Button>
+          <Popconfirm
+            title="确认删除资料"
+            description={`删除「${record.name}」？`}
+            onConfirm={async () => {
+              try {
+                await api.delete(`/product-assets/${record.id}`);
+                message.success("资料已删除");
+                load();
+              } catch (err) {
+                message.error(extractErrorMessage(err, "删除失败"));
+              }
+            }}
+            okText="删除"
+            okButtonProps={{ danger: true }}
+          >
+            <Button type="link" size="small" danger icon={<DeleteOutlined />} />
+          </Popconfirm>
+        </Space>
+      ),
+    },
   ];
 
   const skuColumns: ColumnsType<SKU> = [
@@ -555,7 +603,32 @@ export default function ProductWorkbenchPage() {
         ? Object.entries(v).map(([k, val]) => `${k}: ${val}`).join("，")
         : "未填写",
     },
-    { title: "操作", key: "actions", render: (_: unknown, record) => <Button type="link" size="small" onClick={() => openSkuModal(record)}>编辑</Button> },
+    {
+      title: "操作",
+      key: "actions",
+      render: (_: unknown, record: SKU) => (
+        <Space>
+          <Button type="link" size="small" onClick={() => openSkuModal(record)}>编辑</Button>
+          <Popconfirm
+            title="确认删除 SKU"
+            description={`删除「${record.name}」？有关联批次时将被阻止。`}
+            onConfirm={async () => {
+              try {
+                await api.delete(`/skus/${record.id}`);
+                message.success("SKU 已删除");
+                load();
+              } catch (err) {
+                message.error(extractErrorMessage(err, "删除失败，请检查是否有关联批次"));
+              }
+            }}
+            okText="删除"
+            okButtonProps={{ danger: true }}
+          >
+            <Button type="link" size="small" danger icon={<DeleteOutlined />} />
+          </Popconfirm>
+        </Space>
+      ),
+    },
   ];
 
   const batchColumns: ColumnsType<ProductionBatch> = [
@@ -565,7 +638,32 @@ export default function ProductWorkbenchPage() {
     { title: "保质期至", dataIndex: "expiry_date", key: "expiry_date" },
     { title: "产地", dataIndex: "origin", key: "origin", render: (v?: string) => v || product?.origin || "未填写" },
     { title: "状态", dataIndex: "status", key: "status", render: (s: string) => <Tag color={BATCH_STATUS_MAP[s]?.color || "default"}>{BATCH_STATUS_MAP[s]?.label || s}</Tag> },
-    { title: "操作", key: "actions", render: (_: unknown, record) => <Button type="link" size="small" onClick={() => openBatchModal(record)}>编辑</Button> },
+    {
+      title: "操作",
+      key: "actions",
+      render: (_: unknown, record: ProductionBatch) => (
+        <Space>
+          <Button type="link" size="small" onClick={() => openBatchModal(record)}>编辑</Button>
+          <Popconfirm
+            title="确认删除批次"
+            description={`删除批次「${record.batch_code}」？有关联码批次时将被阻止。`}
+            onConfirm={async () => {
+              try {
+                await api.delete(`/production-batches/${record.id}`);
+                message.success("批次已删除");
+                load();
+              } catch (err) {
+                message.error(extractErrorMessage(err, "删除失败，请检查是否有关联码批次"));
+              }
+            }}
+            okText="删除"
+            okButtonProps={{ danger: true }}
+          >
+            <Button type="link" size="small" danger icon={<DeleteOutlined />} />
+          </Popconfirm>
+        </Space>
+      ),
+    },
   ];
 
   const pageColumns: ColumnsType<PageTemplate> = [
@@ -712,6 +810,7 @@ export default function ProductWorkbenchPage() {
                       <Button onClick={() => setActiveTab("skus")}>去创建 SKU</Button>
                     )}
                     <Button type="primary" icon={<PlusOutlined />} onClick={() => openBatchModal()} disabled={skus.length === 0}>新增批次</Button>
+                    <Button icon={<FileTextOutlined />} onClick={() => setImportModalOpen(true)} disabled={skus.length === 0}>批量导入</Button>
                   </Space>
                 </div>
                 <Table columns={batchColumns} dataSource={batches} rowKey="id" loading={loading} pagination={false} />
@@ -888,6 +987,53 @@ export default function ProductWorkbenchPage() {
           </Form.Item>
           <Form.Item name="description" label="描述"><TextArea rows={2} /></Form.Item>
         </Form>
+      </Modal>
+
+      <Modal
+        title="批量导入生产批次"
+        open={importModalOpen}
+        onCancel={() => { setImportModalOpen(false); setImportResult(null); }}
+        footer={null}
+        width={520}
+        forceRender
+      >
+        {importResult ? (
+          <div>
+            <p>导入完成：成功 {importResult.imported} 条</p>
+            {importResult.errors.length > 0 && (
+              <div className="mt-2">
+                <p className="text-red-500">失败 {importResult.errors.length} 条：</p>
+                <ul className="max-h-40 overflow-auto text-sm text-red-500">
+                  {importResult.errors.map((e, i) => <li key={i}>{e}</li>)}
+                </ul>
+              </div>
+            )}
+            <div className="mt-4 flex justify-end">
+              <Button onClick={() => { setImportModalOpen(false); setImportResult(null); }}>关闭</Button>
+            </div>
+          </div>
+        ) : (
+          <Form layout="vertical" onFinish={handleImportCsv}>
+            <Form.Item name="sku_id" label="选择 SKU" rules={[{ required: true, message: "请选择 SKU" }]} initialValue={skus[0]?.id}>
+              <Select options={skus.map((s) => ({ value: s.id, label: `${s.name} (${s.code})` }))} placeholder="选择 SKU" />
+            </Form.Item>
+            <Form.Item name="file" label="CSV 文件" rules={[{ required: true, message: "请选择 CSV 文件" }]} valuePropName="file">
+              <input type="file" accept=".csv" onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (file) {
+                  const form = e.target.closest("form") as HTMLFormElement;
+                  const skuSelect = form?.querySelector('[name="sku_id"]') as HTMLSelectElement;
+                  handleImportCsv({ sku_id: skuSelect?.value || skus[0]?.id, file } as unknown as { sku_id: string; file: File });
+                }
+              }} />
+            </Form.Item>
+            <p className="text-xs text-text-muted">CSV 格式：batch_code, production_date, expiry_date, origin（可选）</p>
+            <div className="mt-4 flex justify-end">
+              <Button onClick={() => setImportModalOpen(false)}>取消</Button>
+              <Button type="primary" htmlType="submit" loading={importing} className="ml-2">导入</Button>
+            </div>
+          </Form>
+        )}
       </Modal>
     </div>
   );
