@@ -357,6 +357,73 @@ class TestCampaignCRUD:
         resp = await client.delete(f"/api/v1/campaigns/{cid}", headers=headers)
         assert resp.status_code == 200
 
+    @pytest.mark.anyio
+    async def test_get_campaign_detail(self, client: AsyncClient, auth_setup):
+        """GET /campaigns/{id} 返回完整详情"""
+        _, headers = auth_setup
+        resp = await client.post(
+            "/api/v1/campaigns",
+            json={
+                "name": "详情测试",
+                "campaign_type": "coupon",
+                "start_at": "2025-01-01T00:00:00Z",
+                "end_at": "2027-12-31T23:59:59Z",
+                "rules_json": RULES_JSON,
+            },
+            headers=headers,
+        )
+        cid = resp.json()["id"]
+        resp = await client.get(f"/api/v1/campaigns/{cid}", headers=headers)
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["name"] == "详情测试"
+        assert "computed_status" in data
+        assert "benefit_count" in data
+
+    @pytest.mark.anyio
+    async def test_get_campaign_not_found(self, client: AsyncClient, auth_setup):
+        _, headers = auth_setup
+        resp = await client.get(f"/api/v1/campaigns/{uuid.uuid4()}", headers=headers)
+        assert resp.status_code == 404
+
+    @pytest.mark.anyio
+    async def test_delete_non_draft_campaign_rejected(self, client: AsyncClient, db_session: AsyncSession, auth_setup):
+        """非草稿活动不可删除"""
+        _, headers = auth_setup
+        resp = await client.post(
+            "/api/v1/campaigns",
+            json={
+                "name": "不可删活动",
+                "campaign_type": "coupon",
+                "start_at": "2025-01-01T00:00:00Z",
+                "end_at": "2027-12-31T23:59:59Z",
+                "rules_json": RULES_JSON,
+            },
+            headers=headers,
+        )
+        cid = resp.json()["id"]
+        # 手动激活
+        from sqlalchemy import update as sa_update
+
+        from app.models.campaign import Campaign
+
+        await db_session.execute(
+            sa_update(Campaign).where(Campaign.id == uuid.UUID(cid)).values(status="active")
+        )
+        await db_session.commit()
+
+        resp = await client.delete(f"/api/v1/campaigns/{cid}", headers=headers)
+        assert resp.status_code == 400
+
+    @pytest.mark.anyio
+    async def test_list_campaigns_filter_by_status(self, client: AsyncClient, auth_setup):
+        """按状态过滤活动列表"""
+        _, headers = auth_setup
+        resp = await client.get("/api/v1/campaigns?status=draft", headers=headers)
+        assert resp.status_code == 200
+        for item in resp.json()["items"]:
+            assert item["status"] == "draft"
+
 
 class TestBenefitAndClaim:
     @pytest.mark.anyio
