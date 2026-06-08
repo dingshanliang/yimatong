@@ -7,9 +7,9 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.config import settings
 from app.core.database import get_db_with_bypass
 from app.services.scan_token import verify_scan_token
+from app.utils.client_ip import get_client_ip
 
 consumer_router = APIRouter(prefix="/api/v1/consumers", tags=["consumers"])
 
@@ -36,17 +36,14 @@ def _extract_bearer_token(request: Request) -> str:
 
 async def _resolve_scan_tenant(request: Request, db: AsyncSession) -> uuid.UUID:
     token = _extract_bearer_token(request)
-    import jwt
-
-    try:
-        payload = jwt.decode(token, settings.secret_key, algorithms=["HS256"])
-    except jwt.exceptions.DecodeError:
+    payload = verify_scan_token(token)
+    if not payload or not payload.get("public_id"):
         raise HTTPException(status_code=401, detail="invalid token")
-    except jwt.exceptions.ExpiredSignatureError:
-        raise HTTPException(status_code=401, detail="token expired")
 
-    if payload.get("type") != "scan_token" or not payload.get("public_id"):
-        raise HTTPException(status_code=401, detail="invalid token type")
+    # 优先从 token payload 获取 tenant_id（减少 DB 查询）
+    tid = payload.get("tenant_id")
+    if tid:
+        return uuid.UUID(tid)
 
     from app.services.resolver import resolve_public_code
 
@@ -68,7 +65,7 @@ async def lead_capture(
         raise HTTPException(status_code=401, detail="unauthorized")
 
     token = auth_header[7:]
-    client_ip = request.headers.get("X-Forwarded-For", request.client.host if request.client else "unknown").split(",")[0].strip()
+    client_ip = get_client_ip(request)
     import hashlib
     ip_hash = hashlib.sha256(client_ip.encode()).hexdigest() if client_ip != "unknown" else None
     payload = verify_scan_token(token, body.public_id, expected_ip_hash=ip_hash)
