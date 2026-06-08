@@ -49,7 +49,7 @@ async def claim_benefit_h5(
     if payload is None:
         raise HTTPException(status_code=401, detail="invalid token")
 
-    # 2. 查找权益
+    # 2. 查找权益（带租户隔离：只能领取 scan_token 所属租户的权益）
     from app.models.campaign import Benefit
 
     try:
@@ -57,16 +57,29 @@ async def claim_benefit_h5(
     except ValueError:
         raise HTTPException(status_code=400, detail="invalid benefit_id")
 
-    result = await db.execute(select(Benefit).where(Benefit.id == benefit_id))
+    # 从 scan_token payload 中提取 tenant_id，确保只能领取同租户的权益
+    token_tenant_id = payload.get("tenant_id")
+    benefit_filter = [Benefit.id == benefit_id]
+    if token_tenant_id:
+        try:
+            benefit_filter.append(Benefit.tenant_id == uuid.UUID(token_tenant_id))
+        except ValueError:
+            pass
+
+    result = await db.execute(select(Benefit).where(*benefit_filter))
     benefit = result.scalar_one_or_none()
     if not benefit:
         raise HTTPException(status_code=404, detail="benefit not found")
 
-    # 3. 红包类权益特殊处理：需要走 OAuth 获取 OpenID
+    # 3. 权益状态检查（对所有类型生效，包括红包）
+    if benefit.status != "active":
+        raise HTTPException(status_code=409, detail="权益已停用")
+
+    # 4. 红包类权益特殊处理：需要走 OAuth 获取 OpenID
     if benefit.benefit_type == "cash_red_packet":
         return await _handle_cash_red_packet_claim(benefit, token, payload, db)
 
-    # 4. 企业微信添加门槛：只以后端收到的企业微信事件为准
+    # 5. 企业微信添加门槛：只以后端收到的企业微信事件为准
     from app.models.campaign import Campaign
     from app.services.wecom_integration import (
         WeComIntegrationError,
@@ -109,14 +122,14 @@ async def claim_benefit_h5(
                 },
             )
 
-    # 5. 如果需要手机号，先提示补全，避免提前占用幂等 key
+    # 6. 如果需要手机号，先提示补全，避免提前占用幂等 key
     if benefit.config_json.get("require_phone") and not body.phone:
         raise HTTPException(
             status_code=403,
             detail={"code": "require_auth", "message": "需要授权手机号"},
         )
 
-    # 6. 双层幂等：Redis 缓存层 + DB 唯一约束
+    # 7. 双层幂等：Redis 缓存层 + DB 唯一约束
     idempotency_key = f"claim:{token[:16]}:{benefit_id}"
     if not await _claim_cache.set_idempotent(idempotency_key, ttl=300):
         raise HTTPException(status_code=409, detail="already claimed")

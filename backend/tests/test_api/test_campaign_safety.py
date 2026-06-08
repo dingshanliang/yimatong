@@ -9,8 +9,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.main import app
+from app.utils.client_ip import compute_ip_hash
 from app.utils.security import create_access_token
 from tests.conftest import TestSessionLocal
+
 
 def _platform_admin_headers() -> dict:
     from app.utils.security import create_access_token
@@ -449,3 +451,66 @@ class TestBenefitAttach:
             headers=headers,
         )
         assert detach_resp.status_code == 200
+
+
+# ── H5 领取端点租户隔离测试 ──────────────────────────────
+
+# httpx ASGITransport 将 request.client.host 设为 "127.0.0.1"
+_TEST_CLIENT_IP_HASH = compute_ip_hash("127.0.0.1")
+
+
+class TestH5ClaimTenantIsolation:
+    """验证 H5 领取端点的租户隔离和权益状态检查"""
+
+    @pytest.mark.anyio
+    async def test_claim_rejects_inactive_benefit(self, client: AsyncClient, auth_setup, db_session: AsyncSession):
+        """停用的权益不允许通过 H5 端领取"""
+        from sqlalchemy import update as sa_update
+
+        from app.models.campaign import Benefit
+        from app.services.scan_token import create_scan_token
+
+        tenant_id, headers = auth_setup
+
+        # 通过 API 创建活动 + 权益
+        campaign_resp = await client.post(
+            "/api/v1/campaigns",
+            json={
+                "name": "停用权益测试",
+                "campaign_type": "coupon",
+                "start_at": "2026-06-01T00:00:00",
+                "end_at": "2026-06-30T23:59:59",
+                "rules_json": RULES_JSON,
+            },
+            headers=headers,
+        )
+        assert campaign_resp.status_code == 201
+        cid = campaign_resp.json()["id"]
+
+        benefit_resp = await client.post(
+            f"/api/v1/campaigns/{cid}/benefits",
+            json={
+                "name": "停用权益",
+                "benefit_type": "platform_coupon",
+                "config_json": {"url": "https://example.com"},
+                "stock_total": 100,
+            },
+            headers=headers,
+        )
+        assert benefit_resp.status_code == 201
+        bid = benefit_resp.json()["id"]
+
+        # 手动将权益设为 inactive
+        await db_session.execute(
+            sa_update(Benefit).where(Benefit.id == uuid.UUID(bid)).values(status="inactive")
+        )
+        await db_session.commit()
+
+        # 用正确的 ip_hash 创建 scan_token
+        token = create_scan_token("test_pub_id", _TEST_CLIENT_IP_HASH, tenant_id=str(tenant_id))
+        resp = await client.post(
+            "/api/v1/benefit-claims",
+            json={"benefit_id": bid, "scan_token": token},
+        )
+        assert resp.status_code == 409
+        assert "停用" in resp.json()["detail"]
