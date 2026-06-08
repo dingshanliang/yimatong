@@ -122,7 +122,7 @@ class CodeItem(Base):
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
 
-    code_batch = relationship("CodeBatch", lazy="selectin")
+    code_batch = relationship("CodeBatch")
 
     __table_args__ = (
         Index("ix_code_items_tenant_batch", "tenant_id", "code_batch_id"),

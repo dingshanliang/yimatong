@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
 from app.services.scan_event import parse_environment, record_scan_event
 from app.services.scan_token import verify_scan_token
+from app.utils.client_ip import get_client_ip
 
 scan_event_router = APIRouter(tags=["scan-events"])
 
@@ -34,8 +35,7 @@ async def report_scan_event(
         return {"status": "ignored", "reason": "missing_token"}
     token = auth_header[7:]
     # Compute IP hash for verification
-    raw_ip = request.headers.get("X-Forwarded-For", request.client.host if request.client else "unknown")
-    client_ip_for_token = raw_ip.split(",")[0].strip()
+    client_ip_for_token = get_client_ip(request)
     ip_hash_for_token = (
         hashlib.sha256(client_ip_for_token.encode()).hexdigest()
         if client_ip_for_token != "unknown"
@@ -46,7 +46,7 @@ async def report_scan_event(
         return {"status": "ignored", "reason": "invalid_token"}
 
     # 获取客户端信息
-    client_ip = request.client.host if request.client else "unknown"
+    client_ip = get_client_ip(request)
     user_agent = request.headers.get("user-agent")
     ip_hash = hashlib.sha256(client_ip.encode()).hexdigest() if client_ip != "unknown" else None
 
