@@ -30,9 +30,7 @@ class RateLimiter:
         code_key = f"resolver:code:{public_id}"
 
         # IP 级限流
-        ip_allowed, _ = await self._cache.rate_limit_check(
-            ip_key, self.ip_limit, self.window_seconds
-        )
+        ip_allowed, _ = await self._cache.rate_limit_check(ip_key, self.ip_limit, self.window_seconds)
         if not ip_allowed:
             return RateLimitResult(
                 allowed=False,
@@ -40,15 +38,20 @@ class RateLimiter:
             )
 
         # 码级限流
-        code_allowed, _ = await self._cache.rate_limit_check(
-            code_key, self.code_limit, self.window_seconds
-        )
+        code_allowed, _ = await self._cache.rate_limit_check(code_key, self.code_limit, self.window_seconds)
         if not code_allowed:
             return RateLimitResult(
                 allowed=False,
                 retry_after=self.window_seconds,
             )
 
+        return RateLimitResult(allowed=True)
+
+    async def check(self, key: str, limit: int, window: int) -> RateLimitResult:
+        """通用限流检查（用于非 resolver 场景，如 claim 等）"""
+        allowed, _ = await self._cache.rate_limit_check(key, limit, window)
+        if not allowed:
+            return RateLimitResult(allowed=False, retry_after=window)
         return RateLimitResult(allowed=True)
 
 

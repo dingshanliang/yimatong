@@ -1,6 +1,5 @@
 """扫码事件上报端点（H5 前端使用）"""
 
-import hashlib
 import uuid
 
 from fastapi import APIRouter, Depends, Request
@@ -10,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
 from app.services.scan_event import parse_environment, record_scan_event
 from app.services.scan_token import verify_scan_token
-from app.utils.client_ip import get_client_ip
+from app.utils.client_ip import compute_ip_hash, get_client_ip
 
 scan_event_router = APIRouter(tags=["scan-events"])
 
@@ -34,33 +33,25 @@ async def report_scan_event(
     if not auth_header.startswith("Bearer "):
         return {"status": "ignored", "reason": "missing_token"}
     token = auth_header[7:]
-    # Compute IP hash for verification
-    client_ip_for_token = get_client_ip(request)
-    ip_hash_for_token = (
-        hashlib.sha256(client_ip_for_token.encode()).hexdigest()
-        if client_ip_for_token != "unknown"
-        else None
-    )
-    payload = verify_scan_token(token, body.public_id, expected_ip_hash=ip_hash_for_token)
+
+    client_ip = get_client_ip(request)
+    ip_hash = compute_ip_hash(client_ip)
+
+    payload = verify_scan_token(token, body.public_id, expected_ip_hash=ip_hash)
     if payload is None:
         return {"status": "ignored", "reason": "invalid_token"}
 
-    # 获取客户端信息
-    client_ip = get_client_ip(request)
+    # 从 token payload 获取 tenant_id（已包含，无需额外查询）
+    tenant_id = payload.get("tenant_id")
+    if not tenant_id:
+        return {"status": "ignored", "reason": "no_tenant_context"}
+
     user_agent = request.headers.get("user-agent")
-    ip_hash = hashlib.sha256(client_ip.encode()).hexdigest() if client_ip != "unknown" else None
-
-    # 解析码数据获取 tenant_id
-    from app.services.resolver import resolve_public_code
-
-    data = await resolve_public_code(db, body.public_id)
-    if not data:
-        return {"status": "ignored", "reason": "code_not_found"}
 
     try:
         event = await record_scan_event(
             db=db,
-            tenant_id=uuid.UUID(data["tenant_id"]),
+            tenant_id=uuid.UUID(tenant_id),
             public_id=body.public_id,
             ip_hash=ip_hash,
             user_agent=user_agent,

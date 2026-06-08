@@ -7,6 +7,8 @@
   real_ip_header X-Forwarded-For;
 """
 
+import hashlib
+
 from fastapi import Request
 
 
@@ -25,3 +27,13 @@ def get_client_ip(request: Request) -> str:
         return xff.split(",")[0].strip()
 
     return request.client.host if request.client else "unknown"
+
+
+def compute_ip_hash(client_ip: str) -> str | None:
+    """计算客户端 IP 的 SHA-256 哈希（用于匿名化存储）。
+
+    当 IP 不可用时返回 None（不哈希哨兵值 "unknown"）。
+    """
+    if not client_ip or client_ip == "unknown":
+        return None
+    return hashlib.sha256(client_ip.encode()).hexdigest()

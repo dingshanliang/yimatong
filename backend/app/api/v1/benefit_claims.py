@@ -1,6 +1,5 @@
 """权益领取端点（H5 前端使用，scan_token 鉴权）"""
 
-import hashlib
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -12,7 +11,7 @@ from app.middleware.rate_limit import rate_limiter
 from app.schemas.benefit_claim import BenefitClaimRequest
 from app.services.redis_cache import AsyncRedisCache
 from app.services.scan_token import verify_scan_token
-from app.utils.client_ip import get_client_ip
+from app.utils.client_ip import compute_ip_hash, get_client_ip
 
 benefit_claim_router = APIRouter(prefix="/api/v1", tags=["benefit-claims"])
 
@@ -28,14 +27,12 @@ async def claim_benefit_h5(
     """H5 端权益领取（scan_token 鉴权，无需 admin token）"""
     # 0. IP 级速率限制
     client_ip = get_client_ip(request)
-    ip_rate, _ = await rate_limiter._cache.rate_limit_check(
-        f"claim:{client_ip}", 20, 60,
-    )
-    if not ip_rate:
+    rate_result = await rate_limiter.check(f"claim:{client_ip}", 20, 60)
+    if not rate_result.allowed:
         raise HTTPException(
             status_code=429,
             detail="请求过于频繁，请稍后再试",
-            headers={"Retry-After": "60"},
+            headers={"Retry-After": str(rate_result.retry_after)},
         )
 
     # 1. 验证 scan_token
@@ -47,7 +44,7 @@ async def claim_benefit_h5(
     if not token:
         raise HTTPException(status_code=401, detail="scan_token required")
 
-    ip_hash = hashlib.sha256(client_ip.encode()).hexdigest() if client_ip != "unknown" else None
+    ip_hash = compute_ip_hash(client_ip)
     payload = verify_scan_token(token, expected_ip_hash=ip_hash)
     if payload is None:
         raise HTTPException(status_code=401, detail="invalid token")
@@ -221,15 +218,13 @@ async def _handle_cash_red_packet_claim(
     from app.models.campaign import Benefit as BenefitModel
 
     # 锁定权益行，防止并发读取到相同的 claimed_count
-    locked_benefit = await db.execute(
-        select(BenefitModel)
-        .where(BenefitModel.id == benefit.id)
-        .with_for_update()
-    )
+    locked_benefit = await db.execute(select(BenefitModel).where(BenefitModel.id == benefit.id).with_for_update())
     _locked = locked_benefit.scalar_one_or_none()
 
     total_count_result = await db.execute(
-        select(func.count()).select_from(BenefitClaim).where(
+        select(func.count())
+        .select_from(BenefitClaim)
+        .where(
             BenefitClaim.benefit_id == benefit.id,
             BenefitClaim.consumer_id == str(consumer.id),
         )
@@ -242,7 +237,9 @@ async def _handle_cash_red_packet_claim(
 
     today_start = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
     daily_count_result = await db.execute(
-        select(func.count()).select_from(BenefitClaim).where(
+        select(func.count())
+        .select_from(BenefitClaim)
+        .where(
             BenefitClaim.benefit_id == benefit.id,
             BenefitClaim.consumer_id == str(consumer.id),
             BenefitClaim.created_at >= today_start,

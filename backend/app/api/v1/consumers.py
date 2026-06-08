@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db_with_bypass
 from app.services.scan_token import verify_scan_token
-from app.utils.client_ip import get_client_ip
+from app.utils.client_ip import compute_ip_hash, get_client_ip
 
 consumer_router = APIRouter(prefix="/api/v1/consumers", tags=["consumers"])
 
@@ -66,8 +66,7 @@ async def lead_capture(
 
     token = auth_header[7:]
     client_ip = get_client_ip(request)
-    import hashlib
-    ip_hash = hashlib.sha256(client_ip.encode()).hexdigest() if client_ip != "unknown" else None
+    ip_hash = compute_ip_hash(client_ip)
     payload = verify_scan_token(token, body.public_id, expected_ip_hash=ip_hash)
     if payload is None:
         raise HTTPException(status_code=401, detail="invalid_token")
@@ -126,8 +125,6 @@ async def lead_capture(
                 existing.update(extra)
                 profile.extra_data = existing
         await db.commit()
-
-        await db.flush()
 
     return {"status": "ok", "consumer_id": str(profile.id) if phone_hash and profile else None}
 

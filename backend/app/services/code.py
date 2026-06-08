@@ -204,9 +204,13 @@ async def list_brand_code_batches(
         .options(selectinload(CodeBatch.product), selectinload(CodeBatch.sku), selectinload(CodeBatch.production_batch))
         .where(CodeBatch.tenant_id == tenant_id, CodeBatch.product_id.in_(product_ids))
     )
-    count_stmt = select(func.count()).select_from(CodeBatch).where(
-        CodeBatch.tenant_id == tenant_id,
-        CodeBatch.product_id.in_(product_ids),
+    count_stmt = (
+        select(func.count())
+        .select_from(CodeBatch)
+        .where(
+            CodeBatch.tenant_id == tenant_id,
+            CodeBatch.product_id.in_(product_ids),
+        )
     )
 
     total_result = await db.execute(count_stmt)
@@ -369,6 +373,33 @@ async def activate_batch(db: AsyncSession, tenant_id: uuid.UUID, batch_id: uuid.
     return CodeBatchActivateResponse(activated=r.rowcount)
 
 
+async def _invalidate_resolve_cache(public_id: str) -> None:
+    """清除单个码的解析缓存"""
+    from app.services.resolve_cache import resolve_cache
+
+    await resolve_cache.invalidate(f"resolve:{public_id}")
+
+
+async def _invalidate_batch_cache(
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    batch_id: uuid.UUID,
+    status: str,
+) -> None:
+    """批量清除码批次中指定状态的解析缓存"""
+    from app.services.resolve_cache import resolve_cache
+
+    affected = await db.execute(
+        select(CodeItem.public_id).where(
+            CodeItem.tenant_id == tenant_id,
+            CodeItem.code_batch_id == batch_id,
+            CodeItem.status == status,
+        )
+    )
+    for (pid,) in affected.all():
+        await resolve_cache.invalidate(f"resolve:{pid}")
+
+
 async def revoke_code_item(db: AsyncSession, tenant_id: uuid.UUID, item_id: uuid.UUID) -> CodeItem:
 
     from app.services.code_state import can_transition
@@ -384,9 +415,7 @@ async def revoke_code_item(db: AsyncSession, tenant_id: uuid.UUID, item_id: uuid
     item.revoked_at = utcnow()
     await db.flush()
     # 清除解析缓存，确保下次扫码立即看到 revoked 状态
-    from app.services.resolve_cache import resolve_cache
-
-    await resolve_cache.invalidate(f"resolve:{item.public_id}")
+    await _invalidate_resolve_cache(item.public_id)
     await db.refresh(item)
     return item
 
@@ -443,17 +472,7 @@ async def freeze_batch(db: AsyncSession, tenant_id: uuid.UUID, batch_id: uuid.UU
     r = await db.execute(stmt)
     await db.flush()
     # 批量清除被冻结码的解析缓存
-    from app.services.resolve_cache import resolve_cache
-
-    affected = await db.execute(
-        select(CodeItem.public_id).where(
-            CodeItem.tenant_id == tenant_id,
-            CodeItem.code_batch_id == batch_id,
-            CodeItem.status == CodeItemStatus.frozen,
-        )
-    )
-    for (pid,) in affected.all():
-        await resolve_cache.invalidate(f"resolve:{pid}")
+    await _invalidate_batch_cache(db, tenant_id, batch_id, CodeItemStatus.frozen)
     return CodeBatchFreezeResponse(frozen=r.rowcount)
 
 
@@ -473,17 +492,7 @@ async def void_batch(db: AsyncSession, tenant_id: uuid.UUID, batch_id: uuid.UUID
     r = await db.execute(stmt)
     await db.flush()
     # 批量清除被作废码的解析缓存
-    from app.services.resolve_cache import resolve_cache
-
-    affected = await db.execute(
-        select(CodeItem.public_id).where(
-            CodeItem.tenant_id == tenant_id,
-            CodeItem.code_batch_id == batch_id,
-            CodeItem.status == CodeItemStatus.revoked,
-        )
-    )
-    for (pid,) in affected.all():
-        await resolve_cache.invalidate(f"resolve:{pid}")
+    await _invalidate_batch_cache(db, tenant_id, batch_id, CodeItemStatus.revoked)
     return CodeBatchVoidResponse(voided=r.rowcount)
 
 
@@ -563,8 +572,7 @@ async def update_code_item(
         return None
     if "status" in kwargs:
         raise BadRequestError(
-            "Direct status modification is not allowed. "
-            "Use dedicated endpoints: /bind, /revoke, /activate."
+            "Direct status modification is not allowed. Use dedicated endpoints: /bind, /revoke, /activate."
         )
     for k, v in kwargs.items():
         if k in _ITEM_ALLOWED_FIELDS and v is not None:
