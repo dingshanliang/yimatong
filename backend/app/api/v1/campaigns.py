@@ -180,17 +180,20 @@ async def create_benefit_endpoint(
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
-    return await create_benefit(
-        db,
-        tenant_id,
-        campaign_id,
-        body.name,
-        body.benefit_type,
-        body.config_json,
-        body.stock_total,
-        body.per_person_limit,
-        connector_id=body.connector_id,
-    )
+    try:
+        return await create_benefit(
+            db,
+            tenant_id,
+            campaign_id,
+            body.name,
+            body.benefit_type,
+            body.config_json,
+            body.stock_total,
+            body.per_person_limit,
+            connector_id=body.connector_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @campaign_router.post("/{campaign_id}/benefits/{benefit_id}/attach", summary="活动使用权益")

@@ -412,6 +412,22 @@ async def create_benefit(
     per_person_limit: int = 1,
     connector_id: uuid.UUID | None = None,
 ) -> dict:
+    # 验证 benefit_type
+    if benefit_type not in BENEFIT_TYPES:
+        raise ValueError(f"benefit_type must be one of: {', '.join(sorted(BENEFIT_TYPES))}")
+    # 验证 config_json 与 benefit_type 匹配
+    validate_benefit_config_shape(config_json, benefit_type)
+    # 验证 campaign_id 存在且属于当前租户
+    if campaign_id is not None:
+        camp_result = await db.execute(
+            select(Campaign).where(Campaign.id == campaign_id, Campaign.tenant_id == tenant_id),
+        )
+        camp = camp_result.scalar_one_or_none()
+        if not camp:
+            raise ValueError("Campaign not found")
+        if camp.status not in (CampaignStatus.DRAFT, CampaignStatus.PAUSED):
+            raise ValueError("Cannot add benefits to an active or ended campaign")
+
     b = Benefit(
         tenant_id=tenant_id,
         campaign_id=campaign_id,
