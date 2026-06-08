@@ -1,100 +1,83 @@
-"""A5-004: 固定模板定义与 schema 校验测试"""
+"""A5-004: 页面 DSL Schema 校验测试（对齐前端模块化 DSL）"""
 
 import pytest
 from pydantic import ValidationError
 
-from app.schemas.page import (
-    BrandStoryConfig,
-    ProductInfoConfig,
-    TemplateType,
-    TraceabilityConfig,
-    validate_template_config,
+from app.schemas.page_dsl import (
+    ModuleType,
+    PageDSLSchema,
+    validate_page_dsl,
 )
 
 
-class TestProductInfoSchema:
-    def test_valid_config(self):
-        config = ProductInfoConfig(
-            brand_name="测试品牌",
-            brand_logo="https://example.com/logo.png",
-            product_name="测试产品",
-            product_image="https://example.com/product.jpg",
-            specifications={"weight": "500g", "origin": "中国"},
-            batch_info={"batch_code": "B001", "production_date": "2026-01-01"},
-        )
-        assert config.brand_name == "测试品牌"
-        assert config.product_name == "测试产品"
-
-    def test_minimal_config(self):
-        config = ProductInfoConfig(brand_name="品牌", product_name="产品")
-        assert config.brand_logo is None
-        assert config.specifications is None
-
-    def test_missing_required_field(self):
-        with pytest.raises(ValidationError) as exc_info:
-            ProductInfoConfig(brand_name="品牌")
-        assert "product_name" in str(exc_info.value)
-
-
-class TestTraceabilitySchema:
-    def test_valid_config(self):
-        config = TraceabilityConfig(
-            brand_name="溯源品牌",
-            product_name="溯源产品",
-            trace_nodes=[
-                {"name": "种植", "location": "山东", "date": "2026-01-01"},
-                {"name": "加工", "location": "青岛", "date": "2026-02-01"},
+class TestPageDSLSchema:
+    def test_valid_dsl_with_modules(self):
+        dsl = {
+            "modules": [
+                {"id": "hero", "type": "product_hero", "enabled": True, "config": {"show_verify_badge": True}},
+                {"id": "trace", "type": "light_traceability", "enabled": True, "config": {"fields": ["origin"]}},
             ],
-        )
-        assert len(config.trace_nodes) == 2
+            "routing": {"default_page": True, "campaign_periods": [{"mode": "evergreen"}]},
+        }
+        result = validate_page_dsl(dsl)
+        assert len(result["modules"]) == 2
+        assert result["modules"][0]["type"] == "product_hero"
 
-    def test_minimal_config(self):
-        config = TraceabilityConfig(brand_name="品牌", product_name="产品")
-        assert config.trace_nodes is None
+    def test_empty_dsl(self):
+        result = validate_page_dsl({})
+        assert result["modules"] == []
 
-
-class TestBrandStorySchema:
-    def test_valid_config(self):
-        config = BrandStoryConfig(
-            brand_name="品牌故事",
-            story_title="我们的故事",
-            story_content="从田间到餐桌...",
-            cover_image="https://example.com/cover.jpg",
-        )
-        assert config.story_title == "我们的故事"
-
-    def test_minimal_config(self):
-        config = BrandStoryConfig(brand_name="品牌")
-        assert config.story_content is None
-
-
-class TestValidateTemplateConfig:
-    def test_product_info_validation(self):
-        data = {"brand_name": "品牌", "product_name": "产品"}
-        result = validate_template_config("product_info", data)
-        assert result["brand_name"] == "品牌"
-
-    def test_traceability_validation(self):
-        data = {"brand_name": "品牌", "product_name": "产品"}
-        result = validate_template_config("traceability", data)
-        assert result["brand_name"] == "品牌"
-
-    def test_brand_story_validation(self):
-        data = {"brand_name": "品牌"}
-        result = validate_template_config("brand_story", data)
-        assert result["brand_name"] == "品牌"
-
-    def test_invalid_template_type(self):
-        with pytest.raises(ValueError, match="Unknown template type"):
-            validate_template_config("invalid_type", {})
-
-    def test_invalid_config_data(self):
+    def test_module_missing_id(self):
+        dsl = {"modules": [{"type": "product_hero"}]}
         with pytest.raises(ValidationError):
-            validate_template_config("product_info", {})
+            validate_page_dsl(dsl)
+
+    def test_module_missing_type(self):
+        dsl = {"modules": [{"id": "hero"}]}
+        with pytest.raises(ValidationError):
+            validate_page_dsl(dsl)
+
+    def test_invalid_module_type(self):
+        dsl = {"modules": [{"id": "x", "type": "nonexistent_type"}]}
+        with pytest.raises(ValidationError):
+            validate_page_dsl(dsl)
+
+    def test_all_module_types_valid(self):
+        """确保所有 20 种模块类型都能通过校验"""
+        for mt in ModuleType:
+            dsl = {"modules": [{"id": f"test_{mt.value}", "type": mt.value}]}
+            result = validate_page_dsl(dsl)
+            assert result["modules"][0]["type"] == mt.value
+
+    def test_routing_campaign_periods(self):
+        dsl = {
+            "routing": {
+                "default_page": False,
+                "campaign_periods": [
+                    {"mode": "campaign", "start_at": "2026-01-01", "end_at": "2026-12-31"},
+                ],
+            }
+        }
+        result = validate_page_dsl(dsl)
+        assert result["routing"]["campaign_periods"][0]["mode"] == "campaign"
+
+    def test_routing_invalid_mode(self):
+        dsl = {"routing": {"campaign_periods": [{"mode": "invalid"}]}}
+        with pytest.raises(ValidationError):
+            validate_page_dsl(dsl)
+
+    def test_extra_fields_allowed(self):
+        """DSL 允许额外字段（向后兼容）"""
+        dsl = {"modules": [], "dsl_version": "1.0", "theme": {"color": "#fff"}}
+        result = validate_page_dsl(dsl)
+        assert result["dsl_version"] == "1.0"
 
 
-class TestTemplateTypeEnum:
+class TestModuleTypeEnum:
     def test_values(self):
-        assert TemplateType.product_info == "product_info"
-        assert TemplateType.traceability == "traceability"
-        assert TemplateType.brand_story == "brand_story"
+        assert ModuleType.product_hero.value == "product_hero"
+        assert ModuleType.light_traceability.value == "light_traceability"
+        assert ModuleType.custom_html.value == "custom_html"
+
+    def test_count(self):
+        assert len(ModuleType) == 20

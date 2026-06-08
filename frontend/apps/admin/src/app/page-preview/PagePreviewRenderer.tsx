@@ -2,6 +2,7 @@
 
 /* eslint-disable @next/next/no-img-element */
 
+import DOMPurify from "dompurify";
 import { useEffect, useMemo, useState } from "react";
 import type { PageDSL, ModuleConfig, PagePreviewContext, PreviewAsset } from "@/lib/page-dsl";
 
@@ -266,7 +267,7 @@ function PreviewModule({
       return (
         <section
           style={card}
-          dangerouslySetInnerHTML={{ __html: (config.html as string) || "<p>自定义 HTML 预览</p>" }}
+          dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize((config.html as string) || "<p>自定义 HTML 预览</p>") }}
         />
       );
     case "member_card":

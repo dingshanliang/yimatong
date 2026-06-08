@@ -383,6 +383,10 @@ async def revoke_code_item(db: AsyncSession, tenant_id: uuid.UUID, item_id: uuid
     item.status = CodeItemStatus.revoked
     item.revoked_at = utcnow()
     await db.flush()
+    # 清除解析缓存，确保下次扫码立即看到 revoked 状态
+    from app.services.resolve_cache import resolve_cache
+
+    await resolve_cache.invalidate(f"resolve:{item.public_id}")
     await db.refresh(item)
     return item
 
@@ -438,6 +442,18 @@ async def freeze_batch(db: AsyncSession, tenant_id: uuid.UUID, batch_id: uuid.UU
     )
     r = await db.execute(stmt)
     await db.flush()
+    # 批量清除被冻结码的解析缓存
+    from app.services.resolve_cache import resolve_cache
+
+    affected = await db.execute(
+        select(CodeItem.public_id).where(
+            CodeItem.tenant_id == tenant_id,
+            CodeItem.code_batch_id == batch_id,
+            CodeItem.status == CodeItemStatus.frozen,
+        )
+    )
+    for (pid,) in affected.all():
+        await resolve_cache.invalidate(f"resolve:{pid}")
     return CodeBatchFreezeResponse(frozen=r.rowcount)
 
 
@@ -456,6 +472,18 @@ async def void_batch(db: AsyncSession, tenant_id: uuid.UUID, batch_id: uuid.UUID
     )
     r = await db.execute(stmt)
     await db.flush()
+    # 批量清除被作废码的解析缓存
+    from app.services.resolve_cache import resolve_cache
+
+    affected = await db.execute(
+        select(CodeItem.public_id).where(
+            CodeItem.tenant_id == tenant_id,
+            CodeItem.code_batch_id == batch_id,
+            CodeItem.status == CodeItemStatus.revoked,
+        )
+    )
+    for (pid,) in affected.all():
+        await resolve_cache.invalidate(f"resolve:{pid}")
     return CodeBatchVoidResponse(voided=r.rowcount)
 
 

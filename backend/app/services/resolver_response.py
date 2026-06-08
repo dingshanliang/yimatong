@@ -5,7 +5,10 @@ import uuid
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.campaign import Benefit, Campaign, CampaignStatus
+from app.models.code import CodeBatch
 from app.models.page import PageVersion, PageVersionStatus
+from app.models.product import Brand, ProductionBatch, Product
 from app.services.redis_cache import AsyncRedisCache
 
 _product_cache = AsyncRedisCache(prefix="product", default_ttl=600)
@@ -37,8 +40,6 @@ async def build_json_response(
 
     # 查询品牌信息（缓存优先）
     if product_id:
-        from app.models.product import Brand, Product
-
         cached_pb = await _product_cache.get(f"pb:{product_id}")
         if cached_pb:
             result["code_data"]["product"] = cached_pb["product"]
@@ -89,35 +90,25 @@ async def build_json_response(
                 await _page_config_cache.set(f"pv:{template_id}", version.config_json)
                 result["page_config"] = version.config_json
 
-    # 查询码批次关联的生产批次溯源信息
-    code_batch_id = data.get("code_batch_id")
-    if code_batch_id:
-        from app.models.code import CodeBatch
-        from app.models.product import ProductionBatch
-
-        cb_result = await db.execute(
-            select(CodeBatch).where(CodeBatch.id == uuid.UUID(code_batch_id))
-        )
-        code_batch = cb_result.scalar_one_or_none()
-        if code_batch and code_batch.production_batch_id:
-            pb_result = await db.execute(
-                select(ProductionBatch).where(
-                    ProductionBatch.id == code_batch.production_batch_id
-                )
+    # 溯源信息：使用 resolver 已传递的 production_batch_id，避免重复查 CodeBatch
+    production_batch_id = data.get("production_batch_id")
+    if production_batch_id:
+        pb_result = await db.execute(
+            select(ProductionBatch).where(
+                ProductionBatch.id == uuid.UUID(production_batch_id)
             )
-            prod_batch = pb_result.scalar_one_or_none()
-            if prod_batch:
-                result["batch"] = {
-                    "batch_code": prod_batch.batch_code,
-                    "production_date": str(prod_batch.production_date),
-                    "expiry_date": str(prod_batch.expiry_date),
-                    "origin": prod_batch.origin or "",
-                }
+        )
+        prod_batch = pb_result.scalar_one_or_none()
+        if prod_batch:
+            result["batch"] = {
+                "batch_code": prod_batch.batch_code,
+                "production_date": str(prod_batch.production_date),
+                "expiry_date": str(prod_batch.expiry_date),
+                "origin": prod_batch.origin or "",
+            }
 
     # 查询当前产品可用活动，供 H5 展示权益与活动规则
     if product_id:
-        from app.models.campaign import Benefit, Campaign, CampaignStatus
-
         campaign_result = await db.execute(
             select(Campaign)
             .where(
@@ -145,7 +136,7 @@ async def build_json_response(
                     "name": benefit.name,
                     "benefit_type": benefit.benefit_type,
                     "config_json": benefit.config_json,
-                    "description": benefit.config_json.get("description"),
+                    "description": benefit.config_json.get("description") if isinstance(benefit.config_json, dict) else None,
                 }
                 if benefit
                 else None,
