@@ -3,29 +3,23 @@
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.context import set_consumer_tenant_id
 from app.core.database import get_db_for_consumer
+from app.models.member import ConsumerProfile
+from app.schemas.common import PaginatedResponse
+from app.schemas.member import ExchangeRequest as PointsExchangeRequest
+from app.schemas.member import LeadCaptureRequest
+from app.services.member import get_consumer_profile, list_point_transactions
+from app.services.point_shop import exchange_product, list_consumer_point_products
+from app.services.resolver import resolve_public_code
 from app.services.scan_token import verify_scan_token
 from app.utils.client_ip import compute_ip_hash, get_client_ip
+from app.utils.crypto import encrypt_phone, hash_phone
 
 consumer_router = APIRouter(prefix="/api/v1/consumers", tags=["consumers"])
-
-
-class LeadCaptureRequest(BaseModel):
-    name: str | None = None
-    phone: str | None = None
-    region: str | None = None
-    intention: str | None = None
-    public_id: str
-
-
-class PointsExchangeRequest(BaseModel):
-    consumer_id: uuid.UUID
-    product_id: uuid.UUID
 
 
 def _extract_bearer_token(request: Request) -> str:
@@ -50,8 +44,6 @@ async def _resolve_scan_context(
     if tid:
         tenant_uuid = uuid.UUID(tid)
     else:
-        from app.services.resolver import resolve_public_code
-
         code_data = await resolve_public_code(db, payload["public_id"])
         if not code_data:
             raise HTTPException(status_code=404, detail="code not found")
@@ -94,18 +86,12 @@ async def lead_capture(
     encrypted_phone = None
     phone_hash = None
     if body.phone:
-        from app.utils.crypto import encrypt_phone, hash_phone
-
         encrypted_phone = encrypt_phone(body.phone)
         phone_hash = hash_phone(body.phone)
 
     # 存储到 consumer_profile（通过 member 服务）
     if phone_hash:
-        from app.models.member import ConsumerProfile
-
         # scan_token 不含 tenant_id，通过 public_id 反查码数据获取
-        from app.services.resolver import resolve_public_code
-
         code_data = await resolve_public_code(db, body.public_id)
         if not code_data:
             raise HTTPException(status_code=404, detail="code not found")
@@ -164,8 +150,6 @@ async def get_consumer_me(
 
         _verify_consumer_ownership(bound_cid, cid)
 
-        from app.models.member import ConsumerProfile
-
         result = await db.execute(
             select(ConsumerProfile).where(
                 ConsumerProfile.id == cid,
@@ -207,8 +191,6 @@ async def get_consumer_points_me(
 
     _verify_consumer_ownership(bound_cid, consumer_id)
 
-    from app.services.member import get_consumer_profile
-
     profile = await get_consumer_profile(db, tenant_id, consumer_id)
     if not profile:
         raise HTTPException(status_code=404, detail="consumer not found")
@@ -225,8 +207,6 @@ async def list_consumer_points_transactions(
 ):
     tenant_id, bound_cid = await _resolve_scan_context(request, db)
     _verify_consumer_ownership(bound_cid, consumer_id)
-    from app.schemas.common import PaginatedResponse
-    from app.services.member import list_point_transactions
 
     txns, total = await list_point_transactions(db, tenant_id, consumer_id, page=page, page_size=page_size)
     return PaginatedResponse(
@@ -256,7 +236,6 @@ async def list_consumer_points_products(
 ):
     tenant_id, bound_cid = await _resolve_scan_context(request, db)
     _verify_consumer_ownership(bound_cid, consumer_id)
-    from app.services.point_shop import list_consumer_point_products
 
     try:
         return {"items": await list_consumer_point_products(db, tenant_id, consumer_id)}
@@ -272,7 +251,6 @@ async def create_consumer_points_exchange(
 ):
     tenant_id, bound_cid = await _resolve_scan_context(request, db)
     _verify_consumer_ownership(bound_cid, body.consumer_id)
-    from app.services.point_shop import exchange_product
 
     try:
         return await exchange_product(db, tenant_id, body.consumer_id, body.product_id)
