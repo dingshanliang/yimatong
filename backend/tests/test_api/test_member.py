@@ -342,7 +342,7 @@ class TestPointRules:
         )
         resp = await client.get("/api/v1/members/point-rules", headers=headers)
         assert resp.status_code == 200
-        assert len(resp.json()) >= 1
+        assert len(resp.json()["items"]) >= 1
 
 
 class TestTransactions:
