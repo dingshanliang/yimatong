@@ -1590,7 +1590,7 @@ async def check_diversion(
     clue = DiversionClue(
         tenant_id=tenant_id,
         public_id=public_id,
-        code_item_id=item.id if item else uuid.Nil,
+        code_item_id=item.id if item else None,
         expected_region=expected_region,
         detected_city=detected_city,
         distributor_id=dist_id,

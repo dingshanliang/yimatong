@@ -138,7 +138,7 @@ class DiversionClue(Base):
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid7)
     tenant_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
     public_id: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
-    code_item_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
+    code_item_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True, index=True)
     expected_region: Mapped[str | None] = mapped_column(String(200), nullable=True)
     detected_city: Mapped[str | None] = mapped_column(String(100), nullable=True)
     distributor_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True, index=True)
