@@ -254,10 +254,12 @@ async def exchange_product(
     if product.stock <= 0:
         raise ValueError("库存不足")
     consumer_result = await db.execute(
-        select(ConsumerProfile).where(
+        select(ConsumerProfile)
+        .where(
             ConsumerProfile.id == consumer_id,
             ConsumerProfile.tenant_id == tenant_id,
         )
+        .with_for_update()
     )
     consumer = consumer_result.scalar_one_or_none()
     if not consumer:
