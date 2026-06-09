@@ -14,7 +14,7 @@ description: Iterate through product modules systematically: review → plan →
 
 如果所有模块都是 `completed`：
 - 输出 "🎉 所有 30 个模块迭代完成！"
-- 停止 /loop
+- 不再调用 ScheduleWakeup，/loop 自然结束
 
 ### Step 2: 阶段调度
 
@@ -38,14 +38,15 @@ description: Iterate through product modules systematically: review → plan →
    将返回的 bead ID 写入 state.json。
 
 2. **调用 module-review skill**：
-   使用 Skill 工具调用 `module-review`，传入模块 ID 和文件列表。
+   使用 Skill 工具调用 `module-review`，传入 `args: "{module_id} {JSON文件列表}"`。
+   Skill 内部将启动最多 5 个并行 Agent（通过 Agent 工具）分别执行 5 个审查流。
 
 3. **保存 review 结果**：
-   将输出写入 `docs/superpowers/reviews/2026-06-09-{module-id}.md`
+   使用当天日期（如 `2026-06-09`），将输出写入 `docs/superpowers/reviews/{YYYY-MM-DD}-{module-id}.md`
 
 4. **更新 state.json**：
    - `status = "reviewed"`
-   - `review_file = "docs/superpowers/reviews/2026-09-{module-id}.md"`
+   - `review_file = "docs/superpowers/reviews/{YYYY-MM-DD}-{module-id}.md"`
    - `findings_count` = 从 review 结果中提取各级别数量
 
 5. **Git 提交**：
@@ -66,11 +67,11 @@ description: Iterate through product modules systematically: review → plan →
    - 每个任务包含：具体步骤、受影响文件、验证方法
 
 3. **保存计划**：
-   写入 `docs/superpowers/plans/2026-06-09-{module-id}-hardening.md`
+   使用当天日期，写入 `docs/superpowers/plans/{YYYY-MM-DD}-{module-id}-hardening.md`
 
 4. **更新 state.json**：
    - `status = "planned"`
-   - `plan_file = "docs/superpowers/plans/2026-06-09-{module-id}-hardening.md"`
+   - `plan_file = "docs/superpowers/plans/{YYYY-MM-DD}-{module-id}-hardening.md"`
    - `tasks_total` = 计划中的总任务数
 
 5. **Git 提交**：
@@ -97,7 +98,7 @@ description: Iterate through product modules systematically: review → plan →
    - 否则保持 `status = "executing"`，等待下一轮
 
 4. **完成时**：
-   - 关闭 bead
+   - 关闭 bead：`bd done {bead_id} --dolt-auto-commit off --reason "模块迭代完成"`
    - 输出模块完成摘要
    - 提交最终状态
 

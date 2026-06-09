@@ -560,7 +560,7 @@
       "status": "pending",
       "priority": 8,
       "api_files": ["backend/app/api/v1/connectors.py", "backend/app/api/v1/integration.py"],
-      "service_files": ["backend/app/services/connector.py", "backend/app/services/integration.py", "backend/app/services/connectors/"],
+      "service_files": ["backend/app/services/connector.py", "backend/app/services/integration.py", "backend/app/services/connectors/__init__.py", "backend/app/services/connectors/base.py", "backend/app/services/connectors/registry.py", "backend/app/services/connectors/coupon_pool.py", "backend/app/services/connectors/generic_http.py", "backend/app/services/connectors/secrets.py", "backend/app/services/connectors/wecom_crm.py", "backend/app/services/connectors/wechat_pay_transfer.py"],
       "model_files": ["backend/app/models/connector.py", "backend/app/models/integration.py"],
       "schema_files": [],
       "frontend_files": ["frontend/apps/admin/src/app/(dashboard)/connectors/", "frontend/apps/admin/src/app/(dashboard)/integrations/", "frontend/apps/admin/src/app/(dashboard)/crm-sync/"],
