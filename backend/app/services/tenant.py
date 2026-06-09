@@ -69,11 +69,9 @@ async def create_tenant(
         categories=get_default_categories(industry),
     )
     db.add(tenant)
-    await db.flush()
 
     org = Organization(tenant_id=tenant.id, name=f"{name} 默认组织")
     db.add(org)
-    await db.flush()
 
     hashed = hash_password(admin_password)
     account = Account(
@@ -84,7 +82,7 @@ async def create_tenant(
         name=admin_name,
     )
     db.add(account)
-    await db.flush()
+    await db.flush()  # 单次 flush 获取所有 ID
 
     # 应用行业模板（如果指定）
     if template_id is not None:
