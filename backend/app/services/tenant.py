@@ -57,6 +57,11 @@ async def create_tenant(
     if not slug:
         slug = _generate_slug(name)
 
+    # Service 层 slug 唯一性校验
+    existing = await db.execute(select(Tenant).where(Tenant.slug == slug))
+    if existing.scalar_one_or_none() is not None:
+        raise ValueError(f"Slug '{slug}' already exists")
+
     tenant = Tenant(
         name=name,
         slug=slug,
