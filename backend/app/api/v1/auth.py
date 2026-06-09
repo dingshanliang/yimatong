@@ -1,32 +1,28 @@
-import hashlib
-import secrets
 import uuid
-from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
 
 from app.core.config import settings
 from app.core.database import get_db
 from app.core.dependencies import get_current_account_id, get_current_tenant
-from app.models.tenant import Account, Tenant
+from app.models.tenant import Account
 from app.schemas.common import UNAUTHORIZED_EXAMPLE, ErrorDetail
+from app.services.auth import (
+    AuthError,
+    authenticate_login,
+    confirm_password_reset,
+    generate_password_reset,
+    logout_session,
+    refresh_access_token,
+)
 from app.services.redis_cache import AsyncRedisCache
-from app.services.tenant import get_tenant
-from app.utils import utcnow
 from app.utils.security import (
     clear_auth_cookies,
-    create_access_token,
-    create_refresh_token,
-    decode_token,
-    hash_password,
     set_auth_cookies,
-    validate_password_strength,
-    verify_password,
 )
 
 router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
@@ -40,22 +36,10 @@ AUTH_RESPONSES = {
     },
 }
 
-MAX_FAILED_ATTEMPTS = 5
-LOCK_DURATION_MINUTES = 15
 
-
-def _hash_reset_token(token: str) -> str:
-    """密码重置令牌的 SHA-256 哈希"""
-    return hashlib.sha256(token.encode()).hexdigest()
-
-
-def _resolve_account_role(account: Account) -> str:
-    role_names = {role.name for role in account.roles}
-    for role in ("platform_admin", "admin", "operator"):
-        if role in role_names:
-            return role
-    # 安全 fallback：无匹配角色时返回最低权限
-    return "operator" if "operator" in role_names else "viewer"
+# ---------------------------------------------------------------------------
+# Schemas
+# ---------------------------------------------------------------------------
 
 
 class LoginRequest(BaseModel):
@@ -75,6 +59,54 @@ class RefreshRequest(BaseModel):
     refresh_token: str | None = Field(None, description="刷新令牌")
 
 
+class MeResponse(BaseModel):
+    id: str = Field(..., description="账号 ID")
+    email: str = Field(..., description="邮箱")
+    name: str = Field(..., description="姓名")
+    tenant_id: str = Field(..., description="租户 ID")
+    organization_id: str | None = Field(None, description="组织 ID")
+    role: str = Field(..., description="角色")
+    tenant_type: str = Field("brand", description="租户类型")
+
+
+class GenerateResetTokenRequest(BaseModel):
+    account_id: str = Field(..., description="需要重置密码的账户 ID")
+
+
+class GenerateResetTokenResponse(BaseModel):
+    reset_token: str = Field(..., description="一次性重置令牌")
+    reset_url: str = Field(..., description="完整的重置链接（拼好 base_url）")
+
+
+class ConfirmResetPasswordRequest(BaseModel):
+    token: str = Field(..., description="重置令牌")
+    account_id: str = Field(..., description="账户 ID")
+    new_password: str = Field(
+        ...,
+        min_length=8,
+        description="新密码（8 位以上，必须包含字母和数字）",
+    )
+
+
+def _client_ip(request: Request) -> str:
+    return (
+        request.headers.get("X-Forwarded-For", request.client.host if request.client else "unknown")
+        .split(",")[0]
+        .strip()
+    )
+
+
+def _build_token_response(token_pair: dict) -> JSONResponse:
+    response = JSONResponse(content=token_pair)
+    set_auth_cookies(response, token_pair["access_token"], token_pair["refresh_token"])
+    return response
+
+
+# ---------------------------------------------------------------------------
+# 路由
+# ---------------------------------------------------------------------------
+
+
 @router.post(
     "/login",
     response_model=TokenResponse,
@@ -82,70 +114,19 @@ class RefreshRequest(BaseModel):
     response_description="登录成功，返回 JWT 令牌",
 )
 async def login(body: LoginRequest, request: Request, db: AsyncSession = Depends(get_db)):
-    # IP 速率限制：每 IP 每分钟最多 20 次登录尝试
-    client_ip = (
-        request.headers.get("X-Forwarded-For", request.client.host if request.client else "unknown")
-        .split(",")[0]
-        .strip()
-    )
     cache = AsyncRedisCache()
-    allowed, remaining = await cache.rate_limit_check(
-        f"login_rate:{client_ip}", max_attempts=20, window_seconds=60
-    )
-    if not allowed:
-        raise HTTPException(
-            status_code=429,
-            detail="登录尝试过于频繁，请稍后再试",
-            headers={"Retry-After": "60"},
+    try:
+        token_pair = await authenticate_login(
+            db=db,
+            email=body.email,
+            password=body.password,
+            tenant_slug=body.tenant_slug,
+            client_ip=_client_ip(request),
+            cache=cache,
         )
-
-    query = select(Account).options(selectinload(Account.roles)).where(Account.email == body.email)
-    if body.tenant_slug:
-        query = query.join(Tenant, Tenant.id == Account.tenant_id).where(Tenant.slug == body.tenant_slug)
-    result = await db.execute(query)
-    account = result.scalars().first()
-
-    now = utcnow()
-
-    # 时序攻击修复：恒定时间路径 — 始终执行一次 verify_password
-    target_hash = account.hashed_password if account else "$2b$12$ALZ2Z98JlD2ezSiz5/K0Ge1fOp0BI.nO4yChDQiEJnhBZgoT8JE8i"
-    if not verify_password(body.password, target_hash):
-        if account:
-            account.failed_login_attempts += 1
-            if account.failed_login_attempts >= MAX_FAILED_ATTEMPTS:
-                account.locked_until = now + timedelta(minutes=LOCK_DURATION_MINUTES)
-            await db.commit()
-        raise HTTPException(status_code=401, detail="邮箱或密码不正确")
-
-    # account 为 None 时在上面的 if-not-verify 中已返回，走到这里 account 一定存在
-    assert account is not None  # type: narrow for mypy
-
-    if account.locked_until and account.locked_until > now:
-        raise HTTPException(status_code=401, detail="邮箱或密码不正确")
-
-    account.failed_login_attempts = 0
-    account.locked_until = None
-    account.last_login_at = now
-    await db.commit()
-
-    # Resolve tenant_type for JWT payload
-    tenant = await get_tenant(db, account.tenant_id)
-    tenant_type = tenant.tenant_type.value if tenant else "brand"
-
-    access = create_access_token(
-        str(account.tenant_id), str(account.id), _resolve_account_role(account), tenant_type
-    )
-    refresh = create_refresh_token(str(account.id))
-    response = JSONResponse(
-        content={
-            "access_token": access,
-            "refresh_token": refresh,
-            "token_type": "bearer",
-            "expires_in": settings.access_token_expire_minutes * 60,
-        }
-    )
-    set_auth_cookies(response, access, refresh)
-    return response
+    except AuthError as e:
+        raise HTTPException(status_code=e.code, detail=e.detail, headers=e.headers) from e
+    return _build_token_response(token_pair)
 
 
 @router.post(
@@ -159,67 +140,16 @@ async def refresh(
     body: RefreshRequest | None = None,
     db: AsyncSession = Depends(get_db),
 ):
-    from app.utils.security import verify_refresh_token
-
-    # 优先从 cookie 获取，回退到 body
     refresh_token = request.cookies.get("refresh_token")
     if not refresh_token and body:
         refresh_token = body.refresh_token
-    if not refresh_token:
-        raise HTTPException(status_code=401, detail="缺少刷新令牌")
 
-    payload = await verify_refresh_token(refresh_token)
-    if not payload:
-        raise HTTPException(status_code=401, detail="刷新令牌无效")
-
-    # 将旧 refresh token 加入黑名单（轮换）
-    old_jti = payload.get("jti")
-    if old_jti:
-        old_exp = payload.get("exp")
-        if old_exp:
-            remaining = max(1, int(old_exp - datetime.now(UTC).timestamp()))
-        else:
-            remaining = settings.refresh_token_expire_days * 86400
-        cache = AsyncRedisCache()
-        await cache.revoke_token(old_jti, ttl=remaining)
-
-    account_id = payload["sub"]
-    result = await db.execute(
-        select(Account).options(selectinload(Account.roles)).where(Account.id == uuid.UUID(account_id))
-    )
-    account = result.scalar_one_or_none()
-    if not account:
-        raise HTTPException(status_code=401, detail="账户不存在")
-
-    # Resolve tenant_type for JWT payload
-    tenant = await get_tenant(db, account.tenant_id)
-    tenant_type = tenant.tenant_type.value if tenant else "brand"
-
-    access = create_access_token(
-        str(account.tenant_id), str(account.id), _resolve_account_role(account), tenant_type
-    )
-    new_refresh = create_refresh_token(str(account.id))
-
-    response = JSONResponse(
-        content={
-            "access_token": access,
-            "refresh_token": new_refresh,
-            "token_type": "bearer",
-            "expires_in": settings.access_token_expire_minutes * 60,
-        }
-    )
-    set_auth_cookies(response, access, new_refresh)
-    return response
-
-
-class MeResponse(BaseModel):
-    id: str = Field(..., description="账号 ID")
-    email: str = Field(..., description="邮箱")
-    name: str = Field(..., description="姓名")
-    tenant_id: str = Field(..., description="租户 ID")
-    organization_id: str | None = Field(None, description="组织 ID")
-    role: str = Field(..., description="角色")
-    tenant_type: str = Field("brand", description="租户类型")
+    cache = AsyncRedisCache()
+    try:
+        token_pair = await refresh_access_token(db=db, refresh_token=refresh_token, cache=cache)
+    except AuthError as e:
+        raise HTTPException(status_code=e.code, detail=e.detail) from e
+    return _build_token_response(token_pair)
 
 
 @router.get(
@@ -263,84 +193,22 @@ async def me(
 async def logout(request: Request):
     """登出端点：将当前 access token 的 jti 加入黑名单"""
     auth_header = request.headers.get("Authorization", "")
-    token = None
-    if auth_header.startswith("Bearer "):
-        token = auth_header[7:]
-    else:
-        token = request.cookies.get("access_token")
-
-    if not token:
-        response = JSONResponse(content={"status": "ok"})
-        clear_auth_cookies(response)
-        return response
-
-    try:
-        payload = decode_token(token)
-    except Exception:
-        # Token malformed — already unusable, return ok to client
-        response = JSONResponse(content={"status": "ok"})
-        clear_auth_cookies(response)
-        return response
-
-    jti = payload.get("jti")
-    if not jti:
-        response = JSONResponse(content={"status": "ok"})
-        clear_auth_cookies(response)
-        return response
-
-    exp = payload.get("exp")
-    if exp:
-        remaining = max(1, int(exp - datetime.now(UTC).timestamp()))
-    else:
-        remaining = settings.access_token_expire_minutes * 60
+    token = auth_header[7:] if auth_header.startswith("Bearer ") else request.cookies.get("access_token")
 
     cache = AsyncRedisCache()
-    await cache.revoke_token(jti, ttl=remaining)
-
-    # 同时撤销关联的 refresh token
     refresh_token_str = request.cookies.get("refresh_token") or ""
     if not refresh_token_str:
-        # Try request body as fallback (legacy clients)
         try:
             body = await request.json()
             refresh_token_str = body.get("refresh_token", "")
         except Exception:
             pass
-    if refresh_token_str:
-        try:
-            refresh_payload = decode_token(refresh_token_str)
-            refresh_jti = refresh_payload.get("jti")
-            if refresh_jti:
-                refresh_exp = refresh_payload.get("exp")
-                refresh_remaining = (
-                    max(1, int(refresh_exp - datetime.now(UTC).timestamp()))
-                    if refresh_exp
-                    else settings.refresh_token_expire_days * 86400
-                )
-                await cache.revoke_token(refresh_jti, ttl=refresh_remaining)
-        except Exception:
-            pass  # refresh token invalid or malformed, ignore
+
+    await logout_session(access_token=token, refresh_token_str=refresh_token_str or None, cache=cache)
 
     response = JSONResponse(content={"status": "ok"})
     clear_auth_cookies(response)
     return response
-
-
-# ---------------------------------------------------------------------------
-# 密码重置（管理员生成一次性重置链接）
-# ---------------------------------------------------------------------------
-
-RESET_TOKEN_TTL = 3600  # 1 小时
-RESET_TOKEN_KEY_PREFIX = "reset"
-
-
-class GenerateResetTokenRequest(BaseModel):
-    account_id: str = Field(..., description="需要重置密码的账户 ID")
-
-
-class GenerateResetTokenResponse(BaseModel):
-    reset_token: str = Field(..., description="一次性重置令牌")
-    reset_url: str = Field(..., description="完整的重置链接（拼好 base_url）")
 
 
 @router.post(
@@ -355,36 +223,14 @@ async def generate_reset_token(
     tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
     """管理员为指定账户生成一次性密码重置令牌，存入 Redis（1 小时有效）。"""
-    try:
-        account_uuid = uuid.UUID(body.account_id)
-    except ValueError:
-        raise HTTPException(status_code=400, detail="账户 ID 格式无效")
-
-    account = await db.execute(
-        select(Account).where(Account.id == account_uuid, Account.tenant_id == tenant_id)
-    )
-    if not account.scalar_one_or_none():
-        raise HTTPException(status_code=404, detail="账户不存在")
-
-    token = secrets.token_urlsafe(32)
     cache = AsyncRedisCache()
-    await cache.set(
-        f"{RESET_TOKEN_KEY_PREFIX}:{account_uuid}",
-        {"token_hash": _hash_reset_token(token), "account_id": str(account_uuid), "tenant_id": str(tenant_id)},
-        ttl=RESET_TOKEN_TTL,
-    )
-    reset_url = f"{settings.base_url}/api/v1/auth/reset-page?token={token}&account_id={account_uuid}"
-    return GenerateResetTokenResponse(reset_token=token, reset_url=reset_url)
-
-
-class ConfirmResetPasswordRequest(BaseModel):
-    token: str = Field(..., description="重置令牌")
-    account_id: str = Field(..., description="账户 ID")
-    new_password: str = Field(
-        ...,
-        min_length=8,
-        description="新密码（8 位以上，必须包含字母和数字）",
-    )
+    try:
+        result = await generate_password_reset(
+            db=db, account_id_str=body.account_id, tenant_id=tenant_id, cache=cache
+        )
+    except AuthError as e:
+        raise HTTPException(status_code=e.code, detail=e.detail) from e
+    return GenerateResetTokenResponse(reset_token=result["reset_token"], reset_url=result["reset_url"])
 
 
 @router.post(
@@ -398,74 +244,18 @@ async def confirm_reset_password(
     db: AsyncSession = Depends(get_db),
 ):
     """用户通过重置令牌自助设置新密码。令牌验证后立即失效。"""
-    # 速率限制：每 account_id 每分钟最多 5 次尝试
     cache = AsyncRedisCache()
-    allowed, _ = await cache.rate_limit_check(
-        f"reset_rate:{body.account_id}", max_attempts=5, window_seconds=60
-    )
-    if not allowed:
-        raise HTTPException(
-            status_code=429,
-            detail="重置尝试过于频繁，请稍后再试",
-            headers={"Retry-After": "60"},
-        )
-
-    # 验证密码强度
     try:
-        validate_password_strength(body.new_password)
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e)) from e
-
-    # 从 Redis 取出 token 记录
-    try:
-        account_uuid = uuid.UUID(body.account_id)
-    except ValueError:
-        raise HTTPException(status_code=400, detail="账户 ID 格式无效")
-
-    record = await cache.get(f"{RESET_TOKEN_KEY_PREFIX}:{account_uuid}")
-    if not record:
-        raise HTTPException(status_code=400, detail="重置链接已过期或不存在，请联系管理员重新生成")
-
-    if record.get("token_hash") != _hash_reset_token(body.token) or record.get("account_id") != body.account_id:
-        raise HTTPException(status_code=400, detail="重置令牌无效")
-
-    # 查找账户（验证租户隔离）
-    stored_tenant_id = record.get("tenant_id")
-    if stored_tenant_id:
-        result = await db.execute(
-            select(Account).where(Account.id == account_uuid, Account.tenant_id == uuid.UUID(stored_tenant_id))
+        return await confirm_password_reset(
+            db=db,
+            token=body.token,
+            account_id_str=body.account_id,
+            new_password=body.new_password,
+            client_ip=_client_ip(request),
+            cache=cache,
         )
-    else:
-        # 兼容旧 token 记录（无 tenant_id 字段）
-        result = await db.execute(select(Account).where(Account.id == account_uuid))
-    account = result.scalar_one_or_none()
-    if not account:
-        raise HTTPException(status_code=404, detail="账户不存在")
-
-    # 更新密码
-    account.hashed_password = hash_password(body.new_password)
-    account.failed_login_attempts = 0
-    account.locked_until = None
-    await db.commit()
-
-    # 立即删除 token（一次性）
-    await cache.invalidate(f"{RESET_TOKEN_KEY_PREFIX}:{account_uuid}")
-
-    # 审计日志
-    try:
-        from app.services.audit import write_audit_log
-        await write_audit_log(
-            db,
-            operator_id=str(account_uuid),
-            target_tenant_id=str(account.tenant_id) if account.tenant_id else "",
-            action="password_reset",
-            resource=f"account:{account_uuid}",
-        )
-        await db.commit()
-    except Exception:
-        pass  # 审计失败不影响密码重置
-
-    return {"status": "ok", "message": "密码已重置，请使用新密码登录"}
+    except AuthError as e:
+        raise HTTPException(status_code=e.code, detail=e.detail, headers=e.headers) from e
 
 
 @router.get(
@@ -474,8 +264,5 @@ async def confirm_reset_password(
 )
 async def reset_page_redirect(token: str, account_id: str):
     """将后端短链重定向到前端重置密码页面。"""
-    from fastapi.responses import RedirectResponse
-
-    # 从 base_url 推导前端地址（简单处理：用 cors_origins 的第一个）
     frontend_url = settings.cors_origins.split(",")[0].strip()
     return RedirectResponse(f"{frontend_url}/reset-password?token={token}&account_id={account_id}")
