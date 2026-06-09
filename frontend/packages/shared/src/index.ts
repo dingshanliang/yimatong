@@ -200,6 +200,53 @@ export interface Benefit {
   updated_at: string;
 }
 
+// ─── Member & Points ─────────────────────────
+
+export interface PointTransaction {
+  id: string;
+  amount: number;
+  balance_after: number;
+  txn_type: "earning" | "spending" | "expired";
+  reason?: string | null;
+  created_at?: string | null;
+  expires_at?: string | null;
+}
+
+export interface PointProduct {
+  id: string;
+  name: string;
+  description?: string | null;
+  image_url?: string | null;
+  points_cost: number;
+  stock: number;
+  total_claimed: number;
+  enabled: boolean;
+  benefit_id?: string | null;
+  starts_at?: string | null;
+  ends_at?: string | null;
+  per_consumer_limit: number;
+  sort_order: number;
+  can_exchange?: boolean | null;
+  exchange_block_reason?: string | null;
+}
+
+export interface ConsumerProfile {
+  id: string;
+  nickname?: string | null;
+  phone?: string | null;
+  member_level: "normal" | "silver" | "gold" | "platinum";
+  total_points: number;
+}
+
+export interface MemberOverview {
+  enabled_rules: number;
+  active_products: number;
+  points_awarded_7d: number;
+  points_spent_7d: number;
+  redemptions_7d: number;
+  low_stock_products: number;
+}
+
 // ─── Organization & Account ──────────────────
 
 export interface Organization {

@@ -56,6 +56,7 @@ export function MemberCard({
     consumer_id?: string;
   } | null>(null);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [showHistory, setShowHistory] = useState(false);
 
   useEffect(() => {
@@ -64,7 +65,7 @@ export function MemberCard({
     apiClient
       .get("/consumers/me", { params: { consumer_id: consumerId } })
       .then((res) => setProfile(res.data))
-      .catch(() => {})
+      .catch(() => setError("加载会员信息失败"))
       .finally(() => setLoading(false));
   }, [consumerId]);
 
@@ -129,6 +130,10 @@ export function MemberCard({
         </div>
       ) : (
         <p className="mt-2 text-xs text-blue-500">已臻至最高等级</p>
+      )}
+
+      {error && (
+        <p className="mt-2 rounded-lg bg-red-50 px-3 py-1.5 text-xs text-red-600">{error}</p>
       )}
 
       {/* 积分明细 toggle */}

@@ -18,6 +18,7 @@ export function PointsBalance({
   const consumerId = propConsumerId || getConsumerId() || undefined;
   const [points, setPoints] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [showHistory, setShowHistory] = useState(false);
   const [resolvedConsumerId, setResolvedConsumerId] = useState<string | null>(null);
 
@@ -32,7 +33,7 @@ export function PointsBalance({
         setPoints(res.data.total_points ?? 0);
         setResolvedConsumerId(res.data.consumer_id || consumerId);
       })
-      .catch(() => {})
+      .catch(() => setError("加载积分失败"))
       .finally(() => setLoading(false));
   }, [consumerId, scanToken]);
 
@@ -64,6 +65,9 @@ export function PointsBalance({
         </div>
       </div>
       <p className="mt-2 text-xs text-blue-100">积分可用于兑换权益</p>
+      {error && (
+        <p className="mt-1 rounded-xl bg-red-500/20 px-3 py-1.5 text-xs text-red-100">{error}</p>
+      )}
       {!consumerId && (
         <p className="mt-3 rounded-xl bg-white/15 px-3 py-2 text-xs text-blue-50">
           完成手机号留资后，可查看积分并兑换权益。

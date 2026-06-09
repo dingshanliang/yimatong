@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import dayjs, { type Dayjs } from "dayjs";
 import {
   App,
@@ -28,7 +28,7 @@ import {
 } from "antd";
 import { DeleteOutlined, EditOutlined, PlusOutlined, SearchOutlined } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
-import api from "@/lib/api";
+import api, { extractErrorMessage } from "@/lib/api";
 
 const { Title, Text } = Typography;
 const { RangePicker } = DatePicker;
@@ -216,8 +216,7 @@ function ConsumersTab({ onChanged }: { onChanged: () => void }) {
       await fetchProfile(profile.id);
       onChanged();
     } catch (e: unknown) {
-      const err = e as { response?: { data?: { detail?: string } } };
-      message.error(err.response?.data?.detail || "操作失败");
+      message.error(extractErrorMessage(e, "操作失败"));
     }
   };
 
@@ -389,8 +388,7 @@ function RulesTab({ onChanged }: { onChanged: () => void }) {
       await fetchRules();
       onChanged();
     } catch (e: unknown) {
-      const err = e as { response?: { data?: { detail?: string } } };
-      message.error(err.response?.data?.detail || "保存失败");
+      message.error(extractErrorMessage(e, "保存失败"));
     }
   };
 
@@ -576,8 +574,7 @@ function ProductsTab({ onChanged }: { onChanged: () => void }) {
       await fetchProducts(page);
       onChanged();
     } catch (e: unknown) {
-      const err = e as { response?: { data?: { detail?: string } } };
-      message.error(err.response?.data?.detail || "保存失败");
+      message.error(extractErrorMessage(e, "保存失败"));
     }
   };
 
@@ -697,6 +694,7 @@ function RedemptionsTab() {
   const [loading, setLoading] = useState(false);
   const [filters, setFilters] = useState<{ consumer_id?: string; product_id?: string; status?: string }>({});
   const { message } = App.useApp();
+  const initialized = useRef(false);
 
   const fetchRedemptions = useCallback(async (nextPage = 1, nextFilters = filters) => {
     setLoading(true);
@@ -712,7 +710,12 @@ function RedemptionsTab() {
     }
   }, [filters, message]);
 
-  useEffect(() => { fetchRedemptions(); }, [fetchRedemptions]);
+  useEffect(() => {
+    if (!initialized.current) {
+      initialized.current = true;
+      fetchRedemptions(1, {});
+    }
+  }, []);
 
   const columns: ColumnsType<PointRedemption> = [
     { title: "消费者", render: (_, record) => record.consumer_nickname || record.consumer_phone || `${record.consumer_id.slice(0, 8)}...` },
