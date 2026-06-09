@@ -163,6 +163,7 @@ description: Iterate through product modules systematically - review, plan, exec
 3. **判断完成状态**：
    - 如 `tasks_completed == tasks_total`：运行全量测试，通过则 `status = "completed"`，然后**继续处理下一个模块**
    - 否则保持 `status = "executing"`，继续执行剩余任务
+   - 任务被延期（DEFERRED）也算 completed，计入 tasks_completed
 
 4. **完成时**：
    - 关闭 bead：`bd done {bead_id} --dolt-auto-commit off --reason "模块迭代完成"`
@@ -192,27 +193,25 @@ description: Iterate through product modules systematically - review, plan, exec
 
 ## 节奏控制
 
-**核心原则：尽量连续执行，不要人为中断。**
-
-每次 /loop 调用时，按顺序处理直到无法继续：
+**核心原则：全自动，不等待人工。连续执行直到全部模块完成。**
 
 ```
 一次 /loop 迭代：
 Step 0(发现) → Step 2(调度) → Step 3(Review) → Step 4(Plan) → Step 5(Execute) → 下一个模块 → ...
 ```
 
-**连续执行，不要主动断开**。模型会自动处理上下文管理：
-- 如果上下文变长，系统会自动总结，无需人工干预
-- /loop 会在当前轮结束后自动触发下一轮
+**全自动策略**：
+- **测试失败** → 自动修复（最多 3 次）→ 仍失败则 revert + 记录到 `docs/superpowers/deferred-decisions.md`，继续下一个任务
+- **需要人决策的任务**（迁移、接口签名变更）→ 跳过，记录到延期文件，继续下一个任务
+- **全量测试失败** → 同样自动修复 → 修复不了则记录并继续
 
-**唯一需要停止的情况**：
-- 测试失败，需要人工干预 → 输出失败信息，不设 ScheduleWakeup，等待用户回应
-- 所有模块完成 → 输出完成信息，不设 ScheduleWakeup
+**唯一真正停止的情况**：
+- 所有模块完成 → 输出完成信息和延期汇总，不设 ScheduleWakeup
 
 **不要**：
 - 不要在 Review → Plan 之间断开
-- 不要在 Execute 每隔 3 个任务就断开
-- 不要主动设置 ScheduleWakeup（除非测试失败需要等人）
 - 不要人为限制每轮的任务数量
+- 不要因为测试失败就停止整个流程
+- 不要主动设置 ScheduleWakeup
 
 **遵循 CLAUDE.md 中的所有编码规范。**
