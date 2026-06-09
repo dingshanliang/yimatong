@@ -1,4 +1,3 @@
-import re
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -9,18 +8,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
 from app.core.dependencies import get_current_account_id, get_current_tenant
 from app.models.tenant import Account
-from app.utils.security import hash_password, verify_password
+from app.utils.security import hash_password, validate_password_strength, verify_password
 
 router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
-
-
-def validate_password_strength(password: str) -> None:
-    if len(password) < 8:
-        raise HTTPException(status_code=422, detail="密码至少需要 8 位")
-    if not re.search(r"[a-zA-Z]", password):
-        raise HTTPException(status_code=422, detail="密码必须包含字母")
-    if not re.search(r"\d", password):
-        raise HTTPException(status_code=422, detail="密码必须包含数字")
 
 
 class ChangePasswordRequest(BaseModel):
@@ -31,6 +21,14 @@ class ChangePasswordRequest(BaseModel):
 class ResetPasswordRequest(BaseModel):
     account_id: uuid.UUID
     new_password: str = Field(..., min_length=1)
+
+
+def _validate_password(password: str) -> None:
+    """Wrapper that converts ValueError to HTTPException for API layer."""
+    try:
+        validate_password_strength(password)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e)) from e
 
 
 @router.post("/change-password")
@@ -45,7 +43,7 @@ async def change_password(
         raise HTTPException(status_code=404, detail="Account not found")
     if not verify_password(body.old_password, account.hashed_password):
         raise HTTPException(status_code=401, detail="Old password is incorrect")
-    validate_password_strength(body.new_password)
+    _validate_password(body.new_password)
     account.hashed_password = hash_password(body.new_password)
     await db.commit()
     return {"detail": "Password changed"}
@@ -61,7 +59,7 @@ async def reset_password(
     account = result.scalar_one_or_none()
     if not account:
         raise HTTPException(status_code=404, detail="Account not found")
-    validate_password_strength(body.new_password)
+    _validate_password(body.new_password)
     account.hashed_password = hash_password(body.new_password)
     await db.commit()
     return {"detail": "Password reset"}

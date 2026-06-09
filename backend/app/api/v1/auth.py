@@ -25,6 +25,7 @@ from app.utils.security import (
     decode_token,
     hash_password,
     set_auth_cookies,
+    validate_password_strength,
     verify_password,
 )
 
@@ -409,11 +410,11 @@ async def confirm_reset_password(
             headers={"Retry-After": "60"},
         )
 
-    # 验证密码强度：必须包含字母和数字
-    has_letter = any(c.isalpha() for c in body.new_password)
-    has_digit = any(c.isdigit() for c in body.new_password)
-    if not (has_letter and has_digit):
-        raise HTTPException(status_code=400, detail="密码必须包含字母和数字")
+    # 验证密码强度
+    try:
+        validate_password_strength(body.new_password)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
 
     # 从 Redis 取出 token 记录
     try:
