@@ -17,10 +17,9 @@ from tests.conftest import TestSessionLocal
 
 def _platform_admin_headers() -> dict:
     from app.utils.security import create_access_token
+
     token = create_access_token("platform", "platform-admin", "platform_admin")
     return {"Authorization": f"Bearer {token}"}
-
-
 
 
 @pytest.fixture
@@ -61,9 +60,7 @@ async def setup_tenant(client: AsyncClient):
     return tid, headers
 
 
-async def create_scan_context(
-    db_session: AsyncSession, tenant_id: str, consumer_id: str = ""
-) -> str:
+async def create_scan_context(db_session: AsyncSession, tenant_id: str, consumer_id: str = "") -> str:
     batch_id = uuid.uuid4()
     public_id = f"TEST{uuid.uuid4().hex[:10]}"
     db_session.add(
@@ -89,9 +86,7 @@ async def create_scan_context(
         )
     )
     await db_session.flush()
-    return create_scan_token(
-        public_id, "test-ip", tenant_id=tenant_id, consumer_id=consumer_id
-    )
+    return create_scan_token(public_id, "test-ip", tenant_id=tenant_id, consumer_id=consumer_id)
 
 
 class TestConsumerProfile:
@@ -298,7 +293,9 @@ class TestMemberOverview:
             json={"name": "兑换券", "points_cost": 20, "stock": 2, "enabled": True},
             headers=headers,
         )
-        await client.post("/api/v1/members/points/award", json={"consumer_id": cid, "points": 100, "reason": "测试"}, headers=headers)
+        await client.post(
+            "/api/v1/members/points/award", json={"consumer_id": cid, "points": 100, "reason": "测试"}, headers=headers
+        )
         token = await create_scan_context(db_session, tid)
         exchange = await client.post(
             "/api/v1/consumers/points/exchanges",
@@ -423,7 +420,9 @@ class TestPointProducts:
         tid, headers = setup_tenant
         consumer = await client.post("/api/v1/members/consumers", json={}, headers=headers)
         cid = consumer.json()["id"]
-        await client.post("/api/v1/members/points/award", json={"consumer_id": cid, "points": 80, "reason": "初始"}, headers=headers)
+        await client.post(
+            "/api/v1/members/points/award", json={"consumer_id": cid, "points": 80, "reason": "初始"}, headers=headers
+        )
         product = await client.post(
             "/api/v1/members/point-products",
             json={"name": "积分券", "points_cost": 50, "stock": 1, "per_consumer_limit": 1},
@@ -599,3 +598,36 @@ class TestConsumerIdentityBinding:
         )
         assert resp.status_code == 403
         assert "mismatch" in resp.json()["detail"]
+
+
+class TestConcurrentOperations:
+    """并发操作安全性
+
+    注意: SQLite 下 with_for_update() 是 no-op，行锁仅在 PostgreSQL 下生效。
+    测试验证 API 层面的积分累加流程正确性。真正的并发安全在 PostgreSQL 生产环境中保障。
+    """
+
+    @pytest.mark.anyio
+    async def test_rapid_award_preserves_balance(self, client: AsyncClient, setup_tenant):
+        """快速连续发放积分应正确累加，不丢失"""
+        tid, headers = setup_tenant
+        consumer = await client.post("/api/v1/members/consumers", json={}, headers=headers)
+        cid = consumer.json()["id"]
+
+        # 连续发放 10 次，每次 10 积分
+        successes = 0
+        for _ in range(10):
+            resp = await client.post(
+                "/api/v1/members/points/award",
+                json={"consumer_id": cid, "points": 10, "reason": "连续发放测试"},
+                headers=headers,
+            )
+            if resp.status_code == 200:
+                successes += 1
+
+        # 验证最终余额
+        profile = await client.get(
+            f"/api/v1/members/consumers/{cid}",
+            headers=headers,
+        )
+        assert profile.json()["total_points"] == successes * 10
