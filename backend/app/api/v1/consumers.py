@@ -7,7 +7,8 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.database import get_db_with_bypass
+from app.core.context import set_consumer_tenant_id
+from app.core.database import get_db_for_consumer
 from app.services.scan_token import verify_scan_token
 from app.utils.client_ip import compute_ip_hash, get_client_ip
 
@@ -42,22 +43,26 @@ async def _resolve_scan_tenant(request: Request, db: AsyncSession) -> uuid.UUID:
 
     # 优先从 token payload 获取 tenant_id（减少 DB 查询）
     tid = payload.get("tenant_id")
+    tenant_uuid: uuid.UUID
     if tid:
-        return uuid.UUID(tid)
+        tenant_uuid = uuid.UUID(tid)
+    else:
+        from app.services.resolver import resolve_public_code
 
-    from app.services.resolver import resolve_public_code
+        code_data = await resolve_public_code(db, payload["public_id"])
+        if not code_data:
+            raise HTTPException(status_code=404, detail="code not found")
+        tenant_uuid = uuid.UUID(code_data["tenant_id"])
 
-    code_data = await resolve_public_code(db, payload["public_id"])
-    if not code_data:
-        raise HTTPException(status_code=404, detail="code not found")
-    return uuid.UUID(code_data["tenant_id"])
+    set_consumer_tenant_id(str(tenant_uuid))
+    return tenant_uuid
 
 
 @consumer_router.post("/lead-capture", status_code=201)
 async def lead_capture(
     request: Request,
     body: LeadCaptureRequest,
-    db: AsyncSession = Depends(get_db_with_bypass),
+    db: AsyncSession = Depends(get_db_for_consumer),
 ):
     """消费者留资（姓名+手机号），需要 scan_token 鉴权"""
     auth_header = request.headers.get("Authorization", "")
@@ -133,7 +138,7 @@ async def lead_capture(
 async def get_consumer_me(
     request: Request,
     consumer_id: str | None = None,
-    db: AsyncSession = Depends(get_db_with_bypass),
+    db: AsyncSession = Depends(get_db_for_consumer),
 ):
     """查询当前消费者信息（积分、等级），必须结合 scan_token 与 consumer_id。"""
     tenant_id = await _resolve_scan_tenant(request, db)
@@ -173,7 +178,7 @@ async def get_consumer_me(
 async def get_consumer_points_me(
     request: Request,
     consumer_id: uuid.UUID | None = None,
-    db: AsyncSession = Depends(get_db_with_bypass),
+    db: AsyncSession = Depends(get_db_for_consumer),
 ):
     tenant_id = await _resolve_scan_tenant(request, db)
     if not consumer_id:
@@ -198,7 +203,7 @@ async def list_consumer_points_transactions(
     consumer_id: uuid.UUID,
     page: int = 1,
     page_size: int = 20,
-    db: AsyncSession = Depends(get_db_with_bypass),
+    db: AsyncSession = Depends(get_db_for_consumer),
 ):
     tenant_id = await _resolve_scan_tenant(request, db)
     from app.schemas.common import PaginatedResponse
@@ -228,7 +233,7 @@ async def list_consumer_points_transactions(
 async def list_consumer_points_products(
     request: Request,
     consumer_id: uuid.UUID,
-    db: AsyncSession = Depends(get_db_with_bypass),
+    db: AsyncSession = Depends(get_db_for_consumer),
 ):
     tenant_id = await _resolve_scan_tenant(request, db)
     from app.services.point_shop import list_consumer_point_products
@@ -243,7 +248,7 @@ async def list_consumer_points_products(
 async def create_consumer_points_exchange(
     request: Request,
     body: PointsExchangeRequest,
-    db: AsyncSession = Depends(get_db_with_bypass),
+    db: AsyncSession = Depends(get_db_for_consumer),
 ):
     tenant_id = await _resolve_scan_tenant(request, db)
     from app.services.point_shop import exchange_product

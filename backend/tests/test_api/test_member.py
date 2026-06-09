@@ -7,12 +7,13 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.database import get_db, get_db_with_bypass
+from app.core.database import get_db, get_db_for_consumer, get_db_with_bypass
 from app.main import app
 from app.models.code import CodeBatch, CodeItem, CodeItemStatus
 from app.services.scan_token import create_scan_token
 from app.utils.security import create_access_token
 from tests.conftest import TestSessionLocal
+
 
 def _platform_admin_headers() -> dict:
     from app.utils.security import create_access_token
@@ -35,6 +36,7 @@ async def client(db_session: AsyncSession):
 
     app.dependency_overrides[get_db] = override_get_db
     app.dependency_overrides[get_db_with_bypass] = override_get_db
+    app.dependency_overrides[get_db_for_consumer] = override_get_db
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as c:
         yield c
