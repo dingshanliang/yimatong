@@ -14,7 +14,9 @@ export function DiversionTab() {
 
   const handleResolve = async (id: string) => {
     try {
-      await api.put(`/risk-dashboard/diversion-clues/${id}/resolve`);
+      await api.put(`/risk-dashboard/diversion-clues/${id}/resolve`, {
+        resolution_action: "confirmed",
+      });
       message.success("已标记为处理");
       mutate();
     } catch {
