@@ -19,7 +19,7 @@
       "plan_file": "docs/superpowers/plans/2026-06-09-auth-hardening.md",
       "findings_count": {"critical": 4, "high": 12, "medium": 16, "low": 7},
       "tasks_total": 10,
-      "tasks_completed": 7,
+      "tasks_completed": 8,
       "bead_id": "yimatong-koyk",
       "branch": null,
       "last_reviewed": "2026-06-09",

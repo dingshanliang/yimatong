@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
 from app.core.dependencies import get_current_account_id, get_current_role, get_current_tenant
 from app.models.tenant import Account
+from app.services.redis_cache import AsyncRedisCache
 from app.utils.security import hash_password, validate_password_strength, verify_password
 
 router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
@@ -61,6 +62,11 @@ async def reset_password(
 ):
     if role not in ADMIN_ROLES:
         raise HTTPException(status_code=403, detail="仅管理员可重置密码")
+    # 速率限制：每 account_id 每分钟最多 10 次
+    cache = AsyncRedisCache()
+    allowed, _ = await cache.rate_limit_check(f"admin_reset:{body.account_id}", max_attempts=10, window_seconds=60)
+    if not allowed:
+        raise HTTPException(status_code=429, detail="重置操作过于频繁", headers={"Retry-After": "60"})
     result = await db.execute(select(Account).where(Account.id == body.account_id, Account.tenant_id == tenant_id))
     account = result.scalar_one_or_none()
     if not account:
