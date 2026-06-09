@@ -1,4 +1,4 @@
-from pydantic import model_validator
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings
 
 
@@ -15,6 +15,11 @@ class Settings(BaseSettings):
 
     # HMAC-SHA256 pepper（hex 编码）
     hmac_pepper: str = ""
+
+    # IP 哈希加盐密钥（防止彩虹表攻击，生产环境必须修改）
+    ip_hash_secret: str = Field(
+        default="yimatong-default-ip-hash-secret-change-in-production"
+    )
 
     # 后端对外地址（用于构建回调 URL 等）
     base_url: str = "http://localhost:8000"

@@ -2,7 +2,7 @@
 
 import uuid
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.channel import AccountChannelScope, CodeAllocation, Distributor, DiversionClue, Region, Store
@@ -1648,6 +1648,23 @@ async def list_diversion_clues(
     if q:
         pattern = _like(q)
         conditions.append(or_(DiversionClue.public_id.ilike(pattern), DiversionClue.detected_city.ilike(pattern)))
+    if severity:
+        if severity == "high":
+            conditions.append(
+                and_(
+                    DiversionClue.detected_city.isnot(None),
+                    DiversionClue.expected_region.isnot(None),
+                    text("diversion_clues.detected_city NOT ILIKE '%' || diversion_clues.expected_region || '%'"),
+                )
+            )
+        elif severity == "medium":
+            conditions.append(
+                or_(
+                    DiversionClue.detected_city.is_(None),
+                    DiversionClue.expected_region.is_(None),
+                    text("diversion_clues.detected_city ILIKE '%' || diversion_clues.expected_region || '%'"),
+                )
+            )
 
     total = (await db.execute(select(func.count()).select_from(DiversionClue).where(*conditions))).scalar() or 0
     rows = (
@@ -1663,9 +1680,6 @@ async def list_diversion_clues(
         .scalars()
         .all()
     )
-    if severity:
-        filtered = [row for row in rows if _diversion_severity(row) == severity]
-        return filtered, len(filtered)
     return list(rows), total
 
 
