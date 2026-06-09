@@ -144,7 +144,7 @@ class TestLogin:
             json={"email": "nobody@test.com", "password": "Password1"},
         )
         assert resp.status_code == 401
-        assert resp.json()["detail"] == "Invalid credentials"
+        assert resp.json()["detail"] == "邮箱或密码不正确"
 
     @pytest.mark.anyio
     async def test_login_success_records_last_login_time(
@@ -182,10 +182,13 @@ class TestLogin:
 class TestAccountLocking:
     @pytest.mark.anyio
     async def test_account_locked_after_5_failures(self, client: AsyncClient, db_session: AsyncSession, seeded_account):
+        unique_ip = f"10.0.{id(self) % 255}.{(_ := id(self) // 255) % 255}"
+        headers = {"X-Forwarded-For": unique_ip}
         for _ in range(5):
             resp = await client.post(
                 "/api/v1/auth/login",
                 json={"email": "login@test.com", "password": "wrong"},
+                headers=headers,
             )
             assert resp.status_code == 401
 
@@ -193,6 +196,7 @@ class TestAccountLocking:
         resp = await client.post(
             "/api/v1/auth/login",
             json={"email": "login@test.com", "password": "Password1"},
+            headers=headers,
         )
         assert resp.status_code == 401
 
@@ -200,10 +204,13 @@ class TestAccountLocking:
     async def test_locked_account_has_locked_until_set(
         self, client: AsyncClient, db_session: AsyncSession, seeded_account
     ):
+        unique_ip = f"10.1.{id(self) % 255}.{(_ := id(self) // 255) % 255}"
+        headers = {"X-Forwarded-For": unique_ip}
         for _ in range(5):
             await client.post(
                 "/api/v1/auth/login",
                 json={"email": "login@test.com", "password": "wrong"},
+                headers=headers,
             )
         result = await db_session.execute(select(Account).where(Account.id == seeded_account.id))
         account = result.scalar_one()

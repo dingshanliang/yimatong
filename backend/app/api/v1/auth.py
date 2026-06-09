@@ -108,7 +108,7 @@ async def login(body: LoginRequest, request: Request, db: AsyncSession = Depends
     now = utcnow()
 
     # 时序攻击修复：恒定时间路径 — 始终执行一次 verify_password
-    target_hash = account.hashed_password if account else "$2b$12$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+    target_hash = account.hashed_password if account else "$2b$12$ALZ2Z98JlD2ezSiz5/K0Ge1fOp0BI.nO4yChDQiEJnhBZgoT8JE8i"
     if not verify_password(body.password, target_hash):
         if account:
             account.failed_login_attempts += 1
@@ -370,7 +370,7 @@ async def generate_reset_token(
     cache = AsyncRedisCache()
     await cache.set(
         f"{RESET_TOKEN_KEY_PREFIX}:{account_uuid}",
-        {"token_hash": _hash_reset_token(token), "account_id": str(account_uuid)},
+        {"token_hash": _hash_reset_token(token), "account_id": str(account_uuid), "tenant_id": str(tenant_id)},
         ttl=RESET_TOKEN_TTL,
     )
     reset_url = f"{settings.base_url}/api/v1/auth/reset-page?token={token}&account_id={account_uuid}"
@@ -429,8 +429,15 @@ async def confirm_reset_password(
     if record.get("token_hash") != _hash_reset_token(body.token) or record.get("account_id") != body.account_id:
         raise HTTPException(status_code=400, detail="重置令牌无效")
 
-    # 查找账户
-    result = await db.execute(select(Account).where(Account.id == account_uuid))
+    # 查找账户（验证租户隔离）
+    stored_tenant_id = record.get("tenant_id")
+    if stored_tenant_id:
+        result = await db.execute(
+            select(Account).where(Account.id == account_uuid, Account.tenant_id == uuid.UUID(stored_tenant_id))
+        )
+    else:
+        # 兼容旧 token 记录（无 tenant_id 字段）
+        result = await db.execute(select(Account).where(Account.id == account_uuid))
     account = result.scalar_one_or_none()
     if not account:
         raise HTTPException(status_code=404, detail="账户不存在")
