@@ -190,9 +190,29 @@ description: Iterate through product modules systematically - review, plan, exec
 - 下一轮将继续处理 [模块名] 的 [阶段]
 ```
 
-## 注意事项
+## 节奏控制
 
-- **每轮只处理一个阶段**（review 或 plan 或最多 3 个 execute 任务）
-- **不要试图在一次调用中完成整个模块**
-- **遇到测试失败时暂停**，不要继续执行
-- **遵循 CLAUDE.md 中的所有编码规范**
+**Review → Plan 连续执行，不要断开。** 这两个都是文档生成任务，在同一轮内完成：
+
+```
+一轮内的流程：
+Step 2(调度) → Step 3(Review) → Step 4(Plan) → Step 6(摘要)
+```
+
+**Execute 阶段才断开**（涉及代码变更，每轮最多 3 个任务）：
+```
+Execute 轮次：
+Step 2(调度) → Step 5(执行3个任务) → Step 6(摘要) → ScheduleWakeup 60s
+```
+
+**断开点**：
+- Plan 完成后 → 断开（下一轮开始 Execute，需要干净上下文）
+- Execute 每轮 3 个任务后 → 断开
+- Execute 全部完成 → 连续进入下一个模块的 Review+Plan
+
+**ScheduleWakeup 设置**：
+- 断开时设置 **60 秒**（最短间隔），不要用默认的 20 分钟
+- 仅当 Execute 遇到测试失败需要人工干预时，不设置 ScheduleWakeup
+
+**遇到测试失败时暂停**，不要继续执行。
+**遵循 CLAUDE.md 中的所有编码规范**。
