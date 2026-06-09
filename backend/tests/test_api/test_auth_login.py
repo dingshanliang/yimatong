@@ -132,7 +132,7 @@ class TestLogin:
     async def test_login_failure_returns_401(self, client: AsyncClient, seeded_account):
         resp = await client.post(
             "/api/v1/auth/login",
-            json={"email": "login@test.com", "password": "wrong"},
+            json={"email": "login@test.com", "password": "wrong1"},
         )
         assert resp.status_code == 401
         assert resp.json()["detail"] == "邮箱或密码不正确"
@@ -167,7 +167,7 @@ class TestLogin:
         for _ in range(3):
             await client.post(
                 "/api/v1/auth/login",
-                json={"email": "login@test.com", "password": "wrong"},
+                json={"email": "login@test.com", "password": "wrong1"},
             )
         # 再成功
         await client.post(
@@ -187,7 +187,7 @@ class TestAccountLocking:
         for _ in range(5):
             resp = await client.post(
                 "/api/v1/auth/login",
-                json={"email": "login@test.com", "password": "wrong"},
+                json={"email": "login@test.com", "password": "wrong1"},
                 headers=headers,
             )
             assert resp.status_code == 401
@@ -209,7 +209,7 @@ class TestAccountLocking:
         for _ in range(5):
             await client.post(
                 "/api/v1/auth/login",
-                json={"email": "login@test.com", "password": "wrong"},
+                json={"email": "login@test.com", "password": "wrong1"},
                 headers=headers,
             )
         result = await db_session.execute(select(Account).where(Account.id == seeded_account.id))

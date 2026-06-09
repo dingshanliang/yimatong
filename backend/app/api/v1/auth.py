@@ -60,7 +60,7 @@ def _resolve_account_role(account: Account) -> str:
 
 class LoginRequest(BaseModel):
     email: str = Field(..., max_length=255, description="登录邮箱", examples=["admin@example.com"])
-    password: str = Field(..., min_length=1, description="密码", examples=["SecurePass123!"])
+    password: str = Field(..., min_length=6, description="密码", examples=["SecurePass123!"])
     tenant_slug: str | None = Field(None, max_length=100, description="租户标识，用于多租户同邮箱登录")
 
 
