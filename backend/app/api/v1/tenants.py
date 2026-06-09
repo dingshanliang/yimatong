@@ -74,10 +74,13 @@ async def list_tenants_endpoint(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     q: str | None = Query(None, description="搜索关键词"),
+    plan: str | None = Query(None, description="按订阅计划过滤"),
+    tenant_type: str | None = Query(None, description="按租户类型过滤"),
+    status: str | None = Query(None, description="按状态过滤"),
     db: AsyncSession = Depends(get_db),
     _role: str = Depends(require_role("platform_admin")),
 ):
-    """租户列表（支持分页和搜索）"""
+    """租户列表（支持分页、搜索和多维过滤）"""
     query = select(Tenant).where(Tenant.status != "terminated")
     count_query = select(func.count()).select_from(Tenant).where(Tenant.status != "terminated")
 
@@ -85,6 +88,18 @@ async def list_tenants_endpoint(
         escaped = escape_like_pattern(q)
         query = query.where(Tenant.name.ilike(f"%{escaped}%", escape="\\"))
         count_query = count_query.where(Tenant.name.ilike(f"%{escaped}%", escape="\\"))
+
+    if plan:
+        query = query.where(Tenant.plan == plan)
+        count_query = count_query.where(Tenant.plan == plan)
+
+    if tenant_type:
+        query = query.where(Tenant.tenant_type == tenant_type)
+        count_query = count_query.where(Tenant.tenant_type == tenant_type)
+
+    if status:
+        query = query.where(Tenant.status == status)
+        count_query = count_query.where(Tenant.status == status)
 
     total_result = await db.execute(count_query)
     total = total_result.scalar() or 0
