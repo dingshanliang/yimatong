@@ -759,7 +759,7 @@ class TestIPResolution:
     async def test_resolve_unknown_ip(self):
         from app.services.geoip import resolve_ip_to_city
 
-        assert resolve_ip_to_city("8.8.8.8") is None
+        assert resolve_ip_to_city("8.8.8.8") == "未知位置"
 
 
 class TestDiversionDetection:

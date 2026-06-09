@@ -50,8 +50,8 @@ _FALLBACK_MAP: dict[str, str] = {
 }
 
 
-def resolve_ip_to_city(ip: str) -> str | None:
-    """将 IP 地址解析为城市名称"""
+def resolve_ip_to_city(ip: str) -> str:
+    """将 IP 地址解析为城市名称。无法解析时返回 '未知位置' 而非 None。"""
     # 尝试 MaxMind GeoLite2
     if _init_reader() and _reader:
         try:
@@ -63,7 +63,11 @@ def resolve_ip_to_city(ip: str) -> str | None:
             pass
 
     # 降级到 CIDR 映射
-    return _fallback_lookup(ip)
+    city = _fallback_lookup(ip)
+    if city:
+        return city
+
+    return "未知位置"
 
 
 def _fallback_lookup(ip: str) -> str | None:
