@@ -6,6 +6,7 @@ import {
   Button,
   Card,
   Col,
+  Modal,
   Row,
   Select,
   Statistic,
@@ -40,7 +41,6 @@ interface DiversionClue {
 const SEVERITY_MAP: Record<string, { label: string; color: string }> = {
   high: { label: "高危", color: "red" },
   medium: { label: "中危", color: "orange" },
-  low: { label: "低危", color: "blue" },
 };
 
 const RESOLUTION_OPTIONS = [
@@ -57,7 +57,10 @@ export default function AntiDiversionPage() {
   const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(false);
   const [resolvedFilter, setResolvedFilter] = useState<boolean | undefined>(undefined);
-  const [stats, setStats] = useState({ total: 0, unresolved: 0, confirmed: 0, falsePositive: 0 });
+  const [stats, setStats] = useState({ total: 0, unresolved: 0 });
+  const [resolveModalOpen, setResolveModalOpen] = useState(false);
+  const [resolveAction, setResolveAction] = useState("confirmed");
+  const [resolvingClue, setResolvingClue] = useState<DiversionClue | null>(null);
 
   const loadClues = useCallback(async () => {
     setLoading(true);
@@ -87,8 +90,6 @@ export default function AntiDiversionPage() {
       setStats({
         total: allRes.data?.total || 0,
         unresolved: unresolvedRes.data?.total || 0,
-        confirmed: 0,
-        falsePositive: 0,
       });
     } catch {
       // 静默忽略统计错误
@@ -105,8 +106,7 @@ export default function AntiDiversionPage() {
 
   const handleResolve = async (clueId: string, action: string) => {
     try {
-      await api.patch(`/channels/diversion-clues/${clueId}`, {
-        resolved: true,
+      await api.put(`/risk-dashboard/diversion-clues/${clueId}/resolve`, {
         resolution_action: action,
       });
       message.success("线索已处理");
@@ -118,38 +118,9 @@ export default function AntiDiversionPage() {
   };
 
   const showResolveModal = (clue: DiversionClue) => {
-    let selectedAction = "confirmed";
-    modal.confirm({
-      title: "处理窜货线索",
-      content: (
-        <div className="mt-3">
-          <p>
-            <strong>码编号：</strong>
-            {clue.public_id}
-          </p>
-          <p>
-            <strong>预期区域：</strong>
-            {clue.expected_region || "未分配"}
-          </p>
-          <p>
-            <strong>实际扫码地：</strong>
-            {clue.detected_city || "未知"}
-          </p>
-          <div className="mt-3">
-            <strong>处理结果：</strong>
-            <Select
-              style={{ width: "100%", marginTop: 8 }}
-              defaultValue="confirmed"
-              onChange={(v) => { selectedAction = v; }}
-              options={RESOLUTION_OPTIONS}
-            />
-          </div>
-        </div>
-      ),
-      okText: "确认处理",
-      cancelText: "取消",
-      onOk: () => handleResolve(clue.id, selectedAction),
-    });
+    setResolvingClue(clue);
+    setResolveAction("confirmed");
+    setResolveModalOpen(true);
   };
 
   const columns: ColumnsType<DiversionClue> = [
@@ -255,12 +226,10 @@ export default function AntiDiversionPage() {
       </div>
 
       <Row gutter={[16, 16]} className="mb-4">
-        <Col xs={12} sm={6}>
-          <Card size="small">
-            <Statistic title="全部线索" value={stats.total} />
-          </Card>
+        <Col xs={12} sm={8}>
+          <Card size="small"><Statistic title="全部线索" value={stats.total} /></Card>
         </Col>
-        <Col xs={12} sm={6}>
+        <Col xs={12} sm={8}>
           <Card size="small">
             <Statistic
               title="待处理"
@@ -269,12 +238,7 @@ export default function AntiDiversionPage() {
             />
           </Card>
         </Col>
-        <Col xs={12} sm={6}>
-          <Card size="small">
-            <Statistic title="已处理" value={stats.total - stats.unresolved} />
-          </Card>
-        </Col>
-        <Col xs={12} sm={6}>
+        <Col xs={12} sm={8}>
           <Card size="small">
             <Statistic
               title="处理率"
@@ -284,6 +248,35 @@ export default function AntiDiversionPage() {
           </Card>
         </Col>
       </Row>
+
+      <Modal
+        title="处理窜货线索"
+        open={resolveModalOpen}
+        onOk={() => {
+          if (resolvingClue) {
+            handleResolve(resolvingClue.id, resolveAction);
+          }
+          setResolveModalOpen(false);
+        }}
+        onCancel={() => setResolveModalOpen(false)}
+      >
+        {resolvingClue && (
+          <div className="mt-3">
+            <p><strong>码编号：</strong>{resolvingClue.public_id}</p>
+            <p><strong>预期区域：</strong>{resolvingClue.expected_region || "未分配"}</p>
+            <p><strong>实际扫码地：</strong>{resolvingClue.detected_city || "未知"}</p>
+            <div className="mt-3">
+              <strong>处理结果：</strong>
+              <Select
+                style={{ width: "100%", marginTop: 8 }}
+                value={resolveAction}
+                onChange={(v) => setResolveAction(v)}
+                options={RESOLUTION_OPTIONS}
+              />
+            </div>
+          </div>
+        )}
+      </Modal>
 
       <Card size="small">
         <Table
