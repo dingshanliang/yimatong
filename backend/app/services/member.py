@@ -71,11 +71,25 @@ async def get_or_create_consumer(
         consumer.nickname = nickname
 
     if is_new:
-        await event_bus.emit(
-            "consumer.created",
-            {"consumer_id": str(consumer.id), "has_phone": phone is not None},
-            str(tenant_id),
-        )
+        from sqlalchemy import event as sa_event
+
+        consumer_id_str = str(consumer.id)
+        tenant_id_str = str(tenant_id)
+        _has_phone = phone is not None
+
+        async def _emit_after_commit(session):
+            await event_bus.emit(
+                "consumer.created",
+                {"consumer_id": consumer_id_str, "has_phone": _has_phone},
+                tenant_id_str,
+            )
+
+        def _on_commit(session):
+            import asyncio
+
+            asyncio.ensure_future(_emit_after_commit(session))
+
+        sa_event.listen(db.sync_session, "after_commit", _on_commit, once=True)
     return consumer
 
 
@@ -201,7 +215,9 @@ async def get_member_overview(db: AsyncSession, tenant_id: uuid.UUID) -> dict:
     since = datetime.now(UTC) - timedelta(days=7)
     enabled_rules = (
         await db.execute(
-            select(func.count()).select_from(PointRule).where(
+            select(func.count())
+            .select_from(PointRule)
+            .where(
                 PointRule.tenant_id == tenant_id,
                 PointRule.enabled.is_(True),
             )
@@ -209,7 +225,9 @@ async def get_member_overview(db: AsyncSession, tenant_id: uuid.UUID) -> dict:
     ).scalar() or 0
     active_products = (
         await db.execute(
-            select(func.count()).select_from(PointProduct).where(
+            select(func.count())
+            .select_from(PointProduct)
+            .where(
                 PointProduct.tenant_id == tenant_id,
                 PointProduct.enabled.is_(True),
             )
@@ -235,7 +253,9 @@ async def get_member_overview(db: AsyncSession, tenant_id: uuid.UUID) -> dict:
     ).scalar() or 0
     redemptions_7d = (
         await db.execute(
-            select(func.count()).select_from(PointRedemption).where(
+            select(func.count())
+            .select_from(PointRedemption)
+            .where(
                 PointRedemption.tenant_id == tenant_id,
                 PointRedemption.created_at >= since,
             )
@@ -243,7 +263,9 @@ async def get_member_overview(db: AsyncSession, tenant_id: uuid.UUID) -> dict:
     ).scalar() or 0
     low_stock_products = (
         await db.execute(
-            select(func.count()).select_from(PointProduct).where(
+            select(func.count())
+            .select_from(PointProduct)
+            .where(
                 PointProduct.tenant_id == tenant_id,
                 PointProduct.enabled.is_(True),
                 PointProduct.stock <= 5,
@@ -323,10 +345,7 @@ async def search_consumers(
         conditions.append(or_(*clauses))
 
     result = await db.execute(
-        select(ConsumerProfile)
-        .where(*conditions)
-        .order_by(ConsumerProfile.id.desc())
-        .limit(limit)
+        select(ConsumerProfile).where(*conditions).order_by(ConsumerProfile.id.desc()).limit(limit)
     )
     return [serialize_consumer_profile(c) for c in result.scalars().all()]
 
@@ -363,9 +382,7 @@ async def update_point_rule(
     **kwargs,
 ) -> PointRule | None:
     """更新积分规则"""
-    result = await db.execute(
-        select(PointRule).where(PointRule.id == rule_id, PointRule.tenant_id == tenant_id)
-    )
+    result = await db.execute(select(PointRule).where(PointRule.id == rule_id, PointRule.tenant_id == tenant_id))
     rule = result.scalar_one_or_none()
     if not rule:
         return None
@@ -383,9 +400,7 @@ async def delete_point_rule(
     rule_id: uuid.UUID,
 ) -> bool:
     """删除积分规则"""
-    result = await db.execute(
-        select(PointRule).where(PointRule.id == rule_id, PointRule.tenant_id == tenant_id)
-    )
+    result = await db.execute(select(PointRule).where(PointRule.id == rule_id, PointRule.tenant_id == tenant_id))
     rule = result.scalar_one_or_none()
     if not rule:
         return False

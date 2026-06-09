@@ -37,7 +37,9 @@ async def _check_daily_limit(
 
     today_start = utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
     result = await db.execute(
-        select(func.count()).select_from(PointTransaction).where(
+        select(func.count())
+        .select_from(PointTransaction)
+        .where(
             PointTransaction.tenant_id == tenant_id,
             PointTransaction.consumer_id == consumer_id,
             PointTransaction.txn_type == PointTransactionType.earning,
@@ -52,17 +54,12 @@ async def _check_daily_limit(
 async def _check_redis_dedup(tenant_id: str, consumer_id: str, rule_type: str) -> bool:
     """Redis 去重防止短时间内重复发放。"""
     try:
-        import redis.asyncio as aioredis
+        from app.services.redis_cache import get_redis_pool
 
-        from app.core.config import settings
-
+        r = await get_redis_pool()
+        if r is None:
+            return False
         key = f"{DEDUP_KEY_PREFIX}{tenant_id}:{consumer_id}:{rule_type}"
-        # 复用全局连接池而非每次创建新连接
-        if not hasattr(_check_redis_dedup, "_pool"):
-            _check_redis_dedup._pool = aioredis.from_url(
-                settings.redis_url, decode_responses=True
-            )
-        r = _check_redis_dedup._pool
         exists = await r.exists(key)
         if exists:
             return True
@@ -92,7 +89,7 @@ async def _award_for_rule(
 
     points_ttl_days = (rule.config or {}).get("points_ttl_days", 0)
     expires_at = None
-    if points_ttl_days > 0:
+    if isinstance(points_ttl_days, (int, float)) and points_ttl_days > 0:
         expires_at = utcnow() + timedelta(days=points_ttl_days)
 
     txn = await award_points(
@@ -119,6 +116,9 @@ async def _handle_scan_created(event_type: str, data: dict, tenant_id: str) -> N
 
     async with async_session_factory() as db:
         try:
+            from sqlalchemy import text
+
+            await db.execute(text("SET LOCAL app.bypass_rls = 'true'"))
             tid = uuid.UUID(tenant_id)
             cid = uuid.UUID(consumer_id)
 
@@ -139,22 +139,21 @@ async def _handle_scan_created(event_type: str, data: dict, tenant_id: str) -> N
                     if rule.rule_type == "first_scan":
                         # 首扫奖励：检查是否是消费者的第一次扫码
                         scan_count_result = await db.execute(
-                            select(func.count()).select_from(PointTransaction).where(
+                            select(func.count())
+                            .select_from(PointTransaction)
+                            .where(
                                 PointTransaction.tenant_id == tid,
                                 PointTransaction.consumer_id == cid,
-                                PointTransaction.reason == "auto:scan",
+                                PointTransaction.txn_type == PointTransactionType.earning,
+                                PointTransaction.reason.in_(["auto:scan", "auto:first_scan"]),
                             )
                         )
                         if (scan_count_result.scalar() or 0) > 0:
                             continue
 
-                    await _award_for_rule(
-                        db, tid, cid, rule, reference_id=f"scan:{public_id}"
-                    )
+                    await _award_for_rule(db, tid, cid, rule, reference_id=f"scan:{public_id}")
                 except Exception:
-                    logger.warning(
-                        "Failed to award points for rule %s", rule.rule_type, exc_info=True
-                    )
+                    logger.warning("Failed to award points for rule %s", rule.rule_type, exc_info=True)
 
             await db.commit()
         except Exception:
@@ -170,6 +169,9 @@ async def _handle_consumer_created(event_type: str, data: dict, tenant_id: str) 
 
     async with async_session_factory() as db:
         try:
+            from sqlalchemy import text
+
+            await db.execute(text("SET LOCAL app.bypass_rls = 'true'"))
             tid = uuid.UUID(tenant_id)
             cid = uuid.UUID(consumer_id)
 
