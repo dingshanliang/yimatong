@@ -7,7 +7,7 @@ interface Transaction {
   id: string;
   amount: number;
   balance_after: number;
-  txn_type: "earning" | "spending";
+  txn_type: "earning" | "spending" | "expired";
   reason: string;
 }
 
