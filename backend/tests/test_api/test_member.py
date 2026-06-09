@@ -453,3 +453,75 @@ class TestPointProducts:
             headers={"Authorization": f"Bearer {token}"},
         )
         assert blocked.status_code == 400
+
+
+class TestPointsValidation:
+    """积分值正数校验"""
+
+    @pytest.mark.anyio
+    async def test_award_rejects_negative_points(self, client: AsyncClient, setup_tenant):
+        tid, headers = setup_tenant
+        consumer = await client.post(
+            "/api/v1/members/consumers",
+            json={},
+            headers=headers,
+        )
+        cid = consumer.json()["id"]
+
+        resp = await client.post(
+            "/api/v1/members/points/award",
+            json={"consumer_id": cid, "points": -100, "reason": "负数积分"},
+            headers=headers,
+        )
+        assert resp.status_code == 422
+
+    @pytest.mark.anyio
+    async def test_award_rejects_zero_points(self, client: AsyncClient, setup_tenant):
+        tid, headers = setup_tenant
+        consumer = await client.post(
+            "/api/v1/members/consumers",
+            json={},
+            headers=headers,
+        )
+        cid = consumer.json()["id"]
+
+        resp = await client.post(
+            "/api/v1/members/points/award",
+            json={"consumer_id": cid, "points": 0, "reason": "零积分"},
+            headers=headers,
+        )
+        assert resp.status_code == 422
+
+    @pytest.mark.anyio
+    async def test_spend_rejects_negative_points(self, client: AsyncClient, setup_tenant):
+        tid, headers = setup_tenant
+        consumer = await client.post(
+            "/api/v1/members/consumers",
+            json={},
+            headers=headers,
+        )
+        cid = consumer.json()["id"]
+
+        resp = await client.post(
+            "/api/v1/members/points/spend",
+            json={"consumer_id": cid, "points": -50, "reason": "负数消费"},
+            headers=headers,
+        )
+        assert resp.status_code == 422
+
+    @pytest.mark.anyio
+    async def test_award_rejects_oversized_points(self, client: AsyncClient, setup_tenant):
+        tid, headers = setup_tenant
+        consumer = await client.post(
+            "/api/v1/members/consumers",
+            json={},
+            headers=headers,
+        )
+        cid = consumer.json()["id"]
+
+        resp = await client.post(
+            "/api/v1/members/points/award",
+            json={"consumer_id": cid, "points": 1_000_001, "reason": "超大积分"},
+            headers=headers,
+        )
+        assert resp.status_code == 422

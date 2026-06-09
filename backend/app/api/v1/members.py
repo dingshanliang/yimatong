@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
@@ -46,16 +46,16 @@ class ConsumerCreateRequest(BaseModel):
 
 class AwardPointsRequest(BaseModel):
     consumer_id: uuid.UUID
-    points: int
-    reason: str
-    reference_id: str | None = None
+    points: int = Field(gt=0, le=1_000_000)
+    reason: str = Field(min_length=1, max_length=200)
+    reference_id: str | None = Field(None, max_length=100)
 
 
 class SpendPointsRequest(BaseModel):
     consumer_id: uuid.UUID
-    points: int
-    reason: str
-    reference_id: str | None = None
+    points: int = Field(gt=0, le=1_000_000)
+    reason: str = Field(min_length=1, max_length=200)
+    reference_id: str | None = Field(None, max_length=100)
 
 
 class PointRuleCreate(BaseModel):

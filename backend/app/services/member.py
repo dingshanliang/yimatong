@@ -88,6 +88,8 @@ async def award_points(
     reference_id: str | None = None,
 ) -> PointTransaction:
     """发放积分"""
+    if points <= 0:
+        raise ValueError("Points must be positive")
     consumer_result = await db.execute(
         select(ConsumerProfile).where(
             ConsumerProfile.id == consumer_id,
@@ -128,6 +130,8 @@ async def spend_points(
     reference_id: str | None = None,
 ) -> PointTransaction:
     """消费积分"""
+    if points <= 0:
+        raise ValueError("Points must be positive")
     consumer_result = await db.execute(
         select(ConsumerProfile).where(
             ConsumerProfile.id == consumer_id,
