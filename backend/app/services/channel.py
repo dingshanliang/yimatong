@@ -1554,6 +1554,17 @@ async def check_diversion(
     ip: str,
 ) -> DiversionClue | None:
     """检测窜货：扫码 IP 城市与码归属区域不匹配（支持门店级和批次级两种链路）"""
+    # 幂等性检查：该码是否已有未处理的窜货线索
+    existing_result = await db.execute(
+        select(DiversionClue).where(
+            DiversionClue.tenant_id == tenant_id,
+            DiversionClue.public_id == public_id,
+            DiversionClue.resolved.is_(False),
+        )
+    )
+    if existing_result.scalar_one_or_none():
+        return None  # 已有未处理线索，不重复创建
+
     detected_city = _resolve_ip(ip)
     if not detected_city:
         return None
