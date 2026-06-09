@@ -11,6 +11,7 @@ def create_scan_token(
     public_id: str,
     ip_hash: str | None,
     tenant_id: str = "",
+    consumer_id: str = "",
     expires_in: int = 1800,
 ) -> str:
     """颁发 scan_token（短期 JWT，默认 30 分钟）。
@@ -19,12 +20,14 @@ def create_scan_token(
         public_id: 码的公开标识
         ip_hash: 客户端 IP 的 SHA256 哈希，None 表示无法获取
         tenant_id: 租户 ID（减少消费端查询）
+        consumer_id: 可选，绑定的消费者 ID（消费者身份验证后写入）
         expires_in: 有效期秒数，默认 1800（30 分钟）
     """
     payload = {
         "public_id": public_id,
         "ip_hash": ip_hash,
         "tenant_id": tenant_id,
+        "consumer_id": consumer_id,
         "exp": int(time.time()) + expires_in,
         "type": "scan_token",
     }

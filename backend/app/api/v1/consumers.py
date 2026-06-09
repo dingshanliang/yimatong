@@ -35,7 +35,10 @@ def _extract_bearer_token(request: Request) -> str:
     return auth_header[7:]
 
 
-async def _resolve_scan_tenant(request: Request, db: AsyncSession) -> uuid.UUID:
+async def _resolve_scan_context(
+    request: Request, db: AsyncSession
+) -> tuple[uuid.UUID, uuid.UUID | None]:
+    """Resolve tenant_id and optional bound consumer_id from scan_token."""
     token = _extract_bearer_token(request)
     payload = verify_scan_token(token)
     if not payload or not payload.get("public_id"):
@@ -55,7 +58,18 @@ async def _resolve_scan_tenant(request: Request, db: AsyncSession) -> uuid.UUID:
         tenant_uuid = uuid.UUID(code_data["tenant_id"])
 
     set_consumer_tenant_id(str(tenant_uuid))
-    return tenant_uuid
+
+    cid_str = payload.get("consumer_id")
+    bound_consumer_id = uuid.UUID(cid_str) if cid_str else None
+    return tenant_uuid, bound_consumer_id
+
+
+def _verify_consumer_ownership(
+    bound_consumer_id: uuid.UUID | None, requested_consumer_id: uuid.UUID
+) -> None:
+    """If scan_token has bound consumer_id, verify request matches."""
+    if bound_consumer_id and bound_consumer_id != requested_consumer_id:
+        raise HTTPException(status_code=403, detail="consumer_id mismatch with token")
 
 
 @consumer_router.post("/lead-capture", status_code=201)
@@ -141,12 +155,14 @@ async def get_consumer_me(
     db: AsyncSession = Depends(get_db_for_consumer),
 ):
     """查询当前消费者信息（积分、等级），必须结合 scan_token 与 consumer_id。"""
-    tenant_id = await _resolve_scan_tenant(request, db)
+    tenant_id, bound_cid = await _resolve_scan_context(request, db)
     if consumer_id:
         try:
             cid = uuid.UUID(consumer_id)
         except ValueError:
             raise HTTPException(status_code=400, detail="invalid consumer_id")
+
+        _verify_consumer_ownership(bound_cid, cid)
 
         from app.models.member import ConsumerProfile
 
@@ -180,7 +196,7 @@ async def get_consumer_points_me(
     consumer_id: uuid.UUID | None = None,
     db: AsyncSession = Depends(get_db_for_consumer),
 ):
-    tenant_id = await _resolve_scan_tenant(request, db)
+    tenant_id, bound_cid = await _resolve_scan_context(request, db)
     if not consumer_id:
         return {
             "consumer_id": None,
@@ -188,6 +204,8 @@ async def get_consumer_points_me(
             "total_points": 0,
             "recent_transactions": [],
         }
+
+    _verify_consumer_ownership(bound_cid, consumer_id)
 
     from app.services.member import get_consumer_profile
 
@@ -205,7 +223,8 @@ async def list_consumer_points_transactions(
     page_size: int = 20,
     db: AsyncSession = Depends(get_db_for_consumer),
 ):
-    tenant_id = await _resolve_scan_tenant(request, db)
+    tenant_id, bound_cid = await _resolve_scan_context(request, db)
+    _verify_consumer_ownership(bound_cid, consumer_id)
     from app.schemas.common import PaginatedResponse
     from app.services.member import list_point_transactions
 
@@ -235,7 +254,8 @@ async def list_consumer_points_products(
     consumer_id: uuid.UUID,
     db: AsyncSession = Depends(get_db_for_consumer),
 ):
-    tenant_id = await _resolve_scan_tenant(request, db)
+    tenant_id, bound_cid = await _resolve_scan_context(request, db)
+    _verify_consumer_ownership(bound_cid, consumer_id)
     from app.services.point_shop import list_consumer_point_products
 
     try:
@@ -250,7 +270,8 @@ async def create_consumer_points_exchange(
     body: PointsExchangeRequest,
     db: AsyncSession = Depends(get_db_for_consumer),
 ):
-    tenant_id = await _resolve_scan_tenant(request, db)
+    tenant_id, bound_cid = await _resolve_scan_context(request, db)
+    _verify_consumer_ownership(bound_cid, body.consumer_id)
     from app.services.point_shop import exchange_product
 
     try:

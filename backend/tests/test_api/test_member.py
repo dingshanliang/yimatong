@@ -61,7 +61,9 @@ async def setup_tenant(client: AsyncClient):
     return tid, headers
 
 
-async def create_scan_context(db_session: AsyncSession, tenant_id: str) -> str:
+async def create_scan_context(
+    db_session: AsyncSession, tenant_id: str, consumer_id: str = ""
+) -> str:
     batch_id = uuid.uuid4()
     public_id = f"TEST{uuid.uuid4().hex[:10]}"
     db_session.add(
@@ -87,7 +89,9 @@ async def create_scan_context(db_session: AsyncSession, tenant_id: str) -> str:
         )
     )
     await db_session.flush()
-    return create_scan_token(public_id, "test-ip")
+    return create_scan_token(
+        public_id, "test-ip", tenant_id=tenant_id, consumer_id=consumer_id
+    )
 
 
 class TestConsumerProfile:
@@ -527,3 +531,71 @@ class TestPointsValidation:
             headers=headers,
         )
         assert resp.status_code == 422
+
+
+class TestConsumerIdentityBinding:
+    """scan_token consumer_id 绑定与所有权验证"""
+
+    @pytest.mark.anyio
+    async def test_exchange_with_bound_consumer_id(
+        self,
+        client: AsyncClient,
+        setup_tenant,
+        db_session: AsyncSession,
+    ):
+        tid, headers = setup_tenant
+        consumer = await client.post("/api/v1/members/consumers", json={}, headers=headers)
+        cid = consumer.json()["id"]
+        await client.post(
+            "/api/v1/members/points/award",
+            json={"consumer_id": cid, "points": 100, "reason": "初始积分"},
+            headers=headers,
+        )
+        product = await client.post(
+            "/api/v1/members/point-products",
+            json={"name": "绑定测试券", "points_cost": 50, "stock": 10, "enabled": True},
+            headers=headers,
+        )
+
+        # token 绑定到 consumer c1 → c1 兑换成功
+        token = await create_scan_context(db_session, tid, consumer_id=cid)
+        resp = await client.post(
+            "/api/v1/consumers/points/exchanges",
+            json={"consumer_id": cid, "product_id": product.json()["id"]},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["points_spent"] == 50
+
+    @pytest.mark.anyio
+    async def test_exchange_rejects_mismatched_consumer_id(
+        self,
+        client: AsyncClient,
+        setup_tenant,
+        db_session: AsyncSession,
+    ):
+        tid, headers = setup_tenant
+        c1 = await client.post("/api/v1/members/consumers", json={}, headers=headers)
+        c2 = await client.post("/api/v1/members/consumers", json={}, headers=headers)
+        cid1 = c1.json()["id"]
+        cid2 = c2.json()["id"]
+        await client.post(
+            "/api/v1/members/points/award",
+            json={"consumer_id": cid2, "points": 100, "reason": "初始积分"},
+            headers=headers,
+        )
+        product = await client.post(
+            "/api/v1/members/point-products",
+            json={"name": "冒用测试券", "points_cost": 50, "stock": 10, "enabled": True},
+            headers=headers,
+        )
+
+        # token 绑定到 c1，但尝试以 c2 身份兑换 → 403
+        token = await create_scan_context(db_session, tid, consumer_id=cid1)
+        resp = await client.post(
+            "/api/v1/consumers/points/exchanges",
+            json={"consumer_id": cid2, "product_id": product.json()["id"]},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert resp.status_code == 403
+        assert "mismatch" in resp.json()["detail"]
