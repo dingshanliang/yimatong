@@ -117,14 +117,14 @@ async def _build_cross_region_context(
 
     # 统计该码最近的跨区事件次数
     window_hours = 24
-    now = utcnow()
-    now - timedelta(hours=window_hours)
+    since = utcnow() - timedelta(hours=window_hours)
     cross_count_result = await db.execute(
         select(func.count())
         .select_from(DiversionClue)
         .where(
             DiversionClue.tenant_id == tenant_id,
             DiversionClue.public_id == public_id,
+            DiversionClue.created_at >= since,
         )
     )
     cross_count = cross_count_result.scalar() or 0
