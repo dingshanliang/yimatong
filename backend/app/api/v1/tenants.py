@@ -8,7 +8,7 @@ from app.core.database import get_db
 from app.core.dependencies import get_current_tenant
 from app.models.tenant import Tenant
 from app.schemas.common import NOT_FOUND_EXAMPLE, ErrorDetail, PaginatedResponse
-from app.schemas.tenant import CategoriesResponse, TenantCreate, TenantRead, TenantUpdate
+from app.schemas.tenant import CategoriesResponse, TenantCreate, TenantRead, TenantUpdate, TenantUpdateSelf
 from app.services.tenant import (
     complete_onboarding_step,
     create_tenant,
@@ -179,7 +179,7 @@ async def get_current_tenant_categories(
 
 @router.patch("/me", response_model=TenantRead, summary="更新当前租户")
 async def update_current_tenant_endpoint(
-    body: TenantUpdate,
+    body: TenantUpdateSelf,
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
@@ -189,12 +189,8 @@ async def update_current_tenant_endpoint(
         name=body.name,
         industry=body.industry,
         notes=body.notes,
-        quota=body.quota,
-        compliance_settings=body.compliance_settings,
-        plan_expires_at=body.plan_expires_at,
         onboarding_progress=body.onboarding_progress,
         enabled_features=body.enabled_features,
-        tenant_type=body.tenant_type,
         categories=body.categories,
     )
     if not tenant:

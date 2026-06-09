@@ -58,6 +58,38 @@ class TenantUpdate(BaseModel):
         return cleaned
 
 
+class TenantUpdateSelf(BaseModel):
+    """租户用户自助更新 — 仅允许非敏感字段。"""
+
+    name: str | None = Field(None, min_length=1, max_length=100)
+    industry: str | None = Field(None, max_length=50)
+    notes: str | None = Field(None, max_length=1000)
+    categories: list[str] | None = None
+    onboarding_progress: dict | None = None
+    enabled_features: dict | None = None
+
+    @field_validator("categories")
+    @classmethod
+    def validate_categories(cls, v: list[str] | None) -> list[str] | None:
+        if v is None:
+            return v
+        if len(v) > 100:
+            raise ValueError("品类数量不能超过 100 条")
+        cleaned: list[str] = []
+        seen: set[str] = set()
+        for item in v:
+            s = item.strip()
+            if not s:
+                continue
+            if len(s) > 20:
+                raise ValueError(f"品类名称不能超过 20 个字符: {s}")
+            key = s.lower()
+            if key not in seen:
+                seen.add(key)
+                cleaned.append(s)
+        return cleaned
+
+
 class TenantRead(BaseModel):
     id: uuid.UUID = Field(..., description="租户 ID")
     name: str = Field(..., description="租户名称")
