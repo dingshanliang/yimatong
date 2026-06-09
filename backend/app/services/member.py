@@ -1,7 +1,7 @@
 """会员与积分服务层"""
 
 import uuid
-from datetime import UTC, datetime, timedelta
+from datetime import timedelta
 
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -17,6 +17,7 @@ from app.models.member import (
     PointTransaction,
     PointTransactionType,
 )
+from app.utils import utcnow
 from app.utils.crypto import CryptoError, decrypt_phone, encrypt_phone, hash_phone, mask_phone
 
 
@@ -212,7 +213,7 @@ async def get_point_rules(
 
 async def get_member_overview(db: AsyncSession, tenant_id: uuid.UUID) -> dict:
     """会员积分运营概览。"""
-    since = datetime.now(UTC) - timedelta(days=7)
+    since = utcnow() - timedelta(days=7)
     enabled_rules = (
         await db.execute(
             select(func.count())

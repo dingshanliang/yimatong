@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import UTC, datetime
+from datetime import datetime
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -16,6 +16,7 @@ from app.models.member import (
     PointRedemptionStatus,
 )
 from app.services.member import spend_points
+from app.utils import utcnow
 
 
 async def list_point_products(
@@ -28,7 +29,7 @@ async def list_point_products(
     """查询积分商品列表。"""
     stmt = select(PointProduct).where(PointProduct.tenant_id == tenant_id)
     if enabled_only:
-        now = datetime.now(UTC)
+        now = utcnow()
         stmt = stmt.where(
             PointProduct.enabled.is_(True),
             PointProduct.stock > 0,
@@ -183,7 +184,17 @@ async def get_exchange_block_reason(
     product: PointProduct,
     current_points: int,
 ) -> str | None:
-    now = datetime.now(UTC)
+    count = 0
+    if product.per_consumer_limit > 0:
+        count = await _redemption_count(db, tenant_id, consumer_id, product.id)
+    return _compute_block_reason(product, current_points, count)
+
+
+def _compute_block_reason(
+    product: PointProduct, current_points: int, redemption_count: int
+) -> str | None:
+    """Pure function to compute exchange block reason without DB queries."""
+    now = utcnow()
     if not product.enabled:
         return "商品已下架"
     if product.starts_at and product.starts_at > now:
@@ -194,10 +205,8 @@ async def get_exchange_block_reason(
         return "库存不足"
     if current_points < product.points_cost:
         return "积分不足"
-    if product.per_consumer_limit > 0:
-        count = await _redemption_count(db, tenant_id, consumer_id, product.id)
-        if count >= product.per_consumer_limit:
-            return "已达到每人限兑次数"
+    if product.per_consumer_limit > 0 and redemption_count >= product.per_consumer_limit:
+        return "已达到每人限兑次数"
     return None
 
 
@@ -217,10 +226,27 @@ async def list_consumer_point_products(
         raise ValueError("Consumer not found")
 
     products, _ = await list_point_products(db, tenant_id, page=1, page_size=100, enabled_only=True)
+    if not products:
+        return []
+
+    # Batch query redemption counts instead of N+1
+    product_ids = [p.id for p in products]
+    redemption_counts = await db.execute(
+        select(PointRedemption.product_id, func.count())
+        .where(
+            PointRedemption.tenant_id == tenant_id,
+            PointRedemption.consumer_id == consumer_id,
+            PointRedemption.product_id.in_(product_ids),
+            PointRedemption.status == PointRedemptionStatus.success,
+        )
+        .group_by(PointRedemption.product_id)
+    )
+    count_map = dict(redemption_counts.all())
+
     items = []
     for product in products:
-        reason = await get_exchange_block_reason(db, tenant_id, consumer_id, product, consumer.total_points)
-        items.append(serialize_point_product(product, can_exchange=reason is None, exchange_block_reason=reason))
+        block_reason = _compute_block_reason(product, consumer.total_points, count_map.get(product.id, 0))
+        items.append(serialize_point_product(product, can_exchange=block_reason is None, exchange_block_reason=block_reason))
     return items
 
 
