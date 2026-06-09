@@ -13,9 +13,11 @@ from app.models.tenant import (
 )
 
 
-async def list_authorizations_for_agency(db: AsyncSession, agency_tenant_id: uuid.UUID) -> list[dict]:
-    """Agency 查看自己被授权的所有品牌客户"""
-    result = await db.execute(
+async def list_authorizations_for_agency(
+    db: AsyncSession, agency_tenant_id: uuid.UUID, page: int = 1, page_size: int = 50
+) -> tuple[list[dict], int]:
+    """Agency 查看自己被授权的所有品牌客户（分页）。"""
+    base_query = (
         select(AgencyAuthorization, Tenant.name, Tenant.slug)
         .join(Tenant, AgencyAuthorization.client_tenant_id == Tenant.id)
         .where(
@@ -24,8 +26,21 @@ async def list_authorizations_for_agency(db: AsyncSession, agency_tenant_id: uui
         )
         .order_by(AgencyAuthorization.granted_at.desc())
     )
+    # Count
+    from sqlalchemy import func
+
+    count_result = await db.execute(
+        select(func.count()).select_from(AgencyAuthorization).where(
+            AgencyAuthorization.agency_tenant_id == agency_tenant_id,
+            AgencyAuthorization.status == AgencyAuthStatus.active,
+        )
+    )
+    total = count_result.scalar() or 0
+    # Paginate
+    offset = (page - 1) * page_size
+    result = await db.execute(base_query.offset(offset).limit(page_size))
     rows = result.all()
-    return [
+    items = [
         {
             "id": str(auth.id),
             "agency_tenant_id": str(auth.agency_tenant_id),
@@ -39,11 +54,14 @@ async def list_authorizations_for_agency(db: AsyncSession, agency_tenant_id: uui
         }
         for auth, tenant_name, tenant_slug in rows
     ]
+    return items, total
 
 
-async def list_authorizations_for_brand(db: AsyncSession, client_tenant_id: uuid.UUID) -> list[dict]:
-    """Brand 查看哪些 agency 被授权访问自己"""
-    result = await db.execute(
+async def list_authorizations_for_brand(
+    db: AsyncSession, client_tenant_id: uuid.UUID, page: int = 1, page_size: int = 50
+) -> tuple[list[dict], int]:
+    """Brand 查看哪些 agency 被授权访问自己（分页）。"""
+    base_query = (
         select(AgencyAuthorization, Tenant.name)
         .join(Tenant, AgencyAuthorization.agency_tenant_id == Tenant.id)
         .where(
@@ -52,8 +70,19 @@ async def list_authorizations_for_brand(db: AsyncSession, client_tenant_id: uuid
         )
         .order_by(AgencyAuthorization.granted_at.desc())
     )
+    from sqlalchemy import func
+
+    count_result = await db.execute(
+        select(func.count()).select_from(AgencyAuthorization).where(
+            AgencyAuthorization.client_tenant_id == client_tenant_id,
+            AgencyAuthorization.status == AgencyAuthStatus.active,
+        )
+    )
+    total = count_result.scalar() or 0
+    offset = (page - 1) * page_size
+    result = await db.execute(base_query.offset(offset).limit(page_size))
     rows = result.all()
-    return [
+    items = [
         {
             "id": str(auth.id),
             "agency_tenant_id": str(auth.agency_tenant_id),
@@ -66,6 +95,7 @@ async def list_authorizations_for_brand(db: AsyncSession, client_tenant_id: uuid
         }
         for auth, agency_name in rows
     ]
+    return items, total
 
 
 async def authorize_agency(
