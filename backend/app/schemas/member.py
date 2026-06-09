@@ -50,7 +50,18 @@ class PointRuleUpdate(BaseModel):
     config: dict | None = None
 
 
-class PointProductCreate(BaseModel):
+class _DateRangeMixin(BaseModel):
+    starts_at: datetime | None = None
+    ends_at: datetime | None = None
+
+    @model_validator(mode="after")
+    def validate_date_range(self):
+        if self.starts_at and self.ends_at and self.starts_at >= self.ends_at:
+            raise ValueError("starts_at must be before ends_at")
+        return self
+
+
+class PointProductCreate(_DateRangeMixin):
     name: str = Field(max_length=200)
     description: str | None = None
     image_url: str | None = None
@@ -58,19 +69,11 @@ class PointProductCreate(BaseModel):
     stock: int = Field(ge=0, default=0)
     benefit_id: uuid.UUID | None = None
     enabled: bool = True
-    starts_at: datetime | None = None
-    ends_at: datetime | None = None
     per_consumer_limit: int = Field(ge=0, default=1)
     sort_order: int = Field(ge=0, default=0)
 
-    @model_validator(mode="after")
-    def validate_date_range(self):
-        if self.starts_at and self.ends_at and self.starts_at >= self.ends_at:
-            raise ValueError("starts_at must be before ends_at")
-        return self
 
-
-class PointProductUpdate(BaseModel):
+class PointProductUpdate(_DateRangeMixin):
     name: str | None = None
     description: str | None = None
     image_url: str | None = None
@@ -78,16 +81,8 @@ class PointProductUpdate(BaseModel):
     stock: int | None = None
     benefit_id: uuid.UUID | None = None
     enabled: bool | None = None
-    starts_at: datetime | None = None
-    ends_at: datetime | None = None
     per_consumer_limit: int | None = None
     sort_order: int | None = None
-
-    @model_validator(mode="after")
-    def validate_date_range(self):
-        if self.starts_at and self.ends_at and self.starts_at >= self.ends_at:
-            raise ValueError("starts_at must be before ends_at")
-        return self
 
 
 class ExchangeRequest(BaseModel):

@@ -7,6 +7,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.core.dependencies import get_current_role, get_current_tenant
+
+
+def require_admin_or_operator(role: str = Depends(get_current_role)) -> str:
+    if role not in {"admin", "operator"}:
+        raise HTTPException(status_code=403, detail="Insufficient permissions")
+    return role
 from app.schemas.common import PaginatedResponse
 from app.schemas.member import (
     AwardPointsRequest,
@@ -60,10 +66,8 @@ async def create_consumer_endpoint(
     body: ConsumerCreateRequest,
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
-    role: str = Depends(get_current_role),
+    _role: str = Depends(require_admin_or_operator),
 ):
-    if role not in {"admin", "operator"}:
-        raise HTTPException(status_code=403, detail="Insufficient permissions")
     consumer = await get_or_create_consumer(db, tenant_id, phone=body.phone, nickname=body.nickname)
     return {
         "id": str(consumer.id),
@@ -105,10 +109,8 @@ async def award_points_endpoint(
     body: AwardPointsRequest,
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
-    role: str = Depends(get_current_role),
+    _role: str = Depends(require_admin_or_operator),
 ):
-    if role not in {"admin", "operator"}:
-        raise HTTPException(status_code=403, detail="Insufficient permissions")
     try:
         txn = await award_points(
             db, tenant_id, body.consumer_id, body.points, body.reason, body.reference_id,
@@ -128,10 +130,8 @@ async def spend_points_endpoint(
     body: SpendPointsRequest,
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
-    role: str = Depends(get_current_role),
+    _role: str = Depends(require_admin_or_operator),
 ):
-    if role not in {"admin", "operator"}:
-        raise HTTPException(status_code=403, detail="Insufficient permissions")
     try:
         txn = await spend_points(
             db, tenant_id, body.consumer_id, body.points, body.reason, body.reference_id,
@@ -207,10 +207,8 @@ async def create_point_rule_endpoint(
     body: PointRuleCreate,
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
-    role: str = Depends(get_current_role),
+    _role: str = Depends(require_admin_or_operator),
 ):
-    if role not in {"admin", "operator"}:
-        raise HTTPException(status_code=403, detail="Insufficient permissions")
     rule = await create_point_rule(
         db, tenant_id, body.rule_type, body.points,
         daily_limit=body.daily_limit,
@@ -231,10 +229,8 @@ async def update_point_rule_endpoint(
     body: PointRuleUpdate,
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
-    role: str = Depends(get_current_role),
+    _role: str = Depends(require_admin_or_operator),
 ):
-    if role not in {"admin", "operator"}:
-        raise HTTPException(status_code=403, detail="Insufficient permissions")
     rule = await update_point_rule(db, tenant_id, rule_id, **body.model_dump(exclude_none=True))
     if not rule:
         raise HTTPException(status_code=404, detail="Rule not found")
@@ -252,10 +248,8 @@ async def delete_point_rule_endpoint(
     rule_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
-    role: str = Depends(get_current_role),
+    _role: str = Depends(require_admin_or_operator),
 ):
-    if role not in {"admin", "operator"}:
-        raise HTTPException(status_code=403, detail="Insufficient permissions")
     if not await delete_point_rule(db, tenant_id, rule_id):
         raise HTTPException(status_code=404, detail="Rule not found")
 
@@ -307,10 +301,8 @@ async def create_point_product_endpoint(
     body: PointProductCreate,
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
-    role: str = Depends(get_current_role),
+    _role: str = Depends(require_admin_or_operator),
 ):
-    if role not in {"admin", "operator"}:
-        raise HTTPException(status_code=403, detail="Insufficient permissions")
     try:
         product = await create_point_product(
             db, tenant_id,
@@ -337,10 +329,8 @@ async def update_point_product_endpoint(
     body: PointProductUpdate,
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
-    role: str = Depends(get_current_role),
+    _role: str = Depends(require_admin_or_operator),
 ):
-    if role not in {"admin", "operator"}:
-        raise HTTPException(status_code=403, detail="Insufficient permissions")
     try:
         product = await update_point_product(
             db, tenant_id, product_id, **body.model_dump(exclude_unset=True)
@@ -357,10 +347,8 @@ async def delete_point_product_endpoint(
     product_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
-    role: str = Depends(get_current_role),
+    _role: str = Depends(require_admin_or_operator),
 ):
-    if role not in {"admin", "operator"}:
-        raise HTTPException(status_code=403, detail="Insufficient permissions")
     if not await delete_point_product(db, tenant_id, product_id):
         raise HTTPException(status_code=404, detail="Product not found")
 
@@ -370,10 +358,8 @@ async def exchange_product_endpoint(
     body: ExchangeRequest,
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
-    role: str = Depends(get_current_role),
+    _role: str = Depends(require_admin_or_operator),
 ):
-    if role not in {"admin", "operator"}:
-        raise HTTPException(status_code=403, detail="Insufficient permissions")
     try:
         result = await exchange_product(db, tenant_id, body.consumer_id, body.product_id)
         return result

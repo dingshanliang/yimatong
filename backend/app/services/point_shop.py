@@ -108,14 +108,25 @@ async def update_point_product(
         return None
     if "benefit_id" in kwargs:
         await _ensure_benefit_belongs_to_tenant(db, tenant_id, kwargs["benefit_id"])
-    allowed_fields = {
-        "name", "description", "image_url", "points_cost", "stock",
-        "benefit_id", "enabled", "starts_at", "ends_at",
-        "per_consumer_limit", "sort_order",
-    }
-    for key, value in kwargs.items():
-        if key in allowed_fields:
-            setattr(product, key, value)
+    from app.utils.model_helpers import apply_allowed_updates
+
+    apply_allowed_updates(
+        product,
+        kwargs,
+        {
+            "name",
+            "description",
+            "image_url",
+            "points_cost",
+            "stock",
+            "benefit_id",
+            "enabled",
+            "starts_at",
+            "ends_at",
+            "per_consumer_limit",
+            "sort_order",
+        },
+    )
     await db.flush()
     await db.refresh(product)
     return product

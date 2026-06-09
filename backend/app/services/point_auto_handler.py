@@ -16,12 +16,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import async_session_factory
 from app.core.event_bus import event_bus
 from app.models.member import PointRule, PointTransaction, PointTransactionType
+from app.services.redis_cache import get_redis_pool
 from app.utils import utcnow
 
 logger = logging.getLogger(__name__)
 
 DEDUP_KEY_PREFIX = "ymt:points:dedup:"
-DEDUP_TTL_SECONDS = 300  # 5 分钟冷却
+EDUP_TTL_SECONDS = 300  # 5 分钟冷却
 
 
 async def _check_daily_limit(
@@ -54,8 +55,6 @@ async def _check_daily_limit(
 async def _check_redis_dedup(tenant_id: str, consumer_id: str, rule_type: str) -> bool:
     """Redis 去重防止短时间内重复发放。"""
     try:
-        from app.services.redis_cache import get_redis_pool
-
         r = await get_redis_pool()
         if r is None:
             return False
@@ -134,22 +133,25 @@ async def _handle_scan_created(event_type: str, data: dict, tenant_id: str) -> N
             if not rules:
                 return
 
+            # 预查首扫记录（如果有 first_scan 规则才需要）
+            has_any_scan = False
+            if any(r.rule_type == "first_scan" for r in rules):
+                scan_count_result = await db.execute(
+                    select(func.count())
+                    .select_from(PointTransaction)
+                    .where(
+                        PointTransaction.tenant_id == tid,
+                        PointTransaction.consumer_id == cid,
+                        PointTransaction.txn_type == PointTransactionType.earning,
+                        PointTransaction.reason.in_(["auto:scan", "auto:first_scan"]),
+                    )
+                )
+                has_any_scan = (scan_count_result.scalar() or 0) > 0
+
             for rule in rules:
                 try:
-                    if rule.rule_type == "first_scan":
-                        # 首扫奖励：检查是否是消费者的第一次扫码
-                        scan_count_result = await db.execute(
-                            select(func.count())
-                            .select_from(PointTransaction)
-                            .where(
-                                PointTransaction.tenant_id == tid,
-                                PointTransaction.consumer_id == cid,
-                                PointTransaction.txn_type == PointTransactionType.earning,
-                                PointTransaction.reason.in_(["auto:scan", "auto:first_scan"]),
-                            )
-                        )
-                        if (scan_count_result.scalar() or 0) > 0:
-                            continue
+                    if rule.rule_type == "first_scan" and has_any_scan:
+                        continue
 
                     await _award_for_rule(db, tid, cid, rule, reference_id=f"scan:{public_id}")
                 except Exception:

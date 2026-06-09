@@ -19,6 +19,7 @@ from app.models.member import (
 )
 from app.utils import utcnow
 from app.utils.crypto import CryptoError, decrypt_phone, encrypt_phone, hash_phone, mask_phone
+from app.utils.model_helpers import apply_allowed_updates
 
 
 async def get_or_create_consumer(
@@ -94,6 +95,24 @@ async def get_or_create_consumer(
     return consumer
 
 
+async def _get_consumer_for_update(
+    db: AsyncSession, tenant_id: uuid.UUID, consumer_id: uuid.UUID
+) -> ConsumerProfile:
+    """获取消费者档案并加行锁（FOR UPDATE）。"""
+    result = await db.execute(
+        select(ConsumerProfile)
+        .where(
+            ConsumerProfile.id == consumer_id,
+            ConsumerProfile.tenant_id == tenant_id,
+        )
+        .with_for_update()
+    )
+    consumer = result.scalar_one_or_none()
+    if not consumer:
+        raise ValueError("Consumer not found")
+    return consumer
+
+
 async def award_points(
     db: AsyncSession,
     tenant_id: uuid.UUID,
@@ -105,17 +124,7 @@ async def award_points(
     """发放积分"""
     if points <= 0:
         raise ValueError("Points must be positive")
-    consumer_result = await db.execute(
-        select(ConsumerProfile)
-        .where(
-            ConsumerProfile.id == consumer_id,
-            ConsumerProfile.tenant_id == tenant_id,
-        )
-        .with_for_update()
-    )
-    consumer = consumer_result.scalar_one_or_none()
-    if not consumer:
-        raise ValueError("Consumer not found")
+    consumer = await _get_consumer_for_update(db, tenant_id, consumer_id)
 
     new_balance = consumer.total_points + points
     consumer.total_points = new_balance
@@ -149,17 +158,7 @@ async def spend_points(
     """消费积分"""
     if points <= 0:
         raise ValueError("Points must be positive")
-    consumer_result = await db.execute(
-        select(ConsumerProfile)
-        .where(
-            ConsumerProfile.id == consumer_id,
-            ConsumerProfile.tenant_id == tenant_id,
-        )
-        .with_for_update()
-    )
-    consumer = consumer_result.scalar_one_or_none()
-    if not consumer:
-        raise ValueError("Consumer not found")
+    consumer = await _get_consumer_for_update(db, tenant_id, consumer_id)
 
     if consumer.total_points < points:
         raise ValueError("Insufficient points")
@@ -330,22 +329,22 @@ async def search_consumers(
             return []
     elif normalized_type == "phone":
         conditions.append(ConsumerProfile.phone_hash == hash_phone(value))
-    elif normalized_type == "nickname":
-        escaped = value.replace("%", r"\%").replace("_", r"\_")
-        conditions.append(ConsumerProfile.nickname.ilike(f"%{escaped}%", escape="\\"))
     else:
-        try:
-            maybe_id = uuid.UUID(value)
-        except ValueError:
-            maybe_id = None
         escaped = value.replace("%", r"\%").replace("_", r"\_")
-        phone_clause = ConsumerProfile.phone_hash == hash_phone(value) if value.isdigit() else None
-        clauses = [ConsumerProfile.nickname.ilike(f"%{escaped}%", escape="\\")]
-        if maybe_id:
-            clauses.append(ConsumerProfile.id == maybe_id)
-        if phone_clause is not None:
-            clauses.append(phone_clause)
-        conditions.append(or_(*clauses))
+        if normalized_type == "nickname":
+            conditions.append(ConsumerProfile.nickname.ilike(f"%{escaped}%", escape="\\"))
+        else:
+            try:
+                maybe_id = uuid.UUID(value)
+            except ValueError:
+                maybe_id = None
+            phone_clause = ConsumerProfile.phone_hash == hash_phone(value) if value.isdigit() else None
+            clauses = [ConsumerProfile.nickname.ilike(f"%{escaped}%", escape="\\")]
+            if maybe_id:
+                clauses.append(ConsumerProfile.id == maybe_id)
+            if phone_clause is not None:
+                clauses.append(phone_clause)
+            conditions.append(or_(*clauses))
 
     result = await db.execute(
         select(ConsumerProfile).where(*conditions).order_by(ConsumerProfile.id.desc()).limit(limit)
@@ -389,10 +388,7 @@ async def update_point_rule(
     rule = result.scalar_one_or_none()
     if not rule:
         return None
-    allowed_fields = {"points", "daily_limit", "description", "enabled", "config"}
-    for key, value in kwargs.items():
-        if key in allowed_fields and value is not None:
-            setattr(rule, key, value)
+    apply_allowed_updates(rule, kwargs, {"points", "daily_limit", "description", "enabled", "config"})
     await db.flush()
     await db.refresh(rule)
     return rule

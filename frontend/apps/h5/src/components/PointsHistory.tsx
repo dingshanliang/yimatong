@@ -18,6 +18,30 @@ interface PointsHistoryProps {
 
 const PAGE_SIZE = 20;
 
+const TXN_META: Record<string, { badgeCls: string; label: string; amountColor: string; sign: string; fallbackReason: string }> = {
+  earning: {
+    badgeCls: "bg-green-50 text-green-700",
+    label: "收入",
+    amountColor: "text-green-600",
+    sign: "+",
+    fallbackReason: "积分奖励",
+  },
+  expired: {
+    badgeCls: "bg-gray-100 text-gray-600",
+    label: "过期",
+    amountColor: "text-gray-500",
+    sign: "-",
+    fallbackReason: "积分过期",
+  },
+  spending: {
+    badgeCls: "bg-orange-50 text-orange-700",
+    label: "支出",
+    amountColor: "text-orange-600",
+    sign: "-",
+    fallbackReason: "积分消耗",
+  },
+};
+
 export function PointsHistory({ consumerId, scanToken }: PointsHistoryProps) {
   const resolvedConsumerId = consumerId || getConsumerId() || undefined;
   const [items, setItems] = useState<Transaction[]>([]);
@@ -97,37 +121,27 @@ export function PointsHistory({ consumerId, scanToken }: PointsHistoryProps) {
       )}
       <div className="divide-y divide-gray-100">
         {items.map((txn) => (
+          const meta = TXN_META[txn.txn_type] || TXN_META.spending;
+          return (
           <div key={txn.id} className="flex items-center justify-between py-2.5">
             <div className="flex items-center gap-2 min-w-0">
-              <span
-                className={`inline-flex rounded-md px-1.5 py-0.5 text-xs font-medium ${
-                  txn.txn_type === "earning"
-                    ? "bg-green-50 text-green-700"
-                    : txn.txn_type === "expired"
-                      ? "bg-gray-100 text-gray-600"
-                      : "bg-orange-50 text-orange-700"
-                }`}
-              >
-                {txn.txn_type === "earning" ? "收入" : txn.txn_type === "expired" ? "过期" : "支出"}
+              <span className={`inline-flex rounded-md px-1.5 py-0.5 text-xs font-medium ${meta.badgeCls}`}>
+                {meta.label}
               </span>
               <span className="truncate text-sm text-gray-700">
-                {txn.reason || (txn.txn_type === "earning" ? "积分奖励" : txn.txn_type === "expired" ? "积分过期" : "积分消耗")}
+                {txn.reason || meta.fallbackReason}
               </span>
             </div>
             <div className="flex items-center gap-3 shrink-0">
-              <span
-                className={`text-sm font-semibold ${
-                  txn.txn_type === "earning" ? "text-green-600" : txn.txn_type === "expired" ? "text-gray-500" : "text-orange-600"
-                }`}
-              >
-                {txn.txn_type === "earning" ? "+" : "-"}
-                {txn.amount}
+              <span className={`text-sm font-semibold ${meta.amountColor}`}>
+                {meta.sign}{txn.amount}
               </span>
               <span className="text-xs text-gray-400 w-16 text-right">
                 余 {txn.balance_after}
               </span>
             </div>
           </div>
+          );
         ))}
       </div>
 
