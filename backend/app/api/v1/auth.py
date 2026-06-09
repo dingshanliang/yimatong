@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.database import get_db
-from app.core.dependencies import get_current_account_id, get_current_tenant
+from app.core.dependencies import get_current_account_id, get_current_tenant, get_redis_cache
 from app.models.tenant import Account
 from app.schemas.common import UNAUTHORIZED_EXAMPLE, ErrorDetail
 from app.services.auth import (
@@ -113,8 +113,12 @@ def _build_token_response(token_pair: dict) -> JSONResponse:
     summary="账号登录",
     response_description="登录成功，返回 JWT 令牌",
 )
-async def login(body: LoginRequest, request: Request, db: AsyncSession = Depends(get_db)):
-    cache = AsyncRedisCache()
+async def login(
+    body: LoginRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    cache: AsyncRedisCache = Depends(get_redis_cache),
+):
     try:
         token_pair = await authenticate_login(
             db=db,
@@ -139,12 +143,12 @@ async def refresh(
     request: Request,
     body: RefreshRequest | None = None,
     db: AsyncSession = Depends(get_db),
+    cache: AsyncRedisCache = Depends(get_redis_cache),
 ):
     refresh_token = request.cookies.get("refresh_token")
     if not refresh_token and body:
         refresh_token = body.refresh_token
 
-    cache = AsyncRedisCache()
     try:
         token_pair = await refresh_access_token(db=db, refresh_token=refresh_token, cache=cache)
     except AuthError as e:
@@ -190,12 +194,11 @@ async def me(
     summary="登出",
     response_description="登出成功，当前 access_token 加入黑名单",
 )
-async def logout(request: Request):
+async def logout(request: Request, cache: AsyncRedisCache = Depends(get_redis_cache)):
     """登出端点：将当前 access token 的 jti 加入黑名单"""
     auth_header = request.headers.get("Authorization", "")
     token = auth_header[7:] if auth_header.startswith("Bearer ") else request.cookies.get("access_token")
 
-    cache = AsyncRedisCache()
     refresh_token_str = request.cookies.get("refresh_token") or ""
     if not refresh_token_str:
         try:
@@ -221,9 +224,9 @@ async def generate_reset_token(
     body: GenerateResetTokenRequest,
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
+    cache: AsyncRedisCache = Depends(get_redis_cache),
 ):
     """管理员为指定账户生成一次性密码重置令牌，存入 Redis（1 小时有效）。"""
-    cache = AsyncRedisCache()
     try:
         result = await generate_password_reset(
             db=db, account_id_str=body.account_id, tenant_id=tenant_id, cache=cache
@@ -242,9 +245,9 @@ async def confirm_reset_password(
     body: ConfirmResetPasswordRequest,
     request: Request,
     db: AsyncSession = Depends(get_db),
+    cache: AsyncRedisCache = Depends(get_redis_cache),
 ):
     """用户通过重置令牌自助设置新密码。令牌验证后立即失效。"""
-    cache = AsyncRedisCache()
     try:
         return await confirm_password_reset(
             db=db,
