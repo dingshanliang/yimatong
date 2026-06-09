@@ -330,14 +330,16 @@ async def search_consumers(
     elif normalized_type == "phone":
         conditions.append(ConsumerProfile.phone_hash == hash_phone(value))
     elif normalized_type == "nickname":
-        conditions.append(ConsumerProfile.nickname.ilike(f"%{value}%"))
+        escaped = value.replace("%", r"\%").replace("_", r"\_")
+        conditions.append(ConsumerProfile.nickname.ilike(f"%{escaped}%", escape="\\"))
     else:
         try:
             maybe_id = uuid.UUID(value)
         except ValueError:
             maybe_id = None
+        escaped = value.replace("%", r"\%").replace("_", r"\_")
         phone_clause = ConsumerProfile.phone_hash == hash_phone(value) if value.isdigit() else None
-        clauses = [ConsumerProfile.nickname.ilike(f"%{value}%")]
+        clauses = [ConsumerProfile.nickname.ilike(f"%{escaped}%", escape="\\")]
         if maybe_id:
             clauses.append(ConsumerProfile.id == maybe_id)
         if phone_clause is not None:
@@ -386,8 +388,9 @@ async def update_point_rule(
     rule = result.scalar_one_or_none()
     if not rule:
         return None
+    allowed_fields = {"points", "daily_limit", "description", "enabled", "config"}
     for key, value in kwargs.items():
-        if hasattr(rule, key) and value is not None:
+        if key in allowed_fields and value is not None:
             setattr(rule, key, value)
     await db.flush()
     await db.refresh(rule)

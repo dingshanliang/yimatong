@@ -107,8 +107,13 @@ async def update_point_product(
         return None
     if "benefit_id" in kwargs:
         await _ensure_benefit_belongs_to_tenant(db, tenant_id, kwargs["benefit_id"])
+    allowed_fields = {
+        "name", "description", "image_url", "points_cost", "stock",
+        "benefit_id", "enabled", "starts_at", "ends_at",
+        "per_consumer_limit", "sort_order",
+    }
     for key, value in kwargs.items():
-        if hasattr(product, key):
+        if key in allowed_fields:
             setattr(product, key, value)
     await db.flush()
     await db.refresh(product)
@@ -121,6 +126,17 @@ async def delete_point_product(
     product = await get_point_product(db, tenant_id, product_id)
     if not product:
         return False
+    # Check for existing redemptions
+    count_result = await db.execute(
+        select(func.count()).select_from(PointRedemption).where(
+            PointRedemption.product_id == product_id,
+        )
+    )
+    if (count_result.scalar() or 0) > 0:
+        product.enabled = False
+        product.name = f"[已删除] {product.name}"
+        await db.flush()
+        return True
     await db.delete(product)
     await db.flush()
     return True
@@ -274,7 +290,7 @@ async def exchange_product(
         tenant_id,
         consumer_id,
         product.points_cost,
-        f"兑换: {product.name}",
+        f"兑换: {product.name[:196]}",
         reference_id=f"product:{product_id}",
     )
 

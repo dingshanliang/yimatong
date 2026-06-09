@@ -1,10 +1,12 @@
 """会员与积分 API"""
 
+import re
 import uuid
 from datetime import datetime
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator, model_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
@@ -41,7 +43,14 @@ member_router = APIRouter(prefix="/api/v1/members", tags=["members"])
 
 class ConsumerCreateRequest(BaseModel):
     phone: str | None = None
-    nickname: str | None = None
+    nickname: str | None = Field(None, max_length=100)
+
+    @field_validator("phone")
+    @classmethod
+    def validate_phone(cls, v: str | None) -> str | None:
+        if v is not None and not re.match(r"^1[3-9]\d{9}$", v):
+            raise ValueError("手机号格式不正确")
+        return v
 
 
 class AwardPointsRequest(BaseModel):
@@ -59,9 +68,9 @@ class SpendPointsRequest(BaseModel):
 
 
 class PointRuleCreate(BaseModel):
-    rule_type: str
-    points: int
-    daily_limit: int = 0
+    rule_type: Literal["scan", "first_scan", "register", "checkin", "repurchase", "activity"]
+    points: int = Field(gt=0)
+    daily_limit: int = Field(ge=0, default=0)
     description: str | None = None
     config: dict | None = None
 
@@ -75,17 +84,23 @@ class PointRuleUpdate(BaseModel):
 
 
 class PointProductCreate(BaseModel):
-    name: str
+    name: str = Field(max_length=200)
     description: str | None = None
     image_url: str | None = None
-    points_cost: int
-    stock: int = 0
+    points_cost: int = Field(gt=0)
+    stock: int = Field(ge=0, default=0)
     benefit_id: uuid.UUID | None = None
     enabled: bool = True
     starts_at: datetime | None = None
     ends_at: datetime | None = None
-    per_consumer_limit: int = 1
-    sort_order: int = 0
+    per_consumer_limit: int = Field(ge=0, default=1)
+    sort_order: int = Field(ge=0, default=0)
+
+    @model_validator(mode="after")
+    def validate_date_range(self):
+        if self.starts_at and self.ends_at and self.starts_at >= self.ends_at:
+            raise ValueError("starts_at must be before ends_at")
+        return self
 
 
 class PointProductUpdate(BaseModel):
@@ -100,6 +115,12 @@ class PointProductUpdate(BaseModel):
     ends_at: datetime | None = None
     per_consumer_limit: int | None = None
     sort_order: int | None = None
+
+    @model_validator(mode="after")
+    def validate_date_range(self):
+        if self.starts_at and self.ends_at and self.starts_at >= self.ends_at:
+            raise ValueError("starts_at must be before ends_at")
+        return self
 
 
 class ExchangeRequest(BaseModel):
