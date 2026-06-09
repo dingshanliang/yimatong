@@ -16,7 +16,17 @@ description: Iterate through product modules systematically: review → plan →
 - 输出 "🎉 所有 30 个模块迭代完成！"
 - 不再调用 ScheduleWakeup，/loop 自然结束
 
-### Step 2: 阶段调度
+### Step 2: 阶段调度（必须显式输出）
+
+**这一步不可跳过。** 你必须输出以下信息后才能继续：
+
+```
+## Step 2: 阶段调度
+- **模块**: {id} ({name})
+- **当前状态**: {status}
+- **目标阶段**: {根据下表确定}
+- **已有 Bead**: {bead_id 或 "需要创建"}
+```
 
 根据模块的 `status` 字段决定执行哪个阶段：
 
@@ -26,6 +36,8 @@ description: Iterate through product modules systematically: review → plan →
 | `reviewed` | Plan 阶段 | `planned` |
 | `planned` | Execute 阶段（首轮，3 任务） | `executing` |
 | `executing` | Execute 阶段（续接，3 任务） | `executing` 或 `completed` |
+
+输出调度信息后，跳转到对应的阶段（Step 3/4/5）。
 
 ### Step 3: Review 阶段
 
