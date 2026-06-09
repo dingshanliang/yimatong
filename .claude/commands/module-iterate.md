@@ -1,5 +1,5 @@
 ---
-description: Iterate through product modules systematically: review → plan → execute. Designed for /loop self-paced automation.
+description: Iterate through product modules systematically - review, plan, execute. Designed for /loop self-paced automation. Auto-discovers modules on first run.
 ---
 
 # Module Iterate: 系统化模块迭代
@@ -8,12 +8,66 @@ description: Iterate through product modules systematically: review → plan →
 
 ## 流程
 
+### Step 0: 项目发现（仅首次运行）
+
+**如果 `docs/superpowers/module-iterate-state.json` 不存在**，执行项目发现：
+
+1. **读取 CLAUDE.md** 获取项目结构信息（后端目录、前端目录、测试目录等）
+2. **扫描后端模块**：
+   - 找到 API 路由目录（如 `backend/app/api/v1/`），每个路由文件 = 一个模块
+   - 找到 Service 目录，按文件名匹配到对应模块
+   - 找到 Model 目录，按文件名匹配到对应模块
+   - 找到测试目录，按文件名匹配
+3. **扫描前端模块**：
+   - 找到前端页面目录（如 `frontend/apps/admin/src/app/(dashboard)/`）
+   - 每个子目录 = 一个前端模块
+4. **合并为模块列表**：将后端和前端按名称匹配，生成统一的模块列表
+5. **确定处理顺序**：
+   - 读取 CLAUDE.md 判断哪些是基础设施模块（认证、租户、权限）→ 优先
+   - 核心业务模块次之
+   - 分析/集成/辅助模块最后
+6. **生成 `docs/superpowers/module-iterate-state.json`**，格式：
+   ```json
+   {
+     "version": "1.0",
+     "project": "项目名",
+     "last_updated": "YYYY-MM-DD",
+     "current_module_index": 0,
+     "modules": [
+       {
+         "id": "模块id",
+         "name": "模块中文名",
+         "status": "pending",
+         "priority": 1,
+         "api_files": [],
+         "service_files": [],
+         "model_files": [],
+         "schema_files": [],
+         "frontend_files": [],
+         "test_files": [],
+         "review_file": null,
+         "plan_file": null,
+         "findings_count": {"critical": 0, "high": 0, "medium": 0, "low": 0},
+         "tasks_total": 0,
+         "tasks_completed": 0,
+         "bead_id": null,
+         "branch": null,
+         "last_reviewed": null,
+         "last_executed": null
+       }
+     ]
+   }
+   ```
+7. **Git 提交**：`git commit -m "chore: auto-discover project modules for iteration"`
+
+**如果 state.json 已存在**，跳过此步。
+
 ### Step 1: 读取状态
 
 读取 `docs/superpowers/module-iterate-state.json`，找到第一个 `status != "completed"` 的模块。
 
 如果所有模块都是 `completed`：
-- 输出 "🎉 所有 30 个模块迭代完成！"
+- 输出 "🎉 所有模块迭代完成！"
 - 不再调用 ScheduleWakeup，/loop 自然结束
 
 ### Step 2: 阶段调度（必须显式输出）
@@ -50,11 +104,11 @@ description: Iterate through product modules systematically: review → plan →
    将返回的 bead ID 写入 state.json。
 
 2. **调用 module-review skill**：
-   使用 Skill 工具调用 `module-review`，传入 `args: "{module_id} {JSON文件列表}"`。
+   使用 Skill 工具调用 `module-review`，传入 `args: "{module_id}"`。
    Skill 内部将启动最多 5 个并行 Agent（通过 Agent 工具）分别执行 5 个审查流。
 
 3. **保存 review 结果**：
-   使用当天日期（如 `2026-06-09`），将输出写入 `docs/superpowers/reviews/{YYYY-MM-DD}-{module-id}.md`
+   使用当天日期，将输出写入 `docs/superpowers/reviews/{YYYY-MM-DD}-{module-id}.md`
 
 4. **更新 state.json**：
    - `status = "reviewed"`
@@ -73,7 +127,8 @@ description: Iterate through product modules systematically: review → plan →
 
 1. **读取 review 文件**，提取所有 Critical 和 High 级别的发现。
 
-2. **生成改进计划**，格式参考 `docs/superpowers/plans/2026-06-09-anti-diversion-fixes.md`：
+2. **生成改进计划**：
+   - 参考项目中已有的 plan 文件格式（如 `docs/superpowers/plans/` 下最近的一个）
    - 每个计划包含：目标、架构说明、文件变更映射、编号任务（checkbox 格式）
    - 按优先级排序：Critical → High → Medium
    - 每个任务包含：具体步骤、受影响文件、验证方法
@@ -141,4 +196,3 @@ description: Iterate through product modules systematically: review → plan →
 - **不要试图在一次调用中完成整个模块**
 - **遇到测试失败时暂停**，不要继续执行
 - **遵循 CLAUDE.md 中的所有编码规范**
-- **执行前确认 Python 虚拟环境已激活**：`source backend/.venv/bin/activate`
