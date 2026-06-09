@@ -41,7 +41,7 @@
       "plan_file": "docs/superpowers/plans/2026-06-10-tenants-hardening.md",
       "findings_count": {"critical": 0, "high": 9, "medium": 16, "low": 12},
       "tasks_total": 8,
-      "tasks_completed": 2,
+      "tasks_completed": 3,
       "bead_id": "yimatong-fpos",
       "branch": null,
       "last_reviewed": "2026-06-10",

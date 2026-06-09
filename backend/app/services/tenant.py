@@ -10,6 +10,28 @@ from app.models.tenant import Account, Organization, Tenant, TenantPlan, TenantS
 from app.utils.security import hash_password
 
 
+async def _audit(
+    db: AsyncSession,
+    operator_id: str,
+    tenant_id: str,
+    action: str,
+    resource: str,
+) -> None:
+    """写入审计日志，失败不影响主流程。"""
+    try:
+        from app.services.audit import write_audit_log
+
+        await write_audit_log(
+            db,
+            operator_id=operator_id,
+            target_tenant_id=tenant_id,
+            action=action,
+            resource=resource,
+        )
+    except Exception:
+        pass
+
+
 def _generate_slug(name: str) -> str:
     slug = name.lower().strip()
     slug = re.sub(r"[^a-z0-9-]+", "-", slug)
@@ -92,6 +114,7 @@ async def create_tenant(
 
     await db.flush()
     await db.refresh(tenant)
+    await _audit(db, str(account.id), str(tenant.id), "tenant_create", f"tenant:{tenant.id}")
     return tenant
 
 
@@ -141,6 +164,7 @@ async def update_tenant(
         tenant.categories = categories
     await db.flush()
     await db.refresh(tenant)
+    await _audit(db, "system", str(tenant.id), "tenant_update", f"tenant:{tenant_id}")
     return tenant
 
 
@@ -190,4 +214,5 @@ async def soft_delete_tenant(db: AsyncSession, tenant_id: uuid.UUID) -> bool:
         return False
     tenant.status = TenantStatus.terminated
     await db.flush()
+    await _audit(db, "system", str(tenant.id), "tenant_delete", f"tenant:{tenant_id}")
     return True
