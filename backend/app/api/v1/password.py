@@ -6,11 +6,13 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
-from app.core.dependencies import get_current_account_id, get_current_tenant
+from app.core.dependencies import get_current_account_id, get_current_role, get_current_tenant
 from app.models.tenant import Account
 from app.utils.security import hash_password, validate_password_strength, verify_password
 
 router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
+
+ADMIN_ROLES = {"admin", "platform_admin"}
 
 
 class ChangePasswordRequest(BaseModel):
@@ -36,8 +38,9 @@ async def change_password(
     body: ChangePasswordRequest,
     db: AsyncSession = Depends(get_db),
     account_id: uuid.UUID = Depends(get_current_account_id),
+    tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
-    result = await db.execute(select(Account).where(Account.id == account_id))
+    result = await db.execute(select(Account).where(Account.id == account_id, Account.tenant_id == tenant_id))
     account = result.scalar_one_or_none()
     if not account:
         raise HTTPException(status_code=404, detail="Account not found")
@@ -54,7 +57,10 @@ async def reset_password(
     body: ResetPasswordRequest,
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
+    role: str = Depends(get_current_role),
 ):
+    if role not in ADMIN_ROLES:
+        raise HTTPException(status_code=403, detail="仅管理员可重置密码")
     result = await db.execute(select(Account).where(Account.id == body.account_id, Account.tenant_id == tenant_id))
     account = result.scalar_one_or_none()
     if not account:
