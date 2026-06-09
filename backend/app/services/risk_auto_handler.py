@@ -111,7 +111,7 @@ async def _build_cross_region_context(
     # 获取码的归属区域
     from app.services.channel import get_code_expected_region
 
-    expected = await get_code_expected_region(db, public_id)
+    expected = await get_code_expected_region(db, tenant_id, public_id)
     if not expected or not (expected.get("coverage_label") or expected.get("city")):
         return None
 

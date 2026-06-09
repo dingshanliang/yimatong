@@ -1465,26 +1465,42 @@ def _resolve_ip(ip: str) -> str | None:
 
 async def get_code_expected_region(
     db: AsyncSession,
+    tenant_id: uuid.UUID,
     public_id: str,
 ) -> dict | None:
     """获取码的归属区域信息（通过 CodeAllocation → Store → Region 链路，回退到 CodeBatch.region_id）"""
-    item = (await db.execute(select(CodeItem).where(CodeItem.public_id == public_id))).scalar_one_or_none()
+    item = (
+        await db.execute(
+            select(CodeItem).where(CodeItem.public_id == public_id, CodeItem.tenant_id == tenant_id)
+        )
+    ).scalar_one_or_none()
     if not item or not item.code_batch_id:
         return None
 
     alloc = (
         await db.execute(
             select(CodeAllocation)
-            .where(CodeAllocation.batch_id == item.code_batch_id)
+            .where(
+                CodeAllocation.batch_id == item.code_batch_id,
+                CodeAllocation.tenant_id == tenant_id,
+            )
             .order_by(CodeAllocation.id.desc())
             .limit(1)
         )
     ).scalar_one_or_none()
 
     if alloc and alloc.store_id:
-        store = (await db.execute(select(Store).where(Store.id == alloc.store_id))).scalar_one_or_none()
+        store = (
+            await db.execute(
+                select(Store).where(Store.id == alloc.store_id, Store.tenant_id == tenant_id)
+            )
+        ).scalar_one_or_none()
         if store and store.region_id:
-            region = (await db.execute(select(Region).where(Region.id == store.region_id))).scalar_one_or_none()
+            region = (
+                await db.execute(
+                    select(Region).where(Region.id == store.region_id, Region.tenant_id == tenant_id)
+                )
+            ).scalar_one_or_none()
             if region:
                 return {
                     "city": region.city,
@@ -1502,9 +1518,17 @@ async def get_code_expected_region(
                     "distributor_id": str(store.distributor_id) if store.distributor_id else None,
                 }
 
-    batch = (await db.execute(select(CodeBatch).where(CodeBatch.id == item.code_batch_id))).scalar_one_or_none()
+    batch = (
+        await db.execute(
+            select(CodeBatch).where(CodeBatch.id == item.code_batch_id, CodeBatch.tenant_id == tenant_id)
+        )
+    ).scalar_one_or_none()
     if batch and batch.region_id:
-        region = (await db.execute(select(Region).where(Region.id == batch.region_id))).scalar_one_or_none()
+        region = (
+            await db.execute(
+                select(Region).where(Region.id == batch.region_id, Region.tenant_id == tenant_id)
+            )
+        ).scalar_one_or_none()
         if region:
             return {
                 "city": region.city,
@@ -1534,7 +1558,7 @@ async def check_diversion(
     if not detected_city:
         return None
 
-    expected = await get_code_expected_region(db, public_id)
+    expected = await get_code_expected_region(db, tenant_id, public_id)
     if not expected:
         return None
 
