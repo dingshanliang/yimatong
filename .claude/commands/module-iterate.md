@@ -156,13 +156,13 @@ description: Iterate through product modules systematically - review, plan, exec
 
 2. **module-execute 将**：
    - 创建 feature 分支（如需要）
-   - 执行最多 3 个任务
+   - 逐个执行任务直到全部完成
    - 每个任务后提交并更新 state.json
    - 运行测试验证
 
 3. **判断完成状态**：
-   - 如 `tasks_completed == tasks_total`：运行全量测试，通过则 `status = "completed"`
-   - 否则保持 `status = "executing"`，等待下一轮
+   - 如 `tasks_completed == tasks_total`：运行全量测试，通过则 `status = "completed"`，然后**继续处理下一个模块**
+   - 否则保持 `status = "executing"`，继续执行剩余任务
 
 4. **完成时**：
    - 关闭 bead：`bd done {bead_id} --dolt-auto-commit off --reason "模块迭代完成"`
@@ -192,27 +192,27 @@ description: Iterate through product modules systematically - review, plan, exec
 
 ## 节奏控制
 
-**Review → Plan 连续执行，不要断开。** 这两个都是文档生成任务，在同一轮内完成：
+**核心原则：尽量连续执行，不要人为中断。**
+
+每次 /loop 调用时，按顺序处理直到无法继续：
 
 ```
-一轮内的流程：
-Step 2(调度) → Step 3(Review) → Step 4(Plan) → Step 6(摘要)
+一次 /loop 迭代：
+Step 0(发现) → Step 2(调度) → Step 3(Review) → Step 4(Plan) → Step 5(Execute) → 下一个模块 → ...
 ```
 
-**Execute 阶段才断开**（涉及代码变更，每轮最多 3 个任务）：
-```
-Execute 轮次：
-Step 2(调度) → Step 5(执行3个任务) → Step 6(摘要) → ScheduleWakeup 60s
-```
+**连续执行，不要主动断开**。模型会自动处理上下文管理：
+- 如果上下文变长，系统会自动总结，无需人工干预
+- /loop 会在当前轮结束后自动触发下一轮
 
-**断开点**：
-- Plan 完成后 → 断开（下一轮开始 Execute，需要干净上下文）
-- Execute 每轮 3 个任务后 → 断开
-- Execute 全部完成 → 连续进入下一个模块的 Review+Plan
+**唯一需要停止的情况**：
+- 测试失败，需要人工干预 → 输出失败信息，不设 ScheduleWakeup，等待用户回应
+- 所有模块完成 → 输出完成信息，不设 ScheduleWakeup
 
-**ScheduleWakeup 设置**：
-- 断开时设置 **60 秒**（最短间隔），不要用默认的 20 分钟
-- 仅当 Execute 遇到测试失败需要人工干预时，不设置 ScheduleWakeup
+**不要**：
+- 不要在 Review → Plan 之间断开
+- 不要在 Execute 每隔 3 个任务就断开
+- 不要主动设置 ScheduleWakeup（除非测试失败需要等人）
+- 不要人为限制每轮的任务数量
 
-**遇到测试失败时暂停**，不要继续执行。
-**遵循 CLAUDE.md 中的所有编码规范**。
+**遵循 CLAUDE.md 中的所有编码规范。**
