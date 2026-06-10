@@ -66,6 +66,8 @@ brand_router = APIRouter(prefix="/api/v1/brands", tags=["brands"])
 product_router = APIRouter(prefix="/api/v1/products", tags=["products"])
 sku_router = APIRouter(prefix="/api/v1/skus", tags=["skus"])
 batch_router = APIRouter(prefix="/api/v1/production-batches", tags=["production-batches"])
+# NOTE: ProductAsset 创建使用嵌套路由 /products/{id}/assets（明确归属关系），
+# 更新/删除使用扁平路由 /product-assets/{id}（直接定位资源），符合 RESTful 最佳实践。
 asset_router = APIRouter(prefix="/api/v1/product-assets", tags=["product-assets"])
 
 
