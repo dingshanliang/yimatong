@@ -261,6 +261,7 @@ async def mark_printing_endpoint(
     batch_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
+    _: None = Depends(require_permission("code:manage")),
 ):
     try:
         result = await mark_printing(db, tenant_id, batch_id)
@@ -276,6 +277,7 @@ async def mark_delivered_endpoint(
     batch_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
+    _: None = Depends(require_permission("code:manage")),
 ):
     try:
         result = await mark_delivered(db, tenant_id, batch_id)
