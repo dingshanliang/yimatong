@@ -90,7 +90,7 @@
       "id": "organizations",
       "name": "组织管理",
       "prd_group": "SAAS",
-      "status": "pending",
+      "status": "reviewed",
       "priority": 1,
       "api_files": [
         "backend/app/api/v1/organizations.py"
@@ -104,19 +104,19 @@
         "frontend/apps/admin/src/app/(dashboard)/accounts/"
       ],
       "test_files": [],
-      "review_file": null,
+      "review_file": "docs/superpowers/reviews/2026-06-10-organizations.md",
       "plan_file": null,
       "findings_count": {
-        "critical": 0,
-        "high": 0,
-        "medium": 0,
-        "low": 0
+        "critical": 5,
+        "high": 9,
+        "medium": 10,
+        "low": 6
       },
       "tasks_total": 0,
       "tasks_completed": 0,
-      "bead_id": null,
+      "bead_id": "yimatong-9uc3",
       "branch": null,
-      "last_reviewed": null,
+      "last_reviewed": "2026-06-10",
       "last_executed": null,
       "skip_reason": null,
       "error_log": []
