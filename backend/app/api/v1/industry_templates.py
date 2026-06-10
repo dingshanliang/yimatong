@@ -14,13 +14,18 @@ template_router = APIRouter(prefix="/api/v1/industry-templates", tags=["industry
 
 
 @template_router.get("")
-async def list_industry_templates():
+async def list_industry_templates(
+    _role: str = Depends(require_role("admin", "operator")),
+):
     """列出所有行业模板"""
     return [{"id": i, **t} for i, t in enumerate(ALL_TEMPLATES)]
 
 
 @template_router.get("/{template_id}")
-async def get_industry_template(template_id: int):
+async def get_industry_template(
+    template_id: int,
+    _role: str = Depends(require_role("admin", "operator")),
+):
     """获取单个行业模板详情"""
     if template_id < 0 or template_id >= len(ALL_TEMPLATES):
         raise HTTPException(status_code=404, detail="Template not found")
@@ -33,6 +38,7 @@ async def apply_industry_template(
     body: dict | None = None,
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
+    _role: str = Depends(require_role("admin")),
 ):
     """将行业模板应用到租户，创建 page_template"""
     if template_id < 0 or template_id >= len(ALL_TEMPLATES):
