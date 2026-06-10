@@ -62,7 +62,15 @@ async def create_tenant(
     if existing.scalar_one_or_none() is not None:
         raise ValueError(f"Slug '{slug}' already exists")
 
+    # 预生成 ID，避免单次 flush 时 foreign key 为 NULL
+    from uuid6 import uuid7
+
+    tenant_id = uuid7()
+    org_id = uuid7()
+    account_id = uuid7()
+
     tenant = Tenant(
+        id=tenant_id,
         name=name,
         slug=slug,
         status=TenantStatus.active,
@@ -75,13 +83,14 @@ async def create_tenant(
     )
     db.add(tenant)
 
-    org = Organization(tenant_id=tenant.id, name=f"{name} 默认组织")
+    org = Organization(id=org_id, tenant_id=tenant_id, name=f"{name} 默认组织")
     db.add(org)
 
     hashed = hash_password(admin_password)
     account = Account(
-        tenant_id=tenant.id,
-        organization_id=org.id,
+        id=account_id,
+        tenant_id=tenant_id,
+        organization_id=org_id,
         email=admin_email,
         hashed_password=hashed,
         name=admin_name,
@@ -96,18 +105,19 @@ async def create_tenant(
 
         if 0 <= template_id < len(ALL_TEMPLATES):
             template_def = ALL_TEMPLATES[template_id]
+            tmpl_id = uuid7()
             tmpl = PageTemplate(
-                tenant_id=tenant.id,
+                id=tmpl_id,
+                tenant_id=tenant_id,
                 name=template_def["name"],
                 template_type=template_def["template_type"],
                 status="draft",
             )
             db.add(tmpl)
-            await db.flush()
 
             version = PageVersion(
-                tenant_id=tenant.id,
-                page_template_id=tmpl.id,
+                tenant_id=tenant_id,
+                page_template_id=tmpl_id,
                 version_number=1,
                 config_json=template_def["config_json"],
                 status=PageVersionStatus.draft,

@@ -48,19 +48,22 @@ async def create_tenant_endpoint(
     db: AsyncSession = Depends(get_db),
     _role: str = Depends(require_role("platform_admin")),
 ):
-    tenant = await create_tenant(
-        db=db,
-        name=body.name,
-        slug=body.slug,
-        plan=body.plan,
-        admin_email=body.admin_email,
-        admin_name=body.admin_name,
-        admin_password=body.admin_password,
-        industry=body.industry,
-        notes=body.notes,
-        template_id=body.template_id,
-        tenant_type=body.tenant_type,
-    )
+    try:
+        tenant = await create_tenant(
+            db=db,
+            name=body.name,
+            slug=body.slug,
+            plan=body.plan,
+            admin_email=body.admin_email,
+            admin_name=body.admin_name,
+            admin_password=body.admin_password,
+            industry=body.industry,
+            notes=body.notes,
+            template_id=body.template_id,
+            tenant_type=body.tenant_type,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=409, detail=str(e)) from e
     return tenant
 
 
@@ -116,60 +119,6 @@ async def list_tenants_endpoint(
     )
 
 
-@router.get("/{tenant_id}", response_model=TenantRead, summary="获取指定租户")
-async def get_tenant_endpoint(
-    tenant_id: uuid.UUID,
-    db: AsyncSession = Depends(get_db),
-    _role: str = Depends(require_role("platform_admin")),
-):
-    tenant = await get_tenant(db, tenant_id)
-    if not tenant:
-        raise HTTPException(status_code=404, detail="Tenant not found")
-    return tenant
-
-
-@router.patch("/{tenant_id}", response_model=TenantRead, summary="更新指定租户")
-async def update_tenant_endpoint(
-    tenant_id: uuid.UUID,
-    body: TenantUpdate,
-    db: AsyncSession = Depends(get_db),
-    _role: str = Depends(require_role("platform_admin")),
-):
-    tenant = await update_tenant(
-        db,
-        tenant_id,
-        name=body.name,
-        industry=body.industry,
-        notes=body.notes,
-        quota=body.quota,
-        compliance_settings=body.compliance_settings,
-        plan_expires_at=body.plan_expires_at,
-        onboarding_progress=body.onboarding_progress,
-        enabled_features=body.enabled_features,
-        tenant_type=body.tenant_type,
-        categories=body.categories,
-    )
-    if not tenant:
-        raise HTTPException(status_code=404, detail="Tenant not found")
-    return tenant
-
-
-@router.delete("/{tenant_id}", status_code=204, summary="删除租户")
-async def delete_tenant_endpoint(
-    tenant_id: uuid.UUID,
-    db: AsyncSession = Depends(get_db),
-    _role: str = Depends(require_role("platform_admin")),
-):
-    deleted = await soft_delete_tenant(db, tenant_id)
-    if not deleted:
-        raise HTTPException(status_code=404, detail="Tenant not found")
-
-
-# ---------------------------------------------------------------------------
-# Current tenant endpoints (any authenticated tenant user)
-# ---------------------------------------------------------------------------
-
-
 @router.get("/me", response_model=TenantRead, summary="获取当前租户")
 async def get_current_tenant_endpoint(
     db: AsyncSession = Depends(get_db),
@@ -217,6 +166,7 @@ async def update_current_tenant_endpoint(
 # Onboarding向导
 # ---------------------------------------------------------------------------
 
+
 @router.get("/me/onboarding", summary="获取初始化向导进度")
 async def get_onboarding_progress(
     db: AsyncSession = Depends(get_db),
@@ -241,3 +191,57 @@ async def complete_onboarding_step_endpoint(
     if not tenant:
         raise HTTPException(status_code=404, detail="Tenant not found")
     return {"step": step, "completed": True}
+
+
+# ---------------------------------------------------------------------------
+# Platform admin: single-tenant CRUD (MUST be after /me routes)
+# ---------------------------------------------------------------------------
+
+
+@router.get("/{tenant_id}", response_model=TenantRead, summary="获取指定租户")
+async def get_tenant_endpoint(
+    tenant_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    _role: str = Depends(require_role("platform_admin")),
+):
+    tenant = await get_tenant(db, tenant_id)
+    if not tenant:
+        raise HTTPException(status_code=404, detail="Tenant not found")
+    return tenant
+
+
+@router.patch("/{tenant_id}", response_model=TenantRead, summary="更新指定租户")
+async def update_tenant_endpoint(
+    tenant_id: uuid.UUID,
+    body: TenantUpdate,
+    db: AsyncSession = Depends(get_db),
+    _role: str = Depends(require_role("platform_admin")),
+):
+    tenant = await update_tenant(
+        db,
+        tenant_id,
+        name=body.name,
+        industry=body.industry,
+        notes=body.notes,
+        quota=body.quota,
+        compliance_settings=body.compliance_settings,
+        plan_expires_at=body.plan_expires_at,
+        onboarding_progress=body.onboarding_progress,
+        enabled_features=body.enabled_features,
+        tenant_type=body.tenant_type,
+        categories=body.categories,
+    )
+    if not tenant:
+        raise HTTPException(status_code=404, detail="Tenant not found")
+    return tenant
+
+
+@router.delete("/{tenant_id}", status_code=204, summary="删除租户")
+async def delete_tenant_endpoint(
+    tenant_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    _role: str = Depends(require_role("platform_admin")),
+):
+    deleted = await soft_delete_tenant(db, tenant_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Tenant not found")
