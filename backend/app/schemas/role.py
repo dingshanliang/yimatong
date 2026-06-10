@@ -1,0 +1,37 @@
+import uuid
+from datetime import datetime
+
+from pydantic import BaseModel, Field
+
+
+class RoleCreate(BaseModel):
+    name: str = Field(..., min_length=1, max_length=50)
+    description: str | None = Field(None, max_length=255)
+
+
+class RoleUpdate(BaseModel):
+    name: str | None = Field(None, min_length=1, max_length=50)
+    description: str | None = Field(None, max_length=255)
+
+
+class PermissionCreate(BaseModel):
+    code: str = Field(..., min_length=1, max_length=100)
+    description: str | None = Field(None, max_length=255)
+
+
+class PermissionRead(BaseModel):
+    id: uuid.UUID
+    code: str
+    description: str | None = None
+
+    model_config = {"from_attributes": True}
+
+
+class RoleRead(BaseModel):
+    id: uuid.UUID
+    name: str
+    description: str | None = None
+    permissions: list[PermissionRead] = []
+    created_at: datetime | None = None
+
+    model_config = {"from_attributes": True}
