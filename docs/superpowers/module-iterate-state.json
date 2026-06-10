@@ -317,7 +317,7 @@
       "id": "page-templates",
       "name": "页面模板",
       "prd_group": "PAGE",
-      "status": "planned",
+      "status": "completed",
       "priority": 3,
       "api_files": [
         "backend/app/api/v1/page_templates.py"
@@ -344,11 +344,11 @@
         "low": 1
       },
       "tasks_total": 7,
-      "tasks_completed": 0,
+      "tasks_completed": 7,
       "bead_id": "yimatong-fmjn",
       "branch": null,
       "last_reviewed": "2026-06-10",
-      "last_executed": null,
+      "last_executed": "2026-06-10",
       "skip_reason": null,
       "error_log": []
     },
