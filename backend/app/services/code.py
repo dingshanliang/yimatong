@@ -6,6 +6,8 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.core.exceptions import BadRequestError, NotFoundError
+
 from app.models.code import (
     CodeBatch,
     CodeBatchStatus,
@@ -407,9 +409,7 @@ async def revoke_code_item(db: AsyncSession, tenant_id: uuid.UUID, item_id: uuid
     result = await db.execute(select(CodeItem).where(CodeItem.id == item_id, CodeItem.tenant_id == tenant_id))
     item = result.scalar_one_or_none()
     if not item:
-        from fastapi import HTTPException
-
-        raise HTTPException(status_code=404, detail="Code item not found")
+        raise NotFoundError("Code item not found")
     can_transition(item.status, CodeItemStatus.revoked, raise_on_invalid=True)
     item.status = CodeItemStatus.revoked
     item.revoked_at = utcnow()
@@ -427,9 +427,7 @@ async def bind_code_item(db: AsyncSession, tenant_id: uuid.UUID, item_id: uuid.U
     result = await db.execute(select(CodeItem).where(CodeItem.id == item_id, CodeItem.tenant_id == tenant_id))
     item = result.scalar_one_or_none()
     if not item:
-        from fastapi import HTTPException
-
-        raise HTTPException(status_code=404, detail="Code item not found")
+        raise NotFoundError("Code item not found")
     can_transition(item.status, CodeItemStatus.bound, raise_on_invalid=True)
     item.status = CodeItemStatus.bound
     item.bound_at = utcnow()
