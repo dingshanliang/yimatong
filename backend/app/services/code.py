@@ -335,8 +335,12 @@ async def activate_batch(db: AsyncSession, tenant_id: uuid.UUID, batch_id: uuid.
 
     from app.services.code_state import InvalidStateTransitionError, can_transition
 
-    batch = await db.get(CodeBatch, batch_id)
-    if not batch or batch.tenant_id != tenant_id:
+    # Lock the batch row to prevent concurrent state transitions
+    result = await db.execute(
+        select(CodeBatch).where(CodeBatch.id == batch_id, CodeBatch.tenant_id == tenant_id).with_for_update()
+    )
+    batch = result.scalar_one_or_none()
+    if not batch:
         raise ValueError("Code batch not found")
     if batch.status == CodeBatchStatus.activated:
         raise InvalidStateTransitionError("Code batch is already activated")
@@ -498,7 +502,9 @@ async def mark_printing(db: AsyncSession, tenant_id: uuid.UUID, batch_id: uuid.U
     """标记码批次为印刷中（completed -> printing）"""
     from app.services.batch_state import can_transition_batch
 
-    result = await db.execute(select(CodeBatch).where(CodeBatch.id == batch_id, CodeBatch.tenant_id == tenant_id))
+    result = await db.execute(
+        select(CodeBatch).where(CodeBatch.id == batch_id, CodeBatch.tenant_id == tenant_id).with_for_update()
+    )
     batch = result.scalar_one_or_none()
     if not batch:
         raise ValueError("Code batch not found")
@@ -516,7 +522,9 @@ async def mark_delivered(db: AsyncSession, tenant_id: uuid.UUID, batch_id: uuid.
     """标记码批次为已交付（printing -> delivered）"""
     from app.services.batch_state import can_transition_batch
 
-    result = await db.execute(select(CodeBatch).where(CodeBatch.id == batch_id, CodeBatch.tenant_id == tenant_id))
+    result = await db.execute(
+        select(CodeBatch).where(CodeBatch.id == batch_id, CodeBatch.tenant_id == tenant_id).with_for_update()
+    )
     batch = result.scalar_one_or_none()
     if not batch:
         raise ValueError("Code batch not found")
