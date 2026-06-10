@@ -2,11 +2,11 @@ import secrets
 import string
 import uuid
 
-from fastapi import HTTPException
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.tenant import Account, Organization
+from app.utils import escape_like_pattern
 from app.utils.security import hash_password
 
 
@@ -37,8 +37,9 @@ async def list_organizations(
     count_query = select(func.count()).select_from(Organization).where(Organization.tenant_id == tenant_id)
 
     if q:
-        query = query.where(Organization.name.ilike(f"%{q}%"))
-        count_query = count_query.where(Organization.name.ilike(f"%{q}%"))
+        escaped = escape_like_pattern(q)
+        query = query.where(Organization.name.ilike(f"%{escaped}%", escape="\\"))
+        count_query = count_query.where(Organization.name.ilike(f"%{escaped}%", escape="\\"))
 
     total_result = await db.execute(count_query)
     total = total_result.scalar() or 0
@@ -73,12 +74,12 @@ async def create_account(
         select(Organization).where(Organization.id == organization_id, Organization.tenant_id == tenant_id)
     )
     if not org_result.scalar_one_or_none():
-        raise HTTPException(status_code=400, detail="Organization does not belong to current tenant")
+        raise ValueError("Organization does not belong to current tenant")
 
     # Email uniqueness check within tenant
     existing = await db.execute(select(Account).where(Account.tenant_id == tenant_id, Account.email == email))
     if existing.scalar_one_or_none():
-        raise HTTPException(status_code=409, detail="An account with this email already exists in this tenant")
+        raise ValueError("An account with this email already exists in this tenant")
 
     hashed = hash_password(password)
     account = Account(
@@ -115,8 +116,9 @@ async def list_accounts(
     count_query = select(func.count()).select_from(Account).where(Account.tenant_id == tenant_id)
 
     if q:
-        query = query.where((Account.name.ilike(f"%{q}%")) | (Account.email.ilike(f"%{q}%")))
-        count_query = count_query.where((Account.name.ilike(f"%{q}%")) | (Account.email.ilike(f"%{q}%")))
+        escaped = escape_like_pattern(q)
+        query = query.where((Account.name.ilike(f"%{escaped}%", escape="\\")) | (Account.email.ilike(f"%{escaped}%", escape="\\")))
+        count_query = count_query.where((Account.name.ilike(f"%{escaped}%", escape="\\")) | (Account.email.ilike(f"%{escaped}%", escape="\\")))
 
     total_result = await db.execute(count_query)
     total = total_result.scalar() or 0
@@ -152,9 +154,8 @@ async def update_organization(
         org.name = name
 
     if parent_id_provided:
-        # Circular reference check: new parent must not be self or a descendant
         if parent_id is not None and parent_id == org_id:
-            raise HTTPException(status_code=400, detail="Organization cannot be its own parent")
+            raise ValueError("Organization cannot be its own parent")
 
         if parent_id is not None:
             # Walk up the ancestor chain to detect cycles
@@ -162,7 +163,7 @@ async def update_organization(
             current_id = parent_id
             while current_id is not None:
                 if current_id in visited:
-                    raise HTTPException(status_code=400, detail="Circular reference detected in organization hierarchy")
+                    raise ValueError("Circular reference detected in organization hierarchy")
                 visited.add(current_id)
                 ancestor = await db.execute(select(Organization.parent_id).where(Organization.id == current_id))
                 current_id = ancestor.scalar_one_or_none()
@@ -172,7 +173,7 @@ async def update_organization(
                 select(Organization).where(Organization.id == parent_id, Organization.tenant_id == tenant_id)
             )
             if not parent_result.scalar_one_or_none():
-                raise HTTPException(status_code=400, detail="Parent organization not found in current tenant")
+                raise ValueError("Parent organization not found in current tenant")
 
         org.parent_id = parent_id
 
@@ -192,7 +193,7 @@ async def delete_organization(
     )
     org = result.scalar_one_or_none()
     if not org:
-        raise HTTPException(status_code=404, detail="Organization not found")
+        raise ValueError("Organization not found")
 
     # Check for child organizations
     children_result = await db.execute(
@@ -200,10 +201,7 @@ async def delete_organization(
     )
     child_count = children_result.scalar() or 0
     if child_count > 0:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Cannot delete: organization has {child_count} child organization(s)",
-        )
+        raise ValueError(f"Cannot delete: organization has {child_count} child organization(s)")
 
     # Check for associated accounts
     account_result = await db.execute(
@@ -211,10 +209,7 @@ async def delete_organization(
     )
     account_count = account_result.scalar() or 0
     if account_count > 0:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Cannot delete: organization has {account_count} associated account(s)",
-        )
+        raise ValueError(f"Cannot delete: organization has {account_count} associated account(s)")
 
     await db.delete(org)
     await db.flush()
@@ -226,7 +221,8 @@ async def update_account(
     tenant_id: uuid.UUID,
     account_id: uuid.UUID,
     name: str | None,
-    role_ids: list[uuid.UUID] | None,
+    organization_id: uuid.UUID | None = None,
+    role_ids: list[uuid.UUID] | None = None,
 ) -> Account | None:
     result = await db.execute(select(Account).where(Account.id == account_id, Account.tenant_id == tenant_id))
     account = result.scalar_one_or_none()
@@ -234,6 +230,14 @@ async def update_account(
         return None
     if name:
         account.name = name
+    if organization_id is not None:
+        # Validate org belongs to same tenant
+        org_result = await db.execute(
+            select(Organization).where(Organization.id == organization_id, Organization.tenant_id == tenant_id)
+        )
+        if not org_result.scalar_one_or_none():
+            raise ValueError("Organization does not belong to current tenant")
+        account.organization_id = organization_id
     if role_ids is not None:
         from app.models.tenant import Role
 

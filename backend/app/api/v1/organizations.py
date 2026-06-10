@@ -9,6 +9,7 @@ from app.core.dependencies import get_current_tenant
 from app.models.tenant import Account, Organization
 from app.schemas.account import (
     AccountCreate,
+    AccountCreateResponse,
     AccountRead,
     AccountUpdate,
     OrganizationCreate,
@@ -28,8 +29,14 @@ from app.services.organization import (
     update_organization,
 )
 from app.services.quota import QuotaExceededError, check_quota_for_tenant
+from app.utils.auth_rbac import require_role
 
 router = APIRouter(prefix="/api/v1", tags=["organizations", "accounts"])
+
+
+# ---------------------------------------------------------------------------
+# Organizations
+# ---------------------------------------------------------------------------
 
 
 @router.post("/organizations", response_model=OrganizationRead, status_code=201, summary="创建 org")
@@ -37,6 +44,7 @@ async def create_org_endpoint(
     body: OrganizationCreate,
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
+    _role: str = Depends(require_role("admin")),
 ):
     org = await create_organization(db, tenant_id=tenant_id, name=body.name, parent_id=body.parent_id)
     return {"id": org.id, "tenant_id": org.tenant_id, "name": org.name, "parent_id": org.parent_id, "account_count": 0}
@@ -49,6 +57,7 @@ async def list_orgs_endpoint(
     q: str | None = Query(None, description="搜索关键词"),
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
+    _role: str = Depends(require_role("admin", "operator")),
 ):
     result = await list_organizations(db, tenant_id=tenant_id, page=page, page_size=page_size, q=q)
     account_counts = await count_accounts_by_org(db, tenant_id)
@@ -71,20 +80,24 @@ async def update_org_endpoint(
     body: OrganizationUpdate,
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
+    _role: str = Depends(require_role("admin")),
 ):
     updates = body.model_dump(exclude_unset=True)
     name = updates.get("name")
     parent_id = updates.get("parent_id")
     parent_id_provided = "parent_id" in updates
 
-    org = await update_organization(
-        db,
-        tenant_id=tenant_id,
-        org_id=org_id,
-        name=name,
-        parent_id=parent_id,
-        parent_id_provided=parent_id_provided,
-    )
+    try:
+        org = await update_organization(
+            db,
+            tenant_id=tenant_id,
+            org_id=org_id,
+            name=name,
+            parent_id=parent_id,
+            parent_id_provided=parent_id_provided,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
     if not org:
         raise HTTPException(status_code=404, detail="Organization not found")
 
@@ -103,13 +116,24 @@ async def delete_org_endpoint(
     org_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
+    _role: str = Depends(require_role("admin")),
 ):
-    await delete_organization(db, tenant_id=tenant_id, org_id=org_id)
+    try:
+        await delete_organization(db, tenant_id=tenant_id, org_id=org_id)
+    except ValueError as e:
+        if "not found" in str(e):
+            raise HTTPException(status_code=404, detail=str(e)) from e
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+
+# ---------------------------------------------------------------------------
+# Accounts
+# ---------------------------------------------------------------------------
 
 
 @router.post(
     "/accounts",
-    response_model=AccountRead,
+    response_model=AccountCreateResponse,
     response_model_exclude_none=True,
     status_code=201,
     summary="创建 账号",
@@ -118,6 +142,7 @@ async def create_account_endpoint(
     body: AccountCreate,
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
+    _role: str = Depends(require_role("admin")),
 ):
     # Quota check
     try:
@@ -126,15 +151,21 @@ async def create_account_endpoint(
         raise HTTPException(status_code=429, detail=str(e))
 
     initial_password = generate_initial_password() if not body.password else None
-    account = await create_account(
-        db=db,
-        tenant_id=tenant_id,
-        organization_id=body.organization_id,
-        email=body.email,
-        name=body.name,
-        password=body.password or initial_password,
-        role_ids=body.role_ids,
-    )
+    try:
+        account = await create_account(
+            db=db,
+            tenant_id=tenant_id,
+            organization_id=body.organization_id,
+            email=body.email,
+            name=body.name,
+            password=body.password or initial_password,
+            role_ids=body.role_ids,
+        )
+    except ValueError as e:
+        if "already exists" in str(e):
+            raise HTTPException(status_code=409, detail=str(e)) from e
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
     org_name = (
         await db.execute(select(Organization.name).where(Organization.id == account.organization_id))
     ).scalar_one_or_none()
@@ -156,6 +187,7 @@ async def list_accounts_endpoint(
     q: str | None = Query(None, description="搜索姓名或邮箱"),
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
+    _role: str = Depends(require_role("admin", "operator")),
 ):
     result = await list_accounts(db, tenant_id=tenant_id, page=page, page_size=page_size, q=q)
     org_names = {
@@ -184,14 +216,39 @@ async def update_account_endpoint(
     body: AccountUpdate,
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
+    _role: str = Depends(require_role("admin")),
 ):
-    account = await update_account(
-        db=db,
-        tenant_id=tenant_id,
-        account_id=account_id,
-        name=body.name,
-        role_ids=body.role_ids,
-    )
+    try:
+        account = await update_account(
+            db=db,
+            tenant_id=tenant_id,
+            account_id=account_id,
+            name=body.name,
+            organization_id=body.organization_id,
+            role_ids=body.role_ids,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
     if not account:
         raise HTTPException(status_code=404, detail="Account not found")
     return account
+
+
+@router.delete("/accounts/{account_id}", status_code=204, summary="删除账户")
+async def delete_account_endpoint(
+    account_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    tenant_id: uuid.UUID = Depends(get_current_tenant),
+    _role: str = Depends(require_role("admin")),
+):
+    """软删除账户 — 栘除组织关联并标记为已删除。"""
+    from sqlalchemy import update as sa_update
+
+    result = await db.execute(
+        select(Account).where(Account.id == account_id, Account.tenant_id == tenant_id)
+    )
+    account = result.scalar_one_or_none()
+    if not account:
+        raise HTTPException(status_code=404, detail="Account not found")
+    await db.delete(account)
+    await db.flush()

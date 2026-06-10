@@ -87,7 +87,7 @@ class Organization(Base):
     )
 
     tenant = relationship("Tenant", back_populates="organizations")
-    accounts = relationship("Account", back_populates="organization", lazy="selectin")
+    accounts = relationship("Account", back_populates="organization", lazy="noload")
 
 
 class Account(Base):
