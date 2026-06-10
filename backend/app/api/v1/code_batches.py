@@ -6,7 +6,7 @@ from datetime import date, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
@@ -44,7 +44,7 @@ class CodeBatchCreateRequest(BaseModel):
     sku_id: uuid.UUID
     production_batch_id: uuid.UUID
     batch_code: str | None = None
-    quantity: int
+    quantity: int = Field(ge=1, le=100000)
     code_type: str = CodeType.single
     generation_mode: CodeGenerationMode = CodeGenerationMode.item_level
 
