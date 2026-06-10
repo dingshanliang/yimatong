@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.core.dependencies import get_current_tenant
+from app.utils.auth_rbac import require_role
 from app.services.industry_templates import ALL_TEMPLATES
 
 template_router = APIRouter(prefix="/api/v1/industry-templates", tags=["industry-templates"])
@@ -59,7 +60,7 @@ async def apply_industry_template(
     version = PageVersion(
         tenant_id=tenant_id,
         page_template_id=tmpl.id,
-        version_number=1,
+        version=1,
         config_json=template_def["config_json"],
         status=PageVersionStatus.draft,
     )
