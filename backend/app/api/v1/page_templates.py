@@ -4,7 +4,7 @@ import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import HTMLResponse
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, ValidationError, field_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
@@ -53,9 +53,27 @@ class IndustryTemplateCloneRequest(BaseModel):
 class PageVersionCreateRequest(BaseModel):
     config_json: dict
 
+    @field_validator("config_json")
+    @classmethod
+    def validate_config_size(cls, v: dict) -> dict:
+        import json
+
+        if len(json.dumps(v, ensure_ascii=False)) > 100_000:
+            raise ValueError("config_json 太大，最大允许 100KB")
+        return v
+
 
 class PageVersionUpdateRequest(BaseModel):
     config_json: dict
+
+    @field_validator("config_json")
+    @classmethod
+    def validate_config_size(cls, v: dict) -> dict:
+        import json
+
+        if len(json.dumps(v, ensure_ascii=False)) > 100_000:
+            raise ValueError("config_json 太大，最大允许 100KB")
+        return v
 
 
 @page_template_router.get("/industry-templates")
