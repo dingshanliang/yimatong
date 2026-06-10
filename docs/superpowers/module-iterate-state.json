@@ -237,7 +237,7 @@
       "id": "codes",
       "name": "码管理",
       "prd_group": "DATA",
-      "status": "planned",
+      "status": "completed",
       "priority": 2,
       "api_files": [
         "backend/app/api/v1/code_batches.py"
@@ -268,11 +268,11 @@
         "low": 4
       },
       "tasks_total": 8,
-      "tasks_completed": 0,
+      "tasks_completed": 8,
       "bead_id": "yimatong-29nf",
       "branch": null,
       "last_reviewed": "2026-06-10",
-      "last_executed": null,
+      "last_executed": "2026-06-10",
       "skip_reason": null,
       "error_log": []
     },
