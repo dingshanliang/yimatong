@@ -251,11 +251,11 @@ async def create_page_version(
     # 后端 DSL 校验
     validate_page_dsl(config_json)
 
-    # 获取当前最大版本号
+    # 获取当前最大版本号（加行级锁防止并发重复）
     max_ver_result = await db.execute(
         select(func.max(PageVersion.version)).where(
             PageVersion.page_template_id == template_id,
-        )
+        ).with_for_update()
     )
     max_ver = max_ver_result.scalar() or 0
 
