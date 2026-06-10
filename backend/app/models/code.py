@@ -4,7 +4,7 @@ import uuid
 from datetime import date, datetime
 from enum import StrEnum
 
-from sqlalchemy import DateTime, ForeignKey, Index, String, func
+from sqlalchemy import DateTime, ForeignKey, Index, String, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from uuid6 import uuid7
 
@@ -66,7 +66,10 @@ class CodeBatch(Base):
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
 
-    __table_args__ = (Index("ix_code_batches_tenant_batch", "tenant_id", "batch_code"),)
+    __table_args__ = (
+        Index("ix_code_batches_tenant_batch", "tenant_id", "batch_code"),
+        UniqueConstraint("tenant_id", "batch_code", name="uq_code_batches_tenant_batch_code"),
+    )
 
     product = relationship("Product", lazy="selectin")
     sku = relationship("SKU", lazy="selectin")
