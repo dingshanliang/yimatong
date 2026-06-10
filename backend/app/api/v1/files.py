@@ -10,6 +10,19 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
 from app.core.dependencies import get_current_tenant
 from app.services.storage import get_file_info, get_public_file, upload_file
+from app.utils.auth_rbac import require_role
+
+# Maximum upload size: 10 MB
+MAX_UPLOAD_SIZE = 10 * 1024 * 1024
+
+# Allowed MIME types for upload
+ALLOWED_CONTENT_TYPES = {
+    "image/jpeg", "image/png", "image/gif", "image/webp", "image/svg+xml",
+    "application/pdf",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "text/csv",
+}
 
 file_router = APIRouter(prefix="/api/v1/files", tags=["files"])
 
@@ -31,8 +44,15 @@ async def upload_file_endpoint(
     module: str = Form("general"),
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
+    _role: str = Depends(require_role("admin", "operator")),
 ):
     content = await file.read()
+    if len(content) > MAX_UPLOAD_SIZE:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=413, detail=f"文件大小超过限制（最大 {MAX_UPLOAD_SIZE // 1024 // 1024} MB）")
+    if file.content_type and file.content_type not in ALLOWED_CONTENT_TYPES:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=415, detail=f"不支持的文件类型: {file.content_type}")
     result = await upload_file(
         tenant_id=str(tenant_id),
         module=module,
