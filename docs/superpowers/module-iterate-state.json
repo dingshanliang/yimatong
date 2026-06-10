@@ -4,7 +4,7 @@
   "lock": {
     "locked_at": null
   },
-  "current_module_index": 2,
+  "current_module_index": 3,
   "modules": [
     {
       "id": "auth",
@@ -125,7 +125,7 @@
       "id": "roles",
       "name": "角色权限",
       "prd_group": "SAAS",
-      "status": "pending",
+      "status": "completed",
       "priority": 1,
       "api_files": [
         "backend/app/api/v1/roles.py"
@@ -137,20 +137,20 @@
         "frontend/apps/admin/src/app/(dashboard)/settings/"
       ],
       "test_files": [],
-      "review_file": null,
+      "review_file": "docs/superpowers/reviews/2026-06-10-roles.md",
       "plan_file": null,
       "findings_count": {
-        "critical": 0,
-        "high": 0,
-        "medium": 0,
-        "low": 0
+        "critical": 2,
+        "high": 4,
+        "medium": 6,
+        "low": 1
       },
-      "tasks_total": 0,
-      "tasks_completed": 0,
+      "tasks_total": 6,
+      "tasks_completed": 6,
       "bead_id": null,
       "branch": null,
-      "last_reviewed": null,
-      "last_executed": null,
+      "last_reviewed": "2026-06-10",
+      "last_executed": "2026-06-10",
       "skip_reason": null,
       "error_log": []
     },
