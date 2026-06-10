@@ -38,6 +38,18 @@ async def create_code_batch(
     code_type: str = CodeType.single,
     generation_mode: str = CodeGenerationMode.item_level,
 ) -> dict:
+    # Quota check
+    from app.models.tenant import Tenant
+    from app.services.quota import QuotaExceededError, check_quota
+
+    generation_quantity = 1 if generation_mode == CodeGenerationMode.batch_level else quantity
+    tenant = await db.get(Tenant, tenant_id)
+    if tenant and tenant.quota:
+        try:
+            check_quota(tenant.quota, "max_codes_per_batch", generation_quantity)
+        except QuotaExceededError:
+            raise
+
     product = await db.get(Product, product_id)
     if not product or product.tenant_id != tenant_id:
         raise ValueError("Product not found")
