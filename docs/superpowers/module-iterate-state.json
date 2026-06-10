@@ -199,7 +199,7 @@
       "id": "products",
       "name": "产品管理",
       "prd_group": "DATA",
-      "status": "planned",
+      "status": "completed",
       "priority": 2,
       "api_files": [
         "backend/app/api/v1/products.py"
@@ -225,11 +225,11 @@
         "low": 1
       },
       "tasks_total": 6,
-      "tasks_completed": 0,
+      "tasks_completed": 6,
       "bead_id": null,
       "branch": null,
       "last_reviewed": "2026-06-10",
-      "last_executed": null,
+      "last_executed": "2026-06-10",
       "skip_reason": null,
       "error_log": []
     },
