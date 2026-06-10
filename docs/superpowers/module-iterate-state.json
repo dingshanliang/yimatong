@@ -317,7 +317,7 @@
       "id": "page-templates",
       "name": "页面模板",
       "prd_group": "PAGE",
-      "status": "reviewed",
+      "status": "planned",
       "priority": 3,
       "api_files": [
         "backend/app/api/v1/page_templates.py"
@@ -336,14 +336,14 @@
       ],
       "test_files": [],
       "review_file": "docs/superpowers/reviews/2026-06-10-page-templates.md",
-      "plan_file": null,
+      "plan_file": "docs/superpowers/plans/2026-06-10-page-templates-hardening.md",
       "findings_count": {
         "critical": 0,
         "high": 5,
         "medium": 13,
         "low": 1
       },
-      "tasks_total": 0,
+      "tasks_total": 7,
       "tasks_completed": 0,
       "bead_id": "yimatong-fmjn",
       "branch": null,
