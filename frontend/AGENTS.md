@@ -18,6 +18,8 @@ This file applies to `frontend/`, including `apps/admin`, `apps/h5`, `apps/platf
 - `packages/shared/`: Shared TypeScript types and utilities imported as `@yimatong/shared`.
 - `e2e/`: Playwright browser-flow tests.
 
+Packages are deep modules — see [packages/README.md](./packages/README.md) before adding or importing one.
+
 ## Commands
 
 前端 workspace 通用命令见根目录 `AGENTS.md` 第 5 节。以下补充前端专属注意事项：

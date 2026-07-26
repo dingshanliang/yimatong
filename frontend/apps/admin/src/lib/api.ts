@@ -16,6 +16,17 @@ const api = axios.create({
   withCredentials: true,
 });
 
+interface AuthInterceptorHandlers {
+  silentRefresh: () => Promise<string | null>;
+  logout: () => void;
+}
+
+let authHandlers: AuthInterceptorHandlers | null = null;
+
+export function registerAuthInterceptorHandlers(handlers: AuthInterceptorHandlers) {
+  authHandlers = handlers;
+}
+
 api.interceptors.request.use((config) => {
   if (typeof window !== "undefined") {
     const token = localStorage.getItem("access_token");
@@ -53,10 +64,8 @@ api.interceptors.response.use(
     // refresh 接口本身 401，说明 refresh_token 也过期了，直接登出
     if (originalRequest.url?.includes("/auth/refresh")) {
       if (typeof window !== "undefined") {
-        import("./auth").then(({ useAuthStore }) => {
-          useAuthStore.getState().logout();
-          window.location.href = "/login";
-        });
+        authHandlers?.logout();
+        window.location.href = "/login";
       }
       return Promise.reject(error);
     }
@@ -75,12 +84,11 @@ api.interceptors.response.use(
     isRefreshing = true;
 
     try {
-      const { useAuthStore } = await import("./auth");
-      const newToken = await useAuthStore.getState().silentRefresh();
+      const newToken = (await authHandlers?.silentRefresh()) ?? null;
 
       if (!newToken) {
         // refresh 失败，登出
-        useAuthStore.getState().logout();
+        authHandlers?.logout();
         if (typeof window !== "undefined") {
           window.location.href = "/login";
         }

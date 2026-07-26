@@ -33,6 +33,7 @@ vi.mock("@/lib/api", () => ({
     delete: (...args: unknown[]) => mockDelete(...args),
   },
   extractErrorMessage: (_error: unknown, fallback: string) => fallback,
+  registerAuthInterceptorHandlers: vi.fn(),
 }));
 
 function summary(overrides = {}) {

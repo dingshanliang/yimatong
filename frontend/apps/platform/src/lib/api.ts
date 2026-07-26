@@ -9,6 +9,12 @@ const api = axios.create({
   withCredentials: true,
 });
 
+let logoutHandler: (() => void) | null = null;
+
+export function registerPlatformLogoutHandler(handler: () => void) {
+  logoutHandler = handler;
+}
+
 api.interceptors.request.use((config) => {
   if (typeof window !== "undefined") {
     const token = localStorage.getItem("platform_access_token");
@@ -24,8 +30,7 @@ api.interceptors.response.use(
   async (error) => {
     if (error.response?.status === 401) {
       if (typeof window !== "undefined") {
-        const { usePlatformAuth } = await import("./platform-auth");
-        usePlatformAuth.getState().logout();
+        logoutHandler?.();
         window.location.href = "/login";
       }
     }

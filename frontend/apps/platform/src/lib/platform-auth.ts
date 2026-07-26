@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import api from "./api";
+import api, { registerPlatformLogoutHandler } from "./api";
 
 interface PlatformAuthState {
   token: string | null;
@@ -45,6 +45,8 @@ export const usePlatformAuth = create<PlatformAuthState>((set) => ({
     }
   },
 }));
+
+registerPlatformLogoutHandler(() => usePlatformAuth.getState().logout());
 
 // 同步自动 hydrate
 if (typeof window !== "undefined") {

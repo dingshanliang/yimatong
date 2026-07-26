@@ -348,5 +348,5 @@ export interface ResolveResponse {
 
 // ─── JWT Utilities ───────────────────────────
 
-export { parseJwtPayload, isJwtExpired } from "./jwt";
-export type { JwtPayload } from "./jwt";
+export { parseJwtPayload, isJwtExpired } from "./lib/jwt";
+export type { JwtPayload } from "./lib/jwt";

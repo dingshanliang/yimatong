@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import api from "./api";
+import api, { registerAuthInterceptorHandlers } from "./api";
 
 interface AuthUser {
   account_id: string;
@@ -136,6 +136,11 @@ export const useAuthStore = create<AuthState>((set) => ({
   },
 }));
 
+registerAuthInterceptorHandlers({
+  silentRefresh: () => useAuthStore.getState().silentRefresh(),
+  logout: () => useAuthStore.getState().logout(),
+});
+
 /** 将 access_token 和 refresh_token 持久化到 localStorage + cookie */
 function _persistTokens(accessToken: string, refreshToken: string, _expiresIn?: number) {
   localStorage.setItem("access_token", accessToken);
@@ -192,9 +197,9 @@ async function _doSilentRefresh(): Promise<string | null> {
 
 // 同步自动 hydrate：模块加载时立即从 localStorage 恢复状态，
 // 确保任何组件首次读取 store 时就能拿到 user 和 token
-if (typeof window !== "undefined") {
-  const token = localStorage.getItem("access_token");
-  const stored = localStorage.getItem("auth_store");
+if (typeof window !== "undefined" && window.localStorage) {
+  const token = window.localStorage.getItem("access_token");
+  const stored = window.localStorage.getItem("auth_store");
   if (token && stored) {
     try {
       useAuthStore.setState({ user: ensureTenantType(JSON.parse(stored)), token });
