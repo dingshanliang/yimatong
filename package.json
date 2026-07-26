@@ -2,7 +2,13 @@
   "name": "yimatong",
   "private": true,
   "scripts": {
-    "dev:stack": "sh scripts/dev-stack.sh"
+    "dev:stack": "sh scripts/dev-stack.sh",
+    "prepare": "husky"
   },
-  "packageManager": "pnpm@10.0.0"
+  "packageManager": "pnpm@10.0.0",
+  "devDependencies": {
+    "husky": "^9.1.7",
+    "lint-staged": "^17.2.0",
+    "prettier": "^3.9.6"
+  }
 }
