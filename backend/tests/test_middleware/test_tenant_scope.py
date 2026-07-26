@@ -57,3 +57,19 @@ class TestProtectedRoutes:
         token = create_access_token("t-001", "a-001", "admin")
         resp = client.get("/api/v1/test", headers={"Authorization": f"Bearer {token}"})
         assert resp.json()["tenant_id"] == "t-001"
+
+    def test_authorization_header_takes_precedence_over_cookie(self):
+        header_token = create_access_token("header-tenant", "a-001", "admin")
+        cookie_token = create_access_token("cookie-tenant", "a-002", "admin")
+
+        client.cookies.set("access_token", cookie_token)
+        try:
+            resp = client.get(
+                "/api/v1/test",
+                headers={"Authorization": f"Bearer {header_token}"},
+            )
+        finally:
+            client.cookies.delete("access_token")
+
+        assert resp.status_code == 200
+        assert resp.json()["tenant_id"] == "header-tenant"

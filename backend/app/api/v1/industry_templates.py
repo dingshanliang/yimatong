@@ -7,8 +7,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.core.dependencies import get_current_tenant
-from app.utils.auth_rbac import require_role
 from app.services.industry_templates import ALL_TEMPLATES
+from app.utils.auth_rbac import require_role
 
 template_router = APIRouter(prefix="/api/v1/industry-templates", tags=["industry-templates"])
 

@@ -7,12 +7,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.core.dependencies import get_current_role, get_current_tenant
-
-
-def require_admin_or_operator(role: str = Depends(get_current_role)) -> str:
-    if role not in {"admin", "operator"}:
-        raise HTTPException(status_code=403, detail="Insufficient permissions")
-    return role
 from app.schemas.common import PaginatedResponse
 from app.schemas.member import (
     AwardPointsRequest,
@@ -46,6 +40,13 @@ from app.services.point_shop import (
     serialize_point_product,
     update_point_product,
 )
+
+
+def require_admin_or_operator(role: str = Depends(get_current_role)) -> str:
+    if role not in {"admin", "operator"}:
+        raise HTTPException(status_code=403, detail="Insufficient permissions")
+    return role
+
 
 member_router = APIRouter(prefix="/api/v1/members", tags=["members"])
 
@@ -113,7 +114,12 @@ async def award_points_endpoint(
 ):
     try:
         txn = await award_points(
-            db, tenant_id, body.consumer_id, body.points, body.reason, body.reference_id,
+            db,
+            tenant_id,
+            body.consumer_id,
+            body.points,
+            body.reason,
+            body.reference_id,
         )
         return {
             "id": str(txn.id),
@@ -134,7 +140,12 @@ async def spend_points_endpoint(
 ):
     try:
         txn = await spend_points(
-            db, tenant_id, body.consumer_id, body.points, body.reason, body.reference_id,
+            db,
+            tenant_id,
+            body.consumer_id,
+            body.points,
+            body.reason,
+            body.reference_id,
         )
         return {
             "id": str(txn.id),
@@ -155,7 +166,11 @@ async def list_transactions_endpoint(
     tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
     txns, total = await list_point_transactions(
-        db, tenant_id, consumer_id, page=page, page_size=page_size,
+        db,
+        tenant_id,
+        consumer_id,
+        page=page,
+        page_size=page_size,
     )
     return PaginatedResponse(
         items=[
@@ -210,7 +225,10 @@ async def create_point_rule_endpoint(
     _role: str = Depends(require_admin_or_operator),
 ):
     rule = await create_point_rule(
-        db, tenant_id, body.rule_type, body.points,
+        db,
+        tenant_id,
+        body.rule_type,
+        body.points,
         daily_limit=body.daily_limit,
         description=body.description,
         config=body.config,
@@ -305,7 +323,8 @@ async def create_point_product_endpoint(
 ):
     try:
         product = await create_point_product(
-            db, tenant_id,
+            db,
+            tenant_id,
             name=body.name,
             description=body.description,
             image_url=body.image_url,
@@ -332,9 +351,7 @@ async def update_point_product_endpoint(
     _role: str = Depends(require_admin_or_operator),
 ):
     try:
-        product = await update_point_product(
-            db, tenant_id, product_id, **body.model_dump(exclude_unset=True)
-        )
+        product = await update_point_product(db, tenant_id, product_id, **body.model_dump(exclude_unset=True))
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     if not product:

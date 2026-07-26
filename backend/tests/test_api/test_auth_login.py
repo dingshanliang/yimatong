@@ -75,7 +75,9 @@ class TestLogin:
         assert data["token_type"] == "bearer"
 
     @pytest.mark.anyio
-    async def test_login_uses_assigned_account_role(self, client: AsyncClient, db_session: AsyncSession, seeded_account):
+    async def test_login_uses_assigned_account_role(
+        self, client: AsyncClient, db_session: AsyncSession, seeded_account
+    ):
         role = Role(tenant_id=seeded_account.tenant_id, name="operator", description="运营")
         db_session.add(role)
         await db_session.flush()
@@ -235,6 +237,26 @@ class TestTokenRefresh:
         data = resp.json()
         assert "access_token" in data
         assert "refresh_token" in data
+
+    @pytest.mark.anyio
+    async def test_refresh_body_takes_precedence_over_cookie(self, client: AsyncClient, seeded_account):
+        login_resp = await client.post(
+            "/api/v1/auth/login",
+            json={"email": "login@test.com", "password": "Password1"},
+        )
+        refresh_token = login_resp.json()["refresh_token"]
+
+        client.cookies.set("refresh_token", "invalid-token")
+        try:
+            resp = await client.post(
+                "/api/v1/auth/refresh",
+                json={"refresh_token": refresh_token},
+            )
+        finally:
+            client.cookies.delete("refresh_token")
+
+        assert resp.status_code == 200
+        assert "access_token" in resp.json()
 
     @pytest.mark.anyio
     async def test_refresh_with_invalid_token_returns_401(self, client: AsyncClient, seeded_account):

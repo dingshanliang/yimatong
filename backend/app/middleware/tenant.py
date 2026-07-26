@@ -52,12 +52,10 @@ class TenantScopeMiddleware(BaseHTTPMiddleware):
     async def _authenticate_jwt(self, request: Request, call_next):
         from starlette.responses import JSONResponse
 
-        # 优先从 cookie 读取，回退到 Authorization header
-        token = request.cookies.get("access_token")
-        if not token:
-            auth_header = request.headers.get("Authorization", "")
-            if auth_header.startswith("Bearer "):
-                token = auth_header[7:]
+        # API clients attach the current token in Authorization. Prefer it over
+        # cookies so stale localhost cookies from another session cannot shadow it.
+        auth_header = request.headers.get("Authorization", "")
+        token = auth_header[7:] if auth_header.startswith("Bearer ") else request.cookies.get("access_token")
 
         if not token:
             return JSONResponse(status_code=401, content={"detail": "Missing or invalid token"})
@@ -74,9 +72,7 @@ class TenantScopeMiddleware(BaseHTTPMiddleware):
         request.state.tenant_type = payload.get("tenant_type", "brand")
         request.state.auth_method = "jwt"
         # 加载数据库中的权限到 request.state.permissions
-        request.state.permissions = await self._load_permissions(
-            payload.get("sub"), payload.get("role")
-        )
+        request.state.permissions = await self._load_permissions(payload.get("sub"), payload.get("role"))
 
         # Agency context switching: if acting_tenant_id is present, use it for RLS
         if acting_tenant_id:

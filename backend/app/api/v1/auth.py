@@ -145,9 +145,7 @@ async def refresh(
     db: AsyncSession = Depends(get_db),
     cache: AsyncRedisCache = Depends(get_redis_cache),
 ):
-    refresh_token = request.cookies.get("refresh_token")
-    if not refresh_token and body:
-        refresh_token = body.refresh_token
+    refresh_token = body.refresh_token if body and body.refresh_token else request.cookies.get("refresh_token")
 
     try:
         token_pair = await refresh_access_token(db=db, refresh_token=refresh_token, cache=cache)
@@ -228,9 +226,7 @@ async def generate_reset_token(
 ):
     """管理员为指定账户生成一次性密码重置令牌，存入 Redis（1 小时有效）。"""
     try:
-        result = await generate_password_reset(
-            db=db, account_id_str=body.account_id, tenant_id=tenant_id, cache=cache
-        )
+        result = await generate_password_reset(db=db, account_id_str=body.account_id, tenant_id=tenant_id, cache=cache)
     except AuthError as e:
         raise HTTPException(status_code=e.code, detail=e.detail) from e
     return GenerateResetTokenResponse(reset_token=result["reset_token"], reset_url=result["reset_url"])

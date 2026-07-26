@@ -126,7 +126,12 @@ async def list_interceptions_endpoint(
     tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
     records, total = await list_interceptions(
-        db, tenant_id, action=action, auto_triggered=auto_triggered, page=page, page_size=page_size,
+        db,
+        tenant_id,
+        action=action,
+        auto_triggered=auto_triggered,
+        page=page,
+        page_size=page_size,
     )
     return PaginatedResponse(
         items=[
