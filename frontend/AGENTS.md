@@ -20,26 +20,10 @@ This file applies to `frontend/`, including `apps/admin`, `apps/h5`, `apps/platf
 
 ## Commands
 
-Run commands from `frontend/` unless a package-specific command requires another directory.
+前端 workspace 通用命令见根目录 `AGENTS.md` 第 5 节。以下补充前端专属注意事项：
 
-```bash
-pnpm install
-pnpm dev:admin
-pnpm dev:h5
-pnpm dev:platform
-pnpm build:shared
-pnpm build:admin
-pnpm build:h5
-pnpm build:platform
-pnpm build
-pnpm lint:admin
-pnpm lint:h5
-pnpm lint:platform
-pnpm --filter @yimatong/shared typecheck
-pnpm test:e2e
-```
-
-Use targeted commands first, then broader checks before handoff. For Admin component tests, run Vitest from the Admin package, for example:
+- `pnpm dev:h5` 未在 `package.json` 中固定端口，默认使用 Next.js 的 `3000`；同时启动 Admin 时请用 `pnpm dev:h5 --port 3001`。
+- Admin 组件/单元测试在 `apps/admin` 内执行：
 
 ```bash
 cd frontend/apps/admin
