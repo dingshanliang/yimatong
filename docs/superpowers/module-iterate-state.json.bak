@@ -1,0 +1,1126 @@
+{
+  "version": "2.0",
+  "last_updated": "2026-06-10",
+  "lock": {
+    "locked_at": null
+  },
+  "current_module_index": 5,
+  "modules": [
+    {
+      "id": "auth",
+      "name": "认证模块",
+      "prd_group": "SAAS",
+      "status": "completed",
+      "priority": 1,
+      "api_files": [
+        "backend/app/api/v1/auth.py",
+        "backend/app/api/v1/password.py",
+        "backend/app/api/v1/agency_auth.py"
+      ],
+      "service_files": [
+        "backend/app/services/agency_auth.py",
+        "backend/app/services/auth.py"
+      ],
+      "model_files": [
+        "backend/app/models/base.py"
+      ],
+      "schema_files": [],
+      "frontend_files": [
+        "frontend/apps/admin/src/app/(auth)/login/",
+        "frontend/apps/admin/src/app/(dashboard)/accounts/",
+        "frontend/apps/admin/src/app/(dashboard)/agency/"
+      ],
+      "test_files": [],
+      "review_file": "docs/superpowers/reviews/2026-06-09-auth.md",
+      "plan_file": "docs/superpowers/plans/2026-06-09-auth-hardening.md",
+      "findings_count": {
+        "critical": 4,
+        "high": 12,
+        "medium": 16,
+        "low": 7
+      },
+      "tasks_total": 10,
+      "tasks_completed": 10,
+      "bead_id": "yimatong-koyk",
+      "branch": null,
+      "last_reviewed": "2026-06-09",
+      "last_executed": null,
+      "skip_reason": null,
+      "error_log": []
+    },
+    {
+      "id": "tenants",
+      "name": "租户管理",
+      "prd_group": "SAAS",
+      "status": "completed",
+      "priority": 1,
+      "api_files": [
+        "backend/app/api/v1/tenants.py"
+      ],
+      "service_files": [
+        "backend/app/services/tenant.py"
+      ],
+      "model_files": [
+        "backend/app/models/tenant.py"
+      ],
+      "schema_files": [],
+      "frontend_files": [
+        "frontend/apps/admin/src/app/(dashboard)/brands/",
+        "frontend/apps/admin/src/app/(dashboard)/settings/"
+      ],
+      "test_files": [],
+      "review_file": "docs/superpowers/reviews/2026-06-10-tenants.md",
+      "plan_file": "docs/superpowers/plans/2026-06-10-tenants-hardening.md",
+      "findings_count": {
+        "critical": 0,
+        "high": 9,
+        "medium": 16,
+        "low": 12
+      },
+      "tasks_total": 8,
+      "tasks_completed": 8,
+      "bead_id": "yimatong-fpos",
+      "branch": null,
+      "last_reviewed": "2026-06-10",
+      "last_executed": "2026-06-10",
+      "skip_reason": null,
+      "error_log": []
+    },
+    {
+      "id": "organizations",
+      "name": "组织管理",
+      "prd_group": "SAAS",
+      "status": "completed",
+      "priority": 1,
+      "api_files": [
+        "backend/app/api/v1/organizations.py"
+      ],
+      "service_files": [
+        "backend/app/services/organization.py"
+      ],
+      "model_files": [],
+      "schema_files": [],
+      "frontend_files": [
+        "frontend/apps/admin/src/app/(dashboard)/accounts/"
+      ],
+      "test_files": [],
+      "review_file": "docs/superpowers/reviews/2026-06-10-organizations.md",
+      "plan_file": "docs/superpowers/plans/2026-06-10-organizations-hardening.md",
+      "findings_count": {
+        "critical": 5,
+        "high": 9,
+        "medium": 10,
+        "low": 6
+      },
+      "tasks_total": 8,
+      "tasks_completed": 8,
+      "bead_id": "yimatong-9uc3",
+      "branch": null,
+      "last_reviewed": "2026-06-10",
+      "last_executed": "2026-06-10",
+      "skip_reason": null,
+      "error_log": []
+    },
+    {
+      "id": "roles",
+      "name": "角色权限",
+      "prd_group": "SAAS",
+      "status": "completed",
+      "priority": 1,
+      "api_files": [
+        "backend/app/api/v1/roles.py"
+      ],
+      "service_files": [],
+      "model_files": [],
+      "schema_files": [],
+      "frontend_files": [
+        "frontend/apps/admin/src/app/(dashboard)/settings/"
+      ],
+      "test_files": [],
+      "review_file": "docs/superpowers/reviews/2026-06-10-roles.md",
+      "plan_file": null,
+      "findings_count": {
+        "critical": 2,
+        "high": 4,
+        "medium": 6,
+        "low": 1
+      },
+      "tasks_total": 6,
+      "tasks_completed": 6,
+      "bead_id": null,
+      "branch": null,
+      "last_reviewed": "2026-06-10",
+      "last_executed": "2026-06-10",
+      "skip_reason": null,
+      "error_log": []
+    },
+    {
+      "id": "resolver",
+      "name": "码解析",
+      "prd_group": "CODE",
+      "status": "completed",
+      "priority": 2,
+      "api_files": [
+        "backend/app/api/v1/resolver.py",
+        "backend/app/api/v1/public_pages.py"
+      ],
+      "service_files": [
+        "backend/app/services/resolver.py",
+        "backend/app/services/resolver_response.py",
+        "backend/app/services/resolve_cache.py",
+        "backend/app/services/scan_token.py"
+      ],
+      "model_files": [
+        "backend/app/models/scan.py"
+      ],
+      "schema_files": [],
+      "frontend_files": [
+        "frontend/apps/h5/src/app/c/"
+      ],
+      "test_files": [],
+      "review_file": "docs/superpowers/reviews/2026-06-10-resolver.md",
+      "plan_file": "docs/superpowers/plans/2026-06-08-code-resolver-hardening.md",
+      "findings_count": {
+        "critical": 0,
+        "high": 4,
+        "medium": 2,
+        "low": 1
+      },
+      "tasks_total": 3,
+      "tasks_completed": 3,
+      "bead_id": null,
+      "branch": null,
+      "last_reviewed": "2026-06-10",
+      "last_executed": "2026-06-10",
+      "skip_reason": null,
+      "error_log": []
+    },
+    {
+      "id": "products",
+      "name": "产品管理",
+      "prd_group": "DATA",
+      "status": "reviewed",
+      "priority": 2,
+      "api_files": [
+        "backend/app/api/v1/products.py"
+      ],
+      "service_files": [
+        "backend/app/services/product.py"
+      ],
+      "model_files": [
+        "backend/app/models/product.py"
+      ],
+      "schema_files": [],
+      "frontend_files": [
+        "frontend/apps/admin/src/app/(dashboard)/products/",
+        "frontend/apps/admin/src/app/(dashboard)/skus/"
+      ],
+      "test_files": [],
+      "review_file": ".claude/plans/findings_product_management.md",
+      "plan_file": ".claude/plans/task_plan_product_management.md",
+      "findings_count": {
+        "critical": 0,
+        "high": 3,
+        "medium": 5,
+        "low": 3
+      },
+      "tasks_total": 0,
+      "tasks_completed": 0,
+      "bead_id": null,
+      "branch": null,
+      "last_reviewed": "2026-06-10",
+      "last_executed": null,
+      "skip_reason": null,
+      "error_log": []
+    },
+    {
+      "id": "codes",
+      "name": "码管理",
+      "prd_group": "DATA",
+      "status": "pending",
+      "priority": 2,
+      "api_files": [
+        "backend/app/api/v1/code_batches.py"
+      ],
+      "service_files": [
+        "backend/app/services/code.py",
+        "backend/app/services/code_export.py",
+        "backend/app/services/code_state.py",
+        "backend/app/services/import_service.py"
+      ],
+      "model_files": [
+        "backend/app/models/code.py"
+      ],
+      "schema_files": [],
+      "frontend_files": [
+        "frontend/apps/admin/src/app/(dashboard)/codes/",
+        "frontend/apps/admin/src/app/(dashboard)/batches/",
+        "frontend/apps/admin/src/app/(dashboard)/exports/",
+        "frontend/apps/admin/src/app/(dashboard)/imports/"
+      ],
+      "test_files": [],
+      "review_file": null,
+      "plan_file": null,
+      "findings_count": {
+        "critical": 0,
+        "high": 0,
+        "medium": 0,
+        "low": 0
+      },
+      "tasks_total": 0,
+      "tasks_completed": 0,
+      "bead_id": null,
+      "branch": null,
+      "last_reviewed": null,
+      "last_executed": null,
+      "skip_reason": null,
+      "error_log": []
+    },
+    {
+      "id": "scan-events",
+      "name": "扫码事件",
+      "prd_group": "CODE",
+      "status": "completed",
+      "priority": 2,
+      "api_files": [
+        "backend/app/api/v1/scan_events.py"
+      ],
+      "service_files": [
+        "backend/app/services/scan_event.py"
+      ],
+      "model_files": [
+        "backend/app/models/scan.py"
+      ],
+      "schema_files": [],
+      "frontend_files": [
+        "frontend/apps/admin/src/app/(dashboard)/stats/"
+      ],
+      "test_files": [],
+      "review_file": "docs/superpowers/reviews/2026-06-10-scan-events.md",
+      "plan_file": null,
+      "findings_count": {
+        "critical": 0,
+        "high": 0,
+        "medium": 1,
+        "low": 1
+      },
+      "tasks_total": 1,
+      "tasks_completed": 1,
+      "bead_id": null,
+      "branch": null,
+      "last_reviewed": "2026-06-10",
+      "last_executed": "2026-06-10",
+      "skip_reason": null,
+      "error_log": []
+    },
+    {
+      "id": "page-templates",
+      "name": "页面模板",
+      "prd_group": "PAGE",
+      "status": "pending",
+      "priority": 3,
+      "api_files": [
+        "backend/app/api/v1/page_templates.py"
+      ],
+      "service_files": [
+        "backend/app/services/page.py",
+        "backend/app/services/page_templates.py",
+        "backend/app/services/page_render.py"
+      ],
+      "model_files": [
+        "backend/app/models/page.py"
+      ],
+      "schema_files": [],
+      "frontend_files": [
+        "frontend/apps/admin/src/app/(dashboard)/pages/"
+      ],
+      "test_files": [],
+      "review_file": null,
+      "plan_file": null,
+      "findings_count": {
+        "critical": 0,
+        "high": 0,
+        "medium": 0,
+        "low": 0
+      },
+      "tasks_total": 0,
+      "tasks_completed": 0,
+      "bead_id": null,
+      "branch": null,
+      "last_reviewed": null,
+      "last_executed": null,
+      "skip_reason": null,
+      "error_log": []
+    },
+    {
+      "id": "page-render",
+      "name": "页面渲染",
+      "prd_group": "PAGE",
+      "status": "pending",
+      "priority": 3,
+      "api_files": [
+        "backend/app/api/v1/public_pages.py"
+      ],
+      "service_files": [
+        "backend/app/services/page_render.py"
+      ],
+      "model_files": [
+        "backend/app/models/page.py"
+      ],
+      "schema_files": [],
+      "frontend_files": [
+        "frontend/apps/h5/src/app/preview/"
+      ],
+      "test_files": [],
+      "review_file": null,
+      "plan_file": null,
+      "findings_count": {
+        "critical": 0,
+        "high": 0,
+        "medium": 0,
+        "low": 0
+      },
+      "tasks_total": 0,
+      "tasks_completed": 0,
+      "bead_id": null,
+      "branch": null,
+      "last_reviewed": null,
+      "last_executed": null,
+      "skip_reason": null,
+      "error_log": []
+    },
+    {
+      "id": "industry-templates",
+      "name": "行业模板",
+      "prd_group": "PAGE",
+      "status": "pending",
+      "priority": 3,
+      "api_files": [
+        "backend/app/api/v1/industry_templates.py"
+      ],
+      "service_files": [
+        "backend/app/services/industry_templates.py"
+      ],
+      "model_files": [],
+      "schema_files": [],
+      "frontend_files": [],
+      "test_files": [],
+      "review_file": null,
+      "plan_file": null,
+      "findings_count": {
+        "critical": 0,
+        "high": 0,
+        "medium": 0,
+        "low": 0
+      },
+      "tasks_total": 0,
+      "tasks_completed": 0,
+      "bead_id": null,
+      "branch": null,
+      "last_reviewed": null,
+      "last_executed": null,
+      "skip_reason": null,
+      "error_log": []
+    },
+    {
+      "id": "public-pages",
+      "name": "公开页面",
+      "prd_group": "PAGE",
+      "status": "pending",
+      "priority": 3,
+      "api_files": [
+        "backend/app/api/v1/public_pages.py"
+      ],
+      "service_files": [],
+      "model_files": [],
+      "schema_files": [],
+      "frontend_files": [
+        "frontend/apps/h5/src/app/c/"
+      ],
+      "test_files": [],
+      "review_file": null,
+      "plan_file": null,
+      "findings_count": {
+        "critical": 0,
+        "high": 0,
+        "medium": 0,
+        "low": 0
+      },
+      "tasks_total": 0,
+      "tasks_completed": 0,
+      "bead_id": null,
+      "branch": null,
+      "last_reviewed": null,
+      "last_executed": null,
+      "skip_reason": null,
+      "error_log": []
+    },
+    {
+      "id": "campaigns",
+      "name": "活动管理",
+      "prd_group": "ACT",
+      "status": "pending",
+      "priority": 4,
+      "api_files": [
+        "backend/app/api/v1/campaigns.py"
+      ],
+      "service_files": [
+        "backend/app/services/campaign.py",
+        "backend/app/services/campaign_analytics.py"
+      ],
+      "model_files": [
+        "backend/app/models/campaign.py"
+      ],
+      "schema_files": [],
+      "frontend_files": [
+        "frontend/apps/admin/src/app/(dashboard)/campaigns/",
+        "frontend/apps/admin/src/app/(dashboard)/campaign-analytics/"
+      ],
+      "test_files": [],
+      "review_file": null,
+      "plan_file": "docs/superpowers/plans/2026-06-09-campaign-module-hardening.md",
+      "findings_count": {
+        "critical": 0,
+        "high": 0,
+        "medium": 0,
+        "low": 0
+      },
+      "tasks_total": 0,
+      "tasks_completed": 0,
+      "bead_id": null,
+      "branch": null,
+      "last_reviewed": null,
+      "last_executed": null,
+      "skip_reason": null,
+      "error_log": []
+    },
+    {
+      "id": "benefits",
+      "name": "权益管理",
+      "prd_group": "ACT",
+      "status": "pending",
+      "priority": 4,
+      "api_files": [
+        "backend/app/api/v1/benefits.py"
+      ],
+      "service_files": [
+        "backend/app/services/benefit_delivery_handler.py"
+      ],
+      "model_files": [],
+      "schema_files": [],
+      "frontend_files": [
+        "frontend/apps/admin/src/app/(dashboard)/benefits/"
+      ],
+      "test_files": [],
+      "review_file": null,
+      "plan_file": null,
+      "findings_count": {
+        "critical": 0,
+        "high": 0,
+        "medium": 0,
+        "low": 0
+      },
+      "tasks_total": 0,
+      "tasks_completed": 0,
+      "bead_id": null,
+      "branch": null,
+      "last_reviewed": null,
+      "last_executed": null,
+      "skip_reason": null,
+      "error_log": []
+    },
+    {
+      "id": "benefit-claims",
+      "name": "权益领取",
+      "prd_group": "ACT",
+      "status": "pending",
+      "priority": 4,
+      "api_files": [
+        "backend/app/api/v1/benefit_claims.py"
+      ],
+      "service_files": [
+        "backend/app/services/benefit_delivery_handler.py"
+      ],
+      "model_files": [],
+      "schema_files": [],
+      "frontend_files": [],
+      "test_files": [],
+      "review_file": null,
+      "plan_file": null,
+      "findings_count": {
+        "critical": 0,
+        "high": 0,
+        "medium": 0,
+        "low": 0
+      },
+      "tasks_total": 0,
+      "tasks_completed": 0,
+      "bead_id": null,
+      "branch": null,
+      "last_reviewed": null,
+      "last_executed": null,
+      "skip_reason": null,
+      "error_log": []
+    },
+    {
+      "id": "consents",
+      "name": "留资授权",
+      "prd_group": "ACT",
+      "status": "pending",
+      "priority": 4,
+      "api_files": [
+        "backend/app/api/v1/consents.py"
+      ],
+      "service_files": [
+        "backend/app/services/consent.py"
+      ],
+      "model_files": [
+        "backend/app/models/consent.py"
+      ],
+      "schema_files": [],
+      "frontend_files": [],
+      "test_files": [],
+      "review_file": null,
+      "plan_file": null,
+      "findings_count": {
+        "critical": 0,
+        "high": 0,
+        "medium": 0,
+        "low": 0
+      },
+      "tasks_total": 0,
+      "tasks_completed": 0,
+      "bead_id": null,
+      "branch": null,
+      "last_reviewed": null,
+      "last_executed": null,
+      "skip_reason": null,
+      "error_log": []
+    },
+    {
+      "id": "members",
+      "name": "会员管理",
+      "prd_group": "ACT",
+      "status": "pending",
+      "priority": 5,
+      "api_files": [
+        "backend/app/api/v1/members.py",
+        "backend/app/api/v1/consumers.py"
+      ],
+      "service_files": [
+        "backend/app/services/member.py"
+      ],
+      "model_files": [
+        "backend/app/models/member.py",
+        "backend/app/models/consumer.py"
+      ],
+      "schema_files": [],
+      "frontend_files": [
+        "frontend/apps/admin/src/app/(dashboard)/members/"
+      ],
+      "test_files": [],
+      "review_file": null,
+      "plan_file": "docs/superpowers/plans/2026-06-09-member-module-hardening.md",
+      "findings_count": {
+        "critical": 0,
+        "high": 0,
+        "medium": 0,
+        "low": 0
+      },
+      "tasks_total": 0,
+      "tasks_completed": 0,
+      "bead_id": null,
+      "branch": null,
+      "last_reviewed": null,
+      "last_executed": null,
+      "skip_reason": null,
+      "error_log": []
+    },
+    {
+      "id": "points",
+      "name": "积分系统",
+      "prd_group": "ACT",
+      "status": "pending",
+      "priority": 5,
+      "api_files": [],
+      "service_files": [
+        "backend/app/services/point_auto_handler.py",
+        "backend/app/services/point_shop.py",
+        "backend/app/services/point_expiry.py"
+      ],
+      "model_files": [],
+      "schema_files": [],
+      "frontend_files": [],
+      "test_files": [],
+      "review_file": null,
+      "plan_file": null,
+      "findings_count": {
+        "critical": 0,
+        "high": 0,
+        "medium": 0,
+        "low": 0
+      },
+      "tasks_total": 0,
+      "tasks_completed": 0,
+      "bead_id": null,
+      "branch": null,
+      "last_reviewed": null,
+      "last_executed": null,
+      "skip_reason": null,
+      "error_log": []
+    },
+    {
+      "id": "redpacket",
+      "name": "红包系统",
+      "prd_group": "ACT",
+      "status": "pending",
+      "priority": 5,
+      "api_files": [
+        "backend/app/api/v1/redpacket.py"
+      ],
+      "service_files": [
+        "backend/app/services/redpacket.py",
+        "backend/app/services/redpacket_amount.py"
+      ],
+      "model_files": [
+        "backend/app/models/redpacket.py"
+      ],
+      "schema_files": [],
+      "frontend_files": [
+        "frontend/apps/h5/src/app/redpacket/"
+      ],
+      "test_files": [],
+      "review_file": null,
+      "plan_file": null,
+      "findings_count": {
+        "critical": 0,
+        "high": 0,
+        "medium": 0,
+        "low": 0
+      },
+      "tasks_total": 0,
+      "tasks_completed": 0,
+      "bead_id": null,
+      "branch": null,
+      "last_reviewed": null,
+      "last_executed": null,
+      "skip_reason": null,
+      "error_log": []
+    },
+    {
+      "id": "analytics",
+      "name": "经营看板",
+      "prd_group": "BI",
+      "status": "pending",
+      "priority": 6,
+      "api_files": [
+        "backend/app/api/v1/analytics.py",
+        "backend/app/api/v1/analytics_dashboard.py"
+      ],
+      "service_files": [
+        "backend/app/services/analytics.py",
+        "backend/app/services/analytics_extended.py"
+      ],
+      "model_files": [],
+      "schema_files": [],
+      "frontend_files": [
+        "frontend/apps/admin/src/app/(dashboard)/analytics/"
+      ],
+      "test_files": [],
+      "review_file": null,
+      "plan_file": null,
+      "findings_count": {
+        "critical": 0,
+        "high": 0,
+        "medium": 0,
+        "low": 0
+      },
+      "tasks_total": 0,
+      "tasks_completed": 0,
+      "bead_id": null,
+      "branch": null,
+      "last_reviewed": null,
+      "last_executed": null,
+      "skip_reason": null,
+      "error_log": []
+    },
+    {
+      "id": "channel-analytics",
+      "name": "渠道分析",
+      "prd_group": "BI",
+      "status": "pending",
+      "priority": 6,
+      "api_files": [
+        "backend/app/api/v1/channel_analytics.py"
+      ],
+      "service_files": [
+        "backend/app/services/channel_analytics.py"
+      ],
+      "model_files": [],
+      "schema_files": [],
+      "frontend_files": [
+        "frontend/apps/admin/src/app/(dashboard)/channels/"
+      ],
+      "test_files": [],
+      "review_file": null,
+      "plan_file": null,
+      "findings_count": {
+        "critical": 0,
+        "high": 0,
+        "medium": 0,
+        "low": 0
+      },
+      "tasks_total": 0,
+      "tasks_completed": 0,
+      "bead_id": null,
+      "branch": null,
+      "last_reviewed": null,
+      "last_executed": null,
+      "skip_reason": null,
+      "error_log": []
+    },
+    {
+      "id": "export-audit",
+      "name": "导出审计",
+      "prd_group": "BI",
+      "status": "pending",
+      "priority": 6,
+      "api_files": [],
+      "service_files": [
+        "backend/app/services/export_audit.py",
+        "backend/app/services/audit.py"
+      ],
+      "model_files": [
+        "backend/app/models/export_log.py"
+      ],
+      "schema_files": [],
+      "frontend_files": [
+        "frontend/apps/admin/src/app/(dashboard)/exports/"
+      ],
+      "test_files": [],
+      "review_file": null,
+      "plan_file": null,
+      "findings_count": {
+        "critical": 0,
+        "high": 0,
+        "medium": 0,
+        "low": 0
+      },
+      "tasks_total": 0,
+      "tasks_completed": 0,
+      "bead_id": null,
+      "branch": null,
+      "last_reviewed": null,
+      "last_executed": null,
+      "skip_reason": null,
+      "error_log": []
+    },
+    {
+      "id": "gmv",
+      "name": "GMV归因",
+      "prd_group": "BI",
+      "status": "pending",
+      "priority": 6,
+      "api_files": [
+        "backend/app/api/v1/gmv.py"
+      ],
+      "service_files": [
+        "backend/app/services/gmv.py"
+      ],
+      "model_files": [
+        "backend/app/models/gmv.py"
+      ],
+      "schema_files": [],
+      "frontend_files": [
+        "frontend/apps/admin/src/app/(dashboard)/gmv/"
+      ],
+      "test_files": [],
+      "review_file": null,
+      "plan_file": null,
+      "findings_count": {
+        "critical": 0,
+        "high": 0,
+        "medium": 0,
+        "low": 0
+      },
+      "tasks_total": 0,
+      "tasks_completed": 0,
+      "bead_id": null,
+      "branch": null,
+      "last_reviewed": null,
+      "last_executed": null,
+      "skip_reason": null,
+      "error_log": []
+    },
+    {
+      "id": "risk",
+      "name": "风控系统",
+      "prd_group": "RISK",
+      "status": "pending",
+      "priority": 7,
+      "api_files": [
+        "backend/app/api/v1/risk.py",
+        "backend/app/api/v1/risk_dashboard.py",
+        "backend/app/api/v1/risk_evaluate.py",
+        "backend/app/api/v1/risk_notifications.py"
+      ],
+      "service_files": [
+        "backend/app/services/risk.py",
+        "backend/app/services/risk_action.py",
+        "backend/app/services/risk_auto_handler.py",
+        "backend/app/services/risk_dashboard.py"
+      ],
+      "model_files": [
+        "backend/app/models/risk.py"
+      ],
+      "schema_files": [],
+      "frontend_files": [
+        "frontend/apps/admin/src/app/(dashboard)/risk/",
+        "frontend/apps/admin/src/app/(dashboard)/risk-center/",
+        "frontend/apps/admin/src/app/(dashboard)/risk-dashboard/"
+      ],
+      "test_files": [],
+      "review_file": null,
+      "plan_file": null,
+      "findings_count": {
+        "critical": 0,
+        "high": 0,
+        "medium": 0,
+        "low": 0
+      },
+      "tasks_total": 0,
+      "tasks_completed": 0,
+      "bead_id": null,
+      "branch": null,
+      "last_reviewed": null,
+      "last_executed": null,
+      "skip_reason": null,
+      "error_log": []
+    },
+    {
+      "id": "risk-rules",
+      "name": "风控规则",
+      "prd_group": "RISK",
+      "status": "pending",
+      "priority": 7,
+      "api_files": [
+        "backend/app/api/v1/risk_rules.py"
+      ],
+      "service_files": [
+        "backend/app/services/risk_rule.py"
+      ],
+      "model_files": [
+        "backend/app/models/risk.py"
+      ],
+      "schema_files": [],
+      "frontend_files": [
+        "frontend/apps/admin/src/app/(dashboard)/risk/"
+      ],
+      "test_files": [],
+      "review_file": null,
+      "plan_file": null,
+      "findings_count": {
+        "critical": 0,
+        "high": 0,
+        "medium": 0,
+        "low": 0
+      },
+      "tasks_total": 0,
+      "tasks_completed": 0,
+      "bead_id": null,
+      "branch": null,
+      "last_reviewed": null,
+      "last_executed": null,
+      "skip_reason": null,
+      "error_log": []
+    },
+    {
+      "id": "connectors",
+      "name": "连接器",
+      "prd_group": "INT",
+      "status": "pending",
+      "priority": 8,
+      "api_files": [
+        "backend/app/api/v1/connectors.py",
+        "backend/app/api/v1/integration.py"
+      ],
+      "service_files": [
+        "backend/app/services/connector.py",
+        "backend/app/services/integration.py",
+        "backend/app/services/connectors/__init__.py",
+        "backend/app/services/connectors/base.py",
+        "backend/app/services/connectors/registry.py",
+        "backend/app/services/connectors/coupon_pool.py",
+        "backend/app/services/connectors/generic_http.py",
+        "backend/app/services/connectors/secrets.py",
+        "backend/app/services/connectors/wecom_crm.py",
+        "backend/app/services/connectors/wechat_pay_transfer.py"
+      ],
+      "model_files": [
+        "backend/app/models/connector.py",
+        "backend/app/models/integration.py"
+      ],
+      "schema_files": [],
+      "frontend_files": [
+        "frontend/apps/admin/src/app/(dashboard)/connectors/",
+        "frontend/apps/admin/src/app/(dashboard)/integrations/",
+        "frontend/apps/admin/src/app/(dashboard)/crm-sync/"
+      ],
+      "test_files": [],
+      "review_file": null,
+      "plan_file": null,
+      "findings_count": {
+        "critical": 0,
+        "high": 0,
+        "medium": 0,
+        "low": 0
+      },
+      "tasks_total": 0,
+      "tasks_completed": 0,
+      "bead_id": null,
+      "branch": null,
+      "last_reviewed": null,
+      "last_executed": null,
+      "skip_reason": null,
+      "error_log": []
+    },
+    {
+      "id": "webhooks",
+      "name": "Webhook",
+      "prd_group": "INT",
+      "status": "pending",
+      "priority": 8,
+      "api_files": [
+        "backend/app/api/v1/webhooks.py"
+      ],
+      "service_files": [
+        "backend/app/services/webhook.py",
+        "backend/app/services/webhook_dispatcher.py",
+        "backend/app/services/webhook_sender.py"
+      ],
+      "model_files": [
+        "backend/app/models/webhook.py"
+      ],
+      "schema_files": [],
+      "frontend_files": [],
+      "test_files": [],
+      "review_file": null,
+      "plan_file": null,
+      "findings_count": {
+        "critical": 0,
+        "high": 0,
+        "medium": 0,
+        "low": 0
+      },
+      "tasks_total": 0,
+      "tasks_completed": 0,
+      "bead_id": null,
+      "branch": null,
+      "last_reviewed": null,
+      "last_executed": null,
+      "skip_reason": null,
+      "error_log": []
+    },
+    {
+      "id": "imports",
+      "name": "数据导入",
+      "prd_group": "DATA",
+      "status": "pending",
+      "priority": 8,
+      "api_files": [
+        "backend/app/api/v1/imports.py"
+      ],
+      "service_files": [
+        "backend/app/services/import_service.py"
+      ],
+      "model_files": [],
+      "schema_files": [],
+      "frontend_files": [
+        "frontend/apps/admin/src/app/(dashboard)/imports/"
+      ],
+      "test_files": [],
+      "review_file": null,
+      "plan_file": null,
+      "findings_count": {
+        "critical": 0,
+        "high": 0,
+        "medium": 0,
+        "low": 0
+      },
+      "tasks_total": 0,
+      "tasks_completed": 0,
+      "bead_id": null,
+      "branch": null,
+      "last_reviewed": null,
+      "last_executed": null,
+      "skip_reason": null,
+      "error_log": []
+    },
+    {
+      "id": "files",
+      "name": "文件管理",
+      "prd_group": "DATA",
+      "status": "completed",
+      "priority": 8,
+      "api_files": [
+        "backend/app/api/v1/files.py"
+      ],
+      "service_files": [
+        "backend/app/services/storage.py"
+      ],
+      "model_files": [],
+      "schema_files": [],
+      "frontend_files": [],
+      "test_files": [],
+      "review_file": "docs/superpowers/reviews/2026-06-10-files.md",
+      "plan_file": null,
+      "findings_count": {
+        "critical": 0,
+        "high": 3,
+        "medium": 0,
+        "low": 0
+      },
+      "tasks_total": 3,
+      "tasks_completed": 3,
+      "bead_id": null,
+      "branch": null,
+      "last_reviewed": "2026-06-10",
+      "last_executed": "2026-06-10",
+      "skip_reason": null,
+      "error_log": []
+    },
+    {
+      "id": "platform",
+      "name": "平台管理",
+      "prd_group": "SAAS",
+      "status": "pending",
+      "priority": 9,
+      "api_files": [
+        "backend/app/api/v1/platform.py"
+      ],
+      "service_files": [],
+      "model_files": [],
+      "schema_files": [],
+      "frontend_files": [
+        "frontend/apps/platform/src/app/"
+      ],
+      "test_files": [],
+      "review_file": null,
+      "plan_file": null,
+      "findings_count": {
+        "critical": 0,
+        "high": 0,
+        "medium": 0,
+        "low": 0
+      },
+      "tasks_total": 0,
+      "tasks_completed": 0,
+      "bead_id": null,
+      "branch": null,
+      "last_reviewed": null,
+      "last_executed": null,
+      "skip_reason": null,
+      "error_log": []
+    }
+  ]
+}

@@ -101,9 +101,12 @@ async def dashboard_endpoint(
     tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
     return await get_gmv_dashboard(
-        db, tenant_id,
-        start_date=start_date, end_date=end_date,
-        campaign_id=campaign_id, channel=channel,
+        db,
+        tenant_id,
+        start_date=start_date,
+        end_date=end_date,
+        campaign_id=campaign_id,
+        channel=channel,
     )
 
 
@@ -128,8 +131,12 @@ async def list_attributions_endpoint(
     tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
     attrs, total = await list_attributions(
-        db, tenant_id, page=page, page_size=page_size,
-        match_type=match_type, campaign_id=campaign_id,
+        db,
+        tenant_id,
+        page=page,
+        page_size=page_size,
+        match_type=match_type,
+        campaign_id=campaign_id,
     )
     return PaginatedResponse(
         items=[

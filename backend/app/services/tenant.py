@@ -10,6 +10,28 @@ from app.models.tenant import Account, Organization, Tenant, TenantPlan, TenantS
 from app.utils.security import hash_password
 
 
+async def _audit(
+    db: AsyncSession,
+    operator_id: str,
+    tenant_id: str,
+    action: str,
+    resource: str,
+) -> None:
+    """写入审计日志，失败不影响主流程。"""
+    try:
+        from app.services.audit import write_audit_log
+
+        await write_audit_log(
+            db,
+            operator_id=operator_id,
+            target_tenant_id=tenant_id,
+            action=action,
+            resource=resource,
+        )
+    except Exception:
+        pass
+
+
 def _generate_slug(name: str) -> str:
     slug = name.lower().strip()
     slug = re.sub(r"[^a-z0-9-]+", "-", slug)
@@ -35,7 +57,20 @@ async def create_tenant(
     if not slug:
         slug = _generate_slug(name)
 
+    # Service 层 slug 唯一性校验
+    existing = await db.execute(select(Tenant).where(Tenant.slug == slug))
+    if existing.scalar_one_or_none() is not None:
+        raise ValueError(f"Slug '{slug}' already exists")
+
+    # 预生成 ID，避免单次 flush 时 foreign key 为 NULL
+    from uuid6 import uuid7
+
+    tenant_id = uuid7()
+    org_id = uuid7()
+    account_id = uuid7()
+
     tenant = Tenant(
+        id=tenant_id,
         name=name,
         slug=slug,
         status=TenantStatus.active,
@@ -47,22 +82,21 @@ async def create_tenant(
         categories=get_default_categories(industry),
     )
     db.add(tenant)
-    await db.flush()
 
-    org = Organization(tenant_id=tenant.id, name=f"{name} 默认组织")
+    org = Organization(id=org_id, tenant_id=tenant_id, name=f"{name} 默认组织")
     db.add(org)
-    await db.flush()
 
     hashed = hash_password(admin_password)
     account = Account(
-        tenant_id=tenant.id,
-        organization_id=org.id,
+        id=account_id,
+        tenant_id=tenant_id,
+        organization_id=org_id,
         email=admin_email,
         hashed_password=hashed,
         name=admin_name,
     )
     db.add(account)
-    await db.flush()
+    await db.flush()  # 单次 flush 获取所有 ID
 
     # 应用行业模板（如果指定）
     if template_id is not None:
@@ -71,18 +105,19 @@ async def create_tenant(
 
         if 0 <= template_id < len(ALL_TEMPLATES):
             template_def = ALL_TEMPLATES[template_id]
+            tmpl_id = uuid7()
             tmpl = PageTemplate(
-                tenant_id=tenant.id,
+                id=tmpl_id,
+                tenant_id=tenant_id,
                 name=template_def["name"],
                 template_type=template_def["template_type"],
                 status="draft",
             )
             db.add(tmpl)
-            await db.flush()
 
             version = PageVersion(
-                tenant_id=tenant.id,
-                page_template_id=tmpl.id,
+                tenant_id=tenant_id,
+                page_template_id=tmpl_id,
                 version_number=1,
                 config_json=template_def["config_json"],
                 status=PageVersionStatus.draft,
@@ -92,6 +127,7 @@ async def create_tenant(
 
     await db.flush()
     await db.refresh(tenant)
+    await _audit(db, str(account.id), str(tenant.id), "tenant_create", f"tenant:{tenant.id}")
     return tenant
 
 
@@ -141,6 +177,7 @@ async def update_tenant(
         tenant.categories = categories
     await db.flush()
     await db.refresh(tenant)
+    await _audit(db, "system", str(tenant.id), "tenant_update", f"tenant:{tenant_id}")
     return tenant
 
 
@@ -190,4 +227,5 @@ async def soft_delete_tenant(db: AsyncSession, tenant_id: uuid.UUID) -> bool:
         return False
     tenant.status = TenantStatus.terminated
     await db.flush()
+    await _audit(db, "system", str(tenant.id), "tenant_delete", f"tenant:{tenant_id}")
     return True

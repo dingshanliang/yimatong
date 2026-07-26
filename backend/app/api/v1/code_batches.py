@@ -6,7 +6,7 @@ from datetime import date, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
@@ -44,7 +44,7 @@ class CodeBatchCreateRequest(BaseModel):
     sku_id: uuid.UUID
     production_batch_id: uuid.UUID
     batch_code: str | None = None
-    quantity: int
+    quantity: int = Field(ge=1, le=100000)
     code_type: str = CodeType.single
     generation_mode: CodeGenerationMode = CodeGenerationMode.item_level
 
@@ -96,16 +96,7 @@ async def create_code_batch_endpoint(
     account_id: uuid.UUID = Depends(get_current_account_id),
     _: None = Depends(require_permission("code:generate")),
 ):
-    from app.models.tenant import Tenant
-    from app.services.quota import QuotaExceededError, check_quota
-
-    tenant = await db.get(Tenant, tenant_id)
-    generation_quantity = 1 if body.generation_mode == CodeGenerationMode.batch_level else body.quantity
-    if tenant and tenant.quota:
-        try:
-            check_quota(tenant.quota, "max_codes_per_batch", generation_quantity)
-        except QuotaExceededError as e:
-            raise HTTPException(status_code=429, detail=str(e))
+    from app.services.quota import QuotaExceededError
 
     try:
         return await create_code_batch(
@@ -121,6 +112,8 @@ async def create_code_batch_endpoint(
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except QuotaExceededError as e:
+        raise HTTPException(status_code=429, detail=str(e)) from e
 
 
 @code_batch_router.get("", summary="码批次 列表")
@@ -261,6 +254,7 @@ async def mark_printing_endpoint(
     batch_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
+    _: None = Depends(require_permission("code:manage")),
 ):
     try:
         result = await mark_printing(db, tenant_id, batch_id)
@@ -276,6 +270,7 @@ async def mark_delivered_endpoint(
     batch_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
+    _: None = Depends(require_permission("code:manage")),
 ):
     try:
         result = await mark_delivered(db, tenant_id, batch_id)

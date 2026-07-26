@@ -284,6 +284,13 @@ class ExcelImportService:
     async def parse_and_validate(self, file_content: bytes, tenant_id: uuid.UUID) -> ImportResult:
         """解析多 Sheet Excel，校验每一行，返回结构化结果"""
         result = ImportResult()
+
+        # File size limit: 10 MB
+        _MAX_FILE_SIZE = 10 * 1024 * 1024
+        if len(file_content) > _MAX_FILE_SIZE:
+            result.errors.append(RowError(sheet="文件", row=0, message=f"文件大小超过限制（最大 {_MAX_FILE_SIZE // (1024*1024)} MB）"))
+            return result
+
         try:
             wb = load_workbook(BytesIO(file_content), data_only=True, read_only=True)
         except Exception as exc:

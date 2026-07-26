@@ -75,7 +75,9 @@ class TestLogin:
         assert data["token_type"] == "bearer"
 
     @pytest.mark.anyio
-    async def test_login_uses_assigned_account_role(self, client: AsyncClient, db_session: AsyncSession, seeded_account):
+    async def test_login_uses_assigned_account_role(
+        self, client: AsyncClient, db_session: AsyncSession, seeded_account
+    ):
         role = Role(tenant_id=seeded_account.tenant_id, name="operator", description="运营")
         db_session.add(role)
         await db_session.flush()
@@ -132,7 +134,7 @@ class TestLogin:
     async def test_login_failure_returns_401(self, client: AsyncClient, seeded_account):
         resp = await client.post(
             "/api/v1/auth/login",
-            json={"email": "login@test.com", "password": "wrong"},
+            json={"email": "login@test.com", "password": "wrong1"},
         )
         assert resp.status_code == 401
         assert resp.json()["detail"] == "邮箱或密码不正确"
@@ -144,7 +146,7 @@ class TestLogin:
             json={"email": "nobody@test.com", "password": "Password1"},
         )
         assert resp.status_code == 401
-        assert resp.json()["detail"] == "Invalid credentials"
+        assert resp.json()["detail"] == "邮箱或密码不正确"
 
     @pytest.mark.anyio
     async def test_login_success_records_last_login_time(
@@ -167,7 +169,7 @@ class TestLogin:
         for _ in range(3):
             await client.post(
                 "/api/v1/auth/login",
-                json={"email": "login@test.com", "password": "wrong"},
+                json={"email": "login@test.com", "password": "wrong1"},
             )
         # 再成功
         await client.post(
@@ -182,10 +184,13 @@ class TestLogin:
 class TestAccountLocking:
     @pytest.mark.anyio
     async def test_account_locked_after_5_failures(self, client: AsyncClient, db_session: AsyncSession, seeded_account):
+        unique_ip = f"10.0.{id(self) % 255}.{(_ := id(self) // 255) % 255}"
+        headers = {"X-Forwarded-For": unique_ip}
         for _ in range(5):
             resp = await client.post(
                 "/api/v1/auth/login",
-                json={"email": "login@test.com", "password": "wrong"},
+                json={"email": "login@test.com", "password": "wrong1"},
+                headers=headers,
             )
             assert resp.status_code == 401
 
@@ -193,6 +198,7 @@ class TestAccountLocking:
         resp = await client.post(
             "/api/v1/auth/login",
             json={"email": "login@test.com", "password": "Password1"},
+            headers=headers,
         )
         assert resp.status_code == 401
 
@@ -200,10 +206,13 @@ class TestAccountLocking:
     async def test_locked_account_has_locked_until_set(
         self, client: AsyncClient, db_session: AsyncSession, seeded_account
     ):
+        unique_ip = f"10.1.{id(self) % 255}.{(_ := id(self) // 255) % 255}"
+        headers = {"X-Forwarded-For": unique_ip}
         for _ in range(5):
             await client.post(
                 "/api/v1/auth/login",
-                json={"email": "login@test.com", "password": "wrong"},
+                json={"email": "login@test.com", "password": "wrong1"},
+                headers=headers,
             )
         result = await db_session.execute(select(Account).where(Account.id == seeded_account.id))
         account = result.scalar_one()
@@ -228,6 +237,26 @@ class TestTokenRefresh:
         data = resp.json()
         assert "access_token" in data
         assert "refresh_token" in data
+
+    @pytest.mark.anyio
+    async def test_refresh_body_takes_precedence_over_cookie(self, client: AsyncClient, seeded_account):
+        login_resp = await client.post(
+            "/api/v1/auth/login",
+            json={"email": "login@test.com", "password": "Password1"},
+        )
+        refresh_token = login_resp.json()["refresh_token"]
+
+        client.cookies.set("refresh_token", "invalid-token")
+        try:
+            resp = await client.post(
+                "/api/v1/auth/refresh",
+                json={"refresh_token": refresh_token},
+            )
+        finally:
+            client.cookies.delete("refresh_token")
+
+        assert resp.status_code == 200
+        assert "access_token" in resp.json()
 
     @pytest.mark.anyio
     async def test_refresh_with_invalid_token_returns_401(self, client: AsyncClient, seeded_account):

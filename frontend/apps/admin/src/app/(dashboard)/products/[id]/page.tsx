@@ -782,7 +782,7 @@ export default function ProductWorkbenchPage() {
             children: (
               <div>
                 <div className="mb-3 flex justify-end"><Button type="primary" icon={<PlusOutlined />} onClick={() => openAssetModal()}>新增资料</Button></div>
-                <Table columns={assetColumns} dataSource={assets} rowKey="id" loading={loading} pagination={false} />
+                <Table columns={assetColumns} dataSource={assets} rowKey="id" loading={loading} pagination={{ pageSize: 10, showSizeChanger: true, showTotal: (t) => `共 ${t} 条` }} />
               </div>
             ),
           },
@@ -792,7 +792,7 @@ export default function ProductWorkbenchPage() {
             children: (
               <div>
                 <div className="mb-3 flex justify-end"><Button type="primary" icon={<PlusOutlined />} onClick={() => openSkuModal()}>新增 SKU</Button></div>
-                <Table columns={skuColumns} dataSource={skus} rowKey="id" loading={loading} pagination={false} />
+                <Table columns={skuColumns} dataSource={skus} rowKey="id" loading={loading} pagination={{ pageSize: 10, showSizeChanger: true, showTotal: (t) => `共 ${t} 条` }} />
               </div>
             ),
           },
@@ -813,7 +813,7 @@ export default function ProductWorkbenchPage() {
                     <Button icon={<FileTextOutlined />} onClick={() => setImportModalOpen(true)} disabled={skus.length === 0}>批量导入</Button>
                   </Space>
                 </div>
-                <Table columns={batchColumns} dataSource={batches} rowKey="id" loading={loading} pagination={false} />
+                <Table columns={batchColumns} dataSource={batches} rowKey="id" loading={loading} pagination={{ pageSize: 10, showSizeChanger: true, showTotal: (t) => `共 ${t} 条` }} />
               </div>
             ),
           },
@@ -823,7 +823,7 @@ export default function ProductWorkbenchPage() {
             children: (
               <div>
                 <div className="mb-3 flex justify-end"><Button type="primary" icon={<FileTextOutlined />} onClick={() => setPageModalOpen(true)}>新建扫码页</Button></div>
-                <Table columns={pageColumns} dataSource={pages} rowKey="id" loading={loading} pagination={false} />
+                <Table columns={pageColumns} dataSource={pages} rowKey="id" loading={loading} pagination={{ pageSize: 10, showSizeChanger: true, showTotal: (t) => `共 ${t} 条` }} />
               </div>
             ),
           },

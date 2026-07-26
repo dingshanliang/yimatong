@@ -294,7 +294,7 @@ async def create_sku(
 ) -> SKU:
     product_result = await db.execute(select(Product).where(Product.id == product_id, Product.tenant_id == tenant_id))
     product = product_result.scalar_one_or_none()
-    existing = await db.execute(select(SKU).where(SKU.product_id == product_id, SKU.code == code))
+    existing = await db.execute(select(SKU).where(SKU.tenant_id == tenant_id, SKU.product_id == product_id, SKU.code == code))
     if existing.scalar_one_or_none():
         
 
@@ -361,6 +361,7 @@ async def update_sku(
     if code is not None:
         existing = await db.execute(
             select(SKU).where(
+                SKU.tenant_id == tenant_id,
                 SKU.product_id == sku.product_id,
                 SKU.code == code,
                 SKU.id != sku_id,

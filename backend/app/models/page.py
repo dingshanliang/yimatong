@@ -3,8 +3,9 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import JSON, DateTime, Index, String, UniqueConstraint, func
+from sqlalchemy import JSON, DateTime, ForeignKey, Index, String, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column
+from uuid6 import uuid7
 
 from app.models.base import Base
 
@@ -29,7 +30,7 @@ class PageVersionStatus:
 class PageTemplate(Base):
     __tablename__ = "page_templates"
 
-    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid7)
     tenant_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
     product_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True, index=True)
     name: Mapped[str] = mapped_column(String(200), nullable=False)
@@ -52,9 +53,10 @@ class PageTemplate(Base):
 class PageVersion(Base):
     __tablename__ = "page_versions"
 
-    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid7)
     tenant_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
     page_template_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("page_templates.id"),
         nullable=False,
         index=True,
     )

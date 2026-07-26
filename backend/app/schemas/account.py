@@ -1,7 +1,9 @@
 import uuid
 from datetime import datetime
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+from app.utils.security import validate_password_strength
 
 
 class OrganizationCreate(BaseModel):
@@ -34,6 +36,16 @@ class AccountCreate(BaseModel):
     organization_id: uuid.UUID
     role_ids: list[uuid.UUID] = []
 
+    @field_validator("password")
+    @classmethod
+    def _validate_password(cls, v: str | None) -> str | None:
+        if v is not None:
+            try:
+                validate_password_strength(v)
+            except ValueError as e:
+                raise ValueError(f"密码不符合要求: {e}") from e
+        return v
+
 
 class AccountRead(BaseModel):
     id: uuid.UUID
@@ -42,12 +54,17 @@ class AccountRead(BaseModel):
     organization_name: str | None = None
     email: str
     name: str
-    initial_password: str | None = None
     created_at: datetime | None = None
 
     model_config = {"from_attributes": True}
 
 
+class AccountCreateResponse(AccountRead):
+    """创建账户专用响应 — 包含一次性初始密码。"""
+    initial_password: str | None = None
+
+
 class AccountUpdate(BaseModel):
     name: str | None = Field(None, max_length=100)
+    organization_id: uuid.UUID | None = Field(None, description="转移至新组织")
     role_ids: list[uuid.UUID] | None = None

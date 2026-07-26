@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.v1.code_batches import CodeBatchRead
 from app.core.database import get_db
 from app.core.dependencies import get_current_tenant
+from app.utils.auth_rbac import require_role
 from app.schemas.product import (
     BrandCreate,
     BrandDetailRead,
@@ -65,6 +66,8 @@ brand_router = APIRouter(prefix="/api/v1/brands", tags=["brands"])
 product_router = APIRouter(prefix="/api/v1/products", tags=["products"])
 sku_router = APIRouter(prefix="/api/v1/skus", tags=["skus"])
 batch_router = APIRouter(prefix="/api/v1/production-batches", tags=["production-batches"])
+# NOTE: ProductAsset 创建使用嵌套路由 /products/{id}/assets（明确归属关系），
+# 更新/删除使用扁平路由 /product-assets/{id}（直接定位资源），符合 RESTful 最佳实践。
 asset_router = APIRouter(prefix="/api/v1/product-assets", tags=["product-assets"])
 
 
@@ -76,6 +79,7 @@ async def create_brand_endpoint(
     body: BrandCreate,
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
+    _role: str = Depends(require_role("admin", "operator")),
 ):
     return await create_brand(db, tenant_id, body.name, body.logo_url, body.description)
 
@@ -87,6 +91,7 @@ async def list_brands_endpoint(
     page_size: int = Query(20, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
+    _role: str = Depends(require_role("admin", "operator")),
 ):
     brands, total = await list_brands(db, tenant_id, name=name, page=page, page_size=page_size)
     return PaginatedResponse(
@@ -103,6 +108,7 @@ async def update_brand_endpoint(
     body: BrandUpdate,
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
+    _role: str = Depends(require_role("admin", "operator")),
 ):
     brand = await update_brand(
         db,
@@ -123,6 +129,7 @@ async def get_brand_endpoint(
     brand_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
+    _role: str = Depends(require_role("admin", "operator")),
 ):
     brand, stats = await get_brand_with_stats(db, tenant_id, brand_id)
     if not brand:
@@ -140,6 +147,7 @@ async def list_brand_products(
     page_size: int = Query(20, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
+    _role: str = Depends(require_role("admin", "operator")),
 ):
     products, total = await list_products(
         db,
@@ -163,6 +171,7 @@ async def list_brand_campaigns_endpoint(
     page_size: int = Query(20, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
+    _role: str = Depends(require_role("admin", "operator")),
 ):
     items, total = await list_brand_campaigns(db, tenant_id, brand_id, page=page, page_size=page_size)
     return PaginatedResponse(items=items, total=total, page=page, page_size=page_size)
@@ -175,6 +184,7 @@ async def list_brand_code_batches_endpoint(
     page_size: int = Query(20, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
+    _role: str = Depends(require_role("admin", "operator")),
 ):
     batches, total = await list_brand_code_batches(db, tenant_id, brand_id, page=page, page_size=page_size)
     return PaginatedResponse(
@@ -192,6 +202,7 @@ async def list_brand_production_batches_endpoint(
     page_size: int = Query(20, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
+    _role: str = Depends(require_role("admin", "operator")),
 ):
     batches, total = await list_brand_production_batches(db, tenant_id, brand_id, page=page, page_size=page_size)
     return PaginatedResponse(
@@ -207,6 +218,7 @@ async def delete_brand_endpoint(
     brand_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
+    _role: str = Depends(require_role("admin")),
 ):
     deleted, conflict = await delete_brand(db, tenant_id, brand_id)
     if conflict:
@@ -223,6 +235,7 @@ async def create_product_endpoint(
     body: ProductCreate,
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
+    _role: str = Depends(require_role("admin", "operator")),
 ):
     # Quota check
     try:
@@ -253,6 +266,7 @@ async def list_products_endpoint(
     page_size: int = Query(20, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
+    _role: str = Depends(require_role("admin", "operator")),
 ):
     products, total = await list_products(
         db,
@@ -276,6 +290,7 @@ async def get_product_endpoint(
     product_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
+    _role: str = Depends(require_role("admin", "operator")),
 ):
     product = await get_product(db, tenant_id, product_id)
     if not product:
@@ -289,6 +304,7 @@ async def update_product_endpoint(
     body: ProductUpdate,
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
+    _role: str = Depends(require_role("admin", "operator")),
 ):
     product = await update_product(
         db,
@@ -317,6 +333,7 @@ async def list_product_assets_endpoint(
     page_size: int = Query(20, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
+    _role: str = Depends(require_role("admin", "operator")),
 ):
     if not await get_product(db, tenant_id, product_id):
         raise HTTPException(status_code=404, detail="Product not found")
@@ -342,6 +359,7 @@ async def create_product_asset_endpoint(
     body: ProductAssetCreate,
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
+    _role: str = Depends(require_role("admin", "operator")),
 ):
     asset = await create_product_asset(
         db,
@@ -369,6 +387,7 @@ async def list_product_skus(
     page_size: int = Query(20, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
+    _role: str = Depends(require_role("admin", "operator")),
 ):
     skus, total = await list_skus(
         db,
@@ -392,6 +411,7 @@ async def list_product_batches(
     page_size: int = Query(20, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
+    _role: str = Depends(require_role("admin", "operator")),
 ):
     batches, total = await list_production_batches(
         db,
@@ -413,6 +433,7 @@ async def delete_product_endpoint(
     product_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
+    _role: str = Depends(require_role("admin")),
 ):
     deleted, conflict = await delete_product(db, tenant_id, product_id)
     if conflict:
@@ -429,6 +450,7 @@ async def create_sku_endpoint(
     body: SKUCreate,
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
+    _role: str = Depends(require_role("admin", "operator")),
 ):
     return await create_sku(
         db,
@@ -450,6 +472,7 @@ async def list_skus_endpoint(
     page_size: int = Query(20, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
+    _role: str = Depends(require_role("admin", "operator")),
 ):
     skus, total = await list_skus(
         db,
@@ -471,6 +494,7 @@ async def get_sku_endpoint(
     sku_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
+    _role: str = Depends(require_role("admin", "operator")),
 ):
     sku = await get_sku_detail(db, tenant_id, sku_id)
     if not sku:
@@ -484,6 +508,7 @@ async def update_sku_endpoint(
     body: SKUUpdate,
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
+    _role: str = Depends(require_role("admin", "operator")),
 ):
     sku = await update_sku(
         db,
@@ -508,6 +533,7 @@ async def delete_sku_endpoint(
     sku_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
+    _role: str = Depends(require_role("admin")),
 ):
     deleted, conflict = await delete_sku(db, tenant_id, sku_id)
     if conflict:
@@ -524,6 +550,7 @@ async def create_batch_endpoint(
     body: ProductionBatchCreate,
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
+    _role: str = Depends(require_role("admin", "operator")),
 ):
     return await create_production_batch(
         db,
@@ -545,6 +572,7 @@ async def list_batches_endpoint(
     page_size: int = Query(20, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
+    _role: str = Depends(require_role("admin", "operator")),
 ):
     batches, total = await list_production_batches(
         db,
@@ -568,6 +596,7 @@ async def update_batch_endpoint(
     body: ProductionBatchUpdate,
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
+    _role: str = Depends(require_role("admin", "operator")),
 ):
     batch = await update_production_batch(
         db,
@@ -592,6 +621,7 @@ async def import_csv_endpoint(
     file: UploadFile = File(...),
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
+    _role: str = Depends(require_role("admin", "operator")),
 ):
     content = (await file.read()).decode("utf-8")
     imported, errors = await import_batches_csv(
@@ -609,6 +639,7 @@ async def delete_batch_endpoint(
     batch_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
+    _role: str = Depends(require_role("admin")),
 ):
     deleted, conflict = await delete_production_batch(db, tenant_id, batch_id)
     if conflict:
@@ -623,6 +654,7 @@ async def update_product_asset_endpoint(
     body: ProductAssetUpdate,
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
+    _role: str = Depends(require_role("admin", "operator")),
 ):
     asset = await update_product_asset(
         db,
@@ -650,6 +682,7 @@ async def delete_product_asset_endpoint(
     asset_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
+    _role: str = Depends(require_role("admin")),
 ):
     deleted = await delete_product_asset(db, tenant_id, asset_id)
     if not deleted:

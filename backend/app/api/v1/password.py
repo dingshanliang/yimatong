@@ -1,4 +1,3 @@
-import re
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -7,20 +6,14 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
-from app.core.dependencies import get_current_account_id, get_current_tenant
+from app.core.dependencies import get_current_account_id, get_current_role, get_current_tenant
 from app.models.tenant import Account
-from app.utils.security import hash_password, verify_password
+from app.services.redis_cache import AsyncRedisCache
+from app.utils.security import hash_password, validate_password_strength, verify_password
 
 router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
 
-
-def validate_password_strength(password: str) -> None:
-    if len(password) < 8:
-        raise HTTPException(status_code=422, detail="密码至少需要 8 位")
-    if not re.search(r"[a-zA-Z]", password):
-        raise HTTPException(status_code=422, detail="密码必须包含字母")
-    if not re.search(r"\d", password):
-        raise HTTPException(status_code=422, detail="密码必须包含数字")
+ADMIN_ROLES = {"admin", "platform_admin"}
 
 
 class ChangePasswordRequest(BaseModel):
@@ -33,19 +26,28 @@ class ResetPasswordRequest(BaseModel):
     new_password: str = Field(..., min_length=1)
 
 
+def _validate_password(password: str) -> None:
+    """Wrapper that converts ValueError to HTTPException for API layer."""
+    try:
+        validate_password_strength(password)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e)) from e
+
+
 @router.post("/change-password")
 async def change_password(
     body: ChangePasswordRequest,
     db: AsyncSession = Depends(get_db),
     account_id: uuid.UUID = Depends(get_current_account_id),
+    tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
-    result = await db.execute(select(Account).where(Account.id == account_id))
+    result = await db.execute(select(Account).where(Account.id == account_id, Account.tenant_id == tenant_id))
     account = result.scalar_one_or_none()
     if not account:
         raise HTTPException(status_code=404, detail="Account not found")
     if not verify_password(body.old_password, account.hashed_password):
         raise HTTPException(status_code=401, detail="Old password is incorrect")
-    validate_password_strength(body.new_password)
+    _validate_password(body.new_password)
     account.hashed_password = hash_password(body.new_password)
     await db.commit()
     return {"detail": "Password changed"}
@@ -56,12 +58,20 @@ async def reset_password(
     body: ResetPasswordRequest,
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
+    role: str = Depends(get_current_role),
 ):
+    if role not in ADMIN_ROLES:
+        raise HTTPException(status_code=403, detail="仅管理员可重置密码")
+    # 速率限制：每 account_id 每分钟最多 10 次
+    cache = AsyncRedisCache()
+    allowed, _ = await cache.rate_limit_check(f"admin_reset:{body.account_id}", max_attempts=10, window_seconds=60)
+    if not allowed:
+        raise HTTPException(status_code=429, detail="重置操作过于频繁", headers={"Retry-After": "60"})
     result = await db.execute(select(Account).where(Account.id == body.account_id, Account.tenant_id == tenant_id))
     account = result.scalar_one_or_none()
     if not account:
         raise HTTPException(status_code=404, detail="Account not found")
-    validate_password_strength(body.new_password)
+    _validate_password(body.new_password)
     account.hashed_password = hash_password(body.new_password)
     await db.commit()
     return {"detail": "Password reset"}

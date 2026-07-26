@@ -2,7 +2,7 @@
 
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -36,19 +36,21 @@ def _require_brand(tenant_type: str) -> None:
 
 @router.get("", response_model=AuthorizationListResponse)
 async def list_authorizations(
+    page: int = Query(1, ge=1, description="页码"),
+    page_size: int = Query(50, ge=1, le=200, description="每页数量"),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
     tenant_type: str = Depends(get_current_tenant_type),
     db: AsyncSession = Depends(get_db),
 ):
     """查看授权列表：agency 看自己的客户，brand 看哪些 agency 有权"""
     if tenant_type == "agency":
-        items = await list_authorizations_for_agency(db, tenant_id)
+        items, total = await list_authorizations_for_agency(db, tenant_id, page, page_size)
     else:
-        items = await list_authorizations_for_brand(db, tenant_id)
+        items, total = await list_authorizations_for_brand(db, tenant_id, page, page_size)
 
     return AuthorizationListResponse(
         items=[AuthorizationResponse(**item) for item in items],
-        total=len(items),
+        total=total,
     )
 
 

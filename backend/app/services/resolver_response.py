@@ -109,10 +109,12 @@ async def build_json_response(
 
     # 查询当前产品可用活动，供 H5 展示权益与活动规则
     if product_id:
+        tenant_uuid = uuid.UUID(data["tenant_id"])
         campaign_result = await db.execute(
             select(Campaign)
             .where(
                 Campaign.product_id == uuid.UUID(product_id),
+                Campaign.tenant_id == tenant_uuid,
                 Campaign.status == CampaignStatus.ACTIVE,
             )
             .order_by(Campaign.id.desc())
@@ -127,6 +129,7 @@ async def build_json_response(
                 .limit(1)
             )
             benefit = benefit_result.scalar_one_or_none()
+            config = benefit.config_json if benefit else None
             result["campaign"] = {
                 "id": str(campaign.id),
                 "name": campaign.name,
@@ -137,7 +140,7 @@ async def build_json_response(
                     "benefit_type": benefit.benefit_type,
                     "config_json": benefit.config_json,
                     "description": (
-                        benefit.config_json.get("description") if isinstance(benefit.config_json, dict) else None
+                        config.get("description") if isinstance(config, dict) else None
                     ),
                 }
                 if benefit

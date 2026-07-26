@@ -64,12 +64,8 @@ class DeliverBenefitRequest(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-async def _get_connector_or_404(
-    db: AsyncSession, tenant_id: uuid.UUID, conn_id: uuid.UUID
-) -> Connector:
-    result = await db.execute(
-        select(Connector).where(Connector.id == conn_id, Connector.tenant_id == tenant_id)
-    )
+async def _get_connector_or_404(db: AsyncSession, tenant_id: uuid.UUID, conn_id: uuid.UUID) -> Connector:
+    result = await db.execute(select(Connector).where(Connector.id == conn_id, Connector.tenant_id == tenant_id))
     connector = result.scalar_one_or_none()
     if not connector:
         raise HTTPException(status_code=404, detail="Connector not found")
@@ -227,8 +223,11 @@ async def create_connector_endpoint(
 
     # 验证适配器类型和配置
     stub = Connector(
-        tenant_id=tenant_id, name=body.name,
-        connector_type=body.connector_type, config=body.config, enabled=True,
+        tenant_id=tenant_id,
+        name=body.name,
+        connector_type=body.connector_type,
+        config=body.config,
+        enabled=True,
     )
     adapter = get_adapter(stub)
     is_valid, error = await adapter.validate_config(body.config)
@@ -260,6 +259,7 @@ async def list_connectors_endpoint(
 async def list_connector_types_endpoint():
     """返回系统支持的所有连接器类型。"""
     from app.services.connectors.registry import list_adapter_types
+
     return {"types": list_adapter_types()}
 
 
@@ -377,9 +377,7 @@ async def delivery_callback_endpoint(
     db: AsyncSession = Depends(get_db),
 ):
     """外部系统回调端点 — 不走 JWT 认证，由适配器签名验证保护。"""
-    conn_result = await db.execute(
-        select(Connector).where(Connector.id == conn_id)
-    )
+    conn_result = await db.execute(select(Connector).where(Connector.id == conn_id))
     connector = conn_result.scalar_one_or_none()
     if not connector:
         raise HTTPException(status_code=404, detail="Connector not found")
@@ -404,14 +402,11 @@ async def delivery_callback_endpoint(
 
         # 优先按 out_bill_no 精确匹配（适用于微信转账等带唯一单号的场景）
         delivery = None
-        delivery_stmt = (
-            select(BenefitDelivery)
-            .where(
-                BenefitDelivery.tenant_id == connector.tenant_id,
-                BenefitDelivery.connector_id == conn_id,
-                BenefitDelivery.status == "pending",
-                sa_func.jsonb_extract_path_text(BenefitDelivery.benefit_config, "out_bill_no") == result.external_id,
-            )
+        delivery_stmt = select(BenefitDelivery).where(
+            BenefitDelivery.tenant_id == connector.tenant_id,
+            BenefitDelivery.connector_id == conn_id,
+            BenefitDelivery.status == "pending",
+            sa_func.jsonb_extract_path_text(BenefitDelivery.benefit_config, "out_bill_no") == result.external_id,
         )
         delivery_row = await db.execute(delivery_stmt)
         delivery = delivery_row.scalar_one_or_none()
@@ -447,9 +442,7 @@ async def delivery_callback_endpoint(
                     try:
                         claim_id = uuid.UUID(out_bill_no)
                         await db.execute(
-                            sa_update(BenefitClaim)
-                            .where(BenefitClaim.id == claim_id)
-                            .values(status="delivered")
+                            sa_update(BenefitClaim).where(BenefitClaim.id == claim_id).values(status="delivered")
                         )
                     except ValueError:
                         pass

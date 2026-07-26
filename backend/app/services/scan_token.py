@@ -1,6 +1,7 @@
 """scan_token 防伪机制"""
 
 import time
+import uuid
 
 import jwt
 
@@ -30,6 +31,7 @@ def create_scan_token(
         "consumer_id": consumer_id,
         "exp": int(time.time()) + expires_in,
         "type": "scan_token",
+        "jti": str(uuid.uuid4()),
     }
     return jwt.encode(payload, settings.secret_key, algorithm="HS256")
 

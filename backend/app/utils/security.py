@@ -1,3 +1,4 @@
+import re
 import uuid
 from datetime import UTC, datetime, timedelta
 
@@ -16,6 +17,16 @@ def hash_password(password: str) -> str:
 
 def verify_password(plain: str, hashed: str) -> bool:
     return bcrypt.checkpw(plain.encode(), hashed.encode())
+
+
+def validate_password_strength(password: str) -> None:
+    """验证密码强度。不符合要求时抛出 ValueError。"""
+    if len(password) < 8:
+        raise ValueError("密码至少需要 8 位")
+    if not re.search(r"[a-zA-Z]", password):
+        raise ValueError("密码必须包含字母")
+    if not re.search(r"\d", password):
+        raise ValueError("密码必须包含数字")
 
 
 def create_access_token(

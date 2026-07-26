@@ -2,6 +2,8 @@ import uuid
 
 from fastapi import Depends, HTTPException, Request
 
+from app.services.redis_cache import AsyncRedisCache
+
 
 async def get_current_tenant(request: Request) -> uuid.UUID:
     tenant_id = getattr(request.state, "tenant_id", None)
@@ -26,6 +28,11 @@ async def get_current_role(request: Request) -> str:
 
 async def get_current_tenant_type(request: Request) -> str:
     return getattr(request.state, "tenant_type", "brand")
+
+
+async def get_redis_cache() -> AsyncRedisCache:
+    """提供 AsyncRedisCache 实例用于依赖注入。"""
+    return AsyncRedisCache()
 
 
 ALLOWED_OPS_ROLES = {"platform_admin", "operator"}

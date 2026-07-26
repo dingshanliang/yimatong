@@ -6,6 +6,8 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.core.exceptions import BadRequestError, NotFoundError
+
 from app.models.code import (
     CodeBatch,
     CodeBatchStatus,
@@ -36,6 +38,18 @@ async def create_code_batch(
     code_type: str = CodeType.single,
     generation_mode: str = CodeGenerationMode.item_level,
 ) -> dict:
+    # Quota check
+    from app.models.tenant import Tenant
+    from app.services.quota import QuotaExceededError, check_quota
+
+    generation_quantity = 1 if generation_mode == CodeGenerationMode.batch_level else quantity
+    tenant = await db.get(Tenant, tenant_id)
+    if tenant and tenant.quota:
+        try:
+            check_quota(tenant.quota, "max_codes_per_batch", generation_quantity)
+        except QuotaExceededError:
+            raise
+
     product = await db.get(Product, product_id)
     if not product or product.tenant_id != tenant_id:
         raise ValueError("Product not found")
@@ -333,8 +347,12 @@ async def activate_batch(db: AsyncSession, tenant_id: uuid.UUID, batch_id: uuid.
 
     from app.services.code_state import InvalidStateTransitionError, can_transition
 
-    batch = await db.get(CodeBatch, batch_id)
-    if not batch or batch.tenant_id != tenant_id:
+    # Lock the batch row to prevent concurrent state transitions
+    result = await db.execute(
+        select(CodeBatch).where(CodeBatch.id == batch_id, CodeBatch.tenant_id == tenant_id).with_for_update()
+    )
+    batch = result.scalar_one_or_none()
+    if not batch:
         raise ValueError("Code batch not found")
     if batch.status == CodeBatchStatus.activated:
         raise InvalidStateTransitionError("Code batch is already activated")
@@ -407,9 +425,7 @@ async def revoke_code_item(db: AsyncSession, tenant_id: uuid.UUID, item_id: uuid
     result = await db.execute(select(CodeItem).where(CodeItem.id == item_id, CodeItem.tenant_id == tenant_id))
     item = result.scalar_one_or_none()
     if not item:
-        from fastapi import HTTPException
-
-        raise HTTPException(status_code=404, detail="Code item not found")
+        raise NotFoundError("Code item not found")
     can_transition(item.status, CodeItemStatus.revoked, raise_on_invalid=True)
     item.status = CodeItemStatus.revoked
     item.revoked_at = utcnow()
@@ -427,9 +443,7 @@ async def bind_code_item(db: AsyncSession, tenant_id: uuid.UUID, item_id: uuid.U
     result = await db.execute(select(CodeItem).where(CodeItem.id == item_id, CodeItem.tenant_id == tenant_id))
     item = result.scalar_one_or_none()
     if not item:
-        from fastapi import HTTPException
-
-        raise HTTPException(status_code=404, detail="Code item not found")
+        raise NotFoundError("Code item not found")
     can_transition(item.status, CodeItemStatus.bound, raise_on_invalid=True)
     item.status = CodeItemStatus.bound
     item.bound_at = utcnow()
@@ -500,7 +514,9 @@ async def mark_printing(db: AsyncSession, tenant_id: uuid.UUID, batch_id: uuid.U
     """标记码批次为印刷中（completed -> printing）"""
     from app.services.batch_state import can_transition_batch
 
-    result = await db.execute(select(CodeBatch).where(CodeBatch.id == batch_id, CodeBatch.tenant_id == tenant_id))
+    result = await db.execute(
+        select(CodeBatch).where(CodeBatch.id == batch_id, CodeBatch.tenant_id == tenant_id).with_for_update()
+    )
     batch = result.scalar_one_or_none()
     if not batch:
         raise ValueError("Code batch not found")
@@ -518,7 +534,9 @@ async def mark_delivered(db: AsyncSession, tenant_id: uuid.UUID, batch_id: uuid.
     """标记码批次为已交付（printing -> delivered）"""
     from app.services.batch_state import can_transition_batch
 
-    result = await db.execute(select(CodeBatch).where(CodeBatch.id == batch_id, CodeBatch.tenant_id == tenant_id))
+    result = await db.execute(
+        select(CodeBatch).where(CodeBatch.id == batch_id, CodeBatch.tenant_id == tenant_id).with_for_update()
+    )
     batch = result.scalar_one_or_none()
     if not batch:
         raise ValueError("Code batch not found")

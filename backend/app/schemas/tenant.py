@@ -3,6 +3,8 @@ from datetime import datetime
 
 from pydantic import BaseModel, Field, field_validator
 
+from app.utils.security import validate_password_strength
+
 
 class TenantCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=100, description="租户名称", examples=["示例食品公司"])
@@ -20,6 +22,15 @@ class TenantCreate(BaseModel):
     admin_name: str = Field(..., max_length=100, description="管理员姓名", examples=["张三"])
     admin_password: str = Field(..., min_length=8, description="管理员密码", examples=["SecurePass123!"])
     industry: str | None = Field(None, max_length=50, description="行业类别")
+
+    @field_validator("admin_password")
+    @classmethod
+    def _validate_admin_password(cls, v: str) -> str:
+        try:
+            validate_password_strength(v)
+        except ValueError as e:
+            raise ValueError(f"管理员密码不符合要求: {e}") from e
+        return v
     notes: str | None = Field(None, max_length=1000, description="备注")
     template_id: int | None = Field(None, description="行业模板 ID，创建后自动应用")
 
@@ -35,6 +46,38 @@ class TenantUpdate(BaseModel):
     onboarding_progress: dict | None = None
     enabled_features: dict | None = None
     categories: list[str] | None = None
+
+    @field_validator("categories")
+    @classmethod
+    def validate_categories(cls, v: list[str] | None) -> list[str] | None:
+        if v is None:
+            return v
+        if len(v) > 100:
+            raise ValueError("品类数量不能超过 100 条")
+        cleaned: list[str] = []
+        seen: set[str] = set()
+        for item in v:
+            s = item.strip()
+            if not s:
+                continue
+            if len(s) > 20:
+                raise ValueError(f"品类名称不能超过 20 个字符: {s}")
+            key = s.lower()
+            if key not in seen:
+                seen.add(key)
+                cleaned.append(s)
+        return cleaned
+
+
+class TenantUpdateSelf(BaseModel):
+    """租户用户自助更新 — 仅允许非敏感字段。"""
+
+    name: str | None = Field(None, min_length=1, max_length=100)
+    industry: str | None = Field(None, max_length=50)
+    notes: str | None = Field(None, max_length=1000)
+    categories: list[str] | None = None
+    onboarding_progress: dict | None = None
+    enabled_features: dict | None = None
 
     @field_validator("categories")
     @classmethod

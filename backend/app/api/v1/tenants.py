@@ -8,7 +8,7 @@ from app.core.database import get_db
 from app.core.dependencies import get_current_tenant
 from app.models.tenant import Tenant
 from app.schemas.common import NOT_FOUND_EXAMPLE, ErrorDetail, PaginatedResponse
-from app.schemas.tenant import CategoriesResponse, TenantCreate, TenantRead, TenantUpdate
+from app.schemas.tenant import CategoriesResponse, TenantCreate, TenantRead, TenantUpdate, TenantUpdateSelf
 from app.services.tenant import (
     complete_onboarding_step,
     create_tenant,
@@ -48,19 +48,22 @@ async def create_tenant_endpoint(
     db: AsyncSession = Depends(get_db),
     _role: str = Depends(require_role("platform_admin")),
 ):
-    tenant = await create_tenant(
-        db=db,
-        name=body.name,
-        slug=body.slug,
-        plan=body.plan,
-        admin_email=body.admin_email,
-        admin_name=body.admin_name,
-        admin_password=body.admin_password,
-        industry=body.industry,
-        notes=body.notes,
-        template_id=body.template_id,
-        tenant_type=body.tenant_type,
-    )
+    try:
+        tenant = await create_tenant(
+            db=db,
+            name=body.name,
+            slug=body.slug,
+            plan=body.plan,
+            admin_email=body.admin_email,
+            admin_name=body.admin_name,
+            admin_password=body.admin_password,
+            industry=body.industry,
+            notes=body.notes,
+            template_id=body.template_id,
+            tenant_type=body.tenant_type,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=409, detail=str(e)) from e
     return tenant
 
 
@@ -74,10 +77,13 @@ async def list_tenants_endpoint(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     q: str | None = Query(None, description="搜索关键词"),
+    plan: str | None = Query(None, description="按订阅计划过滤"),
+    tenant_type: str | None = Query(None, description="按租户类型过滤"),
+    status: str | None = Query(None, description="按状态过滤"),
     db: AsyncSession = Depends(get_db),
     _role: str = Depends(require_role("platform_admin")),
 ):
-    """租户列表（支持分页和搜索）"""
+    """租户列表（支持分页、搜索和多维过滤）"""
     query = select(Tenant).where(Tenant.status != "terminated")
     count_query = select(func.count()).select_from(Tenant).where(Tenant.status != "terminated")
 
@@ -85,6 +91,18 @@ async def list_tenants_endpoint(
         escaped = escape_like_pattern(q)
         query = query.where(Tenant.name.ilike(f"%{escaped}%", escape="\\"))
         count_query = count_query.where(Tenant.name.ilike(f"%{escaped}%", escape="\\"))
+
+    if plan:
+        query = query.where(Tenant.plan == plan)
+        count_query = count_query.where(Tenant.plan == plan)
+
+    if tenant_type:
+        query = query.where(Tenant.tenant_type == tenant_type)
+        count_query = count_query.where(Tenant.tenant_type == tenant_type)
+
+    if status:
+        query = query.where(Tenant.status == status)
+        count_query = count_query.where(Tenant.status == status)
 
     total_result = await db.execute(count_query)
     total = total_result.scalar() or 0
@@ -99,6 +117,85 @@ async def list_tenants_endpoint(
         page=page,
         page_size=page_size,
     )
+
+
+@router.get("/me", response_model=TenantRead, summary="获取当前租户")
+async def get_current_tenant_endpoint(
+    db: AsyncSession = Depends(get_db),
+    tenant_id: uuid.UUID = Depends(get_current_tenant),
+):
+    tenant = await get_tenant(db, tenant_id)
+    if not tenant:
+        raise HTTPException(status_code=404, detail="Tenant not found")
+    return tenant
+
+
+@router.get("/me/categories", response_model=CategoriesResponse, summary="获取当前租户品类列表")
+async def get_current_tenant_categories(
+    db: AsyncSession = Depends(get_db),
+    tenant_id: uuid.UUID = Depends(get_current_tenant),
+):
+    tenant = await get_tenant(db, tenant_id)
+    if not tenant:
+        raise HTTPException(status_code=404, detail="Tenant not found")
+    return CategoriesResponse(categories=tenant.categories or [])
+
+
+@router.patch("/me", response_model=TenantRead, summary="更新当前租户")
+async def update_current_tenant_endpoint(
+    body: TenantUpdateSelf,
+    db: AsyncSession = Depends(get_db),
+    tenant_id: uuid.UUID = Depends(get_current_tenant),
+):
+    tenant = await update_tenant(
+        db,
+        tenant_id,
+        name=body.name,
+        industry=body.industry,
+        notes=body.notes,
+        onboarding_progress=body.onboarding_progress,
+        enabled_features=body.enabled_features,
+        categories=body.categories,
+    )
+    if not tenant:
+        raise HTTPException(status_code=404, detail="Tenant not found")
+    return tenant
+
+
+# ---------------------------------------------------------------------------
+# Onboarding向导
+# ---------------------------------------------------------------------------
+
+
+@router.get("/me/onboarding", summary="获取初始化向导进度")
+async def get_onboarding_progress(
+    db: AsyncSession = Depends(get_db),
+    tenant_id: uuid.UUID = Depends(get_current_tenant),
+):
+    tenant = await get_tenant(db, tenant_id)
+    if not tenant:
+        raise HTTPException(status_code=404, detail="Tenant not found")
+    return get_onboarding_progress_data(tenant)
+
+
+@router.post("/me/onboarding/step/{step}", summary="完成初始化向导某一步")
+async def complete_onboarding_step_endpoint(
+    step: str,
+    db: AsyncSession = Depends(get_db),
+    tenant_id: uuid.UUID = Depends(get_current_tenant),
+):
+    try:
+        tenant = await complete_onboarding_step(db, tenant_id, step)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    if not tenant:
+        raise HTTPException(status_code=404, detail="Tenant not found")
+    return {"step": step, "completed": True}
+
+
+# ---------------------------------------------------------------------------
+# Platform admin: single-tenant CRUD (MUST be after /me routes)
+# ---------------------------------------------------------------------------
 
 
 @router.get("/{tenant_id}", response_model=TenantRead, summary="获取指定租户")
@@ -148,85 +245,3 @@ async def delete_tenant_endpoint(
     deleted = await soft_delete_tenant(db, tenant_id)
     if not deleted:
         raise HTTPException(status_code=404, detail="Tenant not found")
-
-
-# ---------------------------------------------------------------------------
-# Current tenant endpoints (any authenticated tenant user)
-# ---------------------------------------------------------------------------
-
-
-@router.get("/me", response_model=TenantRead, summary="获取当前租户")
-async def get_current_tenant_endpoint(
-    db: AsyncSession = Depends(get_db),
-    tenant_id: uuid.UUID = Depends(get_current_tenant),
-):
-    tenant = await get_tenant(db, tenant_id)
-    if not tenant:
-        raise HTTPException(status_code=404, detail="Tenant not found")
-    return tenant
-
-
-@router.get("/me/categories", response_model=CategoriesResponse, summary="获取当前租户品类列表")
-async def get_current_tenant_categories(
-    db: AsyncSession = Depends(get_db),
-    tenant_id: uuid.UUID = Depends(get_current_tenant),
-):
-    tenant = await get_tenant(db, tenant_id)
-    if not tenant:
-        raise HTTPException(status_code=404, detail="Tenant not found")
-    return CategoriesResponse(categories=tenant.categories or [])
-
-
-@router.patch("/me", response_model=TenantRead, summary="更新当前租户")
-async def update_current_tenant_endpoint(
-    body: TenantUpdate,
-    db: AsyncSession = Depends(get_db),
-    tenant_id: uuid.UUID = Depends(get_current_tenant),
-):
-    tenant = await update_tenant(
-        db,
-        tenant_id,
-        name=body.name,
-        industry=body.industry,
-        notes=body.notes,
-        quota=body.quota,
-        compliance_settings=body.compliance_settings,
-        plan_expires_at=body.plan_expires_at,
-        onboarding_progress=body.onboarding_progress,
-        enabled_features=body.enabled_features,
-        tenant_type=body.tenant_type,
-        categories=body.categories,
-    )
-    if not tenant:
-        raise HTTPException(status_code=404, detail="Tenant not found")
-    return tenant
-
-
-# ---------------------------------------------------------------------------
-# Onboarding向导
-# ---------------------------------------------------------------------------
-
-@router.get("/me/onboarding", summary="获取初始化向导进度")
-async def get_onboarding_progress(
-    db: AsyncSession = Depends(get_db),
-    tenant_id: uuid.UUID = Depends(get_current_tenant),
-):
-    tenant = await get_tenant(db, tenant_id)
-    if not tenant:
-        raise HTTPException(status_code=404, detail="Tenant not found")
-    return get_onboarding_progress_data(tenant)
-
-
-@router.post("/me/onboarding/step/{step}", summary="完成初始化向导某一步")
-async def complete_onboarding_step_endpoint(
-    step: str,
-    db: AsyncSession = Depends(get_db),
-    tenant_id: uuid.UUID = Depends(get_current_tenant),
-):
-    try:
-        tenant = await complete_onboarding_step(db, tenant_id, step)
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    if not tenant:
-        raise HTTPException(status_code=404, detail="Tenant not found")
-    return {"step": step, "completed": True}

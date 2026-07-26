@@ -4,10 +4,11 @@ import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import HTMLResponse
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, ValidationError, field_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
+from app.utils.auth_rbac import require_role
 from app.core.dependencies import get_current_account_id, get_current_tenant
 from app.schemas.common import PaginatedResponse
 from app.services.industry_templates import ALL_TEMPLATES
@@ -52,13 +53,33 @@ class IndustryTemplateCloneRequest(BaseModel):
 class PageVersionCreateRequest(BaseModel):
     config_json: dict
 
+    @field_validator("config_json")
+    @classmethod
+    def validate_config_size(cls, v: dict) -> dict:
+        import json
+
+        if len(json.dumps(v, ensure_ascii=False)) > 100_000:
+            raise ValueError("config_json 太大，最大允许 100KB")
+        return v
+
 
 class PageVersionUpdateRequest(BaseModel):
     config_json: dict
 
+    @field_validator("config_json")
+    @classmethod
+    def validate_config_size(cls, v: dict) -> dict:
+        import json
+
+        if len(json.dumps(v, ensure_ascii=False)) > 100_000:
+            raise ValueError("config_json 太大，最大允许 100KB")
+        return v
+
 
 @page_template_router.get("/industry-templates")
-async def list_industry_templates():
+async def list_industry_templates(
+    _role: str = Depends(require_role("admin", "operator")),
+):
     """获取行业模板库"""
     return ALL_TEMPLATES
 
@@ -70,6 +91,7 @@ async def clone_industry_template(
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
     account_id: uuid.UUID = Depends(get_current_account_id),
+    _role: str = Depends(require_role("admin", "operator")),
 ):
     """从行业模板库一键复制创建新页面"""
     if index < 0 or index >= len(ALL_TEMPLATES):
@@ -98,6 +120,7 @@ async def create_page_template_endpoint(
     body: PageTemplateCreateRequest,
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
+    _role: str = Depends(require_role("admin")),
 ):
     return await create_page_template(
         db,
@@ -118,6 +141,7 @@ async def list_page_templates_endpoint(
     page_size: int = Query(20, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
+    _role: str = Depends(require_role("admin", "operator")),
 ):
     items, total = await list_page_templates(
         db,
@@ -136,6 +160,7 @@ async def get_page_template_endpoint(
     template_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
+    _role: str = Depends(require_role("admin", "operator")),
 ):
     data = await get_page_template(db, tenant_id, template_id)
     if not data:
@@ -149,6 +174,7 @@ async def update_page_template_endpoint(
     body: PageTemplateUpdateRequest,
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
+    _role: str = Depends(require_role("admin")),
 ):
     data = await update_page_template(
         db,
@@ -167,6 +193,7 @@ async def delete_page_template_endpoint(
     template_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
+    _role: str = Depends(require_role("admin")),
 ):
     deleted = await delete_page_template(db, tenant_id, template_id)
     if not deleted:
@@ -181,6 +208,7 @@ async def preview_page_template_endpoint(
     version_id: uuid.UUID | None = Query(None, description="指定版本 ID 用于草稿预览"),
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
+    _role: str = Depends(require_role("admin", "operator")),
 ):
     context = {}
     if mock_brand:
@@ -205,6 +233,7 @@ async def create_page_version_endpoint(
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
     account_id: uuid.UUID = Depends(get_current_account_id),
+    _role: str = Depends(require_role("admin")),
 ):
     try:
         return await create_page_version(
@@ -223,6 +252,7 @@ async def list_page_versions_endpoint(
     template_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
+    _role: str = Depends(require_role("admin", "operator")),
 ):
     return await list_page_versions(db, tenant_id, template_id)
 
@@ -233,6 +263,7 @@ async def update_page_version_endpoint(
     body: PageVersionUpdateRequest,
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
+    _role: str = Depends(require_role("admin")),
 ):
     try:
         data = await update_page_version(db, tenant_id, version_id, body.config_json)
@@ -250,6 +281,7 @@ async def publish_page_version_endpoint(
     version_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
+    _role: str = Depends(require_role("admin")),
 ):
     try:
         data = await publish_page_version(db, tenant_id, version_id)
@@ -268,6 +300,7 @@ async def archive_page_version_endpoint(
     version_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
+    _role: str = Depends(require_role("admin")),
 ):
     try:
         data = await archive_page_version(db, tenant_id, version_id)
@@ -288,6 +321,7 @@ async def rollback_page_version_endpoint(
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
     account_id: uuid.UUID = Depends(get_current_account_id),
+    _role: str = Depends(require_role("admin")),
 ):
     data = await rollback_page_version(
         db,
