@@ -93,6 +93,14 @@ accuracy: high
 | 2026-06-02-org-account-ux-improvements.md | ✅ Completed | 已实现 | 组织账户 UX 改进 |
 | 2026-06-02-scan-stats-ux-improvements.md | ✅ Completed | 已实现 | 扫码统计 UX 改进（layout + loading + SSE tests） |
 
+## agents — 工程 Skill 配置
+
+| 文档 | 状态 | 最后验证 | 准确度 | 备注 |
+|------|------|----------|--------|------|
+| issue-tracker.md | 🟢 active | 2026-07-26 | ⬆ high | Beads issue tracker 操作约定 |
+| triage-labels.md | 🟢 active | 2026-07-26 | ⬆ high | 工程 skill triage 标签映射 |
+| domain.md | 🟢 active | 2026-07-26 | ⬆ high | single-context 领域文档消费规则 |
+
 ## 根级文件
 
 | 文档 | 状态 | 最后验证 | 准确度 | 备注 |

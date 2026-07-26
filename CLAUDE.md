@@ -256,6 +256,20 @@ schemas/   → Pydantic V2 请求/响应模型
 - **Redis 端口**：Docker Redis 映射到 `localhost:6380`（非默认 6379），但容器内部用 `redis:6379`。
 - **Alembic stamp**：如果数据库表已存在但 `alembic_version` 为空，用 `alembic stamp head` 标记版本而非重新迁移。
 
+## Agent skills
+
+### Issue tracker
+
+工程任务使用仓库内的 Beads tracker 管理。参见 `docs/agents/issue-tracker.md`。
+
+### Triage labels
+
+使用五个默认 triage 标签：`needs-triage`、`needs-info`、`ready-for-agent`、`ready-for-human`、`wontfix`。参见 `docs/agents/triage-labels.md`。
+
+### Domain docs
+
+采用 single-context 布局：根目录 `CONTEXT.md` + `docs/adr/`。参见 `docs/agents/domain.md`。
+
 ## 文档治理
 
 - 所有 `docs/` 下的 Markdown 文件头部含治理元数据：`status`（active/stale/archived）、`last_verified`（日期）、`accuracy`（high/medium/low）
