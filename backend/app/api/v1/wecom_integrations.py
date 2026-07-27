@@ -120,6 +120,27 @@ async def get_contact_way_endpoint(
         await db.commit()
     except WeComIntegrationError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    # yimatong-zgb1.12 Decision 19+26：记录 wecom_click 意图事件（QR 展示 = 意图，非确认转化）
+    visitor_id = payload.get("visitor_id") or None
+    public_id = payload.get("public_id")
+    if visitor_id and public_id:
+        from app.models.intent_event import IntentEvent
+
+        intent = IntentEvent(
+            tenant_id=benefit.tenant_id,
+            event_type="wecom_click",
+            public_id=public_id,
+            visitor_id=visitor_id,
+            client_event_id=f"wecom_click:{contact_way.state}",
+            page_version_id=str(benefit.campaign_id) if benefit.campaign_id else None,
+        )
+        db.add(intent)
+        try:
+            await db.commit()
+        except Exception:
+            await db.rollback()
+
     return {"qr_code": contact_way.qr_code, "state": contact_way.state}
 
 
@@ -184,6 +205,8 @@ async def mock_wecom_added_endpoint(
             "UserID": (way.user_ids or ["demo-member"])[0],
             "State": state,
         },
+        # yimatong-zgb1.12：标记为 mock_added（非验签，仅本地演示）
+        verification_source="mock_added",
     )
     await db.commit()
     return {"status": result.get("status", "recorded"), "message": "已确认添加，可返回领取页面继续领取"}

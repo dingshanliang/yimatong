@@ -124,9 +124,13 @@ async def list_brand_campaigns(
         Campaign.tenant_id == tenant_id,
         Campaign.product_id.in_(product_ids),
     )
-    count_stmt = select(func.count()).select_from(Campaign).where(
-        Campaign.tenant_id == tenant_id,
-        Campaign.product_id.in_(product_ids),
+    count_stmt = (
+        select(func.count())
+        .select_from(Campaign)
+        .where(
+            Campaign.tenant_id == tenant_id,
+            Campaign.product_id.in_(product_ids),
+        )
     )
 
     total = (await db.execute(count_stmt)).scalar() or 0
@@ -657,6 +661,7 @@ async def claim_benefit(
     benefit_id: uuid.UUID,
     consumer_id: str,
     idempotency_key: str,
+    public_id: str | None = None,
 ) -> dict:
     """领取权益，带幂等控制和库存校验。
 
@@ -664,7 +669,27 @@ async def claim_benefit(
     - 库存扣减使用原子 SQL（UPDATE ... WHERE stock_used < stock_total RETURNING）
     - 每人限额检查在库存扣减成功后执行，失败时回滚库存
     - 整个流程在单个事务中，flush 失败时数据库自动回滚
+
+    yimatong-zgb1.7 AC3：风险门禁——若 public_id 存在 active 的 medium/high RiskAlert，
+    服务端阻断权益领取（前端绕过无效，因为检查在 service 层）。
     """
+    # yimatong-zgb1.7：风险门禁（在幂等检查之后，权益查询之前）
+    if public_id:
+        from app.models.risk import RiskAlert
+
+        risk_result = await db.execute(
+            select(RiskAlert.risk_level)
+            .where(
+                RiskAlert.tenant_id == tenant_id,
+                RiskAlert.public_id == public_id,
+                RiskAlert.resolved.is_(False),
+                RiskAlert.risk_level.in_(["medium", "high"]),
+            )
+            .limit(1)
+        )
+        if risk_result.scalar_one_or_none():
+            return {"status": "risk_paused", "message": "该码存在风险信号，权益领取暂时暂停"}
+
     # 幂等检查
     existing = await db.execute(
         select(BenefitClaim).where(
@@ -765,7 +790,9 @@ async def claim_benefit(
 
 async def _benefit_claim_count(db: AsyncSession, tenant_id: uuid.UUID, benefit_id: uuid.UUID) -> int:
     result = await db.execute(
-        select(func.count()).select_from(BenefitClaim).where(
+        select(func.count())
+        .select_from(BenefitClaim)
+        .where(
             BenefitClaim.tenant_id == tenant_id,
             BenefitClaim.benefit_id == benefit_id,
         )

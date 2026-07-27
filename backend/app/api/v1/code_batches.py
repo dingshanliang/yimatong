@@ -242,11 +242,24 @@ async def freeze_batch_endpoint(
 @code_batch_router.post("/{batch_id}/void")
 async def void_batch_endpoint(
     batch_id: uuid.UUID,
+    # yimatong-zgb1.8 AC2：作废是受保护的不可逆动作，必须 reason + 二次确认（User Story 28）
+    reason: str = "",
+    confirm: str = "",
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
+    account_id: uuid.UUID = Depends(get_current_account_id),
     _: None = Depends(require_permission("code:manage")),
 ):
-    return await void_batch(db, tenant_id, batch_id)
+    # yimatong-zgb1.8：作废必须提供原因
+    if not reason or not reason.strip():
+        raise HTTPException(status_code=422, detail="作废必须提供原因（reason 参数）")
+    # 二次确认：confirm 必须等于 "void"（防止误操作）
+    if confirm != "void":
+        raise HTTPException(
+            status_code=422,
+            detail="作废是不可逆操作，必须传 confirm=void 进行二次确认",
+        )
+    return await void_batch(db, tenant_id, batch_id, actor_id=str(account_id), reason=reason)
 
 
 @code_batch_router.post("/{batch_id}/mark-printing", summary="标记印刷中")

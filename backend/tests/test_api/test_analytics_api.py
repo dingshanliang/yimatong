@@ -99,7 +99,11 @@ async def test_dashboard(client: AsyncClient):
 async def test_conversion_funnel_counts_consumer_profiles_without_created_at(
     client: AsyncClient, db_session: AsyncSession
 ):
-    """留资统计不依赖 ConsumerProfile.created_at。"""
+    """yimatong-zgb1.14：漏斗返回 7 层结构（有效访问为分母）。
+
+    旧契约：signup_count（留资）。
+    新契约：7 层漏斗（有效访问/参与意图/权益确认/企微确认/订单/退款/净额）。
+    """
     db_session.add(
         ConsumerProfile(
             tenant_id=uuid.UUID(TENANT_ID),
@@ -112,7 +116,16 @@ async def test_conversion_funnel_counts_consumer_profiles_without_created_at(
     resp = await client.get("/api/v1/analytics/conversion-funnel", headers=_auth_headers())
 
     assert resp.status_code == 200
-    assert resp.json()["signup_count"] == 1
+    body = resp.json()
+    # yimatong-zgb1.14：7 层漏斗契约
+    assert len(body["steps"]) == 7
+    step_names = [s["name"] for s in body["steps"]]
+    assert "有效访问" in step_names
+    assert "净成交额" in step_names
+    # 净额字段存在（AC5）
+    assert "net_amount" in body
+    assert "order_amount" in body
+    assert "refund_amount" in body
 
 
 @pytest.mark.asyncio

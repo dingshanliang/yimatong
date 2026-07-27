@@ -19,25 +19,38 @@ async def record_scan_event(
     ip_hash: str | None = None,
     user_agent: str | None = None,
     environment: str | None = None,
+    visitor_id: str | None = None,
+    is_valid_visit: bool = False,
 ) -> ScanEvent:
     """记录扫码事件。优先使用 CodeItem.first_scanned_at 原子更新消除首扫竞态条件；
-    CodeItem 不存在时回退到查询方式。"""
-    # 原子判断首扫：更新 first_scanned_at，若之前为空则为首扫
+    CodeItem 不存在时回退到查询方式。
+
+    yimatong-zgb1.4 跨租户防御：首查 UPDATE 的 WHERE 加 ``tenant_id`` 过滤，
+    防止 control tenant 用错 tenant_id 调用时污染 baseline 的 first_scanned_at
+    （public_id 全局 unique 已兜底，应用层显式过滤是 defense-in-depth）。
+    """
+    # 原子判断首扫：更新 first_scanned_at，若之前为空则为首扫。
+    # tenant_id 维度过滤：即使 public_id 全局唯一，应用层也显式限定本租户的码，
+    # 避免跨租户调用方误写其他租户的首查事实。
     result = await db.execute(
         sa_update(CodeItem)
-        .where(CodeItem.public_id == public_id, CodeItem.first_scanned_at.is_(None))
+        .where(
+            CodeItem.public_id == public_id,
+            CodeItem.tenant_id == tenant_id,
+            CodeItem.first_scanned_at.is_(None),
+        )
         .values(first_scanned_at=utcnow())
     )
 
     if result.rowcount == 1:
         is_first = True
     else:
-        # 检查 CodeItem 是否存在
+        # 检查本租户的 CodeItem 是否存在（tenant 维度一致）
         code_exists = await db.execute(
-            select(CodeItem.id).where(CodeItem.public_id == public_id)
+            select(CodeItem.id).where(CodeItem.public_id == public_id, CodeItem.tenant_id == tenant_id)
         )
         if code_exists.scalar_one_or_none():
-            # CodeItem 存在但 first_scanned_at 已设置
+            # CodeItem 存在但 first_scanned_at 已设置 → 非首查
             is_first = False
         else:
             # CodeItem 不存在（如测试环境直接调用），回退到查询方式
@@ -51,6 +64,9 @@ async def record_scan_event(
         user_agent=user_agent,
         is_first_scan=is_first,
         environment=environment,
+        # yimatong-zgb1.10：有效访问标记 + 匿名访客关联
+        is_valid_visit=is_valid_visit,
+        visitor_id=visitor_id,
     )
     db.add(event)
     await db.flush()
@@ -58,7 +74,15 @@ async def record_scan_event(
 
     await event_bus.emit(
         "scan.created",
-        {"public_id": public_id, "is_first_scan": is_first, "environment": environment},
+        {
+            "public_id": public_id,
+            "is_first_scan": is_first,
+            "environment": environment,
+            # yimatong-zgb1.7：补 ip_hash（risk_auto_handler 跨区检测需要；之前缺这个字段
+            # 导致 cross-region 路径失效）
+            "ip_hash": ip_hash,
+            "tenant_id": str(tenant_id),
+        },
         str(tenant_id),
     )
     return event

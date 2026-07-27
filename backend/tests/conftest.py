@@ -25,11 +25,14 @@ from app.models.channel import AccountChannelScope, Distributor, DiversionClue, 
 from app.models.code import CodeBatch, CodeItem  # noqa: E402, F401
 from app.models.connector import BenefitDelivery, Connector, CouponCode, CouponPool  # noqa: E402, F401
 from app.models.consent import ConsentRecord  # noqa: E402, F401
+from app.models.diversion_evidence import DiversionEvidence  # noqa: E402, F401
+from app.models.diversion_history import DiversionInvestigationHistory  # noqa: E402, F401
 from app.models.export_log import ExportLog  # noqa: E402, F401
 from app.models.gmv import ExternalOrder, GmvAttribution  # noqa: E402, F401
-from app.models.invite_code import TenantInviteCode  # noqa: E402, F401
 from app.models.i18n import Translation  # noqa: E402, F401
 from app.models.integration import SyncRecord  # noqa: E402, F401
+from app.models.intent_event import IntentEvent  # noqa: E402, F401
+from app.models.invite_code import TenantInviteCode  # noqa: E402, F401
 from app.models.member import (  # noqa: E402, F401
     ConsumerProfile,
     PointProduct,
@@ -68,6 +71,7 @@ from app.models.tenant import (  # noqa: E402, F401
     account_roles,
     role_permissions,
 )
+from app.models.visitor import AnonymousVisitor  # noqa: E402, F401
 from app.models.webhook import ApiKey, WebhookDelivery, WebhookEndpoint  # noqa: E402, F401
 from app.models.wecom import WeComContactWay, WeComExternalContact  # noqa: E402, F401
 from app.utils.crypto import EnvKeyProvider, init_crypto  # noqa: E402

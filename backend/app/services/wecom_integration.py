@@ -37,6 +37,7 @@ WECOM_MODE_REQUIRED = "required"
 WECOM_MODES = {WECOM_MODE_NONE, WECOM_MODE_GUIDE, WECOM_MODE_REQUIRED}
 
 WECOM_EVENT_ADD = "add_external_contact"
+WECOM_EVENT_ADD_HALF = "add_half_external_contact"
 WECOM_EVENT_DELETE = "del_external_contact"
 WECOM_EVENT_DELETE_FOLLOW = "del_follow_user"
 
@@ -292,6 +293,11 @@ async def has_confirmed_wecom_contact(
     benefit_id: uuid.UUID,
     scan_token: str,
 ) -> bool:
+    """yimatong-zgb1.12 Decision 26：只有完整 add_external_contact 才算确认。
+
+    排除 welcome_code_pending（half-add，待客户确认）的行。
+    mock_added 行在 demo 模式下仍可确认（verification_source 不强制过滤，由部署环境控制）。
+    """
     token_hash = scan_token_hash(scan_token)
     result = await db.execute(
         select(WeComExternalContact.id).where(
@@ -299,6 +305,8 @@ async def has_confirmed_wecom_contact(
             WeComExternalContact.benefit_id == benefit_id,
             WeComExternalContact.scan_token_hash == token_hash,
             WeComExternalContact.status == WeComExternalContactStatus.ACTIVE,
+            # yimatong-zgb1.12：排除 half-add（welcome_code_pending）
+            WeComExternalContact.welcome_code_pending.is_(False),
         )
     )
     return result.scalar_one_or_none() is not None
@@ -309,7 +317,15 @@ async def process_wecom_callback_event(
     *,
     connector_id: uuid.UUID,
     event: dict,
+    verification_source: str = "confirmed_callback",
 ) -> dict:
+    """处理企微回调事件。
+
+    yimatong-zgb1.12 Decision 26：
+    - verification_source='confirmed_callback'（默认，验签回调）或 'mock_added'（本地演示，非确认）
+    - add_half_external_contact 不计为 ACTIVE（welcome_code_pending=True，待客户确认）
+    - 事件指纹幂等（change_type + CreateTime + external_userid 的 sha256）
+    """
     connector_result = await db.execute(select(Connector).where(Connector.id == connector_id))
     connector = connector_result.scalar_one_or_none()
     if not connector or connector.connector_type != WeComConnectorType.CUSTOMER_CONTACT:
@@ -332,11 +348,33 @@ async def process_wecom_callback_event(
         )
         contact_way = way_result.scalar_one_or_none()
 
-    status = (
-        WeComExternalContactStatus.DELETED
-        if change_type in {WECOM_EVENT_DELETE, WECOM_EVENT_DELETE_FOLLOW}
-        else WeComExternalContactStatus.ACTIVE
-    )
+    # yimatong-zgb1.12 Decision 26：add_half_external_contact 不计为 ACTIVE
+    is_half_add = change_type == WECOM_EVENT_ADD_HALF
+    is_delete = change_type in {WECOM_EVENT_DELETE, WECOM_EVENT_DELETE_FOLLOW}
+    if is_delete:
+        status = WeComExternalContactStatus.DELETED
+    elif is_half_add:
+        # half-add：客户尚未确认，不计为 ACTIVE（welcome_code_pending=True）
+        status = WeComExternalContactStatus.ACTIVE  # 保留行但标记 pending
+    else:
+        status = WeComExternalContactStatus.ACTIVE
+
+    # yimatong-zgb1.12：事件指纹幂等（change_type + CreateTime + external_userid）
+    create_time = str(event.get("CreateTime") or event.get("create_time") or "")
+    fingerprint_input = f"{change_type}|{create_time}|{external_userid}|{state or ''}"
+    event_fingerprint = hashlib.sha256(fingerprint_input.encode()).hexdigest()
+
+    # 幂等检查：同指纹的事件已处理过则跳过
+    if create_time:
+        dup_check = await db.execute(
+            select(WeComExternalContact.id).where(
+                WeComExternalContact.tenant_id == connector.tenant_id,
+                WeComExternalContact.event_fingerprint == event_fingerprint,
+            )
+        )
+        if dup_check.scalar_one_or_none():
+            return {"status": "duplicate", "reason": "event_fingerprint_exists"}
+
     now = datetime.now(UTC)
     existing_result = await db.execute(
         select(WeComExternalContact).where(
@@ -365,11 +403,17 @@ async def process_wecom_callback_event(
     contact.unionid = event.get("UnionID") or event.get("unionid")
     contact.status = status
     contact.raw_event = event
-    if status == WeComExternalContactStatus.ACTIVE:
+    # yimatong-zgb1.12：记录验签来源 + 事件类型 + 指纹 + 待验证标记
+    contact.verification_source = verification_source
+    contact.change_type = change_type
+    contact.event_fingerprint = event_fingerprint
+    contact.welcome_code_pending = is_half_add
+    if is_delete:
+        contact.deleted_at = now
+    elif not is_half_add:
+        # 只有完整 add 才记 added_at（half-add 不算确认添加）
         contact.added_at = now
         contact.deleted_at = None
-    else:
-        contact.deleted_at = now
 
     connector.config = {**connector.config, "last_event_at": now.isoformat()}
     try:

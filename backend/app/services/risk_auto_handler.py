@@ -143,16 +143,20 @@ async def _check_and_record_diversion(
     db: AsyncSession,
     tenant_id: uuid.UUID,
     public_id: str,
-    ip: str | None,
+    ip_or_hash: str | None,
 ) -> dict | None:
-    """执行跨区检测并记录线索。返回跨区信息或 None。"""
-    if not ip:
+    """执行跨区检测并记录线索。返回跨区信息或 None。
+
+    yimatong-zgb1.7：参数改为 ip_or_hash（兼容 raw ip 与 ip_hash）。
+    scan.created 事件携带 ip_hash（脱敏），check_diversion 用它做位置推断的 fallback。
+    """
+    if not ip_or_hash:
         return None
 
     from app.services.channel import check_diversion
 
     try:
-        clue = await check_diversion(db, tenant_id, public_id, ip)
+        clue = await check_diversion(db, tenant_id, public_id, ip_or_hash)
         if clue:
             return {
                 "detected_city": clue.detected_city,
@@ -203,9 +207,9 @@ async def _handle_scan_created(event_type: str, data: dict, tenant_id: str) -> N
             context["public_id"] = public_id
             context["code_item_id"] = str(code_item.id) if code_item else None
 
-            # 跨区检测
-            ip = data.get("ip")
-            diversion_info = await _check_and_record_diversion(db, tenant_uuid, public_id, ip)
+            # 跨区检测（yimatong-zgb1.7：用 ip_hash 替代 raw ip；scan.created 现在携带 ip_hash）
+            ip_hash = data.get("ip_hash")
+            diversion_info = await _check_and_record_diversion(db, tenant_uuid, public_id, ip_hash)
             if diversion_info:
                 context["cross_region_detected"] = True
                 context["detected_region"] = diversion_info["detected_city"]

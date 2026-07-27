@@ -29,9 +29,7 @@ def _extract_bearer_token(request: Request) -> str:
     return auth_header[7:]
 
 
-async def _resolve_scan_context(
-    request: Request, db: AsyncSession
-) -> tuple[uuid.UUID, uuid.UUID | None]:
+async def _resolve_scan_context(request: Request, db: AsyncSession) -> tuple[uuid.UUID, uuid.UUID | None]:
     """Resolve tenant_id and optional bound consumer_id from scan_token."""
     token = _extract_bearer_token(request)
     payload = verify_scan_token(token)
@@ -56,9 +54,7 @@ async def _resolve_scan_context(
     return tenant_uuid, bound_consumer_id
 
 
-def _verify_consumer_ownership(
-    bound_consumer_id: uuid.UUID | None, requested_consumer_id: uuid.UUID
-) -> None:
+def _verify_consumer_ownership(bound_consumer_id: uuid.UUID | None, requested_consumer_id: uuid.UUID) -> None:
     """If scan_token has bound consumer_id, verify request matches."""
     if bound_consumer_id and bound_consumer_id != requested_consumer_id:
         raise HTTPException(status_code=403, detail="consumer_id mismatch with token")
@@ -70,7 +66,11 @@ async def lead_capture(
     body: LeadCaptureRequest,
     db: AsyncSession = Depends(get_db_for_consumer),
 ):
-    """消费者留资（姓名+手机号），需要 scan_token 鉴权"""
+    """消费者留资（姓名+手机号），需要 scan_token 鉴权。
+
+    yimatong-zgb1.5 AC3：采集手机号（PII）前必须存在 granted 的 privacy consent；
+    撤回后停止采集。非 PII 字段（region/intention）不强制 consent。
+    """
     auth_header = request.headers.get("Authorization", "")
     if not auth_header.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="unauthorized")
@@ -82,21 +82,52 @@ async def lead_capture(
     if payload is None:
         raise HTTPException(status_code=401, detail="invalid_token")
 
-    # 加密存储手机号
+    # yimatong-zgb1.5：采集手机号前检查 consent
     encrypted_phone = None
     phone_hash = None
+    profile = None
     if body.phone:
-        encrypted_phone = encrypt_phone(body.phone)
-        phone_hash = hash_phone(body.phone)
-
-    # 存储到 consumer_profile（通过 member 服务）
-    if phone_hash:
-        # scan_token 不含 tenant_id，通过 public_id 反查码数据获取
+        # 先反查 tenant_id（consent 检查 + 存储都需要）
         code_data = await resolve_public_code(db, body.public_id)
         if not code_data:
             raise HTTPException(status_code=404, detail="code not found")
         tenant_id = uuid.UUID(code_data["tenant_id"])
 
+        # consent gating：privacy 类型必须 granted 且未撤回
+        from app.models.consent import ConsentType
+        from app.services.consent import has_active_consent
+
+        consent_ok = await has_active_consent(
+            db,
+            tenant_id=tenant_id,
+            consent_type=ConsentType.privacy,
+            public_id=body.public_id,
+        )
+        if not consent_ok:
+            # 区分"从未同意"和"已撤回"
+            from sqlalchemy import select as sa_select
+
+            from app.models.consent import ConsentRecord, ConsentStatus
+
+            any_consent = (
+                await db.execute(
+                    sa_select(ConsentRecord.status)
+                    .where(
+                        ConsentRecord.tenant_id == tenant_id,
+                        ConsentRecord.consent_type == ConsentType.privacy,
+                        ConsentRecord.public_id == body.public_id,
+                    )
+                    .limit(1)
+                )
+            ).scalar_one_or_none()
+            if any_consent == ConsentStatus.withdrawn:
+                raise HTTPException(status_code=403, detail="consent_withdrawn")
+            raise HTTPException(status_code=403, detail="consent_required")
+
+        encrypted_phone = encrypt_phone(body.phone)
+        phone_hash = hash_phone(body.phone)
+
+        # 存储到 consumer_profile（通过 member 服务）
         extra = {}
         if body.region:
             extra["region"] = body.region

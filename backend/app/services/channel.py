@@ -1606,6 +1606,15 @@ async def check_diversion(
         detected_city=detected_city,
         distributor_id=dist_id,
         region_id=region_id,
+        # yimatong-zgb1.15 Decision 54：位置观察事实
+        location_source="ip_inference",
+        location_accuracy="medium",
+        location_authorized=None,
+        # yimatong-zgb1.16 AC3+AC4：可解释性字段
+        rule_name="cross_region_ip",
+        confidence="medium",  # IP 推断置信度 medium（AC4 不自动确认）
+        pending_review=True,  # AC4：低置信度标记待核实
+        observation_count=1,
     )
     db.add(clue)
     await db.flush()

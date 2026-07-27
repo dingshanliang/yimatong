@@ -123,11 +123,20 @@ class TestResolverJsonResponse:
         assert batch.get("expiry_date") is not None
 
     @pytest.mark.anyio
-    async def test_first_scan_count_is_zero(self, client, traceability_setup):
-        """首次扫码时 scan_count 应为 0（不含本次）"""
+    async def test_first_scan_count(self, client, traceability_setup):
+        """yimatong-zgb1.4：scan_count 改为 post-insert 语义（含本次），
+        首次查验 = 1（旧 0 语义已废弃）。``verification_count`` 是新契约字段，
+        与 scan_count 同值（scan_count 兼容别名）。
+        """
         resp = await client.get(
             f"/c/{traceability_setup}", headers={"Accept": "application/json"},
         )
         data = resp.json()
         assert data["scan_info"]["is_first_scan"] is True
-        assert data["scan_info"]["scan_count"] == 0, "首次扫码前 scan_count 应为 0"
+        # post-insert 语义：含本次，首次 = 1
+        assert data["scan_info"]["scan_count"] == 1, "首次查验 scan_count 应为 1（含本次）"
+        # 新契约字段，与 scan_count 同值
+        assert data["scan_info"]["verification_count"] == 1
+        # 新增首查时间字段，读自 code_items.first_scanned_at
+        assert data["scan_info"]["first_scan_time"] is not None
+        assert data["scan_info"]["verification_time"] is not None

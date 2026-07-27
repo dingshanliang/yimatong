@@ -624,8 +624,12 @@ class TestCodeStateTransitions:
         assert resp_html.status_code == 410, f"已作废码 HTML 模式应返回 410，实际 {resp_html.status_code}"
 
     @pytest.mark.anyio
-    async def test_frozen_code_returns_403(self, client: AsyncClient, full_setup, db_session: AsyncSession):
-        """冻结码应返回 403"""
+    async def test_frozen_code_keeps_traceability(self, client: AsyncClient, full_setup, db_session: AsyncSession):
+        """yimatong-zgb1.6 AC3：冻结码保留溯源（200），不返回 403。
+
+        旧契约：frozen → 403 错误页。
+        新契约：frozen → 200 + lifecycle=frozen + 完整溯源资料 + 权益暂停（无 scan_token）。
+        """
         public_id = full_setup["public_ids"][3]
 
         # 冻结码
@@ -637,7 +641,14 @@ class TestCodeStateTransitions:
         await db_session.commit()
 
         resp = await client.get(f"/c/{public_id}", headers={"Accept": "application/json"})
-        assert resp.status_code == 403, f"冻结码应返回 403，实际 {resp.status_code}"
+        # yimatong-zgb1.6：frozen 保留溯源，返回 200（不是 403）
+        assert resp.status_code == 200, f"冻结码应 200 保留溯源，实际 {resp.status_code}"
+        body = resp.json()
+        assert body["code_data"]["lifecycle"] == "frozen"
+        # AC3：溯源资料可见
+        assert "product" in body["code_data"]
+        # AC3：权益暂停（无 scan_token）
+        assert not body.get("scan_token")
 
     @pytest.mark.anyio
     async def test_not_activated_code_hint(self, client: AsyncClient, full_setup):

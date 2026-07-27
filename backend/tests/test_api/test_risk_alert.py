@@ -209,11 +209,16 @@ class TestFreezeCode:
         assert data["status"] == "frozen"
 
     @pytest.mark.anyio
-    async def test_frozen_code_shows_warning_page(
+    async def test_frozen_code_keeps_traceability(
         self,
         client: AsyncClient,
         setup_tenant,
     ):
+        """yimatong-zgb1.6 AC3：冻结码保留溯源（200），不返回 403。
+
+        旧契约：frozen → 403 错误页。
+        新契约：frozen → 200 + lifecycle=frozen + 溯源资料 + 权益暂停。
+        """
         tid, headers, product_id, sku_id = setup_tenant
         items = await _create_and_activate_batch(client, headers, product_id, sku_id, "FREEZE-002")
         item_id = items[0]["id"]
@@ -222,10 +227,14 @@ class TestFreezeCode:
         # 冻结
         await client.post(f"/api/v1/risk-alerts/code-items/{item_id}/freeze", headers=headers)
 
-        # 访问 frozen 码
-        resp = await client.get(f"/c/{public_id}")
-        assert resp.status_code == 403
-        assert "冻结" in resp.text
+        # 访问 frozen 码（JSON 模式验证契约）
+        resp = await client.get(f"/c/{public_id}", headers={"Accept": "application/json"})
+        # yimatong-zgb1.6：frozen 保留溯源，返回 200（不是 403）
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["code_data"]["lifecycle"] == "frozen"
+        # AC3：不颁发 scan_token（权益暂停）
+        assert not body.get("scan_token")
 
     @pytest.mark.anyio
     async def test_unfreeze_code(

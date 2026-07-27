@@ -23,9 +23,12 @@ from app.models.channel import AccountChannelScope, Distributor, Region, Store, 
 from app.models.code import CodeBatch, CodeItem  # noqa: F401
 from app.models.consent import ConsentRecord  # noqa: F401
 from app.models.connector import Connector, CouponPool, CouponCode, BenefitDelivery  # noqa: F401
+from app.models.diversion_evidence import DiversionEvidence  # noqa: F401
+from app.models.diversion_history import DiversionInvestigationHistory  # noqa: F401
 from app.models.ai_generation import AiGeneration  # noqa: F401
 from app.models.export_log import ExportLog  # noqa: F401
 from app.models.gmv import ExternalOrder, GmvAttribution  # noqa: F401
+from app.models.intent_event import IntentEvent  # noqa: F401
 from app.models.private_domain import PrivateDomainConfig  # noqa: F401
 from app.models.i18n import Translation  # noqa: F401
 from app.models.integration import SyncRecord  # noqa: F401
@@ -45,6 +48,7 @@ from app.models.scan import ScanEvent  # noqa: F401
 from app.models.sync_mapping import SyncMapping  # noqa: F401
 from app.models.tenant import Account, Organization, Permission, Role, Tenant, account_roles, role_permissions  # noqa: F401
 from app.models.platform_config import PlatformConfig  # noqa: F401
+from app.models.visitor import AnonymousVisitor  # noqa: F401
 from app.models.webhook import ApiKey, WebhookDelivery, WebhookEndpoint  # noqa: F401
 from app.models.wecom import WeComContactWay, WeComExternalContact  # noqa: F401
 

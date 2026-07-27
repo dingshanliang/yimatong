@@ -134,16 +134,25 @@ async def claim_benefit_h5(
     from app.services.campaign import claim_benefit
 
     consumer_id = str(payload.get("consumer_id") or idempotency_key)
+    # yimatong-zgb1.7：透传 public_id 用于风险门禁（scan_token payload 已校验 public_id）
+    claim_public_id = payload.get("public_id") if isinstance(payload.get("public_id"), str) else None
     result = await claim_benefit(
         db,
         benefit.tenant_id,
         benefit_id,
         consumer_id,
         idempotency_key,
+        public_id=claim_public_id,
     )
     if result["status"] in {"idempotent", "success"}:
         await db.commit()
         return {"status": "claimed", "benefit_id": str(benefit_id)}
+    if result["status"] == "risk_paused":
+        # yimatong-zgb1.7 AC3：风险状态下服务端阻断权益领取
+        raise HTTPException(
+            status_code=403,
+            detail={"code": "risk_paused", "message": result.get("message", "该码存在风险信号，权益领取暂时暂停")},
+        )
     if result["status"] == "inactive":
         raise HTTPException(status_code=409, detail="权益已停用")
     if result["status"] == "campaign_inactive":

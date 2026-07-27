@@ -7,7 +7,6 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.campaign import BenefitClaim
-from app.models.member import ConsumerProfile
 from app.models.product import SKU, Product, ProductionBatch  # noqa: F401 - register CodeBatch relationships
 from app.models.scan import ScanEvent
 from app.models.tenant import Tenant
@@ -36,20 +35,45 @@ async def get_conversion_funnel(
     tenant_id: uuid.UUID,
     days_back: int = 30,
 ) -> dict:
-    """获取转化漏斗数据：扫码→领券→留资→加私域→GMV"""
+    """yimatong-zgb1.14 AC1：7 层转化漏斗（有效访问/参与意图/权益确认/企微确认/订单/退款/净额）。
+
+    - 有效访问（valid_visits）：scan_events.is_valid_visit=true（1.10 引入，排除 robot/失败解析）
+    - 参与意图（intent）：intent_events 计数（1.10 引入，page_view/click）
+    - 权益确认（claim）：benefit_claims.status=success（确认转化，1.11 固化）
+    - 企微确认（wecom_confirmed）：wecom_external_contacts.status=active + welcome_code_pending=false（1.12 固化）
+    - 订单（order_amount）：external_orders.amount 求和（1.13 修复，引用 amount 而非 order_amount）
+    - 退款（refund_amount）：external_orders.refund_amount 求和（1.13 引入）
+    - 净额（net_amount）：order_amount - refund_amount（Decision 30）
+    """
     today = date.today()
     start_dt = datetime(today.year, today.month, today.day, tzinfo=UTC) - timedelta(days=days_back)
 
-    # 1. 扫码量
-    scan_result = await db.execute(
+    # 1. 有效访问（is_valid_visit=true，排除 robot/失败）
+    valid_visit_result = await db.execute(
         select(func.count()).where(
             ScanEvent.tenant_id == tenant_id,
             ScanEvent.scan_time >= start_dt,
+            ScanEvent.is_valid_visit.is_(True),
         )
     )
-    scan_count = scan_result.scalar() or 0
+    valid_visit_count = valid_visit_result.scalar() or 0
 
-    # 2. 领券量
+    # 2. 参与意图（intent_events）
+    intent_count = 0
+    try:
+        from app.models.intent_event import IntentEvent
+
+        intent_result = await db.execute(
+            select(func.count()).where(
+                IntentEvent.tenant_id == tenant_id,
+                IntentEvent.occurred_at >= start_dt,
+            )
+        )
+        intent_count = intent_result.scalar() or 0
+    except Exception:
+        pass
+
+    # 3. 权益确认（BenefitClaim.status=success）
     claim_result = await db.execute(
         select(func.count()).where(
             BenefitClaim.tenant_id == tenant_id,
@@ -59,66 +83,74 @@ async def get_conversion_funnel(
     )
     claim_count = claim_result.scalar() or 0
 
-    # 3. 留资量（有 phone_hash 的消费者）
-    signup_result = await db.execute(
-        select(func.count()).where(
-            ConsumerProfile.tenant_id == tenant_id,
-            ConsumerProfile.phone_hash.isnot(None),
-        )
-    )
-    signup_count = signup_result.scalar() or 0
-
-    # 4. 加私域量（微信扫码去重用户）
-    private_domain_result = await db.execute(
-        select(func.count(ScanEvent.public_id.distinct())).where(
-            ScanEvent.tenant_id == tenant_id,
-            ScanEvent.scan_time >= start_dt,
-            ScanEvent.environment == "wechat",
-        )
-    )
-    private_domain_count = private_domain_result.scalar() or 0
-
-    # 5. GMV（从 gmv 模型获取归因订单金额）
-    gmv_amount = 0.0
+    # 4. 企微确认（WeComExternalContact active + 非 pending）
+    wecom_count = 0
     try:
-        from app.models.gmv import ExternalOrder
+        from app.models.wecom import WeComExternalContact, WeComExternalContactStatus
 
-        gmv_result = await db.execute(
-            select(func.coalesce(func.sum(ExternalOrder.order_amount), 0)).where(
-                ExternalOrder.tenant_id == tenant_id,
-                ExternalOrder.order_time >= start_dt,
+        wecom_result = await db.execute(
+            select(func.count()).where(
+                WeComExternalContact.tenant_id == tenant_id,
+                WeComExternalContact.added_at >= start_dt,
+                WeComExternalContact.status == WeComExternalContactStatus.ACTIVE,
+                WeComExternalContact.welcome_code_pending.is_(False),
             )
         )
-        gmv_amount = float(gmv_result.scalar() or 0)
+        wecom_count = wecom_result.scalar() or 0
     except Exception:
         pass
 
-    def safe_rate(count: int, total: int) -> float:
+    # 5/6/7. 订单/退款/净额（external_orders）
+    from app.models.gmv import ExternalOrder
+
+    gmv_result = await db.execute(
+        select(
+            func.coalesce(func.sum(ExternalOrder.amount), 0),
+            func.coalesce(func.sum(ExternalOrder.refund_amount), 0),
+        ).where(
+            ExternalOrder.tenant_id == tenant_id,
+            ExternalOrder.order_time >= start_dt,
+        )
+    )
+    gmv_row = gmv_result.one()
+    order_amount = float(gmv_row[0] or 0)
+    refund_amount = float(gmv_row[1] or 0)
+    net_amount = order_amount - refund_amount
+
+    def safe_rate(count: int | float, total: int) -> float:
         return round(count / total * 100, 1) if total > 0 else 0.0
 
+    # yimatong-zgb1.14 AC1：7 层漏斗（有效访问为分母，Decision 21）
     steps = [
-        {"name": "扫码", "value": scan_count, "rate": 100.0},
-        {"name": "领券", "value": claim_count, "rate": safe_rate(claim_count, scan_count)},
-        {"name": "留资", "value": signup_count, "rate": safe_rate(signup_count, scan_count)},
-        {"name": "加私域", "value": private_domain_count, "rate": safe_rate(private_domain_count, scan_count)},
+        {"name": "有效访问", "value": valid_visit_count, "rate": 100.0},
+        {"name": "参与意图", "value": intent_count, "rate": safe_rate(intent_count, valid_visit_count)},
+        {"name": "权益确认", "value": claim_count, "rate": safe_rate(claim_count, valid_visit_count)},
+        {"name": "企微确认", "value": wecom_count, "rate": safe_rate(wecom_count, valid_visit_count)},
         {
-            "name": "购买(GMV)",
-            "value": int(gmv_amount),
-            "rate": safe_rate(int(gmv_amount), scan_count) if gmv_amount > 0 else 0.0,
+            "name": "订单总额",
+            "value": round(order_amount, 2),
+            "rate": safe_rate(order_amount, valid_visit_count) if order_amount > 0 else 0.0,
         },
+        {"name": "退款总额", "value": round(refund_amount, 2), "rate": 0.0},
+        {"name": "净成交额", "value": round(net_amount, 2), "rate": 0.0},
     ]
 
     return {
         "period_days": days_back,
-        "scan_count": scan_count,
+        # AC1：7 层漏斗
+        "valid_visits": valid_visit_count,
+        "intent_events": intent_count,
+        "confirmed_claims": claim_count,
+        "confirmed_wecom": wecom_count,
+        "order_amount": round(order_amount, 2),
+        "refund_amount": round(refund_amount, 2),
+        "net_amount": round(net_amount, 2),
+        # 兼容旧字段（scan_count 改为 valid_visits 的别名，Decision 21）
+        "scan_count": valid_visit_count,
         "claim_count": claim_count,
-        "claim_rate": safe_rate(claim_count, scan_count),
-        "signup_count": signup_count,
-        "signup_rate": safe_rate(signup_count, scan_count),
-        "private_domain_count": private_domain_count,
-        "private_domain_rate": safe_rate(private_domain_count, scan_count),
-        "gmv_amount": gmv_amount,
-        "gmv_rate": safe_rate(int(gmv_amount), scan_count) if gmv_amount > 0 else 0.0,
+        "claim_rate": safe_rate(claim_count, valid_visit_count),
+        "gmv_amount": round(net_amount, 2),  # net GMV（含退款冲减）
+        "gmv_rate": safe_rate(net_amount, valid_visit_count) if net_amount > 0 else 0.0,
         "steps": steps,
     }
 

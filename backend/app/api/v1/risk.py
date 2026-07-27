@@ -12,6 +12,7 @@ from app.core.dependencies import get_current_tenant
 from app.models.risk import RiskAlert
 from app.schemas.common import PaginatedResponse
 from app.services.risk import freeze_code_item, list_risk_alerts, unfreeze_code_item
+from app.utils.auth_rbac import require_permission
 
 risk_router = APIRouter(prefix="/api/v1/risk-alerts", tags=["risk-alerts"])
 
@@ -77,6 +78,8 @@ async def freeze_code_item_endpoint(
     item_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
+    # yimatong-zgb1.8 AC1：只有具备 code:manage 权限的账号可执行状态操作
+    _: None = Depends(require_permission("code:manage")),
 ):
     from app.services.code_state import InvalidStateTransitionError
 
@@ -92,6 +95,8 @@ async def unfreeze_code_item_endpoint(
     item_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
+    # yimatong-zgb1.8 AC1：解冻同样需要 code:manage 权限
+    _: None = Depends(require_permission("code:manage")),
 ):
     try:
         item = await unfreeze_code_item(db, tenant_id, item_id)

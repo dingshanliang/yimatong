@@ -8,7 +8,7 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
-from app.core.dependencies import get_current_tenant
+from app.core.dependencies import get_current_account_id, get_current_tenant
 from app.schemas.common import PaginatedResponse
 from app.services.gmv import (
     aggregate_daily_stats,
@@ -47,10 +47,15 @@ async def import_orders_endpoint(
     body: OrderImportRequest,
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
+    account_id: uuid.UUID = Depends(get_current_account_id),
 ):
+    """yimatong-zgb1.13：标准订单导入，逐行去重 + 校验 + 审计。
+
+    返回 ``{created, skipped_duplicates, failed, errors}``。
+    """
     orders_data = [o.model_dump() for o in body.orders]
-    count = await import_orders(db, tenant_id, orders_data)
-    return {"imported": count}
+    result = await import_orders(db, tenant_id, orders_data, actor_id=str(account_id))
+    return result
 
 
 @gmv_router.get("/orders", summary="订单列表")

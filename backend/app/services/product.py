@@ -4,6 +4,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.core.exceptions import BadRequestError, ConflictError, NotFoundError
 from app.models.campaign import Campaign
 from app.models.code import CodeBatch
 from app.models.product import (
@@ -18,7 +19,6 @@ from app.models.product import (
     ProductStatus,
     SKUStatus,
 )
-from app.core.exceptions import BadRequestError, ConflictError, NotFoundError
 from app.utils import escape_like_pattern
 
 
@@ -89,8 +89,6 @@ async def update_brand(
             select(Brand).where(Brand.tenant_id == tenant_id, Brand.name == name, Brand.id != brand_id)
         )
         if existing.scalar_one_or_none():
-            
-
             raise ConflictError("Brand name already exists in this tenant")
         brand.name = name
     if logo_url is not None:
@@ -121,7 +119,9 @@ async def get_brand_with_stats(
     product_count = product_result.scalar() or 0
 
     campaign_result = await db.execute(
-        select(func.count()).select_from(Campaign).where(
+        select(func.count())
+        .select_from(Campaign)
+        .where(
             Campaign.tenant_id == tenant_id,
             Campaign.product_id.in_(
                 select(Product.id).where(Product.tenant_id == tenant_id, Product.brand_id == brand_id)
@@ -131,7 +131,9 @@ async def get_brand_with_stats(
     campaign_count = campaign_result.scalar() or 0
 
     code_batch_result = await db.execute(
-        select(func.count()).select_from(CodeBatch).where(
+        select(func.count())
+        .select_from(CodeBatch)
+        .where(
             CodeBatch.tenant_id == tenant_id,
             CodeBatch.product_id.in_(
                 select(Product.id).where(Product.tenant_id == tenant_id, Product.brand_id == brand_id)
@@ -141,7 +143,9 @@ async def get_brand_with_stats(
     code_batch_count = code_batch_result.scalar() or 0
 
     batch_result = await db.execute(
-        select(func.count()).select_from(ProductionBatch).where(
+        select(func.count())
+        .select_from(ProductionBatch)
+        .where(
             ProductionBatch.tenant_id == tenant_id,
             ProductionBatch.product_id.in_(
                 select(Product.id).where(Product.tenant_id == tenant_id, Product.brand_id == brand_id)
@@ -278,6 +282,10 @@ async def update_product(
     await db.flush()
     await db.refresh(product)
     await db.refresh(product, ["brand"])
+    # 失效公共解析缓存：编辑后消费者页立即看到新值（yimatong-zgb1.2 AC1）
+    from app.services.resolver_response import invalidate_product_cache
+
+    await invalidate_product_cache(product.id)
     return product
 
 
@@ -294,10 +302,10 @@ async def create_sku(
 ) -> SKU:
     product_result = await db.execute(select(Product).where(Product.id == product_id, Product.tenant_id == tenant_id))
     product = product_result.scalar_one_or_none()
-    existing = await db.execute(select(SKU).where(SKU.tenant_id == tenant_id, SKU.product_id == product_id, SKU.code == code))
+    existing = await db.execute(
+        select(SKU).where(SKU.tenant_id == tenant_id, SKU.product_id == product_id, SKU.code == code)
+    )
     if existing.scalar_one_or_none():
-        
-
         raise ConflictError("SKU code already exists for this product")
 
     sku = SKU(
@@ -368,8 +376,6 @@ async def update_sku(
             )
         )
         if existing.scalar_one_or_none():
-            
-
             raise ConflictError("SKU code already exists for this product")
         sku.code = code
     if name is not None:
@@ -432,8 +438,6 @@ async def create_production_batch(
         select(ProductionBatch).where(ProductionBatch.tenant_id == tenant_id, ProductionBatch.batch_code == batch_code)
     )
     if existing.scalar_one_or_none():
-        
-
         raise ConflictError("Batch code already exists in this tenant")
 
     batch = ProductionBatch(
@@ -486,8 +490,6 @@ async def update_production_batch(
             )
         )
         if existing.scalar_one_or_none():
-            
-
             raise ConflictError("Batch code already exists in this tenant")
         batch.batch_code = batch_code
     if production_date is not None:
@@ -503,6 +505,11 @@ async def update_production_batch(
 
     await db.flush()
     await db.refresh(batch)
+    # 失效公共解析缓存：生产批次字段被消费者页直接渲染（yimatong-zgb1.2 AC1）。
+    # 注意批次变更影响所有引用该批次的码 → 失效其 product 的缓存条目。
+    from app.services.resolver_response import invalidate_product_cache
+
+    await invalidate_product_cache(batch.product_id)
     return batch
 
 
@@ -569,6 +576,10 @@ async def create_product_asset(
     db.add(asset)
     await db.flush()
     await db.refresh(asset)
+    # 失效公共解析缓存：新增资产影响消费者页 test_reports/certificates（yimatong-zgb1.2）
+    from app.services.resolver_response import invalidate_product_cache
+
+    await invalidate_product_cache(product_id)
     return asset
 
 
@@ -581,9 +592,13 @@ async def list_product_assets(
     page_size: int = 20,
 ) -> tuple[list[ProductAsset], int]:
     stmt = select(ProductAsset).where(ProductAsset.tenant_id == tenant_id, ProductAsset.product_id == product_id)
-    count_stmt = select(func.count()).select_from(ProductAsset).where(
-        ProductAsset.tenant_id == tenant_id,
-        ProductAsset.product_id == product_id,
+    count_stmt = (
+        select(func.count())
+        .select_from(ProductAsset)
+        .where(
+            ProductAsset.tenant_id == tenant_id,
+            ProductAsset.product_id == product_id,
+        )
     )
     if asset_type:
         stmt = stmt.where(ProductAsset.asset_type == asset_type)
@@ -642,6 +657,10 @@ async def update_product_asset(
 
     await db.flush()
     await db.refresh(asset)
+    # 失效公共解析缓存：编辑资产影响消费者页 test_reports/certificates（yimatong-zgb1.2）
+    from app.services.resolver_response import invalidate_product_cache
+
+    await invalidate_product_cache(asset.product_id)
     return asset
 
 
@@ -652,8 +671,13 @@ async def delete_product_asset(db: AsyncSession, tenant_id: uuid.UUID, asset_id:
     asset = result.scalar_one_or_none()
     if not asset:
         return False
+    product_id = asset.product_id
     await db.delete(asset)
     await db.flush()
+    # 失效公共解析缓存：删除资产影响消费者页 test_reports/certificates（yimatong-zgb1.2）
+    from app.services.resolver_response import invalidate_product_cache
+
+    await invalidate_product_cache(product_id)
     return True
 
 
@@ -717,9 +741,7 @@ async def check_brand_has_products(db: AsyncSession, tenant_id: uuid.UUID, brand
     return (result.scalar() or 0) > 0
 
 
-async def delete_brand(
-    db: AsyncSession, tenant_id: uuid.UUID, brand_id: uuid.UUID
-) -> tuple[bool, str | None]:
+async def delete_brand(db: AsyncSession, tenant_id: uuid.UUID, brand_id: uuid.UUID) -> tuple[bool, str | None]:
     """删除品牌。返回 (是否成功, 冲突原因)。"""
     result = await db.execute(select(Brand).where(Brand.id == brand_id, Brand.tenant_id == tenant_id))
     brand = result.scalar_one_or_none()
@@ -735,9 +757,7 @@ async def delete_brand(
     return True, None
 
 
-async def delete_product(
-    db: AsyncSession, tenant_id: uuid.UUID, product_id: uuid.UUID
-) -> tuple[bool, str | None]:
+async def delete_product(db: AsyncSession, tenant_id: uuid.UUID, product_id: uuid.UUID) -> tuple[bool, str | None]:
     """删除产品。返回 (是否成功, 冲突原因)。"""
     result = await db.execute(select(Product).where(Product.id == product_id, Product.tenant_id == tenant_id))
     product = result.scalar_one_or_none()
@@ -751,17 +771,17 @@ async def delete_product(
         return False, "Product has associated SKUs"
 
     batch_count_result = await db.execute(
-        select(func.count()).select_from(ProductionBatch).where(
-            ProductionBatch.tenant_id == tenant_id, ProductionBatch.product_id == product_id
-        )
+        select(func.count())
+        .select_from(ProductionBatch)
+        .where(ProductionBatch.tenant_id == tenant_id, ProductionBatch.product_id == product_id)
     )
     if (batch_count_result.scalar() or 0) > 0:
         return False, "Product has associated production batches"
 
     asset_count_result = await db.execute(
-        select(func.count()).select_from(ProductAsset).where(
-            ProductAsset.tenant_id == tenant_id, ProductAsset.product_id == product_id
-        )
+        select(func.count())
+        .select_from(ProductAsset)
+        .where(ProductAsset.tenant_id == tenant_id, ProductAsset.product_id == product_id)
     )
     if (asset_count_result.scalar() or 0) > 0:
         return False, "Product has associated assets"
@@ -771,9 +791,7 @@ async def delete_product(
     return True, None
 
 
-async def delete_sku(
-    db: AsyncSession, tenant_id: uuid.UUID, sku_id: uuid.UUID
-) -> tuple[bool, str | None]:
+async def delete_sku(db: AsyncSession, tenant_id: uuid.UUID, sku_id: uuid.UUID) -> tuple[bool, str | None]:
     """删除 SKU。返回 (是否成功, 冲突原因)。"""
     result = await db.execute(select(SKU).where(SKU.id == sku_id, SKU.tenant_id == tenant_id))
     sku = result.scalar_one_or_none()
@@ -781,9 +799,9 @@ async def delete_sku(
         return False, None
 
     batch_count_result = await db.execute(
-        select(func.count()).select_from(ProductionBatch).where(
-            ProductionBatch.tenant_id == tenant_id, ProductionBatch.sku_id == sku_id
-        )
+        select(func.count())
+        .select_from(ProductionBatch)
+        .where(ProductionBatch.tenant_id == tenant_id, ProductionBatch.sku_id == sku_id)
     )
     if (batch_count_result.scalar() or 0) > 0:
         return False, "SKU has associated production batches"
@@ -805,9 +823,9 @@ async def delete_production_batch(
         return False, None
 
     code_batch_count_result = await db.execute(
-        select(func.count()).select_from(CodeBatch).where(
-            CodeBatch.tenant_id == tenant_id, CodeBatch.production_batch_id == batch_id
-        )
+        select(func.count())
+        .select_from(CodeBatch)
+        .where(CodeBatch.tenant_id == tenant_id, CodeBatch.production_batch_id == batch_id)
     )
     if (code_batch_count_result.scalar() or 0) > 0:
         return False, "Production batch has associated code batches"
@@ -837,9 +855,13 @@ async def list_brand_production_batches(
         .options(selectinload(ProductionBatch.product), selectinload(ProductionBatch.sku))
         .where(ProductionBatch.tenant_id == tenant_id, ProductionBatch.product_id.in_(product_ids))
     )
-    count_stmt = select(func.count()).select_from(ProductionBatch).where(
-        ProductionBatch.tenant_id == tenant_id,
-        ProductionBatch.product_id.in_(product_ids),
+    count_stmt = (
+        select(func.count())
+        .select_from(ProductionBatch)
+        .where(
+            ProductionBatch.tenant_id == tenant_id,
+            ProductionBatch.product_id.in_(product_ids),
+        )
     )
 
     total_result = await db.execute(count_stmt)

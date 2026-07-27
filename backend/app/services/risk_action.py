@@ -53,7 +53,7 @@ async def execute_risk_action(
     await db.flush()
 
     if rule.action == "block":
-        action_detail = await _execute_block(db, tenant_id, public_id, code_item, context)
+        action_detail = await _execute_block(db, tenant_id, public_id, code_item, context, rule)
     elif rule.action == "warn":
         action_detail = await _execute_warn(db, tenant_id, public_id, code_item, rule, context)
 
@@ -89,15 +89,19 @@ async def execute_risk_action(
     # 广播到 SSE 实时告警
     try:
         from app.api.v1.risk_dashboard import _broadcast_alert
-        _broadcast_alert(str(tenant_id), {
-            "type": "risk_alert",
-            "rule_name": rule.name,
-            "rule_type": rule.rule_type,
-            "action": rule.action,
-            "public_id": public_id,
-            "interception_id": str(interception.id),
-            "steps": action_detail.get("steps", []),
-        })
+
+        _broadcast_alert(
+            str(tenant_id),
+            {
+                "type": "risk_alert",
+                "rule_name": rule.name,
+                "rule_type": rule.rule_type,
+                "action": rule.action,
+                "public_id": public_id,
+                "interception_id": str(interception.id),
+                "steps": action_detail.get("steps", []),
+            },
+        )
     except Exception:
         logger.warning("SSE broadcast failed", exc_info=True)
 
@@ -108,6 +112,7 @@ async def _execute_block(
     public_id: str,
     code_item: CodeItem | None,
     context: dict,
+    rule: RiskRule | None = None,
 ) -> dict:
     """block 动作：冻结码项 + 暂停关联活动。"""
     steps: list[dict] = []
@@ -125,6 +130,11 @@ async def _execute_block(
                 public_id=public_id,
                 code_item_id=code_item.id,
                 detail="风控规则自动触发：码已被冻结",
+                # yimatong-zgb1.7 Decision 17：风险证据链
+                risk_level="high",
+                rule_name=rule.name if rule else None,
+                rule_version=str(rule.config.get("version", "v1")) if rule and rule.config else "v1",
+                evidence_quality="strong",
             )
             db.add(alert)
         except Exception as e:
@@ -150,7 +160,7 @@ async def _execute_warn(
     rule: RiskRule,
     context: dict,
 ) -> dict:
-    """warn 动作：创建风险预警。"""
+    """warn 动作：创建风险预警（yimatong-zgb1.7：不冻结码，但 risk_level=medium 阻断权益）。"""
     steps: list[dict] = []
 
     alert = RiskAlert(
@@ -159,12 +169,31 @@ async def _execute_warn(
         public_id=public_id,
         code_item_id=code_item.id if code_item else uuid.uuid4(),
         detail=f"风控规则 [{rule.name}] 自动触发预警",
+        # yimatong-zgb1.7 Decision 16+17：warn 级不冻结码（保留溯源），
+        # 但 risk_level=medium 会被 claim_benefit 门禁拦截（AC3）。
+        risk_level="medium",
+        rule_name=rule.name,
+        rule_version=str(rule.config.get("version", "v1")) if rule.config else "v1",
+        evidence_quality=_evidence_quality_for_rule(rule.rule_type),
     )
     db.add(alert)
     await db.flush()
     steps.append({"action": "create_alert", "status": "success", "alert_id": str(alert.id)})
 
     return {"steps": steps}
+
+
+def _evidence_quality_for_rule(rule_type: str) -> str:
+    """yimatong-zgb1.7：根据规则类型推断证据质量（Decision 17）。
+
+    - ip_frequency / cross_region：基于 IP/位置的统计信号，medium（可能误判）
+    - suspected_copy / multi_location：基于多设备/多地的强信号，strong
+    - 其他：medium（保守）
+    """
+    strong_types = {"suspected_copy", "multi_location", "device_frequency"}
+    if rule_type in strong_types:
+        return "strong"
+    return "medium"
 
 
 async def _pause_related_campaigns(
@@ -179,9 +208,7 @@ async def _pause_related_campaigns(
     # 查找使用同一产品的活动
     from app.models.code import CodeBatch
 
-    batch_result = await db.execute(
-        select(CodeBatch).where(CodeBatch.id == code_item.code_batch_id)
-    )
+    batch_result = await db.execute(select(CodeBatch).where(CodeBatch.id == code_item.code_batch_id))
     batch = batch_result.scalar_one_or_none()
     if not batch:
         return []

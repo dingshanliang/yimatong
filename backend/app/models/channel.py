@@ -91,7 +91,11 @@ class Store(Base):
 
 
 class CodeAllocation(Base):
-    """渠道流向登记：记录已赋码货品流向经销商/区域/门店"""
+    """渠道流向登记：记录已赋码货品流向经销商/区域/门店。
+
+    yimatong-zgb1.15 Decision 53：版本化流向——每次分配/变更生成可追溯版本，
+    不覆盖历史事实。effective_from/effective_to 表达有效期，version 递增。
+    """
 
     __tablename__ = "code_allocations"
 
@@ -119,6 +123,12 @@ class CodeAllocation(Base):
     )
     quantity: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
     allocated_at: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    # yimatong-zgb1.15 Decision 53：版本化字段（有效期 + 版本号）
+    effective_from: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    effective_to: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    version: Mapped[int] = mapped_column(default=1, nullable=False)
+    # 变更原因（审计）
+    change_reason: Mapped[str | None] = mapped_column(String(200), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
@@ -127,6 +137,8 @@ class CodeAllocation(Base):
     __table_args__ = (
         Index("ix_code_alloc_batch_store", "batch_id", "store_id"),
         Index("ix_code_alloc_tenant_batch", "tenant_id", "batch_id"),
+        # yimatong-zgb1.15：按有效期查询当前版本
+        Index("ix_code_alloc_batch_effective", "batch_id", "effective_from", "effective_to"),
     )
 
 
@@ -144,6 +156,30 @@ class DiversionClue(Base):
     distributor_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True, index=True)
     region_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True, index=True)
     ip_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # yimatong-zgb1.15 Decision 54：位置观察事实（来源/精度/授权状态）
+    # location_source：ip_inference / browser_geolocation / manual
+    # location_accuracy：high（浏览器 GPS）/ medium（IP 推断）/ low / unknown
+    # location_authorized：消费者是否授权位置（浏览器定位场景）
+    location_source: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    location_accuracy: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    location_authorized: Mapped[bool | None] = mapped_column(nullable=True)
+    # yimatong-zgb1.16：线索可解释性字段（AC3 + AC4）
+    # rule_name：命中的规则名（如 cross_region_ip / cross_region_browser）
+    # confidence：置信度（high/medium/low）— 低置信度标记 pending_review
+    # pending_review：位置不足/低置信度时标记待核实（AC4 不自动确认窜货）
+    # observation_count：聚合的观察次数（AC2 同码/同批聚合）
+    rule_name: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    confidence: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    pending_review: Mapped[bool] = mapped_column(default=False, nullable=False)
+    observation_count: Mapped[int] = mapped_column(default=1, nullable=False)
+    # yimatong-zgb1.17 AC1：调查协作字段
+    # investigation_status：open / confirmed_diversion / false_positive /
+    #   normal_transfer / pending_evidence
+    # assigned_to：负责人 account_id
+    investigation_status: Mapped[str] = mapped_column(
+        String(30), nullable=False, default="open"
+    )
+    assigned_to: Mapped[uuid.UUID | None] = mapped_column(nullable=True, index=True)
     resolved: Mapped[bool] = mapped_column(default=False, nullable=False)
     resolution_action: Mapped[str | None] = mapped_column(String(50), nullable=True)
     resolution_note: Mapped[str | None] = mapped_column(Text, nullable=True)

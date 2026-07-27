@@ -56,7 +56,14 @@ class WeComContactWay(Base):
 
 
 class WeComExternalContact(Base):
-    """Confirmed customer relationship received from Enterprise WeChat callbacks."""
+    """Confirmed customer relationship received from Enterprise WeChat callbacks.
+
+    yimatong-zgb1.12 Decision 26：只有验签后的 add_external_contact 才计为确认转化。
+    - verification_source：confirmed_callback（验签回调）/ mock_added（本地演示，非确认）
+    - change_type：事件类型（add_external_contact / add_half_external_contact / del_*）
+    - event_fingerprint：事件指纹（change_type + CreateTime + external_userid 的 sha256），用于幂等
+    - welcome_code_pending：add_half_external_contact 时为 True（待客户确认，不计为 ACTIVE）
+    """
 
     __tablename__ = "wecom_external_contacts"
 
@@ -80,6 +87,11 @@ class WeComExternalContact(Base):
     added_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     raw_event: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    # yimatong-zgb1.12：验签来源 + 事件类型 + 指纹 + 待验证标记
+    verification_source: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    change_type: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    event_fingerprint: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    welcome_code_pending: Mapped[bool] = mapped_column(default=False, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
@@ -96,4 +108,6 @@ class WeComExternalContact(Base):
             name="uq_wecom_external_contacts_source",
         ),
         Index("ix_wecom_external_contacts_lookup", "tenant_id", "benefit_id", "scan_token_hash", "status"),
+        # yimatong-zgb1.12：事件指纹幂等（同 change_type + CreateTime 只处理一次）
+        Index("ix_wecom_external_contacts_fingerprint", "tenant_id", "event_fingerprint"),
     )

@@ -1,4 +1,5 @@
 """风险预警与风控规则模型"""
+
 import uuid
 from datetime import datetime
 from enum import StrEnum
@@ -27,6 +28,15 @@ class RiskAlert(Base):
     detail: Mapped[str] = mapped_column(String(500), nullable=False, default="")
     ip_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     resolved: Mapped[bool] = mapped_column(default=False, nullable=False)
+    # yimatong-zgb1.7 Decision 17：风险记录存储命中事实、证据质量、规则版本、风险等级。
+    # risk_level：low/medium/high（决定是否阻断权益领取）
+    # rule_version：命中时的规则版本快照（便于审计追溯）
+    # evidence_quality：strong/medium/weak（证据可信度）
+    # rule_name：命中的规则名（便于运营查看，无需 join risk_rules）
+    risk_level: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    rule_version: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    evidence_quality: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    rule_name: Mapped[str | None] = mapped_column(String(100), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
@@ -35,6 +45,8 @@ class RiskAlert(Base):
     __table_args__ = (
         Index("ix_risk_alerts_tenant_type", "tenant_id", "alert_type"),
         Index("ix_risk_alerts_tenant_resolved", "tenant_id", "resolved"),
+        # yimatong-zgb1.7：按 public_id 查 active risk（claim_benefit 门禁用）
+        Index("ix_risk_alerts_tenant_pid_resolved", "tenant_id", "public_id", "resolved"),
     )
 
 
@@ -114,6 +126,4 @@ class RiskNotification(Base):
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
 
-    __table_args__ = (
-        Index("ix_risk_notif_tenant_read", "tenant_id", "read"),
-    )
+    __table_args__ = (Index("ix_risk_notif_tenant_read", "tenant_id", "read"),)

@@ -17,6 +17,9 @@ consent_router = APIRouter(tags=["consents"])
 class ConsentRequest(BaseModel):
     consent_type: str
     public_id: str | None = None
+    # yimatong-zgb1.5：合规证据链字段（场景 + 版本）
+    scenario: str | None = None
+    policy_version: str | None = None
 
 
 @consent_router.post("/api/v1/public/consents", status_code=201)
@@ -25,9 +28,13 @@ async def create_consent(
     body: ConsentRequest,
     db: AsyncSession = Depends(get_db),
 ):
-    """消费者授予同意（隐私政策、营销等）"""
+    """消费者授予同意（隐私政策、营销等）。
+
+    yimatong-zgb1.5：记录完整合规证据链（场景、版本、时间、IP/UA）。
+    """
     client_ip = get_client_ip(request)
     ip_hash = compute_ip_hash(client_ip)
+    user_agent = request.headers.get("user-agent")
 
     auth_header = request.headers.get("Authorization", "")
     tenant_id = None
@@ -54,12 +61,18 @@ async def create_consent(
         consent_type=body.consent_type,
         public_id=body.public_id,
         ip_hash=ip_hash,
+        scenario=body.scenario,
+        policy_version=body.policy_version,
+        user_agent=user_agent,
     )
     return {
         "id": str(record.id),
         "consent_type": record.consent_type,
         "status": record.status,
+        "scenario": record.scenario,
+        "policy_version": record.policy_version,
         "granted_at": record.granted_at.isoformat(),
+        "withdrawn_at": record.withdrawn_at.isoformat() if record.withdrawn_at else None,
     }
 
 

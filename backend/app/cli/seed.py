@@ -8,8 +8,9 @@ import typer
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
+from app.constants.campaign import BenefitType
 from app.core.config import settings
-from app.models.campaign import Benefit, BenefitType, Campaign, CampaignStatus
+from app.models.campaign import Benefit, Campaign, CampaignStatus
 from app.models.channel import CodeAllocation, Distributor, DiversionClue, Region, Store
 from app.models.code import CodeItem, CodeItemStatus
 from app.models.connector import Connector  # noqa: F401 - register connector tables for Benefit FK sorting

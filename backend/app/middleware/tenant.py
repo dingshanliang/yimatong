@@ -13,6 +13,9 @@ class TenantScopeMiddleware(BaseHTTPMiddleware):
         if request.method == "OPTIONS":
             return await call_next(request)
 
+        # yimatong-zgb1.5：scan_token 自校验的路径前缀（consents grant + withdraw 都在此下）
+        is_public_consent = request.url.path.startswith("/api/v1/public/consents")
+
         # 公开路由跳过认证
         public_paths = {"/health", "/health/detail", "/docs", "/openapi.json", "/redoc"}
         public_auth_paths = {
@@ -22,12 +25,20 @@ class TenantScopeMiddleware(BaseHTTPMiddleware):
             "/api/v1/consumers/me",
             "/api/v1/invite-codes/register",
         }
+        # scan-events / public consents 使用 scan_token 自校验（与 /c/ 同语义），不走 admin JWT。
+        # yimatong-zgb1.4：scan-events 之前未放行导致 H5 telemetry 真实场景必 401。
+        # yimatong-zgb1.5：public/consents 同样用 scan_token 自校验，需放行（否则 grant/withdraw 必 401）。
+        # 注意：scan_event_router 注册时无 prefix，实际路径是 /scan-events（不是 /api/v1/scan-events）。
+        # consents withdraw 路径含 {consent_id} 路径参数，用前缀匹配 is_public_consent。
+        scan_token_paths = {"/scan-events"}
         # SSE 端点使用 query-param 认证，不走 middleware JWT
         query_auth_paths = {"/api/v1/risk-dashboard/alerts/stream"}
         if (
             request.url.path in public_paths
             or request.url.path in public_auth_paths
             or request.url.path in query_auth_paths
+            or request.url.path in scan_token_paths
+            or is_public_consent
             or request.url.path.startswith("/c/")
             or request.url.path.startswith("/api/v1/consumers/points/")
             or request.url.path.startswith("/api/v1/files/public/")

@@ -63,6 +63,12 @@ testpaths = ["tests"]
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
+# 验收测试默认不在普通 pytest 运行中执行：需要运行中的 infra PG (5433)，
+# 会创建/删除专用 acceptance 数据库。显式启用：`uv run pytest -m acceptance`。
+addopts = ["-m", "not acceptance"]
+markers = [
+    "acceptance: real-PostgreSQL product-acceptance tests (yimatong-zgb1.1+; require infra PG, slow)",
+]
 
 [tool.hatch.build.targets.wheel]
 packages = ["app"]

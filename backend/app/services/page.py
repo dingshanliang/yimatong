@@ -253,9 +253,11 @@ async def create_page_version(
 
     # 获取当前最大版本号（加行级锁防止并发重复）
     max_ver_result = await db.execute(
-        select(func.max(PageVersion.version)).where(
+        select(func.max(PageVersion.version))
+        .where(
             PageVersion.page_template_id == template_id,
-        ).with_for_update()
+        )
+        .with_for_update()
     )
     max_ver = max_ver_result.scalar() or 0
 
@@ -302,6 +304,10 @@ async def update_page_version(
     v.config_json = config_json
     await db.flush()
     await db.refresh(v)
+    # 失效公共解析缓存：页面配置变更后消费者页立即看到新 DSL（yimatong-zgb1.2 AC1）
+    from app.services.resolver_response import invalidate_page_config_cache
+
+    await invalidate_page_config_cache(v.page_template_id)
     return _version_to_dict(v)
 
 
@@ -337,6 +343,10 @@ async def publish_page_version(
     v.published_at = datetime.now(UTC)
     await db.flush()
     await db.refresh(v)
+    # 失效公共解析缓存：发布新版本后消费者页立即用新 DSL（yimatong-zgb1.2 AC1）
+    from app.services.resolver_response import invalidate_page_config_cache
+
+    await invalidate_page_config_cache(v.page_template_id)
     return _version_to_dict(v)
 
 

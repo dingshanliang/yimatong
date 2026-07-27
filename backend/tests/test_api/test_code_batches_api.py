@@ -391,7 +391,7 @@ class TestVoidCodeBatchAPI:
         batch_id = resp.json()["id"]
 
         void_resp = await client.post(
-            f"/api/v1/code-batches/{batch_id}/void", headers=headers
+            f"/api/v1/code-batches/{batch_id}/void?reason=test-void&confirm=void", headers=headers
         )
         assert void_resp.status_code == 200
         assert void_resp.json()["voided"] == 5
@@ -415,7 +415,7 @@ class TestVoidCodeBatchAPI:
         await client.post(f"/api/v1/code-batches/{batch_id}/activate", headers=headers)
 
         void_resp = await client.post(
-            f"/api/v1/code-batches/{batch_id}/void", headers=headers
+            f"/api/v1/code-batches/{batch_id}/void?reason=activate-then-void&confirm=void", headers=headers
         )
         assert void_resp.status_code == 200
         assert void_resp.json()["voided"] == 3
@@ -589,7 +589,7 @@ class TestFullCodeLifecycleAPI:
 
         # 5. 作废
         void_resp = await client.post(
-            f"/api/v1/code-batches/{batch_id}/void", headers=headers
+            f"/api/v1/code-batches/{batch_id}/void?reason=full-lifecycle-test&confirm=void", headers=headers
         )
         assert void_resp.status_code == 200
         assert void_resp.json()["voided"] == 10

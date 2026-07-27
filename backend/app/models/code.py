@@ -31,6 +31,41 @@ class CodeItemStatus(StrEnum):
     frozen = "frozen"
 
 
+# ── 权威四状态生命周期契约（yimatong-zgb1.3）─────────────────────────────
+# 这是统一读取层，**不**替换 DB 里的 CodeItemStatus（AC4 兼容期内保留旧值）。
+# 旧值通过 LEGACY_TO_LIFECYCLE 映射到这四个互斥状态（THREE_LINE_PRODUCT_SPEC
+# Decision 10/11）。bound 归一化为 active（binding 是事件，不是生命周期）；
+# expired 归一化为 voided（失效即作废，不再作为独立终端）。
+class CodeLifecycle(StrEnum):
+    unactivated = "unactivated"
+    active = "active"
+    frozen = "frozen"
+    voided = "voided"
+
+
+LEGACY_TO_LIFECYCLE: dict[CodeItemStatus, CodeLifecycle] = {
+    CodeItemStatus.created: CodeLifecycle.unactivated,
+    CodeItemStatus.activated: CodeLifecycle.active,
+    CodeItemStatus.bound: CodeLifecycle.active,
+    CodeItemStatus.frozen: CodeLifecycle.frozen,
+    CodeItemStatus.revoked: CodeLifecycle.voided,
+    CodeItemStatus.expired: CodeLifecycle.voided,
+}
+
+
+def to_lifecycle(status: CodeItemStatus | str) -> CodeLifecycle:
+    """把旧 CodeItemStatus（或其字符串值）映射为权威 CodeLifecycle。
+
+    未知值（理论上不应出现）保守映射为 voided，避免把异常状态当作可消费的 active。
+    """
+    if isinstance(status, str) and not isinstance(status, CodeItemStatus):
+        try:
+            status = CodeItemStatus(status)
+        except ValueError:
+            return CodeLifecycle.voided
+    return LEGACY_TO_LIFECYCLE.get(status, CodeLifecycle.voided)
+
+
 class CodeType(StrEnum):
     single = "single"
     paired = "paired"

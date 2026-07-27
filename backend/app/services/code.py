@@ -7,7 +7,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.exceptions import BadRequestError, NotFoundError
-
 from app.models.code import (
     CodeBatch,
     CodeBatchStatus,
@@ -342,7 +341,9 @@ async def resolve_code_by_public_id(
     }
 
 
-async def activate_batch(db: AsyncSession, tenant_id: uuid.UUID, batch_id: uuid.UUID) -> CodeBatchActivateResponse:
+async def activate_batch(
+    db: AsyncSession, tenant_id: uuid.UUID, batch_id: uuid.UUID, actor_id: str | None = None
+) -> CodeBatchActivateResponse:
     from sqlalchemy import update as sa_update
 
     from app.services.code_state import InvalidStateTransitionError, can_transition
@@ -388,6 +389,8 @@ async def activate_batch(db: AsyncSession, tenant_id: uuid.UUID, batch_id: uuid.
         raise InvalidStateTransitionError("No generated codes can be activated")
     batch.status = CodeBatchStatus.activated
     await db.flush()
+    # 状态变更审计（yimatong-zgb1.3 AC5）
+    await _audit_code_op(db, actor_id, str(tenant_id), "code_activate", f"code_batch:{batch_id}")
     return CodeBatchActivateResponse(activated=r.rowcount)
 
 
@@ -418,8 +421,9 @@ async def _invalidate_batch_cache(
         await resolve_cache.invalidate(f"resolve:{pid}")
 
 
-async def revoke_code_item(db: AsyncSession, tenant_id: uuid.UUID, item_id: uuid.UUID) -> CodeItem:
-
+async def revoke_code_item(
+    db: AsyncSession, tenant_id: uuid.UUID, item_id: uuid.UUID, actor_id: str | None = None
+) -> CodeItem:
     from app.services.code_state import can_transition
 
     result = await db.execute(select(CodeItem).where(CodeItem.id == item_id, CodeItem.tenant_id == tenant_id))
@@ -432,6 +436,8 @@ async def revoke_code_item(db: AsyncSession, tenant_id: uuid.UUID, item_id: uuid
     await db.flush()
     # 清除解析缓存，确保下次扫码立即看到 revoked 状态
     await _invalidate_resolve_cache(item.public_id)
+    # 状态变更审计（yimatong-zgb1.3 AC5）
+    await _audit_code_op(db, actor_id, str(tenant_id), "code_revoke", f"code_item:{item.public_id}")
     await db.refresh(item)
     return item
 
@@ -452,7 +458,9 @@ async def bind_code_item(db: AsyncSession, tenant_id: uuid.UUID, item_id: uuid.U
     return item
 
 
-async def freeze_batch(db: AsyncSession, tenant_id: uuid.UUID, batch_id: uuid.UUID) -> CodeBatchFreezeResponse:
+async def freeze_batch(
+    db: AsyncSession, tenant_id: uuid.UUID, batch_id: uuid.UUID, actor_id: str | None = None
+) -> CodeBatchFreezeResponse:
     from sqlalchemy import update as sa_update
 
     from app.services.code_state import InvalidStateTransitionError, can_transition
@@ -487,27 +495,90 @@ async def freeze_batch(db: AsyncSession, tenant_id: uuid.UUID, batch_id: uuid.UU
     await db.flush()
     # 批量清除被冻结码的解析缓存
     await _invalidate_batch_cache(db, tenant_id, batch_id, CodeItemStatus.frozen)
+    # 状态变更审计（yimatong-zgb1.3 AC5）
+    await _audit_code_op(db, actor_id, str(tenant_id), "code_freeze", f"code_batch:{batch_id}")
     return CodeBatchFreezeResponse(frozen=r.rowcount)
 
 
-async def void_batch(db: AsyncSession, tenant_id: uuid.UUID, batch_id: uuid.UUID) -> CodeBatchVoidResponse:
+async def void_batch(
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    batch_id: uuid.UUID,
+    actor_id: str | None = None,
+    reason: str | None = None,
+) -> CodeBatchVoidResponse:
+    """作废整批码（不可逆，yimatong-zgb1.3 强制生命周期合约）。
+
+    权威四状态规则：任何未作废（voided）的码都可作废（unactivated/active/frozen → voided）；
+    已经作废（revoked/expired）的幂等跳过。voided 是终态，本操作之后该码不能再回到其他状态。
+
+    yimatong-zgb1.8 AC2+AC3：作废是受保护的不可逆动作，必须记录原因。
+    reason 写入审计日志的 resource 详情（User Story 28）。
+    """
     from sqlalchemy import update as sa_update
 
-    now = utcnow()
-    stmt = (
-        sa_update(CodeItem)
-        .where(
-            CodeItem.tenant_id == tenant_id,
-            CodeItem.code_batch_id == batch_id,
-            CodeItem.status != CodeItemStatus.revoked,
-        )
-        .values(status=CodeItemStatus.revoked, revoked_at=now)
+    from app.models.code import CodeLifecycle, to_lifecycle
+    from app.services.code_lifecycle import can_lifecycle_transition
+
+    # 先取该批所有码的当前状态，校验可作废（已作废的幂等跳过；其余必须能转到 voided）
+    result = await db.execute(
+        select(CodeItem.id, CodeItem.status).where(CodeItem.tenant_id == tenant_id, CodeItem.code_batch_id == batch_id)
     )
-    r = await db.execute(stmt)
-    await db.flush()
-    # 批量清除被作废码的解析缓存
-    await _invalidate_batch_cache(db, tenant_id, batch_id, CodeItemStatus.revoked)
-    return CodeBatchVoidResponse(voided=r.rowcount)
+    voidable_ids: list[uuid.UUID] = []
+    for item_id, status in result.all():
+        # 已作废（映射到 voided）幂等跳过
+        if to_lifecycle(status) == CodeLifecycle.voided:
+            continue
+        # 校验可作废（unactivated/active/frozen → voided 均合法）
+        can_lifecycle_transition(status, CodeLifecycle.voided, raise_on_invalid=True)
+        voidable_ids.append(item_id)
+
+    voided_count = 0
+    if voidable_ids:
+        now = utcnow()
+        stmt = (
+            sa_update(CodeItem)
+            .where(
+                CodeItem.tenant_id == tenant_id,
+                CodeItem.id.in_(voidable_ids),
+            )
+            .values(status=CodeItemStatus.revoked, revoked_at=now)
+        )
+        r = await db.execute(stmt)
+        voided_count = r.rowcount or 0
+        await db.flush()
+        # 批量清除被作废码的解析缓存
+        await _invalidate_batch_cache(db, tenant_id, batch_id, CodeItemStatus.revoked)
+    # 状态变更审计（yimatong-zgb1.3 AC5 + 1.8 AC3 reason）— 即使 voided_count=0（幂等）也记录尝试
+    # yimatong-zgb1.8：resource 包含 reason，便于审计追溯
+    resource = f"code_batch:{batch_id}"
+    if reason:
+        resource += f" reason:{reason[:200]}"
+    await _audit_code_op(db, actor_id, str(tenant_id), "code_void", resource)
+    return CodeBatchVoidResponse(voided=voided_count)
+
+
+async def _audit_code_op(
+    db: AsyncSession,
+    actor_id: str | None,
+    target_tenant_id: str,
+    action: str,
+    resource: str,
+) -> None:
+    """写码状态变更审计日志，失败不阻断主流程（与 tenant._audit 一致）。"""
+    try:
+        from app.services.audit import write_audit_log
+
+        await write_audit_log(
+            db,
+            operator_id=actor_id or "system",
+            target_tenant_id=target_tenant_id,
+            action=action,
+            resource=resource,
+        )
+    except Exception:
+        # 审计失败不影响状态变更本身（已 flush）；与 tenant 服务一致兜底
+        pass
 
 
 async def mark_printing(db: AsyncSession, tenant_id: uuid.UUID, batch_id: uuid.UUID) -> dict:
@@ -582,7 +653,6 @@ async def update_code_item(
     item_id: uuid.UUID,
     **kwargs,
 ) -> CodeItem | None:
-    from app.core.exceptions import BadRequestError
 
     result = await db.execute(select(CodeItem).where(CodeItem.id == item_id, CodeItem.tenant_id == tenant_id))
     item = result.scalar_one_or_none()

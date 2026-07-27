@@ -20,24 +20,116 @@ async def import_orders(
     db: AsyncSession,
     tenant_id: uuid.UUID,
     orders: list[dict],
-) -> int:
-    """批量导入外部订单"""
-    count = 0
-    for o in orders:
+    actor_id: str | None = None,
+) -> dict:
+    """批量导入外部订单（yimatong-zgb1.13：逐行去重 + 校验 + 审计）。
+
+    返回 ``{created, skipped_duplicates, failed, errors}``：
+    - created：成功导入的行数
+    - skipped_duplicates：同 (source_system, external_id) 已存在的重复行
+    - failed：校验失败的行数（无效金额/缺业务键）
+    - errors：每条失败的原因列表（按行）
+    """
+    result = {"created": 0, "skipped_duplicates": 0, "failed": 0, "errors": []}
+
+    for idx, o in enumerate(orders):
+        # 校验：金额必须是正数
+        amount = o.get("amount")
+        if amount is None or not isinstance(amount, int | float) or amount <= 0:
+            result["failed"] += 1
+            result["errors"].append({"row": idx, "reason": "invalid_amount", "external_id": o.get("external_id")})
+            continue
+        # 校验：external_id 必填（业务键）
+        external_id = o.get("external_id")
+        if not external_id:
+            result["failed"] += 1
+            result["errors"].append({"row": idx, "reason": "missing_external_id"})
+            continue
+        # 校验：币种（默认 CNY，允许常见 ISO 4217）
+        currency = str(o.get("currency", "CNY")).upper()
+        if len(currency) != 3:
+            result["failed"] += 1
+            result["errors"].append({"row": idx, "reason": "invalid_currency", "external_id": external_id})
+            continue
+
+        source_system = o.get("source_system") or "unknown"
+
+        # 去重：同 (tenant, source_system, external_id) 已存在则跳过
+        existing = await db.execute(
+            select(ExternalOrder.id).where(
+                ExternalOrder.tenant_id == tenant_id,
+                ExternalOrder.source_system == source_system,
+                ExternalOrder.external_id == external_id,
+            )
+        )
+        if existing.scalar_one_or_none():
+            result["skipped_duplicates"] += 1
+            continue
+
         order = ExternalOrder(
             tenant_id=tenant_id,
-            external_id=o["external_id"],
-            amount=o["amount"],
+            external_id=external_id,
+            amount=float(amount),
             phone_hash=hash_phone(o["phone"]) if o.get("phone") else None,
             product_name=o.get("product_name"),
             order_time=_parse_time(o["order_time"]) if o.get("order_time") else None,
             channel=o.get("channel"),
-            source_system=o.get("source_system"),
+            source_system=source_system,
+            currency=currency,
+            status="paid",
+            refund_amount=0.0,
         )
         db.add(order)
-        count += 1
+        result["created"] += 1
+
     await db.flush()
-    return count
+    return result
+
+
+async def refund_order(
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    order_id: uuid.UUID,
+    refund_amount: float,
+    partial: bool = False,
+    actor_id: str | None = None,
+) -> dict:
+    """yimatong-zgb1.13 Decision 30：订单退款，冲减净 GMV，保留原始流水。
+
+    - 全额退款（partial=False）：status=refunded, refund_amount=amount
+    - 部分退款（partial=True）：status=partially_refunded, refund_amount 累加
+    - 保留原始订单行（不删除），审计通过 status + refund_amount + updated_at 体现。
+    """
+    result = await db.execute(
+        select(ExternalOrder).where(
+            ExternalOrder.id == order_id, ExternalOrder.tenant_id == tenant_id
+        )
+    )
+    order = result.scalar_one_or_none()
+    if not order:
+        return {"status": "not_found"}
+
+    if refund_amount <= 0 or refund_amount > order.amount - order.refund_amount + refund_amount:
+        # 退款金额不能超过订单金额（含已退）
+        if refund_amount > order.amount:
+            return {"status": "invalid_refund_amount"}
+
+    if partial:
+        order.refund_amount += refund_amount
+        order.status = "partially_refunded"
+    else:
+        order.refund_amount = order.amount
+        order.status = "refunded"
+
+    # 同步更新已存在的 GmvAttribution（如有）
+    attr_result = await db.execute(
+        select(GmvAttribution).where(GmvAttribution.external_order_id == order_id)
+    )
+    for attr in attr_result.scalars():
+        attr.amount = order.amount - order.refund_amount  # net amount
+
+    await db.flush()
+    return {"status": "ok", "net_amount": order.amount - order.refund_amount}
 
 
 async def list_orders(
@@ -131,6 +223,11 @@ async def batch_auto_attribution(
             scan_time=scan.scan_time,
             attribution_window_hours=window_hours,
             confidence_score=round(confidence, 2),
+            # yimatong-zgb1.14 Decision 33：归因快照（不可漂移）
+            product_id=getattr(code_item, "product_id", None) if code_item else None,
+            code_batch_id=getattr(code_item, "code_batch_id", None) if code_item else None,
+            channel_snapshot=order.channel,
+            original_amount=order.amount,
         )
         db.add(attr)
         order.matched = True

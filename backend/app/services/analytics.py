@@ -205,6 +205,11 @@ async def aggregate_daily_stats(
             func.count().label("total"),
             func.count(ScanEvent.public_id.distinct()).label("uv"),
             func.sum(ScanEvent.is_first_scan.cast(Integer)).label("first"),
+            # yimatong-zgb1.10：有效访问聚合（Decision 21 headline 分母）
+            func.sum(ScanEvent.is_valid_visit.cast(Integer)).label("valid_visits"),
+            func.count(
+                func.nullif(ScanEvent.is_valid_visit, False).label("vv_flag")
+            ).label("placeholder"),  # 占位，实际 valid_uv 用单独查询
         ).where(
             ScanEvent.tenant_id == tenant_id,
             ScanEvent.scan_time >= start,
@@ -215,6 +220,19 @@ async def aggregate_daily_stats(
 
     total = row.total or 0
     first = int(row.first or 0)
+    valid_visits = int(row.valid_visits or 0)
+
+    # yimatong-zgb1.10：有效访问的独立访客数（distinct visitor_id where is_valid_visit=true）
+    valid_uv_result = await db.execute(
+        select(func.count(func.distinct(ScanEvent.visitor_id))).where(
+            ScanEvent.tenant_id == tenant_id,
+            ScanEvent.scan_time >= start,
+            ScanEvent.scan_time < end,
+            ScanEvent.is_valid_visit.is_(True),
+            ScanEvent.visitor_id.isnot(None),
+        )
+    )
+    valid_uv = int(valid_uv_result.scalar() or 0)
 
     # UPSERT
     existing = await db.execute(
@@ -229,6 +247,8 @@ async def aggregate_daily_stats(
         stats.uv = row.uv or 0
         stats.first_scans = first
         stats.rescans = total - first
+        stats.valid_visits = valid_visits
+        stats.valid_uv = valid_uv
     else:
         stats = DailyScanStats(
             tenant_id=tenant_id,
@@ -237,11 +257,19 @@ async def aggregate_daily_stats(
             uv=row.uv or 0,
             first_scans=first,
             rescans=total - first,
+            valid_visits=valid_visits,
+            valid_uv=valid_uv,
         )
         db.add(stats)
 
     await db.flush()
-    return {"date": str(target_date), "total": total, "first_scans": first}
+    return {
+        "date": str(target_date),
+        "total": total,
+        "first_scans": first,
+        "valid_visits": valid_visits,
+        "valid_uv": valid_uv,
+    }
 
 
 async def get_campaign_scan_stats(

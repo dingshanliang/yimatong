@@ -138,6 +138,10 @@ async def freeze_code_item(
     )
     db.add(alert)
     await db.flush()
+    # 状态变更审计（yimatong-zgb1.3 AC5）
+    from app.services.code import _audit_code_op
+
+    await _audit_code_op(db, None, str(tenant_id), "code_freeze", f"code_item:{item.public_id}")
     await db.refresh(item)
     return item
 
@@ -162,6 +166,10 @@ async def unfreeze_code_item(
 
     item.status = CodeItemStatus.activated
     await db.flush()
+    # 状态变更审计（yimatong-zgb1.3 AC5）
+    from app.services.code import _audit_code_op
+
+    await _audit_code_op(db, None, str(tenant_id), "code_unfreeze", f"code_item:{item.public_id}")
     await db.refresh(item)
     return item
 

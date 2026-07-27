@@ -89,7 +89,8 @@ class TestExternalOrderImport:
         )
         assert resp.status_code == 200
         data = resp.json()
-        assert data["imported"] == 2
+        # yimatong-zgb1.13：import_orders 返回逐行结果（created/skipped_duplicates/failed/errors）
+        assert data["created"] == 2
 
     @pytest.mark.anyio
     async def test_list_orders(self, client: AsyncClient, setup_tenant):
