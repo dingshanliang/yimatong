@@ -48,6 +48,8 @@ progress.md
 # Local tool artifacts
 .claude/skills/
 .codex/
+.codegraph/
+.zcode/
 .playwright-mcp/
 skills-lock.json
 login-page.png
