@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { apiClient } from "@/lib/api";
 import { sanitizeHtml } from "@/lib/sanitize";
 
@@ -17,6 +17,37 @@ interface PrivacyPolicyProps {
   publicId?: string;
 }
 
+// yimatong-zgb1.5：政策版本（合规要求"明示版本"）
+const PRIVACY_POLICY_VERSION = "2026-07-27-v1";
+
+/** consentId 持久化 key（按 public_id 隔离，避免跨码混淆）。 */
+function consentStorageKey(publicId?: string) {
+  return `consent_id:${publicId || "anonymous"}`;
+}
+
+/** 从 localStorage 恢复 consentId（刷新后仍可撤回）。 */
+function loadConsentId(publicId?: string): string | null {
+  if (typeof window === "undefined") return null;
+  try {
+    return localStorage.getItem(consentStorageKey(publicId));
+  } catch {
+    return null;
+  }
+}
+
+function saveConsentId(publicId: string | undefined, id: string | null) {
+  if (typeof window === "undefined") return;
+  try {
+    if (id) {
+      localStorage.setItem(consentStorageKey(publicId), id);
+    } else {
+      localStorage.removeItem(consentStorageKey(publicId));
+    }
+  } catch {
+    // ignore storage errors
+  }
+}
+
 /**
  * 隐私政策组件
  *
@@ -24,6 +55,9 @@ interface PrivacyPolicyProps {
  * 支持富文本 HTML 和纯文本两种展示模式。
  * 同意后提供撤回授权入口。
  * 同意/撤回操作会调用后端 consent API（best-effort，失败不阻断 UI）。
+ *
+ * yimatong-zgb1.5：consentId 持久化到 localStorage（按 public_id 隔离），
+ * 刷新后仍可撤回（修之前只在 React state 里、刷新即丢失的 bug）。
  */
 export function PrivacyPolicy({
   content,
@@ -36,6 +70,15 @@ export function PrivacyPolicy({
   const [consentId, setConsentId] = useState<string | null>(null);
   const [showRevokeConfirm, setShowRevokeConfirm] = useState(false);
 
+  // yimatong-zgb1.5：挂载时从 localStorage 恢复 consentId，恢复"已同意"视图
+  useEffect(() => {
+    const stored = loadConsentId(publicId);
+    if (stored) {
+      setConsentId(stored);
+      setAccepted(true);
+    }
+  }, [publicId]);
+
   if (!content) return null;
 
   const handleAccept = async () => {
@@ -43,10 +86,16 @@ export function PrivacyPolicy({
     onAccept?.();
     try {
       const res = await apiClient.post("/public/consents", {
-        consent_type: "privacy_policy",
+        consent_type: "privacy",
         public_id: publicId,
+        scenario: "privacy_policy",
+        policy_version: PRIVACY_POLICY_VERSION,
       });
-      setConsentId(res.data?.id || null);
+      const id = res.data?.id || null;
+      setConsentId(id);
+      if (id && publicId) {
+        saveConsentId(publicId, id);
+      }
     } catch {
       // best-effort: consent failure does not block UX
     }
@@ -62,6 +111,9 @@ export function PrivacyPolicy({
     try {
       if (consentId) {
         await apiClient.post(`/public/consents/${consentId}/withdraw`);
+        // 撤回成功后清除持久化的 consentId
+        saveConsentId(publicId, null);
+        setConsentId(null);
       }
     } catch {
       // best-effort
@@ -102,7 +154,7 @@ export function PrivacyPolicy({
             onClick={handleAccept}
             className="flex-1 rounded-xl bg-blue-600 py-2.5 text-sm font-semibold text-white transition-colors active:bg-blue-700"
           >
-            同意
+            同意（版本 {PRIVACY_POLICY_VERSION}）
           </button>
         </div>
       )}

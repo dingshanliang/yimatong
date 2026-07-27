@@ -14,23 +14,43 @@ const FIELD_LABELS: Record<string, string> = {
   batch_code: "生产批次",
 };
 
-const DEFAULT_FIELDS = ["origin", "production_date", "expiry_date", "batch_code"];
+const DEFAULT_FIELDS = [
+  "origin",
+  "production_date",
+  "expiry_date",
+  "batch_code",
+];
 
-export function TraceabilitySection({ codeData, config }: TraceabilitySectionProps) {
+export function TraceabilitySection({
+  codeData,
+  config,
+}: TraceabilitySectionProps) {
   const batch = codeData?.batch as Record<string, unknown> | undefined;
   const product = codeData?.product as Record<string, unknown> | undefined;
   const fields = config?.fields || DEFAULT_FIELDS;
 
   const data: Record<string, string> = {};
   for (const f of fields) {
-    if (f === "origin") data[f] = (product?.origin as string) || (batch?.origin as string) || "";
-    else if (f === "production_date") data[f] = (batch?.production_date as string) || "";
-    else if (f === "expiry_date") data[f] = (batch?.expiry_date as string) || "";
+    if (f === "origin")
+      data[f] = (product?.origin as string) || (batch?.origin as string) || "";
+    else if (f === "production_date")
+      data[f] = (batch?.production_date as string) || "";
+    else if (f === "expiry_date")
+      data[f] = (batch?.expiry_date as string) || "";
     else if (f === "batch_code") data[f] = (batch?.batch_code as string) || "";
   }
 
   const hasData = Object.values(data).some(Boolean);
-  if (!hasData) return null;
+
+  // 明确空态：缺失权威溯源数据时不静默隐藏，给出明确提示（yimatong-zgb1.2）。
+  if (!hasData) {
+    return (
+      <div className="mx-4 mt-3 rounded-2xl bg-white p-4 shadow-sm">
+        <h2 className="text-base font-semibold text-gray-900">溯源信息</h2>
+        <p className="mt-3 text-sm text-gray-500">暂无溯源信息</p>
+      </div>
+    );
+  }
 
   return (
     <div className="mx-4 mt-3 rounded-2xl bg-white p-4 shadow-sm">
@@ -39,15 +59,20 @@ export function TraceabilitySection({ codeData, config }: TraceabilitySectionPro
         {fields.map(
           (f) =>
             data[f] && (
-              <div key={f} className="flex items-center justify-between text-sm">
+              <div
+                key={f}
+                className="flex items-center justify-between text-sm"
+              >
                 <span className="text-gray-500">{FIELD_LABELS[f] || f}</span>
                 <span className="font-medium text-gray-900">{data[f]}</span>
               </div>
-            ),
+            )
         )}
         <div className="flex items-center justify-between text-sm">
           <span className="text-gray-500">码编号</span>
-          <span className="font-medium text-gray-900">{(codeData?.public_id as string) || ""}</span>
+          <span className="font-medium text-gray-900">
+            {(codeData?.public_id as string) || ""}
+          </span>
         </div>
       </div>
     </div>

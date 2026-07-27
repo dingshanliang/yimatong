@@ -21,6 +21,11 @@ apiClient.interceptors.request.use((config) => {
     if (token) {
       config.headers.Authorization = `Bearer ${token}`;
     }
+    // yimatong-zgb1.10：携带匿名访客 ID（first-party 稳定标识，Decision 22）
+    const visitorId = localStorage.getItem("visitor_id");
+    if (visitorId) {
+      config.headers["X-Visitor-ID"] = visitorId;
+    }
   }
   return config;
 });
@@ -35,7 +40,7 @@ apiClient.interceptors.response.use(
       }
     }
     return Promise.reject(error);
-  },
+  }
 );
 
 /**

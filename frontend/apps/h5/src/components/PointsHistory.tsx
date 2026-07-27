@@ -18,7 +18,16 @@ interface PointsHistoryProps {
 
 const PAGE_SIZE = 20;
 
-const TXN_META: Record<string, { badgeCls: string; label: string; amountColor: string; sign: string; fallbackReason: string }> = {
+const TXN_META: Record<
+  string,
+  {
+    badgeCls: string;
+    label: string;
+    amountColor: string;
+    sign: string;
+    fallbackReason: string;
+  }
+> = {
   earning: {
     badgeCls: "bg-green-50 text-green-700",
     label: "收入",
@@ -65,7 +74,11 @@ export function PointsHistory({ consumerId, scanToken }: PointsHistoryProps) {
         const headers: Record<string, string> = {};
         if (scanToken) headers.Authorization = `Bearer ${scanToken}`;
         const { data } = await apiClient.get("/consumers/points/transactions", {
-          params: { consumer_id: resolvedConsumerId, page: p, page_size: PAGE_SIZE },
+          params: {
+            consumer_id: resolvedConsumerId,
+            page: p,
+            page_size: PAGE_SIZE,
+          },
           headers,
         });
         const newItems = (data.items || []) as Transaction[];
@@ -83,7 +96,7 @@ export function PointsHistory({ consumerId, scanToken }: PointsHistoryProps) {
         setInitialLoading(false);
       }
     },
-    [resolvedConsumerId, scanToken],
+    [resolvedConsumerId, scanToken]
   );
 
   useEffect(() => {
@@ -96,7 +109,10 @@ export function PointsHistory({ consumerId, scanToken }: PointsHistoryProps) {
     return (
       <div className="space-y-3 py-2">
         {Array.from({ length: 3 }).map((_, i) => (
-          <div key={i} className="flex items-center justify-between animate-pulse">
+          <div
+            key={i}
+            className="flex items-center justify-between animate-pulse"
+          >
             <div className="flex items-center gap-2">
               <div className="h-5 w-10 rounded bg-gray-200" />
               <div className="h-4 w-20 rounded bg-gray-200" />
@@ -117,32 +133,40 @@ export function PointsHistory({ consumerId, scanToken }: PointsHistoryProps) {
   return (
     <div>
       {error && (
-        <p className="mb-2 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-600">{error}</p>
+        <p className="mb-2 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-600">
+          {error}
+        </p>
       )}
       <div className="divide-y divide-gray-100">
-        {items.map((txn) => (
+        {items.map((txn) => {
           const meta = TXN_META[txn.txn_type] || TXN_META.spending;
           return (
-          <div key={txn.id} className="flex items-center justify-between py-2.5">
-            <div className="flex items-center gap-2 min-w-0">
-              <span className={`inline-flex rounded-md px-1.5 py-0.5 text-xs font-medium ${meta.badgeCls}`}>
-                {meta.label}
-              </span>
-              <span className="truncate text-sm text-gray-700">
-                {txn.reason || meta.fallbackReason}
-              </span>
+            <div
+              key={txn.id}
+              className="flex items-center justify-between py-2.5"
+            >
+              <div className="flex items-center gap-2 min-w-0">
+                <span
+                  className={`inline-flex rounded-md px-1.5 py-0.5 text-xs font-medium ${meta.badgeCls}`}
+                >
+                  {meta.label}
+                </span>
+                <span className="truncate text-sm text-gray-700">
+                  {txn.reason || meta.fallbackReason}
+                </span>
+              </div>
+              <div className="flex items-center gap-3 shrink-0">
+                <span className={`text-sm font-semibold ${meta.amountColor}`}>
+                  {meta.sign}
+                  {txn.amount}
+                </span>
+                <span className="text-xs text-gray-400 w-16 text-right">
+                  余 {txn.balance_after}
+                </span>
+              </div>
             </div>
-            <div className="flex items-center gap-3 shrink-0">
-              <span className={`text-sm font-semibold ${meta.amountColor}`}>
-                {meta.sign}{txn.amount}
-              </span>
-              <span className="text-xs text-gray-400 w-16 text-right">
-                余 {txn.balance_after}
-              </span>
-            </div>
-          </div>
           );
-        ))}
+        })}
       </div>
 
       {hasMore && (

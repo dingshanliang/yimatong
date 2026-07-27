@@ -67,24 +67,45 @@ export function ResolveContent({
 
   const codeData = jsonPayload.code_data as Record<string, unknown> | undefined;
   const codeStatus = codeData?.status as string | undefined;
+  // yimatong-zgb1.6：用权威 lifecycle 判断状态（互不混淆）
+  const lifecycle = codeData?.lifecycle as string | undefined;
+  const resultCode = codeData?.result as string | undefined;
 
-  if (codeStatus === "revoked" || codeStatus === "frozen") {
+  // yimatong-zgb1.6 AC3：frozen 码保留溯源（不再跳错误页），只在顶部显示审核中提示。
+  // voided（revoked/expired）仍跳错误页（终止性，不返回溯源）。
+  // unactivated 跳错误页（提示尚未激活）。
+  if (
+    resultCode === "voided" ||
+    codeStatus === "revoked" ||
+    codeStatus === "expired"
+  ) {
     return (
       <div className="mx-auto max-w-md min-h-screen bg-gray-50">
-        <ErrorPage
-          errorCode={codeStatus === "frozen" ? "frozen" : "revoked"}
-          publicId={publicId}
-        />
+        <ErrorPage errorCode="revoked" publicId={publicId} />
+      </div>
+    );
+  }
+  if (
+    lifecycle === "unactivated" ||
+    codeStatus === "created" ||
+    resultCode === "unactivated"
+  ) {
+    return (
+      <div className="mx-auto max-w-md min-h-screen bg-gray-50">
+        <ErrorPage errorCode="not_activated" publicId={publicId} />
       </div>
     );
   }
 
-  const tenantBranding = jsonPayload.tenant_branding as {
-    name: string;
-    logo_url?: string;
-    primary_color?: string;
-  } | undefined;
-  const pageConfig = jsonPayload.page_config as Record<string, unknown> | undefined;
+  const tenantBranding = jsonPayload.tenant_branding as
+    | {
+        name: string;
+        logo_url?: string;
+        primary_color?: string;
+      }
+    | undefined;
+  const pageConfig = jsonPayload.page_config as
+    Record<string, unknown> | undefined;
 
   const modules = (pageConfig?.modules as ModuleConfig[] | undefined) || [];
   const enabledModules = modules.filter((m) => m.enabled !== false);
@@ -95,7 +116,7 @@ export function ResolveContent({
   const campaign = jsonPayload.campaign as Record<string, unknown> | undefined;
   const scanInfo = jsonPayload.scan_info as Record<string, unknown> | undefined;
 
-  const brandName = (brand?.name as string) || (tenantBranding?.name) || "";
+  const brandName = (brand?.name as string) || tenantBranding?.name || "";
   const productName = (product?.name as string) || "";
   const productDesc = (product?.description as string) || "";
   const productImages = product?.images as string[] | undefined;
@@ -106,7 +127,9 @@ export function ResolveContent({
         publicId={publicId}
         scanToken={scanToken}
         brandName={brandName}
-        brandLogo={tenantBranding?.logo_url || (brand?.logo_url as string) || ""}
+        brandLogo={
+          tenantBranding?.logo_url || (brand?.logo_url as string) || ""
+        }
         primaryColor={tenantBranding?.primary_color}
         productName={productName}
         productDesc={productDesc}
@@ -123,6 +146,72 @@ export function ResolveContent({
         logoUrl={tenantBranding?.logo_url || ""}
         primaryColor={tenantBranding?.primary_color}
       />
+
+      {/* yimatong-zgb1.6 AC3：frozen 码保留溯源，但顶部提示审核中 + 权益暂停 */}
+      {lifecycle === "frozen" && (
+        <div
+          className="mx-4 mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800"
+          role="status"
+          aria-label="该码正在审核中，权益暂时暂停"
+        >
+          <div className="flex items-center gap-2">
+            <svg
+              className="h-5 w-5 shrink-0 text-amber-600"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+              strokeWidth={2}
+              aria-hidden="true"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z"
+              />
+            </svg>
+            <div>
+              <p className="font-semibold">该码正在审核中</p>
+              <p className="mt-0.5 text-xs text-amber-700">
+                溯源信息可正常查看，权益领取暂时暂停。如有疑问请联系品牌客服。
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* yimatong-zgb1.7 AC2：异常码风险提示（保留溯源，不宣告假货，Decision 16） */}
+      {(scanInfo?.risk_warning as
+        { level?: string; message?: string } | undefined) && (
+        <div
+          className="mx-4 mt-3 rounded-xl border border-orange-200 bg-orange-50 p-3 text-sm text-orange-800"
+          role="alert"
+          aria-label="该码存在异常使用信号"
+        >
+          <div className="flex items-start gap-2">
+            <svg
+              className="mt-0.5 h-5 w-5 shrink-0 text-orange-600"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+              strokeWidth={2}
+              aria-hidden="true"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z"
+              />
+            </svg>
+            <div>
+              <p className="font-semibold">该码存在异常使用信号</p>
+              <p className="mt-0.5 text-xs text-orange-700">
+                {(scanInfo?.risk_warning as { message?: string }).message ||
+                  "请审慎对待。如非本人操作，请联系品牌客服。"}
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
 
       {enabledModules.map((mod) => (
         <ModuleRenderer
@@ -177,7 +266,7 @@ function ModuleRenderer({
           description={(product.description as string) || ""}
           image_url={(product.image_url as string) || ""}
           images={product.images as string[] | undefined}
-          imageUrl={((product.images as string[])?.[0])}
+          imageUrl={(product.images as string[])?.[0]}
           showBadge={config.show_verify_badge as boolean}
         />
       );
@@ -187,12 +276,17 @@ function ModuleRenderer({
         <div className="px-4 mt-3">
           <VerifyStatus
             status={
-              (scanInfo.is_first_scan as boolean)
-                ? "first_scan"
-                : "repeat_scan"
+              (scanInfo.is_first_scan as boolean) ? "first_scan" : "repeat_scan"
             }
-            scanCount={scanInfo.scan_count as number}
+            // yimatong-zgb1.4：优先用 post-insert 的 verification_count（首次=1，更直观），
+            // 兜底旧 scan_count（兼容期）。
+            scanCount={
+              (scanInfo.verification_count as number) ??
+              (scanInfo.scan_count as number)
+            }
             firstScanTime={scanInfo.first_scan_time as string}
+            // yimatong-zgb1.5 AC1：repeat 状态展示最近查验时间
+            lastScanTime={scanInfo.last_scan_time as string}
           />
         </div>
       );
@@ -222,23 +316,45 @@ function ModuleRenderer({
       );
 
     case "certificates":
-      return (
-        <CertificateRenderer codeData={codeData} />
-      );
+      return <CertificateRenderer codeData={codeData} />;
 
     case "benefit_card": {
-      const campaignBenefit = campaign.benefit as Record<string, unknown> | undefined;
-      const campaignRules = campaign.rules as Record<string, unknown> | undefined;
+      const campaignBenefit = campaign.benefit as
+        Record<string, unknown> | undefined;
+      const campaignRules = campaign.rules as
+        Record<string, unknown> | undefined;
       return (
         <div className="px-4 mt-3">
           <BenefitClaimCard
-            benefitId={(config.benefit_id as string) || (campaignBenefit?.id as string) || ""}
-            benefitType={(config.benefit_type as string) || (campaignBenefit?.benefit_type as string) || "platform_coupon"}
-            title={(config.title as string) || (campaignBenefit?.name as string) || "领取权益"}
-            description={(config.description as string) || (campaignBenefit?.description as string)}
-            configJson={(config.config_json as Record<string, unknown>) || (campaignBenefit?.config_json as Record<string, unknown>) || {}}
+            benefitId={
+              (config.benefit_id as string) ||
+              (campaignBenefit?.id as string) ||
+              ""
+            }
+            benefitType={
+              (config.benefit_type as string) ||
+              (campaignBenefit?.benefit_type as string) ||
+              "platform_coupon"
+            }
+            title={
+              (config.title as string) ||
+              (campaignBenefit?.name as string) ||
+              "领取权益"
+            }
+            description={
+              (config.description as string) ||
+              (campaignBenefit?.description as string)
+            }
+            configJson={
+              (config.config_json as Record<string, unknown>) ||
+              (campaignBenefit?.config_json as Record<string, unknown>) ||
+              {}
+            }
             scanToken={scanToken}
-            wecomMode={(campaignRules?.wecom_mode as "none" | "guide" | "required") || "none"}
+            wecomMode={
+              (campaignRules?.wecom_mode as "none" | "guide" | "required") ||
+              "none"
+            }
           />
         </div>
       );
@@ -251,7 +367,11 @@ function ModuleRenderer({
             buttons={
               (config.buttons as Array<{
                 label: string;
-                action: "wecom_link" | "mini_program" | "external_shop" | "wechat_official";
+                action:
+                  | "wecom_link"
+                  | "mini_program"
+                  | "external_shop"
+                  | "wechat_official";
                 config_id?: string;
                 url?: string;
               }>) || []
@@ -295,12 +415,13 @@ function ModuleRenderer({
     case "legal_terms":
       return (
         <div className="px-4 mt-3 mb-4">
-          {Boolean(config.show_campaign_rules) && String(campaign.name || "") && (
-            <CampaignRules
-              campaignName={campaign.name as string}
-              rules={campaign.rules as Record<string, unknown>}
-            />
-          )}
+          {Boolean(config.show_campaign_rules) &&
+            String(campaign.name || "") && (
+              <CampaignRules
+                campaignName={campaign.name as string}
+                rules={campaign.rules as Record<string, unknown>}
+              />
+            )}
           {Boolean(config.show_privacy_policy) && (
             <PrivacyPolicy
               content={config.privacy_content as string}
@@ -315,7 +436,9 @@ function ModuleRenderer({
         return (
           <div
             className="px-4 mt-3"
-            dangerouslySetInnerHTML={{ __html: sanitizeHtml(config.html as string) }}
+            dangerouslySetInnerHTML={{
+              __html: sanitizeHtml(config.html as string),
+            }}
           />
         );
       }
@@ -397,7 +520,11 @@ function ModuleRenderer({
             publicId={publicId}
             codeType={(codeData.code_type as string) || "standard"}
             isFirstScan={(scanInfo.is_first_scan as boolean) ?? true}
-            scanCount={scanInfo.scan_count as number}
+            // yimatong-zgb1.4：优先 verification_count，兜底 scan_count。
+            scanCount={
+              (scanInfo.verification_count as number) ??
+              (scanInfo.scan_count as number)
+            }
             firstScanTime={scanInfo.first_scan_time as string}
             productVerified={config.product_verified as boolean}
           />
@@ -422,14 +549,20 @@ function ModuleRenderer({
 
 /* ─── 证书渲染（简化） ──────────────────────────── */
 
-function CertificateRenderer({ codeData }: { codeData: Record<string, unknown> }) {
-  const certs = codeData.certificates as Array<{
-    name: string;
-    issuer?: string;
-    valid_until?: string;
-    image_url?: string;
-    file_url?: string;
-  }> | undefined;
+function CertificateRenderer({
+  codeData,
+}: {
+  codeData: Record<string, unknown>;
+}) {
+  const certs = codeData.certificates as
+    | Array<{
+        name: string;
+        issuer?: string;
+        valid_until?: string;
+        image_url?: string;
+        file_url?: string;
+      }>
+    | undefined;
 
   if (!certs?.length) return null;
 
@@ -438,17 +571,34 @@ function CertificateRenderer({ codeData }: { codeData: Record<string, unknown> }
       <h2 className="text-base font-semibold text-gray-900">资质证书</h2>
       <div className="mt-3 space-y-3">
         {certs.map((cert, i) => (
-          <div key={i} className="flex items-start gap-3 rounded-xl border border-gray-100 p-3">
+          <div
+            key={i}
+            className="flex items-start gap-3 rounded-xl border border-gray-100 p-3"
+          >
             {cert.image_url && (
-              <img src={cert.image_url} alt={cert.name} className="h-16 w-16 rounded-lg object-cover shrink-0" />
+              <img
+                src={cert.image_url}
+                alt={cert.name}
+                className="h-16 w-16 rounded-lg object-cover shrink-0"
+              />
             )}
             <div className="min-w-0">
               <p className="text-sm font-medium text-gray-900">{cert.name}</p>
-              {cert.issuer && <p className="text-xs text-gray-500">颁发机构：{cert.issuer}</p>}
-              {cert.valid_until && <p className="text-xs text-gray-500">有效期至：{cert.valid_until}</p>}
+              {cert.issuer && (
+                <p className="text-xs text-gray-500">颁发机构：{cert.issuer}</p>
+              )}
+              {cert.valid_until && (
+                <p className="text-xs text-gray-500">
+                  有效期至：{cert.valid_until}
+                </p>
+              )}
               {cert.file_url && (
-                <a href={cert.file_url} target="_blank" rel="noopener noreferrer"
-                  className="mt-1 inline-block text-xs text-blue-600 hover:underline">
+                <a
+                  href={cert.file_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="mt-1 inline-block text-xs text-blue-600 hover:underline"
+                >
                   查看详情
                 </a>
               )}
@@ -469,12 +619,14 @@ function MediaRenderer({
   codeData: Record<string, unknown>;
   config: Record<string, unknown>;
 }) {
-  const items = (codeData.media_items || config.items) as Array<{
-    type: "video" | "image";
-    url: string;
-    poster_url?: string;
-    caption?: string;
-  }> | undefined;
+  const items = (codeData.media_items || config.items) as
+    | Array<{
+        type: "video" | "image";
+        url: string;
+        poster_url?: string;
+        caption?: string;
+      }>
+    | undefined;
 
   if (!items?.length) return null;
 
@@ -494,14 +646,22 @@ function MediaRenderer({
                 preload="metadata"
                 className="w-full rounded-xl"
               />
-              {item.caption && <p className="mt-1 text-xs text-gray-500">{item.caption}</p>}
+              {item.caption && (
+                <p className="mt-1 text-xs text-gray-500">{item.caption}</p>
+              )}
             </div>
           ) : (
             <div key={i}>
-              <img src={item.url} alt={item.caption || ""} className="w-full rounded-xl object-cover" />
-              {item.caption && <p className="mt-1 text-xs text-gray-500">{item.caption}</p>}
+              <img
+                src={item.url}
+                alt={item.caption || ""}
+                className="w-full rounded-xl object-cover"
+              />
+              {item.caption && (
+                <p className="mt-1 text-xs text-gray-500">{item.caption}</p>
+              )}
             </div>
-          ),
+          )
         )}
       </div>
     </div>
@@ -534,7 +694,11 @@ function DefaultRender({
   const _product = codeData.product as Record<string, unknown> | undefined;
   return (
     <div className="mx-auto max-w-md min-h-screen bg-gray-50">
-      <BrandHeader name={brandName} logoUrl={brandLogo} primaryColor={primaryColor} />
+      <BrandHeader
+        name={brandName}
+        logoUrl={brandLogo}
+        primaryColor={primaryColor}
+      />
       <ProductCard
         productName={productName}
         description={productDesc}

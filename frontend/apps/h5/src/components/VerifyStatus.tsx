@@ -8,8 +8,10 @@ interface VerifyStatusProps {
   status: VerifyStatusType;
   /** 累计扫码次数 */
   scanCount?: number;
-  /** 首次扫码时间（ISO 字符串） */
+  /** 首次扫码时间（ISO 字符串），仅 first_scan 状态展示 */
   firstScanTime?: string;
+  /** 最近查验时间（ISO 字符符串），repeat_scan 状态展示（yimatong-zgb1.5 AC1） */
+  lastScanTime?: string;
 }
 
 /** 状态对应的视觉配置 */
@@ -44,7 +46,10 @@ const STATUS_CONFIG: Record<
       </svg>
     ),
     title: "验证通过",
-    description: "这是您首次扫码验证，产品为正品。",
+    // yimatong-zgb1.4：轻防伪结论 + 可信依据。不声称绝对真伪，
+    // 只说明这是平台首次记录的查验、产品资料来自品牌方权威备案。
+    description:
+      "这是本码首次查验。溯源资料来自品牌方权威备案，可作为正品依据。",
     bg: "bg-green-50",
     border: "border-green-200",
     text: "text-green-700",
@@ -68,13 +73,14 @@ const STATUS_CONFIG: Record<
         />
       </svg>
     ),
-    title: "重复扫码",
-    description: "该码已被扫描过，请确认是否为本人操作。",
+    title: "重复查验",
+    // yimatong-zgb1.4：重复查验不是异常，不引发恐慌。展示首查时间 + 累计次数即可。
+    description: "本码已被查验过，下方为首次查验时间与累计次数。",
     bg: "bg-amber-50",
     border: "border-amber-200",
     text: "text-amber-700",
     badge: "bg-amber-600",
-    badgeText: "重复扫码",
+    badgeText: "重复查验",
   },
   invalid: {
     icon: (
@@ -124,6 +130,7 @@ export function VerifyStatus({
   status,
   scanCount,
   firstScanTime,
+  lastScanTime,
 }: VerifyStatusProps) {
   const config = STATUS_CONFIG[status] ?? STATUS_CONFIG.invalid;
 
@@ -132,9 +139,11 @@ export function VerifyStatus({
       className={`rounded-2xl border ${config.border} ${config.bg} p-4 shadow-sm`}
       role="status"
       aria-label={
-        status === "first_scan" ? "首次扫码验证"
-        : status === "repeat_scan" ? "重复扫码提醒"
-        : "验证失败"
+        status === "first_scan"
+          ? "首次查验验证"
+          : status === "repeat_scan"
+            ? "重复查验提醒"
+            : "验证失败"
       }
     >
       {/* 状态标识 */}
@@ -151,14 +160,14 @@ export function VerifyStatus({
               {config.badgeText}
             </span>
           </div>
-          <p className={`mt-1 text-sm ${config.text}`}>
-            {config.description}
-          </p>
+          <p className={`mt-1 text-sm ${config.text}`}>{config.description}</p>
         </div>
       </div>
 
-      {/* 扫码统计信息 */}
-      {(scanCount !== undefined || firstScanTime) && (
+      {/* 扫码统计信息
+       * yimatong-zgb1.5 AC1：重复查验展示"最近"时间，不再展示首次时间。
+       * first_scan 状态展示首次时间；repeat_scan 状态展示最近时间。 */}
+      {(scanCount !== undefined || firstScanTime || lastScanTime) && (
         <div className="mt-3 flex gap-4 border-t border-white/50 pt-3">
           {scanCount !== undefined && (
             <div className="flex items-center gap-1.5 text-sm text-gray-600">
@@ -177,11 +186,12 @@ export function VerifyStatus({
                 />
               </svg>
               <span>
-                累计扫码 <strong>{scanCount}</strong> 次
+                累计查验 <strong>{scanCount}</strong> 次
               </span>
             </div>
           )}
-          {firstScanTime && (
+          {/* first_scan 状态：展示首次查验时间 */}
+          {status === "first_scan" && firstScanTime && (
             <div className="flex items-center gap-1.5 text-sm text-gray-600">
               <svg
                 className="h-4 w-4 text-gray-400"
@@ -198,6 +208,26 @@ export function VerifyStatus({
                 />
               </svg>
               <span>首次 {formatDateTime(firstScanTime)}</span>
+            </div>
+          )}
+          {/* repeat_scan 状态：展示最近查验时间（不展示首次，AC1） */}
+          {status === "repeat_scan" && lastScanTime && (
+            <div className="flex items-center gap-1.5 text-sm text-gray-600">
+              <svg
+                className="h-4 w-4 text-gray-400"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+                strokeWidth={2}
+                aria-hidden="true"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z"
+                />
+              </svg>
+              <span>最近 {formatDateTime(lastScanTime)}</span>
             </div>
           )}
         </div>

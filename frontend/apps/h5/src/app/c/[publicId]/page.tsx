@@ -42,6 +42,16 @@ export default async function CodePage({ params }: CodePageProps) {
     if (contentType.includes("application/json")) {
       jsonPayload = await res.json();
       mode = "json";
+      // yimatong-zgb1.10 Decision 22：存 visitor_id 到 localStorage（first-party 稳定访客标识）
+      const scanInfo = (jsonPayload as { scan_info?: { visitor_id?: string } })
+        .scan_info;
+      if (scanInfo?.visitor_id && typeof window !== "undefined") {
+        try {
+          localStorage.setItem("visitor_id", scanInfo.visitor_id);
+        } catch {
+          // localStorage 不可用时静默降级
+        }
+      }
     } else {
       // 后端当前返回 HTML — Alpha 兼容模式
       htmlContent = await res.text();
