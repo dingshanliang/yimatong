@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@import "@yimatong/design-tokens/theme.css";
 
 @theme inline {
   --color-text-muted: var(--admin-text-muted);
@@ -10,39 +11,28 @@
 }
 
 :root {
-  --background: #f4f7fb;
-  --foreground: #172033;
-  --color-primary: #1677ff;
-  --admin-bg-layout: #f4f7fb;
-  --admin-bg-container: #ffffff;
-  --admin-bg-elevated: #ffffff;
-  --admin-bg-muted: #f8fafc;
-  --admin-border: #e7edf5;
-  --admin-text-muted: #64748b;
-  --admin-sider-bg: #06172a;
-  --admin-table-row-selected-bg: #e6f4ff;
-  --admin-shadow: 0 10px 28px rgb(16 24 40 / 0.08);
+  --background: var(--ymt-color-bg-canvas);
+  --foreground: var(--ymt-color-text-primary);
+  --color-primary: var(--ymt-color-action-primary);
+  --admin-bg-layout: var(--ymt-color-bg-canvas);
+  --admin-bg-container: var(--ymt-color-bg-surface);
+  --admin-bg-elevated: var(--ymt-color-bg-elevated);
+  --admin-bg-muted: var(--ymt-color-bg-muted);
+  --admin-border: var(--ymt-color-border-base);
+  --admin-text-muted: var(--ymt-color-text-secondary);
+  --admin-sider-bg: var(--ymt-color-chrome-sider);
+  --admin-table-row-selected-bg: var(--ymt-color-chrome-row-selected);
+  --admin-shadow: var(--ymt-shadow-surface);
 }
 
 html[data-theme="dark"] {
-  --background: #07111f;
-  --foreground: #e6edf7;
-  --color-primary: #4c9dff;
-  --admin-bg-layout: #07111f;
-  --admin-bg-container: #0f1a2a;
-  --admin-bg-elevated: #142033;
-  --admin-bg-muted: #101d30;
-  --admin-border: #23334d;
-  --admin-text-muted: #a7b4c8;
-  --admin-sider-bg: #06101d;
-  --admin-table-row-selected-bg: #17365a;
-  --admin-shadow: 0 16px 36px rgb(0 0 0 / 0.32);
+  color-scheme: dark;
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  font-family: var(--ymt-font-family-body);
 }
 
 .admin-app,
@@ -74,4 +64,3 @@ body {
   background: var(--admin-bg-muted);
   border-color: var(--admin-border);
 }
-
