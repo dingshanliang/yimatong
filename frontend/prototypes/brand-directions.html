@@ -1,0 +1,973 @@
+<!doctype html>
+<!--
+  PROTOTYPE — 品牌视觉方向对比（Wayfinder 票 yimatong-ew87.1）
+  一次性代码，用于选定一码通设计体系的品牌基调。不是生产代码。
+  用法：open frontend/prototypes/brand-directions.html  →  ?variant=A|B|C 切换，← → 方向键也可。
+-->
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>一码通品牌方向原型 · PROTOTYPE</title>
+    <style>
+      /* ============ 基础 ============ */
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+      body {
+        font-family: var(--font-body);
+        background: var(--page-bg);
+        color: var(--text-primary);
+        transition: background 0.25s;
+        padding-bottom: 120px;
+      }
+      .proto-banner {
+        position: sticky;
+        top: 0;
+        z-index: 50;
+        background: #111;
+        color: #f5c518;
+        font:
+          12px/1.6 ui-monospace,
+          monospace;
+        text-align: center;
+        padding: 4px 12px;
+        letter-spacing: 0.05em;
+      }
+      .direction-head {
+        text-align: center;
+        padding: 40px 24px 8px;
+      }
+      .direction-head h1 {
+        font-family: var(--font-display);
+        font-size: 34px;
+        letter-spacing: var(--display-tracking, 0);
+      }
+      .direction-head p {
+        color: var(--text-secondary);
+        margin-top: 8px;
+        font-size: 14px;
+      }
+      .section-label {
+        max-width: 1180px;
+        margin: 36px auto 12px;
+        padding: 0 24px;
+        font: 600 12px/1 var(--font-body);
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        color: var(--text-secondary);
+      }
+      .scenes {
+        max-width: 1180px;
+        margin: 0 auto;
+        padding: 0 24px;
+        display: flex;
+        gap: 32px;
+        flex-wrap: wrap;
+        align-items: flex-start;
+      }
+
+      /* ============ Admin 场景（桌面） ============ */
+      .admin-frame {
+        flex: 1 1 720px;
+        min-width: 640px;
+        background: var(--admin-bg);
+        border: 1px solid var(--border);
+        border-radius: var(--radius-lg);
+        overflow: hidden;
+        box-shadow: var(--shadow-lg);
+        display: grid;
+        grid-template-columns: 200px 1fr;
+        grid-template-rows: 52px 1fr;
+        font-size: 13px;
+        min-height: 460px;
+      }
+      .admin-sider {
+        grid-row: 1 / 3;
+        background: var(--sider-bg);
+        color: var(--sider-text);
+        padding: 14px 10px;
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+      }
+      .sider-logo {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 6px 10px 14px;
+        font-family: var(--font-display);
+        font-weight: 700;
+        font-size: 15px;
+        color: var(--sider-logo);
+      }
+      .logo-mark {
+        width: 22px;
+        height: 22px;
+        border-radius: var(--radius-sm);
+        background: var(--primary);
+        display: inline-block;
+        position: relative;
+      }
+      .logo-mark::after {
+        content: "";
+        position: absolute;
+        inset: 5px;
+        border-radius: calc(var(--radius-sm) - 3px);
+        background: var(--sider-bg);
+      }
+      .sider-item {
+        padding: 8px 10px;
+        border-radius: var(--radius-sm);
+        color: var(--sider-text);
+        display: flex;
+        gap: 8px;
+        align-items: center;
+      }
+      .sider-item.active {
+        background: var(--sider-active);
+        color: var(--sider-active-text);
+        font-weight: 600;
+      }
+      .sider-item .dot {
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: currentColor;
+        opacity: 0.55;
+      }
+      .admin-header {
+        grid-column: 2;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 0 20px;
+        background: var(--header-bg);
+        border-bottom: 1px solid var(--border);
+      }
+      .admin-header .crumb {
+        color: var(--text-secondary);
+      }
+      .admin-header .crumb b {
+        color: var(--text-primary);
+      }
+      .avatar {
+        width: 28px;
+        height: 28px;
+        border-radius: 50%;
+        background: var(--primary);
+        color: #fff;
+        display: grid;
+        place-items: center;
+        font-size: 12px;
+        font-weight: 700;
+      }
+      .admin-main {
+        grid-column: 2;
+        padding: 20px;
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+        background: var(--admin-bg);
+      }
+      .stat-row {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 12px;
+      }
+      .stat-card {
+        background: var(--card-bg);
+        border: 1px solid var(--border);
+        border-radius: var(--radius-md);
+        padding: 14px 16px;
+        box-shadow: var(--shadow-sm);
+        position: relative;
+        overflow: hidden;
+      }
+      .stat-card::before {
+        content: "";
+        position: absolute;
+        inset: 0;
+        background: var(--card-motif, none);
+        pointer-events: none;
+      }
+      .stat-card .label {
+        color: var(--text-secondary);
+        font-size: 12px;
+        position: relative;
+      }
+      .stat-card .value {
+        font-family: var(--font-number);
+        font-size: 26px;
+        font-weight: 700;
+        margin-top: 6px;
+        color: var(--text-primary);
+        position: relative;
+        font-variant-numeric: tabular-nums;
+      }
+      .stat-card .delta {
+        font-size: 12px;
+        margin-top: 4px;
+        position: relative;
+      }
+      .delta.up {
+        color: var(--success);
+      }
+      .delta.down {
+        color: var(--danger);
+      }
+      .panel {
+        background: var(--card-bg);
+        border: 1px solid var(--border);
+        border-radius: var(--radius-md);
+        box-shadow: var(--shadow-sm);
+        overflow: hidden;
+      }
+      .panel-head {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 12px 16px;
+        border-bottom: 1px solid var(--border);
+        font-weight: 600;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 12.5px;
+      }
+      th {
+        text-align: left;
+        padding: 9px 16px;
+        color: var(--text-secondary);
+        font-weight: 500;
+        background: var(--table-head-bg);
+      }
+      td {
+        padding: 9px 16px;
+        border-top: 1px solid var(--border);
+        font-variant-numeric: tabular-nums;
+      }
+      tr:hover td {
+        background: var(--row-hover);
+      }
+      .tag {
+        display: inline-block;
+        padding: 2px 8px;
+        border-radius: 999px;
+        font-size: 11px;
+        font-weight: 600;
+      }
+      .tag.ok {
+        background: var(--success-bg);
+        color: var(--success);
+      }
+      .tag.warn {
+        background: var(--warn-bg);
+        color: var(--warn);
+      }
+      .btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        border: none;
+        cursor: pointer;
+        font: 600 12.5px/1 var(--font-body);
+        padding: 8px 14px;
+        border-radius: var(--radius-sm);
+        background: var(--primary);
+        color: var(--on-primary);
+        box-shadow: var(--btn-shadow, none);
+        letter-spacing: var(--btn-tracking, 0);
+      }
+      .btn.ghost {
+        background: transparent;
+        color: var(--primary);
+        border: 1px solid var(--primary-ghost-border);
+        box-shadow: none;
+      }
+
+      /* ============ H5 场景（手机） ============ */
+      .phone {
+        flex: 0 0 320px;
+        width: 320px;
+        border-radius: 36px;
+        border: 10px solid #14171c;
+        background: var(--h5-bg);
+        overflow: hidden;
+        box-shadow: var(--shadow-lg);
+        min-height: 620px;
+        display: flex;
+        flex-direction: column;
+        position: relative;
+      }
+      .h5-hero {
+        padding: 44px 22px 20px;
+        text-align: center;
+        background: var(--h5-hero-bg);
+        position: relative;
+        overflow: hidden;
+      }
+      .h5-hero::before {
+        content: "";
+        position: absolute;
+        inset: 0;
+        background: var(--h5-motif, none);
+        pointer-events: none;
+      }
+      .h5-brand {
+        position: relative;
+        font: 600 12px/1 var(--font-body);
+        letter-spacing: 0.18em;
+        color: var(--h5-hero-sub);
+        text-transform: uppercase;
+      }
+      .h5-product {
+        position: relative;
+        width: 96px;
+        height: 96px;
+        margin: 18px auto 14px;
+        border-radius: var(--h5-product-radius);
+        background: var(--h5-product-bg);
+        display: grid;
+        place-items: center;
+        font-size: 40px;
+        box-shadow: var(--shadow-md);
+      }
+      .h5-title {
+        position: relative;
+        font-family: var(--font-display);
+        font-size: 21px;
+        color: var(--h5-hero-title);
+      }
+      .h5-sub {
+        position: relative;
+        font-size: 12.5px;
+        color: var(--h5-hero-sub);
+        margin-top: 6px;
+      }
+      .h5-body {
+        padding: 18px 20px 24px;
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+        flex: 1;
+      }
+      .h5-info {
+        background: var(--card-bg);
+        border: 1px solid var(--border);
+        border-radius: var(--radius-md);
+        padding: 12px 14px;
+        font-size: 12.5px;
+        box-shadow: var(--shadow-sm);
+      }
+      .h5-info .row {
+        display: flex;
+        justify-content: space-between;
+        padding: 4px 0;
+      }
+      .h5-info .k {
+        color: var(--text-secondary);
+      }
+      .h5-cta {
+        margin-top: auto;
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+      }
+      .h5-btn {
+        text-align: center;
+        padding: 13px;
+        border-radius: var(--h5-btn-radius);
+        background: var(--primary);
+        color: var(--on-primary);
+        font: 700 15px/1 var(--font-body);
+        box-shadow: var(--btn-shadow, none);
+        letter-spacing: var(--btn-tracking, 0);
+      }
+      .h5-btn.secondary {
+        background: var(--h5-secondary-bg);
+        color: var(--primary);
+        box-shadow: none;
+      }
+      .h5-badge {
+        position: absolute;
+        top: 14px;
+        right: 14px;
+        z-index: 2;
+        padding: 4px 10px;
+        border-radius: 999px;
+        background: var(--accent);
+        color: var(--on-accent);
+        font: 700 11px/1.4 var(--font-body);
+        transform: var(--badge-tilt, none);
+      }
+
+      /* ============ Token 小样 ============ */
+      .tokens {
+        max-width: 1180px;
+        margin: 0 auto;
+        padding: 0 24px;
+        display: grid;
+        grid-template-columns: 1.2fr 1fr 1fr;
+        gap: 24px;
+      }
+      .token-card {
+        background: var(--card-bg);
+        border: 1px solid var(--border);
+        border-radius: var(--radius-md);
+        padding: 18px;
+        box-shadow: var(--shadow-sm);
+      }
+      .token-card h3 {
+        font-size: 13px;
+        color: var(--text-secondary);
+        margin-bottom: 12px;
+        font-weight: 600;
+      }
+      .swatches {
+        display: grid;
+        grid-template-columns: repeat(5, 1fr);
+        gap: 6px;
+      }
+      .sw {
+        aspect-ratio: 1;
+        border-radius: var(--radius-sm);
+        border: 1px solid rgba(0, 0, 0, 0.06);
+      }
+      .sw-label {
+        font:
+          10px/1.2 ui-monospace,
+          monospace;
+        color: var(--text-secondary);
+        margin-top: 3px;
+        text-align: center;
+      }
+      .type-sample .display {
+        font-family: var(--font-display);
+        font-size: 24px;
+      }
+      .type-sample .body {
+        font-size: 14px;
+        margin-top: 8px;
+        color: var(--text-primary);
+      }
+      .type-sample .num {
+        font-family: var(--font-number);
+        font-size: 20px;
+        margin-top: 8px;
+        font-variant-numeric: tabular-nums;
+      }
+      .type-sample .cap {
+        font-size: 11px;
+        color: var(--text-secondary);
+        margin-top: 2px;
+      }
+      /* 深色小样（Admin 双主题） */
+      .dark-sample {
+        background: var(--dark-bg);
+        border-radius: var(--radius-md);
+        padding: 14px;
+        color: var(--dark-text);
+      }
+      .dark-sample .ds-card {
+        background: var(--dark-card);
+        border: 1px solid var(--dark-border);
+        border-radius: var(--radius-sm);
+        padding: 10px 12px;
+        margin-top: 8px;
+        font-size: 12px;
+      }
+      .dark-sample .ds-value {
+        font-family: var(--font-number);
+        font-size: 18px;
+        font-weight: 700;
+        color: var(--dark-primary);
+      }
+
+      /* ============ 底部切换条 ============ */
+      .switcher {
+        position: fixed;
+        bottom: 20px;
+        left: 50%;
+        transform: translateX(-50%);
+        z-index: 100;
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        background: #16181d;
+        color: #fff;
+        border-radius: 999px;
+        padding: 10px 14px;
+        box-shadow: 0 8px 30px rgba(0, 0, 0, 0.35);
+        font:
+          500 13px/1 -apple-system,
+          "PingFang SC",
+          sans-serif;
+      }
+      .switcher button {
+        background: #2a2e37;
+        color: #fff;
+        border: none;
+        width: 32px;
+        height: 32px;
+        border-radius: 50%;
+        cursor: pointer;
+        font-size: 15px;
+      }
+      .switcher button:hover {
+        background: #3a3f4b;
+      }
+      .switcher .cur {
+        min-width: 190px;
+        text-align: center;
+      }
+      .switcher .cur b {
+        color: #f5c518;
+      }
+
+      /* ================================================================
+     方向 A —— 自然可信（绿）
+     ================================================================ */
+      body[data-variant="A"] {
+        --font-body:
+          -apple-system, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei",
+          sans-serif;
+        --font-display: -apple-system, "PingFang SC", sans-serif;
+        --font-number: -apple-system, "PingFang SC", sans-serif;
+        --page-bg: #f2f7f3;
+        --text-primary: #1a2e22;
+        --text-secondary: #5c7268;
+        --primary: #16a34a;
+        --on-primary: #ffffff;
+        --primary-ghost-border: #86c9a2;
+        --accent: #f59e0b;
+        --on-accent: #3b2f0b;
+        --success: #15803d;
+        --success-bg: #dcfce7;
+        --danger: #dc2626;
+        --warn: #b45309;
+        --warn-bg: #fef3c7;
+        --border: #dce8df;
+        --card-bg: #ffffff;
+        --radius-sm: 10px;
+        --radius-md: 14px;
+        --radius-lg: 18px;
+        --shadow-sm: 0 1px 3px rgba(26, 46, 34, 0.06);
+        --shadow-md: 0 4px 14px rgba(26, 46, 34, 0.08);
+        --shadow-lg: 0 12px 40px rgba(26, 46, 34, 0.12);
+        --admin-bg: #f2f7f3;
+        --header-bg: #ffffff;
+        --sider-bg: #14301f;
+        --sider-text: #a7c4b2;
+        --sider-logo: #fff;
+        --sider-active: #16a34a;
+        --sider-active-text: #fff;
+        --table-head-bg: #f6faf7;
+        --row-hover: #f2f9f4;
+        --card-motif: radial-gradient(
+          120px 60px at 100% 0%,
+          rgba(22, 163, 74, 0.07),
+          transparent
+        );
+        --btn-shadow: 0 2px 8px rgba(22, 163, 74, 0.35);
+        --h5-bg: #f4faf5;
+        --h5-hero-bg: linear-gradient(160deg, #e8f7ec, #d2efdc);
+        --h5-hero-title: #14301f;
+        --h5-hero-sub: #4d6b5a;
+        --h5-motif:
+          radial-gradient(
+            180px 120px at 85% -10%,
+            rgba(22, 163, 74, 0.18),
+            transparent
+          ),
+          radial-gradient(
+            140px 100px at -10% 110%,
+            rgba(245, 158, 11, 0.12),
+            transparent
+          );
+        --h5-product-radius: 28px;
+        --h5-product-bg: linear-gradient(150deg, #ffffff, #e2f4e8);
+        --h5-btn-radius: 14px;
+        --h5-secondary-bg: #e2f4e8;
+        --dark-bg: #0e1f15;
+        --dark-card: #16301f;
+        --dark-border: #24462f;
+        --dark-text: #d8e8de;
+        --dark-primary: #4ade80;
+      }
+      /* ================================================================
+     方向 B —— 专业科技（靛蓝）
+     ================================================================ */
+      body[data-variant="B"] {
+        --font-body:
+          "Inter", -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+        --font-display: "Inter", -apple-system, "PingFang SC", sans-serif;
+        --font-number: "SF Mono", ui-monospace, "JetBrains Mono", monospace;
+        --display-tracking: -0.02em;
+        --page-bg: #f5f6fa;
+        --text-primary: #111532;
+        --text-secondary: #5a6079;
+        --primary: #4f46e5;
+        --on-primary: #ffffff;
+        --primary-ghost-border: #a5b0f5;
+        --accent: #06b6d4;
+        --on-accent: #062a30;
+        --success: #059669;
+        --success-bg: #d1fae5;
+        --danger: #e11d48;
+        --warn: #b45309;
+        --warn-bg: #fef3c7;
+        --border: #e2e4ef;
+        --card-bg: #ffffff;
+        --radius-sm: 6px;
+        --radius-md: 8px;
+        --radius-lg: 12px;
+        --shadow-sm: 0 1px 2px rgba(17, 21, 50, 0.05);
+        --shadow-md: 0 4px 12px rgba(17, 21, 50, 0.07);
+        --shadow-lg: 0 16px 48px rgba(17, 21, 50, 0.14);
+        --admin-bg: #f5f6fa;
+        --header-bg: #ffffff;
+        --sider-bg: #111532;
+        --sider-text: #8b91b8;
+        --sider-logo: #fff;
+        --sider-active: rgba(79, 70, 229, 0.28);
+        --sider-active-text: #c7cbff;
+        --table-head-bg: #fafbfe;
+        --row-hover: #f6f6fd;
+        --card-motif:
+          repeating-linear-gradient(
+            0deg,
+            transparent,
+            transparent 23px,
+            rgba(79, 70, 229, 0.045) 24px
+          ),
+          repeating-linear-gradient(
+            90deg,
+            transparent,
+            transparent 23px,
+            rgba(79, 70, 229, 0.045) 24px
+          );
+        --btn-tracking: 0.01em;
+        --h5-bg: #f6f7fc;
+        --h5-hero-bg: linear-gradient(165deg, #171a42, #2b2f6e);
+        --h5-hero-title: #ffffff;
+        --h5-hero-sub: #a6abd6;
+        --h5-motif: radial-gradient(
+          200px 140px at 80% -20%,
+          rgba(6, 182, 212, 0.25),
+          transparent
+        );
+        --h5-product-radius: 16px;
+        --h5-product-bg: linear-gradient(150deg, #2f3478, #1d2050);
+        --h5-btn-radius: 8px;
+        --h5-secondary-bg: #e6e7f8;
+        --dark-bg: #0b0d24;
+        --dark-card: #161938;
+        --dark-border: #262a52;
+        --dark-text: #cfd2ec;
+        --dark-primary: #818cf8;
+      }
+      /* ================================================================
+     方向 C —— 暖阳活力（橙琥珀）
+     ================================================================ */
+      body[data-variant="C"] {
+        --font-body:
+          -apple-system, "PingFang SC", "Hiragino Sans GB", sans-serif;
+        --font-display: -apple-system, "PingFang SC", sans-serif;
+        --font-number: -apple-system, "PingFang SC", sans-serif;
+        --display-tracking: -0.01em;
+        --page-bg: #fdf8f2;
+        --text-primary: #2f2114;
+        --text-secondary: #7d6a58;
+        --primary: #ea580c;
+        --on-primary: #ffffff;
+        --primary-ghost-border: #f2b48d;
+        --accent: #16a34a;
+        --on-accent: #ffffff;
+        --success: #15803d;
+        --success-bg: #dcfce7;
+        --danger: #dc2626;
+        --warn: #b45309;
+        --warn-bg: #fef3c7;
+        --border: #f0e3d4;
+        --card-bg: #ffffff;
+        --radius-sm: 12px;
+        --radius-md: 16px;
+        --radius-lg: 22px;
+        --shadow-sm: 0 1px 3px rgba(47, 33, 20, 0.07);
+        --shadow-md: 0 6px 18px rgba(47, 33, 20, 0.09);
+        --shadow-lg: 0 14px 44px rgba(47, 33, 20, 0.13);
+        --admin-bg: #fdf8f2;
+        --header-bg: #ffffff;
+        --sider-bg: #2f2114;
+        --sider-text: #c4ac95;
+        --sider-logo: #fff;
+        --sider-active: #ea580c;
+        --sider-active-text: #fff;
+        --table-head-bg: #fbf3ea;
+        --row-hover: #fdf5ec;
+        --card-motif: radial-gradient(
+          100px 100px at 100% 0%,
+          rgba(234, 88, 12, 0.08),
+          transparent
+        );
+        --btn-shadow: 0 3px 10px rgba(234, 88, 12, 0.4);
+        --h5-bg: #fff8f0;
+        --h5-hero-bg: linear-gradient(155deg, #ffedd5, #fed7aa);
+        --h5-hero-title: #431b05;
+        --h5-hero-sub: #8a5a33;
+        --h5-motif:
+          radial-gradient(
+            160px 160px at 90% 0%,
+            rgba(234, 88, 12, 0.2),
+            transparent
+          ),
+          radial-gradient(
+            120px 120px at 0% 100%,
+            rgba(22, 163, 74, 0.12),
+            transparent
+          );
+        --h5-product-radius: 50% 50% 46% 54% / 55% 48% 52% 45%;
+        --h5-product-bg: linear-gradient(150deg, #ffffff, #ffe9d2);
+        --h5-btn-radius: 999px;
+        --h5-secondary-bg: #ffe9d2;
+        --badge-tilt: rotate(6deg);
+        --dark-bg: #1c130b;
+        --dark-card: #2b1e11;
+        --dark-border: #453222;
+        --dark-text: #ecdcce;
+        --dark-primary: #fb923c;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="proto-banner">
+      PROTOTYPE · 一次性代码 · 一码通品牌方向对比（Beads: yimatong-ew87.1）· 用
+      ← → 或底部条切换
+    </div>
+
+    <div class="direction-head">
+      <h1 id="dir-name">方向 A · 自然可信</h1>
+      <p id="dir-desc">
+        绿色主调，呼应食品与农业的天然联想；圆润、柔和、亲和。B 端清爽不冰冷，C
+        端有"新鲜、安心"的情绪。
+      </p>
+    </div>
+
+    <div class="section-label">场景一 · Admin 管理后台（桌面 / light）</div>
+    <div class="scenes">
+      <div class="admin-frame">
+        <aside class="admin-sider">
+          <div class="sider-logo"><span class="logo-mark"></span>一码通</div>
+          <div class="sider-item active"><span class="dot"></span>数据看板</div>
+          <div class="sider-item"><span class="dot"></span>码管理</div>
+          <div class="sider-item"><span class="dot"></span>扫码活动</div>
+          <div class="sider-item"><span class="dot"></span>页面装修</div>
+          <div class="sider-item"><span class="dot"></span>会员资产</div>
+          <div class="sider-item"><span class="dot"></span>权益中心</div>
+        </aside>
+        <header class="admin-header">
+          <div class="crumb">数据看板 / <b>运营总览</b></div>
+          <div class="avatar">品</div>
+        </header>
+        <main class="admin-main">
+          <div class="stat-row">
+            <div class="stat-card">
+              <div class="label">今日扫码次数</div>
+              <div class="value">128,430</div>
+              <div class="delta up">▲ 12.4% 较昨日</div>
+            </div>
+            <div class="stat-card">
+              <div class="label">新增会员</div>
+              <div class="value">3,872</div>
+              <div class="delta up">▲ 8.1% 较昨日</div>
+            </div>
+            <div class="stat-card">
+              <div class="label">活动参与率</div>
+              <div class="value">41.6%</div>
+              <div class="delta down">▼ 1.2% 较上周</div>
+            </div>
+          </div>
+          <div class="panel">
+            <div class="panel-head">
+              <span>生产批次 · 最近记录</span
+              ><span
+                ><button class="btn ghost">导出</button>
+                <button class="btn">新建批次</button></span
+              >
+            </div>
+            <table>
+              <tr>
+                <th>批次号</th>
+                <th>产品</th>
+                <th>码量</th>
+                <th>已激活</th>
+                <th>状态</th>
+              </tr>
+              <tr>
+                <td>B20260729-018</td>
+                <td>有机胚芽米 5kg</td>
+                <td>50,000</td>
+                <td>31,208</td>
+                <td><span class="tag ok">进行中</span></td>
+              </tr>
+              <tr>
+                <td>B20260729-017</td>
+                <td>冷榨山茶油 500ml</td>
+                <td>20,000</td>
+                <td>20,000</td>
+                <td><span class="tag ok">已完成</span></td>
+              </tr>
+              <tr>
+                <td>B20260728-014</td>
+                <td>冻干草莓脆 60g</td>
+                <td>80,000</td>
+                <td>12,540</td>
+                <td><span class="tag warn">待激活</span></td>
+              </tr>
+            </table>
+          </div>
+        </main>
+      </div>
+
+      <div class="section-label" style="flex-basis: 100%; margin: 8px 0 0">
+        场景二 · H5 消费者扫码页（移动端）
+      </div>
+      <div class="phone">
+        <div class="h5-badge">官方正品</div>
+        <div class="h5-hero">
+          <div class="h5-brand">YIMATONG · 扫码验真</div>
+          <div class="h5-product">🌾</div>
+          <div class="h5-title">有机胚芽米 5kg</div>
+          <div class="h5-sub">本品第 3 次扫码 · 首次验证于 2026-07-12</div>
+        </div>
+        <div class="h5-body">
+          <div class="h5-info">
+            <div class="row">
+              <span class="k">生产批次</span><span>B20260729-018</span>
+            </div>
+            <div class="row">
+              <span class="k">产地</span><span>黑龙江 · 五常</span>
+            </div>
+            <div class="row">
+              <span class="k">保质期至</span><span>2027-06-30</span>
+            </div>
+          </div>
+          <div class="h5-info">
+            <div class="row">
+              <span class="k">🎁 扫码有礼</span
+              ><span style="color: var(--primary); font-weight: 700"
+                >+20 积分已到账</span
+              >
+            </div>
+          </div>
+          <div class="h5-cta">
+            <div class="h5-btn">查看完整溯源档案</div>
+            <div class="h5-btn secondary">领取会员权益</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="section-label">Token 小样 · 色板 / 字体 / 深色模式</div>
+    <div class="tokens" id="tokens">
+      <div class="token-card">
+        <h3>主色板（50 → 900）</h3>
+        <div class="swatches" id="swatches"></div>
+      </div>
+      <div class="token-card type-sample">
+        <h3>字体与数字</h3>
+        <div class="display">包装扫码，增长可见</div>
+        <div class="cap">Display / 标题</div>
+        <div class="body">
+          品牌方在一码通后台管理批次码、扫码活动与会员资产，消费者扫码获得验真与权益。
+        </div>
+        <div class="cap">Body / 正文</div>
+        <div class="num">128,430.50</div>
+        <div class="cap">Number / 表格与金额</div>
+      </div>
+      <div class="token-card">
+        <h3>深色模式小样（Admin）</h3>
+        <div class="dark-sample">
+          数据看板 · 深色
+          <div class="ds-card">
+            今日扫码次数
+            <div class="ds-value">128,430</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="switcher">
+      <button id="prev" aria-label="上一个方向">←</button>
+      <div class="cur" id="cur"></div>
+      <button id="next" aria-label="下一个方向">→</button>
+    </div>
+
+    <script>
+      const VARIANTS = {
+        A: {
+          key: "A",
+          name: "方向 A · 自然可信",
+          desc: '绿色主调，呼应食品与农业的天然联想；圆润、柔和、亲和。B 端清爽不冰冷，C 端有"新鲜、安心"的情绪。',
+          palette: ["#f0fdf4", "#bbf7d0", "#4ade80", "#16a34a", "#14532d"],
+        },
+        B: {
+          key: "B",
+          name: "方向 B · 专业科技",
+          desc: '靛蓝主调 + 等宽数字，企业级 SaaS 气质；锐利、克制、数据感强。B 端专业可信，C 端偏"硬核科技感"。',
+          palette: ["#eef2ff", "#c7d2fe", "#818cf8", "#4f46e5", "#1e1b4b"],
+        },
+        C: {
+          key: "C",
+          name: "方向 C · 暖阳活力",
+          desc: "橙琥珀主调，消费品牌增长感；大圆角、暖阴影、活泼图形。C 端最有记忆点，B 端温暖但需克制使用。",
+          palette: ["#fff7ed", "#fed7aa", "#fb923c", "#ea580c", "#431407"],
+        },
+      };
+      const ORDER = ["A", "B", "C"];
+
+      function current() {
+        const v = new URLSearchParams(location.search).get("variant");
+        return ORDER.includes(v) ? v : "A";
+      }
+      function apply(key) {
+        const v = VARIANTS[key];
+        document.body.dataset.variant = key;
+        document.getElementById("dir-name").textContent = v.name;
+        document.getElementById("dir-desc").textContent = v.desc;
+        document.getElementById("cur").innerHTML =
+          `<b>${v.key}</b> — ${v.name.split("· ")[1]}`;
+        const sw = document.getElementById("swatches");
+        sw.innerHTML = v.palette
+          .map(
+            (c) =>
+              `<div><div class="sw" style="background:${c}"></div><div class="sw-label">${c}</div></div>`
+          )
+          .join("");
+      }
+      function go(key) {
+        const u = new URL(location.href);
+        u.searchParams.set("variant", key);
+        history.replaceState(null, "", u);
+        apply(key);
+      }
+      function step(d) {
+        const i = ORDER.indexOf(current());
+        go(ORDER[(i + d + ORDER.length) % ORDER.length]);
+      }
+      document.getElementById("prev").onclick = () => step(-1);
+      document.getElementById("next").onclick = () => step(1);
+      document.addEventListener("keydown", (e) => {
+        if (/INPUT|TEXTAREA/.test(document.activeElement?.tagName || ""))
+          return;
+        if (e.key === "ArrowLeft") step(-1);
+        if (e.key === "ArrowRight") step(1);
+      });
+      apply(current());
+    </script>
+  </body>
+</html>
