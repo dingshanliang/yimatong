@@ -21,7 +21,8 @@
     "paths": {
       "@/*": ["./src/*"],
       "@yimatong/shared": ["../packages/shared/src"]
-    }
+    },
+    "allowImportingTsExtensions": true
   },
   "include": [
     "next-env.d.ts",
@@ -31,5 +32,12 @@
     ".next/dev/types/**/*.ts",
     "**/*.mts"
   ],
-  "exclude": ["node_modules", "**/__tests__/**", "**/*.test.ts", "**/*.test.tsx", "src/test/**", "vitest.config.ts"]
+  "exclude": [
+    "node_modules",
+    "**/__tests__/**",
+    "**/*.test.ts",
+    "**/*.test.tsx",
+    "src/test/**",
+    "vitest.config.ts"
+  ]
 }

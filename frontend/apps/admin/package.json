@@ -16,6 +16,7 @@
     "@dnd-kit/sortable": "^10.0.0",
     "@dnd-kit/utilities": "^3.2.2",
     "@types/dompurify": "^3.2.0",
+    "@yimatong/design-tokens": "workspace:*",
     "@yimatong/shared": "workspace:*",
     "antd": "^6.4.3",
     "axios": "^1.16.1",

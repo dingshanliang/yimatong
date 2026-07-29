@@ -1,11 +1,21 @@
 "use client";
 
-import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
 import { App, ConfigProvider as AntdConfigProvider } from "antd";
 import zhCN from "antd/locale/zh_CN";
 import { ConfigProvider as ChartsConfigProvider } from "@ant-design/charts";
 import { SWRProvider } from "@/lib/swr-provider";
+import { themes } from "@yimatong/design-tokens";
 import { adminThemes, type AdminThemeMode } from "@/lib/theme";
+
+const darkTokens = themes.dark;
 
 const THEME_STORAGE_KEY = "admin_theme_mode";
 
@@ -24,7 +34,9 @@ function resolveStoredMode(): AdminThemeMode {
   const stored = window.localStorage.getItem(THEME_STORAGE_KEY);
   if (stored === "light" || stored === "dark") return stored;
 
-  return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+  return window.matchMedia("(prefers-color-scheme: dark)").matches
+    ? "dark"
+    : "light";
 }
 
 function applyThemeMode(mode: AdminThemeMode) {
@@ -34,7 +46,11 @@ function applyThemeMode(mode: AdminThemeMode) {
   document.documentElement.style.colorScheme = mode;
 }
 
-export function AdminThemeProvider({ children }: { children: React.ReactNode }) {
+export function AdminThemeProvider({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
   const [mode, setModeState] = useState<AdminThemeMode>("light");
 
   useEffect(() => {
@@ -60,7 +76,7 @@ export function AdminThemeProvider({ children }: { children: React.ReactNode }) 
       setMode,
       toggleMode,
     }),
-    [mode, setMode, toggleMode],
+    [mode, setMode, toggleMode]
   );
 
   const chartsTheme = useMemo(
@@ -69,21 +85,32 @@ export function AdminThemeProvider({ children }: { children: React.ReactNode }) 
         ? {
             theme: {
               type: "dark" as const,
-              color: "#4c9dff",
-              category10: ["#4c9dff", "#5ad8a6", "#f6bd16", "#e86452", "#6dc8ec", "#945fb9", "#ff9845", "#1e9493", "#ff99c3", "#269a99"],
+              color: darkTokens.color.action.primary,
+              category10: [
+                "#4ade80",
+                "#fbbf24",
+                "#93c5fd",
+                "#fca5a5",
+                "#5ad8a6",
+                "#c4b5fd",
+                "#fdba74",
+                "#67e8f9",
+                "#f9a8d4",
+                "#a3e635",
+              ],
               axis: {
-                labelFill: "#a7b4c8",
-                titleFill: "#a7b4c8",
-                gridStroke: "#1e2d45",
-                lineStroke: "#26364f",
+                labelFill: darkTokens.color.text.secondary,
+                titleFill: darkTokens.color.text.secondary,
+                gridStroke: darkTokens.color.border.base,
+                lineStroke: darkTokens.color.border.base,
               },
               legend: {
-                itemLabelFill: "#a7b4c8",
+                itemLabelFill: darkTokens.color.text.secondary,
               },
             },
           }
         : undefined,
-    [mode],
+    [mode]
   );
 
   return (

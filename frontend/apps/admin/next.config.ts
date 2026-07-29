@@ -46,7 +46,7 @@ const securityHeaders = [
 
 const nextConfig: NextConfig = {
   allowedDevOrigins: ["127.0.0.1"],
-  transpilePackages: ["@yimatong/shared"],
+  transpilePackages: ["@yimatong/design-tokens", "@yimatong/shared"],
   turbopack: {
     root: path.resolve(__dirname, "../.."),
   },
@@ -55,4 +55,6 @@ const nextConfig: NextConfig = {
   },
 };
 
-export default withBundleAnalyzer({ enabled: process.env.ANALYZE === "true" })(nextConfig);
+export default withBundleAnalyzer({ enabled: process.env.ANALYZE === "true" })(
+  nextConfig
+);
