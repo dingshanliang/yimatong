@@ -18,6 +18,7 @@ from app.schemas.account import (
     OrganizationUpdate,
 )
 from app.schemas.common import PaginatedResponse
+from app.services.audit import write_audit_log
 from app.services.organization import (
     count_accounts_by_org,
     create_account,
@@ -46,9 +47,18 @@ async def create_org_endpoint(
     body: OrganizationCreate,
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
+    actor_id: uuid.UUID = Depends(get_current_account_id),
     _role: str = Depends(require_role("admin")),
 ):
     org = await create_organization(db, tenant_id=tenant_id, name=body.name, parent_id=body.parent_id)
+    await write_audit_log(
+        db,
+        str(actor_id),
+        str(tenant_id),
+        "organization_created",
+        f"organization:{org.id}",
+        {"resource_name": org.name, "result": "success"},
+    )
     return {"id": org.id, "tenant_id": org.tenant_id, "name": org.name, "parent_id": org.parent_id, "account_count": 0}
 
 
@@ -82,6 +92,7 @@ async def update_org_endpoint(
     body: OrganizationUpdate,
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
+    actor_id: uuid.UUID = Depends(get_current_account_id),
     _role: str = Depends(require_role("admin")),
 ):
     updates = body.model_dump(exclude_unset=True)
@@ -102,6 +113,14 @@ async def update_org_endpoint(
         raise HTTPException(status_code=400, detail=str(e)) from e
     if not org:
         raise HTTPException(status_code=404, detail="Organization not found")
+    await write_audit_log(
+        db,
+        str(actor_id),
+        str(tenant_id),
+        "organization_updated",
+        f"organization:{org.id}",
+        {"resource_name": org.name, "changed_fields": sorted(updates), "result": "success"},
+    )
 
     account_counts = await count_accounts_by_org(db, tenant_id)
     return {
@@ -118,14 +137,31 @@ async def delete_org_endpoint(
     org_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
+    actor_id: uuid.UUID = Depends(get_current_account_id),
     _role: str = Depends(require_role("admin")),
 ):
+    org = (
+        await db.execute(select(Organization).where(Organization.id == org_id, Organization.tenant_id == tenant_id))
+    ).scalar_one_or_none()
     try:
         await delete_organization(db, tenant_id=tenant_id, org_id=org_id)
     except ValueError as e:
         if "not found" in str(e):
             raise HTTPException(status_code=404, detail=str(e)) from e
         raise HTTPException(status_code=400, detail=str(e)) from e
+    await write_audit_log(
+        db,
+        str(actor_id),
+        str(tenant_id),
+        "organization_deleted",
+        f"organization:{org_id}",
+        {
+            "resource_name": org.name if org else str(org_id),
+            "before": "active",
+            "after": "deleted",
+            "result": "success",
+        },
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -144,6 +180,7 @@ async def create_account_endpoint(
     body: AccountCreate,
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
+    actor_id: uuid.UUID = Depends(get_current_account_id),
     _role: str = Depends(require_role("admin")),
 ):
     # Quota check
@@ -171,6 +208,14 @@ async def create_account_endpoint(
     org_name = (
         await db.execute(select(Organization.name).where(Organization.id == account.organization_id))
     ).scalar_one_or_none()
+    await write_audit_log(
+        db,
+        str(actor_id),
+        str(tenant_id),
+        "account_created",
+        f"account:{account.id}",
+        {"resource_name": account.name, "target_email": account.email, "result": "success"},
+    )
     return {
         "id": account.id,
         "tenant_id": account.tenant_id,
@@ -220,6 +265,7 @@ async def update_account_endpoint(
     body: AccountUpdate,
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
+    actor_id: uuid.UUID = Depends(get_current_account_id),
     _role: str = Depends(require_role("admin")),
 ):
     try:
@@ -235,6 +281,18 @@ async def update_account_endpoint(
         raise HTTPException(status_code=400, detail=str(e)) from e
     if not account:
         raise HTTPException(status_code=404, detail="Account not found")
+    await write_audit_log(
+        db,
+        str(actor_id),
+        str(tenant_id),
+        "account_updated",
+        f"account:{account.id}",
+        {
+            "resource_name": account.name,
+            "changed_fields": sorted(body.model_dump(exclude_unset=True)),
+            "result": "success",
+        },
+    )
     return account
 
 
@@ -268,6 +326,7 @@ async def delete_account_endpoint(
     account_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
+    actor_id: uuid.UUID = Depends(get_current_account_id),
     _role: str = Depends(require_role("admin")),
 ):
     """软删除账户 — 栘除组织关联并标记为已删除。"""
@@ -275,5 +334,14 @@ async def delete_account_endpoint(
     account = result.scalar_one_or_none()
     if not account:
         raise HTTPException(status_code=404, detail="Account not found")
+    account_name = account.name
     await db.delete(account)
     await db.flush()
+    await write_audit_log(
+        db,
+        str(actor_id),
+        str(tenant_id),
+        "account_deleted",
+        f"account:{account_id}",
+        {"resource_name": account_name, "before": "active", "after": "deleted", "result": "success"},
+    )

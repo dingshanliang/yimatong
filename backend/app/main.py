@@ -13,6 +13,7 @@ from app.api.v1.ai import ai_router
 from app.api.v1.analytics import analytics_router
 from app.api.v1.analytics_dashboard import dashboard_router
 from app.api.v1.auth import router as auth_router
+from app.api.v1.audit_logs import audit_log_router
 from app.api.v1.benefit_claims import benefit_claim_router
 from app.api.v1.benefits import benefit_router
 from app.api.v1.campaigns import campaign_router
@@ -304,6 +305,7 @@ register_exception_handlers(app, debug=app.debug)
 app.include_router(tenants_router)
 app.include_router(orgs_router)
 app.include_router(auth_router)
+app.include_router(audit_log_router)
 app.include_router(password_router)
 app.include_router(platform_router)
 app.include_router(invite_codes_router)

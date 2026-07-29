@@ -5,8 +5,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.v1.code_batches import CodeBatchRead
 from app.core.database import get_db
-from app.core.dependencies import get_current_tenant
-from app.utils.auth_rbac import require_role
+from app.core.dependencies import get_current_account_id, get_current_tenant
+from app.models.product import Product
 from app.schemas.product import (
     BrandCreate,
     BrandDetailRead,
@@ -29,12 +29,10 @@ from app.schemas.product import (
     SKURead,
     SKUUpdate,
 )
+from app.services.audit import write_audit_log
 from app.services.campaign import list_brand_campaigns
 from app.services.code import list_brand_code_batches
-from app.models.product import Product
-from app.services.quota import QuotaExceededError, check_quota_for_tenant
 from app.services.product import (
-    check_brand_has_products,
     create_brand,
     create_product,
     create_product_asset,
@@ -61,6 +59,8 @@ from app.services.product import (
     update_production_batch,
     update_sku,
 )
+from app.services.quota import QuotaExceededError, check_quota_for_tenant
+from app.utils.auth_rbac import require_role
 
 brand_router = APIRouter(prefix="/api/v1/brands", tags=["brands"])
 product_router = APIRouter(prefix="/api/v1/products", tags=["products"])
@@ -235,6 +235,7 @@ async def create_product_endpoint(
     body: ProductCreate,
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
+    actor_id: uuid.UUID = Depends(get_current_account_id),
     _role: str = Depends(require_role("admin", "operator")),
 ):
     # Quota check
@@ -243,7 +244,7 @@ async def create_product_endpoint(
     except QuotaExceededError as e:
         raise HTTPException(status_code=429, detail=str(e))
 
-    return await create_product(
+    product = await create_product(
         db,
         tenant_id,
         body.brand_id,
@@ -255,6 +256,15 @@ async def create_product_endpoint(
         story_title=body.story_title,
         story_content=body.story_content,
     )
+    await write_audit_log(
+        db,
+        str(actor_id),
+        str(tenant_id),
+        "product_created",
+        f"product:{product.id}",
+        {"resource_name": product.name, "result": "success"},
+    )
+    return product
 
 
 @product_router.get("", summary="产品 列表")
@@ -304,6 +314,7 @@ async def update_product_endpoint(
     body: ProductUpdate,
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
+    actor_id: uuid.UUID = Depends(get_current_account_id),
     _role: str = Depends(require_role("admin", "operator")),
 ):
     product = await update_product(
@@ -322,6 +333,18 @@ async def update_product_endpoint(
     )
     if not product:
         raise HTTPException(status_code=404, detail="Product not found")
+    await write_audit_log(
+        db,
+        str(actor_id),
+        str(tenant_id),
+        "product_updated",
+        f"product:{product.id}",
+        {
+            "resource_name": product.name,
+            "changed_fields": sorted(body.model_dump(exclude_unset=True)),
+            "result": "success",
+        },
+    )
     return product
 
 

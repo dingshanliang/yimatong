@@ -5,6 +5,7 @@ import uuid
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.export_log import ExportLog
+from app.services.audit import write_audit_log
 
 
 async def log_export(
@@ -26,4 +27,18 @@ async def log_export(
     )
     db.add(entry)
     await db.flush()
+    await write_audit_log(
+        db,
+        operator_id=str(account_id),
+        target_tenant_id=str(tenant_id),
+        action="sensitive_export",
+        resource=f"{export_type}:{resource_id or entry.id}",
+        details={
+            "export_type": export_type,
+            "file_name": file_name,
+            "row_count": row_count,
+            "reason": "用户发起数据导出",
+            "result": "success",
+        },
+    )
     return entry

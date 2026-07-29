@@ -8,7 +8,6 @@ from pydantic import BaseModel, ValidationError, field_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
-from app.utils.auth_rbac import require_role
 from app.core.dependencies import get_current_account_id, get_current_tenant
 from app.schemas.common import PaginatedResponse
 from app.services.industry_templates import ALL_TEMPLATES
@@ -28,6 +27,7 @@ from app.services.page import (
     update_page_version,
 )
 from app.services.page_render import render_page
+from app.utils.auth_rbac import require_role
 
 page_template_router = APIRouter(prefix="/api/v1/page-templates", tags=["page-templates"])
 page_version_router = APIRouter(prefix="/api/v1/page-versions", tags=["page-versions"])
@@ -281,6 +281,7 @@ async def publish_page_version_endpoint(
     version_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
+    actor_id: uuid.UUID = Depends(get_current_account_id),
     _role: str = Depends(require_role("admin")),
 ):
     try:
@@ -292,6 +293,21 @@ async def publish_page_version_endpoint(
     from app.services.page_render import invalidate_cache
 
     await invalidate_cache(tenant_id, uuid.UUID(data["page_template_id"]))
+    from app.services.audit import write_audit_log
+
+    await write_audit_log(
+        db,
+        str(actor_id),
+        str(tenant_id),
+        "page_published",
+        f"page_template:{data['page_template_id']}",
+        {
+            "version_id": str(version_id),
+            "before": "draft",
+            "after": "published",
+            "result": "success",
+        },
+    )
     return data
 
 
