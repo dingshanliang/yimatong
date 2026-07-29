@@ -21,7 +21,8 @@
     "paths": {
       "@/*": ["./src/*"],
       "@yimatong/shared": ["../packages/shared/src"]
-    }
+    },
+    "allowImportingTsExtensions": true
   },
   "include": [
     "next-env.d.ts",

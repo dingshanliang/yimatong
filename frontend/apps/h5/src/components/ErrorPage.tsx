@@ -1,7 +1,8 @@
 "use client";
 
 /** 错误码类型 */
-type ErrorCode = "not_found" | "frozen" | "revoked" | "risk_detected";
+type ErrorCode =
+  "not_found" | "not_activated" | "frozen" | "revoked" | "risk_detected";
 
 interface ErrorPageProps {
   /** 错误类型 */
@@ -45,6 +46,29 @@ const ERROR_CONFIG: Record<
     bg: "bg-gray-50",
     text: "text-gray-600",
     iconBg: "bg-gray-100 text-gray-400",
+  },
+  not_activated: {
+    icon: (
+      <svg
+        className="h-12 w-12"
+        fill="none"
+        viewBox="0 0 24 24"
+        stroke="currentColor"
+        strokeWidth={1.5}
+      >
+        <path
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z"
+        />
+      </svg>
+    ),
+    title: "码未激活",
+    description:
+      "该产品码尚未激活，产品信息暂未开放查询。如有疑问请联系商家或客服。",
+    bg: "bg-amber-50",
+    text: "text-amber-700",
+    iconBg: "bg-amber-100 text-amber-500",
   },
   frozen: {
     icon: (
@@ -173,7 +197,9 @@ export function ErrorPage({ errorCode, publicId, onRetry }: ErrorPageProps) {
 
         {/* 客服联系方式 */}
         <div className="rounded-xl bg-gray-50 p-4">
-          <p className="text-center text-xs text-gray-400">如需帮助，请联系客服</p>
+          <p className="text-center text-xs text-gray-400">
+            如需帮助，请联系客服
+          </p>
           <div className="mt-2 flex items-center justify-center gap-4">
             <a
               href="tel:400-000-0000"

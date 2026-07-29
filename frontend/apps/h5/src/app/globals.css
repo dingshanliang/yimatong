@@ -1,1 +1,15 @@
 @import "tailwindcss";
+@import "@yimatong/design-tokens/theme.css";
+
+body {
+  font-family: var(--ymt-font-family-body);
+}
+
+button,
+[role="button"],
+input,
+select,
+textarea,
+summary {
+  min-block-size: var(--ymt-target-touch);
+}

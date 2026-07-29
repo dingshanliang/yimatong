@@ -2,11 +2,13 @@ import type { NextConfig } from "next";
 import path from "node:path";
 import withBundleAnalyzer from "@next/bundle-analyzer";
 
-const connectSrc = process.env.NODE_ENV !== "production"
-  ? "'self' http://localhost:* http://127.0.0.1:*"
-  : "'self'";
+const connectSrc =
+  process.env.NODE_ENV !== "production"
+    ? "'self' http://localhost:* http://127.0.0.1:*"
+    : "'self'";
 
-const frameAncestors = process.env.H5_FRAME_ANCESTORS ||
+const frameAncestors =
+  process.env.H5_FRAME_ANCESTORS ||
   (process.env.NODE_ENV !== "production"
     ? "'self' http://localhost:3000 http://127.0.0.1:3000"
     : "'none'");
@@ -36,7 +38,7 @@ if (frameAncestors === "'none'") {
 }
 
 const nextConfig: NextConfig = {
-  transpilePackages: ["@yimatong/shared"],
+  transpilePackages: ["@yimatong/design-tokens", "@yimatong/shared"],
   turbopack: {
     root: path.resolve(__dirname, "../.."),
   },
@@ -56,4 +58,6 @@ const nextConfig: NextConfig = {
   },
 };
 
-export default withBundleAnalyzer({ enabled: process.env.ANALYZE === "true" })(nextConfig);
+export default withBundleAnalyzer({ enabled: process.env.ANALYZE === "true" })(
+  nextConfig
+);

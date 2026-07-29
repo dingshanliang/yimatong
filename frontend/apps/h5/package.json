@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@headlessui/react": "^2.2.0",
+    "@yimatong/design-tokens": "workspace:*",
     "@yimatong/shared": "workspace:*",
     "axios": "^1.16.1",
     "dayjs": "^1.11.21",

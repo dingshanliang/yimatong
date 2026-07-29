@@ -10,7 +10,6 @@ export const metadata: Metadata = {
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
-  maximumScale: 1,
 };
 
 export default function RootLayout({
@@ -22,13 +21,12 @@ export default function RootLayout({
     <html lang="zh-CN">
       <head>
         {process.env.NODE_ENV === "development" && (
-          <Script
-            src="/react-grab.js"
-            strategy="afterInteractive"
-          />
+          <Script src="/react-grab.js" strategy="afterInteractive" />
         )}
       </head>
-      <body className="bg-white text-gray-900 antialiased">{children}</body>
+      <body className="min-h-screen bg-canvas text-foreground antialiased">
+        {children}
+      </body>
     </html>
   );
 }
