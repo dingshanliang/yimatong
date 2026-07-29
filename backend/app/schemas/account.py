@@ -54,6 +54,7 @@ class AccountRead(BaseModel):
     organization_name: str | None = None
     email: str
     name: str
+    is_active: bool
     created_at: datetime | None = None
 
     model_config = {"from_attributes": True}
@@ -61,6 +62,7 @@ class AccountRead(BaseModel):
 
 class AccountCreateResponse(AccountRead):
     """创建账户专用响应 — 包含一次性初始密码。"""
+
     initial_password: str | None = None
 
 
@@ -68,3 +70,16 @@ class AccountUpdate(BaseModel):
     name: str | None = Field(None, max_length=100)
     organization_id: uuid.UUID | None = Field(None, description="转移至新组织")
     role_ids: list[uuid.UUID] | None = None
+
+
+class AccountStatusUpdate(BaseModel):
+    is_active: bool
+    reason: str = Field(..., min_length=2, max_length=200)
+
+    @field_validator("reason")
+    @classmethod
+    def _normalize_reason(cls, value: str) -> str:
+        normalized = value.strip()
+        if len(normalized) < 2:
+            raise ValueError("操作原因至少需要 2 个字符")
+        return normalized

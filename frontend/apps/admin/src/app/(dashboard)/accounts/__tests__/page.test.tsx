@@ -8,6 +8,16 @@ const mockPost = vi.fn();
 const mockPatch = vi.fn();
 const mockDelete = vi.fn();
 const mockClipboardWriteText = vi.fn();
+let mockAccounts = [
+  {
+    id: "acct-1",
+    email: "sales@test.com",
+    name: "销售账号",
+    organization_id: "org-1",
+    organization_name: "销售部",
+    is_active: true,
+  },
+];
 
 vi.mock("antd", async () => {
   const actual = await vi.importActual<typeof import("antd")>("antd");
@@ -36,11 +46,9 @@ vi.mock("@/lib/api", () => ({
 
 const mockMutateAccounts = vi.fn();
 vi.mock("@/lib/hooks", () => ({
-  useCrud: () => ({
-    items: [
-      { id: "acct-1", email: "sales@test.com", name: "销售账号", organization_id: "org-1", organization_name: "销售部" },
-    ],
-    total: 1,
+  useCrud: (path: string) => ({
+    items: path === "/accounts" ? mockAccounts : [],
+    total: path === "/accounts" ? mockAccounts.length : 0,
     page: 1,
     loading: false,
     setPage: vi.fn(),
@@ -52,6 +60,16 @@ vi.mock("@/lib/hooks", () => ({
 describe("AccountsPage", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockAccounts = [
+      {
+        id: "acct-1",
+        email: "sales@test.com",
+        name: "销售账号",
+        organization_id: "org-1",
+        organization_name: "销售部",
+        is_active: true,
+      },
+    ];
     Object.defineProperty(navigator, "clipboard", {
       configurable: true,
       value: { writeText: mockClipboardWriteText },
@@ -77,14 +95,77 @@ describe("AccountsPage", () => {
     render(<AccountsPage />);
 
     await waitFor(() => {
-      expect(screen.getByTestId("org-account-count-org-1")).toHaveTextContent("1");
+      expect(screen.getByTestId("org-account-count-org-1")).toHaveTextContent(
+        "1"
+      );
     });
 
     fireEvent.click(screen.getByRole("tab", { name: "账户管理" }));
 
     await waitFor(() => {
-      expect(screen.getByTestId("account-org-name-acct-1")).toHaveTextContent("销售部");
+      expect(screen.getByTestId("account-org-name-acct-1")).toHaveTextContent(
+        "销售部"
+      );
+      expect(screen.getByTestId("account-status-acct-1")).toHaveTextContent(
+        "已启用"
+      );
     });
+  });
+
+  it("requires a reason before disabling an account", async () => {
+    render(<AccountsPage />);
+    await screen.findByTestId("org-account-count-org-1");
+    fireEvent.click(screen.getByRole("tab", { name: "账户管理" }));
+    fireEvent.mouseEnter(
+      screen.getByRole("button", { name: "操作菜单-销售账号" })
+    );
+    fireEvent.click(await screen.findByText("停用账户"));
+
+    expect(await screen.findByText("停用「销售账号」")).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("停用原因"), {
+      target: { value: "员工离职" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "确认停用" }));
+
+    await waitFor(() => {
+      expect(mockPatch).toHaveBeenCalledWith("/accounts/acct-1/status", {
+        is_active: false,
+        reason: "员工离职",
+      });
+      expect(mockMutateAccounts).toHaveBeenCalled();
+    });
+  });
+
+  it("re-enables a disabled account without a dangerous confirmation", async () => {
+    mockAccounts = [
+      {
+        id: "acct-1",
+        email: "sales@test.com",
+        name: "销售账号",
+        organization_id: "org-1",
+        organization_name: "销售部",
+        is_active: false,
+      },
+    ];
+
+    render(<AccountsPage />);
+    await screen.findByTestId("org-account-count-org-1");
+    fireEvent.click(screen.getByRole("tab", { name: "账户管理" }));
+    expect(screen.getByTestId("account-status-acct-1")).toHaveTextContent(
+      "已停用"
+    );
+    fireEvent.mouseEnter(
+      screen.getByRole("button", { name: "操作菜单-销售账号" })
+    );
+    fireEvent.click(await screen.findByText("重新启用"));
+
+    await waitFor(() => {
+      expect(mockPatch).toHaveBeenCalledWith("/accounts/acct-1/status", {
+        is_active: true,
+        reason: "管理员重新启用账户",
+      });
+    });
+    expect(screen.queryByText("确认停用")).not.toBeInTheDocument();
   });
 
   it("creates an account without asking the operator to type a password", async () => {
@@ -106,8 +187,12 @@ describe("AccountsPage", () => {
 
     expect(screen.queryByLabelText("密码")).not.toBeInTheDocument();
 
-    fireEvent.change(screen.getByLabelText("邮箱"), { target: { value: "new@test.com" } });
-    fireEvent.change(screen.getByLabelText("姓名"), { target: { value: "新账号" } });
+    fireEvent.change(screen.getByLabelText("邮箱"), {
+      target: { value: "new@test.com" },
+    });
+    fireEvent.change(screen.getByLabelText("姓名"), {
+      target: { value: "新账号" },
+    });
     fireEvent.click(screen.getByRole("button", { name: "创建账户" }));
 
     await waitFor(() => {
@@ -116,7 +201,9 @@ describe("AccountsPage", () => {
         name: "新账号",
         organization_id: "org-1",
       });
-      expect(screen.getByTestId("account-initial-password-alert")).toHaveTextContent("Ymt-Abc123456789");
+      expect(
+        screen.getByTestId("account-initial-password-alert")
+      ).toHaveTextContent("Ymt-Abc123456789");
     });
 
     fireEvent.click(screen.getByRole("button", { name: "复制临时密码" }));
@@ -133,13 +220,19 @@ describe("AccountsPage", () => {
 
     fireEvent.click(screen.getByRole("tab", { name: "账户管理" }));
 
-    expect(screen.getByText(/账户用于员工或渠道伙伴登录后台/)).toBeInTheDocument();
-    expect(screen.getByText(/所属组织决定账号可查看和操作的数据范围/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/账户用于员工或渠道伙伴登录后台/)
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/所属组织决定账号可查看和操作的数据范围/)
+    ).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: /新建账户/ }));
 
     expect(screen.getByText(/不需要手动设置密码/)).toBeInTheDocument();
-    expect(screen.getByText(/临时密码只在创建成功后显示一次/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/临时密码只在创建成功后显示一次/)
+    ).toBeInTheDocument();
   });
 
   it("opens create org modal with name and parent fields", async () => {
@@ -169,8 +262,18 @@ describe("AccountsPage", () => {
       if (url === "/organizations") {
         return Promise.resolve({
           data: [
-            { id: "org-parent", name: "总公司", account_count: 2, parent_id: null },
-            { id: "org-child", name: "华东销售部", account_count: 1, parent_id: "org-parent" },
+            {
+              id: "org-parent",
+              name: "总公司",
+              account_count: 2,
+              parent_id: null,
+            },
+            {
+              id: "org-child",
+              name: "华东销售部",
+              account_count: 1,
+              parent_id: "org-parent",
+            },
           ],
         });
       }
@@ -185,7 +288,9 @@ describe("AccountsPage", () => {
     });
 
     // Account counts should be rendered
-    expect(screen.getByTestId("org-account-count-org-parent")).toHaveTextContent("2");
+    expect(
+      screen.getByTestId("org-account-count-org-parent")
+    ).toHaveTextContent("2");
   });
 
   it("shows org action menu buttons for each root row", async () => {

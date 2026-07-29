@@ -82,8 +82,15 @@ class TenantScopeMiddleware(BaseHTTPMiddleware):
         request.state.role = payload.get("role")
         request.state.tenant_type = payload.get("tenant_type", "brand")
         request.state.auth_method = "jwt"
-        # 加载数据库中的权限到 request.state.permissions
-        request.state.permissions = await self._load_permissions(payload.get("sub"), payload.get("role"))
+        # 加载数据库中的权限，并校验账户状态与 token 版本。
+        has_access, permissions = await self._load_account_access(
+            payload.get("sub"),
+            payload.get("role"),
+            payload.get("auth_version"),
+        )
+        if not has_access:
+            return JSONResponse(status_code=401, content={"detail": "账户已停用或登录状态已失效"})
+        request.state.permissions = permissions
 
         # Agency context switching: if acting_tenant_id is present, use it for RLS
         if acting_tenant_id:
@@ -153,10 +160,20 @@ class TenantScopeMiddleware(BaseHTTPMiddleware):
 
     async def _load_permissions(self, account_id: str | None, role: str | None) -> list[str]:
         """从数据库加载账户的权限列表。账户不存在时回退到角色默认权限。"""
+        _, permissions = await self._load_account_access(account_id, role, None)
+        return permissions
+
+    async def _load_account_access(
+        self,
+        account_id: str | None,
+        role: str | None,
+        token_auth_version: int | None,
+    ) -> tuple[bool, list[str]]:
+        """加载权限并判断持久化账户是否仍允许当前 token 访问。"""
         from app.utils.auth_rbac import get_permissions_for_role
 
         if not account_id:
-            return get_permissions_for_role(role) if role else []
+            return True, get_permissions_for_role(role) if role else []
         try:
             import uuid
 
@@ -175,12 +192,17 @@ class TenantScopeMiddleware(BaseHTTPMiddleware):
                 account = result.scalar_one_or_none()
                 if not account:
                     # 账户不存在时回退到角色默认权限
-                    return get_permissions_for_role(role) if role else []
+                    return True, get_permissions_for_role(role) if role else []
+                account_auth_version = getattr(account, "auth_version", 0)
+                if not isinstance(account_auth_version, int):
+                    account_auth_version = 0
+                if account.is_active is False or (token_auth_version or 0) != account_auth_version:
+                    return False, []
                 permissions = set()
                 for role_obj in account.roles:
                     for perm in role_obj.permissions:
                         permissions.add(perm.code)
-                return list(permissions)
+                return True, list(permissions)
         except Exception:
             # 权限加载失败不应阻断请求，降级为角色默认权限
-            return get_permissions_for_role(role) if role else []
+            return True, get_permissions_for_role(role) if role else []

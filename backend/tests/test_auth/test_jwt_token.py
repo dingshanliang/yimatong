@@ -1,6 +1,5 @@
 """A1-006: JWT 双 token 认证体系验收测试"""
 
-
 from app.utils.security import (
     create_access_token,
     create_refresh_token,
@@ -29,11 +28,13 @@ class TestAccessToken:
             tenant_id="t-001",
             account_id="a-001",
             role="admin",
+            extra={"auth_version": 3},
         )
         payload = decode_token(token)
         assert payload["sub"] == "a-001"
         assert payload["tenant_id"] == "t-001"
         assert payload["role"] == "admin"
+        assert payload["auth_version"] == 3
         assert payload["type"] == "access"
         assert "exp" in payload
         assert "jti" in payload
@@ -58,9 +59,10 @@ class TestAccessToken:
 
 class TestRefreshToken:
     def test_create_and_decode(self):
-        token = create_refresh_token("a-001")
+        token = create_refresh_token("a-001", extra={"auth_version": 3})
         payload = decode_token(token)
         assert payload["sub"] == "a-001"
+        assert payload["auth_version"] == 3
         assert payload["type"] == "refresh"
         assert "jti" in payload
 

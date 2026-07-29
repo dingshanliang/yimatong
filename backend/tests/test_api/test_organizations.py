@@ -11,12 +11,12 @@ from app.main import app
 from app.utils.security import create_access_token
 from tests.conftest import TestSessionLocal
 
+
 def _platform_admin_headers() -> dict:
     from app.utils.security import create_access_token
+
     token = create_access_token("platform", "platform-admin", "platform_admin")
     return {"Authorization": f"Bearer {token}"}
-
-
 
 
 @pytest.fixture
@@ -107,6 +107,7 @@ class TestAccountCRUD:
         )
         assert resp.status_code == 201
         assert resp.json()["email"] == "user@test.com"
+        assert resp.json()["is_active"] is True
 
     @pytest.mark.anyio
     async def test_create_account_can_generate_initial_password(self, client: AsyncClient, tenant_with_auth):
@@ -147,7 +148,92 @@ class TestAccountCRUD:
         account_data = accounts_resp.json()
         account_item = next(item for item in account_data["items"] if item["email"] == "sales@test.com")
         assert account_item["organization_name"] == "销售部"
+        assert account_item["is_active"] is True
         assert "initial_password" not in account_item
+
+    @pytest.mark.anyio
+    async def test_admin_can_disable_and_enable_another_account(self, client: AsyncClient, tenant_with_auth):
+        tenant_id, headers = tenant_with_auth
+        org_resp = await client.post("/api/v1/organizations", json={"name": "客服部"}, headers=headers)
+        account_resp = await client.post(
+            "/api/v1/accounts",
+            json={
+                "email": "support@test.com",
+                "name": "客服账号",
+                "organization_id": org_resp.json()["id"],
+            },
+            headers=headers,
+        )
+        account_id = account_resp.json()["id"]
+
+        disable_resp = await client.patch(
+            f"/api/v1/accounts/{account_id}/status",
+            json={"is_active": False, "reason": "员工离职"},
+            headers=headers,
+        )
+        assert disable_resp.status_code == 200
+        assert disable_resp.json()["tenant_id"] == tenant_id
+        assert disable_resp.json()["is_active"] is False
+
+        enable_resp = await client.patch(
+            f"/api/v1/accounts/{account_id}/status",
+            json={"is_active": True, "reason": "重新入职"},
+            headers=headers,
+        )
+        assert enable_resp.status_code == 200
+        assert enable_resp.json()["is_active"] is True
+
+    @pytest.mark.anyio
+    async def test_operator_cannot_change_account_status(self, client: AsyncClient, tenant_with_auth):
+        tenant_id, headers = tenant_with_auth
+        org_resp = await client.post("/api/v1/organizations", json={"name": "渠道部"}, headers=headers)
+        account_resp = await client.post(
+            "/api/v1/accounts",
+            json={
+                "email": "channel@test.com",
+                "name": "渠道账号",
+                "organization_id": org_resp.json()["id"],
+            },
+            headers=headers,
+        )
+        operator_token = create_access_token(
+            tenant_id,
+            "00000000-0000-0000-0000-000000000002",
+            "operator",
+        )
+
+        resp = await client.patch(
+            f"/api/v1/accounts/{account_resp.json()['id']}/status",
+            json={"is_active": False, "reason": "无权操作"},
+            headers={"Authorization": f"Bearer {operator_token}"},
+        )
+
+        assert resp.status_code == 403
+
+    @pytest.mark.anyio
+    async def test_account_cannot_disable_itself(self, client: AsyncClient, tenant_with_auth):
+        tenant_id, headers = tenant_with_auth
+        org_resp = await client.post("/api/v1/organizations", json={"name": "财务部"}, headers=headers)
+        account_resp = await client.post(
+            "/api/v1/accounts",
+            json={
+                "email": "finance@test.com",
+                "name": "财务管理员",
+                "organization_id": org_resp.json()["id"],
+            },
+            headers=headers,
+        )
+        account_id = account_resp.json()["id"]
+        self_token = create_access_token(tenant_id, account_id, "admin")
+
+        resp = await client.patch(
+            f"/api/v1/accounts/{account_id}/status",
+            json={"is_active": False, "reason": "误操作"},
+            headers={"Authorization": f"Bearer {self_token}"},
+        )
+
+        assert resp.status_code == 400
+        assert resp.json()["detail"] == "不能停用当前登录账户"
 
     @pytest.mark.anyio
     async def test_list_accounts(self, client: AsyncClient, tenant_with_auth):

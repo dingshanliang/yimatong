@@ -4,8 +4,10 @@ import uuid
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
-from app.models.tenant import Account, Organization
+from app.models.tenant import Account, Organization, Role, account_roles
+from app.services.audit import write_audit_log
 from app.utils import escape_like_pattern
 from app.utils.security import hash_password
 
@@ -117,8 +119,11 @@ async def list_accounts(
 
     if q:
         escaped = escape_like_pattern(q)
-        query = query.where((Account.name.ilike(f"%{escaped}%", escape="\\")) | (Account.email.ilike(f"%{escaped}%", escape="\\")))
-        count_query = count_query.where((Account.name.ilike(f"%{escaped}%", escape="\\")) | (Account.email.ilike(f"%{escaped}%", escape="\\")))
+        search_filter = Account.name.ilike(f"%{escaped}%", escape="\\") | Account.email.ilike(
+            f"%{escaped}%", escape="\\"
+        )
+        query = query.where(search_filter)
+        count_query = count_query.where(search_filter)
 
     total_result = await db.execute(count_query)
     total = total_result.scalar() or 0
@@ -243,6 +248,72 @@ async def update_account(
 
         result = await db.execute(select(Role).where(Role.id.in_(role_ids), Role.tenant_id == tenant_id))
         account.roles = list(result.scalars().all())
+    await db.flush()
+    await db.refresh(account)
+    return account
+
+
+async def set_account_active_status(
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    actor_id: uuid.UUID,
+    account_id: uuid.UUID,
+    is_active: bool,
+    reason: str,
+) -> Account | None:
+    """启用或停用租户账户，并使该账户此前签发的 token 全部失效。"""
+    result = await db.execute(
+        select(Account)
+        .options(selectinload(Account.roles))
+        .where(Account.id == account_id, Account.tenant_id == tenant_id)
+        .with_for_update()
+    )
+    account = result.scalar_one_or_none()
+    if not account:
+        return None
+
+    if not is_active and account.id == actor_id:
+        raise ValueError("不能停用当前登录账户")
+
+    if account.is_active == is_active:
+        return account
+
+    if not is_active and any(role.name == "admin" for role in account.roles):
+        active_admin_ids = (
+            await db.execute(
+                select(Account.id)
+                .join(account_roles, account_roles.c.account_id == Account.id)
+                .join(Role, Role.id == account_roles.c.role_id)
+                .where(
+                    Account.tenant_id == tenant_id,
+                    Account.is_active.is_(True),
+                    Role.tenant_id == tenant_id,
+                    Role.name == "admin",
+                )
+                .with_for_update(of=Account)
+            )
+        ).scalars()
+        if len(set(active_admin_ids)) <= 1:
+            raise ValueError("不能停用租户最后一个有效管理员")
+
+    before = "enabled" if account.is_active else "disabled"
+    after = "enabled" if is_active else "disabled"
+    account.is_active = is_active
+    account.auth_version += 1
+
+    await write_audit_log(
+        db,
+        operator_id=str(actor_id),
+        target_tenant_id=str(tenant_id),
+        action="account_enabled" if is_active else "account_disabled",
+        resource=f"account:{account.id}",
+        details={
+            "target_account_id": str(account.id),
+            "reason": reason,
+            "before": before,
+            "after": after,
+        },
+    )
     await db.flush()
     await db.refresh(account)
     return account

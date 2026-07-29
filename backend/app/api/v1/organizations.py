@@ -5,12 +5,13 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
-from app.core.dependencies import get_current_tenant
+from app.core.dependencies import get_current_account_id, get_current_tenant
 from app.models.tenant import Account, Organization
 from app.schemas.account import (
     AccountCreate,
     AccountCreateResponse,
     AccountRead,
+    AccountStatusUpdate,
     AccountUpdate,
     OrganizationCreate,
     OrganizationRead,
@@ -25,6 +26,7 @@ from app.services.organization import (
     generate_initial_password,
     list_accounts,
     list_organizations,
+    set_account_active_status,
     update_account,
     update_organization,
 )
@@ -176,6 +178,7 @@ async def create_account_endpoint(
         "organization_name": org_name,
         "email": account.email,
         "name": account.name,
+        "is_active": account.is_active,
         "initial_password": initial_password,
     }
 
@@ -204,6 +207,7 @@ async def list_accounts_endpoint(
             "organization_name": org_names.get(account.organization_id),
             "email": account.email,
             "name": account.name,
+            "is_active": account.is_active,
         }
         for account in result["items"]
     ]
@@ -234,6 +238,31 @@ async def update_account_endpoint(
     return account
 
 
+@router.patch("/accounts/{account_id}/status", response_model=AccountRead, summary="启用或停用账户")
+async def update_account_status_endpoint(
+    account_id: uuid.UUID,
+    body: AccountStatusUpdate,
+    db: AsyncSession = Depends(get_db),
+    tenant_id: uuid.UUID = Depends(get_current_tenant),
+    actor_id: uuid.UUID = Depends(get_current_account_id),
+    _role: str = Depends(require_role("admin")),
+):
+    try:
+        account = await set_account_active_status(
+            db=db,
+            tenant_id=tenant_id,
+            actor_id=actor_id,
+            account_id=account_id,
+            is_active=body.is_active,
+            reason=body.reason,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    if not account:
+        raise HTTPException(status_code=404, detail="Account not found")
+    return account
+
+
 @router.delete("/accounts/{account_id}", status_code=204, summary="删除账户")
 async def delete_account_endpoint(
     account_id: uuid.UUID,
@@ -242,11 +271,7 @@ async def delete_account_endpoint(
     _role: str = Depends(require_role("admin")),
 ):
     """软删除账户 — 栘除组织关联并标记为已删除。"""
-    from sqlalchemy import update as sa_update
-
-    result = await db.execute(
-        select(Account).where(Account.id == account_id, Account.tenant_id == tenant_id)
-    )
+    result = await db.execute(select(Account).where(Account.id == account_id, Account.tenant_id == tenant_id))
     account = result.scalar_one_or_none()
     if not account:
         raise HTTPException(status_code=404, detail="Account not found")

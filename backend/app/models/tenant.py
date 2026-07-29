@@ -2,7 +2,7 @@ import uuid
 from datetime import UTC, datetime
 from enum import StrEnum
 
-from sqlalchemy import JSON, Column, DateTime, ForeignKey, String, Table, UniqueConstraint, func
+from sqlalchemy import JSON, Boolean, Column, DateTime, ForeignKey, Integer, String, Table, UniqueConstraint, func
 from sqlalchemy import Enum as SQLEnum
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from uuid6 import uuid7
@@ -92,9 +92,7 @@ class Organization(Base):
 
 class Account(Base):
     __tablename__ = "accounts"
-    __table_args__ = (
-        UniqueConstraint("tenant_id", "email", name="uq_account_tenant_email"),
-    )
+    __table_args__ = (UniqueConstraint("tenant_id", "email", name="uq_account_tenant_email"),)
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid7)
     tenant_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("tenants.id"), nullable=False, index=True)
@@ -102,6 +100,8 @@ class Account(Base):
     email: Mapped[str] = mapped_column(String(255), nullable=False)
     hashed_password: Mapped[str] = mapped_column(String(255), nullable=False)
     name: Mapped[str] = mapped_column(String(100), nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true", nullable=False)
+    auth_version: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
     failed_login_attempts: Mapped[int] = mapped_column(default=0, nullable=False)
     locked_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

@@ -17,7 +17,16 @@ import {
   Typography,
 } from "antd";
 import type { MenuProps } from "antd";
-import { CopyOutlined, DeleteOutlined, DownOutlined, EditOutlined, KeyOutlined, PlusOutlined } from "@ant-design/icons";
+import {
+  CheckCircleOutlined,
+  CopyOutlined,
+  DeleteOutlined,
+  DownOutlined,
+  EditOutlined,
+  KeyOutlined,
+  PlusOutlined,
+  StopOutlined,
+} from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
 import api from "@/lib/api";
 import { useCrud } from "@/lib/hooks";
@@ -40,6 +49,7 @@ interface Account {
   organization_name?: string;
   tenant_id: string;
   initial_password?: string;
+  is_active: boolean;
 }
 
 interface Role {
@@ -77,14 +87,28 @@ function buildOrgTree(orgs: Organization[]): Organization[] {
 function buildTreeSelectData(
   orgs: Organization[],
   excludeId?: string
-): { title: string; value: string; children?: { title: string; value: string }[] }[] {
+): {
+  title: string;
+  value: string;
+  children?: { title: string; value: string }[];
+}[] {
   const tree = buildOrgTree(orgs);
 
-  function filterNode(node: Organization): { title: string; value: string; children?: { title: string; value: string }[] } | null {
+  function filterNode(
+    node: Organization
+  ): {
+    title: string;
+    value: string;
+    children?: { title: string; value: string }[];
+  } | null {
     if (node.id === excludeId) return null;
     const filteredChildren = (node.children || [])
       .map(filterNode)
-      .filter(Boolean) as { title: string; value: string; children?: { title: string; value: string }[] }[];
+      .filter(Boolean) as {
+      title: string;
+      value: string;
+      children?: { title: string; value: string }[];
+    }[];
     return {
       title: node.name,
       value: node.id,
@@ -92,7 +116,11 @@ function buildTreeSelectData(
     };
   }
 
-  return tree.map(filterNode).filter(Boolean) as { title: string; value: string; children?: { title: string; value: string }[] }[];
+  return tree.map(filterNode).filter(Boolean) as {
+    title: string;
+    value: string;
+    children?: { title: string; value: string }[];
+  }[];
 }
 
 export default function AccountsPage() {
@@ -112,6 +140,9 @@ export default function AccountsPage() {
   const [editModalOpen, setEditModalOpen] = useState(false);
   const [editingAccount, setEditingAccount] = useState<Account | null>(null);
   const [editForm] = Form.useForm();
+  const [statusTarget, setStatusTarget] = useState<Account | null>(null);
+  const [statusReason, setStatusReason] = useState("");
+  const [statusLoading, setStatusLoading] = useState(false);
 
   // Accounts via useCrud (paginated, SWR-backed)
   const {
@@ -147,9 +178,15 @@ export default function AccountsPage() {
   const orgTreeData = useMemo(() => buildOrgTree(orgs), [orgs]);
 
   // TreeSelect data for create/edit modals
-  const treeSelectData = useMemo(() => buildTreeSelectData(orgs, editingOrg?.id), [orgs, editingOrg?.id]);
+  const treeSelectData = useMemo(
+    () => buildTreeSelectData(orgs, editingOrg?.id),
+    [orgs, editingOrg?.id]
+  );
 
-  const handleCreateOrg = async (values: { name: string; parent_id?: string }) => {
+  const handleCreateOrg = async (values: {
+    name: string;
+    parent_id?: string;
+  }) => {
     try {
       await api.post("/organizations", {
         name: values.name,
@@ -164,7 +201,10 @@ export default function AccountsPage() {
     }
   };
 
-  const handleEditOrg = async (values: { name: string; parent_id?: string }) => {
+  const handleEditOrg = async (values: {
+    name: string;
+    parent_id?: string;
+  }) => {
     if (!editingOrg) return;
     try {
       await api.patch(`/organizations/${editingOrg.id}`, {
@@ -193,7 +233,8 @@ export default function AccountsPage() {
           message.success("组织已删除");
           fetchOrgs();
         } catch (err: unknown) {
-          const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+          const detail = (err as { response?: { data?: { detail?: string } } })
+            ?.response?.data?.detail;
           message.error(detail || "删除失败");
         }
       },
@@ -254,6 +295,43 @@ export default function AccountsPage() {
     });
   };
 
+  const updateAccountStatus = async (
+    account: Account,
+    isActive: boolean,
+    reason: string
+  ) => {
+    setStatusLoading(true);
+    try {
+      await api.patch(`/accounts/${account.id}/status`, {
+        is_active: isActive,
+        reason,
+      });
+      message.success(
+        isActive ? "账户已重新启用" : "账户已停用，原登录状态已失效"
+      );
+      mutateAccounts();
+      setStatusTarget(null);
+      setStatusReason("");
+    } catch (err: unknown) {
+      const detail = (err as { response?: { data?: { detail?: string } } })
+        ?.response?.data?.detail;
+      message.error(detail || (isActive ? "启用失败" : "停用失败"));
+      throw err;
+    } finally {
+      setStatusLoading(false);
+    }
+  };
+
+  const handleConfirmDisable = async () => {
+    if (!statusTarget) return;
+    const reason = statusReason.trim();
+    if (reason.length < 2) {
+      message.error("请填写停用原因");
+      return;
+    }
+    await updateAccountStatus(statusTarget, false, reason);
+  };
+
   const openEditOrgModal = (org: Organization) => {
     setEditingOrg(org);
     orgForm.setFieldsValue({
@@ -286,7 +364,9 @@ export default function AccountsPage() {
       dataIndex: "account_count",
       key: "account_count",
       width: 120,
-      render: (v: number, record) => <Tag data-testid={`org-account-count-${record.id}`}>{v || 0}</Tag>,
+      render: (v: number, record) => (
+        <Tag data-testid={`org-account-count-${record.id}`}>{v || 0}</Tag>
+      ),
     },
     {
       title: "操作",
@@ -294,7 +374,11 @@ export default function AccountsPage() {
       width: 80,
       render: (_: unknown, record: Organization) => (
         <Dropdown menu={{ items: getOrgMenuItems(record) }}>
-          <Button type="text" icon={<DownOutlined />} aria-label={`操作菜单-${record.name}`} />
+          <Button
+            type="text"
+            icon={<DownOutlined />}
+            aria-label={`操作菜单-${record.name}`}
+          />
         </Dropdown>
       ),
     },
@@ -320,6 +404,27 @@ export default function AccountsPage() {
       icon: <KeyOutlined />,
       onClick: () => handleResetPassword(record),
     },
+    record.is_active !== false
+      ? {
+          key: "disable",
+          label: "停用账户",
+          icon: <StopOutlined />,
+          danger: true,
+          onClick: () => {
+            setStatusTarget(record);
+            setStatusReason("");
+          },
+        }
+      : {
+          key: "enable",
+          label: "重新启用",
+          icon: <CheckCircleOutlined />,
+          onClick: () => {
+            void updateAccountStatus(record, true, "管理员重新启用账户").catch(
+              () => undefined
+            );
+          },
+        },
   ];
 
   const accountColumns: ColumnsType<Account> = [
@@ -329,7 +434,25 @@ export default function AccountsPage() {
       title: "所属组织",
       dataIndex: "organization_name",
       key: "organization_name",
-      render: (v: string, record) => <span data-testid={`account-org-name-${record.id}`}>{v || "未分配"}</span>,
+      render: (v: string, record) => (
+        <span data-testid={`account-org-name-${record.id}`}>
+          {v || "未分配"}
+        </span>
+      ),
+    },
+    {
+      title: "状态",
+      dataIndex: "is_active",
+      key: "is_active",
+      width: 100,
+      render: (isActive: boolean, record) => (
+        <Tag
+          color={isActive !== false ? "success" : "default"}
+          data-testid={`account-status-${record.id}`}
+        >
+          {isActive !== false ? "已启用" : "已停用"}
+        </Tag>
+      ),
     },
     {
       title: "操作",
@@ -337,7 +460,11 @@ export default function AccountsPage() {
       width: 100,
       render: (_: unknown, record: Account) => (
         <Dropdown menu={{ items: getAccountMenuItems(record) }}>
-          <Button type="text" icon={<DownOutlined />} aria-label={`操作菜单-${record.name}`} />
+          <Button
+            type="text"
+            icon={<DownOutlined />}
+            aria-label={`操作菜单-${record.name}`}
+          />
         </Dropdown>
       ),
     },
@@ -370,7 +497,9 @@ export default function AccountsPage() {
   return (
     <div>
       <div className="mb-4 flex items-center justify-between">
-        <Title level={4} className="!mb-0">组织与账户</Title>
+        <Title level={4} className="!mb-0">
+          组织与账户
+        </Title>
       </div>
       <Tabs
         activeKey={activeTab}
@@ -399,7 +528,9 @@ export default function AccountsPage() {
                     style={{ width: 260 }}
                     onSearch={(value) => {
                       if (value) {
-                        setOrgs((prev) => prev.filter((o) => o.name.includes(value)));
+                        setOrgs((prev) =>
+                          prev.filter((o) => o.name.includes(value))
+                        );
                       } else {
                         fetchOrgs();
                       }
@@ -431,14 +562,20 @@ export default function AccountsPage() {
                   description="所属组织决定账号可查看和操作的数据范围。创建账户后，系统会发放一次性临时密码给使用人登录。"
                 />
                 <div className="mb-4 flex items-center gap-4">
-                  <Button type="primary" icon={<PlusOutlined />} onClick={openAccountModal}>
+                  <Button
+                    type="primary"
+                    icon={<PlusOutlined />}
+                    onClick={openAccountModal}
+                  >
                     新建账户
                   </Button>
                   <Input.Search
                     placeholder="搜索姓名或邮箱"
                     allowClear
                     style={{ width: 260 }}
-                    onSearch={(value) => setAccountsFilter(value ? { q: value } : {})}
+                    onSearch={(value) =>
+                      setAccountsFilter(value ? { q: value } : {})
+                    }
                   />
                 </div>
                 <Table
@@ -477,7 +614,11 @@ export default function AccountsPage() {
           layout="vertical"
           onFinish={editingOrg ? handleEditOrg : handleCreateOrg}
         >
-          <Form.Item name="name" label="组织名称" rules={[{ required: true, message: "请输入组织名称" }]}>
+          <Form.Item
+            name="name"
+            label="组织名称"
+            rules={[{ required: true, message: "请输入组织名称" }]}
+          >
             <Input />
           </Form.Item>
           <Form.Item name="parent_id" label="上级组织">
@@ -498,7 +639,8 @@ export default function AccountsPage() {
           if (createdAccount?.initial_password) {
             modal.confirm({
               title: "确认关闭？",
-              content: "临时密码仅在此处显示一次，关闭后将无法再次查看。请确保已复制密码。",
+              content:
+                "临时密码仅在此处显示一次，关闭后将无法再次查看。请确保已复制密码。",
               okText: "确认关闭",
               cancelText: "继续查看",
               onOk: () => {
@@ -527,7 +669,8 @@ export default function AccountsPage() {
             description={
               <div>
                 <div>
-                  登录邮箱：{createdAccount.email}，临时密码：<Text code>{createdAccount.initial_password}</Text>。
+                  登录邮箱：{createdAccount.email}，临时密码：
+                  <Text code>{createdAccount.initial_password}</Text>。
                   临时密码只在这里显示一次，请立即交付给账号使用人。
                 </div>
                 <Button
@@ -535,7 +678,9 @@ export default function AccountsPage() {
                   size="small"
                   aria-label="复制临时密码"
                   icon={<CopyOutlined />}
-                  onClick={() => copyInitialPassword(createdAccount.initial_password!)}
+                  onClick={() =>
+                    copyInitialPassword(createdAccount.initial_password!)
+                  }
                 >
                   复制临时密码
                 </Button>
@@ -550,14 +695,32 @@ export default function AccountsPage() {
           message="不需要手动设置密码"
           description="提交后系统会生成一次性临时密码。临时密码只在创建成功后显示一次，请当场交付给使用人。"
         />
-        <Form form={accountForm} layout="vertical" onFinish={handleCreateAccount}>
-          <Form.Item name="email" label="邮箱" rules={[{ required: true, type: "email", message: "请输入有效邮箱" }]}>
+        <Form
+          form={accountForm}
+          layout="vertical"
+          onFinish={handleCreateAccount}
+        >
+          <Form.Item
+            name="email"
+            label="邮箱"
+            rules={[
+              { required: true, type: "email", message: "请输入有效邮箱" },
+            ]}
+          >
             <Input />
           </Form.Item>
-          <Form.Item name="name" label="姓名" rules={[{ required: true, message: "请输入姓名" }]}>
+          <Form.Item
+            name="name"
+            label="姓名"
+            rules={[{ required: true, message: "请输入姓名" }]}
+          >
             <Input />
           </Form.Item>
-          <Form.Item name="organization_id" label="所属组织" rules={[{ required: true, message: "请选择组织" }]}>
+          <Form.Item
+            name="organization_id"
+            label="所属组织"
+            rules={[{ required: true, message: "请选择组织" }]}
+          >
             <TreeSelect
               placeholder="选择组织"
               treeData={buildTreeSelectData(orgs)}
@@ -568,7 +731,10 @@ export default function AccountsPage() {
             <Select
               mode="multiple"
               placeholder="选择角色（可选）"
-              options={availableRoles.map((r) => ({ value: r.id, label: r.name }))}
+              options={availableRoles.map((r) => ({
+                value: r.id,
+                label: r.name,
+              }))}
               allowClear
             />
           </Form.Item>
@@ -582,7 +748,11 @@ export default function AccountsPage() {
           setResetLink("");
         }}
         footer={
-          <Button type="primary" icon={<CopyOutlined />} onClick={copyResetLink}>
+          <Button
+            type="primary"
+            icon={<CopyOutlined />}
+            onClick={copyResetLink}
+          >
             复制链接
           </Button>
         }
@@ -599,7 +769,9 @@ export default function AccountsPage() {
               <Text code className="mt-2 block break-all text-xs">
                 {resetLink}
               </Text>
-              <div className="mt-2 text-xs text-text-muted">链接 1 小时内有效，用户设置新密码后自动失效。</div>
+              <div className="mt-2 text-xs text-text-muted">
+                链接 1 小时内有效，用户设置新密码后自动失效。
+              </div>
             </div>
           }
         />
@@ -617,10 +789,18 @@ export default function AccountsPage() {
         width={520}
       >
         <Form form={editForm} layout="vertical" onFinish={handleEditAccount}>
-          <Form.Item name="name" label="姓名" rules={[{ required: true, message: "请输入姓名" }]}>
+          <Form.Item
+            name="name"
+            label="姓名"
+            rules={[{ required: true, message: "请输入姓名" }]}
+          >
             <Input />
           </Form.Item>
-          <Form.Item name="organization_id" label="所属组织" rules={[{ required: true, message: "请选择组织" }]}>
+          <Form.Item
+            name="organization_id"
+            label="所属组织"
+            rules={[{ required: true, message: "请选择组织" }]}
+          >
             <TreeSelect
               placeholder="选择组织"
               treeData={buildTreeSelectData(orgs)}
@@ -631,11 +811,48 @@ export default function AccountsPage() {
             <Select
               mode="multiple"
               placeholder="选择角色（可选）"
-              options={availableRoles.map((r) => ({ value: r.id, label: r.name }))}
+              options={availableRoles.map((r) => ({
+                value: r.id,
+                label: r.name,
+              }))}
               allowClear
             />
           </Form.Item>
         </Form>
+      </Modal>
+      <Modal
+        title={statusTarget ? `停用「${statusTarget.name}」` : "停用账户"}
+        open={Boolean(statusTarget)}
+        onCancel={() => {
+          setStatusTarget(null);
+          setStatusReason("");
+        }}
+        onOk={handleConfirmDisable}
+        okText="确认停用"
+        cancelText="取消"
+        okButtonProps={{ danger: true, loading: statusLoading }}
+        destroyOnHidden
+      >
+        <Alert
+          className="mb-4"
+          type="warning"
+          showIcon
+          message="停用后，该账户当前登录状态会立即失效"
+          description="重新启用后，账号使用人需要重新登录。"
+        />
+        <label className="mb-2 block" htmlFor="account-disable-reason">
+          停用原因
+        </label>
+        <Input.TextArea
+          id="account-disable-reason"
+          aria-label="停用原因"
+          value={statusReason}
+          onChange={(event) => setStatusReason(event.target.value)}
+          placeholder="例如：员工离职、外部协作结束或账号存在风险"
+          maxLength={200}
+          showCount
+          autoSize={{ minRows: 3, maxRows: 5 }}
+        />
       </Modal>
     </div>
   );

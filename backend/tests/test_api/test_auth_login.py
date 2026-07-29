@@ -1,6 +1,7 @@
 """A2-003: 账号登录与 token 颁发验收测试"""
 
 from collections.abc import AsyncGenerator
+from unittest.mock import patch
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -149,6 +150,20 @@ class TestLogin:
         assert resp.json()["detail"] == "邮箱或密码不正确"
 
     @pytest.mark.anyio
+    async def test_disabled_account_cannot_login(self, client: AsyncClient, db_session: AsyncSession, seeded_account):
+        seeded_account.is_active = False
+        seeded_account.auth_version += 1
+        await db_session.commit()
+
+        resp = await client.post(
+            "/api/v1/auth/login",
+            json={"email": "login@test.com", "password": "Password1"},
+        )
+
+        assert resp.status_code == 403
+        assert resp.json()["detail"] == "账户已停用，请联系租户管理员"
+
+    @pytest.mark.anyio
     async def test_login_success_records_last_login_time(
         self, client: AsyncClient, db_session: AsyncSession, seeded_account
     ):
@@ -265,3 +280,43 @@ class TestTokenRefresh:
             json={"refresh_token": "invalid-token"},
         )
         assert resp.status_code == 401
+
+    @pytest.mark.anyio
+    async def test_status_change_revokes_refresh_and_existing_access_tokens(
+        self, client: AsyncClient, db_session: AsyncSession, seeded_account
+    ):
+        login_resp = await client.post(
+            "/api/v1/auth/login",
+            json={"email": "login@test.com", "password": "Password1"},
+        )
+        access_token = login_resp.json()["access_token"]
+        refresh_token = login_resp.json()["refresh_token"]
+
+        seeded_account.is_active = False
+        seeded_account.auth_version += 1
+        await db_session.commit()
+
+        refresh_resp = await client.post(
+            "/api/v1/auth/refresh",
+            json={"refresh_token": refresh_token},
+        )
+        with patch("app.core.database.async_session_factory", TestSessionLocal):
+            protected_resp = await client.get(
+                "/api/v1/auth/me",
+                headers={"Authorization": f"Bearer {access_token}"},
+            )
+
+        assert refresh_resp.status_code == 401
+        assert protected_resp.status_code == 401
+
+        seeded_account.is_active = True
+        seeded_account.auth_version += 1
+        await db_session.commit()
+
+        with patch("app.core.database.async_session_factory", TestSessionLocal):
+            restored_old_token_resp = await client.get(
+                "/api/v1/auth/me",
+                headers={"Authorization": f"Bearer {access_token}"},
+            )
+
+        assert restored_old_token_resp.status_code == 401

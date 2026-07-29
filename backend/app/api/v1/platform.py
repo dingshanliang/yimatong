@@ -40,6 +40,7 @@ class AuditLogRead(BaseModel):
     target_tenant_id: str
     action: str
     resource: str
+    details: dict | None = None
     timestamp: datetime
 
     model_config = {"from_attributes": True}

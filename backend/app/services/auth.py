@@ -68,10 +68,15 @@ async def _get_account_with_roles(db: AsyncSession, account_id: uuid.UUID) -> Ac
 
 def _build_token_pair(account: Account, tenant_type: str) -> dict:
     """构建 access + refresh token 对。"""
+    token_context = {"auth_version": account.auth_version}
     access = create_access_token(
-        str(account.tenant_id), str(account.id), resolve_account_role(account), tenant_type
+        str(account.tenant_id),
+        str(account.id),
+        resolve_account_role(account),
+        tenant_type,
+        extra=token_context,
     )
-    refresh = create_refresh_token(str(account.id))
+    refresh = create_refresh_token(str(account.id), extra=token_context)
     return {
         "access_token": access,
         "refresh_token": refresh,
@@ -130,6 +135,9 @@ async def authenticate_login(
     if account.locked_until and account.locked_until > now:
         raise AuthError(401, "邮箱或密码不正确")
 
+    if not account.is_active:
+        raise AuthError(403, "账户已停用，请联系租户管理员")
+
     # 登录成功：重置失败计数
     account.failed_login_attempts = 0
     account.locked_until = None
@@ -180,6 +188,10 @@ async def refresh_access_token(
     account = await _get_account_with_roles(db, uuid.UUID(account_id))
     if not account:
         raise AuthError(401, "账户不存在")
+    if not account.is_active:
+        raise AuthError(401, "账户已停用，请重新联系管理员")
+    if payload.get("auth_version", 0) != account.auth_version:
+        raise AuthError(401, "登录状态已失效，请重新登录")
 
     tenant = await get_tenant(db, account.tenant_id)
     tenant_type = tenant.tenant_type.value if tenant else "brand"

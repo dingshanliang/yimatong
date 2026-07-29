@@ -51,7 +51,7 @@ def create_access_token(
     return jwt.encode(payload, settings.secret_key, algorithm=ALGORITHM)
 
 
-def create_refresh_token(account_id: str) -> str:
+def create_refresh_token(account_id: str, extra: dict | None = None) -> str:
     expire = datetime.now(UTC) + timedelta(days=settings.refresh_token_expire_days)
     jti = str(uuid.uuid4())
     payload = {
@@ -60,6 +60,8 @@ def create_refresh_token(account_id: str) -> str:
         "type": "refresh",
         "jti": jti,
     }
+    if extra:
+        payload.update(extra)
     return jwt.encode(payload, settings.secret_key, algorithm=ALGORITHM)
 
 

@@ -12,12 +12,14 @@ async def write_audit_log(
     target_tenant_id: str,
     action: str,
     resource: str,
+    details: dict | None = None,
 ) -> PlatformAuditLog:
     log = PlatformAuditLog(
         operator_id=operator_id,
         target_tenant_id=target_tenant_id,
         action=action,
         resource=resource,
+        details=details,
     )
     db.add(log)
     await db.flush()

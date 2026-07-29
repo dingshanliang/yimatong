@@ -81,6 +81,12 @@ class TestAccountModel:
 
         assert hasattr(Account, "organization_id")
 
+    def test_account_has_active_state_and_auth_version(self):
+        from app.models.tenant import Account
+
+        assert hasattr(Account, "is_active")
+        assert hasattr(Account, "auth_version")
+
     def test_account_has_roles_relationship(self):
         from app.models.tenant import Account
 
