@@ -1,39 +1,29 @@
 @import "tailwindcss";
+@import "@yimatong/design-tokens/theme.css";
 
 :root {
-  --background: #f4f7fb;
-  --foreground: #172033;
-  --color-primary: #722ed1;
-  --platform-bg-layout: #f4f7fb;
-  --platform-bg-container: #ffffff;
-  --platform-bg-elevated: #ffffff;
-  --platform-bg-muted: #f8fafc;
-  --platform-border: #e7edf5;
-  --platform-text-muted: #64748b;
-  --platform-sider-bg: #12033a;
-  --platform-table-row-selected-bg: #f9f0ff;
-  --platform-shadow: 0 10px 28px rgb(16 24 40 / 0.08);
+  --background: var(--ymt-color-bg-canvas);
+  --foreground: var(--ymt-color-text-primary);
+  --color-primary: var(--ymt-color-action-primary);
+  --platform-bg-layout: var(--ymt-color-bg-canvas);
+  --platform-bg-container: var(--ymt-color-bg-surface);
+  --platform-bg-elevated: var(--ymt-color-bg-elevated);
+  --platform-bg-muted: var(--ymt-color-bg-muted);
+  --platform-border: var(--ymt-color-border-base);
+  --platform-text-muted: var(--ymt-color-text-secondary);
+  --platform-sider-bg: var(--ymt-color-chrome-sider);
+  --platform-table-row-selected-bg: var(--ymt-color-chrome-row-selected);
+  --platform-shadow: var(--ymt-shadow-surface);
 }
 
 html[data-theme="dark"] {
-  --background: #0a0418;
-  --foreground: #e6edf7;
-  --color-primary: #9254de;
-  --platform-bg-layout: #0a0418;
-  --platform-bg-container: #14082e;
-  --platform-bg-elevated: #1e0d45;
-  --platform-bg-muted: #100625;
-  --platform-border: #2d1a5e;
-  --platform-text-muted: #a790c8;
-  --platform-sider-bg: #08021a;
-  --platform-table-row-selected-bg: #2a1557;
-  --platform-shadow: 0 16px 36px rgb(0 0 0 / 0.4);
+  color-scheme: dark;
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  font-family: var(--ymt-font-family-body);
 }
 
 .platform-app,
