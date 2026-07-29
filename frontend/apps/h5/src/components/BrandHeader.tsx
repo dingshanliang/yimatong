@@ -9,11 +9,15 @@ interface BrandHeaderProps {
 }
 
 export function BrandHeader({ name, logoUrl, primaryColor }: BrandHeaderProps) {
-  const bgColor = primaryColor || "#2563eb";
+  // 缺省消费品牌槽位注入的 --ymt-color-action（BrandStyle 根容器提供）
+  const bgColor = primaryColor || "var(--ymt-color-action, #15803d)";
   const [logoError, setLogoError] = useState(false);
 
   return (
-    <div className="flex items-center gap-3 px-4 py-4 text-white" style={{ backgroundColor: bgColor }}>
+    <div
+      className="flex items-center gap-3 px-4 py-4 text-white"
+      style={{ backgroundColor: bgColor }}
+    >
       {logoUrl && !logoError ? (
         <img
           src={logoUrl}

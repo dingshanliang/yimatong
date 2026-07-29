@@ -88,9 +88,9 @@ def _shift_lightness(color: str, delta: float) -> str:
 def _mix_with_white(color: str, ratio: float) -> str:
     red, green, blue = _parse_hex(color)
     return _to_hex(
-        red + (1 - red) * ratio,
-        green + (1 - green) * ratio,
-        blue + (1 - blue) * ratio,
+        red / 255 + (1 - red / 255) * ratio,
+        green / 255 + (1 - green / 255) * ratio,
+        blue / 255 + (1 - blue / 255) * ratio,
     )
 
 
@@ -147,6 +147,6 @@ def derive_brand_shades(anchor: str) -> dict[str, str]:
         "primary": primary,
         "hover": _shift_lightness(primary, -0.08),
         "active": _shift_lightness(primary, -0.14),
-        "subtle": _mix_with_white(primary, 0.88),
+        "subtle": _mix_with_white(primary, 0.94),
         "onPrimary": on_primary,
     }

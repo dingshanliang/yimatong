@@ -23,6 +23,8 @@ import { TraceabilitySection } from "@/components/TraceabilitySection";
 import { LeadForm } from "@/components/LeadForm";
 import { FooterSection } from "@/components/FooterSection";
 import { FallbackError } from "@/components/FallbackError";
+import { BrandStyle } from "@/components/BrandStyle";
+import { resolveBrandSlots, type TenantBranding } from "@/lib/brand-theme";
 import { sanitizeHtml } from "@/lib/sanitize";
 
 interface ResolveContentProps {
@@ -98,14 +100,12 @@ export function ResolveContent({
   }
 
   const tenantBranding = jsonPayload.tenant_branding as
-    | {
-        name: string;
-        logo_url?: string;
-        primary_color?: string;
-      }
-    | undefined;
+    TenantBranding | undefined;
   const pageConfig = jsonPayload.page_config as
     Record<string, unknown> | undefined;
+
+  // 租户品牌槽位三层回退：页面 DSL brand_theme → 租户 brand_profile → 默认主题（yimatong-z6i0.10）
+  const brandSlots = resolveBrandSlots(tenantBranding, pageConfig);
 
   const modules = (pageConfig?.modules as ModuleConfig[] | undefined) || [];
   const enabledModules = modules.filter((m) => m.enabled !== false);
@@ -123,114 +123,121 @@ export function ResolveContent({
 
   if (enabledModules.length === 0) {
     return (
-      <DefaultRender
-        publicId={publicId}
-        scanToken={scanToken}
-        brandName={brandName}
-        brandLogo={
-          tenantBranding?.logo_url || (brand?.logo_url as string) || ""
-        }
-        primaryColor={tenantBranding?.primary_color}
-        productName={productName}
-        productDesc={productDesc}
-        productImage={productImages?.[0]}
-        codeData={codeData || {}}
-      />
+      <BrandStyle slots={brandSlots}>
+        <DefaultRender
+          publicId={publicId}
+          scanToken={scanToken}
+          brandName={brandName}
+          brandLogo={
+            tenantBranding?.logo_url || (brand?.logo_url as string) || ""
+          }
+          primaryColor={brandSlots.primaryColor}
+          productName={productName}
+          productDesc={productDesc}
+          productImage={productImages?.[0]}
+          codeData={codeData || {}}
+        />
+      </BrandStyle>
     );
   }
 
   return (
-    <div className="mx-auto max-w-md min-h-screen bg-gray-50">
-      <BrandHeader
-        name={brandName || tenantBranding?.name || ""}
-        logoUrl={tenantBranding?.logo_url || ""}
-        primaryColor={tenantBranding?.primary_color}
-      />
-
-      {/* yimatong-zgb1.6 AC3：frozen 码保留溯源，但顶部提示审核中 + 权益暂停 */}
-      {lifecycle === "frozen" && (
-        <div
-          className="mx-4 mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800"
-          role="status"
-          aria-label="该码正在审核中，权益暂时暂停"
-        >
-          <div className="flex items-center gap-2">
-            <svg
-              className="h-5 w-5 shrink-0 text-amber-600"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-              strokeWidth={2}
-              aria-hidden="true"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z"
-              />
-            </svg>
-            <div>
-              <p className="font-semibold">该码正在审核中</p>
-              <p className="mt-0.5 text-xs text-amber-700">
-                溯源信息可正常查看，权益领取暂时暂停。如有疑问请联系品牌客服。
-              </p>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* yimatong-zgb1.7 AC2：异常码风险提示（保留溯源，不宣告假货，Decision 16） */}
-      {(scanInfo?.risk_warning as
-        { level?: string; message?: string } | undefined) && (
-        <div
-          className="mx-4 mt-3 rounded-xl border border-orange-200 bg-orange-50 p-3 text-sm text-orange-800"
-          role="alert"
-          aria-label="该码存在异常使用信号"
-        >
-          <div className="flex items-start gap-2">
-            <svg
-              className="mt-0.5 h-5 w-5 shrink-0 text-orange-600"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-              strokeWidth={2}
-              aria-hidden="true"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z"
-              />
-            </svg>
-            <div>
-              <p className="font-semibold">该码存在异常使用信号</p>
-              <p className="mt-0.5 text-xs text-orange-700">
-                {(scanInfo?.risk_warning as { message?: string }).message ||
-                  "请审慎对待。如非本人操作，请联系品牌客服。"}
-              </p>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {enabledModules.map((mod) => (
-        <ModuleRenderer
-          key={mod.id}
-          module={mod}
-          publicId={publicId}
-          scanToken={scanToken}
-          codeData={codeData || {}}
-          product={product || {}}
-          brand={brand || {}}
-          batch={batch || {}}
-          campaign={campaign || {}}
-          scanInfo={scanInfo || {}}
-          tenantBranding={tenantBranding}
+    <BrandStyle slots={brandSlots}>
+      <div className="mx-auto max-w-md min-h-screen">
+        <BrandHeader
+          name={brandName || tenantBranding?.name || ""}
+          logoUrl={tenantBranding?.logo_url || ""}
+          primaryColor={brandSlots.primaryColor}
         />
-      ))}
 
-      <FooterSection branding={tenantBranding} />
-    </div>
+        {/* yimatong-zgb1.6 AC3：frozen 码保留溯源，但顶部提示审核中 + 权益暂停 */}
+        {lifecycle === "frozen" && (
+          <div
+            className="mx-4 mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800"
+            role="status"
+            aria-label="该码正在审核中，权益暂时暂停"
+          >
+            <div className="flex items-center gap-2">
+              <svg
+                className="h-5 w-5 shrink-0 text-amber-600"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+                strokeWidth={2}
+                aria-hidden="true"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z"
+                />
+              </svg>
+              <div>
+                <p className="font-semibold">该码正在审核中</p>
+                <p className="mt-0.5 text-xs text-amber-700">
+                  溯源信息可正常查看，权益领取暂时暂停。如有疑问请联系品牌客服。
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* yimatong-zgb1.7 AC2：异常码风险提示（保留溯源，不宣告假货，Decision 16） */}
+        {(scanInfo?.risk_warning as
+          { level?: string; message?: string } | undefined) && (
+          <div
+            className="mx-4 mt-3 rounded-xl border border-orange-200 bg-orange-50 p-3 text-sm text-orange-800"
+            role="alert"
+            aria-label="该码存在异常使用信号"
+          >
+            <div className="flex items-start gap-2">
+              <svg
+                className="mt-0.5 h-5 w-5 shrink-0 text-orange-600"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+                strokeWidth={2}
+                aria-hidden="true"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z"
+                />
+              </svg>
+              <div>
+                <p className="font-semibold">该码存在异常使用信号</p>
+                <p className="mt-0.5 text-xs text-orange-700">
+                  {(scanInfo?.risk_warning as { message?: string }).message ||
+                    "请审慎对待。如非本人操作，请联系品牌客服。"}
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {enabledModules.map((mod) => (
+          <ModuleRenderer
+            key={mod.id}
+            module={mod}
+            publicId={publicId}
+            scanToken={scanToken}
+            codeData={codeData || {}}
+            product={product || {}}
+            brand={brand || {}}
+            batch={batch || {}}
+            campaign={campaign || {}}
+            scanInfo={scanInfo || {}}
+            tenantBranding={tenantBranding}
+          />
+        ))}
+
+        <FooterSection
+          branding={tenantBranding}
+          hideEndorsement={brandSlots.hideYimatongBrand}
+        />
+      </div>
+    </BrandStyle>
   );
 }
 
