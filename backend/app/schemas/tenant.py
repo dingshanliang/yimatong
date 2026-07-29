@@ -78,6 +78,17 @@ class TenantUpdateSelf(BaseModel):
     categories: list[str] | None = None
     onboarding_progress: dict | None = None
     enabled_features: dict | None = None
+    brand_profile: dict | None = None
+
+    @field_validator("brand_profile")
+    @classmethod
+    def validate_brand_profile_slots(cls, v: dict | None) -> dict | None:
+        """H5 租户定制槽位白名单与主色安全校验（yimatong-z6i0.10）"""
+        if v is None:
+            return v
+        from app.utils.brand_color import validate_brand_profile
+
+        return validate_brand_profile(v)
 
     @field_validator("categories")
     @classmethod
@@ -113,6 +124,7 @@ class TenantRead(BaseModel):
     notes: str | None = Field(None, description="备注")
     quota: dict | None = Field(None, description="配额配置")
     compliance_settings: dict | None = Field(None, description="合规设置")
+    brand_profile: dict | None = Field(None, description="租户品牌定制槽位（H5 受控定制）")
     onboarding_progress: dict | None = Field(None, description=" onboarding 进度")
     enabled_features: dict | None = Field(None, description="已启用功能")
     categories: list[str] | None = Field(None, description="租户品类配置")

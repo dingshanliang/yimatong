@@ -62,6 +62,13 @@ class PageVersionCreateRequest(BaseModel):
             raise ValueError("config_json 太大，最大允许 100KB")
         return v
 
+    @field_validator("config_json")
+    @classmethod
+    def validate_brand_theme_slots(cls, v: dict) -> dict:
+        from app.utils.brand_color import validate_brand_theme
+
+        return validate_brand_theme(v)
+
 
 class PageVersionUpdateRequest(BaseModel):
     config_json: dict
@@ -74,6 +81,13 @@ class PageVersionUpdateRequest(BaseModel):
         if len(json.dumps(v, ensure_ascii=False)) > 100_000:
             raise ValueError("config_json 太大，最大允许 100KB")
         return v
+
+    @field_validator("config_json")
+    @classmethod
+    def validate_brand_theme_slots(cls, v: dict) -> dict:
+        from app.utils.brand_color import validate_brand_theme
+
+        return validate_brand_theme(v)
 
 
 @page_template_router.get("/industry-templates")

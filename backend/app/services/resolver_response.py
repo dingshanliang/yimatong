@@ -17,6 +17,7 @@ from app.models.product import (
     ProductionBatch,
 )
 from app.models.risk import RiskAlert
+from app.models.tenant import Tenant
 from app.services.redis_cache import AsyncRedisCache
 
 _product_cache = AsyncRedisCache(prefix="product", default_ttl=600)
@@ -150,6 +151,14 @@ async def build_json_response(
                 result["tenant_branding"] = brand_data
                 result["code_data"]["test_reports"] = test_reports
                 result["code_data"]["certificates"] = certificates
+
+    # 租户级品牌定制槽位（yimatong-z6i0.10）：并入 tenant_branding，
+    # H5 按「页面 DSL brand_theme → 租户 brand_profile → 默认主题」三层回退解析。
+    # 品牌的 name/logo_url 优先级高于 profile 同名字段，保证产品品牌展示不被覆盖。
+    tenant_result = await db.execute(select(Tenant.brand_profile).where(Tenant.id == tenant_uuid))
+    brand_profile = tenant_result.scalar_one_or_none() or {}
+    if brand_profile:
+        result["tenant_branding"] = {**brand_profile, **(result.get("tenant_branding") or {})}
 
     # 查询页面配置（缓存优先）
     template_id = data.get("template_id")

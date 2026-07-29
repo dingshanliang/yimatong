@@ -60,6 +60,11 @@ class Tenant(Base):
     notes: Mapped[str | None] = mapped_column(String(1000), nullable=True)
     quota: Mapped[dict | None] = mapped_column(JSON, default=dict, nullable=True)
     compliance_settings: Mapped[dict | None] = mapped_column(JSON, default=dict, nullable=True)
+    brand_profile: Mapped[dict | None] = mapped_column(
+        JSON,
+        nullable=True,
+        comment="租户品牌定制槽位：primary_color/radius_preset/background_preset/hide_yimatong_brand",
+    )
     onboarding_progress: Mapped[dict | None] = mapped_column(JSON, default=dict, nullable=True)
     enabled_features: Mapped[dict | None] = mapped_column(JSON, default=dict, nullable=True)
     categories: Mapped[list | None] = mapped_column(JSON, default=list, nullable=True, comment="租户品类配置")

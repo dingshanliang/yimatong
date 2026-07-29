@@ -149,6 +149,7 @@ async def update_tenant(
     enabled_features: dict | None = None,
     tenant_type: str | None = None,
     categories: list[str] | None = None,
+    brand_profile: dict | None = None,
 ) -> Tenant | None:
     tenant = await get_tenant(db, tenant_id)
     if not tenant:
@@ -175,6 +176,10 @@ async def update_tenant(
         tenant.tenant_type = TenantType(tenant_type)
     if categories is not None:
         tenant.categories = categories
+    if brand_profile is not None:
+        existing = tenant.brand_profile or {}
+        existing.update(brand_profile)
+        tenant.brand_profile = existing
     await db.flush()
     await db.refresh(tenant)
     await _audit(db, "system", str(tenant.id), "tenant_update", f"tenant:{tenant_id}")

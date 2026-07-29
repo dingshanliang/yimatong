@@ -156,6 +156,7 @@ async def update_current_tenant_endpoint(
         onboarding_progress=body.onboarding_progress,
         enabled_features=body.enabled_features,
         categories=body.categories,
+        brand_profile=body.brand_profile,
     )
     if not tenant:
         raise HTTPException(status_code=404, detail="Tenant not found")
