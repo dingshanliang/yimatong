@@ -1,0 +1,93 @@
+[
+  {
+    "appId": "admin",
+    "linter": "eslint",
+    "ruleId": "no-restricted-syntax",
+    "path": "src/app/(dashboard)/_components/dashboard/CampaignRanking.tsx",
+    "count": 4
+  },
+  {
+    "appId": "admin",
+    "linter": "eslint",
+    "ruleId": "no-restricted-syntax",
+    "path": "src/app/(dashboard)/_components/dashboard/ChannelHealth.tsx",
+    "count": 1
+  },
+  {
+    "appId": "admin",
+    "linter": "eslint",
+    "ruleId": "no-restricted-syntax",
+    "path": "src/app/(dashboard)/_components/dashboard/ConversionFunnel.tsx",
+    "count": 1
+  },
+  {
+    "appId": "admin",
+    "linter": "eslint",
+    "ruleId": "no-restricted-syntax",
+    "path": "src/app/(dashboard)/_components/DashboardHome.tsx",
+    "count": 2
+  },
+  {
+    "appId": "admin",
+    "linter": "eslint",
+    "ruleId": "no-restricted-syntax",
+    "path": "src/app/(dashboard)/_components/HealthScoreHeader.tsx",
+    "count": 2
+  },
+  {
+    "appId": "admin",
+    "linter": "eslint",
+    "ruleId": "no-restricted-syntax",
+    "path": "src/app/(dashboard)/_components/MetricHeaders.tsx",
+    "count": 4
+  },
+  {
+    "appId": "admin",
+    "linter": "eslint",
+    "ruleId": "no-restricted-syntax",
+    "path": "src/app/(dashboard)/codes/page.tsx",
+    "count": 1
+  },
+  {
+    "appId": "admin",
+    "linter": "eslint",
+    "ruleId": "no-restricted-syntax",
+    "path": "src/app/(dashboard)/imports/page.tsx",
+    "count": 3
+  },
+  {
+    "appId": "platform",
+    "linter": "eslint",
+    "ruleId": "no-restricted-syntax",
+    "path": "src/app/(auth)/login/page.tsx",
+    "count": 1
+  },
+  {
+    "appId": "platform",
+    "linter": "eslint",
+    "ruleId": "no-restricted-syntax",
+    "path": "src/app/(dashboard)/_components/HealthScoreHeader.tsx",
+    "count": 2
+  },
+  {
+    "appId": "platform",
+    "linter": "eslint",
+    "ruleId": "no-restricted-syntax",
+    "path": "src/app/(dashboard)/analytics/page.tsx",
+    "count": 7
+  },
+  {
+    "appId": "platform",
+    "linter": "eslint",
+    "ruleId": "no-restricted-syntax",
+    "path": "src/app/(dashboard)/layout.tsx",
+    "count": 1
+  },
+  {
+    "appId": "platform",
+    "linter": "eslint",
+    "ruleId": "no-restricted-syntax",
+    "path": "src/app/(dashboard)/plans/page.tsx",
+    "count": 2
+  }
+]

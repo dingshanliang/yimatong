@@ -6,7 +6,9 @@
     "dev": "next dev --port 3000",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint:eslint": "eslint",
+    "lint:style": "stylelint \"**/*.{css,scss}\" --config ../../stylelint.config.mjs",
+    "lint": "eslint && stylelint \"**/*.{css,scss}\" --config ../../stylelint.config.mjs"
   },
   "dependencies": {
     "@ant-design/charts": "^2.6.7",
@@ -42,6 +44,9 @@
     "eslint": "^9",
     "eslint-config-next": "16.2.6",
     "jsdom": "^29.1.1",
+    "postcss-styled-syntax": "^0.7",
+    "stylelint": "^16",
+    "stylelint-config-standard": "^36",
     "tailwindcss": "^4",
     "typescript": "^5",
     "vitest": "^4.1.8"

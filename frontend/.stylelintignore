@@ -1,0 +1,11 @@
+node_modules
+.next
+out
+build
+dist
+coverage
+playwright-report
+test-results
+# design-tokens 生成的 theme.css 是构建产物（由 build-css.mjs 生成，不在 admin/platform lint 范围）
+packages/design-tokens/dist
+packages/design-tokens/preview

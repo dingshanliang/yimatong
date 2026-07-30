@@ -17,6 +17,8 @@
     "lint:h5": "pnpm --filter @yimatong/h5 lint",
     "lint:platform": "pnpm --filter @yimatong/platform lint",
     "lint:boundaries": "depcruise apps packages",
+    "lint:tokens": "pnpm --filter @yimatong/design-tokens check",
+    "lint:design": "pnpm --filter @yimatong/design-tokens check && node scripts/design-gates.mjs",
     "lint": "pnpm lint:admin && pnpm lint:h5 && pnpm lint:platform",
     "typecheck": "pnpm --filter @yimatong/shared typecheck && pnpm --filter @yimatong/design-tokens typecheck && pnpm --filter @yimatong/admin exec tsc --noEmit && pnpm --filter @yimatong/h5 exec tsc --noEmit && pnpm --filter @yimatong/platform exec tsc --noEmit",
     "check": "pnpm --filter @yimatong/design-tokens check && pnpm typecheck && pnpm lint:boundaries",

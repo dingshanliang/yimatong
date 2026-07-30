@@ -1,0 +1,13 @@
+# 生成产物（由 build-css.mjs 生成，格式由生成器决定，prettier 不应改写）
+frontend/packages/design-tokens/dist
+frontend/packages/design-tokens/preview
+# 快照黄金文件（由生成产物复制，须与 dist 一致）
+frontend/packages/design-tokens/tests/__snapshots__
+
+# 依赖与构建产物
+**/node_modules
+**/.next
+**/dist
+**/build
+**/coverage
+pnpm-lock.yaml

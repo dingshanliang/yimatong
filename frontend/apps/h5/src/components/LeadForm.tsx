@@ -1,5 +1,6 @@
 "use client";
 
+import { Check } from "lucide-react";
 import { useState } from "react";
 import { apiClient } from "@/lib/api";
 
@@ -134,19 +135,7 @@ export function LeadForm({
     return (
       <div className="mt-3 rounded-2xl bg-white p-4 shadow-sm text-center">
         <div className="mx-auto mb-2 flex h-10 w-10 items-center justify-center rounded-full bg-green-50">
-          <svg
-            className="h-5 w-5 text-green-600"
-            fill="none"
-            viewBox="0 0 24 24"
-            stroke="currentColor"
-            strokeWidth={2}
-          >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              d="M5 13l4 4L19 7"
-            />
-          </svg>
+          <Check className="h-5 w-5 text-green-600" aria-hidden="true" />
         </div>
         <p className="text-sm font-medium text-gray-900">提交成功</p>
       </div>

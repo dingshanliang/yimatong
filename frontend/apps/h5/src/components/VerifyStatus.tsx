@@ -1,5 +1,13 @@
 "use client";
 
+import {
+  Clock,
+  CircleX,
+  MinusCircle,
+  ShieldCheck,
+  TriangleAlert,
+} from "lucide-react";
+
 /** 验真状态类型 */
 type VerifyStatusType = "first_scan" | "repeat_scan" | "invalid";
 
@@ -30,20 +38,7 @@ const STATUS_CONFIG: Record<
 > = {
   first_scan: {
     icon: (
-      <svg
-        className="h-8 w-8"
-        fill="none"
-        viewBox="0 0 24 24"
-        stroke="currentColor"
-        strokeWidth={2}
-        aria-hidden="true"
-      >
-        <path
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          d="M9 12.75L11.25 15 15 9.75m-3-7.036A11.959 11.959 0 013.598 6 11.99 11.99 0 003 9.749c0 5.592 3.824 10.29 9 11.623 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.571-.598-3.751h-.152c-3.196 0-6.1-1.248-8.25-3.285z"
-        />
-      </svg>
+      <ShieldCheck className="h-8 w-8" strokeWidth={2} aria-hidden="true" />
     ),
     title: "验证通过",
     // yimatong-zgb1.4：轻防伪结论 + 可信依据。不声称绝对真伪，
@@ -58,20 +53,7 @@ const STATUS_CONFIG: Record<
   },
   repeat_scan: {
     icon: (
-      <svg
-        className="h-8 w-8"
-        fill="none"
-        viewBox="0 0 24 24"
-        stroke="currentColor"
-        strokeWidth={2}
-        aria-hidden="true"
-      >
-        <path
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z"
-        />
-      </svg>
+      <TriangleAlert className="h-8 w-8" strokeWidth={2} aria-hidden="true" />
     ),
     title: "重复查验",
     // yimatong-zgb1.4：重复查验不是异常，不引发恐慌。展示首查时间 + 累计次数即可。
@@ -83,22 +65,7 @@ const STATUS_CONFIG: Record<
     badgeText: "重复查验",
   },
   invalid: {
-    icon: (
-      <svg
-        className="h-8 w-8"
-        fill="none"
-        viewBox="0 0 24 24"
-        stroke="currentColor"
-        strokeWidth={2}
-        aria-hidden="true"
-      >
-        <path
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          d="M9.75 9.75l4.5 4.5m0-4.5l-4.5 4.5M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
-        />
-      </svg>
-    ),
+    icon: <CircleX className="h-8 w-8" strokeWidth={2} aria-hidden="true" />,
     title: "验证失败",
     description: "该码无效或已被篡改，请谨慎对待此产品。",
     bg: "bg-red-50",
@@ -171,20 +138,10 @@ export function VerifyStatus({
         <div className="mt-3 flex gap-4 border-t border-white/50 pt-3">
           {scanCount !== undefined && (
             <div className="flex items-center gap-1.5 text-sm text-gray-600">
-              <svg
+              <MinusCircle
                 className="h-4 w-4 text-gray-400"
-                fill="none"
-                viewBox="0 0 24 24"
-                stroke="currentColor"
-                strokeWidth={2}
                 aria-hidden="true"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  d="M15 12H9m12 0a9 9 0 11-18 0 9 9 0 0118 0z"
-                />
-              </svg>
+              />
               <span>
                 累计查验 <strong>{scanCount}</strong> 次
               </span>
@@ -193,40 +150,14 @@ export function VerifyStatus({
           {/* first_scan 状态：展示首次查验时间 */}
           {status === "first_scan" && firstScanTime && (
             <div className="flex items-center gap-1.5 text-sm text-gray-600">
-              <svg
-                className="h-4 w-4 text-gray-400"
-                fill="none"
-                viewBox="0 0 24 24"
-                stroke="currentColor"
-                strokeWidth={2}
-                aria-hidden="true"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z"
-                />
-              </svg>
+              <Clock className="h-4 w-4 text-gray-400" aria-hidden="true" />
               <span>首次 {formatDateTime(firstScanTime)}</span>
             </div>
           )}
           {/* repeat_scan 状态：展示最近查验时间（不展示首次，AC1） */}
           {status === "repeat_scan" && lastScanTime && (
             <div className="flex items-center gap-1.5 text-sm text-gray-600">
-              <svg
-                className="h-4 w-4 text-gray-400"
-                fill="none"
-                viewBox="0 0 24 24"
-                stroke="currentColor"
-                strokeWidth={2}
-                aria-hidden="true"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z"
-                />
-              </svg>
+              <Clock className="h-4 w-4 text-gray-400" aria-hidden="true" />
               <span>最近 {formatDateTime(lastScanTime)}</span>
             </div>
           )}

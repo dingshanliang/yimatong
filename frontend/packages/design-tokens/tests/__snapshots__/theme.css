@@ -1,0 +1,246 @@
+/* Generated from @yimatong/design-tokens. Do not edit by hand. */
+
+@theme {
+  --color-brand-50: var(--ymt-color-brand-50);
+  --color-brand-100: var(--ymt-color-brand-100);
+  --color-brand-200: var(--ymt-color-brand-200);
+  --color-brand-300: var(--ymt-color-brand-300);
+  --color-brand-400: var(--ymt-color-brand-400);
+  --color-brand-500: var(--ymt-color-brand-500);
+  --color-brand-600: var(--ymt-color-brand-600);
+  --color-brand-700: var(--ymt-color-brand-700);
+  --color-brand-800: var(--ymt-color-brand-800);
+  --color-brand-900: var(--ymt-color-brand-900);
+  --color-brand-950: var(--ymt-color-brand-950);
+  --color-accent-50: var(--ymt-color-accent-50);
+  --color-accent-100: var(--ymt-color-accent-100);
+  --color-accent-200: var(--ymt-color-accent-200);
+  --color-accent-300: var(--ymt-color-accent-300);
+  --color-accent-400: var(--ymt-color-accent-400);
+  --color-accent-500: var(--ymt-color-accent-500);
+  --color-accent-600: var(--ymt-color-accent-600);
+  --color-accent-700: var(--ymt-color-accent-700);
+  --color-accent-800: var(--ymt-color-accent-800);
+  --color-accent-900: var(--ymt-color-accent-900);
+  --color-accent-950: var(--ymt-color-accent-950);
+  --text-xs: var(--ymt-font-size-xs);
+  --text-sm: var(--ymt-font-size-sm);
+  --text-base: var(--ymt-font-size-base);
+  --text-md: var(--ymt-font-size-md);
+  --text-lg: var(--ymt-font-size-lg);
+  --text-xl: var(--ymt-font-size-xl);
+  --text-2xl: var(--ymt-font-size-2xl);
+  --text-3xl: var(--ymt-font-size-3xl);
+  --text-4xl: var(--ymt-font-size-4xl);
+  --font-weight-regular: var(--ymt-font-weight-regular);
+  --font-weight-medium: var(--ymt-font-weight-medium);
+  --font-weight-semibold: var(--ymt-font-weight-semibold);
+  --font-weight-bold: var(--ymt-font-weight-bold);
+  --radius-sm: var(--ymt-radius-sm);
+  --radius-md: var(--ymt-radius-md);
+  --radius-lg: var(--ymt-radius-lg);
+  --radius-xl: var(--ymt-radius-xl);
+  --radius-pill: var(--ymt-radius-pill);
+  --shadow-sm: var(--ymt-shadow-sm);
+  --shadow-md: var(--ymt-shadow-md);
+  --shadow-lg: var(--ymt-shadow-lg);
+  --font-body: var(--ymt-font-family-body);
+  --font-mono: var(--ymt-font-family-mono);
+}
+
+@theme inline {
+  --color-canvas: var(--ymt-color-bg-canvas);
+  --color-surface: var(--ymt-color-bg-surface);
+  --color-elevated: var(--ymt-color-bg-elevated);
+  --color-muted: var(--ymt-color-bg-muted);
+  --color-foreground: var(--ymt-color-text-primary);
+  --color-foreground-secondary: var(--ymt-color-text-secondary);
+  --color-foreground-tertiary: var(--ymt-color-text-tertiary);
+  --color-border-base: var(--ymt-color-border-base);
+  --color-border-strong: var(--ymt-color-border-strong);
+  --color-brand: var(--ymt-color-brand-primary);
+  --color-brand-subtle: var(--ymt-color-brand-subtle);
+  --color-brand-accent: var(--ymt-color-brand-accent);
+  --color-action: var(--ymt-color-action-primary);
+  --color-action-hover: var(--ymt-color-action-primary-hover);
+  --color-action-active: var(--ymt-color-action-primary-active);
+  --color-on-action: var(--ymt-color-action-on-primary);
+  --color-link: var(--ymt-color-action-link);
+  --color-success: var(--ymt-color-feedback-success);
+  --color-success-bg: var(--ymt-color-feedback-success-bg);
+  --color-warning: var(--ymt-color-feedback-warning);
+  --color-warning-bg: var(--ymt-color-feedback-warning-bg);
+  --color-danger: var(--ymt-color-feedback-danger);
+  --color-danger-bg: var(--ymt-color-feedback-danger-bg);
+  --color-info: var(--ymt-color-feedback-info);
+  --color-info-bg: var(--ymt-color-feedback-info-bg);
+  --color-focus-ring: var(--ymt-color-focus-ring);
+}
+
+:root {
+  --ymt-color-brand-50: #f0fdf4;
+  --ymt-color-brand-100: #dcfce7;
+  --ymt-color-brand-200: #bbf7d0;
+  --ymt-color-brand-300: #86efac;
+  --ymt-color-brand-400: #4ade80;
+  --ymt-color-brand-500: #16a34a;
+  --ymt-color-brand-600: #15803d;
+  --ymt-color-brand-700: #166534;
+  --ymt-color-brand-800: #14532d;
+  --ymt-color-brand-900: #0f3d22;
+  --ymt-color-brand-950: #052e16;
+  --ymt-color-accent-50: #fffbeb;
+  --ymt-color-accent-100: #fef3c7;
+  --ymt-color-accent-200: #fde68a;
+  --ymt-color-accent-300: #fcd34d;
+  --ymt-color-accent-400: #fbbf24;
+  --ymt-color-accent-500: #f59e0b;
+  --ymt-color-accent-600: #d97706;
+  --ymt-color-accent-700: #b45309;
+  --ymt-color-accent-800: #92400e;
+  --ymt-color-accent-900: #78350f;
+  --ymt-color-accent-950: #451a03;
+  --ymt-font-family-body: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  --ymt-font-family-mono: "SFMono-Regular", Consolas, "Liberation Mono", ui-monospace, monospace;
+  --ymt-font-size-xs: 12px;
+  --ymt-font-size-sm: 13px;
+  --ymt-font-size-base: 14px;
+  --ymt-font-size-md: 16px;
+  --ymt-font-size-lg: 18px;
+  --ymt-font-size-xl: 20px;
+  --ymt-font-size-2xl: 24px;
+  --ymt-font-size-3xl: 30px;
+  --ymt-font-size-4xl: 36px;
+  --ymt-font-line-height-heading: 1.3;
+  --ymt-font-line-height-dense: 1.4;
+  --ymt-font-line-height-body: 1.6;
+  --ymt-font-weight-regular: 400;
+  --ymt-font-weight-medium: 500;
+  --ymt-font-weight-semibold: 600;
+  --ymt-font-weight-bold: 700;
+  --ymt-space-1: 4px;
+  --ymt-space-2: 8px;
+  --ymt-space-3: 12px;
+  --ymt-space-4: 16px;
+  --ymt-space-6: 24px;
+  --ymt-space-8: 32px;
+  --ymt-space-12: 48px;
+  --ymt-space-16: 64px;
+  --ymt-radius-sm: 6px;
+  --ymt-radius-md: 10px;
+  --ymt-radius-lg: 14px;
+  --ymt-radius-xl: 18px;
+  --ymt-radius-pill: 999px;
+  --ymt-shadow-sm: 0 2px 8px rgb(15 61 34 / 0.06);
+  --ymt-shadow-md: 0 10px 28px rgb(15 61 34 / 0.08);
+  --ymt-shadow-lg: 0 18px 48px rgb(15 61 34 / 0.12);
+  --ymt-focus-width: 2px;
+  --ymt-focus-offset: 2px;
+  --ymt-target-minimum: 24px;
+  --ymt-target-desktop: 32px;
+  --ymt-target-touch: 44px;
+  --ymt-target-primary: 48px;
+  --ymt-color-bg-canvas: #f6f8f5;
+  --ymt-color-bg-surface: #ffffff;
+  --ymt-color-bg-elevated: #ffffff;
+  --ymt-color-bg-muted: #f0f4ef;
+  --ymt-color-text-primary: #17211a;
+  --ymt-color-text-secondary: #435348;
+  --ymt-color-text-tertiary: #5f7064;
+  --ymt-color-text-inverse: #ffffff;
+  --ymt-color-border-base: #d9e3da;
+  --ymt-color-border-strong: #738178;
+  --ymt-color-brand-primary: #16a34a;
+  --ymt-color-brand-subtle: #dcfce7;
+  --ymt-color-brand-accent: #f59e0b;
+  --ymt-color-action-primary: #15803d;
+  --ymt-color-action-primary-hover: #166534;
+  --ymt-color-action-primary-active: #14532d;
+  --ymt-color-action-on-primary: #ffffff;
+  --ymt-color-action-link: #15803d;
+  --ymt-color-action-accent: #f59e0b;
+  --ymt-color-action-on-accent: #17211a;
+  --ymt-color-feedback-success: #166534;
+  --ymt-color-feedback-success-bg: #f0fdf4;
+  --ymt-color-feedback-warning: #92400e;
+  --ymt-color-feedback-warning-bg: #fffbeb;
+  --ymt-color-feedback-danger: #b91c1c;
+  --ymt-color-feedback-danger-bg: #fef2f2;
+  --ymt-color-feedback-info: #1d4ed8;
+  --ymt-color-feedback-info-bg: #eff6ff;
+  --ymt-color-focus-ring: #166534;
+  --ymt-color-chrome-sider: #092c18;
+  --ymt-color-chrome-header: #ffffff;
+  --ymt-color-chrome-table-header: #eef4ee;
+  --ymt-color-chrome-row-hover: #f2f8f2;
+  --ymt-color-chrome-row-selected: #dcfce7;
+  --ymt-shadow-surface: 0 10px 28px rgb(15 61 34 / 0.08);
+  --ymt-shadow-overlay: 0 18px 48px rgb(15 61 34 / 0.14);
+  --ymt-target-minimum: 24px;
+  --ymt-target-desktop: 32px;
+  --ymt-target-touch: 44px;
+  --ymt-target-primary: 48px;
+}
+
+html[data-theme="dark"] {
+  --ymt-color-bg-canvas: #07130b;
+  --ymt-color-bg-surface: #0d1f13;
+  --ymt-color-bg-elevated: #14291a;
+  --ymt-color-bg-muted: #112318;
+  --ymt-color-text-primary: #edf7ef;
+  --ymt-color-text-secondary: #bdccbf;
+  --ymt-color-text-tertiary: #9dae9f;
+  --ymt-color-text-inverse: #07130b;
+  --ymt-color-border-base: #294333;
+  --ymt-color-border-strong: #7e9583;
+  --ymt-color-brand-primary: #4ade80;
+  --ymt-color-brand-subtle: #123b20;
+  --ymt-color-brand-accent: #fbbf24;
+  --ymt-color-action-primary: #4ade80;
+  --ymt-color-action-primary-hover: #86efac;
+  --ymt-color-action-primary-active: #22c55e;
+  --ymt-color-action-on-primary: #07130b;
+  --ymt-color-action-link: #86efac;
+  --ymt-color-action-accent: #fbbf24;
+  --ymt-color-action-on-accent: #1f1603;
+  --ymt-color-feedback-success: #86efac;
+  --ymt-color-feedback-success-bg: #123b20;
+  --ymt-color-feedback-warning: #fcd34d;
+  --ymt-color-feedback-warning-bg: #3d2a08;
+  --ymt-color-feedback-danger: #fca5a5;
+  --ymt-color-feedback-danger-bg: #451a1a;
+  --ymt-color-feedback-info: #93c5fd;
+  --ymt-color-feedback-info-bg: #172554;
+  --ymt-color-focus-ring: #86efac;
+  --ymt-color-chrome-sider: #041108;
+  --ymt-color-chrome-header: #0d1f13;
+  --ymt-color-chrome-table-header: #13281a;
+  --ymt-color-chrome-row-hover: #17321f;
+  --ymt-color-chrome-row-selected: #1b4728;
+  --ymt-shadow-surface: 0 14px 34px rgb(0 0 0 / 0.34);
+  --ymt-shadow-overlay: 0 22px 56px rgb(0 0 0 / 0.48);
+  color-scheme: dark;
+}
+
+:where(a, button, input, select, textarea, summary, [tabindex]):focus-visible {
+  outline: var(--ymt-focus-width) solid var(--ymt-color-focus-ring);
+  outline-offset: var(--ymt-focus-offset);
+}
+
+.ymt-target-desktop {
+  min-block-size: var(--ymt-target-desktop);
+  min-inline-size: var(--ymt-target-desktop);
+}
+
+.ymt-target-touch {
+  min-block-size: var(--ymt-target-touch);
+  min-inline-size: var(--ymt-target-touch);
+}
+
+.ymt-target-primary {
+  min-block-size: var(--ymt-target-primary);
+}
+
+.ymt-tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
