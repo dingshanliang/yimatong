@@ -1,0 +1,453 @@
+<!doctype html>
+<!--
+  PROTOTYPE — throwaway. ticket: yimatong-pifo.7「插画与空状态风格规范」
+  问题：轻量路线（线性图标+排版，无叙事插画）下，空状态视觉用哪种处理？
+  三个变体：?variant=v1 极简灰阶 / ?variant=v2 品牌容器 / ?variant=v3 几何点缀
+  每个变体同时渲染 Admin 表格空状态（明暗双主题可切）与 H5 消费者场景。
+-->
+<html lang="zh-CN" data-theme="light">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>空状态风格原型（PROTOTYPE）</title>
+    <link rel="stylesheet" href="../dist/theme.css" />
+    <style>
+      * {
+        margin: 0;
+        box-sizing: border-box;
+      }
+      body {
+        font-family:
+          -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+        background: var(--ymt-color-bg-canvas);
+        color: var(--ymt-color-text-primary);
+        padding: 32px 24px 120px;
+      }
+      .proto-banner {
+        max-width: 1080px;
+        margin: 0 auto 20px;
+        font-size: 12px;
+        color: var(--ymt-color-text-tertiary);
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+      }
+      .proto-banner strong {
+        color: var(--ymt-color-feedback-warning);
+      }
+      .theme-toggle {
+        border: 1px solid var(--ymt-color-border-base);
+        background: var(--ymt-color-bg-surface);
+        color: var(--ymt-color-text-secondary);
+        border-radius: 999px;
+        padding: 4px 12px;
+        font-size: 12px;
+        cursor: pointer;
+      }
+      .scenes {
+        max-width: 1080px;
+        margin: 0 auto;
+        display: grid;
+        grid-template-columns: 1fr 375px;
+        gap: 24px;
+        align-items: start;
+      }
+      .scene-label {
+        font-size: 12px;
+        color: var(--ymt-color-text-tertiary);
+        margin: 0 0 8px 2px;
+      }
+
+      /* ---- Admin 模拟场景 ---- */
+      .admin-frame {
+        background: var(--ymt-color-bg-surface);
+        border: 1px solid var(--ymt-color-border-base);
+        border-radius: 14px;
+        overflow: hidden;
+        box-shadow: 0 4px 16px rgb(0 0 0 / 0.04);
+      }
+      .admin-toolbar {
+        display: flex;
+        gap: 8px;
+        padding: 14px 16px;
+        border-bottom: 1px solid var(--ymt-color-border-base);
+      }
+      .admin-toolbar .fake-btn {
+        height: 30px;
+        border-radius: 8px;
+        background: var(--ymt-color-bg-muted);
+        width: 88px;
+      }
+      .admin-toolbar .fake-btn.primary {
+        background: var(--ymt-color-action-primary);
+        width: 96px;
+      }
+      .admin-table-head {
+        display: grid;
+        grid-template-columns: 2fr 1fr 1fr 1fr;
+        padding: 10px 16px;
+        background: var(
+          --ymt-color-chrome-table-header,
+          var(--ymt-color-bg-muted)
+        );
+        font-size: 13px;
+        color: var(--ymt-color-text-secondary);
+        border-bottom: 1px solid var(--ymt-color-border-base);
+      }
+      .admin-empty {
+        padding: 56px 24px 64px;
+        display: flex;
+        justify-content: center;
+      }
+
+      /* ---- H5 模拟场景 ---- */
+      .h5-frame {
+        width: 375px;
+        border-radius: 28px;
+        overflow: hidden;
+        border: 8px solid #1c1c1e;
+        background: var(--ymt-color-bg-canvas);
+        box-shadow: 0 12px 32px rgb(0 0 0 / 0.12);
+      }
+      .h5-statusbar {
+        height: 32px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 11px;
+        color: var(--ymt-color-text-tertiary);
+      }
+      .h5-hero {
+        background: linear-gradient(
+          135deg,
+          var(--ymt-color-brand-primary),
+          var(--ymt-color-brand-700, var(--ymt-color-brand-primary))
+        );
+        color: var(--ymt-color-action-on-primary);
+        padding: 18px 20px 22px;
+        border-radius: 0 0 18px 18px;
+      }
+      .h5-hero .brand {
+        font-size: 15px;
+        font-weight: 600;
+        opacity: 0.95;
+      }
+      .h5-hero .sub {
+        font-size: 12px;
+        opacity: 0.75;
+        margin-top: 4px;
+      }
+      .h5-card {
+        margin: 14px;
+        background: var(--ymt-color-bg-surface);
+        border-radius: 14px;
+        box-shadow: 0 4px 16px rgb(0 0 0 / 0.05);
+        padding: 36px 20px 40px;
+        display: flex;
+        justify-content: center;
+      }
+
+      /* ===== 空状态公共结构 ===== */
+      .empty {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        text-align: center;
+        max-width: 320px;
+      }
+      .empty .title {
+        font-size: 15px;
+        font-weight: 500;
+        color: var(--ymt-color-text-primary);
+        margin-top: 16px;
+      }
+      .empty .desc {
+        font-size: 13px;
+        line-height: 1.6;
+        color: var(--ymt-color-text-secondary);
+        margin-top: 6px;
+      }
+      .empty .action {
+        margin-top: 18px;
+      }
+      .btn-primary {
+        border: none;
+        cursor: pointer;
+        font-size: 14px;
+        background: var(--ymt-color-action-primary);
+        color: var(--ymt-color-action-on-primary);
+        border-radius: 10px;
+        padding: 8px 20px;
+      }
+      .btn-link {
+        border: none;
+        cursor: pointer;
+        font-size: 13px;
+        background: none;
+        color: var(--ymt-color-action-link);
+        padding: 4px 8px;
+      }
+      .icon {
+        stroke: currentColor;
+        fill: none;
+        stroke-width: 1.5;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+      }
+
+      /* ===== V1 极简灰阶 ===== */
+      .v1 .empty .glyph {
+        color: var(--ymt-color-text-tertiary);
+      }
+      .v1 .empty .glyph svg {
+        width: 56px;
+        height: 56px;
+      }
+
+      /* ===== V2 品牌容器 ===== */
+      .v2 .empty .glyph {
+        width: 80px;
+        height: 80px;
+        border-radius: 18px;
+        background: var(--ymt-color-brand-subtle);
+        color: var(--ymt-color-brand-primary);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      .v2 .empty .glyph svg {
+        width: 34px;
+        height: 34px;
+      }
+
+      /* ===== V3 几何点缀 ===== */
+      .v3 .empty .glyph {
+        position: relative;
+        width: 120px;
+        height: 96px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      .v3 .empty .glyph svg.main {
+        width: 40px;
+        height: 40px;
+        color: var(--ymt-color-brand-primary);
+        position: relative;
+        z-index: 1;
+      }
+      .v3 .empty .glyph .geo {
+        position: absolute;
+      }
+      .v3 .geo-dot {
+        width: 12px;
+        height: 12px;
+        border-radius: 50%;
+        background: var(--ymt-color-accent-400, #f59e0b);
+        top: 8px;
+        right: 18px;
+      }
+      .v3 .geo-ring {
+        width: 34px;
+        height: 34px;
+        border-radius: 50%;
+        border: 2px solid var(--ymt-color-brand-subtle);
+        bottom: 4px;
+        left: 10px;
+      }
+      .v3 .geo-dot2 {
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background: var(--ymt-color-brand-subtle);
+        top: 22px;
+        left: 24px;
+      }
+      .v3 .geo-plus {
+        font-size: 18px;
+        font-weight: 300;
+        color: var(--ymt-color-accent-400, #f59e0b);
+        bottom: 10px;
+        right: 26px;
+        line-height: 1;
+      }
+
+      /* ---- 底部切换条 ---- */
+      .switcher {
+        position: fixed;
+        bottom: 20px;
+        left: 50%;
+        transform: translateX(-50%);
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        background: #1c1c1e;
+        color: #f5f5f4;
+        border-radius: 999px;
+        padding: 8px 10px;
+        box-shadow: 0 8px 24px rgb(0 0 0 / 0.25);
+        font-size: 13px;
+        z-index: 50;
+        user-select: none;
+      }
+      .switcher button {
+        border: none;
+        background: #3f3f46;
+        color: #f5f5f4;
+        cursor: pointer;
+        width: 30px;
+        height: 30px;
+        border-radius: 50%;
+        font-size: 15px;
+      }
+      .switcher .cur {
+        min-width: 200px;
+        text-align: center;
+      }
+      .switcher .cur small {
+        display: block;
+        color: #a1a1aa;
+        font-size: 11px;
+      }
+      @media (max-width: 860px) {
+        .scenes {
+          grid-template-columns: 1fr;
+        }
+        .h5-frame {
+          margin: 0 auto;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="proto-banner">
+      <div>
+        <strong>PROTOTYPE</strong> · 空状态风格变体对比 · yimatong-pifo.7 · 用 ←
+        → 键或底部条切换变体
+      </div>
+      <button class="theme-toggle" id="themeToggle">切换暗色</button>
+    </div>
+
+    <div class="scenes">
+      <div>
+        <p class="scene-label">场景 1 · Admin 表格空状态（antd Empty 语境）</p>
+        <div class="admin-frame">
+          <div class="admin-toolbar">
+            <div class="fake-btn"></div>
+            <div class="fake-btn"></div>
+            <div class="fake-btn primary"></div>
+          </div>
+          <div class="admin-table-head">
+            <span>权益名称</span><span>类型</span><span>状态</span
+            ><span>操作</span>
+          </div>
+          <div class="admin-empty" id="adminEmpty"></div>
+        </div>
+      </div>
+      <div>
+        <p class="scene-label">场景 2 · H5 消费者「暂无权益」</p>
+        <div class="h5-frame">
+          <div class="h5-statusbar">9:41</div>
+          <div class="h5-hero">
+            <div class="brand">龙井村茶业</div>
+            <div class="sub">扫码溯源 · 正品保障</div>
+          </div>
+          <div class="h5-card" id="h5Empty"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="switcher" id="switcher">
+      <button id="prev" aria-label="上一个变体">←</button>
+      <div class="cur" id="curLabel"></div>
+      <button id="next" aria-label="下一个变体">→</button>
+    </div>
+
+    <script>
+      const ICONS = {
+        inbox:
+          '<svg class="icon" viewBox="0 0 24 24"><path d="M3 13h4l2 3h6l2-3h4"/><path d="M5 5h14a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2z"/></svg>',
+        gift: '<svg class="icon" viewBox="0 0 24 24"><rect x="4" y="10" width="16" height="10" rx="2"/><path d="M12 10v10M4 14h16"/><path d="M12 10c-2.5 0-4-1.5-4-3a2 2 0 0 1 4-1c0-1.5 2-1.5 3-1a2 2 0 0 1-3 5z"/></svg>',
+      };
+
+      const VARIANTS = {
+        v1: {
+          name: "V1 — 极简灰阶",
+          hint: "中性灰图标裸放，行动降级为文字链接，最克制",
+          glyph: (icon) => `<div class="glyph">${icon}</div>`,
+          action: (label) => `<button class="btn-link">${label} →</button>`,
+        },
+        v2: {
+          name: "V2 — 品牌容器",
+          hint: "图标置于 brand-subtle 大圆角容器，实心主按钮",
+          glyph: (icon) => `<div class="glyph">${icon}</div>`,
+          action: (label) => `<button class="btn-primary">${label}</button>`,
+        },
+        v3: {
+          name: "V3 — 几何点缀",
+          hint: "图标 + 品牌绿/琥珀橙几何色块点缀，更活泼",
+          glyph: (icon) =>
+            `<div class="glyph"><span class="geo geo-ring"></span><span class="geo geo-dot"></span><span class="geo geo-dot2"></span><span class="geo geo-plus">+</span>${icon.replace('class="icon"', 'class="icon main"')}</div>`,
+          action: (label) => `<button class="btn-primary">${label}</button>`,
+        },
+      };
+
+      const SCENES = {
+        admin: {
+          icon: ICONS.inbox,
+          title: "暂无权益",
+          desc: "当前活动还没有配置任何权益，创建后消费者扫码即可领取。",
+          action: "新建权益",
+        },
+        h5: {
+          icon: ICONS.gift,
+          title: "暂无可用权益",
+          desc: "该商品当前没有进行中的活动，下次扫码再来试试吧。",
+          action: "查看商品溯源",
+        },
+      };
+
+      function render(variantKey) {
+        const v = VARIANTS[variantKey];
+        document.body.className = variantKey;
+        document.getElementById("adminEmpty").innerHTML =
+          `<div class="empty">${v.glyph(SCENES.admin.icon)}<div class="title">${SCENES.admin.title}</div><div class="desc">${SCENES.admin.desc}</div><div class="action">${v.action(SCENES.admin.action)}</div></div>`;
+        document.getElementById("h5Empty").innerHTML =
+          `<div class="empty">${v.glyph(SCENES.h5.icon)}<div class="title">${SCENES.h5.title}</div><div class="desc">${SCENES.h5.desc}</div><div class="action">${v.action(SCENES.h5.action)}</div></div>`;
+        document.getElementById("curLabel").innerHTML =
+          `${v.name}<small>${v.hint}</small>`;
+      }
+
+      const keys = Object.keys(VARIANTS);
+      const params = new URLSearchParams(location.search);
+      let cur = keys.includes(params.get("variant"))
+        ? params.get("variant")
+        : "v1";
+      function go(k) {
+        cur = k;
+        const p = new URLSearchParams(location.search);
+        p.set("variant", k);
+        history.replaceState(null, "", "?" + p.toString());
+        render(k);
+      }
+      const step = (d) =>
+        go(keys[(keys.indexOf(cur) + d + keys.length) % keys.length]);
+      document.getElementById("prev").onclick = () => step(-1);
+      document.getElementById("next").onclick = () => step(1);
+      document.addEventListener("keydown", (e) => {
+        if (/INPUT|TEXTAREA/.test(document.activeElement.tagName)) return;
+        if (e.key === "ArrowLeft") step(-1);
+        if (e.key === "ArrowRight") step(1);
+      });
+      document.getElementById("themeToggle").onclick = () => {
+        const el = document.documentElement;
+        const dark = el.dataset.theme === "dark";
+        el.dataset.theme = dark ? "light" : "dark";
+        document.getElementById("themeToggle").textContent = dark
+          ? "切换暗色"
+          : "切换亮色";
+      };
+      render(cur);
+    </script>
+  </body>
+</html>
