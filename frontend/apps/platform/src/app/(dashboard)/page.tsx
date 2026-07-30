@@ -47,7 +47,7 @@ export default function PlatformDashboardPage() {
               title="租户总数"
               value={data?.total_tenants ?? 0}
               prefix={<TeamOutlined />}
-              styles={{ value: { color: "#722ed1" } }}
+              styles={{ value: { color: "var(--ymt-color-brand-primary)" } }}
             />
           </Card>
         </Col>
@@ -57,7 +57,7 @@ export default function PlatformDashboardPage() {
               title="活跃租户"
               value={data?.active_tenants ?? 0}
               prefix={<CheckCircleOutlined />}
-              styles={{ value: { color: "#52c41a" } }}
+              styles={{ value: { color: "var(--ymt-color-feedback-success)" } }}
             />
           </Card>
         </Col>
@@ -67,7 +67,7 @@ export default function PlatformDashboardPage() {
               title="暂停租户"
               value={data?.suspended_tenants ?? 0}
               prefix={<PauseCircleOutlined />}
-              styles={{ value: { color: "#faad14" } }}
+              styles={{ value: { color: "var(--ymt-color-feedback-warning)" } }}
             />
           </Card>
         </Col>
@@ -77,7 +77,7 @@ export default function PlatformDashboardPage() {
               title="即将过期（30天）"
               value={data?.expiring_soon ?? 0}
               prefix={<WarningOutlined />}
-              styles={{ value: { color: "#ff4d4f" } }}
+              styles={{ value: { color: "var(--ymt-color-feedback-danger)" } }}
             />
           </Card>
         </Col>
@@ -103,8 +103,12 @@ export default function PlatformDashboardPage() {
                       <Text strong>{log.action}</Text>
                       <Tag style={{ marginLeft: 8 }}>{log.resource}</Tag>
                       <br />
-                      <Text type="secondary" style={{ fontSize: 12 }}>
-                        {dayjs(log.timestamp).format("YYYY-MM-DD HH:mm:ss")} · {log.operator_id}
+                      <Text
+                        type="secondary"
+                        style={{ fontSize: "var(--ymt-font-size-xs)" }}
+                      >
+                        {dayjs(log.timestamp).format("YYYY-MM-DD HH:mm:ss")} ·{" "}
+                        {log.operator_id}
                       </Text>
                     </div>
                   ),

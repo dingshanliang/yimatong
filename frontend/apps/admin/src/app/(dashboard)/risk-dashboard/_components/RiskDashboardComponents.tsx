@@ -1,7 +1,21 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Alert, App, Badge, Button, Card, Col, Row, Select, Space, Statistic, Table, Tag, InputNumber } from "antd";
+import {
+  Alert,
+  App,
+  Badge,
+  Button,
+  Card,
+  Col,
+  Row,
+  Select,
+  Space,
+  Statistic,
+  Table,
+  Tag,
+  InputNumber,
+} from "antd";
 import { CheckOutlined, BellOutlined } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
 import api from "@/lib/api";
@@ -39,7 +53,9 @@ export function AlertIndicator({ tenantId }: { tenantId: string | null }) {
         eventSourceRef.current?.close();
 
         const base = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-        const es = new EventSource(`${base}/api/v1/risk-dashboard/alerts/stream?ticket=${ticket}`);
+        const es = new EventSource(
+          `${base}/api/v1/risk-dashboard/alerts/stream?ticket=${ticket}`
+        );
         eventSourceRef.current = es;
 
         es.onopen = () => {
@@ -56,7 +72,9 @@ export function AlertIndicator({ tenantId }: { tenantId: string | null }) {
           try {
             const msg = JSON.parse(e.data);
             setAlerts((prev) => [msg, ...prev].slice(0, 20));
-          } catch { /* ignore parse errors */ }
+          } catch {
+            /* ignore parse errors */
+          }
         };
       } catch {
         setConnected(false);
@@ -89,10 +107,14 @@ export function AlertIndicator({ tenantId }: { tenantId: string | null }) {
         />
       )}
       <Badge count={alerts.length} size="small" offset={[2, 0]}>
-      <Button icon={<BellOutlined />} type={connected ? "default" : "dashed"} size="small">
-        {connected ? "实时告警" : "未连接"}
-      </Button>
-    </Badge>
+        <Button
+          icon={<BellOutlined />}
+          type={connected ? "default" : "dashed"}
+          size="small"
+        >
+          {connected ? "实时告警" : "未连接"}
+        </Button>
+      </Badge>
     </>
   );
 }
@@ -108,7 +130,9 @@ export function RepeatScansCard() {
   const fetchData = useCallback(async () => {
     setLoading(true);
     try {
-      const { data } = await api.get("/risk-dashboard/repeat-scans", { params: { min_count: 5, page: 1, page_size: 10 } });
+      const { data } = await api.get("/risk-dashboard/repeat-scans", {
+        params: { min_count: 5, page: 1, page_size: 10 },
+      });
       setItems(data.items || []);
       setTotal(data.total || 0);
     } catch {
@@ -118,18 +142,37 @@ export function RepeatScansCard() {
     }
   }, [message]);
 
-  useEffect(() => { void fetchData(); }, [fetchData]);
+  useEffect(() => {
+    void fetchData();
+  }, [fetchData]);
 
   const columns: ColumnsType<Record<string, unknown>> = [
     { title: "码 ID", dataIndex: "public_id", key: "public_id" },
     { title: "扫码次数", dataIndex: "scan_count", key: "scan_count" },
-    { title: "不同 IP", dataIndex: "distinct_ips", key: "distinct_ips", render: (v: number) => v ?? "—" },
+    {
+      title: "不同 IP",
+      dataIndex: "distinct_ips",
+      key: "distinct_ips",
+      render: (v: number) => v ?? "—",
+    },
   ];
 
   return (
     <Card title="重复扫码热点" size="small">
-      <Statistic title="异常码数量" value={total} loading={loading} className="mb-4" />
-      <Table columns={columns} dataSource={items} rowKey="public_id" loading={loading} size="small" pagination={false} />
+      <Statistic
+        title="异常码数量"
+        value={total}
+        loading={loading}
+        className="mb-4"
+      />
+      <Table
+        columns={columns}
+        dataSource={items}
+        rowKey="public_id"
+        loading={loading}
+        size="small"
+        pagination={false}
+      />
     </Card>
   );
 }
@@ -145,7 +188,9 @@ export function CrossRegionCard() {
   const fetchData = useCallback(async () => {
     setLoading(true);
     try {
-      const { data } = await api.get("/risk-dashboard/cross-region", { params: { days_back: daysBack } });
+      const { data } = await api.get("/risk-dashboard/cross-region", {
+        params: { days_back: daysBack },
+      });
       setStats(data || {});
     } catch {
       message.error("加载跨区扫码数据失败");
@@ -154,7 +199,9 @@ export function CrossRegionCard() {
     }
   }, [daysBack, message]);
 
-  useEffect(() => { void fetchData(); }, [fetchData]);
+  useEffect(() => {
+    void fetchData();
+  }, [fetchData]);
 
   const byRegion = (stats.by_region || []) as Record<string, unknown>[];
   const byCity = (stats.by_detected_city || []) as Record<string, unknown>[];
@@ -177,21 +224,62 @@ export function CrossRegionCard() {
       extra={
         <Space>
           <span className="text-text-muted text-sm">近</span>
-          <InputNumber min={1} max={365} value={daysBack} onChange={(v) => setDaysBack(v || 30)} size="small" style={{ width: 70 }} />
+          <InputNumber
+            min={1}
+            max={365}
+            value={daysBack}
+            onChange={(v) => setDaysBack(v || 30)}
+            size="small"
+            style={{ width: 70 }}
+          />
           <span className="text-text-muted text-sm">天</span>
         </Space>
       }
     >
       <Row gutter={16} className="mb-4">
-        <Col span={8}><Statistic title="跨区线索总数" value={Number(stats.total_clues ?? 0)} loading={loading} /></Col>
-        <Col span={8}><Statistic title="待处理" value={Number(stats.unresolved_count ?? 0)} loading={loading} valueStyle={{ color: Number(stats.unresolved_count ?? 0) > 0 ? "#cf1322" : undefined }} /></Col>
+        <Col span={8}>
+          <Statistic
+            title="跨区线索总数"
+            value={Number(stats.total_clues ?? 0)}
+            loading={loading}
+          />
+        </Col>
+        <Col span={8}>
+          <Statistic
+            title="待处理"
+            value={Number(stats.unresolved_count ?? 0)}
+            loading={loading}
+            valueStyle={{
+              color:
+                Number(stats.unresolved_count ?? 0) > 0
+                  ? "var(--ymt-color-feedback-danger)"
+                  : undefined,
+            }}
+          />
+        </Col>
       </Row>
       <Row gutter={16}>
         <Col span={12}>
-          <Table columns={regionCols} dataSource={byRegion.slice(0, 5)} rowKey="region" loading={loading} size="small" pagination={false} title={() => "按预期区域"} />
+          <Table
+            columns={regionCols}
+            dataSource={byRegion.slice(0, 5)}
+            rowKey="region"
+            loading={loading}
+            size="small"
+            pagination={false}
+            title={() => "按预期区域"}
+          />
         </Col>
         <Col span={12}>
-          <Table columns={cityCols} dataSource={byCity.slice(0, 5)} rowKey="city" loading={loading} size="small" pagination={false} title={() => "按实际城市"} />
+          <Table
+            columns={cityCols}
+            dataSource={byCity.slice(0, 5)}
+            rowKey="city"
+            loading={loading}
+            size="small"
+            pagination={false}
+            title={() => "按实际城市"}
+          />
         </Col>
       </Row>
       {byCode.length > 0 && (
@@ -225,7 +313,9 @@ export function ChannelHealthCard() {
   const fetchData = useCallback(async () => {
     setLoading(true);
     try {
-      const { data } = await api.get("/channel-analytics/health-scores", { params: { dimension } });
+      const { data } = await api.get("/channel-analytics/health-scores", {
+        params: { dimension },
+      });
       setScores(data.scores || []);
     } catch {
       message.error("加载渠道健康评分失败");
@@ -234,7 +324,9 @@ export function ChannelHealthCard() {
     }
   }, [dimension, message]);
 
-  useEffect(() => { void fetchData(); }, [fetchData]);
+  useEffect(() => {
+    void fetchData();
+  }, [fetchData]);
 
   const columns: ColumnsType<Record<string, unknown>> = [
     { title: "渠道名称", dataIndex: "name", key: "name" },
@@ -249,9 +341,24 @@ export function ChannelHealthCard() {
         return <Tag color={color}>{v}</Tag>;
       },
     },
-    { title: "重复率%", dataIndex: "repeat_rate", key: "repeat_rate", render: (v: number) => `${v}%` },
-    { title: "跨区率%", dataIndex: "cross_region_rate", key: "cross_region_rate", render: (v: number) => `${v}%` },
-    { title: "异常率%", dataIndex: "anomaly_rate", key: "anomaly_rate", render: (v: number) => `${v}%` },
+    {
+      title: "重复率%",
+      dataIndex: "repeat_rate",
+      key: "repeat_rate",
+      render: (v: number) => `${v}%`,
+    },
+    {
+      title: "跨区率%",
+      dataIndex: "cross_region_rate",
+      key: "cross_region_rate",
+      render: (v: number) => `${v}%`,
+    },
+    {
+      title: "异常率%",
+      dataIndex: "anomaly_rate",
+      key: "anomaly_rate",
+      render: (v: number) => `${v}%`,
+    },
   ];
 
   return (
@@ -259,7 +366,11 @@ export function ChannelHealthCard() {
       title="渠道健康评分"
       size="small"
       extra={
-        <Select value={dimension} onChange={setDimension} size="small" style={{ width: 100 }}
+        <Select
+          value={dimension}
+          onChange={setDimension}
+          size="small"
+          style={{ width: 100 }}
           options={[
             { label: "经销商", value: "distributor" },
             { label: "区域", value: "region" },
@@ -268,7 +379,14 @@ export function ChannelHealthCard() {
         />
       }
     >
-      <Table columns={columns} dataSource={scores} rowKey="name" loading={loading} size="small" pagination={{ pageSize: 10 }} />
+      <Table
+        columns={columns}
+        dataSource={scores}
+        rowKey="name"
+        loading={loading}
+        size="small"
+        pagination={{ pageSize: 10 }}
+      />
     </Card>
   );
 }
@@ -284,7 +402,10 @@ export function ConversionCard() {
   const fetchData = useCallback(async () => {
     setLoading(true);
     try {
-      const { data: d } = await api.get("/channel-analytics/conversion-comparison", { params: { dimension } });
+      const { data: d } = await api.get(
+        "/channel-analytics/conversion-comparison",
+        { params: { dimension } }
+      );
       setData(d.comparison || []);
     } catch {
       message.error("加载渠道转化率数据失败");
@@ -293,20 +414,36 @@ export function ConversionCard() {
     }
   }, [dimension, message]);
 
-  useEffect(() => { void fetchData(); }, [fetchData]);
+  useEffect(() => {
+    void fetchData();
+  }, [fetchData]);
 
   const columns: ColumnsType<Record<string, unknown>> = [
     { title: "渠道名称", dataIndex: "name", key: "name" },
     { title: "扫码 UV", dataIndex: "scan_uv", key: "scan_uv" },
-    { title: "预估领取", dataIndex: "estimated_claims", key: "estimated_claims" },
-    { title: <ChannelConversionRateHeader />, dataIndex: "conversion_rate", key: "conversion_rate", render: (v: number) => `${v}%` },
+    {
+      title: "预估领取",
+      dataIndex: "estimated_claims",
+      key: "estimated_claims",
+    },
+    {
+      title: <ChannelConversionRateHeader />,
+      dataIndex: "conversion_rate",
+      key: "conversion_rate",
+      render: (v: number) => `${v}%`,
+    },
     {
       title: "vs 平均",
       dataIndex: "vs_average",
       key: "vs_average",
       render: (v: number) => {
         const color = v > 0 ? "green" : v < 0 ? "red" : "default";
-        return <Tag color={color}>{v > 0 ? "+" : ""}{v}%</Tag>;
+        return (
+          <Tag color={color}>
+            {v > 0 ? "+" : ""}
+            {v}%
+          </Tag>
+        );
       },
     },
   ];
@@ -316,7 +453,11 @@ export function ConversionCard() {
       title="渠道转化率对比"
       size="small"
       extra={
-        <Select value={dimension} onChange={setDimension} size="small" style={{ width: 100 }}
+        <Select
+          value={dimension}
+          onChange={setDimension}
+          size="small"
+          style={{ width: 100 }}
           options={[
             { label: "经销商", value: "distributor" },
             { label: "区域", value: "region" },
@@ -325,7 +466,14 @@ export function ConversionCard() {
         />
       }
     >
-      <Table columns={columns} dataSource={data} rowKey="name" loading={loading} size="small" pagination={{ pageSize: 10 }} />
+      <Table
+        columns={columns}
+        dataSource={data}
+        rowKey="name"
+        loading={loading}
+        size="small"
+        pagination={{ pageSize: 10 }}
+      />
     </Card>
   );
 }
@@ -341,7 +489,9 @@ export function DiversionCard() {
   const fetchData = useCallback(async () => {
     setLoading(true);
     try {
-      const { data } = await api.get("/risk-dashboard/diversion-summary", { params: { page: 1, page_size: 20 } });
+      const { data } = await api.get("/risk-dashboard/diversion-summary", {
+        params: { page: 1, page_size: 20 },
+      });
       setItems(data.items || []);
       setTotal(data.total || 0);
     } catch {
@@ -351,7 +501,9 @@ export function DiversionCard() {
     }
   }, [message]);
 
-  useEffect(() => { void fetchData(); }, [fetchData]);
+  useEffect(() => {
+    void fetchData();
+  }, [fetchData]);
 
   const handleResolve = async (id: string) => {
     try {
@@ -371,13 +523,22 @@ export function DiversionCard() {
       title: "状态",
       dataIndex: "resolved",
       key: "resolved",
-      render: (v: boolean) => <Tag color={v ? "green" : "red"}>{v ? "已处理" : "待处理"}</Tag>,
+      render: (v: boolean) => (
+        <Tag color={v ? "green" : "red"}>{v ? "已处理" : "待处理"}</Tag>
+      ),
     },
     {
-      title: "操作", key: "actions", width: 80,
+      title: "操作",
+      key: "actions",
+      width: 80,
       render: (_: unknown, record: Record<string, unknown>) =>
         !record.resolved && (
-          <Button size="small" type="link" icon={<CheckOutlined />} onClick={() => handleResolve(String(record.id))}>
+          <Button
+            size="small"
+            type="link"
+            icon={<CheckOutlined />}
+            onClick={() => handleResolve(String(record.id))}
+          >
             处理
           </Button>
         ),
@@ -386,8 +547,20 @@ export function DiversionCard() {
 
   return (
     <Card title="窜货线索汇总" size="small">
-      <Statistic title="线索总数" value={total} loading={loading} className="mb-4" />
-      <Table columns={columns} dataSource={items} rowKey="id" loading={loading} size="small" pagination={false} />
+      <Statistic
+        title="线索总数"
+        value={total}
+        loading={loading}
+        className="mb-4"
+      />
+      <Table
+        columns={columns}
+        dataSource={items}
+        rowKey="id"
+        loading={loading}
+        size="small"
+        pagination={false}
+      />
     </Card>
   );
 }
@@ -399,7 +572,8 @@ export function useRiskExport() {
 
   const handleExport = async (dataType: string) => {
     try {
-      const exportType = dataType === "alerts" ? "risk_dashboard" : "regional_dashboard";
+      const exportType =
+        dataType === "alerts" ? "risk_dashboard" : "regional_dashboard";
       const response = await api.post("/analytics/exports", null, {
         params: { export_type: exportType, format: "xlsx" },
         responseType: "blob",

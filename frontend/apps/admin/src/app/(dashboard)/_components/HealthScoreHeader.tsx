@@ -17,16 +17,24 @@ export function ChannelHealthScoreHeader() {
           <div style={{ lineHeight: 1.8 }}>
             <div style={{ fontWeight: 600, marginBottom: 4 }}>评分公式</div>
             <div>100 − (异常率×40 + 跨区率×30 + 重复率×30)</div>
-            <div style={{ fontWeight: 600, marginTop: 8, marginBottom: 4 }}>指标说明</div>
+            <div style={{ fontWeight: 600, marginTop: 8, marginBottom: 4 }}>
+              指标说明
+            </div>
             <div>• 异常率（权重 40%）：非独立 IP 扫码占比</div>
             <div>• 跨区率（权重 30%）：跨区域窜货扫码占比</div>
             <div>• 重复率（权重 30%）：重复扫码占比</div>
-            <div style={{ fontWeight: 600, marginTop: 8, marginBottom: 4 }}>评级标准</div>
-            <div>≥ 80 健康 &nbsp;|&nbsp; 60–79 预警 &nbsp;|&nbsp; &lt; 60 危险</div>
+            <div style={{ fontWeight: 600, marginTop: 8, marginBottom: 4 }}>
+              评级标准
+            </div>
+            <div>
+              ≥ 80 健康 &nbsp;|&nbsp; 60–79 预警 &nbsp;|&nbsp; &lt; 60 危险
+            </div>
           </div>
         }
       >
-        <InfoCircleOutlined style={{ color: "#999", cursor: "pointer" }} />
+        <InfoCircleOutlined
+          style={{ color: "var(--ymt-color-text-tertiary)", cursor: "pointer" }}
+        />
       </Tooltip>
     </span>
   );
@@ -45,16 +53,24 @@ export function ChannelHealthScoreTitle() {
           <div style={{ lineHeight: 1.8 }}>
             <div style={{ fontWeight: 600, marginBottom: 4 }}>评分公式</div>
             <div>100 − (异常率×40 + 跨区率×30 + 重复率×30)</div>
-            <div style={{ fontWeight: 600, marginTop: 8, marginBottom: 4 }}>指标说明</div>
+            <div style={{ fontWeight: 600, marginTop: 8, marginBottom: 4 }}>
+              指标说明
+            </div>
             <div>• 异常率（权重 40%）：非独立 IP 扫码占比</div>
             <div>• 跨区率（权重 30%）：跨区域窜货扫码占比</div>
             <div>• 重复率（权重 30%）：重复扫码占比</div>
-            <div style={{ fontWeight: 600, marginTop: 8, marginBottom: 4 }}>评级标准</div>
-            <div>≥ 80 健康 &nbsp;|&nbsp; 60–79 预警 &nbsp;|&nbsp; &lt; 60 危险</div>
+            <div style={{ fontWeight: 600, marginTop: 8, marginBottom: 4 }}>
+              评级标准
+            </div>
+            <div>
+              ≥ 80 健康 &nbsp;|&nbsp; 60–79 预警 &nbsp;|&nbsp; &lt; 60 危险
+            </div>
           </div>
         }
       >
-        <InfoCircleOutlined style={{ color: "#999", cursor: "pointer" }} />
+        <InfoCircleOutlined
+          style={{ color: "var(--ymt-color-text-tertiary)", cursor: "pointer" }}
+        />
       </Tooltip>
     </span>
   );

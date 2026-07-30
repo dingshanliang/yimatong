@@ -34,29 +34,48 @@ export default function PlatformLoginPage() {
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
-        background: "linear-gradient(135deg, #12033a 0%, #722ed1 100%)",
+        background:
+          "linear-gradient(135deg, var(--ymt-color-brand-800) 0%, var(--ymt-color-brand-500) 100%)",
       }}
     >
       <Card
-        style={{ width: 400, borderRadius: 12, boxShadow: "0 20px 60px rgba(0,0,0,0.3)" }}
+        style={{
+          width: 400,
+          borderRadius: "var(--ymt-radius-md)",
+          boxShadow: "var(--ymt-shadow-overlay)",
+        }}
         styles={{ body: { padding: "40px 32px" } }}
       >
         <div style={{ textAlign: "center", marginBottom: 32 }}>
-          <Title level={3} style={{ marginBottom: 4, color: "#722ed1" }}>
+          <Title
+            level={3}
+            style={{ marginBottom: 4, color: "var(--ymt-color-brand-primary)" }}
+          >
             一码通 · 平台管理
           </Title>
           <Text type="secondary">SaaS 平台管理后台</Text>
         </div>
 
-        <Form layout="vertical" onFinish={onFinish} size="large" autoComplete="off">
+        <Form
+          layout="vertical"
+          onFinish={onFinish}
+          size="large"
+          autoComplete="off"
+        >
           <Form.Item
             name="email"
-            rules={[{ required: true, message: "请输入邮箱" }, { type: "email", message: "邮箱格式不正确" }]}
+            rules={[
+              { required: true, message: "请输入邮箱" },
+              { type: "email", message: "邮箱格式不正确" },
+            ]}
           >
             <Input prefix={<MailOutlined />} placeholder="管理员邮箱" />
           </Form.Item>
 
-          <Form.Item name="password" rules={[{ required: true, message: "请输入密码" }]}>
+          <Form.Item
+            name="password"
+            rules={[{ required: true, message: "请输入密码" }]}
+          >
             <Input.Password prefix={<LockOutlined />} placeholder="密码" />
           </Form.Item>
 
@@ -68,7 +87,10 @@ export default function PlatformLoginPage() {
         </Form>
 
         <div style={{ textAlign: "center", marginTop: 16 }}>
-          <Text type="secondary" style={{ fontSize: 12 }}>
+          <Text
+            type="secondary"
+            style={{ fontSize: "var(--ymt-font-size-xs)" }}
+          >
             仅限平台管理员访问
           </Text>
         </div>

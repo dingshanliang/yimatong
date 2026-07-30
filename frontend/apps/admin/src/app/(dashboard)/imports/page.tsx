@@ -161,7 +161,13 @@ export default function ImportsPage() {
       dataIndex: "created_count",
       key: "created_count",
       render: (v: number) => (
-        <Text style={{ color: v > 0 ? "#52c41a" : undefined }}>{v ?? 0}</Text>
+        <Text
+          style={{
+            color: v > 0 ? "var(--ymt-color-feedback-success)" : undefined,
+          }}
+        >
+          {v ?? 0}
+        </Text>
       ),
     },
     {
@@ -169,7 +175,13 @@ export default function ImportsPage() {
       dataIndex: "updated_count",
       key: "updated_count",
       render: (v: number) => (
-        <Text style={{ color: v > 0 ? "#1890ff" : undefined }}>{v ?? 0}</Text>
+        <Text
+          style={{
+            color: v > 0 ? "var(--ymt-color-feedback-info)" : undefined,
+          }}
+        >
+          {v ?? 0}
+        </Text>
       ),
     },
     {
@@ -178,8 +190,14 @@ export default function ImportsPage() {
       key: "failed_count",
       render: (v: number, record: ImportRecord) =>
         v > 0 ? (
-          <Button type="link" size="small" onClick={() => handleErrorClick(record)}>
-            <Text style={{ color: "#ff4d4f" }}>{v}</Text>
+          <Button
+            type="link"
+            size="small"
+            onClick={() => handleErrorClick(record)}
+          >
+            <Text style={{ color: "var(--ymt-color-feedback-danger)" }}>
+              {v}
+            </Text>
           </Button>
         ) : (
           <Text>{v ?? 0}</Text>
@@ -250,7 +268,11 @@ export default function ImportsPage() {
         title={errorModal.title}
         onCancel={() => setErrorModal({ open: false, title: "", detail: "" })}
         footer={
-          <Button onClick={() => setErrorModal({ open: false, title: "", detail: "" })}>
+          <Button
+            onClick={() =>
+              setErrorModal({ open: false, title: "", detail: "" })
+            }
+          >
             关闭
           </Button>
         }
@@ -260,10 +282,10 @@ export default function ImportsPage() {
           style={{
             maxHeight: 400,
             overflow: "auto",
-            background: "#f5f5f5",
+            background: "var(--ymt-color-bg-muted)",
             padding: 12,
-            borderRadius: 6,
-            fontSize: 13,
+            borderRadius: "var(--ymt-radius-sm)",
+            fontSize: "var(--ymt-font-size-sm)",
             whiteSpace: "pre-wrap",
             wordBreak: "break-all",
           }}

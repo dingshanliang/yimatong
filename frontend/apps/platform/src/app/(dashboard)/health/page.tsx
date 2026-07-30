@@ -1,6 +1,15 @@
 "use client";
 
-import { Button, Card, Col, Row, Statistic, Table, Tag, Typography } from "antd";
+import {
+  Button,
+  Card,
+  Col,
+  Row,
+  Statistic,
+  Table,
+  Tag,
+  Typography,
+} from "antd";
 import type { ColumnsType } from "antd/es/table";
 import {
   HeartOutlined,
@@ -49,8 +58,12 @@ const STATUS_CONFIG: Record<string, { color: string; label: string }> = {
 
 export default function HealthPage() {
   const router = useRouter();
-  const { data: overview, isLoading: overviewLoading } = useSWR<HealthOverview>("/platform/health-overview");
-  const { data: tenants, isLoading: tenantsLoading } = useSWR<HealthTenant[]>("/platform/health-tenants");
+  const { data: overview, isLoading: overviewLoading } = useSWR<HealthOverview>(
+    "/platform/health-overview"
+  );
+  const { data: tenants, isLoading: tenantsLoading } = useSWR<HealthTenant[]>(
+    "/platform/health-tenants"
+  );
   const [refreshing, setRefreshing] = useState(false);
 
   const handleRefresh = async () => {
@@ -73,7 +86,9 @@ export default function HealthPage() {
       dataIndex: "tenant_name",
       key: "tenant_name",
       render: (name: string, record: HealthTenant) => (
-        <a onClick={() => router.push(`/tenants/${record.tenant_id}`)}>{name}</a>
+        <a onClick={() => router.push(`/tenants/${record.tenant_id}`)}>
+          {name}
+        </a>
       ),
     },
     {
@@ -83,7 +98,14 @@ export default function HealthPage() {
       width: 100,
       sorter: (a, b) => a.health_score - b.health_score,
       render: (score: number) => {
-        const color = score >= 75 ? "#52c41a" : score >= 50 ? "#faad14" : score >= 25 ? "#ff4d4f" : "#d9d9d9";
+        const color =
+          score >= 75
+            ? "var(--ymt-color-feedback-success)"
+            : score >= 50
+              ? "var(--ymt-color-feedback-warning)"
+              : score >= 25
+                ? "var(--ymt-color-feedback-danger)"
+                : "var(--ymt-color-text-tertiary)";
         return <span style={{ fontWeight: "bold", color }}>{score}</span>;
       },
     },
@@ -92,16 +114,34 @@ export default function HealthPage() {
       dataIndex: "health_status",
       key: "health_status",
       width: 80,
-      filters: Object.entries(STATUS_CONFIG).map(([k, v]) => ({ text: v.label, value: k })),
+      filters: Object.entries(STATUS_CONFIG).map(([k, v]) => ({
+        text: v.label,
+        value: k,
+      })),
       onFilter: (value, record) => record.health_status === value,
       render: (status: string) => {
         const cfg = STATUS_CONFIG[status];
         return <Tag color={cfg?.color}>{cfg?.label ?? status}</Tag>;
       },
     },
-    { title: "7日扫码", dataIndex: "scans_last_7d", key: "scans_7d", width: 90 },
-    { title: "30日扫码", dataIndex: "scans_last_30d", key: "scans_30d", width: 90 },
-    { title: "活跃活动", dataIndex: "active_campaigns", key: "campaigns", width: 80 },
+    {
+      title: "7日扫码",
+      dataIndex: "scans_last_7d",
+      key: "scans_7d",
+      width: 90,
+    },
+    {
+      title: "30日扫码",
+      dataIndex: "scans_last_30d",
+      key: "scans_30d",
+      width: 90,
+    },
+    {
+      title: "活跃活动",
+      dataIndex: "active_campaigns",
+      key: "campaigns",
+      width: 80,
+    },
     {
       title: "到期天数",
       dataIndex: "days_until_expiry",
@@ -109,7 +149,11 @@ export default function HealthPage() {
       width: 90,
       render: (v: number | null) =>
         v !== null ? (
-          v <= 30 ? <Tag color="red">{v} 天</Tag> : <span>{v} 天</span>
+          v <= 30 ? (
+            <Tag color="red">{v} 天</Tag>
+          ) : (
+            <span>{v} 天</span>
+          )
         ) : (
           <Tag>永久</Tag>
         ),
@@ -125,9 +169,22 @@ export default function HealthPage() {
 
   return (
     <div>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
-        <Title level={4} style={{ margin: 0 }}>客户健康度</Title>
-        <Button icon={<ReloadOutlined />} loading={refreshing} onClick={handleRefresh}>
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          marginBottom: 16,
+        }}
+      >
+        <Title level={4} style={{ margin: 0 }}>
+          客户健康度
+        </Title>
+        <Button
+          icon={<ReloadOutlined />}
+          loading={refreshing}
+          onClick={handleRefresh}
+        >
           刷新数据
         </Button>
       </div>
@@ -135,22 +192,41 @@ export default function HealthPage() {
       <Row gutter={[16, 16]}>
         <Col xs={12} sm={6}>
           <Card loading={overviewLoading}>
-            <Statistic title="健康" value={overview?.healthy ?? 0} prefix={<HeartOutlined />} styles={{ value: { color: "#52c41a" } }} />
+            <Statistic
+              title="健康"
+              value={overview?.healthy ?? 0}
+              prefix={<HeartOutlined />}
+              styles={{ value: { color: "var(--ymt-color-feedback-success)" } }}
+            />
           </Card>
         </Col>
         <Col xs={12} sm={6}>
           <Card loading={overviewLoading}>
-            <Statistic title="警告" value={overview?.warning ?? 0} prefix={<WarningOutlined />} styles={{ value: { color: "#faad14" } }} />
+            <Statistic
+              title="警告"
+              value={overview?.warning ?? 0}
+              prefix={<WarningOutlined />}
+              styles={{ value: { color: "var(--ymt-color-feedback-warning)" } }}
+            />
           </Card>
         </Col>
         <Col xs={12} sm={6}>
           <Card loading={overviewLoading}>
-            <Statistic title="危急" value={overview?.critical ?? 0} prefix={<StopOutlined />} styles={{ value: { color: "#ff4d4f" } }} />
+            <Statistic
+              title="危急"
+              value={overview?.critical ?? 0}
+              prefix={<StopOutlined />}
+              styles={{ value: { color: "var(--ymt-color-feedback-danger)" } }}
+            />
           </Card>
         </Col>
         <Col xs={12} sm={6}>
           <Card loading={overviewLoading}>
-            <Statistic title="休眠" value={overview?.dormant ?? 0} prefix={<PauseCircleOutlined />} />
+            <Statistic
+              title="休眠"
+              value={overview?.dormant ?? 0}
+              prefix={<PauseCircleOutlined />}
+            />
           </Card>
         </Col>
       </Row>

@@ -48,10 +48,10 @@ const FEATURE_FIELDS = [
 ];
 
 const PLAN_COLORS: Record<string, string> = {
-  free: "#8c8c8c",
-  starter: "#1677ff",
-  pro: "#722ed1",
-  enterprise: "#faad14",
+  free: "var(--ymt-color-text-tertiary)",
+  starter: "var(--ymt-color-feedback-info)",
+  pro: "var(--ymt-color-brand-primary)",
+  enterprise: "var(--ymt-color-feedback-warning)",
 };
 
 export default function PlansPage() {
@@ -125,12 +125,25 @@ export default function PlansPage() {
 
   return (
     <div>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
-        <Title level={4} style={{ margin: 0 }}>套餐管理</Title>
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          marginBottom: 16,
+        }}
+      >
+        <Title level={4} style={{ margin: 0 }}>
+          套餐管理
+        </Title>
         <Button
           type="primary"
           icon={<PlusOutlined />}
-          onClick={() => { setEditPlan(null); form.resetFields(); setCreateOpen(true); }}
+          onClick={() => {
+            setEditPlan(null);
+            form.resetFields();
+            setCreateOpen(true);
+          }}
         >
           创建套餐
         </Button>
@@ -140,39 +153,85 @@ export default function PlansPage() {
         {data?.map((plan) => (
           <Col xs={24} sm={12} lg={6} key={plan.id}>
             <Card
-              style={{ borderTop: `3px solid ${PLAN_COLORS[plan.name] || "#722ed1"}` }}
+              style={{
+                borderTop: `3px solid ${PLAN_COLORS[plan.name] || "var(--ymt-color-brand-primary)"}`,
+              }}
               actions={[
                 <Button
                   key="edit"
                   type="link"
                   icon={<EditOutlined />}
-                  onClick={() => { openEdit(plan); setCreateOpen(true); }}
+                  onClick={() => {
+                    openEdit(plan);
+                    setCreateOpen(true);
+                  }}
                 >
                   编辑
                 </Button>,
               ]}
             >
               <Card.Meta
-                avatar={<CrownOutlined style={{ fontSize: 24, color: PLAN_COLORS[plan.name] || "#722ed1" }} />}
+                avatar={
+                  <CrownOutlined
+                    style={{
+                      fontSize: "var(--ymt-font-size-xl)",
+                      color:
+                        PLAN_COLORS[plan.name] ||
+                        "var(--ymt-color-brand-primary)",
+                    }}
+                  />
+                }
                 title={plan.display_name}
                 description={plan.description || ""}
               />
               <div style={{ marginTop: 16 }}>
-                <Text strong style={{ fontSize: 20, color: PLAN_COLORS[plan.name] }}>
-                  ¥{plan.price_yearly ? (plan.price_yearly / 100).toLocaleString() : "免费"}
+                <Text
+                  strong
+                  style={{
+                    fontSize: "var(--ymt-font-size-lg)",
+                    color: PLAN_COLORS[plan.name],
+                  }}
+                >
+                  ¥
+                  {plan.price_yearly
+                    ? (plan.price_yearly / 100).toLocaleString()
+                    : "免费"}
                 </Text>
                 <Text type="secondary"> / 年</Text>
               </div>
               <div style={{ marginTop: 12 }}>
-                {plan.quota_defaults && Object.entries(plan.quota_defaults).map(([key, value]) => (
-                  <div key={key} style={{ fontSize: 12, color: "#666", marginBottom: 2 }}>
-                    {key === "max_codes" ? "码量" : key === "max_scans" ? "扫码量" : key === "max_campaigns" ? "活动数" : "账号数"}：
-                    {value === -1 ? "无限制" : value?.toLocaleString()}
-                  </div>
-                ))}
+                {plan.quota_defaults &&
+                  Object.entries(plan.quota_defaults).map(([key, value]) => (
+                    <div
+                      key={key}
+                      style={{
+                        fontSize: "var(--ymt-font-size-xs)",
+                        color: "var(--ymt-color-text-secondary)",
+                        marginBottom: 2,
+                      }}
+                    >
+                      {key === "max_codes"
+                        ? "码量"
+                        : key === "max_scans"
+                          ? "扫码量"
+                          : key === "max_campaigns"
+                            ? "活动数"
+                            : "账号数"}
+                      ：{value === -1 ? "无限制" : value?.toLocaleString()}
+                    </div>
+                  ))}
               </div>
               {!plan.is_active && (
-                <Text type="danger" style={{ fontSize: 12, marginTop: 8, display: "block" }}>已停用</Text>
+                <Text
+                  type="danger"
+                  style={{
+                    fontSize: "var(--ymt-font-size-xs)",
+                    marginTop: 8,
+                    display: "block",
+                  }}
+                >
+                  已停用
+                </Text>
               )}
             </Card>
           </Col>
@@ -182,7 +241,11 @@ export default function PlansPage() {
       <Modal
         title={editPlan ? "编辑套餐" : "创建套餐"}
         open={createOpen}
-        onCancel={() => { setCreateOpen(false); setEditPlan(null); form.resetFields(); }}
+        onCancel={() => {
+          setCreateOpen(false);
+          setEditPlan(null);
+          form.resetFields();
+        }}
         onOk={() => form.submit()}
         confirmLoading={saving}
         width={560}
@@ -190,7 +253,11 @@ export default function PlansPage() {
         <Form form={form} layout="vertical" onFinish={handleSubmit}>
           {!editPlan && (
             <>
-              <Form.Item name="name" label="套餐标识" rules={[{ required: true }]}>
+              <Form.Item
+                name="name"
+                label="套餐标识"
+                rules={[{ required: true }]}
+              >
                 <Input placeholder="例：starter" disabled={!!editPlan} />
               </Form.Item>
               <Form.Item name="sort_order" label="排序">
@@ -198,7 +265,11 @@ export default function PlansPage() {
               </Form.Item>
             </>
           )}
-          <Form.Item name="display_name" label="显示名称" rules={[{ required: true }]}>
+          <Form.Item
+            name="display_name"
+            label="显示名称"
+            rules={[{ required: true }]}
+          >
             <Input placeholder="例：入门版" />
           </Form.Item>
           <Form.Item name="description" label="描述">
@@ -208,22 +279,41 @@ export default function PlansPage() {
             <InputNumber min={0} style={{ width: "100%" }} suffix="元/年" />
           </Form.Item>
 
-          <Typography.Text strong style={{ display: "block", marginBottom: 12 }}>额度配置</Typography.Text>
+          <Typography.Text
+            strong
+            style={{ display: "block", marginBottom: 12 }}
+          >
+            额度配置
+          </Typography.Text>
           <Row gutter={12}>
             {QUOTA_FIELDS.map(({ key, label }) => (
               <Col span={12} key={key}>
                 <Form.Item name={key} label={label}>
-                  <InputNumber min={-1} style={{ width: "100%" }} placeholder="-1 表示无限制" />
+                  <InputNumber
+                    min={-1}
+                    style={{ width: "100%" }}
+                    placeholder="-1 表示无限制"
+                  />
                 </Form.Item>
               </Col>
             ))}
           </Row>
 
-          <Typography.Text strong style={{ display: "block", marginBottom: 12 }}>功能开关</Typography.Text>
+          <Typography.Text
+            strong
+            style={{ display: "block", marginBottom: 12 }}
+          >
+            功能开关
+          </Typography.Text>
           <Row gutter={12}>
             {FEATURE_FIELDS.map(({ key, label }) => (
               <Col span={12} key={key}>
-                <Form.Item name={key} label={label} valuePropName="checked" initialValue={false}>
+                <Form.Item
+                  name={key}
+                  label={label}
+                  valuePropName="checked"
+                  initialValue={false}
+                >
                   <Switch />
                 </Form.Item>
               </Col>
