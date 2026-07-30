@@ -15,7 +15,10 @@ function ResetPasswordForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { message } = App.useApp();
-  const [form] = Form.useForm<{ new_password: string; confirm_password: string }>();
+  const [form] = Form.useForm<{
+    new_password: string;
+    confirm_password: string;
+  }>();
   const [pageState, setPageState] = useState<PageState>("loading");
   const [submitting, setSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
@@ -32,7 +35,10 @@ function ResetPasswordForm() {
     }
   }, [token, accountId]);
 
-  const onFinish = async (values: { new_password: string; confirm_password: string }) => {
+  const onFinish = async (values: {
+    new_password: string;
+    confirm_password: string;
+  }) => {
     if (values.new_password !== values.confirm_password) {
       message.error("两次输入的密码不一致");
       return;
@@ -47,7 +53,8 @@ function ResetPasswordForm() {
       });
       setPageState("success");
     } catch (err) {
-      const data = (err as { response?: { data?: { detail?: string } } })?.response?.data;
+      const data = (err as { response?: { data?: { detail?: string } } })
+        ?.response?.data;
       const detail = data?.detail || "重置失败，请重试或联系管理员";
       setErrorMsg(detail);
       message.error(detail);
@@ -58,7 +65,10 @@ function ResetPasswordForm() {
 
   if (pageState === "loading") {
     return (
-      <div className="flex min-h-screen items-center justify-center" style={{ background: "var(--admin-bg-layout)" }}>
+      <div
+        className="flex min-h-screen items-center justify-center"
+        style={{ background: "var(--admin-bg-layout)" }}
+      >
         <Text type="secondary">加载中…</Text>
       </div>
     );
@@ -66,8 +76,11 @@ function ResetPasswordForm() {
 
   if (pageState === "error") {
     return (
-      <div className="flex min-h-screen items-center justify-center px-4" style={{ background: "var(--admin-bg-layout)" }}>
-        <Card className="w-full max-w-[420px] shadow-xl" variant="borderless">
+      <div
+        className="flex min-h-screen items-center justify-center px-4"
+        style={{ background: "var(--admin-bg-layout)" }}
+      >
+        <Card className="w-full max-w-105 shadow-xl" variant="borderless">
           <Result
             status="error"
             title="无法重置密码"
@@ -85,8 +98,11 @@ function ResetPasswordForm() {
 
   if (pageState === "success") {
     return (
-      <div className="flex min-h-screen items-center justify-center px-4" style={{ background: "var(--admin-bg-layout)" }}>
-        <Card className="w-full max-w-[420px] shadow-xl" variant="borderless">
+      <div
+        className="flex min-h-screen items-center justify-center px-4"
+        style={{ background: "var(--admin-bg-layout)" }}
+      >
+        <Card className="w-full max-w-105 shadow-xl" variant="borderless">
           <Result
             status="success"
             title="密码已重置"
@@ -103,10 +119,15 @@ function ResetPasswordForm() {
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center px-4" style={{ background: "var(--admin-bg-layout)" }}>
+    <div
+      className="flex min-h-screen items-center justify-center px-4"
+      style={{ background: "var(--admin-bg-layout)" }}
+    >
       <Card className="w-full max-w-[420px] shadow-xl" variant="borderless">
         <div className="mb-6 text-center">
-          <Title level={3} className="!mb-2">设置新密码</Title>
+          <Title level={3} className="!mb-2">
+            设置新密码
+          </Title>
           <Text type="secondary">请输入您的新密码</Text>
         </div>
         <Form form={form} layout="vertical" onFinish={onFinish} size="large">
@@ -127,7 +148,10 @@ function ResetPasswordForm() {
               },
             ]}
           >
-            <Input.Password prefix={<LockOutlined />} placeholder="至少 8 位，包含字母和数字" />
+            <Input.Password
+              prefix={<LockOutlined />}
+              placeholder="至少 8 位，包含字母和数字"
+            />
           </Form.Item>
           <Form.Item
             name="confirm_password"
@@ -145,7 +169,10 @@ function ResetPasswordForm() {
               }),
             ]}
           >
-            <Input.Password prefix={<LockOutlined />} placeholder="再次输入新密码" />
+            <Input.Password
+              prefix={<LockOutlined />}
+              placeholder="再次输入新密码"
+            />
           </Form.Item>
           <Form.Item>
             <Button type="primary" htmlType="submit" loading={submitting} block>
@@ -162,7 +189,10 @@ export default function ResetPasswordPage() {
   return (
     <Suspense
       fallback={
-        <div className="flex min-h-screen items-center justify-center" style={{ background: "var(--admin-bg-layout)" }}>
+        <div
+          className="flex min-h-screen items-center justify-center"
+          style={{ background: "var(--admin-bg-layout)" }}
+        >
           <Spin size="large" />
         </div>
       }

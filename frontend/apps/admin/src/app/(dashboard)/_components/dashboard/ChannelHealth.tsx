@@ -40,14 +40,21 @@ export default function ChannelHealth() {
   }, [fetchData]);
 
   const columns: ColumnsType<HealthScore> = [
-    { title: "渠道名称", dataIndex: "name", key: "name", ellipsis: true, width: 180 },
+    {
+      title: "渠道名称",
+      dataIndex: "name",
+      key: "name",
+      ellipsis: true,
+      width: 180,
+    },
     {
       title: <ChannelHealthScoreHeader />,
       dataIndex: "health_score",
       key: "score",
       width: 90,
       render: (score: number) => {
-        const color = score >= 80 ? "#3f8600" : score >= 60 ? "#faad14" : "#cf1322";
+        const color =
+          score >= 80 ? "#3f8600" : score >= 60 ? "#faad14" : "#cf1322";
         return <span style={{ fontWeight: 600, color }}>{score}</span>;
       },
     },
@@ -57,7 +64,11 @@ export default function ChannelHealth() {
       key: "anomaly",
       width: 80,
       render: (rate: number) => (
-        <span style={{ color: rate > 0.1 ? "#cf1322" : undefined }}>
+        <span
+          style={{
+            color: rate > 0.1 ? "var(--ymt-color-feedback-danger)" : undefined,
+          }}
+        >
           {(rate * 100).toFixed(1)}%
         </span>
       ),
@@ -87,12 +98,21 @@ export default function ChannelHealth() {
       styles={{ body: { overflow: "hidden" } }}
     >
       {loading ? (
-        <div className="flex items-center justify-center" style={{ height: 200 }}>
+        <div
+          className="flex items-center justify-center"
+          style={{ height: 200 }}
+        >
           <Spin />
         </div>
       ) : scores.length === 0 ? (
-        <div className="flex items-center justify-center" style={{ height: 200 }}>
-          <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无渠道数据" />
+        <div
+          className="flex items-center justify-center"
+          style={{ height: 200 }}
+        >
+          <Empty
+            image={Empty.PRESENTED_IMAGE_SIMPLE}
+            description="暂无渠道数据"
+          />
         </div>
       ) : (
         <Table

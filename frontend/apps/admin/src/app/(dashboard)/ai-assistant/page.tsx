@@ -47,7 +47,11 @@ import {
   type ExtractResult,
   type PageCopyResult,
 } from "@/lib/ai";
-import { createDefaultModules, createEmptyDSL, type ModuleConfig } from "@/lib/page-dsl";
+import {
+  createDefaultModules,
+  createEmptyDSL,
+  type ModuleConfig,
+} from "@/lib/page-dsl";
 import type { Product } from "../products/_components/types";
 import { FIELD_LABELS } from "./_components/constants";
 
@@ -101,7 +105,8 @@ const TASKS: Array<{
     title: "识别包装/资料",
     description: "识别包装、报告或描述文本，生成可确认的产品字段建议。",
     emptyTitle: "生成后可应用到产品资料",
-    emptyDescription: "AI 会提取产品名称、品类、产地、规格和保质期等字段，确认后写入当前产品。",
+    emptyDescription:
+      "AI 会提取产品名称、品类、产地、规格和保质期等字段，确认后写入当前产品。",
     icon: <ExperimentOutlined />,
   },
   {
@@ -109,7 +114,8 @@ const TASKS: Array<{
     title: "补全产品介绍",
     description: "围绕选中产品生成产品介绍、卖点和品牌/产品故事。",
     emptyTitle: "生成后可写入介绍或故事",
-    emptyDescription: "适合补齐产品介绍、产品卖点、故事标题和品牌/产品故事，不会自动覆盖资料。",
+    emptyDescription:
+      "适合补齐产品介绍、产品卖点、故事标题和品牌/产品故事，不会自动覆盖资料。",
     icon: <CopyOutlined />,
   },
   {
@@ -117,7 +123,8 @@ const TASKS: Array<{
     title: "生成扫码页草稿",
     description: "基于产品资料生成 H5 页面文案和模块建议，并进入编辑器。",
     emptyTitle: "生成后可创建扫码页草稿",
-    emptyDescription: "AI 会给出页面文案和模块建议，创建后进入页面编辑器做发布检查。",
+    emptyDescription:
+      "AI 会给出页面文案和模块建议，创建后进入页面编辑器做发布检查。",
     icon: <FileTextOutlined />,
   },
   {
@@ -125,12 +132,27 @@ const TASKS: Array<{
     title: "策划扫码活动",
     description: "生成活动玩法、规则和利益点，确认后创建活动草稿。",
     emptyTitle: "生成后可创建活动草稿",
-    emptyDescription: "AI 会生成活动玩法、规则和利益点，确认时间与类型后创建为草稿。",
+    emptyDescription:
+      "AI 会生成活动玩法、规则和利益点，确认时间与类型后创建为草稿。",
     icon: <GiftOutlined />,
   },
 ];
 
-const CATEGORY_OPTIONS = ["大米", "面粉", "食用油", "茶叶", "水果", "蔬菜", "肉类", "乳制品", "酒类", "饮料", "零食", "保健品", "其他"].map((value) => ({ value, label: value }));
+const CATEGORY_OPTIONS = [
+  "大米",
+  "面粉",
+  "食用油",
+  "茶叶",
+  "水果",
+  "蔬菜",
+  "肉类",
+  "乳制品",
+  "酒类",
+  "饮料",
+  "零食",
+  "保健品",
+  "其他",
+].map((value) => ({ value, label: value }));
 
 const CAMPAIGN_TYPE_OPTIONS = [
   { value: "coupon", label: "优惠券" },
@@ -156,7 +178,14 @@ function formatLocalDateTime(date: Date) {
 
 function buildProductHints(product?: Product | null) {
   if (!product) return "";
-  return [product.category, product.origin, product.description, product.story_title].filter(Boolean).join(", ");
+  return [
+    product.category,
+    product.origin,
+    product.description,
+    product.story_title,
+  ]
+    .filter(Boolean)
+    .join(", ");
 }
 
 function getProductGaps(product?: Product | null) {
@@ -169,22 +198,44 @@ function getProductGaps(product?: Product | null) {
   return gaps;
 }
 
-function getRecommendedTask(product?: Product | null): { task: TaskKey; reason: string } {
+function getRecommendedTask(product?: Product | null): {
+  task: TaskKey;
+  reason: string;
+} {
   if (!product) {
-    return { task: "extract", reason: "先选择产品，AI 结果才能应用回业务资料。" };
+    return {
+      task: "extract",
+      reason: "先选择产品，AI 结果才能应用回业务资料。",
+    };
   }
   if (!product.origin || !product.category) {
-    return { task: "extract", reason: "当前产品基础字段不完整，建议先识别包装或资料补齐。" };
+    return {
+      task: "extract",
+      reason: "当前产品基础字段不完整，建议先识别包装或资料补齐。",
+    };
   }
   if (!product.description || !product.story_content) {
-    return { task: "copywriting", reason: "当前产品介绍或故事不完整，建议先生成可应用文案。" };
+    return {
+      task: "copywriting",
+      reason: "当前产品介绍或故事不完整，建议先生成可应用文案。",
+    };
   }
-  return { task: "page", reason: "产品基础资料较完整，建议生成扫码页草稿进入发布闭环。" };
+  return {
+    task: "page",
+    reason: "产品基础资料较完整，建议生成扫码页草稿进入发布闭环。",
+  };
 }
 
 function renderCopyContent(content: CopywritingResult["content"]) {
   if (typeof content === "string") {
-    return <Paragraph className="!mb-0" style={{ whiteSpace: "pre-wrap", lineHeight: 1.8 }}>{content}</Paragraph>;
+    return (
+      <Paragraph
+        className="!mb-0"
+        style={{ whiteSpace: "pre-wrap", lineHeight: 1.8 }}
+      >
+        {content}
+      </Paragraph>
+    );
   }
   const items = content.items.map(normalizeCopywritingItem);
   return (
@@ -200,15 +251,21 @@ function renderCopyContent(content: CopywritingResult["content"]) {
   );
 }
 
-function normalizeCopywritingItem(item: CopywritingItem): { title?: string; detail: string } {
+function normalizeCopywritingItem(item: CopywritingItem): {
+  title?: string;
+  detail: string;
+} {
   if (typeof item === "string") return { detail: item };
   const title = typeof item.title === "string" ? item.title : undefined;
-  const detail = typeof item.detail === "string"
-    ? item.detail
-    : Object.entries(item)
-      .filter(([key, value]) => key !== "title" && value != null && value !== "")
-      .map(([key, value]) => `${key}: ${String(value)}`)
-      .join("；");
+  const detail =
+    typeof item.detail === "string"
+      ? item.detail
+      : Object.entries(item)
+          .filter(
+            ([key, value]) => key !== "title" && value != null && value !== ""
+          )
+          .map(([key, value]) => `${key}: ${String(value)}`)
+          .join("；");
   return { title, detail: detail || title || "" };
 }
 
@@ -232,14 +289,20 @@ function buildExtractDescription(fields: ExtractResult["fields"]) {
 function buildPageDSL(pageResult: PageCopyResult) {
   const dsl = createEmptyDSL();
   const defaultModules = createDefaultModules();
-  const suggestedTypes = new Set(pageResult.result.page_suggestion.modules.map((mod) => mod.type));
+  const suggestedTypes = new Set(
+    pageResult.result.page_suggestion.modules.map((mod) => mod.type)
+  );
   const modules = defaultModules.map<ModuleConfig>((module) => ({
     ...module,
     enabled: module.enabled || suggestedTypes.has(module.type),
     config: {
       ...(module.config || {}),
-      ...(module.type === "product_hero" ? { subtitle_template: pageResult.result.copywriting.hero_subtitle } : {}),
-      ...(module.type === "media_section" ? { story_content: pageResult.result.copywriting.brand_story } : {}),
+      ...(module.type === "product_hero"
+        ? { subtitle_template: pageResult.result.copywriting.hero_subtitle }
+        : {}),
+      ...(module.type === "media_section"
+        ? { story_content: pageResult.result.copywriting.brand_story }
+        : {}),
     },
   }));
   dsl.modules = modules;
@@ -272,22 +335,34 @@ export default function AIAssistantPage() {
 
   const selectedProduct = useMemo(
     () => products.find((product) => product.id === selectedProductId),
-    [products, selectedProductId],
+    [products, selectedProductId]
   );
 
   const productOptions = useMemo(
-    () => products.map((product) => ({
-      value: product.id,
-      label: `${product.name}${product.category ? ` · ${product.category}` : ""}`,
-    })),
-    [products],
+    () =>
+      products.map((product) => ({
+        value: product.id,
+        label: `${product.name}${product.category ? ` · ${product.category}` : ""}`,
+      })),
+    [products]
   );
 
-  const productGaps = useMemo(() => getProductGaps(selectedProduct), [selectedProduct]);
-  const recommended = useMemo(() => getRecommendedTask(selectedProduct), [selectedProduct]);
-  const productHints = useMemo(() => buildProductHints(selectedProduct), [selectedProduct]);
+  const productGaps = useMemo(
+    () => getProductGaps(selectedProduct),
+    [selectedProduct]
+  );
+  const recommended = useMemo(
+    () => getRecommendedTask(selectedProduct),
+    [selectedProduct]
+  );
+  const productHints = useMemo(
+    () => buildProductHints(selectedProduct),
+    [selectedProduct]
+  );
   const currentTask = TASKS.find((task) => task.key === activeTask) || TASKS[0];
-  const targetContext = selectedProductId ? { target_type: "product", target_id: selectedProductId } : undefined;
+  const targetContext = selectedProductId
+    ? { target_type: "product", target_id: selectedProductId }
+    : undefined;
 
   const handleTaskSelect = (task: TaskKey) => {
     setActiveTask(task);
@@ -296,7 +371,9 @@ export default function AIAssistantPage() {
 
   const fetchProducts = useCallback(async () => {
     try {
-      const { data } = await api.get<ProductListResponse>("/products", { params: { page_size: 100 } });
+      const { data } = await api.get<ProductListResponse>("/products", {
+        params: { page_size: 100 },
+      });
       setProducts(data.items || []);
     } catch {
       setProducts([]);
@@ -335,13 +412,21 @@ export default function AIAssistantPage() {
     }
   };
 
-  const handleExtract = async (values: { text?: string; image_url?: string; filename?: string }) => {
+  const handleExtract = async (values: {
+    text?: string;
+    image_url?: string;
+    filename?: string;
+  }) => {
     setLoadingTask("extract");
     setResult(null);
     try {
-      const data = extractMode === "text"
-        ? await extractFromText(values.text || "")
-        : await recognizeImage(values.image_url || "", values.filename || "image.jpg");
+      const data =
+        extractMode === "text"
+          ? await extractFromText(values.text || "")
+          : await recognizeImage(
+              values.image_url || "",
+              values.filename || "image.jpg"
+            );
       setResult({ kind: "extract", data });
       message.success("已生成产品资料建议");
     } catch (err) {
@@ -351,7 +436,11 @@ export default function AIAssistantPage() {
     }
   };
 
-  const handleCopywriting = async (values: { type: CopywritingType; product_name?: string; keywords?: string }) => {
+  const handleCopywriting = async (values: {
+    type: CopywritingType;
+    product_name?: string;
+    keywords?: string;
+  }) => {
     const productName = getGenerationProductName(values.product_name);
     if (!productName) {
       message.warning("请先选择产品，或手动填写产品名称");
@@ -360,7 +449,12 @@ export default function AIAssistantPage() {
     setLoadingTask("copywriting");
     setResult(null);
     try {
-      const data = await generateCopywriting(values.type, productName, splitKeywords(values.keywords), targetContext);
+      const data = await generateCopywriting(
+        values.type,
+        productName,
+        splitKeywords(values.keywords),
+        targetContext
+      );
       setResult({ kind: "copywriting", data, copyType: values.type });
       message.success("产品文案已生成");
     } catch (err) {
@@ -370,7 +464,11 @@ export default function AIAssistantPage() {
     }
   };
 
-  const handlePagePlan = async (values: { product_name?: string; category?: string; keywords?: string }) => {
+  const handlePagePlan = async (values: {
+    product_name?: string;
+    category?: string;
+    keywords?: string;
+  }) => {
     const productName = getGenerationProductName(values.product_name);
     if (!productName) {
       message.warning("请先选择产品，或手动填写产品名称");
@@ -380,7 +478,12 @@ export default function AIAssistantPage() {
     setLoadingTask("page");
     setResult(null);
     try {
-      const data = await generatePageCopy(productName, category, splitKeywords(values.keywords), targetContext);
+      const data = await generatePageCopy(
+        productName,
+        category,
+        splitKeywords(values.keywords),
+        targetContext
+      );
       setResult({ kind: "page", data });
       message.success("扫码页草稿建议已生成");
     } catch (err) {
@@ -390,7 +493,11 @@ export default function AIAssistantPage() {
     }
   };
 
-  const handleCampaignPlan = async (values: { product_name?: string; goal: CampaignGoal; target_audience: string }) => {
+  const handleCampaignPlan = async (values: {
+    product_name?: string;
+    goal: CampaignGoal;
+    target_audience: string;
+  }) => {
     const productName = getGenerationProductName(values.product_name);
     if (!productName) {
       message.warning("请先选择产品，或手动填写产品名称");
@@ -399,7 +506,12 @@ export default function AIAssistantPage() {
     setLoadingTask("campaign");
     setResult(null);
     try {
-      const data = await generateCampaign(productName, values.goal, values.target_audience, targetContext);
+      const data = await generateCampaign(
+        productName,
+        values.goal,
+        values.target_audience,
+        targetContext
+      );
       setResult({ kind: "campaign", data, goal: values.goal });
       message.success("活动方案已生成");
     } catch (err) {
@@ -434,27 +546,33 @@ export default function AIAssistantPage() {
       productApplyForm.setFieldsValue({
         ...baseValues,
         ...(result.copyType === "brand_story"
-          ? { story_title: baseValues.story_title || `${selectedProduct?.name || "产品"}的安心故事`, story_content: text }
+          ? {
+              story_title:
+                baseValues.story_title ||
+                `${selectedProduct?.name || "产品"}的安心故事`,
+              story_content: text,
+            }
           : { description: text }),
       });
     }
     setProductApplyOpen(true);
   };
 
-  const confirmProductNameChange = (nextName: string) => new Promise<boolean>((resolve) => {
-    if (!selectedProduct || nextName === selectedProduct.name) {
-      resolve(true);
-      return;
-    }
-    modal.confirm({
-      title: "确认修改产品名称？",
-      okText: "确认修改",
-      cancelText: "返回检查",
-      content: `产品名称将从「${selectedProduct.name}」改为「${nextName}」。`,
-      onOk: () => resolve(true),
-      onCancel: () => resolve(false),
+  const confirmProductNameChange = (nextName: string) =>
+    new Promise<boolean>((resolve) => {
+      if (!selectedProduct || nextName === selectedProduct.name) {
+        resolve(true);
+        return;
+      }
+      modal.confirm({
+        title: "确认修改产品名称？",
+        okText: "确认修改",
+        cancelText: "返回检查",
+        content: `产品名称将从「${selectedProduct.name}」改为「${nextName}」。`,
+        onOk: () => resolve(true),
+        onCancel: () => resolve(false),
+      });
     });
-  });
 
   const handleProductApply = async () => {
     if (!selectedProduct) return;
@@ -510,7 +628,8 @@ export default function AIAssistantPage() {
       start_at: formatLocalDateTime(now),
       end_at: formatLocalDateTime(end),
       description: getCampaignField(campaign, "description"),
-      participation_conditions: getCampaignField(campaign, "rules") || "消费者扫码后参与",
+      participation_conditions:
+        getCampaignField(campaign, "rules") || "消费者扫码后参与",
       claim_limits: "每人限参与1次",
       validity_period: getCampaignField(campaign, "duration") || "活动期内有效",
       disclaimer: "最终解释权归品牌方所有",
@@ -549,7 +668,11 @@ export default function AIAssistantPage() {
   const renderTaskForm = () => {
     if (activeTask === "extract") {
       return (
-        <Form key={`extract-${extractMode}`} layout="vertical" onFinish={handleExtract}>
+        <Form
+          key={`extract-${extractMode}`}
+          layout="vertical"
+          onFinish={handleExtract}
+        >
           <Form.Item label="识别来源">
             <Radio.Group
               value={extractMode}
@@ -566,8 +689,15 @@ export default function AIAssistantPage() {
             />
           </Form.Item>
           {extractMode === "text" ? (
-            <Form.Item name="text" label="产品描述文本" rules={[{ required: true, message: "请输入产品描述文本" }]}>
-              <TextArea rows={7} placeholder="粘贴包装、配料表、检测报告摘要或产品介绍，AI 会提取可补齐的产品字段。" />
+            <Form.Item
+              name="text"
+              label="产品描述文本"
+              rules={[{ required: true, message: "请输入产品描述文本" }]}
+            >
+              <TextArea
+                rows={7}
+                placeholder="粘贴包装、配料表、检测报告摘要或产品介绍，AI 会提取可补齐的产品字段。"
+              />
             </Form.Item>
           ) : (
             <>
@@ -576,17 +706,29 @@ export default function AIAssistantPage() {
                 label="产品图片"
                 rules={[
                   { required: true, message: "请上传或填写图片地址" },
-                  { type: "url", message: "请输入以 http:// 或 https:// 开头的图片链接" },
+                  {
+                    type: "url",
+                    message: "请输入以 http:// 或 https:// 开头的图片链接",
+                  },
                 ]}
               >
-                <ImageUploadInput module="ai-recognition" previewAlt="待识别图片预览" variant="uploadFirst" />
+                <ImageUploadInput
+                  module="ai-recognition"
+                  previewAlt="待识别图片预览"
+                  variant="uploadFirst"
+                />
               </Form.Item>
               <Form.Item name="filename" label="文件名">
                 <Input placeholder="image.jpg" />
               </Form.Item>
             </>
           )}
-          <Button type="primary" htmlType="submit" icon={<ExperimentOutlined />} loading={loadingTask === "extract"}>
+          <Button
+            type="primary"
+            htmlType="submit"
+            icon={<ExperimentOutlined />}
+            loading={loadingTask === "extract"}
+          >
             识别并生成资料建议
           </Button>
         </Form>
@@ -599,10 +741,18 @@ export default function AIAssistantPage() {
           key={`copywriting-${selectedProductId || "manual"}`}
           layout="vertical"
           onFinish={handleCopywriting}
-          initialValues={{ type: "brand_story", product_name: selectedProduct?.name, keywords: productHints }}
+          initialValues={{
+            type: "brand_story",
+            product_name: selectedProduct?.name,
+            keywords: productHints,
+          }}
         >
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-            <Form.Item name="type" label="文案用途" rules={[{ required: true, message: "请选择文案用途" }]}>
+            <Form.Item
+              name="type"
+              label="文案用途"
+              rules={[{ required: true, message: "请选择文案用途" }]}
+            >
               <Select
                 options={[
                   { value: "brand_story", label: "品牌/产品故事" },
@@ -611,7 +761,11 @@ export default function AIAssistantPage() {
               />
             </Form.Item>
             {!selectedProduct && (
-              <Form.Item name="product_name" label="产品名称" rules={[{ required: true, message: "请输入产品名称" }]}>
+              <Form.Item
+                name="product_name"
+                label="产品名称"
+                rules={[{ required: true, message: "请输入产品名称" }]}
+              >
                 <Input placeholder="例：五常稻花香大米 5kg" />
               </Form.Item>
             )}
@@ -619,7 +773,12 @@ export default function AIAssistantPage() {
           <Form.Item name="keywords" label="关键词">
             <Input placeholder="例：核心产区、检测合格、适合家庭复购" />
           </Form.Item>
-          <Button type="primary" htmlType="submit" icon={<CopyOutlined />} loading={loadingTask === "copywriting"}>
+          <Button
+            type="primary"
+            htmlType="submit"
+            icon={<CopyOutlined />}
+            loading={loadingTask === "copywriting"}
+          >
             生成可应用文案
           </Button>
         </Form>
@@ -640,12 +799,20 @@ export default function AIAssistantPage() {
         >
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
             {!selectedProduct && (
-              <Form.Item name="product_name" label="产品名称" rules={[{ required: true, message: "请输入产品名称" }]}>
+              <Form.Item
+                name="product_name"
+                label="产品名称"
+                rules={[{ required: true, message: "请输入产品名称" }]}
+              >
                 <Input placeholder="例：五常稻花香大米 5kg" />
               </Form.Item>
             )}
             {!selectedProduct && (
-              <Form.Item name="category" label="品类" rules={[{ required: true, message: "请选择品类" }]}>
+              <Form.Item
+                name="category"
+                label="品类"
+                rules={[{ required: true, message: "请选择品类" }]}
+              >
                 <Select showSearch allowClear options={CATEGORY_OPTIONS} />
               </Form.Item>
             )}
@@ -653,7 +820,12 @@ export default function AIAssistantPage() {
           <Form.Item name="keywords" label="页面重点">
             <Input placeholder="例：产地溯源、检测报告、首扫福利、私域承接" />
           </Form.Item>
-          <Button type="primary" htmlType="submit" icon={<FileTextOutlined />} loading={loadingTask === "page"}>
+          <Button
+            type="primary"
+            htmlType="submit"
+            icon={<FileTextOutlined />}
+            loading={loadingTask === "page"}
+          >
             生成扫码页草稿建议
           </Button>
         </Form>
@@ -668,16 +840,26 @@ export default function AIAssistantPage() {
         initialValues={{
           goal: "promotion",
           product_name: selectedProduct?.name,
-          target_audience: selectedProduct?.category ? `${selectedProduct.category}目标消费者` : "关注产品品质和溯源可信的消费者",
+          target_audience: selectedProduct?.category
+            ? `${selectedProduct.category}目标消费者`
+            : "关注产品品质和溯源可信的消费者",
         }}
       >
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
           {!selectedProduct && (
-            <Form.Item name="product_name" label="产品名称" rules={[{ required: true, message: "请输入产品名称" }]}>
+            <Form.Item
+              name="product_name"
+              label="产品名称"
+              rules={[{ required: true, message: "请输入产品名称" }]}
+            >
               <Input placeholder="例：五常稻花香大米 5kg" />
             </Form.Item>
           )}
-          <Form.Item name="goal" label="活动目标" rules={[{ required: true, message: "请选择活动目标" }]}>
+          <Form.Item
+            name="goal"
+            label="活动目标"
+            rules={[{ required: true, message: "请选择活动目标" }]}
+          >
             <Select
               options={[
                 { value: "promotion", label: "拉新推广" },
@@ -688,10 +870,19 @@ export default function AIAssistantPage() {
             />
           </Form.Item>
         </div>
-        <Form.Item name="target_audience" label="目标受众" rules={[{ required: true, message: "请描述目标受众" }]}>
+        <Form.Item
+          name="target_audience"
+          label="目标受众"
+          rules={[{ required: true, message: "请描述目标受众" }]}
+        >
           <Input placeholder="例：关注品质、产地和家庭健康消费的人群" />
         </Form.Item>
-        <Button type="primary" htmlType="submit" icon={<GiftOutlined />} loading={loadingTask === "campaign"}>
+        <Button
+          type="primary"
+          htmlType="submit"
+          icon={<GiftOutlined />}
+          loading={loadingTask === "campaign"}
+        >
           生成活动草稿方案
         </Button>
       </Form>
@@ -701,7 +892,7 @@ export default function AIAssistantPage() {
   const renderResult = () => {
     if (loadingTask) {
       return (
-        <div className="flex min-h-[360px] items-center justify-center">
+        <div className="flex min-h-90 items-center justify-center">
           <Space orientation="vertical" align="center">
             <RocketOutlined className="text-3xl text-blue-500" />
             <Text type="secondary">AI 正在生成建议...</Text>
@@ -711,7 +902,7 @@ export default function AIAssistantPage() {
     }
     if (!result) {
       return (
-        <div className="flex min-h-[300px] items-center justify-center">
+        <div className="flex min-h-75 items-center justify-center">
           <Empty
             image={Empty.PRESENTED_IMAGE_SIMPLE}
             description={
@@ -719,7 +910,9 @@ export default function AIAssistantPage() {
                 <Text strong>{currentTask.emptyTitle}</Text>
                 <Text type="secondary">{currentTask.emptyDescription}</Text>
                 {!selectedProduct && (
-                  <Text type="secondary">选择产品后，可把结果应用回产品、页面或活动。</Text>
+                  <Text type="secondary">
+                    选择产品后，可把结果应用回产品、页面或活动。
+                  </Text>
                 )}
               </Space>
             }
@@ -731,7 +924,9 @@ export default function AIAssistantPage() {
       <Space orientation="vertical" size="middle" className="w-full">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <Space>
-            <CheckCircleOutlined className="text-green-500" />
+            <CheckCircleOutlined
+              style={{ color: "var(--ymt-color-feedback-success)" }}
+            />
             <Text strong>AI 结果预览</Text>
           </Space>
           <Button size="small" icon={<CopyOutlined />} onClick={copyResultText}>
@@ -744,11 +939,24 @@ export default function AIAssistantPage() {
             <Descriptions bordered size="small" column={1}>
               {Object.entries(result.data.fields).map(([key, value]) => {
                 if (value == null || value === "") return null;
-                const display = key === "confidence" && typeof value === "number" ? `${Math.round(value * 100)}%` : String(value);
-                return <Descriptions.Item key={key} label={FIELD_LABELS[key] || key}>{display}</Descriptions.Item>;
+                const display =
+                  key === "confidence" && typeof value === "number"
+                    ? `${Math.round(value * 100)}%`
+                    : String(value);
+                return (
+                  <Descriptions.Item key={key} label={FIELD_LABELS[key] || key}>
+                    {display}
+                  </Descriptions.Item>
+                );
               })}
             </Descriptions>
-            <Button type="primary" icon={<ProductOutlined />} disabled={!selectedProduct} loading={applyingProduct} onClick={openProductApply}>
+            <Button
+              type="primary"
+              icon={<ProductOutlined />}
+              disabled={!selectedProduct}
+              loading={applyingProduct}
+              onClick={openProductApply}
+            >
               应用到产品资料
             </Button>
           </>
@@ -757,7 +965,13 @@ export default function AIAssistantPage() {
         {result.kind === "copywriting" && (
           <>
             <Card size="small">{renderCopyContent(result.data.content)}</Card>
-            <Button type="primary" icon={<ProductOutlined />} disabled={!selectedProduct} loading={applyingProduct} onClick={openProductApply}>
+            <Button
+              type="primary"
+              icon={<ProductOutlined />}
+              disabled={!selectedProduct}
+              loading={applyingProduct}
+              onClick={openProductApply}
+            >
               应用到产品资料
             </Button>
           </>
@@ -766,22 +980,37 @@ export default function AIAssistantPage() {
         {result.kind === "page" && (
           <>
             <Card size="small" title="页面文案">
-              <Paragraph style={{ whiteSpace: "pre-wrap" }}>{result.data.result.copywriting.brand_story}</Paragraph>
+              <Paragraph style={{ whiteSpace: "pre-wrap" }}>
+                {result.data.result.copywriting.brand_story}
+              </Paragraph>
               <Divider className="!my-3" />
               <Space wrap>
                 {result.data.result.copywriting.selling_points.map((item) => (
-                  <Tag key={item.title} color="blue">{item.title}</Tag>
+                  <Tag key={item.title} color="blue">
+                    {item.title}
+                  </Tag>
                 ))}
               </Space>
             </Card>
             <Card size="small" title="推荐模块">
               <Space wrap>
                 {result.data.result.page_suggestion.modules.map((module) => (
-                  <Tag key={module.id} color={module.enabled ? "green" : "default"}>{module.type}</Tag>
+                  <Tag
+                    key={module.id}
+                    color={module.enabled ? "green" : "default"}
+                  >
+                    {module.type}
+                  </Tag>
                 ))}
               </Space>
             </Card>
-            <Button type="primary" icon={<SendOutlined />} disabled={!selectedProduct} loading={creatingPage} onClick={createPageDraft}>
+            <Button
+              type="primary"
+              icon={<SendOutlined />}
+              disabled={!selectedProduct}
+              loading={creatingPage}
+              onClick={createPageDraft}
+            >
               创建扫码页草稿
             </Button>
           </>
@@ -799,7 +1028,13 @@ export default function AIAssistantPage() {
                 );
               })}
             </Descriptions>
-            <Button type="primary" icon={<GiftOutlined />} disabled={!selectedProduct} loading={creatingCampaign} onClick={openCampaignDraft}>
+            <Button
+              type="primary"
+              icon={<GiftOutlined />}
+              disabled={!selectedProduct}
+              loading={creatingCampaign}
+              onClick={openCampaignDraft}
+            >
               创建活动草稿
             </Button>
           </>
@@ -815,15 +1050,24 @@ export default function AIAssistantPage() {
   return (
     <div className="space-y-4">
       <div>
-        <Title level={4} className="!mb-1">AI 运营助手</Title>
-        <Text type="secondary">先选择产品，再让 AI 帮你补资料、写文案、建扫码页草稿或策划活动。</Text>
+        <Title level={4} className="!mb-1">
+          AI 运营助手
+        </Title>
+        <Text type="secondary">
+          先选择产品，再让 AI 帮你补资料、写文案、建扫码页草稿或策划活动。
+        </Text>
       </div>
 
       <Card className="ai-context-card">
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-[1fr_2fr]">
           <div>
             <Text strong>产品上下文</Text>
-            <div className="mt-1 text-sm text-slate-500">应用结果前必须选择产品；生成文本可先不选。</div>
+            <div
+              className="mt-1 text-sm"
+              style={{ color: "var(--ymt-color-text-secondary)" }}
+            >
+              应用结果前必须选择产品；生成文本可先不选。
+            </div>
           </div>
           <div>
             <Select
@@ -843,10 +1087,22 @@ export default function AIAssistantPage() {
               <>
                 <div className="mt-3 flex flex-wrap gap-2">
                   <Tag color="blue">{selectedProduct.name}</Tag>
-                  <Tag color={selectedProduct.category ? "default" : "orange"}>{selectedProduct.category || "未填写品类"}</Tag>
-                  <Tag color={selectedProduct.origin ? "default" : "orange"}>{selectedProduct.origin || "未填写产地"}</Tag>
-                  {selectedProduct.description ? <Tag color="green">已有产品介绍</Tag> : <Tag color="orange">缺产品介绍</Tag>}
-                  {selectedProduct.story_content ? <Tag color="green">已有产品故事</Tag> : <Tag color="orange">缺产品故事</Tag>}
+                  <Tag color={selectedProduct.category ? "default" : "orange"}>
+                    {selectedProduct.category || "未填写品类"}
+                  </Tag>
+                  <Tag color={selectedProduct.origin ? "default" : "orange"}>
+                    {selectedProduct.origin || "未填写产地"}
+                  </Tag>
+                  {selectedProduct.description ? (
+                    <Tag color="green">已有产品介绍</Tag>
+                  ) : (
+                    <Tag color="orange">缺产品介绍</Tag>
+                  )}
+                  {selectedProduct.story_content ? (
+                    <Tag color="green">已有产品故事</Tag>
+                  ) : (
+                    <Tag color="orange">缺产品故事</Tag>
+                  )}
                 </div>
                 <Alert
                   className="mt-3"
@@ -855,14 +1111,23 @@ export default function AIAssistantPage() {
                   title={`推荐下一步：${TASKS.find((task) => task.key === recommended.task)?.title}`}
                   description={recommended.reason}
                   action={
-                    <Button size="small" type="primary" onClick={() => handleTaskSelect(recommended.task)}>
+                    <Button
+                      size="small"
+                      type="primary"
+                      onClick={() => handleTaskSelect(recommended.task)}
+                    >
                       开始处理
                     </Button>
                   }
                 />
               </>
             ) : (
-              <Alert className="mt-3" type="warning" showIcon title="未选择产品时，AI 结果只能复制，不能写入资料、页面或活动。" />
+              <Alert
+                className="mt-3"
+                type="warning"
+                showIcon
+                title="未选择产品时，AI 结果只能复制，不能写入资料、页面或活动。"
+              />
             )}
           </div>
         </div>
@@ -875,22 +1140,46 @@ export default function AIAssistantPage() {
             hoverable
             size="small"
             onClick={() => handleTaskSelect(task.key)}
-            className={activeTask === task.key ? "border-blue-500 shadow-sm" : ""}
+            className={activeTask === task.key ? "shadow-sm" : ""}
+            style={
+              activeTask === task.key
+                ? { borderColor: "var(--ymt-color-feedback-info)" }
+                : undefined
+            }
             styles={{
               body: {
                 minHeight: 104,
-                background: activeTask === task.key ? "rgba(22, 119, 255, 0.12)" : undefined,
+                background:
+                  activeTask === task.key
+                    ? "var(--ymt-color-feedback-info-bg)"
+                    : undefined,
               },
             }}
           >
             <Space align="start" className="w-full">
-              <span className={activeTask === task.key ? "text-blue-500" : "text-slate-500"}>{task.icon}</span>
+              <span
+                style={{
+                  color:
+                    activeTask === task.key
+                      ? "var(--ymt-color-feedback-info)"
+                      : "var(--ymt-color-text-secondary)",
+                }}
+              >
+                {task.icon}
+              </span>
               <div className="min-w-0 flex-1">
                 <div className="flex items-center justify-between gap-2">
                   <Text strong>{task.title}</Text>
-                  {recommended.task === task.key && <Tag color="gold">推荐</Tag>}
+                  {recommended.task === task.key && (
+                    <Tag color="gold">推荐</Tag>
+                  )}
                 </div>
-                <div className="mt-1 text-xs text-slate-500">{task.description}</div>
+                <div
+                  className="mt-1 text-xs"
+                  style={{ color: "var(--ymt-color-text-secondary)" }}
+                >
+                  {task.description}
+                </div>
               </div>
             </Space>
           </Card>
@@ -910,7 +1199,8 @@ export default function AIAssistantPage() {
                 label: "高级配置",
                 children: (
                   <Text type="secondary">
-                    当前任务会复用现有 AI 能力并自动传入产品上下文。生成结果只作为建议，写入产品、页面或活动前都需要人工确认。
+                    当前任务会复用现有 AI
+                    能力并自动传入产品上下文。生成结果只作为建议，写入产品、页面或活动前都需要人工确认。
                   </Text>
                 ),
               },
@@ -918,9 +1208,7 @@ export default function AIAssistantPage() {
           />
         </Card>
 
-        <Card title="结果预览与应用">
-          {renderResult()}
-        </Card>
+        <Card title="结果预览与应用">{renderResult()}</Card>
       </div>
 
       <Modal
@@ -985,17 +1273,33 @@ export default function AIAssistantPage() {
             title="活动会以草稿状态创建，不会自动上线。创建后可在活动管理继续维护权益、规则和投放。"
           />
           <Form form={campaignDraftForm} layout="vertical">
-            <Form.Item name="name" label="活动名称" rules={[{ required: true, message: "请输入活动名称" }]}>
+            <Form.Item
+              name="name"
+              label="活动名称"
+              rules={[{ required: true, message: "请输入活动名称" }]}
+            >
               <Input />
             </Form.Item>
-            <Form.Item name="campaign_type" label="活动类型" rules={[{ required: true, message: "请选择活动类型" }]}>
+            <Form.Item
+              name="campaign_type"
+              label="活动类型"
+              rules={[{ required: true, message: "请选择活动类型" }]}
+            >
               <Select options={CAMPAIGN_TYPE_OPTIONS} />
             </Form.Item>
             <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-              <Form.Item name="start_at" label="开始时间" rules={[{ required: true, message: "请输入开始时间" }]}>
+              <Form.Item
+                name="start_at"
+                label="开始时间"
+                rules={[{ required: true, message: "请输入开始时间" }]}
+              >
                 <Input placeholder="2026-06-01T00:00:00" />
               </Form.Item>
-              <Form.Item name="end_at" label="结束时间" rules={[{ required: true, message: "请输入结束时间" }]}>
+              <Form.Item
+                name="end_at"
+                label="结束时间"
+                rules={[{ required: true, message: "请输入结束时间" }]}
+              >
                 <Input placeholder="2026-06-30T23:59:59" />
               </Form.Item>
             </div>

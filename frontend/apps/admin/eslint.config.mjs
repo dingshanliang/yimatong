@@ -5,12 +5,11 @@ import nextTs from "eslint-config-next/typescript";
 // 设计体系门禁（docs/02_tech/design-system/governance.md）：
 // 拦截 JSX inline style 中的硬编码颜色/字号字面量与 Tailwind 任意值，
 // 强制消费 design tokens。
-// 这里设为 warn（不阻断 pnpm lint）；error 级增量阻断由 frontend/scripts/design-gates.mjs
-// 配合 frontend/.design-gates-baseline.json 完成（CI design-gates job）。
+// 批3 收尾后 baseline 已清空，规则从 warn 升级为 error（零硬编码契约）。
 const designGates = {
   rules: {
     "no-restricted-syntax": [
-      "warn",
+      "error",
       {
         selector:
           "JSXAttribute[name.name='style'] ObjectExpression > Property[key.name='color'] Literal[value=/#[0-9a-fA-F]{3,8}|rgba?\\(/i]",

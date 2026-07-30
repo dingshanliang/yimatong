@@ -38,7 +38,11 @@ const menuItems: MenuProps["items"] = [
   { key: "/settings", icon: <SettingOutlined />, label: "系统配置" },
 ];
 
-export default function DashboardLayout({ children }: { children: React.ReactNode }) {
+export default function DashboardLayout({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
   const [collapsed, setCollapsed] = useState(false);
   const router = useRouter();
   const pathname = usePathname();
@@ -55,9 +59,20 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   };
 
   const userMenuItems: MenuProps["items"] = [
-    { key: "theme", icon: isDark ? <SunOutlined /> : <MoonOutlined />, label: isDark ? "亮色模式" : "暗色模式", onClick: toggleMode },
+    {
+      key: "theme",
+      icon: isDark ? <SunOutlined /> : <MoonOutlined />,
+      label: isDark ? "亮色模式" : "暗色模式",
+      onClick: toggleMode,
+    },
     { type: "divider" },
-    { key: "logout", icon: <LogoutOutlined />, label: "退出登录", danger: true, onClick: handleLogout },
+    {
+      key: "logout",
+      icon: <LogoutOutlined />,
+      label: "退出登录",
+      danger: true,
+      onClick: handleLogout,
+    },
   ];
 
   return (
@@ -84,8 +99,10 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           <Text
             strong
             style={{
-              color: "#fff",
-              fontSize: collapsed ? 14 : 16,
+              color: "var(--ymt-color-text-inverse)",
+              fontSize: collapsed
+                ? "var(--ymt-font-size-base)"
+                : "var(--ymt-font-size-md)",
               whiteSpace: "nowrap",
               overflow: "hidden",
             }}
@@ -126,7 +143,10 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             </Button>
           </Dropdown>
         </Header>
-        <Content className="platform-content" style={{ margin: 16, padding: 24, borderRadius: 8, minHeight: 280 }}>
+        <Content
+          className="platform-content"
+          style={{ margin: 16, padding: 24, borderRadius: 8, minHeight: 280 }}
+        >
           {children}
         </Content>
       </Layout>

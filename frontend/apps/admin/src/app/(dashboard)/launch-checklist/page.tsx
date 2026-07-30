@@ -194,7 +194,11 @@ export default function LaunchChecklistPage() {
                   >
                     <span>{item.label}</span>
                     {item.required && (
-                      <Tag color="red" className="ml-2" style={{ fontSize: 11 }}>
+                      <Tag
+                        color="red"
+                        className="ml-2"
+                        style={{ fontSize: "var(--ymt-font-size-xs)" }}
+                      >
                         必填
                       </Tag>
                     )}

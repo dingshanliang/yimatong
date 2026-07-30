@@ -1,7 +1,17 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { App, Button, Card, Col, Row, Space, Statistic, Tooltip, Typography } from "antd";
+import {
+  App,
+  Button,
+  Card,
+  Col,
+  Row,
+  Space,
+  Statistic,
+  Tooltip,
+  Typography,
+} from "antd";
 import {
   ReloadOutlined,
   ScanOutlined,
@@ -36,11 +46,22 @@ interface DashboardData {
   };
 }
 
-function ChangeIndicator({ change }: { change: { value: number; direction: string } | null | undefined }) {
+function ChangeIndicator({
+  change,
+}: {
+  change: { value: number; direction: string } | null | undefined;
+}) {
   if (!change) return null;
   const isUp = change.direction === "up";
   return (
-    <span style={{ fontSize: 12, color: isUp ? "#3f8600" : "#cf1322" }}>
+    <span
+      style={{
+        fontSize: "var(--ymt-font-size-xs)",
+        color: isUp
+          ? "var(--ymt-color-feedback-success)"
+          : "var(--ymt-color-feedback-danger)",
+      }}
+    >
       {isUp ? "↑" : "↓"} 较上周 {Math.abs(change.value)}%
     </span>
   );
@@ -54,7 +75,9 @@ export default function DashboardHome() {
   const fetchDashboard = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await api.get("/analytics/dashboard", { params: { days_back: 30 } });
+      const res = await api.get("/analytics/dashboard", {
+        params: { days_back: 30 },
+      });
       setData(res.data);
     } catch (err) {
       message.error(extractErrorMessage(err, "加载工作台数据失败"));
@@ -98,19 +121,38 @@ export default function DashboardHome() {
       {/* 统计卡片 */}
       <Row gutter={[16, 16]} className="mb-6">
         <Col xs={24} sm={12} lg={6}>
-          <Card size="small" className="h-full" style={{ borderLeft: "3px solid #1677ff" }}>
-            <Statistic title="今日扫码" value={data?.today_scans ?? 0} prefix={<ScanOutlined />} loading={loading} />
+          <Card
+            size="small"
+            className="h-full"
+            style={{ borderLeft: "3px solid #1677ff" }}
+          >
+            <Statistic
+              title="今日扫码"
+              value={data?.today_scans ?? 0}
+              prefix={<ScanOutlined />}
+              loading={loading}
+            />
           </Card>
         </Col>
         <Col xs={24} sm={12} lg={6}>
           <Card size="small" className="h-full">
-            <Statistic title="今日 UV" value={data?.today_uv ?? 0} prefix={<TeamOutlined />} loading={loading} />
+            <Statistic
+              title="今日 UV"
+              value={data?.today_uv ?? 0}
+              prefix={<TeamOutlined />}
+              loading={loading}
+            />
           </Card>
         </Col>
         <Col xs={24} sm={12} lg={6}>
           <Card size="small" className="h-full">
             <Space orientation="vertical" size={2} className="w-full">
-              <Statistic title="累计扫码" value={data?.cumulative_scans ?? 0} prefix={<RiseOutlined />} loading={loading} />
+              <Statistic
+                title="累计扫码"
+                value={data?.cumulative_scans ?? 0}
+                prefix={<RiseOutlined />}
+                loading={loading}
+              />
               <ChangeIndicator change={data?.comparison?.weekly_scans_change} />
             </Space>
           </Card>
@@ -120,7 +162,9 @@ export default function DashboardHome() {
             <Statistic
               title="期间领券"
               value={data?.period_claim_count ?? 0}
-              suffix={data?.period_claim_rate ? `(${data.period_claim_rate}%)` : ""}
+              suffix={
+                data?.period_claim_rate ? `(${data.period_claim_rate}%)` : ""
+              }
               prefix={<GiftOutlined />}
               loading={loading}
             />

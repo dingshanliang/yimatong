@@ -9,22 +9,34 @@ import type { Pool, PoolCode } from "./types";
 
 export function CouponPoolsTab() {
   const { message } = App.useApp();
-  const { items: pools, loading: poolsLoading, mutate: mutatePools } = useCrud<Pool>("/connectors/coupon-pools");
+  const {
+    items: pools,
+    loading: poolsLoading,
+    mutate: mutatePools,
+  } = useCrud<Pool>("/connectors/coupon-pools");
   const [poolModalOpen, setPoolModalOpen] = useState(false);
   const [poolForm] = Form.useForm();
   const [codeModalOpen, setCodeModalOpen] = useState(false);
   const [selectedPool, setSelectedPool] = useState<Pool | null>(null);
 
   const {
-    items: poolCodes, total: poolCodesTotal, loading: poolCodesLoading,
-    page: poolCodesPage, setPage: setPoolCodesPage,
+    items: poolCodes,
+    total: poolCodesTotal,
+    loading: poolCodesLoading,
+    page: poolCodesPage,
+    setPage: setPoolCodesPage,
   } = usePaginatedList<PoolCode>(
     async ({ page, page_size }) => {
       if (!selectedPool) return { items: [], total: 0 };
       try {
-        const { data } = await api.get(`/connectors/coupon-pools/${selectedPool.id}/codes`, { params: { page, page_size } });
+        const { data } = await api.get(
+          `/connectors/coupon-pools/${selectedPool.id}/codes`,
+          { params: { page, page_size } }
+        );
         return { items: data.items || [], total: data.total || 0 };
-      } catch { return { items: [], total: 0 }; }
+      } catch {
+        return { items: [], total: 0 };
+      }
     },
     [selectedPool]
   );
@@ -32,8 +44,14 @@ export function CouponPoolsTab() {
   const handleCreatePool = async () => {
     try {
       const values = await poolForm.validateFields();
-      const codes = (values.codes as string).split("\n").map((c: string) => c.trim()).filter(Boolean);
-      if (codes.length === 0) { message.error("请输入至少一个券码"); return; }
+      const codes = (values.codes as string)
+        .split("\n")
+        .map((c: string) => c.trim())
+        .filter(Boolean);
+      if (codes.length === 0) {
+        message.error("请输入至少一个券码");
+        return;
+      }
       await api.post("/connectors/coupon-pools", { name: values.name, codes });
       message.success(`券码池创建成功，共 ${codes.length} 个券码`);
       setPoolModalOpen(false);
@@ -50,49 +68,155 @@ export function CouponPoolsTab() {
   const poolColumns = [
     { title: "池名称", dataIndex: "name", key: "name" },
     { title: "总数", dataIndex: "total_codes", key: "total_codes" },
-    { title: "剩余", key: "remaining", render: (_: unknown, record: Pool) => {
-      const used = record.total_codes - record.remaining;
-      const percent = record.total_codes > 0 ? Math.round((used / record.total_codes) * 100) : 0;
-      return (
-        <div className="min-w-[100px]">
-          <div className="mb-1 text-xs text-text-muted">{record.remaining} / {record.total_codes}</div>
-          <Progress percent={percent} size="small" status={record.remaining === 0 ? "exception" : undefined} />
-        </div>
-      );
-    }},
-    { title: "状态", key: "status", render: (_: unknown, record: Pool) => <Tag color={record.remaining > 0 ? "green" : "red"}>{record.remaining > 0 ? "有库存" : "已耗尽"}</Tag> },
-    { title: "操作", key: "actions", render: (_: unknown, record: Pool) => <Button size="small" icon={<EyeOutlined />} onClick={() => { setSelectedPool(record); setCodeModalOpen(true); }}>查看码</Button> },
+    {
+      title: "剩余",
+      key: "remaining",
+      render: (_: unknown, record: Pool) => {
+        const used = record.total_codes - record.remaining;
+        const percent =
+          record.total_codes > 0
+            ? Math.round((used / record.total_codes) * 100)
+            : 0;
+        return (
+          <div className="min-w-25">
+            <div className="mb-1 text-xs text-text-muted">
+              {record.remaining} / {record.total_codes}
+            </div>
+            <Progress
+              percent={percent}
+              size="small"
+              status={record.remaining === 0 ? "exception" : undefined}
+            />
+          </div>
+        );
+      },
+    },
+    {
+      title: "状态",
+      key: "status",
+      render: (_: unknown, record: Pool) => (
+        <Tag color={record.remaining > 0 ? "green" : "red"}>
+          {record.remaining > 0 ? "有库存" : "已耗尽"}
+        </Tag>
+      ),
+    },
+    {
+      title: "操作",
+      key: "actions",
+      render: (_: unknown, record: Pool) => (
+        <Button
+          size="small"
+          icon={<EyeOutlined />}
+          onClick={() => {
+            setSelectedPool(record);
+            setCodeModalOpen(true);
+          }}
+        >
+          查看码
+        </Button>
+      ),
+    },
   ];
 
   const poolCodeColumns = [
     { title: "券码", dataIndex: "code", key: "code" },
-    { title: "消费者", dataIndex: "consumer_id", key: "consumer_id", render: (v: string | null) => v || "-" },
-    { title: "已分配", dataIndex: "distributed", key: "distributed", render: (v: boolean) => <Tag color={v ? "blue" : "default"}>{v ? "是" : "否"}</Tag> },
+    {
+      title: "消费者",
+      dataIndex: "consumer_id",
+      key: "consumer_id",
+      render: (v: string | null) => v || "-",
+    },
+    {
+      title: "已分配",
+      dataIndex: "distributed",
+      key: "distributed",
+      render: (v: boolean) => (
+        <Tag color={v ? "blue" : "default"}>{v ? "是" : "否"}</Tag>
+      ),
+    },
   ];
 
   return (
     <>
       <div style={{ marginBottom: 16 }}>
-        <Button type="primary" icon={<PlusOutlined />} onClick={() => { poolForm.resetFields(); setPoolModalOpen(true); }}>创建券码池</Button>
-        <Button icon={<ReloadOutlined />} onClick={() => mutatePools()} style={{ marginLeft: 8 }}>刷新</Button>
+        <Button
+          type="primary"
+          icon={<PlusOutlined />}
+          onClick={() => {
+            poolForm.resetFields();
+            setPoolModalOpen(true);
+          }}
+        >
+          创建券码池
+        </Button>
+        <Button
+          icon={<ReloadOutlined />}
+          onClick={() => mutatePools()}
+          style={{ marginLeft: 8 }}
+        >
+          刷新
+        </Button>
       </div>
-      <Table dataSource={pools} columns={poolColumns} rowKey="id" loading={poolsLoading} pagination={false} />
+      <Table
+        dataSource={pools}
+        columns={poolColumns}
+        rowKey="id"
+        loading={poolsLoading}
+        pagination={false}
+      />
 
-      <Modal title="创建券码池" open={poolModalOpen} onOk={handleCreatePool} onCancel={() => setPoolModalOpen(false)} okText="创建">
+      <Modal
+        title="创建券码池"
+        open={poolModalOpen}
+        onOk={handleCreatePool}
+        onCancel={() => setPoolModalOpen(false)}
+        okText="创建"
+      >
         <Form form={poolForm} layout="vertical">
-          <Form.Item name="name" label="池名称" rules={[{ required: true, message: "请输入池名称" }]}>
+          <Form.Item
+            name="name"
+            label="池名称"
+            rules={[{ required: true, message: "请输入池名称" }]}
+          >
             <Input placeholder="如：2026年6月优惠券" />
           </Form.Item>
-          <Form.Item name="codes" label="券码列表" rules={[{ required: true, message: "请输入券码" }]} extra="每行一个券码">
-            <Input.TextArea rows={10} placeholder={"COUPON001\nCOUPON002\nCOUPON003"} />
+          <Form.Item
+            name="codes"
+            label="券码列表"
+            rules={[{ required: true, message: "请输入券码" }]}
+            extra="每行一个券码"
+          >
+            <Input.TextArea
+              rows={10}
+              placeholder={"COUPON001\nCOUPON002\nCOUPON003"}
+            />
           </Form.Item>
         </Form>
       </Modal>
 
-      <Modal title={selectedPool ? `券码池：${selectedPool.name}` : "券码明细"} open={codeModalOpen}
-        onCancel={() => { setCodeModalOpen(false); setSelectedPool(null); }} footer={null} width={700}>
-        <Table dataSource={poolCodes} columns={poolCodeColumns} rowKey="id" loading={poolCodesLoading} size="small"
-          pagination={{ current: poolCodesPage, total: poolCodesTotal, pageSize: 50, onChange: setPoolCodesPage, showTotal: (t) => `共 ${t} 条` }}
+      <Modal
+        title={selectedPool ? `券码池：${selectedPool.name}` : "券码明细"}
+        open={codeModalOpen}
+        onCancel={() => {
+          setCodeModalOpen(false);
+          setSelectedPool(null);
+        }}
+        footer={null}
+        width={700}
+      >
+        <Table
+          dataSource={poolCodes}
+          columns={poolCodeColumns}
+          rowKey="id"
+          loading={poolCodesLoading}
+          size="small"
+          pagination={{
+            current: poolCodesPage,
+            total: poolCodesTotal,
+            pageSize: 50,
+            onChange: setPoolCodesPage,
+            showTotal: (t) => `共 ${t} 条`,
+          }}
         />
       </Modal>
     </>

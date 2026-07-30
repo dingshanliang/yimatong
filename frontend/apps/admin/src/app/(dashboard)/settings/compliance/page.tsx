@@ -438,14 +438,23 @@ export default function CompliancePage() {
         onCancel={() => setPreviewOpen(false)}
         footer={<Button onClick={() => setPreviewOpen(false)}>关闭</Button>}
       >
-        <div className="mx-auto max-w-[390px] rounded-2xl bg-gray-100 p-3">
-          <section className="rounded-2xl bg-white p-4 shadow-sm">
+        <div className="mx-auto max-w-98 rounded-2xl bg-bg-muted p-3">
+          <section className="rounded-2xl bg-bg-container p-4 shadow-sm">
             <div className="flex items-center justify-between gap-3">
-              <h3 className="m-0 text-base font-semibold text-gray-900">
+              <h3
+                className="m-0 text-base font-semibold"
+                style={{ color: "var(--ymt-color-text-primary)" }}
+              >
                 隐私政策
               </h3>
               {previewPolicy.version && (
-                <span className="shrink-0 rounded-full bg-blue-50 px-2 py-1 text-xs text-blue-700">
+                <span
+                  className="shrink-0 rounded-full px-2 py-1 text-xs"
+                  style={{
+                    background: "var(--ymt-color-feedback-info-bg)",
+                    color: "var(--ymt-color-feedback-info)",
+                  }}
+                >
                   版本 {previewPolicy.version}
                 </span>
               )}
@@ -454,19 +463,26 @@ export default function CompliancePage() {
               <div className="mt-3 max-h-[60vh] overflow-y-auto">
                 {previewPolicy.content.trim().startsWith("<") ? (
                   <div
-                    className="prose prose-sm max-w-none text-sm text-gray-600 [&_a]:text-blue-600 [&_a]:underline"
+                    className="prose prose-sm max-w-none text-sm [&_a]:underline"
+                    style={{ color: "var(--ymt-color-text-secondary)" }}
                     dangerouslySetInnerHTML={{
                       __html: sanitizePrivacyPolicyHtml(previewPolicy.content),
                     }}
                   />
                 ) : (
-                  <p className="m-0 whitespace-pre-wrap text-sm leading-relaxed text-gray-600">
+                  <p
+                    className="m-0 whitespace-pre-wrap text-sm leading-relaxed"
+                    style={{ color: "var(--ymt-color-text-secondary)" }}
+                  >
                     {previewPolicy.content}
                   </p>
                 )}
               </div>
             ) : (
-              <div className="mt-3 rounded-lg bg-gray-50 px-4 py-8 text-center text-sm text-gray-500">
+              <div
+                className="mt-3 rounded-lg bg-bg-muted px-4 py-8 text-center text-sm"
+                style={{ color: "var(--ymt-color-text-tertiary)" }}
+              >
                 暂无可预览内容，请先填写隐私政策。
               </div>
             )}

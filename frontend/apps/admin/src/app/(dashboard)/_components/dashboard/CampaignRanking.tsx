@@ -50,12 +50,23 @@ export default function CampaignRanking() {
       title: "排名",
       width: 50,
       render: (_, __, idx) => (
-        <span style={{ fontWeight: 600, color: idx < 3 ? "#1677ff" : undefined }}>
+        <span
+          style={{
+            fontWeight: 600,
+            color: idx < 3 ? "var(--ymt-color-feedback-info)" : undefined,
+          }}
+        >
           {idx + 1}
         </span>
       ),
     },
-    { title: "活动名称", dataIndex: "campaign_name", key: "name", ellipsis: true, width: 180 },
+    {
+      title: "活动名称",
+      dataIndex: "campaign_name",
+      key: "name",
+      ellipsis: true,
+      width: 180,
+    },
     {
       title: "状态",
       dataIndex: "campaign_status",
@@ -72,7 +83,17 @@ export default function CampaignRanking() {
       key: "rate",
       width: 80,
       render: (rate: number) => (
-        <span style={{ fontWeight: 600, color: rate > 10 ? "#3f8600" : rate > 5 ? "#faad14" : "#cf1322" }}>
+        <span
+          style={{
+            fontWeight: 600,
+            color:
+              rate > 10
+                ? "var(--ymt-color-feedback-success)"
+                : rate > 5
+                  ? "var(--ymt-color-feedback-warning)"
+                  : "var(--ymt-color-feedback-danger)",
+          }}
+        >
           {rate}%
         </span>
       ),
@@ -80,14 +101,28 @@ export default function CampaignRanking() {
   ];
 
   return (
-    <Card title="活动排行 Top 5" size="small" style={{ height: "100%" }} styles={{ body: { overflow: "hidden" } }}>
+    <Card
+      title="活动排行 Top 5"
+      size="small"
+      style={{ height: "100%" }}
+      styles={{ body: { overflow: "hidden" } }}
+    >
       {loading ? (
-        <div className="flex items-center justify-center" style={{ height: 200 }}>
+        <div
+          className="flex items-center justify-center"
+          style={{ height: 200 }}
+        >
           <Spin />
         </div>
       ) : items.length === 0 ? (
-        <div className="flex items-center justify-center" style={{ height: 200 }}>
-          <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无活动数据" />
+        <div
+          className="flex items-center justify-center"
+          style={{ height: 200 }}
+        >
+          <Empty
+            image={Empty.PRESENTED_IMAGE_SIMPLE}
+            description="暂无活动数据"
+          />
         </div>
       ) : (
         <Table

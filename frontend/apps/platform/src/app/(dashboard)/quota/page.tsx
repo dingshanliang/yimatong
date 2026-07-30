@@ -26,7 +26,9 @@ export default function QuotaPage() {
       dataIndex: "tenant_name",
       key: "tenant_name",
       render: (name: string, record: QuotaUsageItem) => (
-        <a onClick={() => router.push(`/tenants/${record.tenant_id}`)}>{name}</a>
+        <a onClick={() => router.push(`/tenants/${record.tenant_id}`)}>
+          {name}
+        </a>
       ),
     },
     {
@@ -40,19 +42,22 @@ export default function QuotaPage() {
       title: "码量额度",
       key: "codes",
       width: 200,
-      render: (_: unknown, record: QuotaUsageItem) => renderQuotaBar(record, "max_codes"),
+      render: (_: unknown, record: QuotaUsageItem) =>
+        renderQuotaBar(record, "max_codes"),
     },
     {
       title: "活动额度",
       key: "campaigns",
       width: 200,
-      render: (_: unknown, record: QuotaUsageItem) => renderQuotaBar(record, "max_campaigns"),
+      render: (_: unknown, record: QuotaUsageItem) =>
+        renderQuotaBar(record, "max_campaigns"),
     },
     {
       title: "账号额度",
       key: "accounts",
       width: 200,
-      render: (_: unknown, record: QuotaUsageItem) => renderQuotaBar(record, "max_accounts"),
+      render: (_: unknown, record: QuotaUsageItem) =>
+        renderQuotaBar(record, "max_accounts"),
     },
     {
       title: "状态",
@@ -68,7 +73,9 @@ export default function QuotaPage() {
 
   return (
     <div>
-      <Title level={4} style={{ marginBottom: 16 }}>额度监控</Title>
+      <Title level={4} style={{ marginBottom: 16 }}>
+        额度监控
+      </Title>
       <Card>
         <Table<QuotaUsageItem>
           rowKey="tenant_id"
@@ -91,7 +98,9 @@ function renderQuotaBar(record: QuotaUsageItem, key: string) {
   // For now show limit only — actual usage tracking will come with health metrics in Wave 4
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-      <span style={{ fontSize: 12 }}>限额 {limit.toLocaleString()}</span>
+      <span style={{ fontSize: "var(--ymt-font-size-xs)" }}>
+        限额 {limit.toLocaleString()}
+      </span>
     </div>
   );
 }

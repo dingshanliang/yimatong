@@ -1,8 +1,26 @@
 "use client";
 
 import { useState } from "react";
-import { App, Button, Card, Divider, Form, Input, Space, Tag, Typography } from "antd";
-import { CrownOutlined, GlobalOutlined, LockOutlined, MailOutlined, ShopOutlined, TeamOutlined, UserSwitchOutlined } from "@ant-design/icons";
+import {
+  App,
+  Button,
+  Card,
+  Divider,
+  Form,
+  Input,
+  Space,
+  Tag,
+  Typography,
+} from "antd";
+import {
+  CrownOutlined,
+  GlobalOutlined,
+  LockOutlined,
+  MailOutlined,
+  ShopOutlined,
+  TeamOutlined,
+  UserSwitchOutlined,
+} from "@ant-design/icons";
 import { useRouter } from "next/navigation";
 import axios from "axios";
 import { useAuthStore } from "@/lib/auth";
@@ -77,14 +95,23 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false);
   const [loadingAccount, setLoadingAccount] = useState<string | null>(null);
 
-  const onFinish = async (values: { email: string; password: string }, redirectTo = "/", tenantSlug?: string) => {
+  const onFinish = async (
+    values: { email: string; password: string },
+    redirectTo = "/",
+    tenantSlug?: string
+  ) => {
     setLoading(true);
     try {
-      await login(values.email, values.password, tenantSlug ? { tenantSlug } : undefined);
+      await login(
+        values.email,
+        values.password,
+        tenantSlug ? { tenantSlug } : undefined
+      );
       message.success("登录成功");
       router.push(redirectTo);
     } catch (err) {
-      const data = (err as { response?: { data?: { detail?: string } } })?.response?.data;
+      const data = (err as { response?: { data?: { detail?: string } } })
+        ?.response?.data;
       const detail = data?.detail;
       if (detail?.toLowerCase().includes("locked")) {
         message.error("账户已被锁定，请 15 分钟后再试");
@@ -105,22 +132,35 @@ export default function LoginPage() {
         // 平台管理员：使用独立登录端点和 cookie
         const API_BASE =
           process.env.NEXT_PUBLIC_API_URL ||
-          (window.location.hostname === "127.0.0.1" ? "http://127.0.0.1:8000" : "http://localhost:8000");
-        const { data } = await axios.post(`${API_BASE}/api/v1/platform/auth/login`, {
-          email: account.email,
-          password: account.password,
-        });
+          (window.location.hostname === "127.0.0.1"
+            ? "http://127.0.0.1:8000"
+            : "http://localhost:8000");
+        const { data } = await axios.post(
+          `${API_BASE}/api/v1/platform/auth/login`,
+          {
+            email: account.email,
+            password: account.password,
+          }
+        );
         const { access_token } = data;
         localStorage.setItem("platform_access_token", access_token);
         const secure = window.location.protocol === "https:" ? "; Secure" : "";
         document.cookie = `platform_access_token=${access_token}; path=/; max-age=${30 * 24 * 3600}; SameSite=Lax${secure}`;
         message.success("平台管理员登录成功，正在跳转…");
         // 跳转到平台管理后台（端口 3002）
-        const platformUrl = process.env.NEXT_PUBLIC_PLATFORM_URL || "http://localhost:3002";
+        const platformUrl =
+          process.env.NEXT_PUBLIC_PLATFORM_URL || "http://localhost:3002";
         window.open(platformUrl, "_blank");
       } else {
-        form.setFieldsValue({ email: account.email, password: account.password });
-        await onFinish({ email: account.email, password: account.password }, account.route ?? "/", "demo");
+        form.setFieldsValue({
+          email: account.email,
+          password: account.password,
+        });
+        await onFinish(
+          { email: account.email, password: account.password },
+          account.route ?? "/",
+          "demo"
+        );
       }
     } finally {
       setLoadingAccount(null);
@@ -128,10 +168,15 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="flex min-h-screen items-center justify-center px-4 py-8" style={{ background: "var(--admin-bg-layout)" }}>
-      <Card className="w-full max-w-[520px] shadow-xl" variant="borderless">
+    <div
+      className="flex min-h-screen items-center justify-center px-4 py-8"
+      style={{ background: "var(--admin-bg-layout)" }}
+    >
+      <Card className="w-full max-w-130 shadow-xl" variant="borderless">
         <div className="mb-8 text-center">
-          <Title level={2} className="!mb-2">一码通</Title>
+          <Title level={2} className="!mb-2">
+            一码通
+          </Title>
           <Text type="secondary">包装扫码增长 SaaS 管理后台</Text>
         </div>
         <div className="admin-muted-panel mb-6 rounded-md border p-3">
@@ -142,7 +187,13 @@ export default function LoginPage() {
           <Space orientation="vertical" className="w-full" size={8}>
             {DEMO_ACCOUNTS.map((account) => (
               <span key={account.key}>
-                {account.platform && <Divider className="!my-2" plain><Text type="secondary" className="!text-xs">平台管理</Text></Divider>}
+                {account.platform && (
+                  <Divider className="!my-2" plain>
+                    <Text type="secondary" className="!text-xs">
+                      平台管理
+                    </Text>
+                  </Divider>
+                )}
                 <Button
                   block
                   className="!h-auto !justify-start !py-3 text-left"
@@ -153,9 +204,20 @@ export default function LoginPage() {
                   <span className="flex w-full items-center justify-between gap-3">
                     <span className="min-w-0">
                       <span className="block font-medium">{account.label}</span>
-                      <span className="block truncate text-xs text-text-muted">{account.description}</span>
+                      <span className="block truncate text-xs text-text-muted">
+                        {account.description}
+                      </span>
                     </span>
-                    <Tag className="m-0" color={account.role === "platform_admin" ? "purple" : account.role === "admin" ? "gold" : "blue"}>
+                    <Tag
+                      className="m-0"
+                      color={
+                        account.role === "platform_admin"
+                          ? "purple"
+                          : account.role === "admin"
+                            ? "gold"
+                            : "blue"
+                      }
+                    >
                       {account.role}
                     </Tag>
                   </span>
@@ -172,13 +234,21 @@ export default function LoginPage() {
               { type: "email", message: "请输入有效的邮箱地址" },
             ]}
           >
-            <Input prefix={<MailOutlined />} placeholder="邮箱" autoComplete="email" />
+            <Input
+              prefix={<MailOutlined />}
+              placeholder="邮箱"
+              autoComplete="email"
+            />
           </Form.Item>
           <Form.Item
             name="password"
             rules={[{ required: true, message: "请输入密码" }]}
           >
-            <Input.Password prefix={<LockOutlined />} placeholder="密码" autoComplete="current-password" />
+            <Input.Password
+              prefix={<LockOutlined />}
+              placeholder="密码"
+              autoComplete="current-password"
+            />
           </Form.Item>
           <Form.Item>
             <Button type="primary" htmlType="submit" loading={loading} block>

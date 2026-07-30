@@ -16,14 +16,26 @@ interface PlatformConfig {
 }
 
 const FEATURE_FLAGS = [
-  { key: "ai_assistant", label: "AI 助手", desc: "允许租户使用 AI 写作和数据分析功能" },
+  {
+    key: "ai_assistant",
+    label: "AI 助手",
+    desc: "允许租户使用 AI 写作和数据分析功能",
+  },
   { key: "risk_module", label: "风控模块", desc: "启用扫码风控和异常检测" },
   { key: "channel_portal", label: "渠道门户", desc: "启用经销商/门店渠道管理" },
 ];
 
 const NOTIFICATION_SETTINGS = [
-  { key: "email_enabled", label: "邮件通知", desc: "系统通知和告警通过邮件发送" },
-  { key: "webhook_enabled", label: "Webhook 推送", desc: "允许租户配置 Webhook 事件推送" },
+  {
+    key: "email_enabled",
+    label: "邮件通知",
+    desc: "系统通知和告警通过邮件发送",
+  },
+  {
+    key: "webhook_enabled",
+    label: "Webhook 推送",
+    desc: "允许租户配置 Webhook 事件推送",
+  },
 ];
 
 export default function SettingsPage() {
@@ -32,7 +44,9 @@ export default function SettingsPage() {
   const [saving, setSaving] = useState(false);
 
   const [features, setFeatures] = useState<Record<string, boolean>>({});
-  const [notifications, setNotifications] = useState<Record<string, boolean>>({});
+  const [notifications, setNotifications] = useState<Record<string, boolean>>(
+    {}
+  );
   const [retentionDays, setRetentionDays] = useState<number>(365);
 
   useEffect(() => {
@@ -62,9 +76,23 @@ export default function SettingsPage() {
 
   return (
     <div>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
-        <Title level={4} style={{ margin: 0 }}>系统配置</Title>
-        <Button type="primary" icon={<SaveOutlined />} loading={saving} onClick={handleSave}>
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          marginBottom: 16,
+        }}
+      >
+        <Title level={4} style={{ margin: 0 }}>
+          系统配置
+        </Title>
+        <Button
+          type="primary"
+          icon={<SaveOutlined />}
+          loading={saving}
+          onClick={handleSave}
+        >
           保存配置
         </Button>
       </div>
@@ -78,13 +106,30 @@ export default function SettingsPage() {
               children: (
                 <div style={{ maxWidth: 600 }}>
                   {FEATURE_FLAGS.map(({ key, label, desc }) => (
-                    <div key={key} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 0", borderBottom: "1px solid #f0f0f0" }}>
+                    <div
+                      key={key}
+                      style={{
+                        display: "flex",
+                        justifyContent: "space-between",
+                        alignItems: "center",
+                        padding: "12px 0",
+                        borderBottom: "1px solid var(--ymt-color-border-base)",
+                      }}
+                    >
                       <div>
                         <Text strong>{label}</Text>
                         <br />
-                        <Text type="secondary" style={{ fontSize: 12 }}>{desc}</Text>
+                        <Text
+                          type="secondary"
+                          style={{ fontSize: "var(--ymt-font-size-xs)" }}
+                        >
+                          {desc}
+                        </Text>
                       </div>
-                      <Switch checked={features[key] ?? true} onChange={(v) => setFeatures({ ...features, [key]: v })} />
+                      <Switch
+                        checked={features[key] ?? true}
+                        onChange={(v) => setFeatures({ ...features, [key]: v })}
+                      />
                     </div>
                   ))}
                 </div>
@@ -96,13 +141,32 @@ export default function SettingsPage() {
               children: (
                 <div style={{ maxWidth: 600 }}>
                   {NOTIFICATION_SETTINGS.map(({ key, label, desc }) => (
-                    <div key={key} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 0", borderBottom: "1px solid #f0f0f0" }}>
+                    <div
+                      key={key}
+                      style={{
+                        display: "flex",
+                        justifyContent: "space-between",
+                        alignItems: "center",
+                        padding: "12px 0",
+                        borderBottom: "1px solid var(--ymt-color-border-base)",
+                      }}
+                    >
                       <div>
                         <Text strong>{label}</Text>
                         <br />
-                        <Text type="secondary" style={{ fontSize: 12 }}>{desc}</Text>
+                        <Text
+                          type="secondary"
+                          style={{ fontSize: "var(--ymt-font-size-xs)" }}
+                        >
+                          {desc}
+                        </Text>
                       </div>
-                      <Switch checked={notifications[key] ?? true} onChange={(v) => setNotifications({ ...notifications, [key]: v })} />
+                      <Switch
+                        checked={notifications[key] ?? true}
+                        onChange={(v) =>
+                          setNotifications({ ...notifications, [key]: v })
+                        }
+                      />
                     </div>
                   ))}
                 </div>
@@ -113,11 +177,23 @@ export default function SettingsPage() {
               label: "合规设置",
               children: (
                 <div style={{ maxWidth: 600 }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 0" }}>
+                  <div
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      alignItems: "center",
+                      padding: "12px 0",
+                    }}
+                  >
                     <div>
                       <Text strong>数据保留天数</Text>
                       <br />
-                      <Text type="secondary" style={{ fontSize: 12 }}>扫码事件和审计日志的保留期限</Text>
+                      <Text
+                        type="secondary"
+                        style={{ fontSize: "var(--ymt-font-size-xs)" }}
+                      >
+                        扫码事件和审计日志的保留期限
+                      </Text>
                     </div>
                     <InputNumber
                       min={30}

@@ -5,12 +5,11 @@ import tailwind from "eslint-plugin-tailwindcss";
 
 // 设计体系门禁（docs/02_tech/design-system/governance.md）：
 // H5 行：拦截 Tailwind 任意值（text-[13px]、bg-[#16a34a]）。
-// 这里设为 warn（不阻断 pnpm lint）；error 级增量阻断由 frontend/scripts/design-gates.mjs
-// 配合 frontend/.design-gates-baseline.json 完成（CI design-gates job）。
+// 批3 收尾后 baseline 已清空，规则从 warn 升级为 error（零硬编码契约）。
 const designGates = {
   plugins: { tailwindcss: tailwind },
   rules: {
-    "tailwindcss/no-arbitrary-value": "warn",
+    "tailwindcss/no-arbitrary-value": "error",
   },
 };
 

@@ -1,7 +1,16 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { Card, Table, Tag, Typography, DatePicker, Space, Button, Input } from "antd";
+import {
+  Card,
+  Table,
+  Tag,
+  Typography,
+  DatePicker,
+  Space,
+  Button,
+  Input,
+} from "antd";
 import type { ColumnsType } from "antd/es/table";
 import { ReloadOutlined, SearchOutlined } from "@ant-design/icons";
 import dayjs from "dayjs";
@@ -21,7 +30,9 @@ interface AuditLog {
 }
 
 export default function AuditLogsPage() {
-  const [dateRange, setDateRange] = useState<[dayjs.Dayjs | null, dayjs.Dayjs | null] | null>(null);
+  const [dateRange, setDateRange] = useState<
+    [dayjs.Dayjs | null, dayjs.Dayjs | null] | null
+  >(null);
   const [searchText, setSearchText] = useState("");
 
   const url = useMemo(() => {
@@ -52,7 +63,8 @@ export default function AuditLogsPage() {
       dataIndex: "timestamp",
       key: "timestamp",
       width: 170,
-      sorter: (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime(),
+      sorter: (a, b) =>
+        new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime(),
       defaultSortOrder: "descend",
       render: (v: string) => dayjs(v).format("YYYY-MM-DD HH:mm:ss"),
     },
@@ -61,7 +73,9 @@ export default function AuditLogsPage() {
       dataIndex: "operator_id",
       key: "operator_id",
       width: 130,
-      render: (v: string) => <Tag>{v === "platform-admin" ? "平台管理员" : v}</Tag>,
+      render: (v: string) => (
+        <Tag>{v === "platform-admin" ? "平台管理员" : v}</Tag>
+      ),
     },
     {
       title: "目标租户",
@@ -69,7 +83,14 @@ export default function AuditLogsPage() {
       key: "target_tenant_id",
       width: 120,
       ellipsis: true,
-      render: (v: string) => v === "platform" ? <Tag color="purple">平台</Tag> : <span style={{ fontSize: 12 }}>{v.slice(0, 8)}…</span>,
+      render: (v: string) =>
+        v === "platform" ? (
+          <Tag color="purple">平台</Tag>
+        ) : (
+          <span style={{ fontSize: "var(--ymt-font-size-xs)" }}>
+            {v.slice(0, 8)}…
+          </span>
+        ),
     },
     {
       title: "操作",
@@ -91,9 +112,20 @@ export default function AuditLogsPage() {
 
   return (
     <div>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
-        <Title level={4} style={{ margin: 0 }}>审计日志</Title>
-        <Button icon={<ReloadOutlined />} onClick={() => mutate(url)}>刷新</Button>
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          marginBottom: 16,
+        }}
+      >
+        <Title level={4} style={{ margin: 0 }}>
+          审计日志
+        </Title>
+        <Button icon={<ReloadOutlined />} onClick={() => mutate(url)}>
+          刷新
+        </Button>
       </div>
 
       <Card>
@@ -104,7 +136,9 @@ export default function AuditLogsPage() {
             placeholder={["开始时间", "结束时间"]}
           />
           {dateRange && (
-            <Button size="small" onClick={() => setDateRange(null)}>清除日期</Button>
+            <Button size="small" onClick={() => setDateRange(null)}>
+              清除日期
+            </Button>
           )}
           <Input
             placeholder="搜索操作/资源/租户"
@@ -121,7 +155,11 @@ export default function AuditLogsPage() {
           columns={columns}
           dataSource={filtered ?? []}
           loading={isLoading}
-          pagination={{ pageSize: 20, showSizeChanger: true, showTotal: (t) => `共 ${t} 条记录` }}
+          pagination={{
+            pageSize: 20,
+            showSizeChanger: true,
+            showTotal: (t) => `共 ${t} 条记录`,
+          }}
           scroll={{ x: 800 }}
           size="middle"
         />

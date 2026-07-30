@@ -17,7 +17,13 @@ interface FunnelData {
   period_days: number;
 }
 
-const STEP_COLORS = ["#1677ff", "#52c41a", "#faad14", "#fa8c16", "#f5222d"];
+const STEP_COLORS = [
+  "var(--ymt-color-feedback-info)",
+  "var(--ymt-color-feedback-success)",
+  "var(--ymt-color-feedback-warning)",
+  "var(--ymt-color-action-accent)",
+  "var(--ymt-color-feedback-danger)",
+];
 
 export default function ConversionFunnel() {
   const [data, setData] = useState<FunnelData | null>(null);
@@ -43,7 +49,10 @@ export default function ConversionFunnel() {
   if (loading) {
     return (
       <Card title="核心转化漏斗（近 30 天）" size="small">
-        <div className="flex items-center justify-center" style={{ height: 120 }}>
+        <div
+          className="flex items-center justify-center"
+          style={{ height: 120 }}
+        >
           <Spin />
         </div>
       </Card>
@@ -55,8 +64,14 @@ export default function ConversionFunnel() {
   if (steps.length === 0 || steps[0].value === 0) {
     return (
       <Card title="核心转化漏斗（近 30 天）" size="small">
-        <div className="flex items-center justify-center" style={{ minHeight: 148 }}>
-          <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无转化数据" />
+        <div
+          className="flex items-center justify-center"
+          style={{ minHeight: 148 }}
+        >
+          <Empty
+            image={Empty.PRESENTED_IMAGE_SIMPLE}
+            description="暂无转化数据"
+          />
         </div>
       </Card>
     );
@@ -73,7 +88,10 @@ export default function ConversionFunnel() {
         }}
       >
         {steps.map((step, idx) => {
-          const progressPercent = Math.max((step.value / maxValue) * 100, step.value > 0 ? 6 : 0);
+          const progressPercent = Math.max(
+            (step.value / maxValue) * 100,
+            step.value > 0 ? 6 : 0
+          );
           return (
             <div
               key={step.name}
@@ -93,14 +111,22 @@ export default function ConversionFunnel() {
                     {step.value.toLocaleString()}
                   </Title>
                 </div>
-                <Text strong style={{ color: STEP_COLORS[idx] || "#1677ff", whiteSpace: "nowrap" }}>
+                <Text
+                  strong
+                  style={{
+                    color: STEP_COLORS[idx] || "var(--ymt-color-feedback-info)",
+                    whiteSpace: "nowrap",
+                  }}
+                >
                   {step.rate}%
                 </Text>
               </div>
               <Progress
                 percent={progressPercent}
                 showInfo={false}
-                strokeColor={STEP_COLORS[idx] || "#1677ff"}
+                strokeColor={
+                  STEP_COLORS[idx] || "var(--ymt-color-feedback-info)"
+                }
                 railColor="var(--ant-color-fill-secondary)"
                 size={["100%", 8]}
               />

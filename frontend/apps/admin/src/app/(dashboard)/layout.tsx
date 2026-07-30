@@ -2,7 +2,18 @@
 
 import { useEffect, useMemo } from "react";
 import { useRouter, usePathname } from "next/navigation";
-import { Button, ConfigProvider, Layout, Menu, Avatar, Dropdown, Select, Space, Spin, Tooltip } from "antd";
+import {
+  Button,
+  ConfigProvider,
+  Layout,
+  Menu,
+  Avatar,
+  Dropdown,
+  Select,
+  Space,
+  Spin,
+  Tooltip,
+} from "antd";
 import {
   DashboardOutlined,
   AppstoreOutlined,
@@ -37,19 +48,40 @@ import OnboardingWizard from "./_components/OnboardingWizard";
 
 const { Header, Sider, Content } = Layout;
 
-const LOCALE_MAP: Record<string, Parameters<typeof ConfigProvider>[0]["locale"]> = {
+const LOCALE_MAP: Record<
+  string,
+  Parameters<typeof ConfigProvider>[0]["locale"]
+> = {
   "zh-CN": zhCN,
   "en-US": enUS,
 };
 
 const MENU_OPEN_KEY_RULES = [
-  { key: "catalog-group", prefixes: ["/brands", "/products", "/skus", "/batches"] },
+  {
+    key: "catalog-group",
+    prefixes: ["/brands", "/products", "/skus", "/batches"],
+  },
   { key: "traceability-group", prefixes: ["/codes", "/pages"] },
   { key: "growth-group", prefixes: ["/campaigns", "/benefits", "/members"] },
-  { key: "channels-group", prefixes: ["/channels", "/channel-portal", "/store-portal", "/regional", "/accounts"] },
-  { key: "/analytics", prefixes: ["/analytics", "/campaign-analytics", "/gmv"] },
+  {
+    key: "channels-group",
+    prefixes: [
+      "/channels",
+      "/channel-portal",
+      "/store-portal",
+      "/regional",
+      "/accounts",
+    ],
+  },
+  {
+    key: "/analytics",
+    prefixes: ["/analytics", "/campaign-analytics", "/gmv"],
+  },
   { key: "/risk-center", prefixes: ["/risk-center", "/risk-dashboard"] },
-  { key: "integrations-group", prefixes: ["/connectors", "/integrations", "/imports", "/crm-sync"] },
+  {
+    key: "integrations-group",
+    prefixes: ["/connectors", "/integrations", "/imports", "/crm-sync"],
+  },
   { key: "governance-group", prefixes: ["/risk", "/launch-checklist"] },
   { key: "settings-group", prefixes: ["/settings", "/i18n"] },
 ];
@@ -70,20 +102,39 @@ const MENU_PERMISSIONS: Record<TenantType, MenuPolicy> = {
   agency: {
     mode: "allowlist",
     items: [
-      "/", "/ai-assistant",
+      "/",
+      "/ai-assistant",
       "/agency",
-      "/pages", "/campaigns", "/products", "/codes",
+      "/pages",
+      "/campaigns",
+      "/products",
+      "/codes",
       "/launch-checklist",
-      "/analytics", "/exports",
-      "settings-group", "/settings/roles", "/settings/compliance", "/settings/tenant", "/settings/audit-logs", "/i18n",
+      "/analytics",
+      "/exports",
+      "settings-group",
+      "/settings/roles",
+      "/settings/compliance",
+      "/settings/tenant",
+      "/settings/audit-logs",
+      "/i18n",
     ],
   },
   regional_org: {
     mode: "blocklist",
     items: [
-      "/agency", "/skus", "/batches", "/benefits", "/channels",
-      "/accounts", "/risk-center", "/integrations", "/connectors",
-      "/risk", "/crm-sync", "/imports",
+      "/agency",
+      "/skus",
+      "/batches",
+      "/benefits",
+      "/channels",
+      "/accounts",
+      "/risk-center",
+      "/integrations",
+      "/connectors",
+      "/risk",
+      "/crm-sync",
+      "/imports",
     ],
   },
 };
@@ -110,9 +161,11 @@ function DashboardInner({ children }: { children: React.ReactNode }) {
 
   const selectedKeys = [pathname];
 
-  const openKeys = MENU_OPEN_KEY_RULES
-    .filter(({ prefixes }) => prefixes.some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`)))
-    .map(({ key }) => key);
+  const openKeys = MENU_OPEN_KEY_RULES.filter(({ prefixes }) =>
+    prefixes.some(
+      (prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`)
+    )
+  ).map(({ key }) => key);
 
   const channelMenuChildren: MenuProps["items"] = [
     { key: "/channels", icon: <ShopOutlined />, label: t("menu.channels") },
@@ -122,16 +175,28 @@ function DashboardInner({ children }: { children: React.ReactNode }) {
 
   const menuItems: MenuProps["items"] = [
     { key: "/", icon: <DashboardOutlined />, label: t("menu.dashboard") },
-    { key: "/ai-assistant", icon: <RobotOutlined />, label: t("menu.ai-assistant") },
+    {
+      key: "/ai-assistant",
+      icon: <RobotOutlined />,
+      label: t("menu.ai-assistant"),
+    },
     {
       key: "catalog-group",
       icon: <AppstoreOutlined />,
       label: t("menu.group.catalog"),
       children: [
         { key: "/brands", icon: <TagOutlined />, label: t("menu.brands") },
-        { key: "/products", icon: <AppstoreOutlined />, label: t("menu.products") },
+        {
+          key: "/products",
+          icon: <AppstoreOutlined />,
+          label: t("menu.products"),
+        },
         { key: "/skus", icon: <ProfileOutlined />, label: t("menu.skus") },
-        { key: "/batches", icon: <DatabaseOutlined />, label: t("menu.batches") },
+        {
+          key: "/batches",
+          icon: <DatabaseOutlined />,
+          label: t("menu.batches"),
+        },
       ],
     },
     {
@@ -148,8 +213,16 @@ function DashboardInner({ children }: { children: React.ReactNode }) {
       icon: <GiftOutlined />,
       label: t("menu.group.growth"),
       children: [
-        { key: "/campaigns", icon: <GiftOutlined />, label: t("menu.campaigns") },
-        { key: "/benefits", icon: <SafetyCertificateOutlined />, label: t("menu.benefits") },
+        {
+          key: "/campaigns",
+          icon: <GiftOutlined />,
+          label: t("menu.campaigns"),
+        },
+        {
+          key: "/benefits",
+          icon: <SafetyCertificateOutlined />,
+          label: t("menu.benefits"),
+        },
         { key: "/members", icon: <UserOutlined />, label: t("menu.members") },
       ],
     },
@@ -160,16 +233,32 @@ function DashboardInner({ children }: { children: React.ReactNode }) {
       label: t("menu.group.channels"),
       children: channelMenuChildren,
     },
-    { key: "/analytics", icon: <LineChartOutlined />, label: t("menu.deep-analytics") },
-    { key: "/risk-center", icon: <SafetyCertificateOutlined />, label: t("menu.risk-center") },
+    {
+      key: "/analytics",
+      icon: <LineChartOutlined />,
+      label: t("menu.deep-analytics"),
+    },
+    {
+      key: "/risk-center",
+      icon: <SafetyCertificateOutlined />,
+      label: t("menu.risk-center"),
+    },
     { key: "/exports", icon: <ExportOutlined />, label: t("menu.exports") },
     {
       key: "integrations-group",
       icon: <DatabaseOutlined />,
       label: t("menu.integrations"),
       children: [
-        { key: "/integrations", icon: <DatabaseOutlined />, label: t("menu.integrations") },
-        { key: "/connectors", icon: <DatabaseOutlined />, label: t("menu.connectors") },
+        {
+          key: "/integrations",
+          icon: <DatabaseOutlined />,
+          label: t("menu.integrations"),
+        },
+        {
+          key: "/connectors",
+          icon: <DatabaseOutlined />,
+          label: t("menu.connectors"),
+        },
       ],
     },
     {
@@ -177,8 +266,16 @@ function DashboardInner({ children }: { children: React.ReactNode }) {
       icon: <SafetyCertificateOutlined />,
       label: t("menu.group.governance"),
       children: [
-        { key: "/risk", icon: <SafetyCertificateOutlined />, label: t("menu.risk") },
-        { key: "/launch-checklist", icon: <CheckSquareOutlined />, label: t("menu.launch-checklist") },
+        {
+          key: "/risk",
+          icon: <SafetyCertificateOutlined />,
+          label: t("menu.risk"),
+        },
+        {
+          key: "/launch-checklist",
+          icon: <CheckSquareOutlined />,
+          label: t("menu.launch-checklist"),
+        },
       ],
     },
     {
@@ -186,10 +283,26 @@ function DashboardInner({ children }: { children: React.ReactNode }) {
       icon: <SettingOutlined />,
       label: t("menu.settings"),
       children: [
-        { key: "/settings/roles", icon: <UserAddOutlined />, label: t("menu.roles") },
-        { key: "/settings/compliance", icon: <SafetyCertificateOutlined />, label: t("menu.compliance") },
-        { key: "/settings/tenant", icon: <ShopOutlined />, label: t("menu.tenant") },
-        { key: "/settings/audit-logs", icon: <FileTextOutlined />, label: t("menu.audit-logs") },
+        {
+          key: "/settings/roles",
+          icon: <UserAddOutlined />,
+          label: t("menu.roles"),
+        },
+        {
+          key: "/settings/compliance",
+          icon: <SafetyCertificateOutlined />,
+          label: t("menu.compliance"),
+        },
+        {
+          key: "/settings/tenant",
+          icon: <ShopOutlined />,
+          label: t("menu.tenant"),
+        },
+        {
+          key: "/settings/audit-logs",
+          icon: <FileTextOutlined />,
+          label: t("menu.audit-logs"),
+        },
         { key: "/i18n", icon: <GlobalOutlined />, label: t("menu.i18n") },
       ],
     },
@@ -206,7 +319,9 @@ function DashboardInner({ children }: { children: React.ReactNode }) {
     if (portalOverride) {
       return menuItems.filter(
         (item): item is NonNullable<typeof item> =>
-          item != null && "key" in item && (item.key === "/" || item.key === portalOverride)
+          item != null &&
+          "key" in item &&
+          (item.key === "/" || item.key === portalOverride)
       );
     }
 
@@ -289,7 +404,14 @@ function DashboardInner({ children }: { children: React.ReactNode }) {
     }
 
     return filterItems(menuItems);
-  }, [menuItems, policy, portalOverride, tenantType, user?.acting_tenant_id, user?.agency_scope]);
+  }, [
+    menuItems,
+    policy,
+    portalOverride,
+    tenantType,
+    user?.acting_tenant_id,
+    user?.agency_scope,
+  ]);
 
   if (!user) {
     return (
@@ -313,7 +435,10 @@ function DashboardInner({ children }: { children: React.ReactNode }) {
 
   return (
     <ConfigProvider locale={LOCALE_MAP[locale]}>
-      <Layout className="admin-shell min-h-screen" style={{ minHeight: "100vh" }}>
+      <Layout
+        className="admin-shell min-h-screen"
+        style={{ minHeight: "100vh" }}
+      >
         <Sider
           breakpoint="lg"
           collapsedWidth={0}
@@ -322,7 +447,9 @@ function DashboardInner({ children }: { children: React.ReactNode }) {
           style={{ minHeight: "100vh" }}
         >
           <div className="my-4 flex h-10 items-center justify-center border-b border-white/10 pb-4">
-            <span className="text-lg font-bold text-white">{t("common.brand")}</span>
+            <span className="text-lg font-bold text-white">
+              {t("common.brand")}
+            </span>
           </div>
           <Menu
             theme="dark"
@@ -335,25 +462,33 @@ function DashboardInner({ children }: { children: React.ReactNode }) {
             }}
           />
         </Sider>
-        <Layout className="admin-workspace flex flex-col" style={{ minHeight: "100vh" }}>
+        <Layout
+          className="admin-workspace flex flex-col"
+          style={{ minHeight: "100vh" }}
+        >
           <Header className="admin-header flex items-center justify-between px-6">
             {/* Agency context indicator */}
             {user?.tenant_type === "agency" && user?.acting_tenant_id && (
-              <div style={{
-                background: "#722ed1",
-                color: "white",
-                padding: "4px 12px",
-                borderRadius: 4,
-                fontSize: 13,
-                display: "flex",
-                alignItems: "center",
-                gap: 8,
-              }}>
+              <div
+                style={{
+                  background: "var(--ymt-color-brand-primary)",
+                  color: "var(--ymt-color-text-inverse)",
+                  padding: "4px 12px",
+                  borderRadius: "var(--ymt-radius-sm)",
+                  fontSize: "var(--ymt-font-size-sm)",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 8,
+                }}
+              >
                 <span>客户: {user.acting_tenant_id}</span>
                 <Button
                   size="small"
                   type="text"
-                  style={{ color: "white", padding: "0 4px" }}
+                  style={{
+                    color: "var(--ymt-color-text-inverse)",
+                    padding: "0 4px",
+                  }}
                   onClick={() => {
                     useAuthStore.getState().exitAgencyContext();
                     router.push("/");
@@ -392,9 +527,7 @@ function DashboardInner({ children }: { children: React.ReactNode }) {
               </Dropdown>
             </Space>
           </Header>
-          <Content
-            className="admin-content my-4 rounded-lg p-5 max-w-[1440px] mx-auto w-full flex-1"
-          >
+          <Content className="admin-content my-4 rounded-lg p-5 max-w-360 mx-auto w-full flex-1">
             {user?.tenant_type === "brand" && <OnboardingWizard />}
             {children}
           </Content>
