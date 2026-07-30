@@ -2,11 +2,23 @@
 
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { CopyOutlined, HolderOutlined, MoreOutlined, SettingOutlined } from "@ant-design/icons";
+import {
+  CopyOutlined,
+  HolderOutlined,
+  MoreOutlined,
+  SettingOutlined,
+} from "@ant-design/icons";
 import { App, Dropdown, Switch, Tag, Tooltip } from "antd";
-import { MODULE_TYPES, type ModuleConfig, type ModuleReadiness } from "@/lib/page-dsl";
+import {
+  MODULE_TYPES,
+  type ModuleConfig,
+  type ModuleReadiness,
+} from "@/lib/page-dsl";
 
-const STATUS_TAGS: Record<ModuleReadiness["status"], { label: string; color: string }> = {
+const STATUS_TAGS: Record<
+  ModuleReadiness["status"],
+  { label: string; color: string }
+> = {
   configured: { label: "已配置", color: "green" },
   incomplete: { label: "待完善", color: "orange" },
   example: { label: "使用示例数据", color: "blue" },
@@ -50,7 +62,9 @@ export function ModuleItem({
     color: "var(--foreground)",
   };
 
-  const typeLabel = MODULE_TYPES.find((type) => type.value === module.type)?.label || module.type;
+  const typeLabel =
+    MODULE_TYPES.find((type) => type.value === module.type)?.label ||
+    module.type;
   const status = readiness ? STATUS_TAGS[readiness.status] : null;
 
   return (
@@ -88,13 +102,22 @@ export function ModuleItem({
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
             <span className="truncate text-sm font-medium">{typeLabel}</span>
-            {selected ? <SettingOutlined className="text-blue-500" /> : null}
+            {selected ? (
+              <SettingOutlined
+                style={{ color: "var(--ymt-color-brand-primary)" }}
+              />
+            ) : null}
           </div>
           <div className="mt-1 flex items-center gap-2">
             {status ? <Tag color={status.color}>{status.label}</Tag> : null}
             {readiness?.message ? (
               <Tooltip title={readiness.issues.join("；") || readiness.message}>
-                <span className="truncate text-xs" style={{ color: "var(--admin-text-muted)" }}>{readiness.message}</span>
+                <span
+                  className="truncate text-xs"
+                  style={{ color: "var(--admin-text-muted)" }}
+                >
+                  {readiness.message}
+                </span>
               </Tooltip>
             ) : null}
           </div>

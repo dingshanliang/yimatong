@@ -2,7 +2,16 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { useParams } from "next/navigation";
-import { Alert, App, Collapse, Descriptions, Input, List, Tabs, Typography } from "antd";
+import {
+  Alert,
+  App,
+  Collapse,
+  Descriptions,
+  Input,
+  List,
+  Tabs,
+  Typography,
+} from "antd";
 import api from "@/lib/api";
 import {
   inspectPageReadiness,
@@ -45,31 +54,65 @@ export default function PageEditorPage() {
       try {
         const { data: tpl } = await api.get(`/page-templates/${params.id}`);
         setTemplateName(tpl.name);
-        const { data: versions } = await api.get(`/page-templates/${params.id}/versions`);
+        const { data: versions } = await api.get(
+          `/page-templates/${params.id}/versions`
+        );
         const draft = versions.find((v: PageVersion) => v.status === "draft");
         const target = draft || versions[0];
-        const nextDsl = ((target?.config_json as PageDSL) || createEmptyDSL());
+        const nextDsl = (target?.config_json as PageDSL) || createEmptyDSL();
 
         if (tpl.product_id) {
-          const { data: productList } = await api.get("/products", { params: { page_size: 100 } });
-          const product = (productList.items || []).find((item: { id: string }) => item.id === tpl.product_id) || null;
+          const { data: productList } = await api.get("/products", {
+            params: { page_size: 100 },
+          });
+          const product =
+            (productList.items || []).find(
+              (item: { id: string }) => item.id === tpl.product_id
+            ) || null;
           const modules = nextDsl.modules || [];
-          const needsBatches = modules.some((module) => module.enabled !== false && module.type === "light_traceability");
-          const needsAssets = modules.some((module) => module.enabled !== false && ["test_reports", "certificates", "media_section"].includes(module.type));
-          const [batchResult, assetResult] = product ? await Promise.allSettled([
-            needsBatches
-              ? api.get(`/products/${tpl.product_id}/batches`, { params: { page_size: 100 } })
-              : Promise.resolve({ data: { items: [] } }),
-            needsAssets
-              ? api.get(`/products/${tpl.product_id}/assets`, { params: { page_size: 100 } })
-              : Promise.resolve({ data: { items: [] } }),
-          ]) : [];
+          const needsBatches = modules.some(
+            (module) =>
+              module.enabled !== false && module.type === "light_traceability"
+          );
+          const needsAssets = modules.some(
+            (module) =>
+              module.enabled !== false &&
+              ["test_reports", "certificates", "media_section"].includes(
+                module.type
+              )
+          );
+          const [batchResult, assetResult] = product
+            ? await Promise.allSettled([
+                needsBatches
+                  ? api.get(`/products/${tpl.product_id}/batches`, {
+                      params: { page_size: 100 },
+                    })
+                  : Promise.resolve({ data: { items: [] } }),
+                needsAssets
+                  ? api.get(`/products/${tpl.product_id}/assets`, {
+                      params: { page_size: 100 },
+                    })
+                  : Promise.resolve({ data: { items: [] } }),
+              ])
+            : [];
           setPreviewContext({
             product,
-            batches: batchResult?.status === "fulfilled"
-              ? [...(batchResult.value.data.items || [])].sort((a: { production_date?: string }, b: { production_date?: string }) => String(b.production_date || "").localeCompare(String(a.production_date || "")))
-              : [],
-            assets: assetResult?.status === "fulfilled" ? assetResult.value.data.items || [] : [],
+            batches:
+              batchResult?.status === "fulfilled"
+                ? [...(batchResult.value.data.items || [])].sort(
+                    (
+                      a: { production_date?: string },
+                      b: { production_date?: string }
+                    ) =>
+                      String(b.production_date || "").localeCompare(
+                        String(a.production_date || "")
+                      )
+                  )
+                : [],
+            assets:
+              assetResult?.status === "fulfilled"
+                ? assetResult.value.data.items || []
+                : [],
           });
         } else {
           setPreviewContext({});
@@ -87,8 +130,11 @@ export default function PageEditorPage() {
   }, [params.id, message]);
 
   const readiness = inspectPageReadiness(dsl, previewContext);
-  const enabledModuleCount = (dsl.modules || []).filter((module) => module.enabled !== false).length;
-  const issueCount = readiness.blockingIssues.length + readiness.warnings.length;
+  const enabledModuleCount = (dsl.modules || []).filter(
+    (module) => module.enabled !== false
+  ).length;
+  const issueCount =
+    readiness.blockingIssues.length + readiness.warnings.length;
 
   const handleSave = useCallback(async () => {
     if (!version) return;
@@ -110,7 +156,9 @@ export default function PageEditorPage() {
 
   const refreshData = useCallback(async () => {
     try {
-      const { data: versions } = await api.get(`/page-templates/${params.id}/versions`);
+      const { data: versions } = await api.get(
+        `/page-templates/${params.id}/versions`
+      );
       const draft = versions.find((v: PageVersion) => v.status === "draft");
       const target = draft || versions[0];
       if (target) {
@@ -119,7 +167,9 @@ export default function PageEditorPage() {
         setDsl(nextDsl);
         setSelectedModuleId(nextDsl.modules?.[0]?.id || null);
       }
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
   }, [params.id]);
 
   const handlePublish = useCallback(() => {
@@ -130,7 +180,11 @@ export default function PageEditorPage() {
         title: "草稿暂不能发布",
         content: (
           <div className="space-y-3">
-            <Alert type="warning" showIcon title="请先处理以下阻断项，再发布给消费者。" />
+            <Alert
+              type="warning"
+              showIcon
+              title="请先处理以下阻断项，再发布给消费者。"
+            />
             <List
               size="small"
               dataSource={currentReadiness.blockingIssues}
@@ -152,9 +206,15 @@ export default function PageEditorPage() {
         <div className="space-y-3">
           <Descriptions size="small" bordered column={1}>
             <Descriptions.Item label="页面">{templateName}</Descriptions.Item>
-            <Descriptions.Item label="关联产品">{previewContext.product?.name || "未关联产品"}</Descriptions.Item>
-            <Descriptions.Item label="草稿版本">v{version.version}</Descriptions.Item>
-            <Descriptions.Item label="模块">{enabledModuleCount} 个已启用模块</Descriptions.Item>
+            <Descriptions.Item label="关联产品">
+              {previewContext.product?.name || "未关联产品"}
+            </Descriptions.Item>
+            <Descriptions.Item label="草稿版本">
+              v{version.version}
+            </Descriptions.Item>
+            <Descriptions.Item label="模块">
+              {enabledModuleCount} 个已启用模块
+            </Descriptions.Item>
           </Descriptions>
           {currentReadiness.warnings.length > 0 ? (
             <Alert
@@ -172,7 +232,9 @@ export default function PageEditorPage() {
           ) : (
             <Alert type="success" showIcon title="发布检查通过" />
           )}
-          <Text type="secondary">发布后消费者扫码可能看到此页面。系统会先保存当前草稿再发布。</Text>
+          <Text type="secondary">
+            发布后消费者扫码可能看到此页面。系统会先保存当前草稿再发布。
+          </Text>
         </div>
       ),
       onOk: async () => {
@@ -189,10 +251,23 @@ export default function PageEditorPage() {
         }
       },
     });
-  }, [dsl, enabledModuleCount, message, modal, previewContext, refreshData, templateName, version]);
+  }, [
+    dsl,
+    enabledModuleCount,
+    message,
+    modal,
+    previewContext,
+    refreshData,
+    templateName,
+    version,
+  ]);
 
   if (!version) {
-    return <div className="flex h-screen items-center justify-center text-text-muted">加载中...</div>;
+    return (
+      <div className="flex h-screen items-center justify-center text-text-muted">
+        加载中...
+      </div>
+    );
   }
 
   return (
@@ -210,7 +285,7 @@ export default function PageEditorPage() {
         onPublish={handlePublish}
       />
       <div className="flex flex-1 overflow-hidden">
-        <div className="w-[520px] shrink-0 overflow-y-auto border-r bg-bg-container p-4">
+        <div className="w-130 shrink-0 overflow-y-auto border-r bg-bg-container p-4">
           {readiness.blockingIssues.length > 0 ? (
             <Alert
               className="mb-3"
@@ -279,7 +354,9 @@ export default function PageEditorPage() {
           <PreviewPanel
             dsl={dsl}
             previewContext={previewContext}
-            usesExampleData={readiness.usesExampleData || !previewContext.product}
+            usesExampleData={
+              readiness.usesExampleData || !previewContext.product
+            }
           />
         </div>
       </div>
@@ -321,9 +398,19 @@ function JSONEditor({
       <div className="mb-2 flex items-center justify-between">
         <span className="text-xs text-text-muted">直接编辑 JSON 配置</span>
         {errors.length > 0 ? (
-          <span className="text-xs text-red-500">{errors.length} 个错误</span>
+          <span
+            className="text-xs"
+            style={{ color: "var(--ymt-color-feedback-danger)" }}
+          >
+            {errors.length} 个错误
+          </span>
         ) : (
-          <span className="text-xs text-green-500">校验通过</span>
+          <span
+            className="text-xs"
+            style={{ color: "var(--ymt-color-feedback-success)" }}
+          >
+            校验通过
+          </span>
         )}
       </div>
       <TextArea
@@ -333,9 +420,18 @@ function JSONEditor({
         className="font-mono text-sm"
       />
       {errors.length > 0 && (
-        <div className="mt-2 rounded bg-red-50 p-3">
+        <div
+          className="mt-2 rounded p-3"
+          style={{ background: "var(--ymt-color-feedback-danger-bg)" }}
+        >
           {errors.map((err, i) => (
-            <div key={i} className="text-xs text-red-600">{err}</div>
+            <div
+              key={i}
+              className="text-xs"
+              style={{ color: "var(--ymt-color-feedback-danger)" }}
+            >
+              {err}
+            </div>
           ))}
         </div>
       )}

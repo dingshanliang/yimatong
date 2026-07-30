@@ -2,10 +2,7 @@
 
 import { useEffect, useRef, useState, useCallback } from "react";
 import { Select, Slider, Tag, Typography } from "antd";
-import {
-  MobileOutlined,
-  DesktopOutlined,
-} from "@ant-design/icons";
+import { MobileOutlined, DesktopOutlined } from "@ant-design/icons";
 import type { PageDSL, PagePreviewContext } from "@/lib/page-dsl";
 
 const { Text } = Typography;
@@ -18,9 +15,24 @@ type DevicePreset = {
 };
 
 const DEVICE_PRESETS: Record<string, DevicePreset> = {
-  iphone15: { label: "iPhone 15", width: 393, height: 852, icon: <MobileOutlined /> },
-  iphone_se: { label: "iPhone SE", width: 375, height: 667, icon: <MobileOutlined /> },
-  desktop: { label: "桌面", width: 1024, height: 768, icon: <DesktopOutlined /> },
+  iphone15: {
+    label: "iPhone 15",
+    width: 393,
+    height: 852,
+    icon: <MobileOutlined />,
+  },
+  iphone_se: {
+    label: "iPhone SE",
+    width: 375,
+    height: 667,
+    icon: <MobileOutlined />,
+  },
+  desktop: {
+    label: "桌面",
+    width: 1024,
+    height: 768,
+    icon: <DesktopOutlined />,
+  },
 };
 
 export function PreviewPanel({
@@ -39,7 +51,9 @@ export function PreviewPanel({
 
   const preset = DEVICE_PRESETS[device];
   const configuredH5Url = process.env.NEXT_PUBLIC_H5_URL?.replace(/\/$/, "");
-  const previewUrl = configuredH5Url ? `${configuredH5Url}/preview` : "/page-preview";
+  const previewUrl = configuredH5Url
+    ? `${configuredH5Url}/preview`
+    : "/page-preview";
 
   const getPreviewOrigin = useCallback(() => {
     if (typeof window === "undefined") return "*";
@@ -57,7 +71,7 @@ export function PreviewPanel({
           previewMode: usesExampleData ? "example" : "bound",
         },
       },
-      getPreviewOrigin(),
+      getPreviewOrigin()
     );
   }, [dsl, previewContext, ready, getPreviewOrigin, usesExampleData]);
 
@@ -98,11 +112,15 @@ export function PreviewPanel({
             style={{ width: 150 }}
           />
           <Tag color={usesExampleData ? "blue" : "green"}>
-            {usesExampleData ? "草稿预览 · 示例数据" : "草稿预览 · 已绑定真实产品"}
+            {usesExampleData
+              ? "草稿预览 · 示例数据"
+              : "草稿预览 · 已绑定真实产品"}
           </Tag>
         </div>
         <div className="flex items-center gap-2">
-          <Text type="secondary" className="text-xs">缩放</Text>
+          <Text type="secondary" className="text-xs">
+            缩放
+          </Text>
           <Slider
             min={50}
             max={100}
@@ -110,7 +128,9 @@ export function PreviewPanel({
             onChange={setScale}
             style={{ width: 100 }}
           />
-          <Text type="secondary" className="text-xs">{scale}%</Text>
+          <Text type="secondary" className="text-xs">
+            {scale}%
+          </Text>
         </div>
       </div>
 
@@ -122,10 +142,10 @@ export function PreviewPanel({
           style={{
             width: preset.width * (scale / 100) + 24,
             height: preset.height * (scale / 100) + 24,
-            border: "3px solid #333",
-            borderRadius: 24,
+            border: "3px solid var(--ymt-color-text-primary)",
+            borderRadius: "var(--ymt-radius-xl)",
             padding: 8,
-            background: "#fff",
+            background: "var(--ymt-color-bg-surface)",
             overflow: "hidden",
           }}
         >

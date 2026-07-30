@@ -2,8 +2,26 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { useCrud } from "@/lib/hooks";
-import { Alert, App, Button, Descriptions, Empty, Form, InputNumber, Modal, Select, Space, Table, Tag, Typography } from "antd";
-import { QrcodeOutlined, PlusOutlined, DownloadOutlined } from "@ant-design/icons";
+import {
+  Alert,
+  App,
+  Button,
+  Descriptions,
+  Empty,
+  Form,
+  InputNumber,
+  Modal,
+  Select,
+  Space,
+  Table,
+  Tag,
+  Typography,
+} from "antd";
+import {
+  QrcodeOutlined,
+  PlusOutlined,
+  DownloadOutlined,
+} from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
 import api from "@/lib/api";
 import { formatDate } from "@/lib/format";
@@ -91,7 +109,8 @@ const CODE_TYPE_OPTIONS = [
 
 const CODE_TYPE_DESCRIPTIONS: Record<string, string> = {
   single: "普通二维码：每个包装一个独立二维码，适合大多数溯源场景。",
-  paired: "内外双码：生成内码和外码配对，用于外包装引流、内包装验真或权益核销。",
+  paired:
+    "内外双码：生成内码和外码配对，用于外包装引流、内包装验真或权益核销。",
   outer: "外包装码：贴在外包装上，主要用于消费者扫码引流和产品展示。",
   inner: "内包装码：放在包装内侧，主要用于验真、防伪或内部核验。",
 };
@@ -107,10 +126,17 @@ const GENERATION_MODE_LABELS: Record<string, string> = {
 };
 
 function getCodeTypeLabel(value?: string) {
-  return CODE_TYPE_OPTIONS.find((option) => option.value === value)?.label || value || "-";
+  return (
+    CODE_TYPE_OPTIONS.find((option) => option.value === value)?.label ||
+    value ||
+    "-"
+  );
 }
 
-function getDownloadFilename(contentDisposition: string | undefined, fallback: string) {
+function getDownloadFilename(
+  contentDisposition: string | undefined,
+  fallback: string
+) {
   if (!contentDisposition) return fallback;
 
   const utf8Match = contentDisposition.match(/filename\*=UTF-8''([^;]+)/i);
@@ -135,53 +161,91 @@ export default function CodesPage() {
   const { message, modal } = App.useApp();
   const [products, setProducts] = useState<Product[]>([]);
   const [skus, setSKUs] = useState<SKU[]>([]);
-  const [productionBatches, setProductionBatches] = useState<ProductionBatch[]>([]);
+  const [productionBatches, setProductionBatches] = useState<ProductionBatch[]>(
+    []
+  );
   const [status, setStatus] = useState<string | undefined>(undefined);
   const [createOpen, setCreateOpen] = useState(false);
   const [form] = Form.useForm<CodeBatchFormValues>();
-  const [selectedProduct, setSelectedProduct] = useState<string | undefined>(undefined);
+  const [selectedProduct, setSelectedProduct] = useState<string | undefined>(
+    undefined
+  );
   const [selectedSku, setSelectedSku] = useState<string | undefined>(undefined);
   const [creating, setCreating] = useState(false);
-  const [activatingId, setActivatingId] = useState<string | undefined>(undefined);
+  const [activatingId, setActivatingId] = useState<string | undefined>(
+    undefined
+  );
   const [exportingId, setExportingId] = useState<string | undefined>(undefined);
-  const [markingPrintingId, setMarkingPrintingId] = useState<string | undefined>(undefined);
-  const [markingDeliveredId, setMarkingDeliveredId] = useState<string | undefined>(undefined);
+  const [markingPrintingId, setMarkingPrintingId] = useState<
+    string | undefined
+  >(undefined);
+  const [markingDeliveredId, setMarkingDeliveredId] = useState<
+    string | undefined
+  >(undefined);
 
   const generationMode = Form.useWatch("generation_mode", form) || "item_level";
   const codeType = Form.useWatch("code_type", form) || "single";
   const quantity = Form.useWatch("quantity", form);
   const selectedProductionBatchId = Form.useWatch("production_batch_id", form);
 
-  const { items: batches, total, page, loading, setPage, setFilter, mutate } = useCrud<CodeBatch>("/code-batches");
+  const {
+    items: batches,
+    total,
+    page,
+    loading,
+    setPage,
+    setFilter,
+    mutate,
+  } = useCrud<CodeBatch>("/code-batches");
 
   const fetchProducts = useCallback(async () => {
     try {
-      const { data } = await api.get("/products", { params: { page_size: 100 } });
+      const { data } = await api.get("/products", {
+        params: { page_size: 100 },
+      });
       setProducts(data.items || []);
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
   }, []);
 
   const fetchSKUs = useCallback(async (productId?: string) => {
-    if (!productId) { setSKUs([]); setProductionBatches([]); return; }
+    if (!productId) {
+      setSKUs([]);
+      setProductionBatches([]);
+      return;
+    }
     try {
-      const { data } = await api.get("/skus", { params: { product_id: productId, page_size: 100 } });
+      const { data } = await api.get("/skus", {
+        params: { product_id: productId, page_size: 100 },
+      });
       setSKUs(data.items || []);
     } catch {
       setSKUs([]);
     }
   }, []);
 
-  const fetchProductionBatches = useCallback(async (productId?: string, skuId?: string) => {
-    if (!productId || !skuId) { setProductionBatches([]); return; }
-    try {
-      const { data } = await api.get("/production-batches", { params: { product_id: productId, sku_id: skuId, page_size: 100 } });
-      setProductionBatches(data.items || []);
-    } catch {
-      setProductionBatches([]);
-    }
-  }, []);
+  const fetchProductionBatches = useCallback(
+    async (productId?: string, skuId?: string) => {
+      if (!productId || !skuId) {
+        setProductionBatches([]);
+        return;
+      }
+      try {
+        const { data } = await api.get("/production-batches", {
+          params: { product_id: productId, sku_id: skuId, page_size: 100 },
+        });
+        setProductionBatches(data.items || []);
+      } catch {
+        setProductionBatches([]);
+      }
+    },
+    []
+  );
 
-  useEffect(() => { fetchProducts(); }, [fetchProducts]);
+  useEffect(() => {
+    fetchProducts();
+  }, [fetchProducts]);
 
   const resetCreateState = () => {
     setCreateOpen(false);
@@ -199,7 +263,8 @@ export default function CodesPage() {
       production_batch_id: values.production_batch_id,
       generation_mode: values.generation_mode,
       quantity: values.generation_mode === "batch_level" ? 1 : values.quantity,
-      code_type: values.generation_mode === "batch_level" ? "single" : values.code_type,
+      code_type:
+        values.generation_mode === "batch_level" ? "single" : values.code_type,
     };
     setCreating(true);
     try {
@@ -215,7 +280,10 @@ export default function CodesPage() {
   };
 
   const handleCreate = async (values: CodeBatchFormValues) => {
-    if (values.generation_mode === "item_level" && Number(values.quantity || 0) >= 10000) {
+    if (
+      values.generation_mode === "item_level" &&
+      Number(values.quantity || 0) >= 10000
+    ) {
       modal.confirm({
         title: "确认生成大量二维码？",
         content: `本次将生成 ${Number(values.quantity).toLocaleString()} 个二维码，生成后会进入码批次列表用于导出码表和激活。`,
@@ -244,7 +312,11 @@ export default function CodesPage() {
   const handleExport = async (record: CodeBatch) => {
     setExportingId(record.id);
     try {
-      const response = await api.post<Blob>(`/code-batches/${record.id}/export`, null, { responseType: "blob" });
+      const response = await api.post<Blob>(
+        `/code-batches/${record.id}/export`,
+        null,
+        { responseType: "blob" }
+      );
       const blob = response.data;
       if (!blob || blob.size === 0) {
         message.warning("当前码批次暂无可导出的码，请检查生成状态");
@@ -254,7 +326,10 @@ export default function CodesPage() {
       const url = window.URL.createObjectURL(blob);
       const link = document.createElement("a");
       link.href = url;
-      link.download = getDownloadFilename(response.headers["content-disposition"], `codes-${record.id}.csv`);
+      link.download = getDownloadFilename(
+        response.headers["content-disposition"],
+        `codes-${record.id}.csv`
+      );
       document.body.appendChild(link);
       link.click();
       link.remove();
@@ -276,12 +351,24 @@ export default function CodesPage() {
         title="激活后，该批二维码将对消费者扫码生效。请确认码表已导出，并已完成印刷或贴码安排。"
       />
       <Descriptions size="small" column={1} bordered>
-        <Descriptions.Item label="产品">{getProductDisplay(record)}</Descriptions.Item>
-        <Descriptions.Item label="SKU">{getSkuDisplay(record)}</Descriptions.Item>
-        <Descriptions.Item label="生产批次">{record.production_batch_code || "未关联生产批次"}</Descriptions.Item>
-        <Descriptions.Item label="生成方式">{GENERATION_MODE_LABELS[record.generation_mode] || "一物一码"}</Descriptions.Item>
-        <Descriptions.Item label="数量">{Number(record.quantity || 0).toLocaleString()}</Descriptions.Item>
-        <Descriptions.Item label="码类型">{getCodeTypeLabel(record.code_type)}</Descriptions.Item>
+        <Descriptions.Item label="产品">
+          {getProductDisplay(record)}
+        </Descriptions.Item>
+        <Descriptions.Item label="SKU">
+          {getSkuDisplay(record)}
+        </Descriptions.Item>
+        <Descriptions.Item label="生产批次">
+          {record.production_batch_code || "未关联生产批次"}
+        </Descriptions.Item>
+        <Descriptions.Item label="生成方式">
+          {GENERATION_MODE_LABELS[record.generation_mode] || "一物一码"}
+        </Descriptions.Item>
+        <Descriptions.Item label="数量">
+          {Number(record.quantity || 0).toLocaleString()}
+        </Descriptions.Item>
+        <Descriptions.Item label="码类型">
+          {getCodeTypeLabel(record.code_type)}
+        </Descriptions.Item>
       </Descriptions>
     </div>
   );
@@ -331,9 +418,7 @@ export default function CodesPage() {
       render: (_: unknown, record: CodeBatch) => (
         <div>
           <div>{getProductDisplay(record)}</div>
-          <div className="text-xs text-text-muted">
-            {getSkuDisplay(record)}
-          </div>
+          <div className="text-xs text-text-muted">{getSkuDisplay(record)}</div>
         </div>
       ),
     },
@@ -343,7 +428,11 @@ export default function CodesPage() {
       render: (_: unknown, record: CodeBatch) => (
         <div>
           <div>{record.production_batch_code || "未关联生产批次"}</div>
-          {record.production_date ? <div className="text-xs text-text-muted">{record.production_date}</div> : null}
+          {record.production_date ? (
+            <div className="text-xs text-text-muted">
+              {record.production_date}
+            </div>
+          ) : null}
         </div>
       ),
     },
@@ -353,7 +442,12 @@ export default function CodesPage() {
       key: "generation_mode",
       render: (v: string) => GENERATION_MODE_LABELS[v] || "一物一码",
     },
-    { title: "数量", dataIndex: "quantity", key: "quantity", render: (v: number) => Number(v || 0).toLocaleString() },
+    {
+      title: "数量",
+      dataIndex: "quantity",
+      key: "quantity",
+      render: (v: number) => Number(v || 0).toLocaleString(),
+    },
     {
       title: "码类型",
       dataIndex: "code_type",
@@ -380,7 +474,13 @@ export default function CodesPage() {
       key: "actions",
       render: (_: unknown, record: CodeBatch) => (
         <Space>
-          {["activated", "completed", "exported", "printing", "delivered"].includes(record.status) && (
+          {[
+            "activated",
+            "completed",
+            "exported",
+            "printing",
+            "delivered",
+          ].includes(record.status) && (
             <Button
               size="small"
               icon={<DownloadOutlined />}
@@ -428,7 +528,13 @@ export default function CodesPage() {
               激活码批次
             </Button>
           )}
-          {!["activated", "completed", "exported", "printing", "delivered"].includes(record.status) && (
+          {![
+            "activated",
+            "completed",
+            "exported",
+            "printing",
+            "delivered",
+          ].includes(record.status) && (
             <Typography.Text type="secondary">暂无可用操作</Typography.Text>
           )}
         </Space>
@@ -439,24 +545,40 @@ export default function CodesPage() {
   return (
     <div>
       <div className="mb-4 flex items-center justify-between">
-        <Title level={4} className="!mb-0">码管理</Title>
+        <Title level={4} className="!mb-0">
+          码管理
+        </Title>
         <Space>
           <Select
             placeholder="按状态筛选"
             allowClear
             style={{ width: 150 }}
             value={status}
-            onChange={(v) => { setStatus(v); setFilter(v ? { status: v } : {}); }}
+            onChange={(v) => {
+              setStatus(v);
+              setFilter(v ? { status: v } : {});
+            }}
             options={FILTER_STATUS_OPTIONS}
           />
-          <Button type="primary" icon={<PlusOutlined />} onClick={() => setCreateOpen(true)}>
+          <Button
+            type="primary"
+            icon={<PlusOutlined />}
+            onClick={() => setCreateOpen(true)}
+          >
             生成码批次
           </Button>
         </Space>
       </div>
       {batches.length === 0 && !loading ? (
         <Empty
-          image={<QrcodeOutlined style={{ fontSize: 48, color: "#ccc" }} />}
+          image={
+            <QrcodeOutlined
+              style={{
+                fontSize: "var(--ymt-font-size-4xl)",
+                color: "var(--ymt-color-text-tertiary)",
+              }}
+            />
+          }
           description="暂无码批次，请先生成码批次"
         />
       ) : (
@@ -466,7 +588,10 @@ export default function CodesPage() {
           rowKey="id"
           loading={loading}
           pagination={{
-            current: page, total, pageSize: 20, onChange: setPage,
+            current: page,
+            total,
+            pageSize: 20,
+            onChange: setPage,
             showTotal: (t) => `共 ${t} 条`,
           }}
         />
@@ -487,7 +612,11 @@ export default function CodesPage() {
           onFinish={handleCreate}
           initialValues={{ generation_mode: "item_level", code_type: "single" }}
         >
-          <Form.Item name="product_id" label="关联产品" rules={[{ required: true, message: "请选择产品" }]}>
+          <Form.Item
+            name="product_id"
+            label="关联产品"
+            rules={[{ required: true, message: "请选择产品" }]}
+          >
             <Select
               placeholder="选择产品"
               options={products.map((p) => ({ value: p.id, label: p.name }))}
@@ -498,26 +627,40 @@ export default function CodesPage() {
                 setSelectedSku(undefined);
                 fetchSKUs(v);
                 setProductionBatches([]);
-                form.setFieldsValue({ sku_id: undefined, production_batch_id: undefined });
+                form.setFieldsValue({
+                  sku_id: undefined,
+                  production_batch_id: undefined,
+                });
               }}
               data-testid="code-batch-product-select"
             />
           </Form.Item>
-          <Form.Item name="sku_id" label="关联 SKU" rules={[{ required: true, message: "请选择 SKU" }]}>
+          <Form.Item
+            name="sku_id"
+            label="关联 SKU"
+            rules={[{ required: true, message: "请选择 SKU" }]}
+          >
             <Select
               placeholder="选择 SKU"
-              options={skus.map((s) => ({ value: s.id, label: `${s.name}${s.code ? `（${s.code}）` : ""}` }))}
+              options={skus.map((s) => ({
+                value: s.id,
+                label: `${s.name}${s.code ? `（${s.code}）` : ""}`,
+              }))}
               showSearch
               optionFilterProp="label"
               disabled={!selectedProduct}
-              notFoundContent={selectedProduct ? (
-                <Empty
-                  image={Empty.PRESENTED_IMAGE_SIMPLE}
-                  description="该产品暂无 SKU，请先创建 SKU 后再生成码批次"
-                >
-                  <Button type="link" href={`/products/${selectedProduct}`}>去产品工作台创建 SKU</Button>
-                </Empty>
-              ) : null}
+              notFoundContent={
+                selectedProduct ? (
+                  <Empty
+                    image={Empty.PRESENTED_IMAGE_SIMPLE}
+                    description="该产品暂无 SKU，请先创建 SKU 后再生成码批次"
+                  >
+                    <Button type="link" href={`/products/${selectedProduct}`}>
+                      去产品工作台创建 SKU
+                    </Button>
+                  </Empty>
+                ) : null
+              }
               onChange={(v) => {
                 setSelectedSku(v);
                 fetchProductionBatches(selectedProduct, v);
@@ -526,7 +669,11 @@ export default function CodesPage() {
               data-testid="code-batch-sku-select"
             />
           </Form.Item>
-          <Form.Item name="production_batch_id" label="关联生产批次" rules={[{ required: true, message: "请选择生产批次" }]}>
+          <Form.Item
+            name="production_batch_id"
+            label="关联生产批次"
+            rules={[{ required: true, message: "请选择生产批次" }]}
+          >
             <Select
               placeholder="选择生产批次"
               options={productionBatches.map((b) => ({
@@ -536,22 +683,31 @@ export default function CodesPage() {
               showSearch
               optionFilterProp="label"
               disabled={!selectedSku}
-              notFoundContent={selectedSku ? (
-                <Empty
-                  image={Empty.PRESENTED_IMAGE_SIMPLE}
-                  description="该 SKU 暂无生产批次，请先创建批次后再生成码批次"
-                >
-                  <Button type="link" href={`/products/${selectedProduct}`}>去产品工作台创建批次</Button>
-                </Empty>
-              ) : null}
+              notFoundContent={
+                selectedSku ? (
+                  <Empty
+                    image={Empty.PRESENTED_IMAGE_SIMPLE}
+                    description="该 SKU 暂无生产批次，请先创建批次后再生成码批次"
+                  >
+                    <Button type="link" href={`/products/${selectedProduct}`}>
+                      去产品工作台创建批次
+                    </Button>
+                  </Empty>
+                ) : null
+              }
               data-testid="code-batch-production-batch-select"
             />
           </Form.Item>
-          <Form.Item name="generation_mode" label="生成方式" rules={[{ required: true, message: "请选择生成方式" }]}>
+          <Form.Item
+            name="generation_mode"
+            label="生成方式"
+            rules={[{ required: true, message: "请选择生成方式" }]}
+          >
             <Select
               options={GENERATION_MODE_OPTIONS}
               onChange={(v) => {
-                if (v === "batch_level") form.setFieldsValue({ quantity: 1, code_type: "single" });
+                if (v === "batch_level")
+                  form.setFieldsValue({ quantity: 1, code_type: "single" });
               }}
               data-testid="code-batch-generation-mode-select"
             />
@@ -563,22 +719,63 @@ export default function CodesPage() {
               rules={[{ required: true, message: "请输入数量" }]}
               extra="将生成可导出的二维码数量，生成后可导出码表、激活或关联扫码页。"
             >
-              <InputNumber min={1} max={100000} style={{ width: "100%" }} placeholder="1-100000" data-testid="code-batch-quantity-input" />
+              <InputNumber
+                min={1}
+                max={100000}
+                style={{ width: "100%" }}
+                placeholder="1-100000"
+                data-testid="code-batch-quantity-input"
+              />
             </Form.Item>
           ) : (
-            <Alert className="mb-4" type="info" showIcon title="一批一码会为当前生产批次生成 1 个共用二维码。" />
+            <Alert
+              className="mb-4"
+              type="info"
+              showIcon
+              title="一批一码会为当前生产批次生成 1 个共用二维码。"
+            />
           )}
-          <Form.Item name="code_type" label="码类型" extra={generationMode === "batch_level" ? "一批一码默认使用普通二维码。" : CODE_TYPE_DESCRIPTIONS[codeType]}>
-            <Select options={CODE_TYPE_OPTIONS} disabled={generationMode === "batch_level"} data-testid="code-batch-type-select" />
+          <Form.Item
+            name="code_type"
+            label="码类型"
+            extra={
+              generationMode === "batch_level"
+                ? "一批一码默认使用普通二维码。"
+                : CODE_TYPE_DESCRIPTIONS[codeType]
+            }
+          >
+            <Select
+              options={CODE_TYPE_OPTIONS}
+              disabled={generationMode === "batch_level"}
+              data-testid="code-batch-type-select"
+            />
           </Form.Item>
           {selectedProductionBatchId ? (
             <Descriptions bordered size="small" column={1} title="生成确认">
-              <Descriptions.Item label="产品">{products.find((p) => p.id === selectedProduct)?.name || "-"}</Descriptions.Item>
-              <Descriptions.Item label="SKU">{skus.find((s) => s.id === selectedSku)?.name || "-"}</Descriptions.Item>
-              <Descriptions.Item label="生产批次">{productionBatches.find((b) => b.id === selectedProductionBatchId)?.batch_code || "-"}</Descriptions.Item>
-              <Descriptions.Item label="生成方式">{GENERATION_MODE_LABELS[generationMode]}</Descriptions.Item>
-              <Descriptions.Item label="生成数量">{generationMode === "batch_level" ? 1 : Number(quantity || 0).toLocaleString()}</Descriptions.Item>
-              <Descriptions.Item label="码类型">{getCodeTypeLabel(generationMode === "batch_level" ? "single" : codeType)}</Descriptions.Item>
+              <Descriptions.Item label="产品">
+                {products.find((p) => p.id === selectedProduct)?.name || "-"}
+              </Descriptions.Item>
+              <Descriptions.Item label="SKU">
+                {skus.find((s) => s.id === selectedSku)?.name || "-"}
+              </Descriptions.Item>
+              <Descriptions.Item label="生产批次">
+                {productionBatches.find(
+                  (b) => b.id === selectedProductionBatchId
+                )?.batch_code || "-"}
+              </Descriptions.Item>
+              <Descriptions.Item label="生成方式">
+                {GENERATION_MODE_LABELS[generationMode]}
+              </Descriptions.Item>
+              <Descriptions.Item label="生成数量">
+                {generationMode === "batch_level"
+                  ? 1
+                  : Number(quantity || 0).toLocaleString()}
+              </Descriptions.Item>
+              <Descriptions.Item label="码类型">
+                {getCodeTypeLabel(
+                  generationMode === "batch_level" ? "single" : codeType
+                )}
+              </Descriptions.Item>
             </Descriptions>
           ) : null}
         </Form>

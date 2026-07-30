@@ -390,7 +390,12 @@ export default function BrandDetailPage() {
         >
           返回列表
         </Button>
-        <div className="mt-4 text-gray-500">品牌不存在或已删除</div>
+        <div
+          className="mt-4"
+          style={{ color: "var(--ymt-color-text-secondary)" }}
+        >
+          品牌不存在或已删除
+        </div>
       </div>
     );
   }

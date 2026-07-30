@@ -56,11 +56,15 @@ export default function AntiDiversionPage() {
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(false);
-  const [resolvedFilter, setResolvedFilter] = useState<boolean | undefined>(undefined);
+  const [resolvedFilter, setResolvedFilter] = useState<boolean | undefined>(
+    undefined
+  );
   const [stats, setStats] = useState({ total: 0, unresolved: 0 });
   const [resolveModalOpen, setResolveModalOpen] = useState(false);
   const [resolveAction, setResolveAction] = useState("confirmed");
-  const [resolvingClue, setResolvingClue] = useState<DiversionClue | null>(null);
+  const [resolvingClue, setResolvingClue] = useState<DiversionClue | null>(
+    null
+  );
 
   const loadClues = useCallback(async () => {
     setLoading(true);
@@ -85,7 +89,9 @@ export default function AntiDiversionPage() {
       // 加载统计数据
       const [allRes, unresolvedRes] = await Promise.all([
         api.get("/channels/diversion-clues", { params: { page_size: 1 } }),
-        api.get("/channels/diversion-clues", { params: { page_size: 1, resolved: false } }),
+        api.get("/channels/diversion-clues", {
+          params: { page_size: 1, resolved: false },
+        }),
       ]);
       setStats({
         total: allRes.data?.total || 0,
@@ -137,7 +143,10 @@ export default function AntiDiversionPage() {
       key: "severity",
       width: 80,
       render: (v: string) => {
-        const info = SEVERITY_MAP[v] || { label: v || "未知", color: "default" };
+        const info = SEVERITY_MAP[v] || {
+          label: v || "未知",
+          color: "default",
+        };
         return <Tag color={info.color}>{info.label}</Tag>;
       },
     },
@@ -167,9 +176,13 @@ export default function AntiDiversionPage() {
       width: 80,
       render: (v: boolean) =>
         v ? (
-          <Tag icon={<CheckCircleOutlined />} color="success">已处理</Tag>
+          <Tag icon={<CheckCircleOutlined />} color="success">
+            已处理
+          </Tag>
         ) : (
-          <Tag icon={<ExclamationCircleOutlined />} color="warning">待处理</Tag>
+          <Tag icon={<ExclamationCircleOutlined />} color="warning">
+            待处理
+          </Tag>
         ),
     },
     {
@@ -196,7 +209,11 @@ export default function AntiDiversionPage() {
       width: 80,
       render: (_: unknown, record: DiversionClue) =>
         record.resolved ? null : (
-          <Button size="small" type="primary" onClick={() => showResolveModal(record)}>
+          <Button
+            size="small"
+            type="primary"
+            onClick={() => showResolveModal(record)}
+          >
             处理
           </Button>
         ),
@@ -227,14 +244,23 @@ export default function AntiDiversionPage() {
 
       <Row gutter={[16, 16]} className="mb-4">
         <Col xs={12} sm={8}>
-          <Card size="small"><Statistic title="全部线索" value={stats.total} /></Card>
+          <Card size="small">
+            <Statistic title="全部线索" value={stats.total} />
+          </Card>
         </Col>
         <Col xs={12} sm={8}>
           <Card size="small">
             <Statistic
               title="待处理"
               value={stats.unresolved}
-              styles={{ value: { color: stats.unresolved > 0 ? "#fa541c" : undefined } }}
+              styles={{
+                value: {
+                  color:
+                    stats.unresolved > 0
+                      ? "var(--ymt-color-feedback-danger)"
+                      : undefined,
+                },
+              }}
             />
           </Card>
         </Col>
@@ -242,7 +268,13 @@ export default function AntiDiversionPage() {
           <Card size="small">
             <Statistic
               title="处理率"
-              value={stats.total > 0 ? Math.round(((stats.total - stats.unresolved) / stats.total) * 100) : 0}
+              value={
+                stats.total > 0
+                  ? Math.round(
+                      ((stats.total - stats.unresolved) / stats.total) * 100
+                    )
+                  : 0
+              }
               suffix="%"
             />
           </Card>
@@ -262,9 +294,18 @@ export default function AntiDiversionPage() {
       >
         {resolvingClue && (
           <div className="mt-3">
-            <p><strong>码编号：</strong>{resolvingClue.public_id}</p>
-            <p><strong>预期区域：</strong>{resolvingClue.expected_region || "未分配"}</p>
-            <p><strong>实际扫码地：</strong>{resolvingClue.detected_city || "未知"}</p>
+            <p>
+              <strong>码编号：</strong>
+              {resolvingClue.public_id}
+            </p>
+            <p>
+              <strong>预期区域：</strong>
+              {resolvingClue.expected_region || "未分配"}
+            </p>
+            <p>
+              <strong>实际扫码地：</strong>
+              {resolvingClue.detected_city || "未知"}
+            </p>
             <div className="mt-3">
               <strong>处理结果：</strong>
               <Select

@@ -2,8 +2,28 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { App, Button, Descriptions, Form, Input, Modal, Radio, Select, Space, Table, Tag, Tooltip, Typography } from "antd";
-import { EditOutlined, EyeOutlined, PlusOutlined, SendOutlined, UnorderedListOutlined } from "@ant-design/icons";
+import {
+  App,
+  Button,
+  Descriptions,
+  Form,
+  Input,
+  Modal,
+  Radio,
+  Select,
+  Space,
+  Table,
+  Tag,
+  Tooltip,
+  Typography,
+} from "antd";
+import {
+  EditOutlined,
+  EyeOutlined,
+  PlusOutlined,
+  SendOutlined,
+  UnorderedListOutlined,
+} from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
 import api from "@/lib/api";
 import { formatDateTime } from "@/lib/format";
@@ -64,7 +84,10 @@ const TYPE_LABELS: Record<string, string> = {
   campaign: "活动页",
 };
 
-const TYPE_OPTIONS = Object.entries(TYPE_LABELS).map(([value, label]) => ({ value, label }));
+const TYPE_OPTIONS = Object.entries(TYPE_LABELS).map(([value, label]) => ({
+  value,
+  label,
+}));
 
 const STATUS_META: Record<string, { label: string; color: string }> = {
   unpublished: { label: "未发布", color: "default" },
@@ -80,7 +103,8 @@ function buildDefaultDSL() {
 
 function getDisplayStatus(record: PageTemplate) {
   if (record.display_status) return record.display_status;
-  if (record.published_version && record.draft_version) return "has_unpublished_draft";
+  if (record.published_version && record.draft_version)
+    return "has_unpublished_draft";
   if (record.published_version) return "published";
   return "unpublished";
 }
@@ -106,17 +130,22 @@ export default function PagesPage() {
 
   const [createOpen, setCreateOpen] = useState(false);
   const [products, setProducts] = useState<ProductOption[]>([]);
-  const [industryTemplates, setIndustryTemplates] = useState<IndustryTemplate[]>([]);
+  const [industryTemplates, setIndustryTemplates] = useState<
+    IndustryTemplate[]
+  >([]);
   const [submitting, setSubmitting] = useState(false);
 
   const productOptions = useMemo(
-    () => products.map((product) => ({ value: product.id, label: product.name })),
-    [products],
+    () =>
+      products.map((product) => ({ value: product.id, label: product.name })),
+    [products]
   );
 
   const fetchProducts = useCallback(async () => {
     try {
-      const { data } = await api.get("/products", { params: { page_size: 100 } });
+      const { data } = await api.get("/products", {
+        params: { page_size: 100 },
+      });
       setProducts(data.items || []);
     } catch {
       setProducts([]);
@@ -163,10 +192,13 @@ export default function PagesPage() {
           message.error("请选择一个行业模板");
           return;
         }
-        const { data } = await api.post(`/page-templates/industry-templates/${values.template_index}/clone`, {
-          name: values.name,
-          product_id: values.product_id || null,
-        });
+        const { data } = await api.post(
+          `/page-templates/industry-templates/${values.template_index}/clone`,
+          {
+            name: values.name,
+            product_id: values.product_id || null,
+          }
+        );
         templateId = data.template.id;
       } else {
         const { data: template } = await api.post("/page-templates", {
@@ -175,7 +207,9 @@ export default function PagesPage() {
           product_id: values.product_id || null,
         });
         templateId = template.id;
-        await api.post(`/page-templates/${templateId}/versions`, { config_json: buildDefaultDSL() });
+        await api.post(`/page-templates/${templateId}/versions`, {
+          config_json: buildDefaultDSL(),
+        });
       }
       message.success("页面已创建，继续编辑草稿");
       setCreateOpen(false);
@@ -196,7 +230,9 @@ export default function PagesPage() {
     }
     try {
       const config = record.published_version?.config_json ?? buildDefaultDSL();
-      await api.post(`/page-templates/${record.id}/versions`, { config_json: config });
+      await api.post(`/page-templates/${record.id}/versions`, {
+        config_json: config,
+      });
       message.success("已基于当前页面创建草稿");
       void mutateTemplates();
       router.push(`/pages/${record.id}/edit`);
@@ -220,8 +256,12 @@ export default function PagesPage() {
         <div className="mt-3">
           <Descriptions size="small" column={1} bordered>
             <Descriptions.Item label="页面">{record.name}</Descriptions.Item>
-            <Descriptions.Item label="关联产品">{record.product_name || "未关联产品"}</Descriptions.Item>
-            <Descriptions.Item label="草稿版本">v{draft.version}</Descriptions.Item>
+            <Descriptions.Item label="关联产品">
+              {record.product_name || "未关联产品"}
+            </Descriptions.Item>
+            <Descriptions.Item label="草稿版本">
+              v{draft.version}
+            </Descriptions.Item>
           </Descriptions>
           <Text type="secondary" className="mt-3 block">
             发布后，关联产品的消费者扫码页可能展示此页面内容。
@@ -247,10 +287,21 @@ export default function PagesPage() {
       key: "name",
       render: (name: string, record) => (
         <div>
-          <Button type="link" className="h-auto p-0" onClick={() => ensureDraftAndEdit(record)}>
+          <Button
+            type="link"
+            className="h-auto p-0"
+            onClick={() => ensureDraftAndEdit(record)}
+          >
             {name}
           </Button>
-          {record.description && <div className="mt-1 text-xs text-slate-400">{record.description}</div>}
+          {record.description && (
+            <div
+              className="mt-1 text-xs"
+              style={{ color: "var(--ymt-color-text-tertiary)" }}
+            >
+              {record.description}
+            </div>
+          )}
         </div>
       ),
     },
@@ -285,11 +336,16 @@ export default function PagesPage() {
       title: "版本",
       key: "versions",
       render: (_, record) => {
-        if (!record.published_version && !record.draft_version) return <Text type="secondary">暂无版本</Text>;
+        if (!record.published_version && !record.draft_version)
+          return <Text type="secondary">暂无版本</Text>;
         return (
           <Space size={4} wrap>
-            {record.published_version && <Tag color="blue">已发布 v{record.published_version.version}</Tag>}
-            {record.draft_version && <Tag>草稿 v{record.draft_version.version}</Tag>}
+            {record.published_version && (
+              <Tag color="blue">已发布 v{record.published_version.version}</Tag>
+            )}
+            {record.draft_version && (
+              <Tag>草稿 v{record.draft_version.version}</Tag>
+            )}
           </Space>
         );
       },
@@ -307,25 +363,46 @@ export default function PagesPage() {
         const status = getDisplayStatus(record);
         return (
           <Space size={8} wrap>
-            <Button size="small" icon={<EditOutlined />} onClick={() => ensureDraftAndEdit(record)}>
+            <Button
+              size="small"
+              icon={<EditOutlined />}
+              onClick={() => ensureDraftAndEdit(record)}
+            >
               编辑草稿
             </Button>
             {record.draft_version && (
-              <Button size="small" icon={<EyeOutlined />} onClick={() => router.push(`/pages/${record.id}/edit`)}>
+              <Button
+                size="small"
+                icon={<EyeOutlined />}
+                onClick={() => router.push(`/pages/${record.id}/edit`)}
+              >
                 预览草稿
               </Button>
             )}
             {record.published_version && (
-              <Button size="small" icon={<EyeOutlined />} href={getPreviewUrl(record.id)} target="_blank">
+              <Button
+                size="small"
+                icon={<EyeOutlined />}
+                href={getPreviewUrl(record.id)}
+                target="_blank"
+              >
                 预览线上页
               </Button>
             )}
             {record.draft_version && (
-              <Button size="small" type={status === "published" ? "default" : "primary"} onClick={() => publishDraft(record)}>
+              <Button
+                size="small"
+                type={status === "published" ? "default" : "primary"}
+                onClick={() => publishDraft(record)}
+              >
                 {status === "has_unpublished_draft" ? "发布草稿" : "发布"}
               </Button>
             )}
-            <Button size="small" icon={<UnorderedListOutlined />} onClick={() => router.push(`/pages/${record.id}`)}>
+            <Button
+              size="small"
+              icon={<UnorderedListOutlined />}
+              onClick={() => router.push(`/pages/${record.id}`)}
+            >
               版本记录
             </Button>
           </Space>
@@ -372,13 +449,25 @@ export default function PagesPage() {
         width={720}
       >
         <Form form={form} layout="vertical" onFinish={handleCreate}>
-          <Form.Item name="name" label="页面名称" rules={[{ required: true, message: "请输入页面名称" }]}>
+          <Form.Item
+            name="name"
+            label="页面名称"
+            rules={[{ required: true, message: "请输入页面名称" }]}
+          >
             <Input placeholder="例如 五常稻花香扫码信任页" />
           </Form.Item>
-          <Form.Item name="template_type" label="页面类型" rules={[{ required: true, message: "请选择页面类型" }]}>
+          <Form.Item
+            name="template_type"
+            label="页面类型"
+            rules={[{ required: true, message: "请选择页面类型" }]}
+          >
             <Select options={TYPE_OPTIONS} />
           </Form.Item>
-          <Form.Item name="product_id" label="关联产品" extra="关联后，消费者扫码该产品的码时可自动命中此页面。">
+          <Form.Item
+            name="product_id"
+            label="关联产品"
+            extra="关联后，消费者扫码该产品的码时可自动命中此页面。"
+          >
             <Select
               allowClear
               showSearch
@@ -387,7 +476,11 @@ export default function PagesPage() {
               options={productOptions}
             />
           </Form.Item>
-          <Form.Item name="start_mode" label="起始内容" rules={[{ required: true }]}>
+          <Form.Item
+            name="start_mode"
+            label="起始内容"
+            rules={[{ required: true }]}
+          >
             <Radio.Group>
               <Radio.Button value="blank">从空白页开始</Radio.Button>
               <Radio.Button value="template">从行业模板开始</Radio.Button>
@@ -401,11 +494,19 @@ export default function PagesPage() {
             >
               <Radio.Group className="grid w-full grid-cols-1 gap-3">
                 {industryTemplates.map((tpl, index) => (
-                  <Radio key={`${tpl.name}-${index}`} value={index} onChange={() => handleTemplatePick(index)}>
+                  <Radio
+                    key={`${tpl.name}-${index}`}
+                    value={index}
+                    onChange={() => handleTemplatePick(index)}
+                  >
                     <div className="pl-1">
                       <div className="font-medium">{tpl.name}</div>
-                      <div className="text-xs text-slate-400">
-                        {TYPE_LABELS[tpl.template_type] || tpl.template_type} · {tpl.description}
+                      <div
+                        className="text-xs"
+                        style={{ color: "var(--ymt-color-text-tertiary)" }}
+                      >
+                        {TYPE_LABELS[tpl.template_type] || tpl.template_type} ·{" "}
+                        {tpl.description}
                       </div>
                     </div>
                   </Radio>

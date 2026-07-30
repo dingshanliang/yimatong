@@ -13,9 +13,8 @@ type RiskNotification = Record<string, unknown> & {
 };
 
 export function NotificationsTab() {
-  const { items, total, page, loading, setPage, mutate } = useCrud<RiskNotification>(
-    "/risk-notifications",
-  );
+  const { items, total, page, loading, setPage, mutate } =
+    useCrud<RiskNotification>("/risk-notifications");
 
   const markRead = async (id: string) => {
     await api.post(`/risk-notifications/${id}/read`);
@@ -54,20 +53,34 @@ export function NotificationsTab() {
         renderItem={(item) => (
           <Card
             size="small"
-            className={`mb-2 ${!item.read ? "bg-blue-50 border-blue-200" : ""}`}
+            className="mb-2"
             onClick={() => !item.read && markRead(item.id)}
-            style={{ cursor: item.read ? "default" : "pointer" }}
+            style={{
+              cursor: item.read ? "default" : "pointer",
+              ...(item.read
+                ? {}
+                : {
+                    background: "var(--ymt-color-feedback-info-bg)",
+                    borderColor: "var(--ymt-color-feedback-info)",
+                  }),
+            }}
           >
             <div className="flex items-start justify-between">
               <div>
                 <div className="flex items-center gap-2 mb-1">
-                  <Tag color={item.notification_type === "risk_block" ? "red" : "orange"}>
+                  <Tag
+                    color={
+                      item.notification_type === "risk_block" ? "red" : "orange"
+                    }
+                  >
                     {item.notification_type === "risk_block" ? "阻断" : "预警"}
                   </Tag>
                   <span className="font-medium">{item.title}</span>
                   {!item.read && <Badge status="processing" />}
                 </div>
-                <p className="text-sm text-text-muted whitespace-pre-line">{item.detail}</p>
+                <p className="text-sm text-text-muted whitespace-pre-line">
+                  {item.detail}
+                </p>
               </div>
             </div>
           </Card>
