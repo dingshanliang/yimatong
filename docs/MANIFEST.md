@@ -32,19 +32,19 @@ accuracy: high
 
 ## 02_tech — 技术文档
 
-| 文档                           | 状态        | 最后验证   | 准确度   | 备注                                               |
-| ------------------------------ | ----------- | ---------- | -------- | -------------------------------------------------- |
-| API_DRAFT.md                   | 🟢 active   | 2026-06-03 | ⬆ high   | **已全面重写**，覆盖 250+ 路由                     |
-| DATA_MODEL.md                  | 🟢 active   | 2026-06-03 | ⬆ high   | **已全面重写**，覆盖 69 个模型                     |
-| ARCHITECTURE.md                | 🟢 active   | 2026-06-03 | ⬆ high   | **已更新**，补充平台管理、代理授权等模块           |
-| TASKS.md                       | 🔴 archived | 2026-06-03 | ⬇ low    | **已归档**，阶段一/二任务已完成                    |
-| EPIC-23_IMPLEMENTATION_PLAN.md | 🟢 active   | 2026-06-03 | ⬆ high   | 现金红包 Epic 实施计划                             |
-| EVENT_TRACKING.md              | 🟢 active   | 2026-06-03 | ⬆ high   | 事件埋点设计                                       |
-| INTEGRATION_PLAYBOOK.md        | 🟢 active   | 2026-06-03 | ⬆ high   | 集成手册                                           |
-| PAGE_LIST.md                   | 🟡 stale    | 2026-06-03 | ➡ medium | 页面列表待与前端对齐                               |
-| PERMISSION_MATRIX.md           | 🟢 active   | 2026-06-03 | ⬆ high   | 权限矩阵                                           |
-| SECURITY_COMPLIANCE.md         | 🟢 active   | 2026-06-03 | ⬆ high   | 安全合规                                           |
-| design-system/                 | 🟢 active   | 2026-07-30 | ⬆ high   | **新增**，设计体系规范（tokens/组件/H5 槽位/a11y） |
+| 文档                           | 状态        | 最后验证   | 准确度   | 备注                                                   |
+| ------------------------------ | ----------- | ---------- | -------- | ------------------------------------------------------ |
+| API_DRAFT.md                   | 🟢 active   | 2026-06-03 | ⬆ high   | **已全面重写**，覆盖 250+ 路由                         |
+| DATA_MODEL.md                  | 🟢 active   | 2026-06-03 | ⬆ high   | **已全面重写**，覆盖 69 个模型                         |
+| ARCHITECTURE.md                | 🟢 active   | 2026-06-03 | ⬆ high   | **已更新**，补充平台管理、代理授权等模块               |
+| TASKS.md                       | 🔴 archived | 2026-06-03 | ⬇ low    | **已归档**，阶段一/二任务已完成                        |
+| EPIC-23_IMPLEMENTATION_PLAN.md | 🟢 active   | 2026-06-03 | ⬆ high   | 现金红包 Epic 实施计划                                 |
+| EVENT_TRACKING.md              | 🟢 active   | 2026-06-03 | ⬆ high   | 事件埋点设计                                           |
+| INTEGRATION_PLAYBOOK.md        | 🟢 active   | 2026-06-03 | ⬆ high   | 集成手册                                               |
+| PAGE_LIST.md                   | 🟡 stale    | 2026-06-03 | ➡ medium | 页面列表待与前端对齐                                   |
+| PERMISSION_MATRIX.md           | 🟢 active   | 2026-06-03 | ⬆ high   | 权限矩阵                                               |
+| SECURITY_COMPLIANCE.md         | 🟢 active   | 2026-06-03 | ⬆ high   | 安全合规                                               |
+| design-system/                 | 🟢 active   | 2026-07-30 | ⬆ high   | 设计体系规范（tokens/组件/H5 槽位/a11y/迁移规划/治理） |
 
 ## 03_delivery — 交付文档
 

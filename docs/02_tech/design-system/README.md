@@ -31,12 +31,14 @@ accuracy: high
 
 ## 文档目录
 
-| 文档                                 | 内容                                                        |
-| ------------------------------------ | ----------------------------------------------------------- |
-| [tokens.md](tokens.md)               | 三层 token 结构、命名规范、语义集、度量刻度、演进策略       |
-| [components.md](components.md)       | Admin/Platform 页面骨架、组件选型硬规则、反馈分级、边角状态 |
-| [h5-branding.md](h5-branding.md)     | H5 租户定制五槽位、主色校验、三层回退、CSS 变量注入         |
-| [accessibility.md](accessibility.md) | WCAG AA 基线、四项交互基线、走查清单                        |
+| 文档                                   | 内容                                                        |
+| -------------------------------------- | ----------------------------------------------------------- |
+| [tokens.md](tokens.md)                 | 三层 token 结构、命名规范、语义集、度量刻度、演进策略       |
+| [components.md](components.md)         | Admin/Platform 页面骨架、组件选型硬规则、反馈分级、边角状态 |
+| [h5-branding.md](h5-branding.md)       | H5 租户定制五槽位、主色校验、三层回退、CSS 变量注入         |
+| [accessibility.md](accessibility.md)   | WCAG AA 基线、四项交互基线、走查清单                        |
+| [migration-plan.md](migration-plan.md) | 旧页面迁移四批划分、名单、分层验收标准                      |
+| [governance.md](governance.md)         | 防漂移治理：CI 门禁（baseline 收敛）+ 人工走查工作流        |
 
 ## 演进规则
 
