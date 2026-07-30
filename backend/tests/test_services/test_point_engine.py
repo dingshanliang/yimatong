@@ -31,9 +31,7 @@ async def test_award_points_increments_balance():
         assert txn.balance_after == 100
         assert txn.txn_type == PointTransactionType.earning
 
-        consumer = (await db.execute(
-            select(ConsumerProfile).where(ConsumerProfile.id == cid)
-        )).scalar_one()
+        consumer = (await db.execute(select(ConsumerProfile).where(ConsumerProfile.id == cid))).scalar_one()
         assert consumer.total_points == 100
 
 
@@ -103,9 +101,7 @@ async def test_award_accumulates():
         await award_points(db, tid, cid, 50, "first")
         await award_points(db, tid, cid, 30, "second")
 
-        consumer = (await db.execute(
-            select(ConsumerProfile).where(ConsumerProfile.id == cid)
-        )).scalar_one()
+        consumer = (await db.execute(select(ConsumerProfile).where(ConsumerProfile.id == cid))).scalar_one()
         assert consumer.total_points == 80
 
 
@@ -138,11 +134,19 @@ async def test_exchange_product_deducts_stock_and_points():
         tid = uuid.uuid4()
         cid = uuid.uuid4()
         db.add(ConsumerProfile(id=cid, tenant_id=tid, total_points=200))
-        db.add(PointProduct(
-            id=uuid.uuid4(), tenant_id=tid, name="测试商品",
-            points_cost=50, stock=5, total_claimed=0, enabled=True,
-            per_consumer_limit=10, sort_order=0,
-        ))
+        db.add(
+            PointProduct(
+                id=uuid.uuid4(),
+                tenant_id=tid,
+                name="测试商品",
+                points_cost=50,
+                stock=5,
+                total_claimed=0,
+                enabled=True,
+                per_consumer_limit=10,
+                sort_order=0,
+            )
+        )
         await db.flush()
 
         product = (await db.execute(select(PointProduct))).scalar_one()
@@ -155,9 +159,9 @@ async def test_exchange_product_deducts_stock_and_points():
         assert product.stock == 4
         assert product.total_claimed == 1
 
-        redemptions = (await db.execute(
-            select(PointRedemption).where(PointRedemption.consumer_id == cid)
-        )).scalars().all()
+        redemptions = (
+            (await db.execute(select(PointRedemption).where(PointRedemption.consumer_id == cid))).scalars().all()
+        )
         assert len(redemptions) == 1
 
 
@@ -168,11 +172,19 @@ async def test_exchange_out_of_stock_blocked():
         tid = uuid.uuid4()
         cid = uuid.uuid4()
         db.add(ConsumerProfile(id=cid, tenant_id=tid, total_points=500))
-        db.add(PointProduct(
-            id=uuid.uuid4(), tenant_id=tid, name="无库存",
-            points_cost=10, stock=0, total_claimed=0, enabled=True,
-            per_consumer_limit=10, sort_order=0,
-        ))
+        db.add(
+            PointProduct(
+                id=uuid.uuid4(),
+                tenant_id=tid,
+                name="无库存",
+                points_cost=10,
+                stock=0,
+                total_claimed=0,
+                enabled=True,
+                per_consumer_limit=10,
+                sort_order=0,
+            )
+        )
         await db.flush()
 
         product = (await db.execute(select(PointProduct))).scalar_one()
@@ -187,11 +199,19 @@ async def test_exchange_insufficient_points_blocked():
         tid = uuid.uuid4()
         cid = uuid.uuid4()
         db.add(ConsumerProfile(id=cid, tenant_id=tid, total_points=5))
-        db.add(PointProduct(
-            id=uuid.uuid4(), tenant_id=tid, name="贵商品",
-            points_cost=100, stock=10, total_claimed=0, enabled=True,
-            per_consumer_limit=10, sort_order=0,
-        ))
+        db.add(
+            PointProduct(
+                id=uuid.uuid4(),
+                tenant_id=tid,
+                name="贵商品",
+                points_cost=100,
+                stock=10,
+                total_claimed=0,
+                enabled=True,
+                per_consumer_limit=10,
+                sort_order=0,
+            )
+        )
         await db.flush()
 
         product = (await db.execute(select(PointProduct))).scalar_one()
@@ -206,11 +226,19 @@ async def test_exchange_per_consumer_limit():
         tid = uuid.uuid4()
         cid = uuid.uuid4()
         db.add(ConsumerProfile(id=cid, tenant_id=tid, total_points=500))
-        db.add(PointProduct(
-            id=uuid.uuid4(), tenant_id=tid, name="限兑商品",
-            points_cost=10, stock=10, total_claimed=0, enabled=True,
-            per_consumer_limit=1, sort_order=0,
-        ))
+        db.add(
+            PointProduct(
+                id=uuid.uuid4(),
+                tenant_id=tid,
+                name="限兑商品",
+                points_cost=10,
+                stock=10,
+                total_claimed=0,
+                enabled=True,
+                per_consumer_limit=1,
+                sort_order=0,
+            )
+        )
         await db.flush()
 
         product = (await db.execute(select(PointProduct))).scalar_one()

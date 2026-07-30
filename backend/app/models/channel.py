@@ -176,9 +176,7 @@ class DiversionClue(Base):
     # investigation_status：open / confirmed_diversion / false_positive /
     #   normal_transfer / pending_evidence
     # assigned_to：负责人 account_id
-    investigation_status: Mapped[str] = mapped_column(
-        String(30), nullable=False, default="open"
-    )
+    investigation_status: Mapped[str] = mapped_column(String(30), nullable=False, default="open")
     assigned_to: Mapped[uuid.UUID | None] = mapped_column(nullable=True, index=True)
     resolved: Mapped[bool] = mapped_column(default=False, nullable=False)
     resolution_action: Mapped[str | None] = mapped_column(String(50), nullable=True)

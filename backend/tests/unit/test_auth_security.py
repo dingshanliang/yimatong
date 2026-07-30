@@ -2,14 +2,15 @@
 
 import os
 import uuid
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
 
 
 def test_config_rejects_empty_secret_key():
     """空 secret_key 应在启动时拒绝"""
     from pydantic import ValidationError
+
     from app.core.config import Settings
 
     original = os.environ.get("SECRET_KEY")
@@ -68,6 +69,7 @@ async def test_load_permissions_returns_empty_on_failure():
         permissions = await middleware._load_permissions("some-id", "admin")
 
     from app.utils.auth_rbac import get_permissions_for_role
+
     assert permissions == get_permissions_for_role("admin")
 
 
@@ -92,6 +94,7 @@ async def test_load_permissions_returns_role_defaults_for_no_account():
         permissions = await middleware._load_permissions("nonexistent-id", "admin")
 
     from app.utils.auth_rbac import get_permissions_for_role
+
     assert permissions == get_permissions_for_role("admin")
 
 

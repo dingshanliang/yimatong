@@ -1,4 +1,5 @@
 """集成同步记录模型"""
+
 import uuid
 from datetime import datetime
 

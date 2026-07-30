@@ -21,17 +21,17 @@ from app.core.database import get_db
 from app.main import app
 from app.models.analytics import DailyScanStats
 from app.models.campaign import Benefit, BenefitClaim, Campaign, CampaignStatus
-from app.models.code import CodeBatch, CodeItem, CodeItemStatus
+from app.models.code import CodeItem
 from app.models.scan import ScanEvent
 from app.utils.security import create_access_token
 from tests.conftest import TestSessionLocal
 
+
 def _platform_admin_headers() -> dict:
     from app.utils.security import create_access_token
+
     token = create_access_token("platform", "platform-admin", "platform_admin")
     return {"Authorization": f"Bearer {token}"}
-
-
 
 
 @pytest.fixture
@@ -181,9 +181,7 @@ async def full_setup(client: AsyncClient, db_session: AsyncSession):
     from sqlalchemy import update as db_update
 
     await db_session.execute(
-        db_update(Campaign)
-        .where(Campaign.id == uuid.UUID(campaign.json()["id"]))
-        .values(status=CampaignStatus.ACTIVE)
+        db_update(Campaign).where(Campaign.id == uuid.UUID(campaign.json()["id"])).values(status=CampaignStatus.ACTIVE)
     )
     await db_session.commit()
 
@@ -312,9 +310,7 @@ class TestScanEventRecording:
         public_id = full_setup["public_ids"][0]
         await client.get(f"/c/{public_id}")
 
-        result = await db_session.execute(
-            select(ScanEvent).where(ScanEvent.public_id == public_id)
-        )
+        result = await db_session.execute(select(ScanEvent).where(ScanEvent.public_id == public_id))
         events = result.scalars().all()
         assert len(events) >= 1, "扫码后应有事件记录"
 
@@ -353,9 +349,7 @@ class TestScanEventRecording:
         public_id = full_setup["public_ids"][0]
         await client.get(f"/c/{public_id}")
 
-        result = await db_session.execute(
-            select(ScanEvent).where(ScanEvent.public_id == public_id)
-        )
+        result = await db_session.execute(select(ScanEvent).where(ScanEvent.public_id == public_id))
         event = result.scalars().first()
         assert event is not None
         assert str(event.tenant_id) == full_setup["tenant_id"]
@@ -369,9 +363,7 @@ class TestScanEventRecording:
             headers={"User-Agent": "MicroMessenger/8.0.38(Android;12)"},
         )
 
-        result = await db_session.execute(
-            select(ScanEvent).where(ScanEvent.public_id == public_id)
-        )
+        result = await db_session.execute(select(ScanEvent).where(ScanEvent.public_id == public_id))
         event = result.scalars().first()
         assert event is not None
         assert event.environment == "wechat", f"微信 UA 应解析为 wechat，实际为 {event.environment}"
@@ -447,7 +439,6 @@ class TestAnalyticsDataFlow:
     async def test_scan_environment_stats(self, client: AsyncClient, full_setup, db_session: AsyncSession):
         """dashboard 应返回环境分布统计"""
         public_ids = full_setup["public_ids"]
-        headers = full_setup["headers"]
 
         # 模拟微信扫码
         await client.get(f"/c/{public_ids[0]}", headers={"User-Agent": "MicroMessenger/8.0.38"})
@@ -533,9 +524,7 @@ class TestBenefitClaimClosedLoop:
         )
 
         # 验证数据库记录
-        result = await db_session.execute(
-            select(BenefitClaim).where(BenefitClaim.benefit_id == uuid.UUID(benefit_id))
-        )
+        result = await db_session.execute(select(BenefitClaim).where(BenefitClaim.benefit_id == uuid.UUID(benefit_id)))
         claims = result.scalars().all()
         assert len(claims) >= 1, "领取后应有领取记录"
         assert claims[-1].idempotency_key is not None, "领取记录应有幂等键"
@@ -547,9 +536,7 @@ class TestBenefitClaimClosedLoop:
         benefit_id = full_setup["benefit_id"]
 
         # 查看当前库存
-        before = await db_session.execute(
-            select(Benefit).where(Benefit.id == uuid.UUID(benefit_id))
-        )
+        before = await db_session.execute(select(Benefit).where(Benefit.id == uuid.UUID(benefit_id)))
         stock_before = before.scalar_one().stock_used
 
         # 扫码 + 领取
@@ -562,9 +549,7 @@ class TestBenefitClaimClosedLoop:
 
         # 验证库存减少
         await db_session.reset()
-        after = await db_session.execute(
-            select(Benefit).where(Benefit.id == uuid.UUID(benefit_id))
-        )
+        after = await db_session.execute(select(Benefit).where(Benefit.id == uuid.UUID(benefit_id)))
         stock_after = after.scalar_one().stock_used
         assert stock_after == stock_before + 1, f"库存应从 {stock_before} 减到 {stock_before + 1}，实际 {stock_after}"
 
@@ -609,9 +594,7 @@ class TestCodeStateTransitions:
 
         # 直接在数据库中将码状态改为 revoked
         await db_session.execute(
-            CodeItem.__table__.update()
-            .where(CodeItem.__table__.c.public_id == public_id)
-            .values(status="revoked")
+            CodeItem.__table__.update().where(CodeItem.__table__.c.public_id == public_id).values(status="revoked")
         )
         await db_session.commit()
 
@@ -634,9 +617,7 @@ class TestCodeStateTransitions:
 
         # 冻结码
         await db_session.execute(
-            CodeItem.__table__.update()
-            .where(CodeItem.__table__.c.public_id == public_id)
-            .values(status="frozen")
+            CodeItem.__table__.update().where(CodeItem.__table__.c.public_id == public_id).values(status="frozen")
         )
         await db_session.commit()
 
@@ -675,7 +656,9 @@ class TestCodeStateTransitions:
         resp = await client.get(f"/c/{public_id}", headers={"Accept": "application/json"})
         assert resp.status_code == 200
         data = resp.json()
-        assert data["code_data"]["status"] == "not_active", f"未激活码应返回 not_active，实际 {data['code_data']['status']}"
+        assert data["code_data"]["status"] == "not_active", (
+            f"未激活码应返回 not_active，实际 {data['code_data']['status']}"
+        )
 
     @pytest.mark.anyio
     async def test_invalid_public_id_404(self, client: AsyncClient):

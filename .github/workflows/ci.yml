@@ -18,6 +18,7 @@ jobs:
   # ── Backend: lint + unit tests ──────────────────────────────
   backend:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     defaults:
       run:
         working-directory: backend
@@ -42,6 +43,7 @@ jobs:
   # ── Frontend: typecheck + lint + build ──────────────────────
   frontend:
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     defaults:
       run:
         working-directory: frontend
@@ -62,15 +64,16 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Typecheck
-        run: pnpm --filter @yimatong/admin exec tsc --noEmit
+      - name: Workspace checks
+        run: pnpm check
 
-      - name: Build admin
-        run: pnpm build:admin
-        env:
-          NEXT_PUBLIC_API_URL: http://localhost:8000
+      - name: App lint
+        run: pnpm lint
 
-      - name: Build h5
-        run: pnpm build:h5
+      - name: Admin tests
+        run: pnpm test:admin
+
+      - name: Build workspace
+        run: pnpm build
         env:
           NEXT_PUBLIC_API_URL: http://localhost:8000

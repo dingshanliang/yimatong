@@ -84,9 +84,7 @@ async def refresh_tenant_health(db: AsyncSession, tenant_id: str) -> TenantHealt
     from app.models.tenant import Account
 
     last_login = (
-        await db.execute(
-            select(func.max(Account.last_login_at)).where(Account.tenant_id == tenant_id)
-        )
+        await db.execute(select(func.max(Account.last_login_at)).where(Account.tenant_id == tenant_id))
     ).scalar()
 
     if last_login:
@@ -115,11 +113,11 @@ async def refresh_tenant_health(db: AsyncSession, tenant_id: str) -> TenantHealt
 
     # Find last scan time
     last_scan_date = (
-        await db.execute(
-            select(func.max(DailyScanStats.date)).where(DailyScanStats.tenant_id == tenant_id)
-        )
+        await db.execute(select(func.max(DailyScanStats.date)).where(DailyScanStats.tenant_id == tenant_id))
     ).scalar()
-    last_scan_at = datetime(last_scan_date.year, last_scan_date.month, last_scan_date.day, tzinfo=UTC) if last_scan_date else None
+    last_scan_at = (
+        datetime(last_scan_date.year, last_scan_date.month, last_scan_date.day, tzinfo=UTC) if last_scan_date else None
+    )
 
     health_status = _compute_health_status(score)
 
@@ -157,9 +155,7 @@ async def refresh_tenant_health(db: AsyncSession, tenant_id: str) -> TenantHealt
 
 async def refresh_all_health_metrics(db: AsyncSession) -> int:
     """Refresh health metrics for all active tenants. Returns count of tenants processed."""
-    result = await db.execute(
-        select(Tenant.id).where(Tenant.status == TenantStatus.active)
-    )
+    result = await db.execute(select(Tenant.id).where(Tenant.status == TenantStatus.active))
     tenant_ids = [str(row[0]) for row in result.all()]
 
     for tid in tenant_ids:

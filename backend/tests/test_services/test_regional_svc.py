@@ -106,7 +106,15 @@ class TestDashboardStats:
             "by_member": [],
             "by_product": [],
         }
-        required_keys = ["org_id", "member_count", "product_count", "total_scans", "total_claims", "by_member", "by_product"]
+        required_keys = [
+            "org_id",
+            "member_count",
+            "product_count",
+            "total_scans",
+            "total_claims",
+            "by_member",
+            "by_product",
+        ]
         for key in required_keys:
             assert key in dashboard
 
@@ -161,20 +169,24 @@ class TestPublishHistory:
         config: dict = {}
         if "publish_history" not in config:
             config["publish_history"] = []
-        config["publish_history"].append({
-            "published_at": datetime.now(UTC).isoformat(),
-            "member_count": 5,
-            "delivered_count": 4,
-        })
+        config["publish_history"].append(
+            {
+                "published_at": datetime.now(UTC).isoformat(),
+                "member_count": 5,
+                "delivered_count": 4,
+            }
+        )
         assert len(config["publish_history"]) == 1
         assert config["publish_history"][0]["member_count"] == 5
 
     def test_multiple_publishes(self):
         config: dict = {"publish_history": []}
         for i in range(3):
-            config["publish_history"].append({
-                "published_at": datetime.now(UTC).isoformat(),
-                "member_count": i + 1,
-                "delivered_count": i,
-            })
+            config["publish_history"].append(
+                {
+                    "published_at": datetime.now(UTC).isoformat(),
+                    "member_count": i + 1,
+                    "delivered_count": i,
+                }
+            )
         assert len(config["publish_history"]) == 3

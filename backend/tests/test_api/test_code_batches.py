@@ -11,12 +11,12 @@ from app.main import app
 from app.utils.security import create_access_token
 from tests.conftest import TestSessionLocal
 
+
 def _platform_admin_headers() -> dict:
     from app.utils.security import create_access_token
+
     token = create_access_token("platform", "platform-admin", "platform_admin")
     return {"Authorization": f"Bearer {token}"}
-
-
 
 
 @pytest.fixture
@@ -182,7 +182,9 @@ class TestCodeBatchCreate:
         assert data["generation_mode"] == "batch_level"
 
     @pytest.mark.anyio
-    async def test_rejects_production_batch_from_another_sku(self, client: AsyncClient, tenant_with_auth, sku_with_auth):
+    async def test_rejects_production_batch_from_another_sku(
+        self, client: AsyncClient, tenant_with_auth, sku_with_auth
+    ):
         _, headers = tenant_with_auth
         product_id, sku_id, _ = sku_with_auth
         other_sku_resp = await client.post(

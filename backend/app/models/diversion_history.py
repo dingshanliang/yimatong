@@ -7,7 +7,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, String, Text, func
+from sqlalchemy import DateTime, ForeignKey, Index, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column
 from uuid6 import uuid7
 
@@ -18,20 +18,19 @@ class DiversionInvestigationHistory(Base):
     __tablename__ = "diversion_investigation_history"
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid7)
-    tenant_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
-    clue_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("diversion_clues.id"), nullable=False, index=True
-    )
+    tenant_id: Mapped[uuid.UUID] = mapped_column(nullable=False)
+    clue_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("diversion_clues.id"), nullable=False)
     # 前后状态（AC3 前后值）
     from_status: Mapped[str | None] = mapped_column(String(30), nullable=True)
     to_status: Mapped[str] = mapped_column(String(30), nullable=False)
     # 操作人 + 时间（AC3）
     changed_by: Mapped[str | None] = mapped_column(String(100), nullable=True)
-    changed_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now(), nullable=False
-    )
+    changed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     # 变更原因（AC3）
     reason: Mapped[str | None] = mapped_column(Text, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now(), nullable=False
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    __table_args__ = (
+        Index("ix_diversion_history_tenant_id", "tenant_id"),
+        Index("ix_diversion_history_clue_id", "clue_id"),
     )

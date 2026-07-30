@@ -12,8 +12,8 @@ from app.api.v1.agency_auth import router as agency_auth_router
 from app.api.v1.ai import ai_router
 from app.api.v1.analytics import analytics_router
 from app.api.v1.analytics_dashboard import dashboard_router
-from app.api.v1.auth import router as auth_router
 from app.api.v1.audit_logs import audit_log_router
+from app.api.v1.auth import router as auth_router
 from app.api.v1.benefit_claims import benefit_claim_router
 from app.api.v1.benefits import benefit_router
 from app.api.v1.campaigns import campaign_router
@@ -29,6 +29,7 @@ from app.api.v1.i18n import i18n_router
 from app.api.v1.imports import import_router
 from app.api.v1.industry_templates import template_router
 from app.api.v1.integration import integration_router
+from app.api.v1.invite_codes import router as invite_codes_router
 from app.api.v1.members import member_router
 from app.api.v1.open_api import open_api_router
 from app.api.v1.ops import ops_router
@@ -50,7 +51,6 @@ from app.api.v1.risk_rules import risk_rule_router
 from app.api.v1.roles import router as roles_router
 from app.api.v1.scan_events import scan_event_router
 from app.api.v1.tasks import task_router
-from app.api.v1.invite_codes import router as invite_codes_router
 from app.api.v1.tenants import router as tenants_router
 from app.api.v1.webhooks import webhook_router
 from app.api.v1.wechat_oauth import wechat_oauth_router

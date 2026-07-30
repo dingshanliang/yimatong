@@ -16,9 +16,9 @@ from tests.conftest import TestSessionLocal
 
 def _platform_admin_headers() -> dict:
     from app.utils.security import create_access_token
+
     token = create_access_token("platform", "platform-admin", "platform_admin")
     return {"Authorization": f"Bearer {token}"}
-
 
 
 RULES_JSON = {
@@ -106,7 +106,12 @@ class TestCampaignStateMachine:
         # 添加权益以满足激活条件
         await client.post(
             f"/api/v1/campaigns/{cid}/benefits",
-            json={"name": "测试权益", "benefit_type": "platform_coupon", "config_json": {"amount": 5}, "stock_total": 10},
+            json={
+                "name": "测试权益",
+                "benefit_type": "platform_coupon",
+                "config_json": {"amount": 5},
+                "stock_total": 10,
+            },
             headers=headers,
         )
 
@@ -135,7 +140,12 @@ class TestCampaignStateMachine:
 
         await client.post(
             f"/api/v1/campaigns/{cid}/benefits",
-            json={"name": "测试权益", "benefit_type": "platform_coupon", "config_json": {"amount": 5}, "stock_total": 10},
+            json={
+                "name": "测试权益",
+                "benefit_type": "platform_coupon",
+                "config_json": {"amount": 5},
+                "stock_total": 10,
+            },
             headers=headers,
         )
         await client.post(f"/api/v1/campaigns/{cid}/status", json={"status": "active"}, headers=headers)
@@ -165,7 +175,12 @@ class TestCampaignStateMachine:
 
         await client.post(
             f"/api/v1/campaigns/{cid}/benefits",
-            json={"name": "测试权益", "benefit_type": "platform_coupon", "config_json": {"amount": 5}, "stock_total": 10},
+            json={
+                "name": "测试权益",
+                "benefit_type": "platform_coupon",
+                "config_json": {"amount": 5},
+                "stock_total": 10,
+            },
             headers=headers,
         )
         await client.post(f"/api/v1/campaigns/{cid}/status", json={"status": "active"}, headers=headers)
@@ -216,7 +231,12 @@ class TestCampaignStateMachine:
 
         await client.post(
             f"/api/v1/campaigns/{cid}/benefits",
-            json={"name": "测试权益", "benefit_type": "platform_coupon", "config_json": {"amount": 5}, "stock_total": 10},
+            json={
+                "name": "测试权益",
+                "benefit_type": "platform_coupon",
+                "config_json": {"amount": 5},
+                "stock_total": 10,
+            },
             headers=headers,
         )
         await client.post(f"/api/v1/campaigns/{cid}/status", json={"status": "active"}, headers=headers)
@@ -251,7 +271,12 @@ class TestClaimSafety:
 
         benefit_resp = await client.post(
             f"/api/v1/campaigns/{cid}/benefits",
-            json={"name": "零库存权益", "benefit_type": "platform_coupon", "config_json": {"amount": 5}, "stock_total": 1},
+            json={
+                "name": "零库存权益",
+                "benefit_type": "platform_coupon",
+                "config_json": {"amount": 5},
+                "stock_total": 1,
+            },
             headers=headers,
         )
         bid = benefit_resp.json()["id"]
@@ -292,7 +317,12 @@ class TestClaimSafety:
 
         benefit_resp = await client.post(
             f"/api/v1/campaigns/{cid}/benefits",
-            json={"name": "幂等权益", "benefit_type": "platform_coupon", "config_json": {"amount": 5}, "stock_total": 10},
+            json={
+                "name": "幂等权益",
+                "benefit_type": "platform_coupon",
+                "config_json": {"amount": 5},
+                "stock_total": 10,
+            },
             headers=headers,
         )
         bid = benefit_resp.json()["id"]
@@ -409,7 +439,12 @@ class TestBenefitAttach:
         # 创建权益
         benefit_resp = await client.post(
             f"/api/v1/campaigns/{cid_a}/benefits",
-            json={"name": "可复用权益", "benefit_type": "external_link", "config_json": {"url": "https://example.com"}, "stock_total": 100},
+            json={
+                "name": "可复用权益",
+                "benefit_type": "external_link",
+                "config_json": {"url": "https://example.com"},
+                "stock_total": 100,
+            },
             headers=headers,
         )
         bid = benefit_resp.json()["id"]
@@ -440,7 +475,12 @@ class TestBenefitAttach:
 
         benefit_resp = await client.post(
             f"/api/v1/campaigns/{cid}/benefits",
-            json={"name": "待解绑权益", "benefit_type": "external_link", "config_json": {"url": "https://example.com"}, "stock_total": 50},
+            json={
+                "name": "待解绑权益",
+                "benefit_type": "external_link",
+                "config_json": {"url": "https://example.com"},
+                "stock_total": 50,
+            },
             headers=headers,
         )
         bid = benefit_resp.json()["id"]
@@ -501,9 +541,7 @@ class TestH5ClaimTenantIsolation:
         bid = benefit_resp.json()["id"]
 
         # 手动将权益设为 inactive
-        await db_session.execute(
-            sa_update(Benefit).where(Benefit.id == uuid.UUID(bid)).values(status="inactive")
-        )
+        await db_session.execute(sa_update(Benefit).where(Benefit.id == uuid.UUID(bid)).values(status="inactive"))
         await db_session.commit()
 
         # 用正确的 ip_hash 创建 scan_token
@@ -563,9 +601,7 @@ class TestExpiredCampaignClaim:
         )
         # 手动设 status 为 active（绕过激活检查）
         await db_session.execute(
-            sa_update(Campaign)
-            .where(Campaign.id == uuid.UUID(campaign["id"]))
-            .values(status=CampaignStatus.ACTIVE)
+            sa_update(Campaign).where(Campaign.id == uuid.UUID(campaign["id"])).values(status=CampaignStatus.ACTIVE)
         )
         await db_session.commit()
 
@@ -762,7 +798,6 @@ class TestConcurrentClaims:
     @pytest.mark.asyncio
     async def test_concurrent_per_person_limit_enforcement(self, db_session):
         """5 个并发请求同一消费者领取 per_person_limit=1 的权益，应恰好 1 个成功"""
-        import asyncio
 
         from app.services.campaign import claim_benefit, create_benefit, create_campaign
 

@@ -207,9 +207,7 @@ def get_onboarding_progress_data(tenant: Tenant) -> dict:
     }
 
 
-async def complete_onboarding_step(
-    db: AsyncSession, tenant_id: uuid.UUID, step: str
-) -> Tenant | None:
+async def complete_onboarding_step(db: AsyncSession, tenant_id: uuid.UUID, step: str) -> Tenant | None:
     """Mark an onboarding step as completed for a tenant."""
     if step not in ONBOARDING_STEPS:
         raise ValueError(f"Invalid step: {step}")

@@ -5,7 +5,6 @@ from pydantic import ValidationError
 
 from app.schemas.page_dsl import (
     ModuleType,
-    PageDSLSchema,
     validate_page_dsl,
 )
 

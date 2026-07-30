@@ -243,8 +243,12 @@ async def create_export(
         download_name = "scan-events.xlsx"
 
         await log_export(
-            db, tenant_id, account_id, "scan_events_xlsx",
-            file_name=file_name, row_count=len(events),
+            db,
+            tenant_id,
+            account_id,
+            "scan_events_xlsx",
+            file_name=file_name,
+            row_count=len(events),
         )
         await db.commit()
 
@@ -267,18 +271,19 @@ async def create_export(
         stats = result.scalars().all()
 
         headers = ["日期", "扫码量", "独立用户", "首扫数", "重扫数"]
-        rows = [
-            [str(s.date), s.total_scans, s.uv, s.first_scans, s.rescans]
-            for s in stats
-        ]
+        rows = [[str(s.date), s.total_scans, s.uv, s.first_scans, s.rescans] for s in stats]
 
         xlsx_bytes = _build_xlsx(headers, rows, sheet_name="扫码统计")
         file_name = f"scan-stats-{tenant_id.hex[:8]}.xlsx"
         download_name = "scan-stats.xlsx"
 
         await log_export(
-            db, tenant_id, account_id, "scan_stats_xlsx",
-            file_name=file_name, row_count=len(stats),
+            db,
+            tenant_id,
+            account_id,
+            "scan_stats_xlsx",
+            file_name=file_name,
+            row_count=len(stats),
         )
         await db.commit()
 
@@ -302,8 +307,12 @@ async def create_export(
         download_name = "campaign-dashboard.xlsx"
 
         await log_export(
-            db, tenant_id, account_id, "campaign_dashboard_xlsx",
-            file_name=file_name, row_count=len(items),
+            db,
+            tenant_id,
+            account_id,
+            "campaign_dashboard_xlsx",
+            file_name=file_name,
+            row_count=len(items),
         )
         await db.commit()
 
@@ -321,18 +330,19 @@ async def create_export(
         alerts = result.scalars().all()
 
         headers = ["预警 ID", "预警类型", "码 ID", "详情", "已处理"]
-        rows = [
-            [str(a.id), a.alert_type, a.public_id, a.detail or "", "是" if a.resolved else "否"]
-            for a in alerts
-        ]
+        rows = [[str(a.id), a.alert_type, a.public_id, a.detail or "", "是" if a.resolved else "否"] for a in alerts]
 
         xlsx_bytes = _build_xlsx(headers, rows, sheet_name="风控看板")
         file_name = f"risk-dashboard-{tenant_id.hex[:8]}.xlsx"
         download_name = "risk-dashboard.xlsx"
 
         await log_export(
-            db, tenant_id, account_id, "risk_dashboard_xlsx",
-            file_name=file_name, row_count=len(alerts),
+            db,
+            tenant_id,
+            account_id,
+            "risk_dashboard_xlsx",
+            file_name=file_name,
+            row_count=len(alerts),
         )
         await db.commit()
 
@@ -360,8 +370,12 @@ async def create_export(
         download_name = "regional-dashboard.xlsx"
 
         await log_export(
-            db, tenant_id, account_id, "regional_dashboard_xlsx",
-            file_name=file_name, row_count=len(clues),
+            db,
+            tenant_id,
+            account_id,
+            "regional_dashboard_xlsx",
+            file_name=file_name,
+            row_count=len(clues),
         )
         await db.commit()
 

@@ -21,12 +21,12 @@ from app.main import app
 from app.utils.security import create_access_token
 from tests.conftest import TestSessionLocal
 
+
 def _platform_admin_headers() -> dict:
     from app.utils.security import create_access_token
+
     token = create_access_token("platform", "platform-admin", "platform_admin")
     return {"Authorization": f"Bearer {token}"}
-
-
 
 
 @pytest.fixture
@@ -215,16 +215,12 @@ class TestListCodeBatchesAPI:
         await client.post(f"/api/v1/code-batches/{batch_id}/activate", headers=headers)
 
         # 过滤 activated
-        filtered = await client.get(
-            "/api/v1/code-batches?status=activated", headers=headers
-        )
+        filtered = await client.get("/api/v1/code-batches?status=activated", headers=headers)
         assert filtered.status_code == 200
         assert filtered.json()["total"] == 1
 
         # 过滤 completed 应该为 0
-        completed = await client.get(
-            "/api/v1/code-batches?status=completed", headers=headers
-        )
+        completed = await client.get("/api/v1/code-batches?status=completed", headers=headers)
         assert completed.status_code == 200
         assert completed.json()["total"] == 0
 
@@ -248,9 +244,7 @@ class TestActivateCodeBatchAPI:
         )
         batch_id = resp.json()["id"]
 
-        activate_resp = await client.post(
-            f"/api/v1/code-batches/{batch_id}/activate", headers=headers
-        )
+        activate_resp = await client.post(f"/api/v1/code-batches/{batch_id}/activate", headers=headers)
         assert activate_resp.status_code == 200
         assert activate_resp.json()["activated"] == 5
 
@@ -282,9 +276,7 @@ class TestActivateCodeBatchAPI:
 
         await client.post(f"/api/v1/code-batches/{batch_id}/activate", headers=headers)
         # 再次激活应失败
-        dup_resp = await client.post(
-            f"/api/v1/code-batches/{batch_id}/activate", headers=headers
-        )
+        dup_resp = await client.post(f"/api/v1/code-batches/{batch_id}/activate", headers=headers)
         assert dup_resp.status_code == 409
 
 
@@ -307,16 +299,14 @@ class TestExportCodeBatchAPI:
         )
         batch_id = resp.json()["id"]
 
-        export_resp = await client.post(
-            f"/api/v1/code-batches/{batch_id}/export", headers=headers
-        )
+        export_resp = await client.post(f"/api/v1/code-batches/{batch_id}/export", headers=headers)
         assert export_resp.status_code == 200
         assert "text/csv" in export_resp.headers.get("content-type", "")
         assert "codes-" in export_resp.headers.get("content-disposition", "")
 
         csv_text = export_resp.text
         # CSV 头 + 3 行数据
-        lines = [l for l in csv_text.strip().split("\n") if l.strip()]
+        lines = [line for line in csv_text.strip().split("\n") if line.strip()]
         assert len(lines) == 4  # 1 header + 3 data rows
         assert "public_id" in lines[0]
 
@@ -352,9 +342,7 @@ class TestFreezeCodeBatchAPI:
         batch_id = resp.json()["id"]
         await client.post(f"/api/v1/code-batches/{batch_id}/activate", headers=headers)
 
-        freeze_resp = await client.post(
-            f"/api/v1/code-batches/{batch_id}/freeze", headers=headers
-        )
+        freeze_resp = await client.post(f"/api/v1/code-batches/{batch_id}/freeze", headers=headers)
         assert freeze_resp.status_code == 200
         assert freeze_resp.json()["frozen"] == 5
 
@@ -440,9 +428,7 @@ class TestCodeItemsAPI:
         )
         batch_id = resp.json()["id"]
 
-        items_resp = await client.get(
-            f"/api/v1/code-items?code_batch_id={batch_id}", headers=headers
-        )
+        items_resp = await client.get(f"/api/v1/code-items?code_batch_id={batch_id}", headers=headers)
         assert items_resp.status_code == 200
         data = items_resp.json()
         assert data["total"] == 5
@@ -558,32 +544,24 @@ class TestFullCodeLifecycleAPI:
         batch_id = create_resp.json()["id"]
 
         # 验证码项初始状态
-        items = await client.get(
-            f"/api/v1/code-items?code_batch_id={batch_id}", headers=headers
-        )
+        items = await client.get(f"/api/v1/code-items?code_batch_id={batch_id}", headers=headers)
         assert items.json()["total"] == 10
         for item in items.json()["items"]:
             assert item["status"] == "created"
 
         # 2. 激活
-        activate_resp = await client.post(
-            f"/api/v1/code-batches/{batch_id}/activate", headers=headers
-        )
+        activate_resp = await client.post(f"/api/v1/code-batches/{batch_id}/activate", headers=headers)
         assert activate_resp.status_code == 200
         assert activate_resp.json()["activated"] == 10
 
         # 3. 导出 CSV
-        export_resp = await client.post(
-            f"/api/v1/code-batches/{batch_id}/export", headers=headers
-        )
+        export_resp = await client.post(f"/api/v1/code-batches/{batch_id}/export", headers=headers)
         assert export_resp.status_code == 200
-        csv_lines = [l for l in export_resp.text.strip().split("\n") if l.strip()]
+        csv_lines = [line for line in export_resp.text.strip().split("\n") if line.strip()]
         assert len(csv_lines) == 11  # header + 10 rows
 
         # 4. 冻结
-        freeze_resp = await client.post(
-            f"/api/v1/code-batches/{batch_id}/freeze", headers=headers
-        )
+        freeze_resp = await client.post(f"/api/v1/code-batches/{batch_id}/freeze", headers=headers)
         assert freeze_resp.status_code == 200
         assert freeze_resp.json()["frozen"] == 10
 
@@ -595,8 +573,6 @@ class TestFullCodeLifecycleAPI:
         assert void_resp.json()["voided"] == 10
 
         # 验证所有码项最终状态
-        items = await client.get(
-            f"/api/v1/code-items?code_batch_id={batch_id}", headers=headers
-        )
+        items = await client.get(f"/api/v1/code-items?code_batch_id={batch_id}", headers=headers)
         for item in items.json()["items"]:
             assert item["status"] == "revoked"

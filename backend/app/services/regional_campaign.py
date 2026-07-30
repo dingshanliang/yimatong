@@ -35,9 +35,7 @@ async def create_unified_campaign(
     else:
         # 全部 active 成员
         members_result = await db.execute(
-            select(RegionalOrgMember).where(
-                RegionalOrgMember.org_id == org_id, RegionalOrgMember.status == "active"
-            )
+            select(RegionalOrgMember).where(RegionalOrgMember.org_id == org_id, RegionalOrgMember.status == "active")
         )
         target_member_ids = [m.id for m in members_result.scalars().all()]
 

@@ -101,9 +101,7 @@ async def refund_order(
     - 保留原始订单行（不删除），审计通过 status + refund_amount + updated_at 体现。
     """
     result = await db.execute(
-        select(ExternalOrder).where(
-            ExternalOrder.id == order_id, ExternalOrder.tenant_id == tenant_id
-        )
+        select(ExternalOrder).where(ExternalOrder.id == order_id, ExternalOrder.tenant_id == tenant_id)
     )
     order = result.scalar_one_or_none()
     if not order:
@@ -122,9 +120,7 @@ async def refund_order(
         order.status = "refunded"
 
     # 同步更新已存在的 GmvAttribution（如有）
-    attr_result = await db.execute(
-        select(GmvAttribution).where(GmvAttribution.external_order_id == order_id)
-    )
+    attr_result = await db.execute(select(GmvAttribution).where(GmvAttribution.external_order_id == order_id))
     for attr in attr_result.scalars():
         attr.amount = order.amount - order.refund_amount  # net amount
 
@@ -144,17 +140,21 @@ async def list_orders(
     if matched is not None:
         conditions.append(ExternalOrder.matched == matched)
 
-    total = (await db.execute(
-        select(func.count()).select_from(ExternalOrder).where(*conditions)
-    )).scalar() or 0
+    total = (await db.execute(select(func.count()).select_from(ExternalOrder).where(*conditions))).scalar() or 0
 
-    rows = (await db.execute(
-        select(ExternalOrder)
-        .where(*conditions)
-        .order_by(ExternalOrder.id.desc())
-        .offset((page - 1) * page_size)
-        .limit(page_size)
-    )).scalars().all()
+    rows = (
+        (
+            await db.execute(
+                select(ExternalOrder)
+                .where(*conditions)
+                .order_by(ExternalOrder.id.desc())
+                .offset((page - 1) * page_size)
+                .limit(page_size)
+            )
+        )
+        .scalars()
+        .all()
+    )
     return list(rows), total
 
 
@@ -166,25 +166,35 @@ async def batch_auto_attribution(
 ) -> dict:
     """批量自动归因：手机号匹配 + 时间窗口过滤"""
     # 1. 查找未匹配且有手机号的订单
-    unmatched = (await db.execute(
-        select(ExternalOrder).where(
-            ExternalOrder.tenant_id == tenant_id,
-            ExternalOrder.matched.is_(False),
-            ExternalOrder.phone_hash.isnot(None),
-        ).limit(limit)
-    )).scalars().all()
+    unmatched = (
+        (
+            await db.execute(
+                select(ExternalOrder)
+                .where(
+                    ExternalOrder.tenant_id == tenant_id,
+                    ExternalOrder.matched.is_(False),
+                    ExternalOrder.phone_hash.isnot(None),
+                )
+                .limit(limit)
+            )
+        )
+        .scalars()
+        .all()
+    )
 
     matched_count = 0
     results = []
 
     for order in unmatched:
         # 2. 通过 phone_hash 找到消费者
-        consumer = (await db.execute(
-            select(ConsumerProfile).where(
-                ConsumerProfile.tenant_id == tenant_id,
-                ConsumerProfile.phone_hash == order.phone_hash,
+        consumer = (
+            await db.execute(
+                select(ConsumerProfile).where(
+                    ConsumerProfile.tenant_id == tenant_id,
+                    ConsumerProfile.phone_hash == order.phone_hash,
+                )
             )
-        )).scalar_one_or_none()
+        ).scalar_one_or_none()
 
         if not consumer:
             continue
@@ -193,17 +203,15 @@ async def batch_auto_attribution(
         #    注意：ScanEvent 没有 consumer_id，需要通过码来关联
         #    找到消费者最近扫过的 public_id 列表（通过关联推断）
         #    实际路径：消费者的扫码行为 -> 找到对应的码 -> 关联到码批次/产品/活动
-        scan = await _find_latest_scan_for_consumer(
-            db, tenant_id, consumer.id, order, window_hours
-        )
+        scan = await _find_latest_scan_for_consumer(db, tenant_id, consumer.id, order, window_hours)
 
         if not scan:
             continue
 
         # 4. 找到码对应的活动
-        code_item = (await db.execute(
-            select(CodeItem).where(CodeItem.public_id == scan.public_id)
-        )).scalar_one_or_none()
+        code_item = (
+            await db.execute(select(CodeItem).where(CodeItem.public_id == scan.public_id))
+        ).scalar_one_or_none()
 
         campaign_id = await _find_campaign_for_code(db, tenant_id, code_item) if code_item else None
 
@@ -232,12 +240,14 @@ async def batch_auto_attribution(
         db.add(attr)
         order.matched = True
         matched_count += 1
-        results.append({
-            "order_id": str(order.id),
-            "public_id": scan.public_id,
-            "match_type": "phone",
-            "confidence": round(confidence, 2),
-        })
+        results.append(
+            {
+                "order_id": str(order.id),
+                "public_id": scan.public_id,
+                "match_type": "phone",
+                "confidence": round(confidence, 2),
+            }
+        )
 
     await db.flush()
     return {"matched": matched_count, "total_checked": len(unmatched), "details": results}
@@ -286,18 +296,13 @@ async def _find_latest_scan_for_consumer(
 
     # 如果有产品名，进一步验证
     if scan and order.product_name:
-        code = (await db.execute(
-            select(CodeItem).where(CodeItem.public_id == scan.public_id)
-        )).scalar_one_or_none()
+        code = (await db.execute(select(CodeItem).where(CodeItem.public_id == scan.public_id))).scalar_one_or_none()
         if code:
-            batch = (await db.execute(
-                select(CodeBatch).where(CodeBatch.id == code.code_batch_id)
-            )).scalar_one_or_none()
+            batch = (await db.execute(select(CodeBatch).where(CodeBatch.id == code.code_batch_id))).scalar_one_or_none()
             if batch:
                 from app.models.product import Product
-                product = (await db.execute(
-                    select(Product).where(Product.id == batch.product_id)
-                )).scalar_one_or_none()
+
+                product = (await db.execute(select(Product).where(Product.id == batch.product_id))).scalar_one_or_none()
                 if product and order.product_name and product.name != order.product_name:
                     return None
 
@@ -313,27 +318,28 @@ async def _find_campaign_for_code(
     if not code_item:
         return None
 
-    batch = (await db.execute(
-        select(CodeBatch).where(CodeBatch.id == code_item.code_batch_id)
-    )).scalar_one_or_none()
+    batch = (await db.execute(select(CodeBatch).where(CodeBatch.id == code_item.code_batch_id))).scalar_one_or_none()
     if not batch:
         return None
 
     # 通过产品的活动绑定查找
     from app.models.product import Product
-    product = (await db.execute(
-        select(Product).where(Product.id == batch.product_id)
-    )).scalar_one_or_none()
+
+    product = (await db.execute(select(Product).where(Product.id == batch.product_id))).scalar_one_or_none()
     if not product:
         return None
 
     # 找 active 的活动（简化：匹配产品类别或名称）
-    campaign = (await db.execute(
-        select(Campaign).where(
-            Campaign.tenant_id == tenant_id,
-            Campaign.status == "active",
-        ).limit(1)
-    )).scalar_one_or_none()
+    campaign = (
+        await db.execute(
+            select(Campaign)
+            .where(
+                Campaign.tenant_id == tenant_id,
+                Campaign.status == "active",
+            )
+            .limit(1)
+        )
+    ).scalar_one_or_none()
     return campaign.id if campaign else None
 
 
@@ -358,18 +364,18 @@ async def get_gmv_dashboard(
     if channel:
         order_conditions.append(ExternalOrder.channel == channel)
 
-    total_gmv = float((await db.execute(
-        select(func.coalesce(func.sum(GmvAttribution.amount), 0))
-        .where(*attr_conditions)
-    )).scalar() or 0)
+    total_gmv = float(
+        (await db.execute(select(func.coalesce(func.sum(GmvAttribution.amount), 0)).where(*attr_conditions))).scalar()
+        or 0
+    )
 
-    matched_orders = (await db.execute(
-        select(func.count()).select_from(GmvAttribution).where(*attr_conditions)
-    )).scalar() or 0
+    matched_orders = (
+        await db.execute(select(func.count()).select_from(GmvAttribution).where(*attr_conditions))
+    ).scalar() or 0
 
-    total_orders = (await db.execute(
-        select(func.count()).select_from(ExternalOrder).where(*order_conditions)
-    )).scalar() or 0
+    total_orders = (
+        await db.execute(select(func.count()).select_from(ExternalOrder).where(*order_conditions))
+    ).scalar() or 0
 
     attribution_rate = round(matched_orders / total_orders * 100, 1) if total_orders else 0
 
@@ -406,16 +412,18 @@ async def _get_daily_trend(
     if end_date:
         conditions.append(GmvAttribution.scan_time <= end_date)
 
-    rows = (await db.execute(
-        select(
-            func.date(GmvAttribution.scan_time).label("day"),
-            func.coalesce(func.sum(GmvAttribution.amount), 0).label("gmv"),
-            func.count().label("orders"),
+    rows = (
+        await db.execute(
+            select(
+                func.date(GmvAttribution.scan_time).label("day"),
+                func.coalesce(func.sum(GmvAttribution.amount), 0).label("gmv"),
+                func.count().label("orders"),
+            )
+            .where(*conditions)
+            .group_by("day")
+            .order_by("day")
         )
-        .where(*conditions)
-        .group_by("day")
-        .order_by("day")
-    )).all()
+    ).all()
 
     return [
         {
@@ -441,21 +449,20 @@ async def _get_channel_breakdown(
         conditions.append(GmvAttribution.scan_time <= end_date)
 
     # 通过 external_order 的 channel 关联
-    rows = (await db.execute(
-        select(
-            ExternalOrder.channel,
-            func.coalesce(func.sum(GmvAttribution.amount), 0).label("gmv"),
-            func.count().label("orders"),
+    rows = (
+        await db.execute(
+            select(
+                ExternalOrder.channel,
+                func.coalesce(func.sum(GmvAttribution.amount), 0).label("gmv"),
+                func.count().label("orders"),
+            )
+            .join(GmvAttribution, GmvAttribution.external_order_id == ExternalOrder.id)
+            .where(*conditions)
+            .group_by(ExternalOrder.channel)
         )
-        .join(GmvAttribution, GmvAttribution.external_order_id == ExternalOrder.id)
-        .where(*conditions)
-        .group_by(ExternalOrder.channel)
-    )).all()
+    ).all()
 
-    return [
-        {"channel": r.channel or "unknown", "gmv": float(r.gmv), "orders": r.orders}
-        for r in rows
-    ]
+    return [{"channel": r.channel or "unknown", "gmv": float(r.gmv), "orders": r.orders} for r in rows]
 
 
 async def _get_campaign_breakdown(
@@ -471,18 +478,20 @@ async def _get_campaign_breakdown(
     if end_date:
         conditions.append(GmvAttribution.scan_time <= end_date)
 
-    rows = (await db.execute(
-        select(
-            GmvAttribution.campaign_id,
-            Campaign.name.label("campaign_name"),
-            func.coalesce(func.sum(GmvAttribution.amount), 0).label("gmv"),
-            func.count().label("orders"),
-            func.avg(GmvAttribution.confidence_score).label("avg_confidence"),
+    rows = (
+        await db.execute(
+            select(
+                GmvAttribution.campaign_id,
+                Campaign.name.label("campaign_name"),
+                func.coalesce(func.sum(GmvAttribution.amount), 0).label("gmv"),
+                func.count().label("orders"),
+                func.avg(GmvAttribution.confidence_score).label("avg_confidence"),
+            )
+            .join(Campaign, Campaign.id == GmvAttribution.campaign_id, isouter=True)
+            .where(*conditions)
+            .group_by(GmvAttribution.campaign_id, Campaign.name)
         )
-        .join(Campaign, Campaign.id == GmvAttribution.campaign_id, isouter=True)
-        .where(*conditions)
-        .group_by(GmvAttribution.campaign_id, Campaign.name)
-    )).all()
+    ).all()
 
     return [
         {
@@ -514,33 +523,33 @@ async def get_roi_report(
         attr_conditions.append(GmvAttribution.scan_time <= end_date)
 
     # 按 campaign 分组统计 GMV
-    gmv_rows = (await db.execute(
-        select(
-            GmvAttribution.campaign_id,
-            func.coalesce(func.sum(GmvAttribution.amount), 0).label("gmv"),
-            func.count().label("attributed_orders"),
-            func.avg(GmvAttribution.confidence_score).label("avg_confidence"),
+    gmv_rows = (
+        await db.execute(
+            select(
+                GmvAttribution.campaign_id,
+                func.coalesce(func.sum(GmvAttribution.amount), 0).label("gmv"),
+                func.count().label("attributed_orders"),
+                func.avg(GmvAttribution.confidence_score).label("avg_confidence"),
+            )
+            .where(*attr_conditions)
+            .group_by(GmvAttribution.campaign_id)
         )
-        .where(*attr_conditions)
-        .group_by(GmvAttribution.campaign_id)
-    )).all()
+    ).all()
 
     results = []
     for row in gmv_rows:
         cid = row.campaign_id
 
         # 查活动信息
-        camp = (await db.execute(
-            select(Campaign).where(Campaign.id == cid, Campaign.tenant_id == tenant_id)
-        )).scalar_one_or_none()
+        camp = (
+            await db.execute(select(Campaign).where(Campaign.id == cid, Campaign.tenant_id == tenant_id))
+        ).scalar_one_or_none()
         if not camp:
             continue
 
         # 扫码统计
         # 通过码批次找到该活动关联的码 → 那些码的扫码次数
-        scan_count, scan_uv = await _get_campaign_scan_stats(
-            db, tenant_id, cid, start_date, end_date
-        )
+        scan_count, scan_uv = await _get_campaign_scan_stats(db, tenant_id, cid, start_date, end_date)
 
         # ROI 计算
         budget = _extract_budget(camp.rules_json)
@@ -548,20 +557,22 @@ async def get_roi_report(
         conversion_rate = round(row.attributed_orders / scan_uv * 100, 2) if scan_uv else 0
         roi = float(row.gmv) / budget if budget else 0
 
-        results.append({
-            "campaign_id": str(cid),
-            "campaign_name": camp.name,
-            "status": camp.status,
-            "budget": budget,
-            "attributed_gmv": float(row.gmv),
-            "attributed_orders": row.attributed_orders,
-            "scan_count": scan_count,
-            "scan_uv": scan_uv,
-            "scan_cost": round(scan_cost, 2),
-            "conversion_rate": conversion_rate,
-            "roi": round(roi, 2),
-            "avg_confidence": round(float(row.avg_confidence or 0), 2),
-        })
+        results.append(
+            {
+                "campaign_id": str(cid),
+                "campaign_name": camp.name,
+                "status": camp.status,
+                "budget": budget,
+                "attributed_gmv": float(row.gmv),
+                "attributed_orders": row.attributed_orders,
+                "scan_count": scan_count,
+                "scan_uv": scan_uv,
+                "scan_cost": round(scan_cost, 2),
+                "conversion_rate": conversion_rate,
+                "roi": round(roi, 2),
+                "avg_confidence": round(float(row.avg_confidence or 0), 2),
+            }
+        )
 
     # 按 GMV 降序
     results.sort(key=lambda x: x["attributed_gmv"], reverse=True)
@@ -584,15 +595,13 @@ async def _get_campaign_scan_stats(
     if end_date:
         conditions.append(ScanEvent.scan_time <= end_date)
 
-    scan_count = (await db.execute(
-        select(func.count()).select_from(ScanEvent).where(*conditions)
-    )).scalar() or 0
+    scan_count = (await db.execute(select(func.count()).select_from(ScanEvent).where(*conditions))).scalar() or 0
 
-    scan_uv = (await db.execute(
-        select(func.count(func.distinct(ScanEvent.public_id)))
-        .select_from(ScanEvent)
-        .where(*conditions)
-    )).scalar() or 0
+    scan_uv = (
+        await db.execute(
+            select(func.count(func.distinct(ScanEvent.public_id))).select_from(ScanEvent).where(*conditions)
+        )
+    ).scalar() or 0
 
     return scan_count, scan_uv
 
@@ -619,17 +628,21 @@ async def list_attributions(
     if campaign_id:
         conditions.append(GmvAttribution.campaign_id == campaign_id)
 
-    total = (await db.execute(
-        select(func.count()).select_from(GmvAttribution).where(*conditions)
-    )).scalar() or 0
+    total = (await db.execute(select(func.count()).select_from(GmvAttribution).where(*conditions))).scalar() or 0
 
-    rows = (await db.execute(
-        select(GmvAttribution)
-        .where(*conditions)
-        .order_by(GmvAttribution.id.desc())
-        .offset((page - 1) * page_size)
-        .limit(page_size)
-    )).scalars().all()
+    rows = (
+        (
+            await db.execute(
+                select(GmvAttribution)
+                .where(*conditions)
+                .order_by(GmvAttribution.id.desc())
+                .offset((page - 1) * page_size)
+                .limit(page_size)
+            )
+        )
+        .scalars()
+        .all()
+    )
     return list(rows), total
 
 
@@ -640,49 +653,59 @@ async def aggregate_daily_stats(
 ) -> int:
     """聚合并 upsert 日统计（供定时任务调用）"""
     from app.utils import utcnow
+
     date = target_date or utcnow()
     day_start = date.replace(hour=0, minute=0, second=0, microsecond=0)
     day_end = day_start + timedelta(days=1)
 
     # 扫码统计
-    scan_count = (await db.execute(
-        select(func.count()).select_from(ScanEvent).where(
-            ScanEvent.tenant_id == tenant_id,
-            ScanEvent.scan_time >= day_start,
-            ScanEvent.scan_time < day_end,
+    scan_count = (
+        await db.execute(
+            select(func.count())
+            .select_from(ScanEvent)
+            .where(
+                ScanEvent.tenant_id == tenant_id,
+                ScanEvent.scan_time >= day_start,
+                ScanEvent.scan_time < day_end,
+            )
         )
-    )).scalar() or 0
+    ).scalar() or 0
 
-    scan_uv = (await db.execute(
-        select(func.count(func.distinct(ScanEvent.public_id)))
-        .select_from(ScanEvent)
-        .where(
-            ScanEvent.tenant_id == tenant_id,
-            ScanEvent.scan_time >= day_start,
-            ScanEvent.scan_time < day_end,
+    scan_uv = (
+        await db.execute(
+            select(func.count(func.distinct(ScanEvent.public_id)))
+            .select_from(ScanEvent)
+            .where(
+                ScanEvent.tenant_id == tenant_id,
+                ScanEvent.scan_time >= day_start,
+                ScanEvent.scan_time < day_end,
+            )
         )
-    )).scalar() or 0
+    ).scalar() or 0
 
     # 归因统计（按 channel 维度）
-    attr_rows = (await db.execute(
-        select(
-            ExternalOrder.channel,
-            func.coalesce(func.sum(GmvAttribution.amount), 0).label("gmv"),
-            func.count().label("orders"),
+    attr_rows = (
+        await db.execute(
+            select(
+                ExternalOrder.channel,
+                func.coalesce(func.sum(GmvAttribution.amount), 0).label("gmv"),
+                func.count().label("orders"),
+            )
+            .join(GmvAttribution, GmvAttribution.external_order_id == ExternalOrder.id)
+            .where(
+                GmvAttribution.tenant_id == tenant_id,
+                GmvAttribution.scan_time >= day_start,
+                GmvAttribution.scan_time < day_end,
+            )
+            .group_by(ExternalOrder.channel)
         )
-        .join(GmvAttribution, GmvAttribution.external_order_id == ExternalOrder.id)
-        .where(
-            GmvAttribution.tenant_id == tenant_id,
-            GmvAttribution.scan_time >= day_start,
-            GmvAttribution.scan_time < day_end,
-        )
-        .group_by(ExternalOrder.channel)
-    )).all()
+    ).all()
 
     upserted = 0
     for row in attr_rows:
         # Upsert using raw SQL for ON CONFLICT
         from sqlalchemy import text
+
         await db.execute(
             text("""
                 INSERT INTO gmv_daily_stats
@@ -696,16 +719,21 @@ async def aggregate_daily_stats(
                               scan_uv = EXCLUDED.scan_uv
             """),
             {
-                "tid": str(tenant_id), "dt": day_start, "ch": row.channel,
-                "gmv": float(row.gmv), "ords": row.orders,
-                "sc": scan_count, "suv": scan_uv,
-            }
+                "tid": str(tenant_id),
+                "dt": day_start,
+                "ch": row.channel,
+                "gmv": float(row.gmv),
+                "ords": row.orders,
+                "sc": scan_count,
+                "suv": scan_uv,
+            },
         )
         upserted += 1
 
     # 如果没有归因数据，也记录扫码统计
     if not attr_rows:
         from sqlalchemy import text
+
         await db.execute(
             text("""
                 INSERT INTO gmv_daily_stats
@@ -716,7 +744,7 @@ async def aggregate_daily_stats(
                 DO UPDATE SET scan_count = EXCLUDED.scan_count,
                               scan_uv = EXCLUDED.scan_uv
             """),
-            {"tid": str(tenant_id), "dt": day_start, "sc": scan_count, "suv": scan_uv}
+            {"tid": str(tenant_id), "dt": day_start, "sc": scan_count, "suv": scan_uv},
         )
         upserted = 1
 

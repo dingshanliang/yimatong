@@ -13,7 +13,7 @@ from tests.conftest import TestSessionLocal
 
 
 def _platform_admin_headers() -> dict:
-    token = create_access_token("platform", "00000000-0000-0000-0000-000000000000", "platform_admin")
+    token = create_access_token("platform", "platform-admin", "platform_admin")
     return {"Authorization": f"Bearer {token}"}
 
 
@@ -44,7 +44,7 @@ class TestInviteCodeCRUD:
             json={"tenant_type": "brand", "max_uses": 5, "expires_in_days": 7},
             headers=_platform_admin_headers(),
         )
-        assert resp.status_code == 201
+        assert resp.status_code == 201, resp.text
         data = resp.json()
         assert data["code"]
         assert data["tenant_type"] == "brand"
@@ -107,7 +107,7 @@ class TestInviteCodeRegistration:
                 "admin_password": "Pass1234",
             },
         )
-        assert resp.status_code == 201
+        assert resp.status_code == 201, resp.text
         data = resp.json()
         assert data["tenant_id"]
         assert "注册成功" in data["message"]
@@ -148,7 +148,7 @@ class TestInviteCodeRegistration:
                 "admin_password": "Pass1234",
             },
         )
-        assert resp1.status_code == 201
+        assert resp1.status_code == 201, resp1.text
 
         # Second registration fails (code depleted)
         resp2 = await client.post(

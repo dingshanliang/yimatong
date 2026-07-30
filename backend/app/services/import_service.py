@@ -286,9 +286,11 @@ class ExcelImportService:
         result = ImportResult()
 
         # File size limit: 10 MB
-        _MAX_FILE_SIZE = 10 * 1024 * 1024
-        if len(file_content) > _MAX_FILE_SIZE:
-            result.errors.append(RowError(sheet="文件", row=0, message=f"文件大小超过限制（最大 {_MAX_FILE_SIZE // (1024*1024)} MB）"))
+        max_file_size = 10 * 1024 * 1024
+        if len(file_content) > max_file_size:
+            result.errors.append(
+                RowError(sheet="文件", row=0, message=f"文件大小超过限制（最大 {max_file_size // (1024 * 1024)} MB）")
+            )
             return result
 
         try:

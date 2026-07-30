@@ -2,7 +2,20 @@ import uuid
 from datetime import UTC, datetime
 from enum import StrEnum
 
-from sqlalchemy import JSON, Boolean, Column, DateTime, ForeignKey, Integer, String, Table, UniqueConstraint, func
+from sqlalchemy import (
+    JSON,
+    Boolean,
+    Column,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Table,
+    UniqueConstraint,
+    func,
+    text,
+)
 from sqlalchemy import Enum as SQLEnum
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from uuid6 import uuid7
@@ -222,4 +235,15 @@ class AgencyAuthorization(Base):
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC), onupdate=lambda: datetime.now(UTC), nullable=False
+    )
+
+    __table_args__ = (
+        Index("ix_agency_auth_agency_client", "agency_tenant_id", "client_tenant_id"),
+        Index(
+            "uq_agency_auth_active",
+            "agency_tenant_id",
+            "client_tenant_id",
+            unique=True,
+            postgresql_where=text("status = 'active'"),
+        ),
     )

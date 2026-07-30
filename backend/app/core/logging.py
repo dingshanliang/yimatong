@@ -54,10 +54,10 @@ class HumanFormatter(logging.Formatter):
     """Colored, readable output for development."""
 
     COLORS = {
-        "DEBUG": "\033[36m",     # cyan
-        "INFO": "\033[32m",      # green
-        "WARNING": "\033[33m",   # yellow
-        "ERROR": "\033[31m",     # red
+        "DEBUG": "\033[36m",  # cyan
+        "INFO": "\033[32m",  # green
+        "WARNING": "\033[33m",  # yellow
+        "ERROR": "\033[31m",  # red
         "CRITICAL": "\033[35m",  # magenta
     }
     RESET = "\033[0m"
@@ -65,9 +65,7 @@ class HumanFormatter(logging.Formatter):
     def format(self, record: logging.LogRecord) -> str:
         color = self.COLORS.get(record.levelname, "")
         request_id = getattr(record, "request_id", "-")
-        ts = datetime.fromtimestamp(record.created, tz=UTC).strftime(
-            "%Y-%m-%d %H:%M:%S.%f"
-        )[:-3]
+        ts = datetime.fromtimestamp(record.created, tz=UTC).strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
         msg = f"{ts} {color}{record.levelname:<8}{self.RESET} [{request_id}] {record.name}: {record.getMessage()}"
         if record.exc_info and record.exc_info[1]:
             msg += "\n" + self.formatException(record.exc_info)

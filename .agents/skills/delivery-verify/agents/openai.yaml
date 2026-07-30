@@ -1,0 +1,4 @@
+interface:
+  display_name: "Delivery Verify"
+  short_description: "Verify Beads delivery with change-aware evidence"
+  default_prompt: "Use $delivery-verify to verify the current Bead and changed files before closure."

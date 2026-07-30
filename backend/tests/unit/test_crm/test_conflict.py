@@ -1,6 +1,5 @@
 """CRM 冲突处理单元测试"""
 
-
 from app.services.crm.conflict import (
     _parse_tags,
     resolve_consumer_conflict,

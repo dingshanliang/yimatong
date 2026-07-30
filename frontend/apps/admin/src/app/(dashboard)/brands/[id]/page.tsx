@@ -77,6 +77,8 @@ interface BatchItem {
   status: string;
 }
 
+type TabItem = ProductItem | CampaignItem | CodeBatchItem | BatchItem;
+
 const PRODUCT_STATUS_MAP: Record<string, { label: string; color: string }> = {
   active: { label: "启用", color: "green" },
   inactive: { label: "停用", color: "default" },
@@ -128,9 +130,12 @@ export default function BrandDetailPage() {
   const [editModalOpen, setEditModalOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<TabKey>("products");
 
-  const [products, setProducts] = useState<TabState<ProductItem>>(createTabState);
-  const [campaigns, setCampaigns] = useState<TabState<CampaignItem>>(createTabState);
-  const [codeBatches, setCodeBatches] = useState<TabState<CodeBatchItem>>(createTabState);
+  const [products, setProducts] =
+    useState<TabState<ProductItem>>(createTabState);
+  const [campaigns, setCampaigns] =
+    useState<TabState<CampaignItem>>(createTabState);
+  const [codeBatches, setCodeBatches] =
+    useState<TabState<CodeBatchItem>>(createTabState);
   const [batches, setBatches] = useState<TabState<BatchItem>>(createTabState);
 
   const fetchBrand = async () => {
@@ -153,11 +158,13 @@ export default function BrandDetailPage() {
       batches: `/brands/${brandId}/production-batches`,
     };
 
-    const setters: Record<TabKey, (s: TabState<any>) => void> = {
-      products: (s) => setProducts(s),
-      campaigns: (s) => setCampaigns(s),
-      "code-batches": (s) => setCodeBatches(s),
-      batches: (s) => setBatches(s),
+    const setters: Record<TabKey, (s: TabState<TabItem>) => void> = {
+      products: (s) => setProducts({ ...s, items: s.items as ProductItem[] }),
+      campaigns: (s) =>
+        setCampaigns({ ...s, items: s.items as CampaignItem[] }),
+      "code-batches": (s) =>
+        setCodeBatches({ ...s, items: s.items as CodeBatchItem[] }),
+      batches: (s) => setBatches({ ...s, items: s.items as BatchItem[] }),
     };
 
     const prev = {
@@ -170,8 +177,15 @@ export default function BrandDetailPage() {
     setters[tab]({ ...prev, loading: true });
 
     try {
-      const { data } = await api.get(endpointMap[tab], { params: { page, page_size: 20 } });
-      setters[tab]({ items: data.items || [], total: data.total || 0, page, loading: false });
+      const { data } = await api.get(endpointMap[tab], {
+        params: { page, page_size: 20 },
+      });
+      setters[tab]({
+        items: data.items || [],
+        total: data.total || 0,
+        page,
+        loading: false,
+      });
     } catch {
       message.error("获取数据失败");
       setters[tab]({ ...prev, loading: false });
@@ -187,7 +201,7 @@ export default function BrandDetailPage() {
 
   useEffect(() => {
     if (!brandId) return;
-    const stateMap: Record<TabKey, TabState<any>> = {
+    const stateMap: Record<TabKey, TabState<unknown>> = {
       products,
       campaigns,
       "code-batches": codeBatches,
@@ -204,12 +218,21 @@ export default function BrandDetailPage() {
       dataIndex: "name",
       key: "name",
       render: (v: string, record: ProductItem) => (
-        <Button type="link" className="!px-0" onClick={() => router.push(`/products/${record.id}`)}>
+        <Button
+          type="link"
+          className="!px-0"
+          onClick={() => router.push(`/products/${record.id}`)}
+        >
           {v}
         </Button>
       ),
     },
-    { title: "分类", dataIndex: "category", key: "category", render: (v?: string) => v || "-" },
+    {
+      title: "分类",
+      dataIndex: "category",
+      key: "category",
+      render: (v?: string) => v || "-",
+    },
     {
       title: "状态",
       dataIndex: "status",
@@ -219,7 +242,12 @@ export default function BrandDetailPage() {
         return <Tag color={info.color}>{info.label}</Tag>;
       },
     },
-    { title: "创建时间", dataIndex: "created_at", key: "created_at", render: (v?: string) => formatDate(v) },
+    {
+      title: "创建时间",
+      dataIndex: "created_at",
+      key: "created_at",
+      render: (v?: string) => formatDate(v),
+    },
   ];
 
   const campaignColumns: ColumnsType<CampaignItem> = [
@@ -228,7 +256,11 @@ export default function BrandDetailPage() {
       dataIndex: "name",
       key: "name",
       render: (v: string, record: CampaignItem) => (
-        <Button type="link" className="!px-0" onClick={() => router.push(`/campaigns/${record.id}`)}>
+        <Button
+          type="link"
+          className="!px-0"
+          onClick={() => router.push(`/campaigns/${record.id}`)}
+        >
           {v}
         </Button>
       ),
@@ -243,11 +275,17 @@ export default function BrandDetailPage() {
         return <Tag color={info.color}>{info.label}</Tag>;
       },
     },
-    { title: "关联产品", dataIndex: "product_name", key: "product_name", render: (v?: string) => v || "-" },
+    {
+      title: "关联产品",
+      dataIndex: "product_name",
+      key: "product_name",
+      render: (v?: string) => v || "-",
+    },
     {
       title: "起止时间",
       key: "time",
-      render: (_, record: CampaignItem) => `${record.start_at} 至 ${record.end_at}`,
+      render: (_, record: CampaignItem) =>
+        `${record.start_at} 至 ${record.end_at}`,
     },
   ];
 
@@ -257,13 +295,27 @@ export default function BrandDetailPage() {
       dataIndex: "batch_code",
       key: "batch_code",
       render: (v: string, record: CodeBatchItem) => (
-        <Button type="link" className="!px-0" onClick={() => router.push(`/codes/${record.id}`)}>
+        <Button
+          type="link"
+          className="!px-0"
+          onClick={() => router.push(`/codes/${record.id}`)}
+        >
           {v}
         </Button>
       ),
     },
-    { title: "产品", dataIndex: "product_name", key: "product_name", render: (v?: string) => v || "-" },
-    { title: "SKU", dataIndex: "sku_name", key: "sku_name", render: (v?: string) => v || "-" },
+    {
+      title: "产品",
+      dataIndex: "product_name",
+      key: "product_name",
+      render: (v?: string) => v || "-",
+    },
+    {
+      title: "SKU",
+      dataIndex: "sku_name",
+      key: "sku_name",
+      render: (v?: string) => v || "-",
+    },
     { title: "数量", dataIndex: "quantity", key: "quantity" },
     {
       title: "状态",
@@ -274,13 +326,28 @@ export default function BrandDetailPage() {
         return <Tag color={info.color}>{info.label}</Tag>;
       },
     },
-    { title: "创建时间", dataIndex: "created_at", key: "created_at", render: (v?: string) => formatDate(v) },
+    {
+      title: "创建时间",
+      dataIndex: "created_at",
+      key: "created_at",
+      render: (v?: string) => formatDate(v),
+    },
   ];
 
   const batchColumns: ColumnsType<BatchItem> = [
     { title: "批次号", dataIndex: "batch_code", key: "batch_code" },
-    { title: "产品", dataIndex: "product_name", key: "product_name", render: (v?: string) => v || "-" },
-    { title: "SKU", dataIndex: "sku_name", key: "sku_name", render: (v?: string) => v || "-" },
+    {
+      title: "产品",
+      dataIndex: "product_name",
+      key: "product_name",
+      render: (v?: string) => v || "-",
+    },
+    {
+      title: "SKU",
+      dataIndex: "sku_name",
+      key: "sku_name",
+      render: (v?: string) => v || "-",
+    },
     { title: "生产日期", dataIndex: "production_date", key: "production_date" },
     { title: "保质期至", dataIndex: "expiry_date", key: "expiry_date" },
     {
@@ -297,7 +364,7 @@ export default function BrandDetailPage() {
   const renderTable = <T extends object>(
     columns: ColumnsType<T>,
     state: TabState<T>,
-    tab: TabKey,
+    tab: TabKey
   ) => (
     <Table
       columns={columns}
@@ -317,7 +384,12 @@ export default function BrandDetailPage() {
   if (!brand && !brandLoading) {
     return (
       <div className="p-6">
-        <Button icon={<ArrowLeftOutlined />} onClick={() => router.push("/brands")}>返回列表</Button>
+        <Button
+          icon={<ArrowLeftOutlined />}
+          onClick={() => router.push("/brands")}
+        >
+          返回列表
+        </Button>
         <div className="mt-4 text-gray-500">品牌不存在或已删除</div>
       </div>
     );
@@ -326,14 +398,23 @@ export default function BrandDetailPage() {
   return (
     <div className="p-6">
       <Space className="mb-4">
-        <Button icon={<ArrowLeftOutlined />} onClick={() => router.push("/brands")}>返回</Button>
-        <Title level={4} className="!mb-0">{brand?.name || "品牌详情"}</Title>
+        <Button
+          icon={<ArrowLeftOutlined />}
+          onClick={() => router.push("/brands")}
+        >
+          返回
+        </Button>
+        <Title level={4} className="!mb-0">
+          {brand?.name || "品牌详情"}
+        </Title>
       </Space>
 
       <Card className="mb-4" loading={brandLoading}>
         <div className="flex items-start justify-between">
           <Descriptions title="基础信息" column={2} className="flex-1">
-            <Descriptions.Item label="品牌名称">{brand?.name}</Descriptions.Item>
+            <Descriptions.Item label="品牌名称">
+              {brand?.name}
+            </Descriptions.Item>
             <Descriptions.Item label="状态">
               {brand && (
                 <Tag color={brand.status === "active" ? "green" : "default"}>
@@ -341,44 +422,74 @@ export default function BrandDetailPage() {
                 </Tag>
               )}
             </Descriptions.Item>
-            <Descriptions.Item label="描述">{brand?.description || "-"}</Descriptions.Item>
-            <Descriptions.Item label="创建时间">{formatDate(brand?.created_at)}</Descriptions.Item>
+            <Descriptions.Item label="描述">
+              {brand?.description || "-"}
+            </Descriptions.Item>
+            <Descriptions.Item label="创建时间">
+              {formatDate(brand?.created_at)}
+            </Descriptions.Item>
           </Descriptions>
-          <Button type="primary" icon={<EditOutlined />} onClick={() => setEditModalOpen(true)}>
+          <Button
+            type="primary"
+            icon={<EditOutlined />}
+            onClick={() => setEditModalOpen(true)}
+          >
             编辑基础信息
           </Button>
         </div>
       </Card>
 
       <Space className="mb-4" size="large">
-        <Card><Statistic title="产品数量" value={brand?.stats.product_count || 0} /></Card>
-        <Card><Statistic title="营销活动" value={brand?.stats.campaign_count || 0} /></Card>
-        <Card><Statistic title="溯源码批次" value={brand?.stats.code_batch_count || 0} /></Card>
-        <Card><Statistic title="生产批次" value={brand?.stats.batch_count || 0} /></Card>
+        <Card>
+          <Statistic title="产品数量" value={brand?.stats.product_count || 0} />
+        </Card>
+        <Card>
+          <Statistic
+            title="营销活动"
+            value={brand?.stats.campaign_count || 0}
+          />
+        </Card>
+        <Card>
+          <Statistic
+            title="溯源码批次"
+            value={brand?.stats.code_batch_count || 0}
+          />
+        </Card>
+        <Card>
+          <Statistic title="生产批次" value={brand?.stats.batch_count || 0} />
+        </Card>
       </Space>
 
-      <Tabs activeKey={activeTab} onChange={(k) => setActiveTab(k as TabKey)} items={[
-        {
-          key: "products",
-          label: `产品列表 (${brand?.stats.product_count || 0})`,
-          children: renderTable(productColumns, products, "products"),
-        },
-        {
-          key: "campaigns",
-          label: `营销活动 (${brand?.stats.campaign_count || 0})`,
-          children: renderTable(campaignColumns, campaigns, "campaigns"),
-        },
-        {
-          key: "code-batches",
-          label: `溯源码批次 (${brand?.stats.code_batch_count || 0})`,
-          children: renderTable(codeBatchColumns, codeBatches, "code-batches"),
-        },
-        {
-          key: "batches",
-          label: `生产批次 (${brand?.stats.batch_count || 0})`,
-          children: renderTable(batchColumns, batches, "batches"),
-        },
-      ]} />
+      <Tabs
+        activeKey={activeTab}
+        onChange={(k) => setActiveTab(k as TabKey)}
+        items={[
+          {
+            key: "products",
+            label: `产品列表 (${brand?.stats.product_count || 0})`,
+            children: renderTable(productColumns, products, "products"),
+          },
+          {
+            key: "campaigns",
+            label: `营销活动 (${brand?.stats.campaign_count || 0})`,
+            children: renderTable(campaignColumns, campaigns, "campaigns"),
+          },
+          {
+            key: "code-batches",
+            label: `溯源码批次 (${brand?.stats.code_batch_count || 0})`,
+            children: renderTable(
+              codeBatchColumns,
+              codeBatches,
+              "code-batches"
+            ),
+          },
+          {
+            key: "batches",
+            label: `生产批次 (${brand?.stats.batch_count || 0})`,
+            children: renderTable(batchColumns, batches, "batches"),
+          },
+        ]}
+      />
 
       {brand && (
         <BrandFormModal

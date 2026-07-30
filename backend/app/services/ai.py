@@ -120,10 +120,12 @@ async def _call_llm(
             # 模型没有调用 tool，重试并强调
             if attempt == 0:
                 messages.append(choice.message.model_dump())
-                messages.append({
-                    "role": "user",
-                    "content": "请通过调用提供的函数来返回结果，不要直接回复文字。",
-                })
+                messages.append(
+                    {
+                        "role": "user",
+                        "content": "请通过调用提供的函数来返回结果，不要直接回复文字。",
+                    }
+                )
                 continue
 
             raise AIServiceError("AI 未返回结构化结果，请重试")
@@ -210,7 +212,9 @@ async def extract_product_fields(
     await _increment_daily_count(tenant_id)
 
     record = await _save_generation(
-        db, tenant_id, "extract_text",
+        db,
+        tenant_id,
+        "extract_text",
         input_snapshot={"text": text[:2000]},
         output_data=result,
     )
@@ -240,7 +244,9 @@ async def extract_product_from_image(
     await _increment_daily_count(tenant_id)
 
     record = await _save_generation(
-        db, tenant_id, "extract_image",
+        db,
+        tenant_id,
+        "extract_image",
         input_snapshot={"image_url": image_url, "filename": filename},
         output_data=result,
     )
@@ -275,7 +281,9 @@ async def generate_copywriting(
     await _increment_daily_count(tenant_id)
 
     record = await _save_generation(
-        db, tenant_id, "copywriting",
+        db,
+        tenant_id,
+        "copywriting",
         input_snapshot={"copy_type": copy_type, "product_name": product_name, "keywords": keywords},
         output_data=result,
         target_type=target_type,
@@ -299,8 +307,7 @@ async def suggest_page_structure(
 
     prompt = load_prompt("page_suggest")
     user_msg = (
-        f"请为「{product_name}」（品类：{category}）推荐扫码页面的模块结构。\n"
-        f"目标读者是扫描产品包装二维码的消费者。"
+        f"请为「{product_name}」（品类：{category}）推荐扫码页面的模块结构。\n目标读者是扫描产品包装二维码的消费者。"
     )
     messages = _build_messages(prompt["system"], user_msg)
     tools = [{"type": "function", "function": prompt["tool"]}]
@@ -309,7 +316,9 @@ async def suggest_page_structure(
     await _increment_daily_count(tenant_id)
 
     record = await _save_generation(
-        db, tenant_id, "page_suggest",
+        db,
+        tenant_id,
+        "page_suggest",
         input_snapshot={"product_name": product_name, "category": category},
         output_data=result,
         target_type=target_type,
@@ -346,7 +355,9 @@ async def generate_page_copy(
     await _increment_daily_count(tenant_id)
 
     record = await _save_generation(
-        db, tenant_id, "page_copy",
+        db,
+        tenant_id,
+        "page_copy",
         input_snapshot={"product_name": product_name, "category": category, "keywords": keywords},
         output_data=result,
         target_type=target_type,
@@ -388,7 +399,9 @@ async def generate_campaign(
     await _increment_daily_count(tenant_id)
 
     record = await _save_generation(
-        db, tenant_id, "campaign",
+        db,
+        tenant_id,
+        "campaign",
         input_snapshot={"product_name": product_name, "goal": goal, "target_audience": target_audience},
         output_data=result,
         target_type=target_type,

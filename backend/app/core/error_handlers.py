@@ -42,9 +42,7 @@ async def app_exception_handler(request: Request, exc: AppException) -> JSONResp
     )
 
 
-async def http_exception_handler(
-    request: Request, exc: StarletteHTTPException
-) -> JSONResponse:
+async def http_exception_handler(request: Request, exc: StarletteHTTPException) -> JSONResponse:
     request_id = get_request_id()
     error_code = f"HTTP_{exc.status_code}"
     detail = exc.detail
@@ -60,9 +58,7 @@ async def http_exception_handler(
     )
 
 
-async def validation_exception_handler(
-    request: Request, exc: RequestValidationError
-) -> JSONResponse:
+async def validation_exception_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
     import json
 
     request_id = get_request_id()
@@ -84,9 +80,7 @@ async def validation_exception_handler(
     )
 
 
-async def unhandled_exception_handler(
-    request: Request, exc: Exception
-) -> JSONResponse:
+async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
     request_id = get_request_id()
     logger.exception(
         "Unhandled exception: %s path=%s method=%s request_id=%s",
@@ -97,9 +91,7 @@ async def unhandled_exception_handler(
     )
     return JSONResponse(
         status_code=500,
-        content=_error_body(
-            "INTERNAL_ERROR", "Internal server error", request_id
-        ),
+        content=_error_body("INTERNAL_ERROR", "Internal server error", request_id),
     )
 
 

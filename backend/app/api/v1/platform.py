@@ -11,8 +11,11 @@ from app.core.config import settings
 from app.core.database import get_db_with_bypass
 from app.models.plan import PlanDefinition
 from app.models.tenant import Account, Organization, Tenant, TenantPlan, TenantStatus
+from app.models.tenant_health import TenantHealthMetrics
+from app.schemas.common import PaginatedResponse
 from app.services.audit import query_audit_logs, write_audit_log
 from app.services.redis_cache import AsyncRedisCache
+from app.services.tenant_health import refresh_all_health_metrics
 from app.utils.auth_rbac import require_role
 from app.utils.security import create_access_token, hash_password, verify_password
 
@@ -116,17 +119,14 @@ async def platform_login(body: PlatformLoginRequest, request: Request):
         .strip()
     )
     cache = AsyncRedisCache()
-    allowed, _ = await cache.rate_limit_check(
-        f"platform_login_rate:{client_ip}", max_attempts=10, window_seconds=300
-    )
+    allowed, _ = await cache.rate_limit_check(f"platform_login_rate:{client_ip}", max_attempts=10, window_seconds=300)
     if not allowed:
         raise HTTPException(status_code=429, detail="尝试过于频繁", headers={"Retry-After": "300"})
 
     if not settings.platform_admin_password_hash:
         raise HTTPException(status_code=500, detail="Platform admin not configured")
-    if (
-        body.email != settings.platform_admin_email
-        or not verify_password(body.password, settings.platform_admin_password_hash)
+    if body.email != settings.platform_admin_email or not verify_password(
+        body.password, settings.platform_admin_password_hash
     ):
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
@@ -185,7 +185,12 @@ async def get_dashboard(
             )
         )
     ).one()
-    total, active, suspended, terminated = int(counts_row[0] or 0), int(counts_row[1] or 0), int(counts_row[2] or 0), int(counts_row[3] or 0)
+    total, active, suspended, terminated = (
+        int(counts_row[0] or 0),
+        int(counts_row[1] or 0),
+        int(counts_row[2] or 0),
+        int(counts_row[3] or 0),
+    )
 
     soon_threshold = now + timedelta(days=30)
     expiring_soon = (
@@ -215,8 +220,6 @@ async def get_dashboard(
 # Tenants CRUD
 # ---------------------------------------------------------------------------
 
-
-from app.schemas.common import PaginatedResponse
 
 @router.get("/tenants", response_model=PaginatedResponse)
 async def list_tenants(
@@ -580,7 +583,12 @@ async def assign_plan_to_tenant(
         raise HTTPException(status_code=404, detail="Plan definition not found")
 
     # Map plan name to TenantPlan enum
-    plan_enum_map = {"free": TenantPlan.free, "starter": TenantPlan.starter, "pro": TenantPlan.pro, "enterprise": TenantPlan.enterprise}
+    plan_enum_map = {
+        "free": TenantPlan.free,
+        "starter": TenantPlan.starter,
+        "pro": TenantPlan.pro,
+        "enterprise": TenantPlan.enterprise,
+    }
     tenant.plan = plan_enum_map.get(plan.name, TenantPlan.free)
     tenant.quota = body.override_quota or plan.quota_defaults or {}
     tenant.enabled_features = plan.feature_flags or {}
@@ -605,31 +613,22 @@ async def list_quota_usage(
 ):
     """全租户额度使用汇总（含实际用量）"""
     from sqlalchemy import func, select
+
     from app.models.campaign import Campaign
     from app.models.code import CodeItem
     from app.models.product import Product
     from app.models.tenant import Account
 
-    result = await db.execute(
-        select(Tenant).where(Tenant.status != TenantStatus.terminated).order_by(Tenant.name)
-    )
+    result = await db.execute(select(Tenant).where(Tenant.status != TenantStatus.terminated).order_by(Tenant.name))
     tenants = list(result.scalars().all())
 
     items = []
     for t in tenants:
         tid = t.id
-        campaigns = (
-            await db.execute(select(func.count(Campaign.id)).where(Campaign.tenant_id == tid))
-        ).scalar() or 0
-        products = (
-            await db.execute(select(func.count(Product.id)).where(Product.tenant_id == tid))
-        ).scalar() or 0
-        accounts = (
-            await db.execute(select(func.count(Account.id)).where(Account.tenant_id == tid))
-        ).scalar() or 0
-        codes = (
-            await db.execute(select(func.count(CodeItem.id)).where(CodeItem.tenant_id == tid))
-        ).scalar() or 0
+        campaigns = (await db.execute(select(func.count(Campaign.id)).where(Campaign.tenant_id == tid))).scalar() or 0
+        products = (await db.execute(select(func.count(Product.id)).where(Product.tenant_id == tid))).scalar() or 0
+        accounts = (await db.execute(select(func.count(Account.id)).where(Account.tenant_id == tid))).scalar() or 0
+        codes = (await db.execute(select(func.count(CodeItem.id)).where(CodeItem.tenant_id == tid))).scalar() or 0
 
         items.append(
             QuotaUsageItem(
@@ -718,10 +717,6 @@ async def update_platform_config(
 # ---------------------------------------------------------------------------
 # Health Metrics
 # ---------------------------------------------------------------------------
-
-
-from app.models.tenant_health import TenantHealthMetrics
-from app.services.tenant_health import refresh_all_health_metrics
 
 
 class HealthMetricsRead(BaseModel):
@@ -825,6 +820,7 @@ async def list_service_providers(
 ):
     """服务商列表（agency 类型租户）"""
     from sqlalchemy import select
+
     from app.models.tenant import AgencyAuthorization, TenantType
 
     result = await db.execute(
@@ -838,8 +834,7 @@ async def list_service_providers(
     providers = []
     for agency in agencies:
         auth_result = await db.execute(
-            select(AgencyAuthorization.client_tenant_id)
-            .where(
+            select(AgencyAuthorization.client_tenant_id).where(
                 AgencyAuthorization.agency_tenant_id == agency.id,
                 AgencyAuthorization.status == "active",
             )

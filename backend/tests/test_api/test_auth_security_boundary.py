@@ -118,9 +118,7 @@ class TestJWTBlacklist:
 
 class TestRefreshTokenRotation:
     @pytest.mark.anyio
-    async def test_refresh_returns_new_tokens(
-        self, client: AsyncClient, seeded_account
-    ):
+    async def test_refresh_returns_new_tokens(self, client: AsyncClient, seeded_account):
         """刷新 token 返回不同的 access_token 和 refresh_token。"""
         login_resp = await client.post(
             "/api/v1/auth/login",
@@ -143,9 +141,7 @@ class TestRefreshTokenRotation:
         assert new_refresh != old_refresh
 
     @pytest.mark.anyio
-    async def test_refresh_with_invalid_token_returns_401(
-        self, client: AsyncClient, seeded_account
-    ):
+    async def test_refresh_with_invalid_token_returns_401(self, client: AsyncClient, seeded_account):
         """无效 refresh token 返回 401。"""
         resp = await client.post(
             "/api/v1/auth/refresh",
@@ -156,11 +152,8 @@ class TestRefreshTokenRotation:
 
 class TestAccountLockingExtended:
     @pytest.mark.anyio
-    async def test_lock_expires_after_duration(
-        self, client: AsyncClient, db: AsyncSession, seeded_account
-    ):
+    async def test_lock_expires_after_duration(self, client: AsyncClient, db: AsyncSession, seeded_account):
         """账户锁定后 locked_until 过期可以重新登录。"""
-
 
         headers = {"X-Forwarded-For": "66.66.66.66"}
 

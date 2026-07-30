@@ -54,9 +54,7 @@ class ProductAssetStatus(StrEnum):
 
 class Brand(Base, ExternalRefMixin):
     __tablename__ = "brands"
-    __table_args__ = (
-        UniqueConstraint("tenant_id", "name", name="uq_brands_tenant_name"),
-    )
+    __table_args__ = (UniqueConstraint("tenant_id", "name", name="uq_brands_tenant_name"),)
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid7)
     tenant_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
@@ -104,9 +102,7 @@ class Product(Base, ExternalRefMixin):
 
 class SKU(Base, ExternalRefMixin):
     __tablename__ = "skus"
-    __table_args__ = (
-        UniqueConstraint("tenant_id", "product_id", "code", name="uq_skus_tenant_product_code"),
-    )
+    __table_args__ = (UniqueConstraint("tenant_id", "product_id", "code", name="uq_skus_tenant_product_code"),)
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid7)
     tenant_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
@@ -134,9 +130,7 @@ class SKU(Base, ExternalRefMixin):
 
 class ProductionBatch(Base, ExternalRefMixin):
     __tablename__ = "production_batches"
-    __table_args__ = (
-        UniqueConstraint("tenant_id", "batch_code", name="uq_production_batches_tenant_batch_code"),
-    )
+    __table_args__ = (UniqueConstraint("tenant_id", "batch_code", name="uq_production_batches_tenant_batch_code"),)
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid7)
     tenant_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)

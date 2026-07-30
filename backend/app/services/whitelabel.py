@@ -16,9 +16,7 @@ logger = logging.getLogger(__name__)
 # ── 白标配置 ──────────────────────────────────────
 
 
-async def get_whitelabel_config(
-    db: AsyncSession, org_id: uuid.UUID
-) -> WhitelabelConfig | None:
+async def get_whitelabel_config(db: AsyncSession, org_id: uuid.UUID) -> WhitelabelConfig | None:
     result = await db.execute(select(WhitelabelConfig).where(WhitelabelConfig.org_id == org_id))
     return result.scalar_one_or_none()
 
@@ -42,9 +40,7 @@ async def update_whitelabel_config(
     return config
 
 
-async def get_whitelabel_by_domain(
-    db: AsyncSession, domain: str
-) -> WhitelabelConfig | None:
+async def get_whitelabel_by_domain(db: AsyncSession, domain: str) -> WhitelabelConfig | None:
     """通过域名查找关联的白标配置（用于中间件路由）。"""
     domain_result = await db.execute(
         select(TenantDomain).where(TenantDomain.domain == domain, TenantDomain.verified.is_(True))
@@ -56,9 +52,7 @@ async def get_whitelabel_by_domain(
     # 通过 tenant_id 查找关联的 org（RegionalOrg）
     from app.models.regional import RegionalOrg
 
-    org_result = await db.execute(
-        select(RegionalOrg).where(RegionalOrg.tenant_id == tenant_domain.tenant_id)
-    )
+    org_result = await db.execute(select(RegionalOrg).where(RegionalOrg.tenant_id == tenant_domain.tenant_id))
     org = org_result.scalar_one_or_none()
     if not org:
         return None
@@ -89,9 +83,7 @@ async def list_domains(
     tenant_id: uuid.UUID,
 ) -> list[TenantDomain]:
     result = await db.execute(
-        select(TenantDomain)
-        .where(TenantDomain.tenant_id == tenant_id)
-        .order_by(TenantDomain.id.desc())
+        select(TenantDomain).where(TenantDomain.tenant_id == tenant_id).order_by(TenantDomain.id.desc())
     )
     return list(result.scalars().all())
 
@@ -103,9 +95,7 @@ async def verify_domain(
 ) -> bool:
     """验证域名（简化版：标记为已验证）。生产环境应检查 CNAME 记录。"""
     result = await db.execute(
-        select(TenantDomain).where(
-            TenantDomain.id == domain_id, TenantDomain.tenant_id == tenant_id
-        )
+        select(TenantDomain).where(TenantDomain.id == domain_id, TenantDomain.tenant_id == tenant_id)
     )
     td = result.scalar_one_or_none()
     if not td:
@@ -122,9 +112,7 @@ async def remove_domain(
     tenant_id: uuid.UUID,
 ) -> bool:
     result = await db.execute(
-        select(TenantDomain).where(
-            TenantDomain.id == domain_id, TenantDomain.tenant_id == tenant_id
-        )
+        select(TenantDomain).where(TenantDomain.id == domain_id, TenantDomain.tenant_id == tenant_id)
     )
     td = result.scalar_one_or_none()
     if not td:

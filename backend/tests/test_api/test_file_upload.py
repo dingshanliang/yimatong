@@ -14,12 +14,12 @@ from app.services.storage import MAX_FILE_SIZE
 from app.utils.security import create_access_token
 from tests.conftest import TestSessionLocal
 
+
 def _platform_admin_headers() -> dict:
     from app.utils.security import create_access_token
+
     token = create_access_token("platform", "platform-admin", "platform_admin")
     return {"Authorization": f"Bearer {token}"}
-
-
 
 
 @pytest.fixture

@@ -23,7 +23,7 @@ from app.models.code import (
     CodeItemStatus,
     CodeType,
 )
-from app.models.product import Brand, BatchStatus, Product, SKU, ProductionBatch
+from app.models.product import SKU, BatchStatus, Brand, Product, ProductionBatch
 from app.services.code import (
     activate_batch,
     create_code_batch,
@@ -49,6 +49,7 @@ async def setup_tables():
 
 def _uuid() -> uuid.UUID:
     from uuid6 import uuid7
+
     return uuid7()
 
 
@@ -93,8 +94,13 @@ class TestCreateCodeBatch:
             created_by = _uuid()
 
             result = await create_code_batch(
-                db, tenant_id, product_id, sku_id, production_batch_id,
-                quantity=10, created_by=created_by,
+                db,
+                tenant_id,
+                product_id,
+                sku_id,
+                production_batch_id,
+                quantity=10,
+                created_by=created_by,
             )
 
             assert result["quantity"] == 10
@@ -114,15 +120,18 @@ class TestCreateCodeBatch:
             created_by = _uuid()
 
             result = await create_code_batch(
-                db, tenant_id, product_id, sku_id, production_batch_id,
-                quantity=5, created_by=created_by,
+                db,
+                tenant_id,
+                product_id,
+                sku_id,
+                production_batch_id,
+                quantity=5,
+                created_by=created_by,
             )
             batch_id = uuid.UUID(result["id"])
 
             # 验证 CodeItem 数量
-            items_result = await db.execute(
-                select(CodeItem).where(CodeItem.code_batch_id == batch_id)
-            )
+            items_result = await db.execute(select(CodeItem).where(CodeItem.code_batch_id == batch_id))
             items = list(items_result.scalars().all())
             assert len(items) == 5
 
@@ -142,8 +151,13 @@ class TestCreateCodeBatch:
 
             with pytest.raises(ValueError, match="Product not found"):
                 await create_code_batch(
-                    db, tenant_id, fake_product_id, sku_id, _uuid(),
-                    quantity=1, created_by=created_by,
+                    db,
+                    tenant_id,
+                    fake_product_id,
+                    sku_id,
+                    _uuid(),
+                    quantity=1,
+                    created_by=created_by,
                 )
 
     @pytest.mark.anyio
@@ -162,8 +176,13 @@ class TestCreateCodeBatch:
 
             with pytest.raises(ValueError, match="SKU does not belong"):
                 await create_code_batch(
-                    db, tenant_id, product_id, wrong_sku.id, production_batch_id,
-                    quantity=1, created_by=created_by,
+                    db,
+                    tenant_id,
+                    product_id,
+                    wrong_sku.id,
+                    production_batch_id,
+                    quantity=1,
+                    created_by=created_by,
                 )
 
     @pytest.mark.anyio
@@ -187,8 +206,13 @@ class TestCreateCodeBatch:
 
             with pytest.raises(ValueError, match="Production batch does not belong"):
                 await create_code_batch(
-                    db, tenant_id, product_id, sku_id, wrong_prod_batch.id,
-                    quantity=1, created_by=created_by,
+                    db,
+                    tenant_id,
+                    product_id,
+                    sku_id,
+                    wrong_prod_batch.id,
+                    quantity=1,
+                    created_by=created_by,
                 )
 
     @pytest.mark.anyio
@@ -201,8 +225,13 @@ class TestCreateCodeBatch:
 
             with pytest.raises(ValueError, match="Product not found"):
                 await create_code_batch(
-                    db, other_tenant_id, product_id, sku_id, production_batch_id,
-                    quantity=1, created_by=created_by,
+                    db,
+                    other_tenant_id,
+                    product_id,
+                    sku_id,
+                    production_batch_id,
+                    quantity=1,
+                    created_by=created_by,
                 )
 
     @pytest.mark.anyio
@@ -213,17 +242,20 @@ class TestCreateCodeBatch:
             created_by = _uuid()
 
             result = await create_code_batch(
-                db, tenant_id, product_id, sku_id, production_batch_id,
-                quantity=3, created_by=created_by,
+                db,
+                tenant_id,
+                product_id,
+                sku_id,
+                production_batch_id,
+                quantity=3,
+                created_by=created_by,
                 code_type=CodeType.paired,
             )
 
             assert result["generated_count"] == 6  # 3 * 2
             batch_id = uuid.UUID(result["id"])
 
-            items_result = await db.execute(
-                select(CodeItem).where(CodeItem.code_batch_id == batch_id)
-            )
+            items_result = await db.execute(select(CodeItem).where(CodeItem.code_batch_id == batch_id))
             items = list(items_result.scalars().all())
             assert len(items) == 6
 
@@ -244,8 +276,13 @@ class TestCreateCodeBatch:
             created_by = _uuid()
 
             result = await create_code_batch(
-                db, tenant_id, product_id, sku_id, production_batch_id,
-                quantity=100, created_by=created_by,
+                db,
+                tenant_id,
+                product_id,
+                sku_id,
+                production_batch_id,
+                quantity=100,
+                created_by=created_by,
                 generation_mode=CodeGenerationMode.batch_level,
             )
 
@@ -265,8 +302,13 @@ class TestActivateBatch:
             created_by = _uuid()
 
             result = await create_code_batch(
-                db, tenant_id, product_id, sku_id, production_batch_id,
-                quantity=5, created_by=created_by,
+                db,
+                tenant_id,
+                product_id,
+                sku_id,
+                production_batch_id,
+                quantity=5,
+                created_by=created_by,
             )
             batch_id = uuid.UUID(result["id"])
 
@@ -274,9 +316,7 @@ class TestActivateBatch:
             assert activate_result.activated == 5
 
             # 验证所有码项状态已变为 activated
-            items_result = await db.execute(
-                select(CodeItem).where(CodeItem.code_batch_id == batch_id)
-            )
+            items_result = await db.execute(select(CodeItem).where(CodeItem.code_batch_id == batch_id))
             items = list(items_result.scalars().all())
             for item in items:
                 assert item.status == CodeItemStatus.activated
@@ -318,8 +358,13 @@ class TestActivateBatch:
             created_by = _uuid()
 
             result = await create_code_batch(
-                db, tenant_id, product_id, sku_id, production_batch_id,
-                quantity=3, created_by=created_by,
+                db,
+                tenant_id,
+                product_id,
+                sku_id,
+                production_batch_id,
+                quantity=3,
+                created_by=created_by,
             )
             batch_id = uuid.UUID(result["id"])
 
@@ -336,8 +381,13 @@ class TestActivateBatch:
             created_by = _uuid()
 
             result = await create_code_batch(
-                db, tenant_id, product_id, sku_id, production_batch_id,
-                quantity=3, created_by=created_by,
+                db,
+                tenant_id,
+                product_id,
+                sku_id,
+                production_batch_id,
+                quantity=3,
+                created_by=created_by,
             )
             batch_id = uuid.UUID(result["id"])
 
@@ -356,8 +406,13 @@ class TestFreezeBatch:
             created_by = _uuid()
 
             result = await create_code_batch(
-                db, tenant_id, product_id, sku_id, production_batch_id,
-                quantity=5, created_by=created_by,
+                db,
+                tenant_id,
+                product_id,
+                sku_id,
+                production_batch_id,
+                quantity=5,
+                created_by=created_by,
             )
             batch_id = uuid.UUID(result["id"])
             await activate_batch(db, tenant_id, batch_id)
@@ -366,9 +421,7 @@ class TestFreezeBatch:
             assert freeze_result.frozen == 5
 
             # 验证码项状态
-            items_result = await db.execute(
-                select(CodeItem).where(CodeItem.code_batch_id == batch_id)
-            )
+            items_result = await db.execute(select(CodeItem).where(CodeItem.code_batch_id == batch_id))
             for item in items_result.scalars().all():
                 assert item.status == CodeItemStatus.frozen
 
@@ -380,8 +433,13 @@ class TestFreezeBatch:
             created_by = _uuid()
 
             result = await create_code_batch(
-                db, tenant_id, product_id, sku_id, production_batch_id,
-                quantity=3, created_by=created_by,
+                db,
+                tenant_id,
+                product_id,
+                sku_id,
+                production_batch_id,
+                quantity=3,
+                created_by=created_by,
             )
             batch_id = uuid.UUID(result["id"])
             # 批次处于 completed 但码项都是 created 状态，不在 activated/bound
@@ -400,8 +458,13 @@ class TestVoidBatch:
             created_by = _uuid()
 
             result = await create_code_batch(
-                db, tenant_id, product_id, sku_id, production_batch_id,
-                quantity=5, created_by=created_by,
+                db,
+                tenant_id,
+                product_id,
+                sku_id,
+                production_batch_id,
+                quantity=5,
+                created_by=created_by,
             )
             batch_id = uuid.UUID(result["id"])
 
@@ -409,9 +472,7 @@ class TestVoidBatch:
             assert void_result.voided == 5
 
             # 验证码项状态
-            items_result = await db.execute(
-                select(CodeItem).where(CodeItem.code_batch_id == batch_id)
-            )
+            items_result = await db.execute(select(CodeItem).where(CodeItem.code_batch_id == batch_id))
             for item in items_result.scalars().all():
                 assert item.status == CodeItemStatus.revoked
                 assert item.revoked_at is not None
@@ -424,8 +485,13 @@ class TestVoidBatch:
             created_by = _uuid()
 
             result = await create_code_batch(
-                db, tenant_id, product_id, sku_id, production_batch_id,
-                quantity=3, created_by=created_by,
+                db,
+                tenant_id,
+                product_id,
+                sku_id,
+                production_batch_id,
+                quantity=3,
+                created_by=created_by,
             )
             batch_id = uuid.UUID(result["id"])
 
@@ -448,12 +514,22 @@ class TestListCodeBatches:
             created_by = _uuid()
 
             await create_code_batch(
-                db, tenant_id, product_id, sku_id, production_batch_id,
-                quantity=5, created_by=created_by,
+                db,
+                tenant_id,
+                product_id,
+                sku_id,
+                production_batch_id,
+                quantity=5,
+                created_by=created_by,
             )
             await create_code_batch(
-                db, tenant_id, product_id, sku_id, production_batch_id,
-                quantity=10, created_by=created_by,
+                db,
+                tenant_id,
+                product_id,
+                sku_id,
+                production_batch_id,
+                quantity=10,
+                created_by=created_by,
             )
 
             batches, total = await list_code_batches(db, tenant_id)
@@ -467,21 +543,29 @@ class TestListCodeBatches:
             created_by = _uuid()
 
             result = await create_code_batch(
-                db, tenant_id, product_id, sku_id, production_batch_id,
-                quantity=5, created_by=created_by,
+                db,
+                tenant_id,
+                product_id,
+                sku_id,
+                production_batch_id,
+                quantity=5,
+                created_by=created_by,
             )
             batch_id = uuid.UUID(result["id"])
             await activate_batch(db, tenant_id, batch_id)
 
             # 新建一个不激活的
             await create_code_batch(
-                db, tenant_id, product_id, sku_id, production_batch_id,
-                quantity=3, created_by=created_by,
+                db,
+                tenant_id,
+                product_id,
+                sku_id,
+                production_batch_id,
+                quantity=3,
+                created_by=created_by,
             )
 
-            activated_batches, total = await list_code_batches(
-                db, tenant_id, status=CodeBatchStatus.activated
-            )
+            activated_batches, total = await list_code_batches(db, tenant_id, status=CodeBatchStatus.activated)
             assert total == 1
             assert activated_batches[0].status == CodeBatchStatus.activated
 
@@ -493,8 +577,13 @@ class TestListCodeBatches:
             created_by = _uuid()
 
             await create_code_batch(
-                db, tenant_id, product_id, sku_id, production_batch_id,
-                quantity=5, created_by=created_by,
+                db,
+                tenant_id,
+                product_id,
+                sku_id,
+                production_batch_id,
+                quantity=5,
+                created_by=created_by,
             )
 
             other_tenant_id = _uuid()
@@ -513,8 +602,13 @@ class TestListCodeItems:
             created_by = _uuid()
 
             result = await create_code_batch(
-                db, tenant_id, product_id, sku_id, production_batch_id,
-                quantity=5, created_by=created_by,
+                db,
+                tenant_id,
+                product_id,
+                sku_id,
+                production_batch_id,
+                quantity=5,
+                created_by=created_by,
             )
             batch_id = uuid.UUID(result["id"])
 
@@ -529,18 +623,19 @@ class TestListCodeItems:
             created_by = _uuid()
 
             result = await create_code_batch(
-                db, tenant_id, product_id, sku_id, production_batch_id,
-                quantity=5, created_by=created_by,
+                db,
+                tenant_id,
+                product_id,
+                sku_id,
+                production_batch_id,
+                quantity=5,
+                created_by=created_by,
             )
             batch_id = uuid.UUID(result["id"])
             await activate_batch(db, tenant_id, batch_id)
 
-            activated_items, total = await list_code_items(
-                db, tenant_id, status=CodeItemStatus.activated
-            )
+            activated_items, total = await list_code_items(db, tenant_id, status=CodeItemStatus.activated)
             assert total == 5
 
-            created_items, created_total = await list_code_items(
-                db, tenant_id, status=CodeItemStatus.created
-            )
+            created_items, created_total = await list_code_items(db, tenant_id, status=CodeItemStatus.created)
             assert created_total == 0

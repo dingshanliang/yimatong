@@ -6,13 +6,13 @@ import hmac
 import pytest
 
 from app.core.event_bus import _EventBus
+from app.services.webhook_sender import build_envelope, compute_signature, should_retry
 from app.utils.auth_rbac import (
     ROLE_PERMISSIONS,
     VALID_ROLES,
     get_permissions_for_role,
     role_has_permission,
 )
-from app.services.webhook_sender import build_envelope, compute_signature, should_retry
 
 
 class TestPermissions:

@@ -60,9 +60,7 @@ async def claim_red_packet(
     from app.services.redpacket_amount import calc_amount, validate_config
 
     # 1. FOR UPDATE 读取最新库存和 config_json
-    fresh = await db.execute(
-        select(Benefit).where(Benefit.id == benefit_id).with_for_update()
-    )
+    fresh = await db.execute(select(Benefit).where(Benefit.id == benefit_id).with_for_update())
     benefit = fresh.scalar_one_or_none()
     if not benefit or benefit.stock_used >= benefit.stock_total:
         raise RuntimeError("红包已抢光")
@@ -129,9 +127,7 @@ async def claim_red_packet(
     # 6. 执行微信转账
     from app.models.connector import Connector
 
-    conn_result = await db.execute(
-        select(Connector).where(Connector.id == connector_id)
-    )
+    conn_result = await db.execute(select(Connector).where(Connector.id == connector_id))
     connector = conn_result.scalar_one_or_none()
 
     if connector:

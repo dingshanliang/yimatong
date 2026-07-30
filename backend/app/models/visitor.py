@@ -13,7 +13,7 @@ Decision 22：匿名访客接收 first-party 匿名访客标识。身份可通�
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, Index, String, func
+from sqlalchemy import DateTime, ForeignKey, Index, String, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column
 from uuid6 import uuid7
 
@@ -26,24 +26,20 @@ class AnonymousVisitor(Base):
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid7)
     tenant_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
     # first-party 稳定访客标识（H5 localStorage 持有，跨会话稳定，清缓存即换新）
-    visitor_id: Mapped[str] = mapped_column(String(64), nullable=False, unique=True, index=True)
+    visitor_id: Mapped[str] = mapped_column(String(64), nullable=False)
     # 可选：身份升级后关联到 ConsumerProfile（Decision 22 身份升级路径）
-    consumer_id: Mapped[uuid.UUID | None] = mapped_column(
-        ForeignKey("consumer_profiles.id"), nullable=True
-    )
+    consumer_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("consumer_profiles.id"), nullable=True)
     # 首次访问环境（wechat/alipay/browser，用于诊断，非身份合并依据）
     first_environment: Mapped[str | None] = mapped_column(String(20), nullable=True)
     first_ip_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    last_seen_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now(), nullable=False
-    )
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now(), nullable=False
-    )
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
 
     __table_args__ = (
+        UniqueConstraint("visitor_id", name="uq_anonymous_visitors_visitor_id"),
+        Index("ix_anonymous_visitors_visitor_id", "visitor_id"),
         Index("ix_visitors_tenant_consumer", "tenant_id", "consumer_id"),
     )

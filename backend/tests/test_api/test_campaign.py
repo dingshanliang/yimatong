@@ -12,11 +12,12 @@ from app.main import app
 from app.utils.security import create_access_token
 from tests.conftest import TestSessionLocal
 
+
 def _platform_admin_headers() -> dict:
     from app.utils.security import create_access_token
+
     token = create_access_token("platform", "platform-admin", "platform_admin")
     return {"Authorization": f"Bearer {token}"}
-
 
 
 RULES_JSON = {
@@ -407,9 +408,7 @@ class TestCampaignCRUD:
 
         from app.models.campaign import Campaign
 
-        await db_session.execute(
-            sa_update(Campaign).where(Campaign.id == uuid.UUID(cid)).values(status="active")
-        )
+        await db_session.execute(sa_update(Campaign).where(Campaign.id == uuid.UUID(cid)).values(status="active"))
         await db_session.commit()
 
         resp = await client.delete(f"/api/v1/campaigns/{cid}", headers=headers)

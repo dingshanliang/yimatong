@@ -15,6 +15,30 @@ services:
       timeout: 5s
       retries: 5
 
+  db-init:
+    image: postgres:16-alpine
+    environment:
+      PGPASSWORD: yimatong
+    command:
+      [
+        "psql",
+        "-h",
+        "postgres",
+        "-U",
+        "yimatong",
+        "-d",
+        "yimatong_dev",
+        "-v",
+        "ON_ERROR_STOP=1",
+        "-f",
+        "/scripts/init_runtime_role.sql",
+      ]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./backend/scripts/init_runtime_role.sql:/scripts/init_runtime_role.sql:ro
+
   redis:
     image: redis:7-alpine
     ports:

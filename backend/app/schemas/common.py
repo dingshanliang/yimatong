@@ -47,7 +47,5 @@ TOO_MANY_REQUESTS_EXAMPLE = {"detail": "Too many requests"}
 
 class StandardErrorResponse(BaseModel):
     error_code: str = Field(..., description="Machine-readable error identifier", examples=["NOT_FOUND"])
-    detail: str | list[ValidationErrorDetail] = Field(
-        ..., description="Human-readable message or validation errors"
-    )
+    detail: str | list[ValidationErrorDetail] = Field(..., description="Human-readable message or validation errors")
     request_id: str | None = Field(None, description="Request tracing ID")

@@ -34,6 +34,7 @@ def _get_connector_config(connector) -> dict:
         cfg.update(secrets)
     return cfg
 
+
 wechat_oauth_router = APIRouter(prefix="/api/v1/wechat", tags=["wechat-oauth"])
 
 OAUTH_URL = "https://open.weixin.qq.com/connect/oauth2/authorize"
@@ -218,7 +219,9 @@ async def oauth_callback(
     total_limit = rp_config.get("total_limit_per_user", 10)
 
     total_count_result = await db.execute(
-        select(func.count()).select_from(BenefitClaim).where(
+        select(func.count())
+        .select_from(BenefitClaim)
+        .where(
             BenefitClaim.benefit_id == benefit_id,
             BenefitClaim.consumer_id == str(consumer.id),
         )
@@ -229,7 +232,9 @@ async def oauth_callback(
 
     today_start = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
     daily_count_result = await db.execute(
-        select(func.count()).select_from(BenefitClaim).where(
+        select(func.count())
+        .select_from(BenefitClaim)
+        .where(
             BenefitClaim.benefit_id == benefit_id,
             BenefitClaim.consumer_id == str(consumer.id),
             BenefitClaim.created_at >= today_start,
@@ -266,10 +271,5 @@ async def oauth_callback(
     h5_base = getattr(settings, "h5_base_url", "http://localhost:3001")
     from fastapi.responses import RedirectResponse
 
-    redirect_url = (
-        f"{h5_base}/redpacket/result"
-        f"?amount={amount}"
-        f"&status={delivery_status}"
-        f"&claim_id={claim_id}"
-    )
+    redirect_url = f"{h5_base}/redpacket/result?amount={amount}&status={delivery_status}&claim_id={claim_id}"
     return RedirectResponse(url=redirect_url)

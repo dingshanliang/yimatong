@@ -31,9 +31,7 @@ async def list_scans(
 ):
     from app.models.scan import ScanEvent
 
-    total_result = await db.execute(
-        select(func.count()).select_from(ScanEvent).where(ScanEvent.tenant_id == tenant_id)
-    )
+    total_result = await db.execute(select(func.count()).select_from(ScanEvent).where(ScanEvent.tenant_id == tenant_id))
     total = total_result.scalar() or 0
 
     result = await db.execute(
@@ -65,9 +63,7 @@ async def get_scan(
 ):
     from app.models.scan import ScanEvent
 
-    result = await db.execute(
-        select(ScanEvent).where(ScanEvent.id == scan_id, ScanEvent.tenant_id == tenant_id)
-    )
+    result = await db.execute(select(ScanEvent).where(ScanEvent.id == scan_id, ScanEvent.tenant_id == tenant_id))
     s = result.scalar_one_or_none()
     if not s:
         raise HTTPException(status_code=404, detail="Scan not found")
@@ -185,9 +181,7 @@ async def list_events(
 ):
     from app.models.scan import ScanEvent
 
-    total_result = await db.execute(
-        select(func.count()).select_from(ScanEvent).where(ScanEvent.tenant_id == tenant_id)
-    )
+    total_result = await db.execute(select(func.count()).select_from(ScanEvent).where(ScanEvent.tenant_id == tenant_id))
     total = total_result.scalar() or 0
 
     result = await db.execute(
@@ -337,9 +331,7 @@ async def open_list_products(
 ):
     from app.models.product import Product
 
-    total_result = await db.execute(
-        select(func.count()).select_from(Product).where(Product.tenant_id == tenant_id)
-    )
+    total_result = await db.execute(select(func.count()).select_from(Product).where(Product.tenant_id == tenant_id))
     total = total_result.scalar() or 0
 
     result = await db.execute(
@@ -375,9 +367,7 @@ async def open_create_product(
 
     brand_id = None
     if body.brand_name:
-        bresult = await db.execute(
-            select(Brand).where(Brand.tenant_id == tenant_id, Brand.name == body.brand_name)
-        )
+        bresult = await db.execute(select(Brand).where(Brand.tenant_id == tenant_id, Brand.name == body.brand_name))
         brand = bresult.scalar_one_or_none()
         if not brand:
             raise HTTPException(status_code=400, detail=f"品牌 '{body.brand_name}' 不存在")
@@ -439,9 +429,7 @@ async def open_update_product(
 ):
     from app.models.product import Product
 
-    result = await db.execute(
-        select(Product).where(Product.id == product_id, Product.tenant_id == tenant_id)
-    )
+    result = await db.execute(select(Product).where(Product.id == product_id, Product.tenant_id == tenant_id))
     product = result.scalar_one_or_none()
     if not product:
         raise HTTPException(status_code=404, detail="产品不存在")
@@ -466,9 +454,7 @@ async def open_list_skus(
 ):
     from app.models.product import SKU
 
-    total_result = await db.execute(
-        select(func.count()).select_from(SKU).where(SKU.tenant_id == tenant_id)
-    )
+    total_result = await db.execute(select(func.count()).select_from(SKU).where(SKU.tenant_id == tenant_id))
     total = total_result.scalar() or 0
 
     result = await db.execute(
@@ -502,9 +488,7 @@ async def open_create_sku(
 ):
     from app.models.product import SKU, Product
 
-    presult = await db.execute(
-        select(Product).where(Product.tenant_id == tenant_id, Product.name == body.product_name)
-    )
+    presult = await db.execute(select(Product).where(Product.tenant_id == tenant_id, Product.name == body.product_name))
     product = presult.scalar_one_or_none()
     if not product:
         raise HTTPException(status_code=400, detail=f"产品 '{body.product_name}' 不存在")
@@ -563,9 +547,7 @@ async def open_update_sku(
 ):
     from app.models.product import SKU
 
-    result = await db.execute(
-        select(SKU).where(SKU.id == sku_id, SKU.tenant_id == tenant_id)
-    )
+    result = await db.execute(select(SKU).where(SKU.id == sku_id, SKU.tenant_id == tenant_id))
     sku = result.scalar_one_or_none()
     if not sku:
         raise HTTPException(status_code=404, detail="SKU 不存在")
@@ -589,9 +571,7 @@ async def open_list_batches(
     from app.models.product import ProductionBatch
 
     total_result = await db.execute(
-        select(func.count())
-        .select_from(ProductionBatch)
-        .where(ProductionBatch.tenant_id == tenant_id)
+        select(func.count()).select_from(ProductionBatch).where(ProductionBatch.tenant_id == tenant_id)
     )
     total = total_result.scalar() or 0
 
@@ -629,9 +609,7 @@ async def open_create_batch(
 
     from app.models.product import SKU, ProductionBatch
 
-    sresult = await db.execute(
-        select(SKU).where(SKU.tenant_id == tenant_id, SKU.code == body.sku_code)
-    )
+    sresult = await db.execute(select(SKU).where(SKU.tenant_id == tenant_id, SKU.code == body.sku_code))
     sku = sresult.scalar_one_or_none()
     if not sku:
         raise HTTPException(status_code=400, detail=f"SKU 编码 '{body.sku_code}' 不存在")

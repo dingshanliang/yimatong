@@ -59,17 +59,13 @@ async def on_claim_created(event_type: str, data: dict, tenant_id: str) -> None:
 
         await db.execute(text("SET LOCAL app.bypass_rls = 'true'"))
         # 查询权益
-        benefit_result = await db.execute(
-            select(Benefit).where(Benefit.id == uuid.UUID(benefit_id))
-        )
+        benefit_result = await db.execute(select(Benefit).where(Benefit.id == uuid.UUID(benefit_id)))
         benefit = benefit_result.scalar_one_or_none()
         if not benefit or not benefit.connector_id:
             return  # 平台内权益，不需要外部发放
 
         # 查询连接器
-        conn_result = await db.execute(
-            select(Connector).where(Connector.id == benefit.connector_id)
-        )
+        conn_result = await db.execute(select(Connector).where(Connector.id == benefit.connector_id))
         connector = conn_result.scalar_one_or_none()
         if not connector or not connector.enabled:
             logger.warning("Connector %s not found or disabled for benefit %s", benefit.connector_id, benefit_id)
@@ -188,9 +184,7 @@ async def _update_claim_delivery_status(
         update(BenefitClaim)
         .where(
             BenefitClaim.consumer_id == consumer_id,
-            BenefitClaim.benefit_id.in_(
-                select(Benefit.id).where(Benefit.connector_id == connector_id)
-            ),
+            BenefitClaim.benefit_id.in_(select(Benefit.id).where(Benefit.connector_id == connector_id)),
         )
         .values(delivery_status=status)
     )

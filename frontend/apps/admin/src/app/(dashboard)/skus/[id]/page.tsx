@@ -58,6 +58,8 @@ interface CodeBatchItem {
   created_at?: string;
 }
 
+type TabItem = ProductionBatchItem | CodeBatchItem;
+
 type TabKey = "profile" | "batches" | "code-batches";
 
 interface TabState<T> {
@@ -112,8 +114,10 @@ export default function SKUDetailPage() {
   const [skuLoading, setSkuLoading] = useState(false);
   const [activeTab, setActiveTab] = useState<TabKey>("profile");
 
-  const [batches, setBatches] = useState<TabState<ProductionBatchItem>>(createTabState);
-  const [codeBatches, setCodeBatches] = useState<TabState<CodeBatchItem>>(createTabState);
+  const [batches, setBatches] =
+    useState<TabState<ProductionBatchItem>>(createTabState);
+  const [codeBatches, setCodeBatches] =
+    useState<TabState<CodeBatchItem>>(createTabState);
 
   const fetchSKU = async () => {
     try {
@@ -135,9 +139,14 @@ export default function SKUDetailPage() {
       "code-batches": "/code-batches",
     };
 
-    const setters: Record<Exclude<TabKey, "profile">, (s: TabState<any>) => void> = {
-      batches: (s) => setBatches(s),
-      "code-batches": (s) => setCodeBatches(s),
+    const setters: Record<
+      Exclude<TabKey, "profile">,
+      (s: TabState<TabItem>) => void
+    > = {
+      batches: (s) =>
+        setBatches({ ...s, items: s.items as ProductionBatchItem[] }),
+      "code-batches": (s) =>
+        setCodeBatches({ ...s, items: s.items as CodeBatchItem[] }),
     };
 
     const prev = {
@@ -151,7 +160,12 @@ export default function SKUDetailPage() {
       const { data } = await api.get(endpointMap[tab], {
         params: { sku_id: skuId, page, page_size: 20 },
       });
-      setters[tab]({ items: data.items || [], total: data.total || 0, page, loading: false });
+      setters[tab]({
+        items: data.items || [],
+        total: data.total || 0,
+        page,
+        loading: false,
+      });
     } catch {
       message.error("获取数据失败");
       setters[tab]({ ...prev, loading: false });
@@ -184,10 +198,20 @@ export default function SKUDetailPage() {
       dataIndex: "batch_code",
       key: "batch_code",
     },
-    { title: "产品", dataIndex: "product_name", key: "product_name", render: (v?: string) => v || "-" },
+    {
+      title: "产品",
+      dataIndex: "product_name",
+      key: "product_name",
+      render: (v?: string) => v || "-",
+    },
     { title: "生产日期", dataIndex: "production_date", key: "production_date" },
     { title: "保质期至", dataIndex: "expiry_date", key: "expiry_date" },
-    { title: "产地", dataIndex: "origin", key: "origin", render: (v?: string) => v || "-" },
+    {
+      title: "产地",
+      dataIndex: "origin",
+      key: "origin",
+      render: (v?: string) => v || "-",
+    },
     {
       title: "状态",
       dataIndex: "status",
@@ -205,12 +229,21 @@ export default function SKUDetailPage() {
       dataIndex: "batch_code",
       key: "batch_code",
       render: (v: string, record: CodeBatchItem) => (
-        <Button type="link" className="!px-0" onClick={() => router.push(`/codes/${record.id}`)}>
+        <Button
+          type="link"
+          className="!px-0"
+          onClick={() => router.push(`/codes/${record.id}`)}
+        >
           {v}
         </Button>
       ),
     },
-    { title: "产品", dataIndex: "product_name", key: "product_name", render: (v?: string) => v || "-" },
+    {
+      title: "产品",
+      dataIndex: "product_name",
+      key: "product_name",
+      render: (v?: string) => v || "-",
+    },
     { title: "数量", dataIndex: "quantity", key: "quantity" },
     {
       title: "码类型",
@@ -233,7 +266,12 @@ export default function SKUDetailPage() {
         return <Tag color={info.color}>{info.label}</Tag>;
       },
     },
-    { title: "创建时间", dataIndex: "created_at", key: "created_at", render: (v?: string) => formatDate(v) },
+    {
+      title: "创建时间",
+      dataIndex: "created_at",
+      key: "created_at",
+      render: (v?: string) => formatDate(v),
+    },
   ];
 
   const renderTable = <T extends object>(
@@ -266,19 +304,29 @@ export default function SKUDetailPage() {
 
   const specText =
     sku.specifications && Object.keys(sku.specifications).length
-      ? Object.entries(sku.specifications).map(([k, v]) => `${k}: ${v}`).join(", ")
+      ? Object.entries(sku.specifications)
+          .map(([k, v]) => `${k}: ${v}`)
+          .join(", ")
       : "未填写";
 
   return (
     <div>
       <div className="mb-5 flex items-start justify-between gap-4">
         <Space direction="vertical" size={4}>
-          <Button type="link" className="!px-0" icon={<ArrowLeftOutlined />} onClick={() => router.push("/skus")}>
+          <Button
+            type="link"
+            className="!px-0"
+            icon={<ArrowLeftOutlined />}
+            onClick={() => router.push("/skus")}
+          >
             返回 SKU 列表
           </Button>
-          <Title level={4} className="!mb-0">{sku.name}</Title>
+          <Title level={4} className="!mb-0">
+            {sku.name}
+          </Title>
           <Text type="secondary">
-            {sku.product_name || "未关联产品"} · {sku.code} · {SKU_STATUS_MAP[sku.status]?.label || sku.status}
+            {sku.product_name || "未关联产品"} · {sku.code} ·{" "}
+            {SKU_STATUS_MAP[sku.status]?.label || sku.status}
           </Text>
         </Space>
       </div>
@@ -307,34 +355,52 @@ export default function SKUDetailPage() {
             label: "基础资料",
             children: (
               <Descriptions bordered size="small" column={2}>
-                <Descriptions.Item label="SKU 编码">{sku.code}</Descriptions.Item>
-                <Descriptions.Item label="SKU 名称">{sku.name}</Descriptions.Item>
+                <Descriptions.Item label="SKU 编码">
+                  {sku.code}
+                </Descriptions.Item>
+                <Descriptions.Item label="SKU 名称">
+                  {sku.name}
+                </Descriptions.Item>
                 <Descriptions.Item label="所属产品">
-                  <Button type="link" className="!px-0" onClick={() => router.push(`/products/${sku.product_id}`)}>
+                  <Button
+                    type="link"
+                    className="!px-0"
+                    onClick={() => router.push(`/products/${sku.product_id}`)}
+                  >
                     {sku.product_name || sku.product_id}
                   </Button>
                 </Descriptions.Item>
-                <Descriptions.Item label="包装类型">{sku.package_type || "未填写"}</Descriptions.Item>
-                <Descriptions.Item label="条码/GTIN">{sku.barcode || "未填写"}</Descriptions.Item>
+                <Descriptions.Item label="包装类型">
+                  {sku.package_type || "未填写"}
+                </Descriptions.Item>
+                <Descriptions.Item label="条码/GTIN">
+                  {sku.barcode || "未填写"}
+                </Descriptions.Item>
                 <Descriptions.Item label="规格">{specText}</Descriptions.Item>
                 <Descriptions.Item label="状态">
                   <Tag color={SKU_STATUS_MAP[sku.status]?.color || "default"}>
                     {SKU_STATUS_MAP[sku.status]?.label || sku.status}
                   </Tag>
                 </Descriptions.Item>
-                <Descriptions.Item label="创建时间">{formatDate(sku.created_at)}</Descriptions.Item>
+                <Descriptions.Item label="创建时间">
+                  {formatDate(sku.created_at)}
+                </Descriptions.Item>
               </Descriptions>
             ),
           },
           {
             key: "batches",
             label: `生产批次 (${batches.total || 0})`,
-            children: renderTable(batchColumns, batches, (p) => fetchTabData("batches", p)),
+            children: renderTable(batchColumns, batches, (p) =>
+              fetchTabData("batches", p)
+            ),
           },
           {
             key: "code-batches",
             label: `码批次 (${codeBatches.total || 0})`,
-            children: renderTable(codeBatchColumns, codeBatches, (p) => fetchTabData("code-batches", p)),
+            children: renderTable(codeBatchColumns, codeBatches, (p) =>
+              fetchTabData("code-batches", p)
+            ),
           },
         ]}
       />

@@ -15,23 +15,15 @@ class SyncMapping(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid7)
     tenant_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
-    local_entity_type: Mapped[str] = mapped_column(
-        String(50), nullable=False
-    )  # e.g. "consumer_profile", "product"
+    local_entity_type: Mapped[str] = mapped_column(String(50), nullable=False)  # e.g. "consumer_profile", "product"
     local_entity_id: Mapped[uuid.UUID] = mapped_column(nullable=False)
-    source_system: Mapped[str] = mapped_column(
-        String(50), nullable=False
-    )  # e.g. "wecom", "csv_import"
+    source_system: Mapped[str] = mapped_column(String(50), nullable=False)  # e.g. "wecom", "csv_import"
     external_id: Mapped[str] = mapped_column(String(200), nullable=False)
-    external_phone_hash: Mapped[str | None] = mapped_column(
-        String(64), nullable=True
-    )
+    external_phone_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     sync_direction: Mapped[str] = mapped_column(
         String(20), nullable=False, default="bidirectional"
     )  # "bidirectional" / "push_only"
-    last_synced_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
+    last_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()

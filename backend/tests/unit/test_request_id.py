@@ -1,6 +1,5 @@
 """Tests for Request ID middleware."""
 
-
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient

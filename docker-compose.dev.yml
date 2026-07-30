@@ -72,18 +72,42 @@ services:
       - ./backend:/app
       - backend_venv:/app/.venv
 
+  db-init:
+    image: postgres:16-alpine
+    environment:
+      PGPASSWORD: yimatong
+    command:
+      [
+        "psql",
+        "-h",
+        "postgres",
+        "-U",
+        "yimatong",
+        "-d",
+        "yimatong_dev",
+        "-v",
+        "ON_ERROR_STOP=1",
+        "-f",
+        "/scripts/init_runtime_role.sql",
+      ]
+    depends_on:
+      migration:
+        condition: service_completed_successfully
+    volumes:
+      - ./backend/scripts/init_runtime_role.sql:/scripts/init_runtime_role.sql:ro
+
   seed:
     build:
       context: ./backend
       dockerfile: Dockerfile
     command: ["uv", "run", "python", "-m", "app.cli", "all"]
     environment:
-      database_url: postgresql+asyncpg://yimatong:yimatong@postgres:5432/yimatong_dev
+      database_url: postgresql+asyncpg://yimatong_app:yimatong_app@postgres:5432/yimatong_dev
       secret_key: dev-secret-key-change-in-production
       AES_MASTER_KEY_V1: f18d81c3b455f9a5a01db6a8546fc5acc242b51cbc4ae70ec99654e091f38a4b
       HMAC_PEPPER: 7c9cade78554566742f263539bd4ff404493e9b9ed6939168da7ad5ceb3813cd
     depends_on:
-      migration:
+      db-init:
         condition: service_completed_successfully
     volumes:
       - ./backend:/app
@@ -96,7 +120,7 @@ services:
     ports:
       - "8000:8000"
     environment:
-      database_url: postgresql+asyncpg://yimatong:yimatong@postgres:5432/yimatong_dev
+      database_url: postgresql+asyncpg://yimatong_app:yimatong_app@postgres:5432/yimatong_dev
       redis_url: redis://redis:6379/0
       secret_key: dev-secret-key-change-in-production
       AES_MASTER_KEY_V1: f18d81c3b455f9a5a01db6a8546fc5acc242b51cbc4ae70ec99654e091f38a4b
@@ -120,7 +144,13 @@ services:
       seed:
         condition: service_completed_successfully
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')",
+        ]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -133,9 +163,16 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
-    command: ["uv", "run", "python", "-c", "from app.tasks.worker import run_worker; run_worker()"]
+    command:
+      [
+        "uv",
+        "run",
+        "python",
+        "-c",
+        "from app.tasks.worker import run_worker; run_worker()",
+      ]
     environment:
-      database_url: postgresql+asyncpg://yimatong:yimatong@postgres:5432/yimatong_dev
+      database_url: postgresql+asyncpg://yimatong_app:yimatong_app@postgres:5432/yimatong_dev
       redis_url: redis://redis:6379/0
       secret_key: dev-secret-key-change-in-production
       AES_MASTER_KEY_V1: f18d81c3b455f9a5a01db6a8546fc5acc242b51cbc4ae70ec99654e091f38a4b
@@ -145,6 +182,8 @@ services:
         condition: service_healthy
       postgres:
         condition: service_healthy
+      db-init:
+        condition: service_completed_successfully
     volumes:
       - ./backend:/app
       - backend_venv:/app/.venv

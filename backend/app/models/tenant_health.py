@@ -12,9 +12,7 @@ class TenantHealthMetrics(Base):
     __tablename__ = "tenant_health_metrics"
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid7)
-    tenant_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("tenants.id"), unique=True, nullable=False, index=True
-    )
+    tenant_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("tenants.id"), unique=True, nullable=False, index=True)
     last_scan_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     scans_last_7d: Mapped[int] = mapped_column(Integer, default=0, nullable=False)

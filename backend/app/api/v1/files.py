@@ -17,7 +17,11 @@ MAX_UPLOAD_SIZE = 10 * 1024 * 1024
 
 # Allowed MIME types for upload
 ALLOWED_CONTENT_TYPES = {
-    "image/jpeg", "image/png", "image/gif", "image/webp", "image/svg+xml",
+    "image/jpeg",
+    "image/png",
+    "image/gif",
+    "image/webp",
+    "image/svg+xml",
     "application/pdf",
     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -49,9 +53,11 @@ async def upload_file_endpoint(
     content = await file.read()
     if len(content) > MAX_UPLOAD_SIZE:
         from fastapi import HTTPException
+
         raise HTTPException(status_code=413, detail=f"文件大小超过限制（最大 {MAX_UPLOAD_SIZE // 1024 // 1024} MB）")
     if file.content_type and file.content_type not in ALLOWED_CONTENT_TYPES:
         from fastapi import HTTPException
+
         raise HTTPException(status_code=415, detail=f"不支持的文件类型: {file.content_type}")
     result = await upload_file(
         tenant_id=str(tenant_id),

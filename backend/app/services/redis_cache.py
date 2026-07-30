@@ -174,6 +174,7 @@ class AsyncRedisCache:
 # All new code should use AsyncRedisCache.
 # ---------------------------------------------------------------------------
 
+
 class RedisCache:  # noqa: SIM119 — dataclass-style class kept for compat
     """同步 Redis 缓存（已废弃，请使用 AsyncRedisCache）"""
 

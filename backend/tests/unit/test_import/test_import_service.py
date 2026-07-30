@@ -121,10 +121,13 @@ class TestExcelParsing:
         wb = Workbook()
         wb.remove(wb.active)
 
-        _make_brand_sheet(wb, [
-            ["品牌A", "", "描述A", "ext_a"],
-            ["品牌B", "", "描述B", "ext_b"],
-        ])
+        _make_brand_sheet(
+            wb,
+            [
+                ["品牌A", "", "描述A", "ext_a"],
+                ["品牌B", "", "描述B", "ext_b"],
+            ],
+        )
         _make_product_sheet(wb, [])
         _make_sku_sheet(wb, [])
         _make_batch_sheet(wb, [])

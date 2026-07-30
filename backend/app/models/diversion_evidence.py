@@ -20,9 +20,7 @@ class DiversionEvidence(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid7)
     tenant_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
-    clue_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("diversion_clues.id"), nullable=False, index=True
-    )
+    clue_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("diversion_clues.id"), nullable=False, index=True)
     # 证据类型：transfer（调货单）/ order（订单）/ logistics（物流）/ explanation（说明）/ other
     evidence_type: Mapped[str] = mapped_column(String(30), nullable=False)
     # 证据来源：distributor（经销商）/ brand_ops（品牌运营）/ system（系统）/ other
@@ -32,9 +30,5 @@ class DiversionEvidence(Base):
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     # 上传人 + 时间（AC2）
     uploaded_by: Mapped[str | None] = mapped_column(String(100), nullable=True)
-    uploaded_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now(), nullable=False
-    )
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now(), nullable=False
-    )
+    uploaded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)

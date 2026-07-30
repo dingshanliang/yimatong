@@ -66,9 +66,7 @@ async def list_coupon_pools(
     tenant_id: uuid.UUID,
 ) -> list[CouponPool]:
     result = await db.execute(
-        select(CouponPool)
-        .where(CouponPool.tenant_id == tenant_id)
-        .order_by(CouponPool.id.desc())
+        select(CouponPool).where(CouponPool.tenant_id == tenant_id).order_by(CouponPool.id.desc())
     )
     return list(result.scalars().all())
 
@@ -81,9 +79,7 @@ async def list_pool_codes(
 ) -> tuple[list[CouponCode], int]:
     from sqlalchemy import func
 
-    count_result = await db.execute(
-        select(func.count()).select_from(CouponCode).where(CouponCode.pool_id == pool_id)
-    )
+    count_result = await db.execute(select(func.count()).select_from(CouponCode).where(CouponCode.pool_id == pool_id))
     total = count_result.scalar() or 0
 
     result = await db.execute(

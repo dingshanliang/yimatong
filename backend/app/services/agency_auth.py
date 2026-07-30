@@ -30,7 +30,9 @@ async def list_authorizations_for_agency(
     from sqlalchemy import func
 
     count_result = await db.execute(
-        select(func.count()).select_from(AgencyAuthorization).where(
+        select(func.count())
+        .select_from(AgencyAuthorization)
+        .where(
             AgencyAuthorization.agency_tenant_id == agency_tenant_id,
             AgencyAuthorization.status == AgencyAuthStatus.active,
         )
@@ -73,7 +75,9 @@ async def list_authorizations_for_brand(
     from sqlalchemy import func
 
     count_result = await db.execute(
-        select(func.count()).select_from(AgencyAuthorization).where(
+        select(func.count())
+        .select_from(AgencyAuthorization)
+        .where(
             AgencyAuthorization.client_tenant_id == client_tenant_id,
             AgencyAuthorization.status == AgencyAuthStatus.active,
         )

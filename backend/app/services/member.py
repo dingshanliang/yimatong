@@ -95,9 +95,7 @@ async def get_or_create_consumer(
     return consumer
 
 
-async def _get_consumer_for_update(
-    db: AsyncSession, tenant_id: uuid.UUID, consumer_id: uuid.UUID
-) -> ConsumerProfile:
+async def _get_consumer_for_update(db: AsyncSession, tenant_id: uuid.UUID, consumer_id: uuid.UUID) -> ConsumerProfile:
     """获取消费者档案并加行锁（FOR UPDATE）。"""
     result = await db.execute(
         select(ConsumerProfile)

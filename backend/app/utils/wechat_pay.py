@@ -20,6 +20,7 @@ def _load_private_key(pem_str: str):
 
 def _load_certificate(pem_str: str):
     from cryptography import x509
+
     return x509.load_pem_x509_certificate(pem_str.encode())
 
 
@@ -44,7 +45,7 @@ def sign_with_serial(
     signature = private_key.sign(signing_string, padding.PKCS1v15(), hashes.SHA256())
     signature_b64 = base64.b64encode(signature).decode("utf-8")
     authorization = (
-        f'WECHATPAY2-SHA256-RSA2048 '
+        f"WECHATPAY2-SHA256-RSA2048 "
         f'mchid="{mch_id}",'
         f'nonce_str="{nonce}",'
         f'timestamp="{timestamp}",'
@@ -104,5 +105,6 @@ def decrypt_callback_resource(
 def get_cert_serial_no(cert_pem: str) -> str:
     """从证书 PEM 中提取序列号。"""
     from cryptography import x509
+
     cert = x509.load_pem_x509_certificate(cert_pem.encode())
-    return format(cert.serial_number, 'X')
+    return format(cert.serial_number, "X")

@@ -33,15 +33,11 @@ def _extract_consumer_data(external_contact: dict) -> dict:
     """从企微外部联系人数据提取消费者字段。"""
     return {
         "nickname": external_contact.get("name", ""),
-        "tags": _wecom_tags_to_string(
-            external_contact.get("tag", {}).get("tag_name_list", [])
-        ),
+        "tags": _wecom_tags_to_string(external_contact.get("tag", {}).get("tag_name_list", [])),
     }
 
 
-async def sync_wecom_contacts_for_tenant(
-    db: AsyncSession, tenant_id: uuid.UUID
-) -> dict:
+async def sync_wecom_contacts_for_tenant(db: AsyncSession, tenant_id: uuid.UUID) -> dict:
     """为单个租户同步企微联系人。
 
     Returns:

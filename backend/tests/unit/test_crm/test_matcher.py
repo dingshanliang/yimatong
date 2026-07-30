@@ -70,26 +70,18 @@ class TestMatchByPhone:
 class TestCreateOrUpdateMapping:
     async def test_create_new(self, db, tenant_id):
         consumer = await _create_consumer(db, tenant_id)
-        mapping = await create_or_update_mapping(
-            db, tenant_id, consumer.id, "wecom", "ext_new"
-        )
+        mapping = await create_or_update_mapping(db, tenant_id, consumer.id, "wecom", "ext_new")
         assert mapping.external_id == "ext_new"
         assert mapping.source_system == "wecom"
         assert mapping.local_entity_id == consumer.id
 
     async def test_update_existing(self, db, tenant_id):
         consumer = await _create_consumer(db, tenant_id)
-        await create_or_update_mapping(
-            db, tenant_id, consumer.id, "wecom", "ext_old"
-        )
+        await create_or_update_mapping(db, tenant_id, consumer.id, "wecom", "ext_old")
         await db.commit()
 
-        new_consumer = await _create_consumer(
-            db, tenant_id, phone_hash="new_hash", nickname="新用户"
-        )
-        mapping = await create_or_update_mapping(
-            db, tenant_id, new_consumer.id, "wecom", "ext_old"
-        )
+        new_consumer = await _create_consumer(db, tenant_id, phone_hash="new_hash", nickname="新用户")
+        mapping = await create_or_update_mapping(db, tenant_id, new_consumer.id, "wecom", "ext_old")
         assert mapping.local_entity_id == new_consumer.id
 
 
@@ -101,12 +93,8 @@ class TestGetMappingsForConsumer:
 
     async def test_multiple_mappings(self, db, tenant_id):
         consumer = await _create_consumer(db, tenant_id)
-        await create_or_update_mapping(
-            db, tenant_id, consumer.id, "wecom", "ext_wecom"
-        )
-        await create_or_update_mapping(
-            db, tenant_id, consumer.id, "youzan", "ext_youzan"
-        )
+        await create_or_update_mapping(db, tenant_id, consumer.id, "wecom", "ext_wecom")
+        await create_or_update_mapping(db, tenant_id, consumer.id, "youzan", "ext_youzan")
         await db.commit()
 
         mappings = await get_mappings_for_consumer(db, tenant_id, consumer.id)

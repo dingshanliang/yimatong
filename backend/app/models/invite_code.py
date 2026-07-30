@@ -2,7 +2,7 @@ import uuid
 from datetime import UTC, datetime
 from enum import StrEnum
 
-from sqlalchemy import DateTime, ForeignKey, String
+from sqlalchemy import DateTime, String
 from sqlalchemy import Enum as SQLEnum
 from sqlalchemy.orm import Mapped, mapped_column
 from uuid6 import uuid7
@@ -29,9 +29,7 @@ class TenantInviteCode(Base):
         SQLEnum(InviteCodeStatus), default=InviteCodeStatus.active, nullable=False
     )
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    created_by: Mapped[uuid.UUID | None] = mapped_column(
-        ForeignKey("accounts.id"), nullable=True
-    )
+    created_by_actor: Mapped[str] = mapped_column(String(100), nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False
     )

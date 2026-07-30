@@ -60,9 +60,7 @@ async def _sync_record(
     db.add(record)
 
 
-async def handle_consumer_created(
-    event_type: str, data: dict, tenant_id_str: str
-) -> None:
+async def handle_consumer_created(event_type: str, data: dict, tenant_id_str: str) -> None:
     """消费者创建事件处理器。"""
     tenant_id = uuid.UUID(tenant_id_str)
     consumer_id = data.get("consumer_id")
@@ -89,9 +87,7 @@ async def handle_consumer_created(
 
         try:
             # 检查是否已有映射
-            existing = await match_by_external_id(
-                db, tenant_id, "wecom", consumer_id
-            )
+            existing = await match_by_external_id(db, tenant_id, "wecom", consumer_id)
 
             if existing and existing.mapping:
                 # 已映射，执行更新
@@ -105,8 +101,12 @@ async def handle_consumer_created(
                     __import__("datetime").timezone.utc
                 )
                 await _sync_record(
-                    db, tenant_id, consumer.id, "update",
-                    existing.mapping.external_id, {"status": "updated"},
+                    db,
+                    tenant_id,
+                    consumer.id,
+                    "update",
+                    existing.mapping.external_id,
+                    {"status": "updated"},
                 )
             else:
                 # 尝试通过手机号匹配
@@ -118,25 +118,42 @@ async def handle_consumer_created(
                         ext_user = contacts[0]
                         ext_id = ext_user.get("external_userid", "")
                         await create_or_update_mapping(
-                            db, tenant_id, consumer.id, "wecom", ext_id,
+                            db,
+                            tenant_id,
+                            consumer.id,
+                            "wecom",
+                            ext_id,
                         )
                         await _sync_record(
-                            db, tenant_id, consumer.id, "match",
-                            ext_id, {"status": "matched_by_phone"},
+                            db,
+                            tenant_id,
+                            consumer.id,
+                            "match",
+                            ext_id,
+                            {"status": "matched_by_phone"},
                         )
                         logger.info(
                             "CRM sync: matched consumer %s → wecom %s by phone",
-                            consumer_id, ext_id,
+                            consumer_id,
+                            ext_id,
                         )
                     else:
                         await _sync_record(
-                            db, tenant_id, consumer.id, "skip",
-                            None, {"status": "no_crm_match"},
+                            db,
+                            tenant_id,
+                            consumer.id,
+                            "skip",
+                            None,
+                            {"status": "no_crm_match"},
                         )
                 else:
                     await _sync_record(
-                        db, tenant_id, consumer.id, "skip",
-                        None, {"status": "no_phone"},
+                        db,
+                        tenant_id,
+                        consumer.id,
+                        "skip",
+                        None,
+                        {"status": "no_phone"},
                     )
 
             await db.commit()
@@ -146,9 +163,7 @@ async def handle_consumer_created(
             await client.close()
 
 
-async def handle_consumer_updated(
-    event_type: str, data: dict, tenant_id_str: str
-) -> None:
+async def handle_consumer_updated(event_type: str, data: dict, tenant_id_str: str) -> None:
     """消费者更新事件处理器。"""
     tenant_id = uuid.UUID(tenant_id_str)
     consumer_id = data.get("consumer_id")
@@ -174,9 +189,7 @@ async def handle_consumer_updated(
 
         try:
             # 查映射
-            existing = await match_by_external_id(
-                db, tenant_id, "wecom", consumer_id
-            )
+            existing = await match_by_external_id(db, tenant_id, "wecom", consumer_id)
             if not existing or not existing.mapping:
                 # 无映射，走创建流程
                 await handle_consumer_created(event_type, data, tenant_id_str)
@@ -196,15 +209,18 @@ async def handle_consumer_updated(
                 tag_list = [t.strip() for t in tags.split(",") if t.strip()]
                 if tag_list:
                     await client.mark_external_contact(
-                        mapping.external_id, add_tag=tag_list,
+                        mapping.external_id,
+                        add_tag=tag_list,
                     )
 
-            mapping.last_synced_at = __import__("datetime").datetime.now(
-                __import__("datetime").timezone.utc
-            )
+            mapping.last_synced_at = __import__("datetime").datetime.now(__import__("datetime").timezone.utc)
             await _sync_record(
-                db, tenant_id, consumer.id, "update",
-                mapping.external_id, {"status": "updated"},
+                db,
+                tenant_id,
+                consumer.id,
+                "update",
+                mapping.external_id,
+                {"status": "updated"},
             )
             await db.commit()
         except Exception:

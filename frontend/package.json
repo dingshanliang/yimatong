@@ -1,6 +1,7 @@
 {
   "name": "yimatong-frontend",
   "private": true,
+  "packageManager": "pnpm@10.0.0",
   "scripts": {
     "dev:admin": "pnpm --filter @yimatong/admin dev",
     "dev:h5": "pnpm --filter @yimatong/h5 dev",
@@ -16,8 +17,10 @@
     "lint:h5": "pnpm --filter @yimatong/h5 lint",
     "lint:platform": "pnpm --filter @yimatong/platform lint",
     "lint:boundaries": "depcruise apps packages",
-    "typecheck": "pnpm --filter @yimatong/shared typecheck && pnpm --filter @yimatong/design-tokens typecheck",
+    "lint": "pnpm lint:admin && pnpm lint:h5 && pnpm lint:platform",
+    "typecheck": "pnpm --filter @yimatong/shared typecheck && pnpm --filter @yimatong/design-tokens typecheck && pnpm --filter @yimatong/admin exec tsc --noEmit && pnpm --filter @yimatong/h5 exec tsc --noEmit && pnpm --filter @yimatong/platform exec tsc --noEmit",
     "check": "pnpm --filter @yimatong/design-tokens check && pnpm typecheck && pnpm lint:boundaries",
+    "test:admin": "pnpm --filter @yimatong/admin exec vitest run",
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui",
     "test:e2e:debug": "playwright test --debug"

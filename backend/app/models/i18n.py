@@ -1,4 +1,5 @@
 """多语言翻译模型"""
+
 import uuid
 from datetime import datetime
 

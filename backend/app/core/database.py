@@ -32,9 +32,7 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
                     uuid.UUID(validated_id)
                 except ValueError:
                     raise ValueError(f"Invalid tenant_id format: {validated_id}")
-            await session.execute(
-                text(f"SET LOCAL app.tenant_id = '{validated_id}'")
-            )
+            await session.execute(text(f"SET LOCAL app.tenant_id = '{validated_id}'"))
         try:
             yield session
             await session.commit()
@@ -75,9 +73,7 @@ async def get_db_for_consumer() -> AsyncGenerator[AsyncSession, None]:
                 uuid.UUID(validated_id)
             except ValueError:
                 raise ValueError(f"Invalid tenant_id format: {validated_id}")
-            await session.execute(
-                text(f"SET LOCAL app.tenant_id = '{validated_id}'")
-            )
+            await session.execute(text(f"SET LOCAL app.tenant_id = '{validated_id}'"))
         try:
             yield session
             await session.commit()

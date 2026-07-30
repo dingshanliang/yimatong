@@ -93,14 +93,16 @@ class TestCanTransitionValid:
     """所有合法转换都能通过 can_transition"""
 
     @pytest.mark.parametrize(
-        "source,target", VALID_TRANSITIONS,
+        "source,target",
+        VALID_TRANSITIONS,
         ids=[f"{s.value}->{t.value}" for s, t in VALID_TRANSITIONS],
     )
     def test_valid_transition_returns_true(self, source: CodeItemStatus, target: CodeItemStatus):
         assert can_transition(source, target) is True
 
     @pytest.mark.parametrize(
-        "source,target", VALID_TRANSITIONS,
+        "source,target",
+        VALID_TRANSITIONS,
         ids=[f"{s.value}->{t.value}" for s, t in VALID_TRANSITIONS],
     )
     def test_valid_transition_does_not_raise(self, source: CodeItemStatus, target: CodeItemStatus):
@@ -112,7 +114,8 @@ class TestCanTransitionInvalid:
     """所有非法转换 can_transition 返回 False"""
 
     @pytest.mark.parametrize(
-        "source,target", INVALID_TRANSITIONS,
+        "source,target",
+        INVALID_TRANSITIONS,
         ids=[f"{s.value}->{t.value}" for s, t in INVALID_TRANSITIONS],
     )
     def test_invalid_transition_returns_false(self, source: CodeItemStatus, target: CodeItemStatus):

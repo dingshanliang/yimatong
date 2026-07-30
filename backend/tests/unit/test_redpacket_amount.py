@@ -14,75 +14,91 @@ from app.services.redpacket_amount import (
 
 class TestValidateConfig:
     def test_fixed_valid(self):
-        ok, msg = validate_config({
-            "amount_type": "fixed",
-            "fixed_amount": 100,
-            "budget": 10000,
-        })
+        ok, msg = validate_config(
+            {
+                "amount_type": "fixed",
+                "fixed_amount": 100,
+                "budget": 10000,
+            }
+        )
         assert ok
         assert msg == ""
 
     def test_fixed_too_large(self):
-        ok, msg = validate_config({
-            "amount_type": "fixed",
-            "fixed_amount": WECHAT_CASH_MARKETING_MAX + 1,
-            "budget": 100000,
-        })
+        ok, msg = validate_config(
+            {
+                "amount_type": "fixed",
+                "fixed_amount": WECHAT_CASH_MARKETING_MAX + 1,
+                "budget": 100000,
+            }
+        )
         assert not ok
         assert "200元" in msg
 
     def test_random_valid(self):
-        ok, msg = validate_config({
-            "amount_type": "random",
-            "min_amount": 30,
-            "max_amount": 300,
-            "budget": 10000,
-        })
+        ok, msg = validate_config(
+            {
+                "amount_type": "random",
+                "min_amount": 30,
+                "max_amount": 300,
+                "budget": 10000,
+            }
+        )
         assert ok
 
     def test_random_min_gt_max(self):
-        ok, msg = validate_config({
-            "amount_type": "random",
-            "min_amount": 300,
-            "max_amount": 30,
-            "budget": 10000,
-        })
+        ok, msg = validate_config(
+            {
+                "amount_type": "random",
+                "min_amount": 300,
+                "max_amount": 30,
+                "budget": 10000,
+            }
+        )
         assert not ok
         assert "min_amount must be <=" in msg
 
     def test_lucky_valid(self):
-        ok, msg = validate_config({
-            "amount_type": "lucky",
-            "lucky_total_count": 10,
-            "lucky_min_per": 10,
-            "budget": 5000,
-        })
+        ok, msg = validate_config(
+            {
+                "amount_type": "lucky",
+                "lucky_total_count": 10,
+                "lucky_min_per": 10,
+                "budget": 5000,
+            }
+        )
         assert ok
 
     def test_lucky_budget_too_small(self):
-        ok, msg = validate_config({
-            "amount_type": "lucky",
-            "lucky_total_count": 100,
-            "lucky_min_per": 10,
-            "budget": 500,
-        })
+        ok, msg = validate_config(
+            {
+                "amount_type": "lucky",
+                "lucky_total_count": 100,
+                "lucky_min_per": 10,
+                "budget": 500,
+            }
+        )
         assert not ok
         assert "budget too small" in msg
 
     def test_invalid_amount_type(self):
-        ok, msg = validate_config({
-            "amount_type": "unknown",
-            "budget": 1000,
-        })
+        ok, msg = validate_config(
+            {
+                "amount_type": "unknown",
+                "budget": 1000,
+            }
+        )
         assert not ok
         assert "amount_type must be one of" in msg
 
     def test_zero_budget(self):
-        ok, msg = validate_config({
-            "amount_type": "fixed",
-            "fixed_amount": 100,
-            "budget": 0,
-        })
+        ok, msg = validate_config(
+            {
+                "amount_type": "fixed",
+                "fixed_amount": 100,
+                "budget": 0,
+            }
+        )
         assert not ok
         assert "budget must be positive" in msg
 

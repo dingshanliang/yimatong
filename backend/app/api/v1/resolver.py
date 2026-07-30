@@ -108,8 +108,14 @@ async def resolve_code_endpoint(
     is_valid_visit = status in (CodeItemStatus.activated, CodeItemStatus.frozen) and not is_robot
     # frozen 仍记录扫码事实（消费者查看了溯源），但不颁发 scan_token
     scan_info = await _record_scan(
-        db, data, public_id, ip_hash, user_agent, status,
-        visitor_id=visitor_id, is_valid_visit=is_valid_visit,
+        db,
+        data,
+        public_id,
+        ip_hash,
+        user_agent,
+        status,
+        visitor_id=visitor_id,
+        is_valid_visit=is_valid_visit,
     )
     # 把签发的 visitor_id 放进 scan_info，H5 存 localStorage
     scan_info["visitor_id"] = visitor_id

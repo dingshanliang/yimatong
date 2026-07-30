@@ -13,12 +13,12 @@ from app.models.tenant import Account, Organization
 from app.utils.security import create_access_token, hash_password
 from tests.conftest import TestSessionLocal
 
+
 def _platform_admin_headers() -> dict:
     from app.utils.security import create_access_token
+
     token = create_access_token("platform", "platform-admin", "platform_admin")
     return {"Authorization": f"Bearer {token}"}
-
-
 
 
 @pytest.fixture

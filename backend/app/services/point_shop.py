@@ -49,13 +49,9 @@ async def list_point_products(
     return list(result.scalars().all()), total
 
 
-async def get_point_product(
-    db: AsyncSession, tenant_id: uuid.UUID, product_id: uuid.UUID
-) -> PointProduct | None:
+async def get_point_product(db: AsyncSession, tenant_id: uuid.UUID, product_id: uuid.UUID) -> PointProduct | None:
     result = await db.execute(
-        select(PointProduct).where(
-            PointProduct.id == product_id, PointProduct.tenant_id == tenant_id
-        )
+        select(PointProduct).where(PointProduct.id == product_id, PointProduct.tenant_id == tenant_id)
     )
     return result.scalar_one_or_none()
 
@@ -132,15 +128,15 @@ async def update_point_product(
     return product
 
 
-async def delete_point_product(
-    db: AsyncSession, tenant_id: uuid.UUID, product_id: uuid.UUID
-) -> bool:
+async def delete_point_product(db: AsyncSession, tenant_id: uuid.UUID, product_id: uuid.UUID) -> bool:
     product = await get_point_product(db, tenant_id, product_id)
     if not product:
         return False
     # Check for existing redemptions
     count_result = await db.execute(
-        select(func.count()).select_from(PointRedemption).where(
+        select(func.count())
+        .select_from(PointRedemption)
+        .where(
             PointRedemption.product_id == product_id,
         )
     )
@@ -178,7 +174,9 @@ async def _redemption_count(
     product_id: uuid.UUID,
 ) -> int:
     result = await db.execute(
-        select(func.count()).select_from(PointRedemption).where(
+        select(func.count())
+        .select_from(PointRedemption)
+        .where(
             PointRedemption.tenant_id == tenant_id,
             PointRedemption.consumer_id == consumer_id,
             PointRedemption.product_id == product_id,
@@ -201,9 +199,7 @@ async def get_exchange_block_reason(
     return _compute_block_reason(product, current_points, count)
 
 
-def _compute_block_reason(
-    product: PointProduct, current_points: int, redemption_count: int
-) -> str | None:
+def _compute_block_reason(product: PointProduct, current_points: int, redemption_count: int) -> str | None:
     """Pure function to compute exchange block reason without DB queries."""
     now = utcnow()
     if not product.enabled:
@@ -257,7 +253,9 @@ async def list_consumer_point_products(
     items = []
     for product in products:
         block_reason = _compute_block_reason(product, consumer.total_points, count_map.get(product.id, 0))
-        items.append(serialize_point_product(product, can_exchange=block_reason is None, exchange_block_reason=block_reason))
+        items.append(
+            serialize_point_product(product, can_exchange=block_reason is None, exchange_block_reason=block_reason)
+        )
     return items
 
 
@@ -295,9 +293,7 @@ async def exchange_product(
     """消费者兑换积分商品。"""
     # 使用 FOR UPDATE 行锁防止并发超卖
     result = await db.execute(
-        select(PointProduct)
-        .where(PointProduct.id == product_id, PointProduct.tenant_id == tenant_id)
-        .with_for_update()
+        select(PointProduct).where(PointProduct.id == product_id, PointProduct.tenant_id == tenant_id).with_for_update()
     )
     product = result.scalar_one_or_none()
     if not product:
@@ -342,7 +338,10 @@ async def exchange_product(
         from app.services.campaign import claim_benefit
 
         result = await claim_benefit(
-            db, tenant_id, product.benefit_id, str(consumer_id),
+            db,
+            tenant_id,
+            product.benefit_id,
+            str(consumer_id),
             idempotency_key=f"points_exchange:{product_id}:{consumer_id}",
         )
         if result.get("status") != "success" or not result.get("claim"):

@@ -28,7 +28,12 @@ async def scan_by_channel_endpoint(
 ):
     """按渠道维度聚合扫码统计"""
     items, total = await get_scan_by_channel(
-        db, tenant_id, dimension=dimension, days_back=days_back, page=page, page_size=page_size,
+        db,
+        tenant_id,
+        dimension=dimension,
+        days_back=days_back,
+        page=page,
+        page_size=page_size,
     )
     return PaginatedResponse(items=items, total=total, page=page, page_size=page_size)
 

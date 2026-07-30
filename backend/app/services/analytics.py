@@ -207,9 +207,9 @@ async def aggregate_daily_stats(
             func.sum(ScanEvent.is_first_scan.cast(Integer)).label("first"),
             # yimatong-zgb1.10：有效访问聚合（Decision 21 headline 分母）
             func.sum(ScanEvent.is_valid_visit.cast(Integer)).label("valid_visits"),
-            func.count(
-                func.nullif(ScanEvent.is_valid_visit, False).label("vv_flag")
-            ).label("placeholder"),  # 占位，实际 valid_uv 用单独查询
+            func.count(func.nullif(ScanEvent.is_valid_visit, False).label("vv_flag")).label(
+                "placeholder"
+            ),  # 占位，实际 valid_uv 用单独查询
         ).where(
             ScanEvent.tenant_id == tenant_id,
             ScanEvent.scan_time >= start,

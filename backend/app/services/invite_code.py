@@ -17,7 +17,7 @@ def _generate_invite_code() -> str:
 
 async def create_invite_code(
     db: AsyncSession,
-    created_by: uuid.UUID,
+    created_by_actor: str,
     tenant_type: str = "brand",
     max_uses: int = 1,
     expires_in_days: int | None = 30,
@@ -26,9 +26,7 @@ async def create_invite_code(
     code = _generate_invite_code()
     # Ensure uniqueness
     for _ in range(10):
-        existing = await db.execute(
-            select(TenantInviteCode).where(TenantInviteCode.code == code)
-        )
+        existing = await db.execute(select(TenantInviteCode).where(TenantInviteCode.code == code))
         if not existing.scalar_one_or_none():
             break
         code = _generate_invite_code()
@@ -42,7 +40,7 @@ async def create_invite_code(
         used_count=0,
         status=InviteCodeStatus.active,
         expires_at=datetime.now(UTC) + timedelta(days=expires_in_days) if expires_in_days else None,
-        created_by=created_by,
+        created_by_actor=created_by_actor,
     )
     db.add(invite)
     await db.flush()
@@ -56,9 +54,7 @@ async def validate_invite_code(db: AsyncSession, code: str) -> TenantInviteCode 
     This is a read-only validation; it does NOT mutate invite status.
     Callers should handle status transitions (expired / depleted) explicitly.
     """
-    result = await db.execute(
-        select(TenantInviteCode).where(TenantInviteCode.code == code)
-    )
+    result = await db.execute(select(TenantInviteCode).where(TenantInviteCode.code == code))
     invite = result.scalar_one_or_none()
     if not invite:
         return None
@@ -70,8 +66,7 @@ async def validate_invite_code(db: AsyncSession, code: str) -> TenantInviteCode 
         now = datetime.now(UTC)
         expires_at = invite.expires_at
         if expires_at.tzinfo is None:
-            from datetime import timezone
-            expires_at = expires_at.replace(tzinfo=timezone.utc)
+            expires_at = expires_at.replace(tzinfo=UTC)
         if expires_at < now:
             return None
 
@@ -183,9 +178,7 @@ async def toggle_invite_code_status(
     active: bool,
 ) -> TenantInviteCode | None:
     """Activate or deactivate an invite code."""
-    result = await db.execute(
-        select(TenantInviteCode).where(TenantInviteCode.id == code_id)
-    )
+    result = await db.execute(select(TenantInviteCode).where(TenantInviteCode.id == code_id))
     invite = result.scalar_one_or_none()
     if not invite:
         return None

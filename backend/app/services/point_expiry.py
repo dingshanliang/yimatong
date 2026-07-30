@@ -80,9 +80,7 @@ async def expire_points_batch() -> int:
                 db.add(expire_txn)
                 processed += 1
             except Exception:
-                logger.warning(
-                    "Failed to expire points for consumer %s", cid, exc_info=True
-                )
+                logger.warning("Failed to expire points for consumer %s", cid, exc_info=True)
 
         await db.commit()
 
@@ -90,11 +88,7 @@ async def expire_points_batch() -> int:
     async with async_session_factory() as db:
         txn_ids = [t.id for t in expired_txns]
         if txn_ids:
-            await db.execute(
-                update(PointTransaction)
-                .where(PointTransaction.id.in_(txn_ids))
-                .values(amount=0)
-            )
+            await db.execute(update(PointTransaction).where(PointTransaction.id.in_(txn_ids)).values(amount=0))
             await db.commit()
 
     logger.info("Expired points processed: %d consumers", processed)

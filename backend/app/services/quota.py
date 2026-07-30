@@ -37,9 +37,7 @@ async def check_quota_for_tenant(
     if not tenant or not tenant.quota:
         return
     total = (
-        await db.execute(
-            select(func.count()).select_from(model_cls).where(model_cls.tenant_id == tenant_id)
-        )
+        await db.execute(select(func.count()).select_from(model_cls).where(model_cls.tenant_id == tenant_id))
     ).scalar() or 0
     check_quota_incremental(tenant.quota, resource_type, total, 1)
 
@@ -55,9 +53,7 @@ def check_quota(quota: dict | None, resource_type: str, amount: int) -> None:
     if limit is None:
         return
     if amount > limit:
-        raise QuotaExceededError(
-            f"Quota exceeded for {resource_type}: requested {amount}, limit {limit}"
-        )
+        raise QuotaExceededError(f"Quota exceeded for {resource_type}: requested {amount}, limit {limit}")
 
 
 def check_quota_incremental(

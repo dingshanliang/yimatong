@@ -2,7 +2,7 @@
 
 import uuid
 
-from sqlalchemy import func, or_, select, text
+from sqlalchemy import and_, func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.channel import AccountChannelScope, CodeAllocation, Distributor, DiversionClue, Region, Store
@@ -1470,9 +1470,7 @@ async def get_code_expected_region(
 ) -> dict | None:
     """获取码的归属区域信息（通过 CodeAllocation → Store → Region 链路，回退到 CodeBatch.region_id）"""
     item = (
-        await db.execute(
-            select(CodeItem).where(CodeItem.public_id == public_id, CodeItem.tenant_id == tenant_id)
-        )
+        await db.execute(select(CodeItem).where(CodeItem.public_id == public_id, CodeItem.tenant_id == tenant_id))
     ).scalar_one_or_none()
     if not item or not item.code_batch_id:
         return None
@@ -1491,15 +1489,11 @@ async def get_code_expected_region(
 
     if alloc and alloc.store_id:
         store = (
-            await db.execute(
-                select(Store).where(Store.id == alloc.store_id, Store.tenant_id == tenant_id)
-            )
+            await db.execute(select(Store).where(Store.id == alloc.store_id, Store.tenant_id == tenant_id))
         ).scalar_one_or_none()
         if store and store.region_id:
             region = (
-                await db.execute(
-                    select(Region).where(Region.id == store.region_id, Region.tenant_id == tenant_id)
-                )
+                await db.execute(select(Region).where(Region.id == store.region_id, Region.tenant_id == tenant_id))
             ).scalar_one_or_none()
             if region:
                 return {
@@ -1519,15 +1513,11 @@ async def get_code_expected_region(
                 }
 
     batch = (
-        await db.execute(
-            select(CodeBatch).where(CodeBatch.id == item.code_batch_id, CodeBatch.tenant_id == tenant_id)
-        )
+        await db.execute(select(CodeBatch).where(CodeBatch.id == item.code_batch_id, CodeBatch.tenant_id == tenant_id))
     ).scalar_one_or_none()
     if batch and batch.region_id:
         region = (
-            await db.execute(
-                select(Region).where(Region.id == batch.region_id, Region.tenant_id == tenant_id)
-            )
+            await db.execute(select(Region).where(Region.id == batch.region_id, Region.tenant_id == tenant_id))
         ).scalar_one_or_none()
         if region:
             return {

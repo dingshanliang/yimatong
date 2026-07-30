@@ -6,7 +6,6 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db_with_bypass
-from app.core.dependencies import get_current_account_id
 from app.schemas.common import PaginatedResponse
 from app.schemas.invite_code import (
     InviteCodeCreateRequest,
@@ -34,13 +33,12 @@ router = APIRouter(prefix="/api/v1/invite-codes", tags=["invite-codes"])
 async def generate_invite_code(
     body: InviteCodeCreateRequest,
     db: AsyncSession = Depends(get_db_with_bypass),
-    account_id: uuid.UUID = Depends(get_current_account_id),
     _role: str = Depends(require_role("platform_admin")),
 ):
     """平台管理员生成邀请码"""
     invite = await create_invite_code(
         db=db,
-        created_by=account_id,
+        created_by_actor="platform-admin",
         tenant_type=body.tenant_type,
         max_uses=body.max_uses,
         expires_in_days=body.expires_in_days,
@@ -57,9 +55,7 @@ async def list_invite_code_endpoint(
     _role: str = Depends(require_role("platform_admin")),
 ):
     """邀请码列表"""
-    items, total = await list_invite_codes(
-        db=db, status=status, page=page, page_size=page_size
-    )
+    items, total = await list_invite_codes(db=db, status=status, page=page, page_size=page_size)
     return PaginatedResponse(
         items=[InviteCodeResponse.model_validate(i) for i in items],
         total=total,

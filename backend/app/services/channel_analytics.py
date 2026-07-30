@@ -78,10 +78,7 @@ async def get_scan_by_channel(
 
     rows = (
         await db.execute(
-            select(subq)
-            .order_by(subq.c.scan_count.desc())
-            .offset((page - 1) * page_size)
-            .limit(page_size)
+            select(subq).order_by(subq.c.scan_count.desc()).offset((page - 1) * page_size).limit(page_size)
         )
     ).all()
 
@@ -90,9 +87,7 @@ async def get_scan_by_channel(
     names: dict = {}
     if dim_ids:
         name_model = cfg["name_model"]
-        entities = (await db.execute(
-            select(name_model).where(name_model.id.in_(dim_ids))
-        )).scalars().all()
+        entities = (await db.execute(select(name_model).where(name_model.id.in_(dim_ids)))).scalars().all()
         names = {e.id: e.name for e in entities}
 
     items = [
@@ -161,14 +156,16 @@ async def get_channel_health_scores(
         elif score < 80:
             level = "warning"
 
-        scores.append({
-            **item,
-            "health_score": score,
-            "level": level,
-            "repeat_rate": round(repeat_rate * 100, 1),
-            "cross_region_rate": round(cross_region_rate * 100, 1),
-            "anomaly_rate": round(anomaly_rate * 100, 1),
-        })
+        scores.append(
+            {
+                **item,
+                "health_score": score,
+                "level": level,
+                "repeat_rate": round(repeat_rate * 100, 1),
+                "cross_region_rate": round(cross_region_rate * 100, 1),
+                "anomaly_rate": round(anomaly_rate * 100, 1),
+            }
+        )
 
     return sorted(scores, key=lambda x: x["health_score"])
 
@@ -203,11 +200,13 @@ async def get_conversion_comparison(
         estimated_claims = round(total_claims * scan_uv / total_uv) if total_uv > 0 else 0
         conversion = round(estimated_claims / scan_uv * 100, 2) if scan_uv > 0 else 0
 
-        results.append({
-            **item,
-            "estimated_claims": estimated_claims,
-            "conversion_rate": conversion,
-            "vs_average": round(conversion - overall_conversion, 2),
-        })
+        results.append(
+            {
+                **item,
+                "estimated_claims": estimated_claims,
+                "conversion_rate": conversion,
+                "vs_average": round(conversion - overall_conversion, 2),
+            }
+        )
 
     return sorted(results, key=lambda x: x["conversion_rate"], reverse=True)

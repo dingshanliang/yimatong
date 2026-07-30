@@ -46,9 +46,7 @@ async def process_single_delivery(delivery_id: str) -> None:
     from app.core.database import async_session_factory
 
     async with async_session_factory() as db:
-        result = await db.execute(
-            select(WebhookDelivery).where(WebhookDelivery.id == delivery_id)
-        )
+        result = await db.execute(select(WebhookDelivery).where(WebhookDelivery.id == delivery_id))
         delivery = result.scalar_one_or_none()
         if not delivery:
             logger.warning("Delivery %s not found", delivery_id)
@@ -58,9 +56,7 @@ async def process_single_delivery(delivery_id: str) -> None:
             return
 
         # 查找 endpoint
-        ep_result = await db.execute(
-            select(WebhookEndpoint).where(WebhookEndpoint.id == delivery.endpoint_id)
-        )
+        ep_result = await db.execute(select(WebhookEndpoint).where(WebhookEndpoint.id == delivery.endpoint_id))
         endpoint = ep_result.scalar_one_or_none()
         if not endpoint or not endpoint.enabled:
             delivery.status = "failed"
@@ -111,10 +107,12 @@ async def poll_pending_retries() -> int:
     count = 0
     async with async_session_factory() as db:
         result = await db.execute(
-            select(WebhookDelivery).where(
+            select(WebhookDelivery)
+            .where(
                 WebhookDelivery.status == "retrying",
                 WebhookDelivery.next_retry_at <= datetime.now(UTC),
-            ).limit(100)
+            )
+            .limit(100)
         )
         deliveries = list(result.scalars().all())
 
@@ -156,9 +154,7 @@ async def poll_benefit_delivery_retries() -> int:
         deliveries = list(result.scalars().all())
 
         for d in deliveries:
-            conn_result = await db.execute(
-                select(Connector).where(Connector.id == d.connector_id)
-            )
+            conn_result = await db.execute(select(Connector).where(Connector.id == d.connector_id))
             connector = conn_result.scalar_one_or_none()
             if not connector or not connector.enabled:
                 d.status = DeliveryStatus.FAILED
@@ -167,7 +163,7 @@ async def poll_benefit_delivery_retries() -> int:
             cb = _get_circuit_breaker(connector)
             if not cb.is_available():
                 d.retry_count += 1
-                backoff = retry_backoff_base ** d.retry_count
+                backoff = retry_backoff_base**d.retry_count
 
             try:
                 await _do_deliver(db, d.tenant_id, connector, d.consumer_id, d.benefit_config)
@@ -181,7 +177,7 @@ async def poll_benefit_delivery_retries() -> int:
                     d.status = DeliveryStatus.FAILED
                     d.next_retry_at = None
                 else:
-                    backoff = retry_backoff_base ** d.retry_count
+                    backoff = retry_backoff_base**d.retry_count
                     d.next_retry_at = datetime.now(UTC) + timedelta(seconds=backoff)
 
         if deliveries:

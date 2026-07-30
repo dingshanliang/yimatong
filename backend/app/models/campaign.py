@@ -96,9 +96,7 @@ class BenefitClaim(Base):
     idempotency_key: Mapped[str] = mapped_column(String(100), nullable=False)
     claim_type: Mapped[str] = mapped_column(String(20), nullable=False, default="claim")
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="success")
-    delivery_status: Mapped[str] = mapped_column(
-        String(20), nullable=False, default="not_required"
-    )
+    delivery_status: Mapped[str] = mapped_column(String(20), nullable=False, default="not_required")
     created_at: Mapped[DateTime | None] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=True
     )

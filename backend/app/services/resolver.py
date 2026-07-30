@@ -14,9 +14,7 @@ async def resolve_public_code(
 ) -> dict | None:
     """解析公开码，返回码信息+关联数据（使用 selectinload 预加载 CodeBatch）"""
     result = await db.execute(
-        select(CodeItem)
-        .options(selectinload(CodeItem.code_batch))
-        .where(CodeItem.public_id == public_id)
+        select(CodeItem).options(selectinload(CodeItem.code_batch)).where(CodeItem.public_id == public_id)
     )
     item = result.scalar_one_or_none()
     if not item:

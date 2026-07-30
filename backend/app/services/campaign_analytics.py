@@ -75,10 +75,8 @@ async def get_campaign_comparison(
 
     # 保持原始 campaign_ids 顺序
     result_map = {
-        row.id: {"campaign_id": str(row.id), "campaign_name": row.name, "claims": row.claims}
-        for row in rows.all()
+        row.id: {"campaign_id": str(row.id), "campaign_name": row.name, "claims": row.claims} for row in rows.all()
     }
     return [
-        result_map.get(cid, {"campaign_id": str(cid), "campaign_name": "Unknown", "claims": 0})
-        for cid in campaign_ids
+        result_map.get(cid, {"campaign_id": str(cid), "campaign_name": "Unknown", "claims": 0}) for cid in campaign_ids
     ]

@@ -45,6 +45,15 @@ def _db_exists() -> bool:
     return "1" in result.stdout
 
 
+def _test_db_psql(database_url: str, sql: str) -> subprocess.CompletedProcess:
+    sync_url = database_url.replace("postgresql+asyncpg://", "postgresql://", 1)
+    return subprocess.run(
+        ["psql", sync_url, "-v", "ON_ERROR_STOP=1", "-c", sql],
+        capture_output=True,
+        text=True,
+    )
+
+
 @pytest.fixture(scope="module")
 def clean_test_db():
     """Create a clean test database before tests and drop it after."""
@@ -68,6 +77,7 @@ class TestMigrationOnCleanDB:
         """Phase 1 test: alembic upgrade head should succeed on a clean DB."""
         env = os.environ.copy()
         env["database_url"] = clean_test_db
+        env["migration_database_url"] = clean_test_db
 
         result = subprocess.run(
             [sys.executable, "-m", "alembic", "upgrade", "head"],
@@ -83,6 +93,7 @@ class TestMigrationOnCleanDB:
         """Verify migrated schema matches SQLAlchemy models (no diff)."""
         env = os.environ.copy()
         env["database_url"] = clean_test_db
+        env["migration_database_url"] = clean_test_db
 
         # First ensure migrations are applied
         result = subprocess.run(
@@ -94,82 +105,119 @@ class TestMigrationOnCleanDB:
         )
         assert result.returncode == 0, f"Migration setup failed: {result.stderr}"
 
-        # Run autogenerate to check for differences
+        # Ask Alembic to compare metadata without creating a throwaway revision.
         result = subprocess.run(
-            [sys.executable, "-m", "alembic", "revision", "--autogenerate", "-m", "test_diff"],
+            [
+                sys.executable,
+                "-m",
+                "alembic",
+                "-x",
+                "baseline_legacy_timestamp_nullability=true",
+                "check",
+            ],
             cwd=BACKEND_DIR,
             capture_output=True,
             text=True,
             env=env,
         )
 
-        # If autogenerate itself fails, that's a problem
         assert result.returncode == 0, (
-            f"Alembic autogenerate failed!\nSTDOUT:\n{result.stdout}\nSTDERR:\n{result.stderr}"
+            "Schema mismatch detected! Migrated DB differs from SQLAlchemy models.\n"
+            f"STDOUT:\n{result.stdout}\nSTDERR:\n{result.stderr}"
         )
 
-        # Check if a new revision file was created (indicating differences)
-        versions_dir = BACKEND_DIR / "alembic" / "versions"
-        diff_files = list(versions_dir.glob("*test_diff*.py"))
+    def test_required_tables_and_rls_are_present(self, clean_test_db):
+        """Guard metadata registration and database-level tenant isolation."""
+        result = _test_db_psql(
+            clean_test_db,
+            """
+            INSERT INTO tenant_invite_codes (
+                id, code, tenant_type, max_uses, used_count, status, created_by_actor
+            )
+            VALUES (
+                '20000000-0000-0000-0000-000000000001',
+                'PLATFORM-ACTOR-PROBE',
+                'brand',
+                1,
+                0,
+                'active',
+                'platform-admin'
+            );
 
-        if diff_files:
-            diff_content = diff_files[0].read_text()
-            # Clean up the diff file regardless
-            diff_files[0].unlink()
-            # Check if the upgrade function is empty (no actual changes)
-            # Alembic generates empty upgrade/downgrade when no diff
-            if "def upgrade()" in diff_content:
-                # Extract the upgrade function body
-                lines = diff_content.splitlines()
-                in_upgrade = False
-                upgrade_body = []
-                for line in lines:
-                    if line.startswith("def upgrade()"):
-                        in_upgrade = True
-                        continue
-                    if in_upgrade:
-                        if line and not line.startswith(" ") and not line.startswith("\t"):
-                            break
-                        upgrade_body.append(line)
-                body_text = "\n".join(upgrade_body).strip()
-                # If body is just pass or empty, no real diff
-                if body_text and body_text != "pass":
-                    # Filter out known noise. Split into per-operation blocks
-                    # by detecting lines starting with "op." (each Alembic op starts here).
-                    known_noise = (
-                        "scan_events_",
-                        "scan_events_default",
-                        "ai_generations",
-                        "ix_point_products",
-                        "ix_tenant_domains",
-                        "api_keys",
-                        "webhook_deliveries",
-                        "webhook_endpoints",
-                    )
-                    lines = body_text.split("\n")
-                    ops = []
-                    current_op = []
-                    for ln in lines:
-                        stripped = ln.strip()
-                        if stripped.startswith("op.") or stripped.startswith("sa."):
-                            if current_op:
-                                ops.append("\n".join(current_op))
-                            current_op = [ln]
-                        elif stripped.startswith("#"):
-                            continue
-                        else:
-                            current_op.append(ln)
-                    if current_op:
-                        ops.append("\n".join(current_op))
+            SELECT
+                to_regclass('public.tenant_invite_codes') IS NOT NULL AS invite_codes_exists,
+                bool_and(c.relrowsecurity) AS rls_enabled,
+                count(p.policyname) = 2 AS policies_exist
+            FROM pg_class c
+            LEFT JOIN pg_policies p
+              ON p.schemaname = 'public'
+             AND p.tablename = c.relname
+             AND p.policyname = 'tenant_isolation'
+            WHERE c.relname IN ('anonymous_visitors', 'tenant_health_metrics');
+            """,
+        )
+        assert result.returncode == 0, result.stderr
+        assert "t|t|t" in result.stdout.replace(" ", ""), result.stdout
 
-                    real_diffs = [
-                        op for op in ops
-                        if not any(kw in op for kw in known_noise)
-                        and op.strip()
-                    ]
-                    if real_diffs:
-                        pytest.fail(
-                            f"Schema mismatch detected! Migrated DB differs from SQLAlchemy models.\n"
-                            f"Unexpected diffs:\n{chr(10).join(real_diffs)}\n"
-                            f"Full diff file:\n{diff_content}"
-                        )
+    def test_new_rls_policies_block_cross_tenant_reads_and_writes(self, clean_test_db):
+        """Exercise both policy USING and WITH CHECK as a non-owner role."""
+        role_name = "yimatong_migration_rls_probe"
+        tenant_a = "00000000-0000-0000-0000-000000000001"
+        tenant_b = "00000000-0000-0000-0000-000000000002"
+
+        _psql(f"DROP ROLE IF EXISTS {role_name};")
+        created = _psql(f"CREATE ROLE {role_name} NOLOGIN;")
+        if created.returncode != 0:
+            pytest.skip(f"Cannot create RLS probe role: {created.stderr}")
+
+        try:
+            setup = _test_db_psql(
+                clean_test_db,
+                f"""
+                INSERT INTO tenants (id, name, slug, status, plan, tenant_type)
+                VALUES
+                    ('{tenant_a}', 'RLS A', 'rls-a', 'active', 'free', 'brand'),
+                    ('{tenant_b}', 'RLS B', 'rls-b', 'active', 'free', 'brand');
+                INSERT INTO anonymous_visitors (id, tenant_id, visitor_id)
+                VALUES
+                    ('10000000-0000-0000-0000-000000000001', '{tenant_a}', 'visitor-a'),
+                    ('10000000-0000-0000-0000-000000000002', '{tenant_b}', 'visitor-b');
+                GRANT USAGE ON SCHEMA public TO {role_name};
+                GRANT SELECT, INSERT ON anonymous_visitors TO {role_name};
+                """,
+            )
+            assert setup.returncode == 0, setup.stderr
+
+            probe = _test_db_psql(
+                clean_test_db,
+                f"""
+                SET ROLE {role_name};
+                SELECT set_config('app.tenant_id', '{tenant_a}', false);
+                DO $$
+                DECLARE visible_rows integer;
+                BEGIN
+                    SELECT count(*) INTO visible_rows FROM anonymous_visitors;
+                    IF visible_rows <> 1 THEN
+                        RAISE EXCEPTION 'cross-tenant read leaked % rows', visible_rows;
+                    END IF;
+
+                    BEGIN
+                        INSERT INTO anonymous_visitors (id, tenant_id, visitor_id)
+                        VALUES (
+                            '10000000-0000-0000-0000-000000000003',
+                            '{tenant_b}',
+                            'visitor-cross-tenant'
+                        );
+                        RAISE EXCEPTION 'cross-tenant insert unexpectedly succeeded';
+                    EXCEPTION
+                        WHEN insufficient_privilege THEN NULL;
+                    END;
+                END
+                $$;
+                RESET ROLE;
+                """,
+            )
+            assert probe.returncode == 0, f"RLS probe failed:\n{probe.stdout}\n{probe.stderr}"
+        finally:
+            _test_db_psql(clean_test_db, f"DROP OWNED BY {role_name};")
+            _psql(f"DROP ROLE IF EXISTS {role_name};")

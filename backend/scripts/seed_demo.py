@@ -67,6 +67,7 @@ TENANT_NAME = "青岭良仓演示租户"
 TOTAL_DAYS = 60
 DEMO_ENABLED_FEATURES = {"channel_store": True}
 
+
 # ─── 进度报告器 ──────────────────────────────────────────
 class Progress:
     def __init__(self, total: int):
@@ -84,9 +85,27 @@ class Progress:
 DEMO_ACCOUNTS = [
     {"email": "admin@demo.com", "password": "Admin1234", "name": "品牌管理员", "role": "admin", "title": "品牌管理员"},
     {"email": "ops@demo.com", "password": "Ops123456", "name": "活动运营", "role": "operator", "title": "活动运营"},
-    {"email": "agency@demo.com", "password": "Agency1234", "name": "代运营顾问", "role": "operator", "title": "代运营顾问"},
-    {"email": "dist@demo.com", "password": "Dist123456", "name": "华东经销商", "role": "distributor", "title": "华东经销商"},
-    {"email": "store@demo.com", "password": "Store123456", "name": "南京东路店", "role": "store_guide", "title": "南京东路店"},
+    {
+        "email": "agency@demo.com",
+        "password": "Agency1234",
+        "name": "代运营顾问",
+        "role": "operator",
+        "title": "代运营顾问",
+    },
+    {
+        "email": "dist@demo.com",
+        "password": "Dist123456",
+        "name": "华东经销商",
+        "role": "distributor",
+        "title": "华东经销商",
+    },
+    {
+        "email": "store@demo.com",
+        "password": "Store123456",
+        "name": "南京东路店",
+        "role": "store_guide",
+        "title": "南京东路店",
+    },
 ]
 
 # ─── 品牌/产品/SKU 定义 ─────────────────────────────────
@@ -101,8 +120,16 @@ BRANDS_DATA = [
                 "origin": "黑龙江五常",
                 "description": "五常核心产区稻花香大米，溯源、检测报告、首扫福利。",
                 "skus": [
-                    {"code": "RICE-5KG-001", "name": "五常稻花香 5kg 礼盒装", "specs": {"净含量": "5kg", "产地": "黑龙江五常", "包装": "礼盒装"}},
-                    {"code": "RICE-10KG-001", "name": "五常稻花香 10kg 袋装", "specs": {"净含量": "10kg", "产地": "黑龙江五常", "包装": "编织袋"}},
+                    {
+                        "code": "RICE-5KG-001",
+                        "name": "五常稻花香 5kg 礼盒装",
+                        "specs": {"净含量": "5kg", "产地": "黑龙江五常", "包装": "礼盒装"},
+                    },
+                    {
+                        "code": "RICE-10KG-001",
+                        "name": "五常稻花香 10kg 袋装",
+                        "specs": {"净含量": "10kg", "产地": "黑龙江五常", "包装": "编织袋"},
+                    },
                 ],
             },
             {
@@ -111,7 +138,11 @@ BRANDS_DATA = [
                 "origin": "内蒙古赤峰",
                 "description": "6种有机杂粮组合礼盒，适合节日送礼。",
                 "skus": [
-                    {"code": "GRAIN-GIFT-001", "name": "有机杂粮礼盒 六合一", "specs": {"净含量": "3kg", "产地": "内蒙古赤峰", "包装": "礼盒"}},
+                    {
+                        "code": "GRAIN-GIFT-001",
+                        "name": "有机杂粮礼盒 六合一",
+                        "specs": {"净含量": "3kg", "产地": "内蒙古赤峰", "包装": "礼盒"},
+                    },
                 ],
             },
             {
@@ -120,8 +151,16 @@ BRANDS_DATA = [
                 "origin": "山东临沂",
                 "description": "物理冷压榨花生油，保留原始香味。",
                 "skus": [
-                    {"code": "OIL-15L-001", "name": "冷榨花生油 1.5L 瓶装", "specs": {"净含量": "1.5L", "产地": "山东临沂", "包装": "玻璃瓶"}},
-                    {"code": "OIL-5L-001", "name": "冷榨花生油 5L 桶装", "specs": {"净含量": "5L", "产地": "山东临沂", "包装": "铁桶"}},
+                    {
+                        "code": "OIL-15L-001",
+                        "name": "冷榨花生油 1.5L 瓶装",
+                        "specs": {"净含量": "1.5L", "产地": "山东临沂", "包装": "玻璃瓶"},
+                    },
+                    {
+                        "code": "OIL-5L-001",
+                        "name": "冷榨花生油 5L 桶装",
+                        "specs": {"净含量": "5L", "产地": "山东临沂", "包装": "铁桶"},
+                    },
                 ],
             },
             {
@@ -130,7 +169,11 @@ BRANDS_DATA = [
                 "origin": "吉林长白山",
                 "description": "长白山原始椴树蜜，扫码领试用装。",
                 "skus": [
-                    {"code": "HONEY-500G-001", "name": "椴树蜂蜜 500g 瓶装", "specs": {"净含量": "500g", "产地": "吉林长白山", "包装": "玻璃瓶"}},
+                    {
+                        "code": "HONEY-500G-001",
+                        "name": "椴树蜂蜜 500g 瓶装",
+                        "specs": {"净含量": "500g", "产地": "吉林长白山", "包装": "玻璃瓶"},
+                    },
                 ],
             },
             {
@@ -139,7 +182,11 @@ BRANDS_DATA = [
                 "origin": "云南昆明",
                 "description": "有机蔬菜周配送卡，扫码溯源农场信息。",
                 "skus": [
-                    {"code": "VEG-WEEK-001", "name": "有机蔬菜周卡 标准版", "specs": {"配送次数": "7次", "产地": "云南昆明", "包装": "冷链配送"}},
+                    {
+                        "code": "VEG-WEEK-001",
+                        "name": "有机蔬菜周卡 标准版",
+                        "specs": {"配送次数": "7次", "产地": "云南昆明", "包装": "冷链配送"},
+                    },
                 ],
             },
         ],
@@ -154,8 +201,16 @@ BRANDS_DATA = [
                 "origin": "浙江杭州",
                 "description": "明前一级龙井，扫码查看茶园视频。",
                 "skus": [
-                    {"code": "TEA-LJ-100G", "name": "龙井明前 100g 罐装", "specs": {"净含量": "100g", "产地": "浙江杭州", "包装": "铁罐"}},
-                    {"code": "TEA-LJ-250G", "name": "龙井明前 250g 礼盒", "specs": {"净含量": "250g", "产地": "浙江杭州", "包装": "礼盒"}},
+                    {
+                        "code": "TEA-LJ-100G",
+                        "name": "龙井明前 100g 罐装",
+                        "specs": {"净含量": "100g", "产地": "浙江杭州", "包装": "铁罐"},
+                    },
+                    {
+                        "code": "TEA-LJ-250G",
+                        "name": "龙井明前 250g 礼盒",
+                        "specs": {"净含量": "250g", "产地": "浙江杭州", "包装": "礼盒"},
+                    },
                 ],
             },
             {
@@ -164,7 +219,11 @@ BRANDS_DATA = [
                 "origin": "福建武夷山",
                 "description": "桐木关正山小种，传统松烟香。",
                 "skus": [
-                    {"code": "TEA-XZ-200G", "name": "正山小种 200g 罐装", "specs": {"净含量": "200g", "产地": "福建武夷山", "包装": "铁罐"}},
+                    {
+                        "code": "TEA-XZ-200G",
+                        "name": "正山小种 200g 罐装",
+                        "specs": {"净含量": "200g", "产地": "福建武夷山", "包装": "铁罐"},
+                    },
                 ],
             },
             {
@@ -173,7 +232,11 @@ BRANDS_DATA = [
                 "origin": "福建福鼎",
                 "description": "福鼎白毫银针，扫码查看采摘日期。",
                 "skus": [
-                    {"code": "TEA-YZ-50G", "name": "白毫银针 50g 罐装", "specs": {"净含量": "50g", "产地": "福建福鼎", "包装": "铁罐"}},
+                    {
+                        "code": "TEA-YZ-50G",
+                        "name": "白毫银针 50g 罐装",
+                        "specs": {"净含量": "50g", "产地": "福建福鼎", "包装": "铁罐"},
+                    },
                 ],
             },
         ],
@@ -188,8 +251,16 @@ BRANDS_DATA = [
                 "origin": "宁夏贺兰山",
                 "description": "贺兰山东麓赤霞珠干红，扫码品鉴笔记。",
                 "skus": [
-                    {"code": "WINE-RED-750", "name": "赤霞珠干红 750ml 单瓶", "specs": {"净含量": "750ml", "产地": "宁夏贺兰山", "包装": "单瓶"}},
-                    {"code": "WINE-RED-6PK", "name": "赤霞珠干红 6瓶装", "specs": {"净含量": "750ml×6", "产地": "宁夏贺兰山", "包装": "木箱"}},
+                    {
+                        "code": "WINE-RED-750",
+                        "name": "赤霞珠干红 750ml 单瓶",
+                        "specs": {"净含量": "750ml", "产地": "宁夏贺兰山", "包装": "单瓶"},
+                    },
+                    {
+                        "code": "WINE-RED-6PK",
+                        "name": "赤霞珠干红 6瓶装",
+                        "specs": {"净含量": "750ml×6", "产地": "宁夏贺兰山", "包装": "木箱"},
+                    },
                 ],
             },
             {
@@ -198,7 +269,11 @@ BRANDS_DATA = [
                 "origin": "辽宁桓仁",
                 "description": "桓仁冰酒，扫码查看酿造过程。",
                 "skus": [
-                    {"code": "WINE-ICE-375", "name": "冰酒 375ml 单瓶", "specs": {"净含量": "375ml", "产地": "辽宁桓仁", "包装": "单瓶"}},
+                    {
+                        "code": "WINE-ICE-375",
+                        "name": "冰酒 375ml 单瓶",
+                        "specs": {"净含量": "375ml", "产地": "辽宁桓仁", "包装": "单瓶"},
+                    },
                 ],
             },
         ],
@@ -243,53 +318,225 @@ STORES_DATA = [
 
 # ─── User-Agent 池 ──────────────────────────────────────
 UA_WECHAT = [
-    "Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 MicroMessenger/8.0.47",
-    "Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 MicroMessenger/8.0.44",
-    "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/125.0.0.0 Mobile Safari/537.36 MicroMessenger/8.0.47",
-    "Mozilla/5.0 (Linux; Android 13; SM-S9080) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/122.0.0.0 Mobile Safari/537.36 MicroMessenger/8.0.45",
+    "Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 "
+    "(KHTML, like Gecko) Mobile/15E148 MicroMessenger/8.0.47",
+    "Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 "
+    "(KHTML, like Gecko) Mobile/15E148 MicroMessenger/8.0.44",
+    "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Version/4.0 Chrome/125.0.0.0 Mobile Safari/537.36 MicroMessenger/8.0.47",
+    "Mozilla/5.0 (Linux; Android 13; SM-S9080) AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Version/4.0 Chrome/122.0.0.0 Mobile Safari/537.36 MicroMessenger/8.0.45",
 ]
 UA_ALIPAY = [
-    "Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 AlipayClient/10.5.36",
-    "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/125.0.0.0 Mobile Safari/537.36 AlipayClient/10.5.36",
+    "Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 "
+    "(KHTML, like Gecko) Mobile/15E148 AlipayClient/10.5.36",
+    "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Version/4.0 Chrome/125.0.0.0 Mobile Safari/537.36 AlipayClient/10.5.36",
 ]
 UA_BROWSER = [
-    "Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1",
-    "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Mobile Safari/537.36",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_4) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15",
+    "Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 "
+    "(KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1",
+    "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/125.0.0.0 Mobile Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_4) AppleWebKit/605.1.15 "
+    "(KHTML, like Gecko) Version/17.4 Safari/605.1.15",
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
 ]
 
 # ─── 昵称池 ──────────────────────────────────────────
 NICKNAME_POOL = [
-    "小太阳", "大白兔", "小星星", "月光族", "吃货王", "奶茶控", "小确幸", "阳光少年",
-    "棉花糖", "小米粒", "小蜜蜂", "快乐星球", "柠檬精", "薄荷糖", "小红帽", "彩虹糖",
-    "小苹果", "樱桃小丸子", "草莓奶昔", "蓝莓芝士", "芒果冰沙", "椰子树", "西瓜太郎",
-    "葡萄汽水", "蜜桃乌龙", "焦糖拿铁", "抹茶星冰乐", "可可布朗尼", "香草冰淇淋",
-    "抹茶蛋糕", "巧克力慕斯", "芒果布丁", "草莓千层", "榴莲忘返", "菠萝油",
-    "小龙虾", "大闸蟹", "狮子头", "佛跳墙", "宫保鸡丁", "麻婆豆腐", "红烧肉",
-    "清蒸鲈鱼", "东坡肘子", "水煮牛肉", "回锅肉", "鱼香肉丝", "糖醋排骨",
-    "蚂蚁上树", "夫妻肺片", "担担面", "热干面", "兰州拉面", "重庆小面",
-    "螺蛳粉", "桂林米粉", "过桥米线", "云南米线", "武汉豆皮", "长沙臭豆腐",
-    "煎饼果子", "肉夹馍", "羊肉泡馍", "凉皮", "冰粉", "豆花",
-    "小熊猫", "柯基犬", "柴犬控", "猫薄荷", "布偶猫", "金毛", "哈士奇", "边牧",
-    "秋田犬", "法斗", "英短", "美短", "橘猫", "暹罗猫", "加菲猫", "折耳猫",
-    "北极熊", "企鹅", "海豚", "鲸鱼", "水母", "珊瑚", "海星", "小丑鱼",
-    "绿叶", "红枫", "银杏", "梧桐", "松柏", "樱花", "桃花", "荷花",
-    "向日葵", "薰衣草", "郁金香", "牡丹", "兰花", "菊花", "梅花", "竹叶青",
-    "小确幸", "岁月静好", "且听风吟", "风和日丽", "春暖花开", "天高云淡",
-    "星辰大海", "浮生若梦", "梦里花落", "云卷云舒", "半夏时光", "秋水长天",
-    "冬日暖阳", "山间清风", "溪水潺潺", "竹林幽径", "月下独酌", "花间一壶酒",
-    "大海无量", "春风十里", "桃花潭水", "月朦胧", "鸟朦胧", "江南烟雨",
-    "塞北风沙", "大漠孤烟", "长河落日", "碧水蓝天", "青山绿水", "紫气东来",
-    "小确幸", "满分先生", "元气少女", "阳光男孩", "甜甜圈", "棒棒糖",
-    "风信子", "铃兰花", "满天星", "勿忘我", "紫罗兰", "百合花",
-    "天狼星", "北极星", "织女星", "牛郎星", "猎户座", "仙女座",
-    "小蜜蜂", "蝴蝶兰", "蒲公英", "牵牛花", "风铃草", "忘忧草",
-    "棉花糖", "棒棒糖", "波板糖", "彩虹糖", "QQ糖", "牛轧糖",
-    "小幸运", "好运来", "锦鲤", "旺财", "招财猫", "福星高照",
-    "琴棋书画", "诗酒花茶", "笔墨纸砚", "梅兰竹菊", "春夏秋冬", "风花雪月",
-    "翡翠", "琥珀", "玛瑙", "水晶", "珍珠", "琉璃", "珊瑚", "碧玉",
-    "小火箭", "大飞船", "宇宙侠", "星空漫步", "银河系", "光年之外",
+    "小太阳",
+    "大白兔",
+    "小星星",
+    "月光族",
+    "吃货王",
+    "奶茶控",
+    "小确幸",
+    "阳光少年",
+    "棉花糖",
+    "小米粒",
+    "小蜜蜂",
+    "快乐星球",
+    "柠檬精",
+    "薄荷糖",
+    "小红帽",
+    "彩虹糖",
+    "小苹果",
+    "樱桃小丸子",
+    "草莓奶昔",
+    "蓝莓芝士",
+    "芒果冰沙",
+    "椰子树",
+    "西瓜太郎",
+    "葡萄汽水",
+    "蜜桃乌龙",
+    "焦糖拿铁",
+    "抹茶星冰乐",
+    "可可布朗尼",
+    "香草冰淇淋",
+    "抹茶蛋糕",
+    "巧克力慕斯",
+    "芒果布丁",
+    "草莓千层",
+    "榴莲忘返",
+    "菠萝油",
+    "小龙虾",
+    "大闸蟹",
+    "狮子头",
+    "佛跳墙",
+    "宫保鸡丁",
+    "麻婆豆腐",
+    "红烧肉",
+    "清蒸鲈鱼",
+    "东坡肘子",
+    "水煮牛肉",
+    "回锅肉",
+    "鱼香肉丝",
+    "糖醋排骨",
+    "蚂蚁上树",
+    "夫妻肺片",
+    "担担面",
+    "热干面",
+    "兰州拉面",
+    "重庆小面",
+    "螺蛳粉",
+    "桂林米粉",
+    "过桥米线",
+    "云南米线",
+    "武汉豆皮",
+    "长沙臭豆腐",
+    "煎饼果子",
+    "肉夹馍",
+    "羊肉泡馍",
+    "凉皮",
+    "冰粉",
+    "豆花",
+    "小熊猫",
+    "柯基犬",
+    "柴犬控",
+    "猫薄荷",
+    "布偶猫",
+    "金毛",
+    "哈士奇",
+    "边牧",
+    "秋田犬",
+    "法斗",
+    "英短",
+    "美短",
+    "橘猫",
+    "暹罗猫",
+    "加菲猫",
+    "折耳猫",
+    "北极熊",
+    "企鹅",
+    "海豚",
+    "鲸鱼",
+    "水母",
+    "珊瑚",
+    "海星",
+    "小丑鱼",
+    "绿叶",
+    "红枫",
+    "银杏",
+    "梧桐",
+    "松柏",
+    "樱花",
+    "桃花",
+    "荷花",
+    "向日葵",
+    "薰衣草",
+    "郁金香",
+    "牡丹",
+    "兰花",
+    "菊花",
+    "梅花",
+    "竹叶青",
+    "小确幸",
+    "岁月静好",
+    "且听风吟",
+    "风和日丽",
+    "春暖花开",
+    "天高云淡",
+    "星辰大海",
+    "浮生若梦",
+    "梦里花落",
+    "云卷云舒",
+    "半夏时光",
+    "秋水长天",
+    "冬日暖阳",
+    "山间清风",
+    "溪水潺潺",
+    "竹林幽径",
+    "月下独酌",
+    "花间一壶酒",
+    "大海无量",
+    "春风十里",
+    "桃花潭水",
+    "月朦胧",
+    "鸟朦胧",
+    "江南烟雨",
+    "塞北风沙",
+    "大漠孤烟",
+    "长河落日",
+    "碧水蓝天",
+    "青山绿水",
+    "紫气东来",
+    "小确幸",
+    "满分先生",
+    "元气少女",
+    "阳光男孩",
+    "甜甜圈",
+    "棒棒糖",
+    "风信子",
+    "铃兰花",
+    "满天星",
+    "勿忘我",
+    "紫罗兰",
+    "百合花",
+    "天狼星",
+    "北极星",
+    "织女星",
+    "牛郎星",
+    "猎户座",
+    "仙女座",
+    "小蜜蜂",
+    "蝴蝶兰",
+    "蒲公英",
+    "牵牛花",
+    "风铃草",
+    "忘忧草",
+    "棉花糖",
+    "棒棒糖",
+    "波板糖",
+    "彩虹糖",
+    "QQ糖",
+    "牛轧糖",
+    "小幸运",
+    "好运来",
+    "锦鲤",
+    "旺财",
+    "招财猫",
+    "福星高照",
+    "琴棋书画",
+    "诗酒花茶",
+    "笔墨纸砚",
+    "梅兰竹菊",
+    "春夏秋冬",
+    "风花雪月",
+    "翡翠",
+    "琥珀",
+    "玛瑙",
+    "水晶",
+    "珍珠",
+    "琉璃",
+    "珊瑚",
+    "碧玉",
+    "小火箭",
+    "大飞船",
+    "宇宙侠",
+    "星空漫步",
+    "银河系",
+    "光年之外",
 ]
 
 # ─── 环境权重分布 ────────────────────────────────────
@@ -331,9 +578,14 @@ def _random_scan_time(day_index: int) -> datetime:
     """生成第 day_index 天的一个随机扫码时间（集中在高峰时段）"""
     target_date = date.today() - timedelta(days=TOTAL_DAYS - 1 - day_index)
     hour_weights = [
-        (0, 6, 0.02), (6, 10, 0.10), (10, 12, 0.22),
-        (12, 14, 0.12), (14, 16, 0.22), (16, 18, 0.14),
-        (18, 20, 0.10), (20, 24, 0.08),
+        (0, 6, 0.02),
+        (6, 10, 0.10),
+        (10, 12, 0.22),
+        (12, 14, 0.12),
+        (14, 16, 0.22),
+        (16, 18, 0.14),
+        (18, 20, 0.10),
+        (20, 24, 0.08),
     ]
     r = random.random()
     cumulative = 0.0
@@ -349,14 +601,19 @@ def _random_scan_time(day_index: int) -> datetime:
     minute = random.randint(0, 59)
     second = random.randint(0, 59)
     return datetime(
-        target_date.year, target_date.month, target_date.day,
-        hour, minute, second,
+        target_date.year,
+        target_date.month,
+        target_date.day,
+        hour,
+        minute,
+        second,
     )
 
 
 # ═══════════════════════════════════════════════════════
 # 阶段 1: 租户与账号
 # ═══════════════════════════════════════════════════════
+
 
 async def _ensure_tenant(db: AsyncSession) -> Tenant:
     """获取或创建演示租户"""
@@ -404,9 +661,7 @@ async def _ensure_role(db: AsyncSession, tenant_id: uuid.UUID, name: str, descri
     return role
 
 
-async def _ensure_accounts(
-    db: AsyncSession, tenant_id: uuid.UUID, org_id: uuid.UUID
-) -> list[Account]:
+async def _ensure_accounts(db: AsyncSession, tenant_id: uuid.UUID, org_id: uuid.UUID) -> list[Account]:
     roles = {
         "admin": await _ensure_role(db, tenant_id, "admin", "品牌管理员：完整管理权限。"),
         "operator": await _ensure_role(db, tenant_id, "operator", "运营人员：日常运营权限。"),
@@ -415,9 +670,7 @@ async def _ensure_accounts(
     }
     accounts: list[Account] = []
     for item in DEMO_ACCOUNTS:
-        result = await db.execute(
-            select(Account).where(Account.tenant_id == tenant_id, Account.email == item["email"])
-        )
+        result = await db.execute(select(Account).where(Account.tenant_id == tenant_id, Account.email == item["email"]))
         account = result.scalar_one_or_none()
         if account:
             account.name = item["name"]
@@ -434,9 +687,7 @@ async def _ensure_accounts(
             db.add(account)
             await db.flush()
         await db.execute(account_roles.delete().where(account_roles.c.account_id == account.id))
-        await db.execute(
-            account_roles.insert().values(account_id=account.id, role_id=roles[item["role"]].id)
-        )
+        await db.execute(account_roles.insert().values(account_id=account.id, role_id=roles[item["role"]].id))
         accounts.append(account)
     await db.flush()
     return accounts
@@ -446,16 +697,13 @@ async def _ensure_accounts(
 # 阶段 2: 品牌与产品
 # ═══════════════════════════════════════════════════════
 
-async def _ensure_brands_products(
-    db: AsyncSession, tenant_id: uuid.UUID
-) -> list[dict]:
+
+async def _ensure_brands_products(db: AsyncSession, tenant_id: uuid.UUID) -> list[dict]:
     """创建所有品牌/产品/SKU/生产批次，返回结构化数据供后续引用"""
     brand_records = []
     for brand_data in BRANDS_DATA:
         # 品牌
-        result = await db.execute(
-            select(Brand).where(Brand.tenant_id == tenant_id, Brand.name == brand_data["name"])
-        )
+        result = await db.execute(select(Brand).where(Brand.tenant_id == tenant_id, Brand.name == brand_data["name"]))
         brand = result.scalar_one_or_none()
         if not brand:
             brand = await create_brand(db, tenant_id, brand_data["name"], description=brand_data["description"])
@@ -471,7 +719,10 @@ async def _ensure_brands_products(
             product = result.scalar_one_or_none()
             if not product:
                 product = await create_product(
-                    db, tenant_id, brand.id, prod_data["name"],
+                    db,
+                    tenant_id,
+                    brand.id,
+                    prod_data["name"],
                     category=prod_data.get("category"),
                     origin=prod_data.get("origin"),
                     description=prod_data.get("description"),
@@ -484,13 +735,15 @@ async def _ensure_brands_products(
 
             sku_records = []
             for sku_data in prod_data["skus"]:
-                result = await db.execute(
-                    select(SKU).where(SKU.product_id == product.id, SKU.code == sku_data["code"])
-                )
+                result = await db.execute(select(SKU).where(SKU.product_id == product.id, SKU.code == sku_data["code"]))
                 sku = result.scalar_one_or_none()
                 if not sku:
                     sku = await create_sku(
-                        db, tenant_id, product.id, sku_data["code"], sku_data["name"],
+                        db,
+                        tenant_id,
+                        product.id,
+                        sku_data["code"],
+                        sku_data["name"],
                         specifications=sku_data.get("specs"),
                     )
                 else:
@@ -623,6 +876,7 @@ async def _ensure_code_batches(
 # 阶段 4: 渠道体系
 # ═══════════════════════════════════════════════════════
 
+
 async def _ensure_channels(
     db: AsyncSession,
     tenant_id: uuid.UUID,
@@ -653,9 +907,7 @@ async def _ensure_channels(
     # 区域
     regions = []
     for reg_data in REGIONS_DATA:
-        result = await db.execute(
-            select(Region).where(Region.tenant_id == tenant_id, Region.code == reg_data["code"])
-        )
+        result = await db.execute(select(Region).where(Region.tenant_id == tenant_id, Region.code == reg_data["code"]))
         reg = result.scalar_one_or_none()
         dist = distributors[reg_data["dist"]]
         if not reg:
@@ -684,9 +936,7 @@ async def _ensure_channels(
     # 门店
     stores = []
     for store_data in STORES_DATA:
-        result = await db.execute(
-            select(Store).where(Store.tenant_id == tenant_id, Store.code == store_data["code"])
-        )
+        result = await db.execute(select(Store).where(Store.tenant_id == tenant_id, Store.code == store_data["code"]))
         store = result.scalar_one_or_none()
         region = regions[store_data["region"]]
         dist = distributors[REGIONS_DATA[store_data["region"]]["dist"]]
@@ -731,7 +981,11 @@ async def _ensure_channels(
             now_str = utcnow().replace(microsecond=0).isoformat()
             for idx, store in enumerate(stores):
                 region = regions[STORES_DATA[idx]["region"]] if idx < len(STORES_DATA) else regions[0]
-                dist = distributors[REGIONS_DATA[STORES_DATA[idx]["region"]]["dist"]] if idx < len(STORES_DATA) else distributors[0]
+                dist = (
+                    distributors[REGIONS_DATA[STORES_DATA[idx]["region"]]["dist"]]
+                    if idx < len(STORES_DATA)
+                    else distributors[0]
+                )
                 alloc_qty = min(per_store, len(batch_items) - idx * per_store)
                 if alloc_qty <= 0:
                     break
@@ -749,15 +1003,17 @@ async def _ensure_channels(
                     alloc.distributor_id = dist.id
                     alloc.region_id = region.id
                 else:
-                    db.add(CodeAllocation(
-                        tenant_id=tenant_id,
-                        batch_id=batch_id,
-                        store_id=store.id,
-                        region_id=region.id,
-                        distributor_id=dist.id,
-                        quantity=alloc_qty,
-                        allocated_at=now_str,
-                    ))
+                    db.add(
+                        CodeAllocation(
+                            tenant_id=tenant_id,
+                            batch_id=batch_id,
+                            store_id=store.id,
+                            region_id=region.id,
+                            distributor_id=dist.id,
+                            quantity=alloc_qty,
+                            allocated_at=now_str,
+                        )
+                    )
         await db.flush()
 
     # 账号渠道作用域
@@ -775,6 +1031,7 @@ async def _ensure_channels(
 # 阶段 5: 扫码事件
 # ═══════════════════════════════════════════════════════
 
+
 async def _ensure_scan_events(
     db: AsyncSession,
     tenant_id: uuid.UUID,
@@ -782,9 +1039,7 @@ async def _ensure_scan_events(
 ) -> int:
     """批量生成 60 天的扫码事件，返回总条数"""
     # 检查是否已有扫码事件
-    result = await db.execute(
-        select(func.count()).select_from(ScanEvent).where(ScanEvent.tenant_id == tenant_id)
-    )
+    result = await db.execute(select(func.count()).select_from(ScanEvent).where(ScanEvent.tenant_id == tenant_id))
     existing_count = result.scalar_one()
     if existing_count > 1000:
         return existing_count  # 已有足够数据，跳过
@@ -808,15 +1063,17 @@ async def _ensure_scan_events(
             ip_hash = hashlib.sha256(f"demo-ip-{random.randint(1, 5000)}".encode()).hexdigest()[:32]
             is_first = random.random() < 0.70  # 70% 首扫
 
-            events_batch.append(ScanEvent(
-                tenant_id=tenant_id,
-                public_id=public_id,
-                scan_time=scan_time,
-                ip_hash=ip_hash,
-                user_agent=ua,
-                is_first_scan=is_first,
-                environment=env,
-            ))
+            events_batch.append(
+                ScanEvent(
+                    tenant_id=tenant_id,
+                    public_id=public_id,
+                    scan_time=scan_time,
+                    ip_hash=ip_hash,
+                    user_agent=ua,
+                    is_first_scan=is_first,
+                    environment=env,
+                )
+            )
             total_events += 1
 
             if len(events_batch) >= batch_size:
@@ -845,68 +1102,76 @@ CAMPAIGNS_DATA = [
         "name": "首扫领券加企微复购活动",
         "campaign_type": "coupon",
         "status": CampaignStatus.ACTIVE,
-        "start_offset": -3, "end_offset": 30,
+        "start_offset": -3,
+        "end_offset": 30,
         "rules": {"first_scan_only": True, "per_person_limit": 1, "channels": ["wechat", "h5"]},
         "description": "首扫领券，引导加企微和商城复购。",
         "benefit_name": "20 元复购券",
         "benefit_type": "external_link",
         "benefit_config": {"url": "https://shop.example.com/demo-rice", "amount": 20, "threshold": 99},
-        "stock_total": 1000, "stock_used": 36,
+        "stock_total": 1000,
+        "stock_used": 36,
     },
     {
         "name": "五常大米限时折扣",
         "campaign_type": "discount",
         "status": CampaignStatus.ACTIVE,
-        "start_offset": -7, "end_offset": 7,
+        "start_offset": -7,
+        "end_offset": 7,
         "rules": {"per_person_limit": 2, "discount_rate": 0.85},
         "description": "限时 85 折促销活动。",
         "benefit_name": "85折优惠券",
         "benefit_type": "platform_coupon",
         "benefit_config": {"discount_rate": 0.85, "min_purchase": 50},
-        "stock_total": 500, "stock_used": 128,
+        "stock_total": 500,
+        "stock_used": 128,
     },
     {
         "name": "新品蜂蜜体验装试用",
         "campaign_type": "trial",
         "status": CampaignStatus.ACTIVE,
-        "start_offset": -1, "end_offset": 15,
+        "start_offset": -1,
+        "end_offset": 15,
         "rules": {"first_scan_only": True, "per_person_limit": 1},
         "description": "蜂蜜新品扫码免费领取体验装。",
         "benefit_name": "蜂蜜体验装 30g",
         "benefit_type": "form_benefit",
         "benefit_config": {"form_fields": ["name", "address", "phone"], "shipping_required": True},
-        "stock_total": 300, "stock_used": 45,
+        "stock_total": 300,
+        "stock_used": 45,
     },
     {
         "name": "端午礼盒预售",
         "campaign_type": "presale",
         "status": CampaignStatus.DRAFT,
-        "start_offset": 5, "end_offset": 20,
+        "start_offset": 5,
+        "end_offset": 20,
         "rules": {"per_person_limit": 3, "deposit_required": True},
         "description": "端午有机杂粮礼盒预售，定金翻倍。",
         "benefit_name": "端午礼盒预售定金翻倍",
         "benefit_type": "external_link",
         "benefit_config": {"url": "https://shop.example.com/presale-duanwu", "deposit": 50, "value": 100},
-        "stock_total": 200, "stock_used": 0,
+        "stock_total": 200,
+        "stock_used": 0,
     },
     {
         "name": "春茶品鉴会",
         "campaign_type": "event",
         "status": CampaignStatus.ENDED,
-        "start_offset": -45, "end_offset": -30,
+        "start_offset": -45,
+        "end_offset": -30,
         "rules": {"per_person_limit": 1, "registration_required": True},
         "description": "春茶品鉴会线上报名，扫码预约。",
         "benefit_name": "品鉴会入场券",
         "benefit_type": "private_domain",
         "benefit_config": {"wechat_group": "spring-tea-tasting", "qr_code_url": "https://example.com/qr"},
-        "stock_total": 100, "stock_used": 87,
+        "stock_total": 100,
+        "stock_used": 87,
     },
 ]
 
 
-async def _ensure_campaigns(
-    db: AsyncSession, tenant_id: uuid.UUID, consumer_ids: list[str]
-) -> list[Campaign]:
+async def _ensure_campaigns(db: AsyncSession, tenant_id: uuid.UUID, consumer_ids: list[str]) -> list[Campaign]:
     """创建活动与权益，含领取记录"""
     now = utcnow()
     campaigns = []
@@ -959,7 +1224,9 @@ async def _ensure_campaigns(
         if camp_data["stock_used"] > 0 and consumer_ids:
             existing_claims = (
                 await db.execute(
-                    select(func.count()).select_from(BenefitClaim).where(
+                    select(func.count())
+                    .select_from(BenefitClaim)
+                    .where(
                         BenefitClaim.tenant_id == tenant_id,
                         BenefitClaim.benefit_id == benefit.id,
                     )
@@ -969,16 +1236,18 @@ async def _ensure_campaigns(
             if claims_to_create > 0:
                 for i in range(claims_to_create):
                     consumer_id = random.choice(consumer_ids)
-                    db.add(BenefitClaim(
-                        tenant_id=tenant_id,
-                        benefit_id=benefit.id,
-                        campaign_id=campaign.id,
-                        consumer_id=consumer_id,
-                        idempotency_key=f"demo-claim-{benefit.id}-{i}",
-                        claim_type="claim",
-                        status="success",
-                        delivery_status="not_required",
-                    ))
+                    db.add(
+                        BenefitClaim(
+                            tenant_id=tenant_id,
+                            benefit_id=benefit.id,
+                            campaign_id=campaign.id,
+                            consumer_id=consumer_id,
+                            idempotency_key=f"demo-claim-{benefit.id}-{i}",
+                            claim_type="claim",
+                            status="success",
+                            delivery_status="not_required",
+                        )
+                    )
                 await db.flush()
 
         campaigns.append(campaign)
@@ -1009,9 +1278,7 @@ def _assign_member_level() -> tuple[str, int]:
     return "normal", random.randint(0, 200)
 
 
-async def _ensure_consumers(
-    db: AsyncSession, tenant_id: uuid.UUID
-) -> tuple[list[ConsumerProfile], list[str]]:
+async def _ensure_consumers(db: AsyncSession, tenant_id: uuid.UUID) -> tuple[list[ConsumerProfile], list[str]]:
     """创建消费者档案并发放积分，返回消费者列表和 consumer_id 字符串列表"""
     target_count = 200
 
@@ -1037,11 +1304,14 @@ async def _ensure_consumers(
             nickname=f"{nickname}{random.randint(1, 999) if random.random() < 0.3 else ''}",
             member_level=level,
             total_points=points,
-            wechat_openid=f"demo_o{hashlib.md5(f'consumer-{i}'.encode()).hexdigest()[:24]}" if random.random() < 0.6 else None,
+            wechat_openid=f"demo_o{hashlib.md5(f'consumer-{i}'.encode()).hexdigest()[:24]}"
+            if random.random() < 0.6
+            else None,
             tags=random.choice(["扫码用户", "会员", "高活跃", None]),
-            extra_data={"source": "demo", "city": random.choice(
-                ["上海", "杭州", "南京", "苏州", "广州", "深圳", "北京", "成都"]
-            )},
+            extra_data={
+                "source": "demo",
+                "city": random.choice(["上海", "杭州", "南京", "苏州", "广州", "深圳", "北京", "成都"]),
+            },
         )
         db.add(consumer)
         consumers.append(consumer)
@@ -1050,9 +1320,7 @@ async def _ensure_consumers(
     await db.flush()
     # 批量 refresh（一次查询获取所有 ID）
     consumer_ids_db = [c.id for c in consumers]
-    result = await db.execute(
-        select(ConsumerProfile).where(ConsumerProfile.id.in_(consumer_ids_db))
-    )
+    result = await db.execute(select(ConsumerProfile).where(ConsumerProfile.id.in_(consumer_ids_db)))
     consumers = list(result.scalars().all())
 
     # 为有积分的消费者创建积分流水
@@ -1072,29 +1340,27 @@ async def _ensure_consumers(
     await db.flush()
 
     # 创建积分规则
-    result = await db.execute(
-        select(func.count()).select_from(PointRule).where(PointRule.tenant_id == tenant_id)
-    )
+    result = await db.execute(select(func.count()).select_from(PointRule).where(PointRule.tenant_id == tenant_id))
     if result.scalar_one() == 0:
         for rule_type, points, desc in [
             ("scan", 10, "每次扫码获得 10 积分"),
             ("first_scan", 50, "首扫额外奖励 50 积分"),
             ("daily_checkin", 5, "每日签到获得 5 积分"),
         ]:
-            db.add(PointRule(
-                tenant_id=tenant_id,
-                rule_type=rule_type,
-                points=points,
-                enabled=True,
-                daily_limit=3 if rule_type == "scan" else 1,
-                description=desc,
-            ))
+            db.add(
+                PointRule(
+                    tenant_id=tenant_id,
+                    rule_type=rule_type,
+                    points=points,
+                    enabled=True,
+                    daily_limit=3 if rule_type == "scan" else 1,
+                    description=desc,
+                )
+            )
         await db.flush()
 
     # 创建积分商城商品
-    result = await db.execute(
-        select(func.count()).select_from(PointProduct).where(PointProduct.tenant_id == tenant_id)
-    )
+    result = await db.execute(select(func.count()).select_from(PointProduct).where(PointProduct.tenant_id == tenant_id))
     if result.scalar_one() == 0:
         point_products_data = [
             ("满减券 10 元", 100, 500, "全场满 99 减 10"),
@@ -1104,14 +1370,16 @@ async def _ensure_consumers(
             ("新品试吃礼盒", 3000, 30, "当季新品试吃装"),
         ]
         for name, cost, stock, desc in point_products_data:
-            db.add(PointProduct(
-                tenant_id=tenant_id,
-                name=name,
-                description=desc,
-                points_cost=cost,
-                stock=stock,
-                enabled=True,
-            ))
+            db.add(
+                PointProduct(
+                    tenant_id=tenant_id,
+                    name=name,
+                    description=desc,
+                    points_cost=cost,
+                    stock=stock,
+                    enabled=True,
+                )
+            )
         await db.flush()
 
     consumer_ids = [str(c.id) for c in consumers]
@@ -1181,12 +1449,24 @@ async def _ensure_risk_data(
 
     # 风险规则
     risk_rules_data = [
-        {"name": "异地扫码预警", "rule_type": "multi_location", "action": "warn",
-         "config": {"max_locations": 3, "time_window_hours": 24}},
-        {"name": "疑似仿制码拦截", "rule_type": "suspected_copy", "action": "block",
-         "config": {"min_scan_interval_seconds": 5}},
-        {"name": "高风险码冻结", "rule_type": "risk_frozen", "action": "block",
-         "config": {"max_daily_scans_per_code": 50}},
+        {
+            "name": "异地扫码预警",
+            "rule_type": "multi_location",
+            "action": "warn",
+            "config": {"max_locations": 3, "time_window_hours": 24},
+        },
+        {
+            "name": "疑似仿制码拦截",
+            "rule_type": "suspected_copy",
+            "action": "block",
+            "config": {"min_scan_interval_seconds": 5},
+        },
+        {
+            "name": "高风险码冻结",
+            "rule_type": "risk_frozen",
+            "action": "block",
+            "config": {"max_daily_scans_per_code": 50},
+        },
     ]
     risk_rules = []
     for rule_data in risk_rules_data:
@@ -1218,9 +1498,7 @@ async def _ensure_risk_data(
         (RiskAlertType.risk_frozen, "码已被系统自动冻结"),
     ]
     existing_alerts = (
-        await db.execute(
-            select(func.count()).select_from(RiskAlert).where(RiskAlert.tenant_id == tenant_id)
-        )
+        await db.execute(select(func.count()).select_from(RiskAlert).where(RiskAlert.tenant_id == tenant_id))
     ).scalar_one()
 
     if existing_alerts < 5:
@@ -1229,37 +1507,39 @@ async def _ensure_risk_data(
                 break
             code_item = activated_items[i]
             alert_type, detail = alert_types[i % len(alert_types)]
-            db.add(RiskAlert(
-                tenant_id=tenant_id,
-                alert_type=alert_type,
-                public_id=code_item.public_id,
-                code_item_id=code_item.id,
-                detail=detail,
-                ip_hash=f"demo-alert-ip-{i}",
-                resolved=random.random() < 0.4,
-            ))
+            db.add(
+                RiskAlert(
+                    tenant_id=tenant_id,
+                    alert_type=alert_type,
+                    public_id=code_item.public_id,
+                    code_item_id=code_item.id,
+                    detail=detail,
+                    ip_hash=f"demo-alert-ip-{i}",
+                    resolved=random.random() < 0.4,
+                )
+            )
 
     # 拦截记录
     existing_interceptions = (
         await db.execute(
-            select(func.count()).select_from(InterceptionRecord).where(
-                InterceptionRecord.tenant_id == tenant_id
-            )
+            select(func.count()).select_from(InterceptionRecord).where(InterceptionRecord.tenant_id == tenant_id)
         )
     ).scalar_one()
 
     if existing_interceptions < 2 and risk_rules:
         for i in range(3):
             rule = risk_rules[i % len(risk_rules)]
-            db.add(InterceptionRecord(
-                tenant_id=tenant_id,
-                risk_rule_id=rule.id,
-                action=rule.action,
-                context={"reason": "演示数据", "ip": f"192.168.{i}.{random.randint(1, 254)}"},
-                consumer_id=f"demo-consumer-{i}",
-                auto_triggered=random.random() < 0.7,
-                action_taken="blocked" if rule.action == "block" else "warned",
-            ))
+            db.add(
+                InterceptionRecord(
+                    tenant_id=tenant_id,
+                    risk_rule_id=rule.id,
+                    action=rule.action,
+                    context={"reason": "演示数据", "ip": f"192.168.{i}.{random.randint(1, 254)}"},
+                    consumer_id=f"demo-consumer-{i}",
+                    auto_triggered=random.random() < 0.7,
+                    action_taken="blocked" if rule.action == "block" else "warned",
+                )
+            )
 
     await db.flush()
 
@@ -1394,14 +1674,16 @@ async def _ensure_page_templates(
         if version:
             version.config_json = config
         else:
-            db.add(PageVersion(
-                tenant_id=tenant_id,
-                page_template_id=template.id,
-                version=1,
-                config_json=config,
-                status=PageVersionStatus.published,
-                created_by=created_by,
-            ))
+            db.add(
+                PageVersion(
+                    tenant_id=tenant_id,
+                    page_template_id=template.id,
+                    version=1,
+                    config_json=config,
+                    status=PageVersionStatus.published,
+                    created_by=created_by,
+                )
+            )
         await db.flush()
         templates.append(template)
 
@@ -1411,6 +1693,7 @@ async def _ensure_page_templates(
 # ═══════════════════════════════════════════════════════
 # 阶段 10: 统计聚合
 # ═══════════════════════════════════════════════════════
+
 
 async def _aggregate_stats(db: AsyncSession, tenant_id: uuid.UUID) -> int:
     """批量聚合 60 天的 DailyScanStats"""
@@ -1430,25 +1713,41 @@ async def _aggregate_stats(db: AsyncSession, tenant_id: uuid.UUID) -> int:
 # 清理功能
 # ═══════════════════════════════════════════════════════
 
+
 async def _clean_demo_data(db: AsyncSession, tenant_id: uuid.UUID) -> None:
     """删除所有演示数据（保留租户本身）"""
     typer.echo("\U0001f9f9 正在清理演示数据...")
     # 按依赖顺序删除
     for model in [
-        InterceptionRecord, RiskAlert, RiskRule, RiskNotification,
-        PointRedemption, PointTransaction, PointProduct, PointRule,
-        BenefitClaim, Benefit, Campaign,
+        InterceptionRecord,
+        RiskAlert,
+        RiskRule,
+        RiskNotification,
+        PointRedemption,
+        PointTransaction,
+        PointProduct,
+        PointRule,
+        BenefitClaim,
+        Benefit,
+        Campaign,
         ConsumerProfile,
-        DiversionClue, CodeAllocation, AccountChannelScope,
+        DiversionClue,
+        CodeAllocation,
+        AccountChannelScope,
         ScanEvent,
-        PageVersion, PageTemplate,
-        CodeItem, CodeBatch,
-        ProductionBatch, SKU, Product, Brand,
-        Store, Region, Distributor,
+        PageVersion,
+        PageTemplate,
+        CodeItem,
+        CodeBatch,
+        ProductionBatch,
+        SKU,
+        Product,
+        Brand,
+        Store,
+        Region,
+        Distributor,
     ]:
-        result = await db.execute(
-            delete(model).where(model.tenant_id == tenant_id)
-        )
+        result = await db.execute(delete(model).where(model.tenant_id == tenant_id))
         if result.rowcount:
             typer.echo(f"  删除 {model.__tablename__}: {result.rowcount} 条")
     await db.flush()
@@ -1458,6 +1757,7 @@ async def _clean_demo_data(db: AsyncSession, tenant_id: uuid.UUID) -> None:
 # ═══════════════════════════════════════════════════════
 # 主入口
 # ═══════════════════════════════════════════════════════
+
 
 @app.command()
 def generate():
@@ -1493,13 +1793,14 @@ def generate():
             activated = len([i for i in code_items if i.status == CodeItemStatus.activated])
             p.step("码批次", f"({len(code_items)} 码, {activated} 激活)")
             # 保存 public_id 列表供后续使用
-            active_public_id = next(
-                (i.public_id for i in code_items if i.status == CodeItemStatus.activated), None
-            )
+            active_public_id = next((i.public_id for i in code_items if i.status == CodeItemStatus.activated), None)
 
             # 4. 渠道
             channels = await _ensure_channels(db, tenant_id, accounts, code_items)
-            p.step("渠道体系", f"({len(channels['distributors'])}经销商/{len(channels['regions'])}区域/{len(channels['stores'])}门店)")
+            p.step(
+                "渠道体系",
+                f"({len(channels['distributors'])}经销商/{len(channels['regions'])}区域/{len(channels['stores'])}门店)",
+            )
 
             # 5. 扫码事件
             event_count = await _ensure_scan_events(db, tenant_id, code_items)
@@ -1561,11 +1862,9 @@ def generate():
             p.step("活动与权益", f"({len(campaigns)} 活动)")
 
             # 8. 风控（需要重新查询 code_items）
-            code_items_b = list((
-                await db.execute(
-                    select(CodeItem).where(CodeItem.tenant_id == tenant_id).limit(100)
-                )
-            ).scalars().all())
+            code_items_b = list(
+                (await db.execute(select(CodeItem).where(CodeItem.tenant_id == tenant_id).limit(100))).scalars().all()
+            )
             await _ensure_risk_data(db, tenant_id, code_items_b, channels)
             p.step("风控数据", "(告警/窜货/拦截)")
 
@@ -1596,6 +1895,7 @@ def generate():
 @app.command()
 def clean():
     """清理所有演示数据"""
+
     async def _run():
         async with async_session() as db:
             result = await db.execute(select(Tenant).where(Tenant.slug == TENANT_SLUG))
@@ -1612,6 +1912,7 @@ def clean():
 @app.command()
 def reset():
     """清理后重新生成"""
+
     async def _run():
         async with async_session() as db:
             result = await db.execute(select(Tenant).where(Tenant.slug == TENANT_SLUG))

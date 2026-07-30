@@ -40,7 +40,6 @@ async def client(db_session: AsyncSession):
 
 async def _create_code_chain(client: AsyncClient, prefix: str):
     """创建完整的 租户→品牌→产品→SKU→生产批次→码批次→激活 链路，返回 (public_id, item_id, tid)"""
-    import uuid
 
     resp = await client.post(
         "/api/v1/tenants",
@@ -114,9 +113,7 @@ async def expired_code(client: AsyncClient, db_session: AsyncSession):
 
     # 设置为 expired
     await db_session.execute(
-        db_update(CodeItem)
-        .where(CodeItem.id == uuid.UUID(item_id))
-        .values(status=CodeItemStatus.expired)
+        db_update(CodeItem).where(CodeItem.id == uuid.UUID(item_id)).values(status=CodeItemStatus.expired)
     )
     await db_session.commit()
 

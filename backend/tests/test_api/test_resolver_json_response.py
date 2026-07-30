@@ -1,7 +1,7 @@
 """验证 resolver JSON 响应结构完整性"""
 
 import pytest
-from httpx import AsyncClient, ASGITransport
+from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
@@ -9,12 +9,12 @@ from app.main import app
 from app.utils.security import create_access_token
 from tests.conftest import TestSessionLocal
 
+
 def _platform_admin_headers() -> dict:
     from app.utils.security import create_access_token
+
     token = create_access_token("platform", "platform-admin", "platform_admin")
     return {"Authorization": f"Bearer {token}"}
-
-
 
 
 @pytest.fixture
@@ -38,12 +38,16 @@ async def client(db_session: AsyncSession):
 @pytest.fixture
 async def traceability_setup(client: AsyncClient):
     """创建带溯源数据的完整链路"""
-    resp = await client.post("/api/v1/tenants", json={
-        "name": "溯源测试",
-        "admin_email": "trace@test.com",
-        "admin_name": "Admin",
-        "admin_password": "Pass1234",
-    }, headers=_platform_admin_headers())
+    resp = await client.post(
+        "/api/v1/tenants",
+        json={
+            "name": "溯源测试",
+            "admin_email": "trace@test.com",
+            "admin_name": "Admin",
+            "admin_password": "Pass1234",
+        },
+        headers=_platform_admin_headers(),
+    )
     assert resp.status_code in (200, 201)
     tid = resp.json()["id"]
     token = create_access_token(tid, "00000000-0000-0000-0000-000000000001", "admin")
@@ -52,45 +56,62 @@ async def traceability_setup(client: AsyncClient):
     brand = await client.post("/api/v1/brands", json={"name": "溯源品牌"}, headers=headers)
     assert brand.status_code in (200, 201)
 
-    prod = await client.post("/api/v1/products", json={
-        "brand_id": brand.json()["id"],
-        "name": "溯源大米",
-        "description": "测试溯源",
-        "origin": "黑龙江五常",
-        "image_url": "https://example.com/rice.jpg",
-    }, headers=headers)
+    prod = await client.post(
+        "/api/v1/products",
+        json={
+            "brand_id": brand.json()["id"],
+            "name": "溯源大米",
+            "description": "测试溯源",
+            "origin": "黑龙江五常",
+            "image_url": "https://example.com/rice.jpg",
+        },
+        headers=headers,
+    )
     assert prod.status_code in (200, 201)
 
-    sku = await client.post("/api/v1/skus", json={
-        "product_id": prod.json()["id"],
-        "code": "TRACE-SKU",
-        "name": "5kg装",
-    }, headers=headers)
+    sku = await client.post(
+        "/api/v1/skus",
+        json={
+            "product_id": prod.json()["id"],
+            "code": "TRACE-SKU",
+            "name": "5kg装",
+        },
+        headers=headers,
+    )
     assert sku.status_code in (200, 201)
 
-    pb = await client.post("/api/v1/production-batches", json={
-        "product_id": prod.json()["id"],
-        "sku_id": sku.json()["id"],
-        "batch_code": "PB-TRACE-001",
-        "production_date": "2026-03-01",
-        "expiry_date": "2027-03-01",
-        "origin": "黑龙江省五常市",
-    }, headers=headers)
+    pb = await client.post(
+        "/api/v1/production-batches",
+        json={
+            "product_id": prod.json()["id"],
+            "sku_id": sku.json()["id"],
+            "batch_code": "PB-TRACE-001",
+            "production_date": "2026-03-01",
+            "expiry_date": "2027-03-01",
+            "origin": "黑龙江省五常市",
+        },
+        headers=headers,
+    )
     assert pb.status_code in (200, 201)
 
-    batch = await client.post("/api/v1/code-batches", json={
-        "product_id": prod.json()["id"],
-        "sku_id": sku.json()["id"],
-        "production_batch_id": pb.json()["id"],
-        "batch_code": "CB-TRACE-001",
-        "quantity": 2,
-    }, headers=headers)
+    batch = await client.post(
+        "/api/v1/code-batches",
+        json={
+            "product_id": prod.json()["id"],
+            "sku_id": sku.json()["id"],
+            "production_batch_id": pb.json()["id"],
+            "batch_code": "CB-TRACE-001",
+            "quantity": 2,
+        },
+        headers=headers,
+    )
     assert batch.status_code in (200, 201)
 
     await client.post(f"/api/v1/code-batches/{batch.json()['id']}/activate", headers=headers)
 
     items = await client.get(
-        f"/api/v1/code-items?code_batch_id={batch.json()['id']}", headers=headers,
+        f"/api/v1/code-items?code_batch_id={batch.json()['id']}",
+        headers=headers,
     )
     return items.json()["items"][0]["public_id"]
 
@@ -100,7 +121,8 @@ class TestResolverJsonResponse:
     async def test_json_has_product_image_url(self, client, traceability_setup):
         """产品图片应该用 image_url 而非空 images 数组"""
         resp = await client.get(
-            f"/c/{traceability_setup}", headers={"Accept": "application/json"},
+            f"/c/{traceability_setup}",
+            headers={"Accept": "application/json"},
         )
         assert resp.status_code == 200
         data = resp.json()
@@ -112,7 +134,8 @@ class TestResolverJsonResponse:
     async def test_json_has_traceability_data(self, client, traceability_setup):
         """响应应包含溯源信息（产地、生产日期、保质期、批次号）"""
         resp = await client.get(
-            f"/c/{traceability_setup}", headers={"Accept": "application/json"},
+            f"/c/{traceability_setup}",
+            headers={"Accept": "application/json"},
         )
         data = resp.json()
         batch = data.get("batch") or data.get("code_data", {}).get("batch")
@@ -129,7 +152,8 @@ class TestResolverJsonResponse:
         与 scan_count 同值（scan_count 兼容别名）。
         """
         resp = await client.get(
-            f"/c/{traceability_setup}", headers={"Accept": "application/json"},
+            f"/c/{traceability_setup}",
+            headers={"Accept": "application/json"},
         )
         data = resp.json()
         assert data["scan_info"]["is_first_scan"] is True

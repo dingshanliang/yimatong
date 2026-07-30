@@ -43,9 +43,7 @@ async def delete_translation(
     translation_id: uuid.UUID,
 ) -> bool:
     result = await db.execute(
-        select(Translation).where(
-            Translation.id == translation_id, Translation.tenant_id == tenant_id
-        )
+        select(Translation).where(Translation.id == translation_id, Translation.tenant_id == tenant_id)
     )
     t = result.scalar_one_or_none()
     if not t:

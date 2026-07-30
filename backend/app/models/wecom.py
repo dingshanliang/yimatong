@@ -90,7 +90,7 @@ class WeComExternalContact(Base):
     # yimatong-zgb1.12：验签来源 + 事件类型 + 指纹 + 待验证标记
     verification_source: Mapped[str | None] = mapped_column(String(30), nullable=True)
     change_type: Mapped[str | None] = mapped_column(String(50), nullable=True)
-    event_fingerprint: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    event_fingerprint: Mapped[str | None] = mapped_column(String(64), nullable=True)
     welcome_code_pending: Mapped[bool] = mapped_column(default=False, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(

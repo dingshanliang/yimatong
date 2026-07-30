@@ -1,4 +1,5 @@
 """区域品牌/协会模型"""
+
 import uuid
 from datetime import datetime
 
@@ -108,7 +109,7 @@ class TenantDomain(Base):
     __tablename__ = "tenant_domains"
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid7)
-    tenant_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(nullable=False)
     domain: Mapped[str] = mapped_column(String(253), nullable=False, unique=True)
     ssl_status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending")
     verified: Mapped[bool] = mapped_column(default=False, nullable=False)

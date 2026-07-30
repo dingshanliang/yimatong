@@ -75,8 +75,8 @@ class WeChatPayTransferAdapter(BaseConnectorAdapter):
             return DeliveryResult(
                 status="failed",
                 message=f"Missing required config: mch_id={bool(mch_id)}, appid={bool(oa_appid)}, "
-                        f"serial={bool(cert_serial_no)}, key={bool(private_key_pem)}, "
-                        f"openid={bool(openid)}, amount={bool(amount)}",
+                f"serial={bool(cert_serial_no)}, key={bool(private_key_pem)}, "
+                f"openid={bool(openid)}, amount={bool(amount)}",
             )
 
         from app.core.config import settings

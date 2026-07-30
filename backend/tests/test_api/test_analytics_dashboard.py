@@ -20,12 +20,12 @@ from app.models.scan import ScanEvent
 from app.utils.security import create_access_token
 from tests.conftest import TestSessionLocal
 
+
 def _platform_admin_headers() -> dict:
     from app.utils.security import create_access_token
+
     token = create_access_token("platform", "platform-admin", "platform_admin")
     return {"Authorization": f"Bearer {token}"}
-
-
 
 
 @pytest.fixture
@@ -126,7 +126,9 @@ class TestDashboardExport:
     """yimatong-0j6: 扫码看板数据导出"""
 
     @pytest.mark.anyio
-    async def test_export_scan_events_with_date_range(self, client: AsyncClient, db_session: AsyncSession, dashboard_setup):
+    async def test_export_scan_events_with_date_range(
+        self, client: AsyncClient, db_session: AsyncSession, dashboard_setup
+    ):
         tid, headers = dashboard_setup
         tenant_uuid = uuid.UUID(tid)
 
@@ -198,7 +200,9 @@ class TestDashboardExport:
         assert "spreadsheetml.sheet" in resp.headers.get("content-type", "")
 
         result = await db_session.execute(
-            select(ExportLog).where(ExportLog.tenant_id == tenant_uuid, ExportLog.export_type == "campaign_dashboard_xlsx")
+            select(ExportLog).where(
+                ExportLog.tenant_id == tenant_uuid, ExportLog.export_type == "campaign_dashboard_xlsx"
+            )
         )
         log = result.scalar_one_or_none()
         assert log is not None
@@ -259,7 +263,9 @@ class TestDashboardExport:
         assert "spreadsheetml.sheet" in resp.headers.get("content-type", "")
 
         result = await db_session.execute(
-            select(ExportLog).where(ExportLog.tenant_id == tenant_uuid, ExportLog.export_type == "regional_dashboard_xlsx")
+            select(ExportLog).where(
+                ExportLog.tenant_id == tenant_uuid, ExportLog.export_type == "regional_dashboard_xlsx"
+            )
         )
         log = result.scalar_one_or_none()
         assert log is not None

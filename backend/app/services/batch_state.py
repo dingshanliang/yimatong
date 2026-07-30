@@ -30,7 +30,5 @@ def can_transition_batch(
     if target in valid:
         return True
     if raise_on_invalid:
-        raise InvalidBatchStateTransitionError(
-            f"Cannot transition batch from '{current.value}' to '{target.value}'"
-        )
+        raise InvalidBatchStateTransitionError(f"Cannot transition batch from '{current.value}' to '{target.value}'")
     return False

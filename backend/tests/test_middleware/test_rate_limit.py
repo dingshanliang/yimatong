@@ -1,7 +1,5 @@
 """A6-003: 限流策略测试"""
 
-import time
-
 import pytest
 
 from app.middleware.rate_limit import RateLimiter

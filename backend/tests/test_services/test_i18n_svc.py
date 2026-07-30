@@ -106,6 +106,7 @@ class TestI18nFrontendIntegration:
     def test_h5_language_param(self):
         """H5 通过 ?lang=en 参数切换语言"""
         import urllib.parse
+
         url = "https://qr.yimatong.cn/c/ABC123?lang=en"
         parsed = urllib.parse.urlparse(url)
         params = urllib.parse.parse_qs(parsed.query)

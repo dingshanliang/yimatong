@@ -3,7 +3,7 @@
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import delete as sa_delete, func, select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -66,9 +66,7 @@ async def update_role(
     if "name" in updates:
         # Check name uniqueness
         if updates["name"] != role.name:
-            dup = await db.execute(
-                select(Role).where(Role.tenant_id == tenant_id, Role.name == updates["name"])
-            )
+            dup = await db.execute(select(Role).where(Role.tenant_id == tenant_id, Role.name == updates["name"]))
             if dup.scalar_one_or_none():
                 raise HTTPException(status_code=409, detail="角色名称已存在")
         role.name = updates["name"]

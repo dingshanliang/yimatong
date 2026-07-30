@@ -106,9 +106,7 @@ async def code_batch_with_auth(client: AsyncClient, tenant_with_auth, sku_with_a
     batch_id = uuid.UUID(resp.json()["id"])
 
     # 获取批次下的码项
-    items_resp = await client.get(
-        "/api/v1/code-items", params={"code_batch_id": batch_id}, headers=headers
-    )
+    items_resp = await client.get("/api/v1/code-items", params={"code_batch_id": batch_id}, headers=headers)
     items = items_resp.json()["items"]
     item_id = uuid.UUID(items[0]["id"])
     return tid, headers, batch_id, item_id
@@ -196,7 +194,8 @@ class TestPublicIdConflictHandling:
 
         # 获取所有码项，验证 public_id 唯一
         items_resp = await client.get(
-            "/api/v1/code-items", params={"code_batch_id": batch_id, "page_size": 100},
+            "/api/v1/code-items",
+            params={"code_batch_id": batch_id, "page_size": 100},
             headers=headers,
         )
         items = items_resp.json()["items"]

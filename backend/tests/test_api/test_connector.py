@@ -13,12 +13,12 @@ from app.models.connector import BenefitDelivery
 from app.utils.security import create_access_token
 from tests.conftest import TestSessionLocal
 
+
 def _platform_admin_headers() -> dict:
     from app.utils.security import create_access_token
+
     token = create_access_token("platform", "platform-admin", "platform_admin")
     return {"Authorization": f"Bearer {token}"}
-
-
 
 
 @pytest.fixture
@@ -173,7 +173,11 @@ class TestConnectorCRUD:
         _, headers = setup_tenant
         await client.post(
             "/api/v1/connectors/connectors",
-            json={"name": "列表测试", "connector_type": "generic_http", "config": {"api_url": "https://api.example.com"}},
+            json={
+                "name": "列表测试",
+                "connector_type": "generic_http",
+                "config": {"api_url": "https://api.example.com"},
+            },
             headers=headers,
         )
 
@@ -186,7 +190,11 @@ class TestConnectorCRUD:
         _, headers = setup_tenant
         create_resp = await client.post(
             "/api/v1/connectors/connectors",
-            json={"name": "更新测试", "connector_type": "generic_http", "config": {"api_url": "https://api.example.com"}},
+            json={
+                "name": "更新测试",
+                "connector_type": "generic_http",
+                "config": {"api_url": "https://api.example.com"},
+            },
             headers=headers,
         )
         conn_id = create_resp.json()["id"]
@@ -204,7 +212,11 @@ class TestConnectorCRUD:
         _, headers = setup_tenant
         create_resp = await client.post(
             "/api/v1/connectors/connectors",
-            json={"name": "连接测试", "connector_type": "generic_http", "config": {"api_url": "https://api.example.com"}},
+            json={
+                "name": "连接测试",
+                "connector_type": "generic_http",
+                "config": {"api_url": "https://api.example.com"},
+            },
             headers=headers,
         )
         conn_id = create_resp.json()["id"]
@@ -245,7 +257,11 @@ class TestConnectorSecrets:
         _, headers = setup_tenant
         create_resp = await client.post(
             "/api/v1/connectors/connectors",
-            json={"name": "更新凭证", "connector_type": "generic_http", "config": {"api_url": "https://api.example.com"}},
+            json={
+                "name": "更新凭证",
+                "connector_type": "generic_http",
+                "config": {"api_url": "https://api.example.com"},
+            },
             headers=headers,
         )
         conn_id = create_resp.json()["id"]

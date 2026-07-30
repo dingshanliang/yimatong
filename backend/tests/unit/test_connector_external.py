@@ -29,6 +29,7 @@ from app.services.connectors.secrets import (
 
 def uuid7():
     from uuid6 import uuid7
+
     return uuid7()
 
 
@@ -85,8 +86,12 @@ class TestAdapterRegistry:
 
     def test_unknown_type_raises(self, tenant_id):
         unknown = Connector(
-            id=uuid7(), tenant_id=tenant_id, name="x",
-            connector_type="nonexistent", config={}, enabled=True,
+            id=uuid7(),
+            tenant_id=tenant_id,
+            name="x",
+            connector_type="nonexistent",
+            config={},
+            enabled=True,
         )
         with pytest.raises(ValueError, match="Unknown connector type"):
             get_adapter(unknown)
@@ -109,46 +114,70 @@ class TestGenericHttpAdapter:
 
     @pytest.mark.asyncio
     async def test_validate_config_missing_url(self):
-        adapter = get_adapter(Connector(
-            id=uuid7(), tenant_id=uuid7(), name="x",
-            connector_type="generic_http", config={}, enabled=True,
-        ))
+        adapter = get_adapter(
+            Connector(
+                id=uuid7(),
+                tenant_id=uuid7(),
+                name="x",
+                connector_type="generic_http",
+                config={},
+                enabled=True,
+            )
+        )
         is_valid, error = await adapter.validate_config({})
         assert not is_valid
         assert "api_url" in error
 
     @pytest.mark.asyncio
     async def test_validate_config_rejects_http(self):
-        adapter = get_adapter(Connector(
-            id=uuid7(), tenant_id=uuid7(), name="x",
-            connector_type="generic_http", config={}, enabled=True,
-        ))
+        adapter = get_adapter(
+            Connector(
+                id=uuid7(),
+                tenant_id=uuid7(),
+                name="x",
+                connector_type="generic_http",
+                config={},
+                enabled=True,
+            )
+        )
         is_valid, error = await adapter.validate_config({"api_url": "http://api.example.com"})
         assert not is_valid
         assert "HTTPS" in error
 
     @pytest.mark.asyncio
     async def test_validate_config_rejects_localhost(self):
-        adapter = get_adapter(Connector(
-            id=uuid7(), tenant_id=uuid7(), name="x",
-            connector_type="generic_http", config={}, enabled=True,
-        ))
+        adapter = get_adapter(
+            Connector(
+                id=uuid7(),
+                tenant_id=uuid7(),
+                name="x",
+                connector_type="generic_http",
+                config={},
+                enabled=True,
+            )
+        )
         is_valid, error = await adapter.validate_config({"api_url": "https://localhost"})
         assert not is_valid
 
     @pytest.mark.asyncio
     async def test_validate_config_rejects_private_ip(self):
-        adapter = get_adapter(Connector(
-            id=uuid7(), tenant_id=uuid7(), name="x",
-            connector_type="generic_http", config={}, enabled=True,
-        ))
+        adapter = get_adapter(
+            Connector(
+                id=uuid7(),
+                tenant_id=uuid7(),
+                name="x",
+                connector_type="generic_http",
+                config={},
+                enabled=True,
+            )
+        )
         is_valid, error = await adapter.validate_config({"api_url": "https://192.168.1.1"})
         assert not is_valid
 
     @pytest.mark.asyncio
     async def test_verify_callback_default_deny(self, generic_connector):
         adapter = get_adapter(generic_connector)
-        result = await adapter.verify_callback(generic_connector, b'{}', {})
+        result = await adapter.verify_callback(generic_connector, b"{}", {})
         assert result is False
 
     @pytest.mark.asyncio
@@ -161,8 +190,11 @@ class TestGenericHttpAdapter:
         expected_sig = hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
 
         conn = Connector(
-            id=uuid7(), tenant_id=uuid7(), name="x",
-            connector_type="generic_http", config={"api_url": "https://api.example.com"},
+            id=uuid7(),
+            tenant_id=uuid7(),
+            name="x",
+            connector_type="generic_http",
+            config={"api_url": "https://api.example.com"},
             secrets_encrypted=encrypt_secrets({"callback_secret": secret}),
             enabled=True,
         )
@@ -187,25 +219,30 @@ class TestSSRFProtection:
 
     def test_allows_https_public(self):
         from app.services.connectors.generic_http import _is_url_safe
+
         assert _is_url_safe("https://api.example.com") is True
 
     def test_rejects_http(self):
         from app.services.connectors.generic_http import _is_url_safe
+
         assert _is_url_safe("http://api.example.com") is False
 
     def test_rejects_localhost(self):
         from app.services.connectors.generic_http import _is_url_safe
+
         assert _is_url_safe("https://localhost") is False
         assert _is_url_safe("https://127.0.0.1") is False
 
     def test_rejects_private_ip(self):
         from app.services.connectors.generic_http import _is_url_safe
+
         assert _is_url_safe("https://10.0.0.1") is False
         assert _is_url_safe("https://172.16.0.1") is False
         assert _is_url_safe("https://192.168.1.1") is False
 
     def test_rejects_empty(self):
         from app.services.connectors.generic_http import _is_url_safe
+
         assert _is_url_safe("") is False
 
 
@@ -225,20 +262,32 @@ class TestCouponPoolAdapter:
 
     @pytest.mark.asyncio
     async def test_validate_config_missing_pool_id(self):
-        adapter = get_adapter(Connector(
-            id=uuid7(), tenant_id=uuid7(), name="x",
-            connector_type="coupon_pool", config={}, enabled=True,
-        ))
+        adapter = get_adapter(
+            Connector(
+                id=uuid7(),
+                tenant_id=uuid7(),
+                name="x",
+                connector_type="coupon_pool",
+                config={},
+                enabled=True,
+            )
+        )
         is_valid, error = await adapter.validate_config({})
         assert not is_valid
         assert "pool_id" in error
 
     @pytest.mark.asyncio
     async def test_validate_config_invalid_uuid(self):
-        adapter = get_adapter(Connector(
-            id=uuid7(), tenant_id=uuid7(), name="x",
-            connector_type="coupon_pool", config={}, enabled=True,
-        ))
+        adapter = get_adapter(
+            Connector(
+                id=uuid7(),
+                tenant_id=uuid7(),
+                name="x",
+                connector_type="coupon_pool",
+                config={},
+                enabled=True,
+            )
+        )
         is_valid, error = await adapter.validate_config({"pool_id": "not-a-uuid"})
         assert not is_valid
 
@@ -283,11 +332,21 @@ class TestBenefitDeliveryModel:
 
     def test_model_fields(self):
         from app.models.connector import BenefitDelivery
+
         expected = [
-            "id", "tenant_id", "connector_id", "consumer_id",
-            "benefit_type", "benefit_config", "status",
-            "retry_count", "max_retries", "external_data",
-            "next_retry_at", "created_at", "updated_at",
+            "id",
+            "tenant_id",
+            "connector_id",
+            "consumer_id",
+            "benefit_type",
+            "benefit_config",
+            "status",
+            "retry_count",
+            "max_retries",
+            "external_data",
+            "next_retry_at",
+            "created_at",
+            "updated_at",
         ]
         for field in expected:
             assert hasattr(BenefitDelivery, field), f"Missing field: {field}"
@@ -327,6 +386,7 @@ class TestCircuitBreaker:
 
     def test_resets_after_timeout(self):
         import time
+
         cb = CircuitBreaker(threshold=1, reset_timeout=1)
         cb.record_failure()
         assert not cb.is_available()

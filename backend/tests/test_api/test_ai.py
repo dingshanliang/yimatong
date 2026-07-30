@@ -13,12 +13,12 @@ from app.main import app
 from app.utils.security import create_access_token
 from tests.conftest import TestSessionLocal
 
+
 def _platform_admin_headers() -> dict:
     from app.utils.security import create_access_token
+
     token = create_access_token("platform", "platform-admin", "platform_admin")
     return {"Authorization": f"Bearer {token}"}
-
-
 
 
 @pytest.fixture
@@ -59,10 +59,12 @@ async def setup_tenant(client: AsyncClient):
 
 @pytest.fixture(autouse=True)
 def _mock_llm():
-    with patch("app.services.ai._check_daily_limit", new_callable=AsyncMock), \
-         patch("app.services.ai._increment_daily_count", new_callable=AsyncMock), \
-         patch("app.services.ai._save_generation", new_callable=AsyncMock) as mock_save, \
-         patch("app.services.ai._call_llm", new_callable=AsyncMock) as mock_llm:
+    with (
+        patch("app.services.ai._check_daily_limit", new_callable=AsyncMock),
+        patch("app.services.ai._increment_daily_count", new_callable=AsyncMock),
+        patch("app.services.ai._save_generation", new_callable=AsyncMock) as mock_save,
+        patch("app.services.ai._call_llm", new_callable=AsyncMock) as mock_llm,
+    ):
         mock_save.return_value = type("R", (), {"id": uuid.uuid4()})()
         yield mock_llm
 

@@ -41,11 +41,7 @@ async def list_notifications(
     tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
     stmt = select(RiskNotification).where(RiskNotification.tenant_id == tenant_id)
-    count_stmt = (
-        select(func.count())
-        .select_from(RiskNotification)
-        .where(RiskNotification.tenant_id == tenant_id)
-    )
+    count_stmt = select(func.count()).select_from(RiskNotification).where(RiskNotification.tenant_id == tenant_id)
 
     if notification_type:
         stmt = stmt.where(RiskNotification.notification_type == notification_type)

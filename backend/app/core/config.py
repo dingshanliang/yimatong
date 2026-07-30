@@ -4,6 +4,7 @@ from pydantic_settings import BaseSettings
 
 class Settings(BaseSettings):
     database_url: str = "postgresql+asyncpg://yimatong:yimatong@localhost:5432/yimatong_dev?ssl=disable"
+    migration_database_url: str | None = None
     redis_url: str = "redis://localhost:6379/0"
     secret_key: str = ""  # 必须通过环境变量 SECRET_KEY 设置
     access_token_expire_minutes: int = 15
@@ -17,9 +18,7 @@ class Settings(BaseSettings):
     hmac_pepper: str = ""
 
     # IP 哈希加盐密钥（防止彩虹表攻击，生产环境必须修改）
-    ip_hash_secret: str = Field(
-        default="yimatong-default-ip-hash-secret-change-in-production"
-    )
+    ip_hash_secret: str = Field(default="yimatong-default-ip-hash-secret-change-in-production")
 
     # 后端对外地址（用于构建回调 URL 等）
     base_url: str = "http://localhost:8000"
@@ -62,8 +61,7 @@ class Settings(BaseSettings):
     def _validate_auth_config(self) -> "Settings":
         if not self.secret_key:
             raise ValueError(
-                "SECRET_KEY 环境变量未设置。"
-                "生成方法: python -c 'import secrets; print(secrets.token_urlsafe(32))'"
+                "SECRET_KEY 环境变量未设置。生成方法: python -c 'import secrets; print(secrets.token_urlsafe(32))'"
             )
         return self
 

@@ -22,7 +22,7 @@ from app.utils import utcnow
 logger = logging.getLogger(__name__)
 
 DEDUP_KEY_PREFIX = "ymt:points:dedup:"
-EDUP_TTL_SECONDS = 300  # 5 分钟冷却
+DEDUP_TTL_SECONDS = 300  # 5 分钟冷却
 
 
 async def _check_daily_limit(

@@ -8,6 +8,7 @@ from pydantic import BaseModel
 
 class FunnelStep(BaseModel):
     """转化漏斗单步"""
+
     name: str
     value: int
     rate: float  # 相对扫码量的百分比
@@ -15,6 +16,7 @@ class FunnelStep(BaseModel):
 
 class ConversionFunnelResponse(BaseModel):
     """转化漏斗响应"""
+
     period_days: int
     scan_count: int
     claim_count: int
@@ -30,6 +32,7 @@ class ConversionFunnelResponse(BaseModel):
 
 class AlertItem(BaseModel):
     """单条状态提醒"""
+
     type: str  # "code_quota" | "campaign_anomaly" | "campaign_status" | "plan_expiry"
     level: str  # "error" | "warning" | "info"
     message: str
@@ -38,11 +41,13 @@ class AlertItem(BaseModel):
 
 class AlertsResponse(BaseModel):
     """状态提醒响应"""
+
     alerts: list[AlertItem]
 
 
 class CampaignRankingItem(BaseModel):
     """活动排行单项"""
+
     campaign_id: uuid.UUID
     campaign_name: str
     campaign_status: str
@@ -53,12 +58,14 @@ class CampaignRankingItem(BaseModel):
 
 class CampaignRankingResponse(BaseModel):
     """活动排行响应"""
+
     items: list[CampaignRankingItem]
     total: int
 
 
 class RecentEventItem(BaseModel):
     """最近动态单项"""
+
     event_type: str  # "scan_surge" | "campaign_status_change" | "channel_anomaly" | "new_signup" | "claim_milestone"
     message: str
     timestamp: datetime
@@ -67,4 +74,5 @@ class RecentEventItem(BaseModel):
 
 class RecentEventsResponse(BaseModel):
     """最近动态响应"""
+
     events: list[RecentEventItem]

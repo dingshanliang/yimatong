@@ -31,6 +31,7 @@ class TenantCreate(BaseModel):
         except ValueError as e:
             raise ValueError(f"管理员密码不符合要求: {e}") from e
         return v
+
     notes: str | None = Field(None, max_length=1000, description="备注")
     template_id: int | None = Field(None, description="行业模板 ID，创建后自动应用")
 
