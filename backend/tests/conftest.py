@@ -41,6 +41,7 @@ from app.models.member import (  # noqa: E402, F401
     PointTransaction,
 )
 from app.models.page import PageTemplate, PageVersion  # noqa: E402, F401
+from app.models.plan import PlanDefinition  # noqa: E402
 from app.models.private_domain import PrivateDomainConfig  # noqa: E402, F401
 from app.models.product import SKU, Brand, Product, ProductionBatch  # noqa: E402, F401
 
@@ -88,6 +89,40 @@ TestSessionLocal = async_sessionmaker(test_engine, class_=AsyncSession, expire_o
 async def setup_database():
     async with test_engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+    async with TestSessionLocal() as session:
+        session.add_all(
+            [
+                PlanDefinition(
+                    id="test-plan-free",
+                    name="free",
+                    display_name="免费版",
+                    quota_defaults={"max_codes": 10000, "max_campaigns": 50, "max_accounts": 10},
+                    feature_flags={},
+                ),
+                PlanDefinition(
+                    id="test-plan-starter",
+                    name="starter",
+                    display_name="入门版",
+                    quota_defaults={"max_codes": 10000, "max_campaigns": 10, "max_accounts": 5},
+                    feature_flags={"ai_assistant": True},
+                ),
+                PlanDefinition(
+                    id="test-plan-pro",
+                    name="pro",
+                    display_name="专业版",
+                    quota_defaults={"max_codes": 100000, "max_campaigns": 50, "max_accounts": 20},
+                    feature_flags={"ai_assistant": True, "risk_module": True},
+                ),
+                PlanDefinition(
+                    id="test-plan-enterprise",
+                    name="enterprise",
+                    display_name="企业版",
+                    quota_defaults={"max_codes": -1, "max_campaigns": -1, "max_accounts": -1},
+                    feature_flags={"ai_assistant": True, "risk_module": True, "white_label": True},
+                ),
+            ]
+        )
+        await session.commit()
     yield
     async with test_engine.begin() as conn:
         await conn.run_sync(Base.metadata.drop_all)

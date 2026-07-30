@@ -252,6 +252,8 @@ async def generate_password_reset(
     account_id_str: str,
     tenant_id: uuid.UUID,
     cache: AsyncRedisCache,
+    *,
+    operator_id: str | None = None,
 ) -> dict:
     """管理员生成密码重置令牌。
 
@@ -284,7 +286,7 @@ async def generate_password_reset(
 
         await write_audit_log(
             db,
-            operator_id=str(tenant_id),
+            operator_id=operator_id or str(tenant_id),
             target_tenant_id=str(tenant_id),
             action="generate_reset_token",
             resource=f"account:{account_uuid}",
@@ -349,6 +351,7 @@ async def confirm_password_reset(
 
     # 更新密码
     account.hashed_password = hash_password(new_password)
+    account.is_active = True
     account.failed_login_attempts = 0
     account.locked_until = None
     await db.commit()

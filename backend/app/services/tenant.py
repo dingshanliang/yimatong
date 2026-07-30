@@ -1,13 +1,15 @@
-import re
 import uuid
 from datetime import datetime
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.constants.categories import get_default_categories
-from app.models.tenant import Account, Organization, Tenant, TenantPlan, TenantStatus, TenantType
-from app.utils.security import hash_password
+from app.models.tenant import Tenant, TenantStatus, TenantType
+from app.modules.brand_tenant_initialization import (
+    BrandTenantInitialization,
+    InitializeBrandTenant,
+    TrustedAutomationOpening,
+)
 
 
 async def _audit(
@@ -32,15 +34,6 @@ async def _audit(
         pass
 
 
-def _generate_slug(name: str) -> str:
-    slug = name.lower().strip()
-    slug = re.sub(r"[^a-z0-9-]+", "-", slug)
-    slug = re.sub(r"-+", "-", slug).strip("-")
-    if not slug or slug == "-":
-        slug = f"tenant-{uuid.uuid4().hex[:8]}"
-    return slug[:50]
-
-
 async def create_tenant(
     db: AsyncSession,
     name: str,
@@ -54,80 +47,42 @@ async def create_tenant(
     template_id: int | None = None,
     tenant_type: str = "brand",
 ) -> Tenant:
-    if not slug:
-        slug = _generate_slug(name)
+    """兼容旧调用方的受信自动化 adapter。
 
-    # Service 层 slug 唯一性校验
-    existing = await db.execute(select(Tenant).where(Tenant.slug == slug))
-    if existing.scalar_one_or_none() is not None:
-        raise ValueError(f"Slug '{slug}' already exists")
-
-    # 预生成 ID，避免单次 flush 时 foreign key 为 NULL
-    from uuid6 import uuid7
-
-    tenant_id = uuid7()
-    org_id = uuid7()
-    account_id = uuid7()
-
-    tenant = Tenant(
-        id=tenant_id,
-        name=name,
-        slug=slug,
-        status=TenantStatus.active,
-        plan=TenantPlan(plan),
-        tenant_type=TenantType(tenant_type),
-        industry=industry,
-        notes=notes,
-        quota={"max_codes": 10000, "max_campaigns": 50, "max_accounts": 10},
-        categories=get_default_categories(industry),
-    )
-    db.add(tenant)
-
-    org = Organization(id=org_id, tenant_id=tenant_id, name=f"{name} 默认组织")
-    db.add(org)
-
-    hashed = hash_password(admin_password)
-    account = Account(
-        id=account_id,
-        tenant_id=tenant_id,
-        organization_id=org_id,
-        email=admin_email,
-        hashed_password=hashed,
-        name=admin_name,
-    )
-    db.add(account)
-    await db.flush()  # 单次 flush 获取所有 ID
-
-    # 应用行业模板（如果指定）
+    新业务代码应直接依赖 BrandTenantInitialization interface。页面模板不属于
+    “租户初始化完成”的原子范围，调用方需要在初始化成功后显式创建。
+    """
+    if tenant_type != "brand":
+        raise ValueError("BrandTenantInitialization 仅支持品牌租户")
     if template_id is not None:
-        from app.models.page import PageTemplate, PageVersion, PageVersionStatus
-        from app.services.industry_templates import ALL_TEMPLATES
+        raise ValueError("行业页面模板不属于租户初始化，请在初始化成功后单独创建")
 
-        if 0 <= template_id < len(ALL_TEMPLATES):
-            template_def = ALL_TEMPLATES[template_id]
-            tmpl_id = uuid7()
-            tmpl = PageTemplate(
-                id=tmpl_id,
-                tenant_id=tenant_id,
-                name=template_def["name"],
-                template_type=template_def["template_type"],
-                status="draft",
+    try:
+        receipt = await BrandTenantInitialization(db).initialize(
+            InitializeBrandTenant(
+                name=name,
+                admin_name=admin_name,
+                admin_email=admin_email,
+                industry=industry,
+                notes=notes,
+                opening=TrustedAutomationOpening(
+                    actor="legacy:create_tenant",
+                    chosen_password=admin_password,
+                    plan_name=plan,
+                    stable_tenant_key=slug,
+                ),
             )
-            db.add(tmpl)
+        )
+    except Exception as exc:
+        from app.modules.brand_tenant_initialization.interface import BrandTenantInitializationError
 
-            version = PageVersion(
-                tenant_id=tenant_id,
-                page_template_id=tmpl_id,
-                version_number=1,
-                config_json=template_def["config_json"],
-                status=PageVersionStatus.draft,
-            )
-            db.add(version)
-            await db.flush()
+        if isinstance(exc, BrandTenantInitializationError):
+            raise ValueError(str(exc)) from exc
+        raise
 
-    await db.flush()
-    await db.refresh(tenant)
-    await _audit(db, str(account.id), str(tenant.id), "tenant_create", f"tenant:{tenant.id}")
+    tenant = await db.get(Tenant, receipt.tenant_id)
+    if tenant is None:  # pragma: no cover - protected by initialization postcondition
+        raise RuntimeError("租户初始化结果不可读取")
     return tenant
 
 

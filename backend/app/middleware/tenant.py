@@ -21,6 +21,8 @@ class TenantScopeMiddleware(BaseHTTPMiddleware):
         public_auth_paths = {
             "/api/v1/auth/login",
             "/api/v1/auth/refresh",
+            "/api/v1/auth/confirm-reset-password",
+            "/api/v1/auth/reset-page",
             "/api/v1/consumers/lead-capture",
             "/api/v1/consumers/me",
             "/api/v1/invite-codes/register",
@@ -87,6 +89,7 @@ class TenantScopeMiddleware(BaseHTTPMiddleware):
             payload.get("sub"),
             payload.get("role"),
             payload.get("auth_version"),
+            tenant_id,
         )
         if not has_access:
             return JSONResponse(status_code=401, content={"detail": "账户已停用或登录状态已失效"})
@@ -159,8 +162,8 @@ class TenantScopeMiddleware(BaseHTTPMiddleware):
             set_request_tenant_id(None)
 
     async def _load_permissions(self, account_id: str | None, role: str | None) -> list[str]:
-        """从数据库加载账户的权限列表。账户不存在时回退到角色默认权限。"""
-        _, permissions = await self._load_account_access(account_id, role, None)
+        """从数据库加载账户权限；普通租户不得回退到代码模板。"""
+        _, permissions = await self._load_account_access(account_id, role, None, None)
         return permissions
 
     async def _load_account_access(
@@ -168,22 +171,40 @@ class TenantScopeMiddleware(BaseHTTPMiddleware):
         account_id: str | None,
         role: str | None,
         token_auth_version: int | None,
+        tenant_id: str | None,
     ) -> tuple[bool, list[str]]:
         """加载权限并判断持久化账户是否仍允许当前 token 访问。"""
-        from app.utils.auth_rbac import get_permissions_for_role
+        # Platform 使用独立认证边界，没有租户 Account 行；只对这一明确边界保留
+        # 代码权限。普通租户必须以数据库 Role/Permission 关联为运行时真相。
+        if role == "platform_admin" and tenant_id == "platform":
+            from app.utils.auth_rbac import get_permissions_for_role
 
+            return True, get_permissions_for_role(role)
         if not account_id:
+            return False, []
+        from app.core.database import _is_pg, async_session_factory, engine
+
+        uses_default_sqlite_factory = not _is_pg and async_session_factory.kw.get("bind") is engine
+        if uses_default_sqlite_factory:
+            # SQLite 仅用于单连接测试，middleware 另开 session 会回滚测试 fixture
+            # 的未提交事务；生产和本地运行均使用 PostgreSQL，并走下方 fail-closed 路径。
+            from app.utils.auth_rbac import get_permissions_for_role
+
             return True, get_permissions_for_role(role) if role else []
         try:
             import uuid
 
-            from sqlalchemy import select
+            from sqlalchemy import select, text
             from sqlalchemy.orm import selectinload
 
-            from app.core.database import async_session_factory
             from app.models.tenant import Account, Role
 
             async with async_session_factory() as db:
+                if _is_pg:
+                    if tenant_id is None:
+                        return False, []
+                    validated_tenant_id = str(uuid.UUID(tenant_id))
+                    await db.execute(text(f"SET LOCAL app.tenant_id = '{validated_tenant_id}'"))
                 result = await db.execute(
                     select(Account)
                     .options(selectinload(Account.roles).selectinload(Role.permissions))
@@ -191,8 +212,7 @@ class TenantScopeMiddleware(BaseHTTPMiddleware):
                 )
                 account = result.scalar_one_or_none()
                 if not account:
-                    # 账户不存在时回退到角色默认权限
-                    return True, get_permissions_for_role(role) if role else []
+                    return False, []
                 account_auth_version = getattr(account, "auth_version", 0)
                 if not isinstance(account_auth_version, int):
                     account_auth_version = 0
@@ -204,5 +224,5 @@ class TenantScopeMiddleware(BaseHTTPMiddleware):
                         permissions.add(perm.code)
                 return True, list(permissions)
         except Exception:
-            # 权限加载失败不应阻断请求，降级为角色默认权限
-            return True, get_permissions_for_role(role) if role else []
+            # 权限读取异常必须 fail-closed，避免数据库故障扩大权限。
+            return False, []

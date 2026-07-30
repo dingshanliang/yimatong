@@ -4,20 +4,28 @@ from datetime import UTC, datetime, timedelta
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, EmailStr
-from sqlalchemy import case, func, select
+from sqlalchemy import case, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.core.database import get_db_with_bypass
+from app.core.database import _is_pg, get_db_with_bypass
 from app.models.plan import PlanDefinition
 from app.models.tenant import Account, Organization, Tenant, TenantPlan, TenantStatus
 from app.models.tenant_health import TenantHealthMetrics
+from app.modules.brand_tenant_initialization import (
+    BrandTenantAlreadyExists,
+    BrandTenantInitialization,
+    InitializeBrandTenant,
+    PlanDefinitionUnavailable,
+    PlatformOpening,
+)
+from app.modules.initial_admin_activation import InitialAdminActivation, InitialAdminNotPending
 from app.schemas.common import PaginatedResponse
 from app.services.audit import query_audit_logs, write_audit_log
 from app.services.redis_cache import AsyncRedisCache
 from app.services.tenant_health import refresh_all_health_metrics
 from app.utils.auth_rbac import require_role
-from app.utils.security import create_access_token, hash_password, verify_password
+from app.utils.security import create_access_token, verify_password
 
 router = APIRouter(prefix="/api/v1/platform", tags=["platform"])
 
@@ -51,13 +59,11 @@ class AuditLogRead(BaseModel):
 
 class TenantCreate(BaseModel):
     name: str
-    slug: str
     plan: TenantPlan = TenantPlan.free
     industry: str | None = None
     notes: str | None = None
     admin_email: EmailStr
     admin_name: str
-    admin_password: str
 
 
 class TenantUpdate(BaseModel):
@@ -88,6 +94,18 @@ class TenantRead(BaseModel):
     created_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class TenantOpeningRead(TenantRead):
+    initial_admin_id: uuid.UUID
+    initial_admin_state: str
+    activation_url: str | None = None
+    activation_retryable: bool = False
+
+
+class ActivationLinkRead(BaseModel):
+    initial_admin_id: uuid.UUID
+    activation_url: str
 
 
 class TenantDetail(TenantRead):
@@ -261,71 +279,84 @@ async def list_tenants(
     )
 
 
-@router.post("/tenants", response_model=TenantRead, status_code=201)
+@router.post("/tenants", response_model=TenantOpeningRead, status_code=201)
 async def create_tenant(
     body: TenantCreate,
     db: AsyncSession = Depends(get_db_with_bypass),
     _role: str = Depends(require_role("platform_admin")),
 ):
-    """创建租户（同时创建 Organization + 初始 admin 账号）"""
-    # 检查 slug 唯一性
-    existing = await db.execute(select(Tenant).where(Tenant.slug == body.slug))
-    if existing.scalar_one_or_none():
-        raise HTTPException(status_code=409, detail=f"Slug '{body.slug}' already exists")
+    """初始化品牌租户；初始管理员通过单次链接自行设置密码。"""
+    try:
+        receipt = await BrandTenantInitialization(db).initialize(
+            InitializeBrandTenant(
+                name=body.name,
+                admin_name=body.admin_name,
+                admin_email=str(body.admin_email),
+                industry=body.industry,
+                notes=body.notes,
+                opening=PlatformOpening(
+                    operator_id="platform-admin",
+                    plan_name=body.plan.value,
+                ),
+            )
+        )
+    except BrandTenantAlreadyExists as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except PlanDefinitionUnavailable as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
-    tenant = Tenant(
-        name=body.name,
-        slug=body.slug,
-        plan=body.plan,
-        industry=body.industry,
-        notes=body.notes,
-    )
-    db.add(tenant)
-    await db.flush()
+    # 租户初始化是原子边界；链接签发失败不得撤销已经初始化完成的租户。
+    await db.commit()
+    if _is_pg:
+        # SET LOCAL 会在显式 commit 后失效；激活签发仍是受控跨租户操作。
+        await db.execute(text("SET LOCAL app.bypass_rls = 'true'"))
+    tenant = await db.get(Tenant, receipt.tenant_id)
+    if tenant is None:  # pragma: no cover
+        raise HTTPException(status_code=500, detail="租户初始化结果不可读取")
 
-    org = Organization(
-        tenant_id=tenant.id,
-        name=body.name,
-    )
-    db.add(org)
-    await db.flush()
+    activation_url: str | None = None
+    activation_retryable = False
+    try:
+        ticket = await InitialAdminActivation(db, AsyncRedisCache()).issue_or_reissue(
+            tenant_id=receipt.tenant_id,
+            operator_id="platform-admin",
+            initial_admin_id=receipt.initial_admin_id,
+        )
+        activation_url = ticket.url
+    except Exception:
+        activation_retryable = True
 
-    account = Account(
-        tenant_id=tenant.id,
-        organization_id=org.id,
-        email=body.admin_email,
-        hashed_password=hash_password(body.admin_password),
-        name=body.admin_name,
-    )
-    db.add(account)
-    await db.flush()
-
-    # 创建 admin 角色
-    from app.models.tenant import Role
-
-    admin_role = Role(
-        tenant_id=tenant.id,
-        name="admin",
-        description="品牌管理员",
-    )
-    db.add(admin_role)
-    await db.flush()
-
-    # 关联角色
-    from app.models.tenant import account_roles
-
-    await db.execute(account_roles.insert().values(account_id=account.id, role_id=admin_role.id))
-
-    await write_audit_log(
-        db,
-        operator_id="platform-admin",
-        target_tenant_id=str(tenant.id),
-        action="create_tenant",
-        resource=f"tenant:{tenant.slug}",
+    tenant_data = TenantRead.model_validate(tenant).model_dump()
+    return TenantOpeningRead(
+        **tenant_data,
+        initial_admin_id=receipt.initial_admin_id,
+        initial_admin_state=receipt.initial_admin_state.value,
+        activation_url=activation_url,
+        activation_retryable=activation_retryable,
     )
 
-    await db.flush()
-    return tenant
+
+@router.post(
+    "/tenants/{tenant_id}/initial-admin-activation",
+    response_model=ActivationLinkRead,
+)
+async def reissue_initial_admin_activation(
+    tenant_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db_with_bypass),
+    _role: str = Depends(require_role("platform_admin")),
+):
+    """重新签发初始管理员激活链接；新链接会覆盖旧链接。"""
+    try:
+        ticket = await InitialAdminActivation(db, AsyncRedisCache()).issue_or_reissue(
+            tenant_id=tenant_id,
+            operator_id="platform-admin",
+        )
+    except InitialAdminNotPending as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return ActivationLinkRead(
+        initial_admin_id=ticket.initial_admin_id,
+        activation_url=ticket.url,
+    )
 
 
 @router.get("/tenants/{tenant_id}", response_model=TenantDetail)

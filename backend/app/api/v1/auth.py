@@ -7,7 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.core.database import get_db
+from app.core.database import get_db, get_db_with_bypass
 from app.core.dependencies import get_current_account_id, get_current_tenant, get_redis_cache
 from app.models.tenant import Account
 from app.schemas.common import UNAUTHORIZED_EXAMPLE, ErrorDetail
@@ -240,7 +240,7 @@ async def generate_reset_token(
 async def confirm_reset_password(
     body: ConfirmResetPasswordRequest,
     request: Request,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db_with_bypass),
     cache: AsyncRedisCache = Depends(get_redis_cache),
 ):
     """用户通过重置令牌自助设置新密码。令牌验证后立即失效。"""

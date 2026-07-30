@@ -105,5 +105,5 @@ async def register_with_invite_code(
 
     return TenantRegisterResponse(
         tenant_id=tenant.id,
-        message="注册成功，请等待平台审核",
+        message="注册成功，租户已开通",
     )

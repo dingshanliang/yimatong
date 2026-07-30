@@ -6,8 +6,12 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.invite_code import InviteCodeStatus, TenantInviteCode
-from app.models.tenant import Account, Organization, Tenant, TenantPlan, TenantStatus, TenantType
-from app.utils.security import hash_password
+from app.models.tenant import Tenant
+from app.modules.brand_tenant_initialization import (
+    BrandTenantInitialization,
+    ControlledInviteOpening,
+    InitializeBrandTenant,
+)
 
 
 def _generate_invite_code() -> str:
@@ -117,58 +121,33 @@ async def register_tenant_with_invite(
     admin_password: str,
     industry: str | None = None,
 ) -> Tenant:
-    """Register a new tenant using an invite code.
+    """使用受控邀请码初始化品牌租户，注册完成后直接启用。"""
+    if slug is not None:
+        raise ValueError("租户标识由系统自动生成，无需填写")
 
-    The tenant is created with status=pending_review and must be approved
-    by a platform admin before it becomes active.
-    """
-    invite = await validate_invite_code(db, invite_code)
-    if not invite:
-        raise ValueError("Invalid or expired invite code")
+    try:
+        receipt = await BrandTenantInitialization(db).initialize(
+            InitializeBrandTenant(
+                name=name,
+                admin_name=admin_name,
+                admin_email=admin_email,
+                industry=industry,
+                opening=ControlledInviteOpening(
+                    invite_code=invite_code,
+                    chosen_password=admin_password,
+                ),
+            )
+        )
+    except Exception as exc:
+        from app.modules.brand_tenant_initialization.interface import BrandTenantInitializationError
 
-    # Check slug uniqueness
-    from app.services.tenant import _generate_slug
+        if isinstance(exc, BrandTenantInitializationError):
+            raise ValueError(str(exc)) from exc
+        raise
 
-    if not slug:
-        slug = _generate_slug(name)
-
-    existing = await db.execute(select(Tenant).where(Tenant.slug == slug))
-    if existing.scalar_one_or_none():
-        raise ValueError(f"Slug '{slug}' already exists")
-
-    # Create tenant with pending_review status
-    tenant = Tenant(
-        name=name,
-        slug=slug,
-        status=TenantStatus.active,  # Will be changed to pending_review after invite code system is fully integrated
-        plan=TenantPlan.free,
-        tenant_type=TenantType(invite.tenant_type),
-        industry=industry,
-        quota={"max_codes": 10000, "max_campaigns": 50, "max_accounts": 10},
-    )
-    db.add(tenant)
-    await db.flush()
-
-    # Create default organization
-    org = Organization(tenant_id=tenant.id, name=f"{name} 默认组织")
-    db.add(org)
-    await db.flush()
-
-    # Create admin account
-    account = Account(
-        tenant_id=tenant.id,
-        organization_id=org.id,
-        email=admin_email,
-        hashed_password=hash_password(admin_password),
-        name=admin_name,
-    )
-    db.add(account)
-    await db.flush()
-
-    # Mark invite code as used
-    await use_invite_code(db, invite)
-
-    await db.refresh(tenant)
+    tenant = await db.get(Tenant, receipt.tenant_id)
+    if tenant is None:  # pragma: no cover
+        raise RuntimeError("租户初始化结果不可读取")
     return tenant
 
 

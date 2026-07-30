@@ -17,10 +17,6 @@ import path from "path";
 const API_BASE = process.env.API_BASE_URL || "http://localhost:8000";
 const TEST_PASSWORD = "E2ETest1234";
 
-function generateUniqueSlug(): string {
-  return `e2e-test-${Date.now()}`;
-}
-
 function generateUniqueEmail(): string {
   return `e2e-admin-${Date.now()}@example.com`;
 }
@@ -133,7 +129,6 @@ export default async function globalSetup() {
   console.log("[global-setup] Seeding E2E test data...");
 
   const TEST_EMAIL = generateUniqueEmail();
-  const slug = generateUniqueSlug();
 
   // 1. Platform admin login
   const platformLoginRes = await apiPost("/api/v1/platform/auth/login", {
@@ -148,18 +143,35 @@ export default async function globalSetup() {
     "/api/v1/platform/tenants",
     {
       name: "E2E Test Tenant",
-      slug,
       plan: "free",
       admin_email: TEST_EMAIL,
       admin_name: "E2E Admin",
-      admin_password: TEST_PASSWORD,
     },
     platformToken
   );
   const tenantId = tenantRes.id as string;
+  const slug = tenantRes.slug as string;
   console.log(`[global-setup] Tenant created: ${tenantId} (slug=${slug})`);
 
-  // 2. Login
+  // 2. Initial admin activates the account and chooses their own password.
+  const activationUrl = tenantRes.activation_url as string;
+  const initialAdminId = tenantRes.initial_admin_id as string;
+  if (!activationUrl || !initialAdminId) {
+    throw new Error(
+      "Platform tenant initialization did not return an activation link"
+    );
+  }
+  const activationToken = new URL(activationUrl).searchParams.get("token");
+  if (!activationToken) {
+    throw new Error("Activation URL did not contain a token");
+  }
+  await apiPost("/api/v1/auth/confirm-reset-password", {
+    token: activationToken,
+    account_id: initialAdminId,
+    new_password: TEST_PASSWORD,
+  });
+
+  // 3. Login
   const loginRes = await apiPost("/api/v1/auth/login", {
     email: TEST_EMAIL,
     password: TEST_PASSWORD,
@@ -167,12 +179,16 @@ export default async function globalSetup() {
   const token = loginRes.access_token as string;
   console.log(`[global-setup] Logged in as ${TEST_EMAIL}, token acquired`);
 
-  // 3. Create brand
-  const brandRes = await apiPost("/api/v1/brands", { name: "E2E Brand", industry: "food" }, token);
+  // 4. Create brand
+  const brandRes = await apiPost(
+    "/api/v1/brands",
+    { name: "E2E Brand", industry: "food" },
+    token
+  );
   const brandId = brandRes.id as string;
   console.log(`[global-setup] Brand created: ${brandId}`);
 
-  // 4. Create product
+  // 5. Create product
   const productRes = await apiPost(
     "/api/v1/products",
     { name: "E2E Product", brand_id: brandId, category: "测试品类" },
@@ -226,7 +242,10 @@ export default async function globalSetup() {
   console.log(`[global-setup] Code batch activated`);
 
   // 8. Get a public_id
-  const itemsRes = await apiGet(`/api/v1/code-items?code_batch_id=${codeBatchId}&page_size=1`, token);
+  const itemsRes = await apiGet(
+    `/api/v1/code-items?code_batch_id=${codeBatchId}&page_size=1`,
+    token
+  );
   const items = (itemsRes.items || []) as Array<{ public_id: string }>;
   const publicId = items[0]?.public_id;
   if (!publicId) throw new Error("No code items generated");
@@ -235,7 +254,11 @@ export default async function globalSetup() {
   // 9. Create page template
   const tplRes = await apiPost(
     "/api/v1/page-templates",
-    { name: "E2E Page", template_type: "product_info", description: "E2E test page" },
+    {
+      name: "E2E Page",
+      template_type: "product_info",
+      description: "E2E test page",
+    },
     token
   );
   const pageTemplateId = tplRes.id as string;
@@ -244,9 +267,29 @@ export default async function globalSetup() {
   // 10. Create page version with DSL
   const dsl = {
     modules: [
-      { id: "hero", type: "product_hero", enabled: true, config: { show_verify_badge: true } },
-      { id: "trace", type: "light_traceability", enabled: true, config: { fields: ["origin", "production_date"] } },
-      { id: "benefit", type: "benefit_card", enabled: true, config: { benefit_id: "", benefit_type: "coupon", title: "测试权益", description: "E2E测试权益" } },
+      {
+        id: "hero",
+        type: "product_hero",
+        enabled: true,
+        config: { show_verify_badge: true },
+      },
+      {
+        id: "trace",
+        type: "light_traceability",
+        enabled: true,
+        config: { fields: ["origin", "production_date"] },
+      },
+      {
+        id: "benefit",
+        type: "benefit_card",
+        enabled: true,
+        config: {
+          benefit_id: "",
+          benefit_type: "coupon",
+          title: "测试权益",
+          description: "E2E测试权益",
+        },
+      },
     ],
     routing: { default_page: true, campaign_periods: [] },
   };
@@ -303,10 +346,16 @@ export default async function globalSetup() {
   const updatedDsl = {
     ...dsl,
     modules: dsl.modules.map((m) =>
-      m.type === "benefit_card" ? { ...m, config: { ...m.config, benefit_id: benefitId } } : m
+      m.type === "benefit_card"
+        ? { ...m, config: { ...m.config, benefit_id: benefitId } }
+        : m
     ),
   };
-  await apiPatch(`/api/v1/page-versions/${pageVersionId}`, { config_json: updatedDsl }, token);
+  await apiPatch(
+    `/api/v1/page-versions/${pageVersionId}`,
+    { config_json: updatedDsl },
+    token
+  );
   console.log(`[global-setup] Page DSL updated with benefit_id`);
 
   // 15. Persist auth state + test context
@@ -362,8 +411,14 @@ export default async function globalSetup() {
     benefitId,
   };
 
-  await writeFile(path.join(authDir, "state.json"), JSON.stringify(storageState, null, 2));
-  await writeFile(path.join(authDir, "context.json"), JSON.stringify(ctx, null, 2));
+  await writeFile(
+    path.join(authDir, "state.json"),
+    JSON.stringify(storageState, null, 2)
+  );
+  await writeFile(
+    path.join(authDir, "context.json"),
+    JSON.stringify(ctx, null, 2)
+  );
 
   console.log("[global-setup] Done.");
 }
