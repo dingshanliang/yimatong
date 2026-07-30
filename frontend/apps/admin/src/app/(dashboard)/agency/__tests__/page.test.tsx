@@ -5,6 +5,11 @@ import AgencyPage from "../page";
 const mockConfirm = vi.fn();
 const mockSuccess = vi.fn();
 const mockError = vi.fn();
+const mockPush = vi.fn();
+
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ push: mockPush }),
+}));
 
 vi.mock("antd", async () => {
   const actual = await vi.importActual("antd");
@@ -121,7 +126,9 @@ function mockWorkbench({
     if (url.includes("/ops/clients/") && url.includes("/launch-checklist")) {
       return Promise.resolve({ data: checklist });
     }
-    return Promise.resolve({ data: { items: [], total: 0, page: 1, page_size: 20 } });
+    return Promise.resolve({
+      data: { items: [], total: 0, page: 1, page_size: 20 },
+    });
   });
 }
 
@@ -140,10 +147,14 @@ describe("AgencyPage", () => {
     render(<AgencyPage />);
 
     await waitFor(() => {
-      expect(mockGet).toHaveBeenCalledWith("/ops/workbench", { params: { page: 1, page_size: 100 } });
+      expect(mockGet).toHaveBeenCalledWith("/ops/workbench", {
+        params: { page: 1, page_size: 100 },
+      });
       expect(screen.getAllByText("客户A").length).toBeGreaterThanOrEqual(1);
       expect(screen.getByText("2/4")).toBeInTheDocument();
-      expect(screen.getByRole("button", { name: /发布扫码页/ })).toBeInTheDocument();
+      expect(
+        screen.getByRole("button", { name: /发布扫码页/ })
+      ).toBeInTheDocument();
     });
   });
 
@@ -164,10 +175,14 @@ describe("AgencyPage", () => {
 
     await waitFor(() => {
       expect(screen.getByText("上线准备度")).toBeInTheDocument();
-      expect(screen.getByText("缺：发布扫码页、激活码批次")).toBeInTheDocument();
+      expect(
+        screen.getByText("缺：发布扫码页、激活码批次")
+      ).toBeInTheDocument();
       expect(screen.getByText("待办 1")).toBeInTheDocument();
       expect(screen.getByText("高优先级 1")).toBeInTheDocument();
-      expect(screen.getByRole("button", { name: /上线检查/ })).toBeInTheDocument();
+      expect(
+        screen.getByRole("button", { name: /上线检查/ })
+      ).toBeInTheDocument();
     });
   });
 
@@ -183,14 +198,13 @@ describe("AgencyPage", () => {
     });
   });
 
-  it("prefills task creation from the row next action", async () => {
+  it("opens the module linked by the client next action", async () => {
     render(<AgencyPage />);
 
     fireEvent.click(await screen.findByRole("button", { name: /发布扫码页/ }));
 
     await waitFor(() => {
-      expect(screen.getByText("新建待办任务")).toBeInTheDocument();
-      expect(screen.getByLabelText("任务标题")).toHaveValue("为客户A发布扫码页");
+      expect(mockPush).toHaveBeenCalledWith("/pages");
     });
   });
 
@@ -198,45 +212,71 @@ describe("AgencyPage", () => {
     mockPost.mockResolvedValue({ data: { id: "task-new" } });
     render(<AgencyPage />);
 
-    fireEvent.click(await screen.findByRole("button", { name: /发布扫码页/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "创建任务" }));
     await screen.findByText("新建待办任务");
+    expect(screen.getByLabelText("任务标题")).toHaveValue("为客户A发布扫码页");
     fireEvent.click(screen.getByTestId("agency-task-create-submit"));
 
     await waitFor(() => {
       expect(mockPost).toHaveBeenCalledWith("/ops/tasks", {
         tenant_id: "t1",
         title: "为客户A发布扫码页",
+        description: null,
         priority: "medium",
       });
     });
   });
 
   it("updates pending task status to in progress", async () => {
-    mockPatch.mockResolvedValue({ data: { id: "task1", status: "in_progress" } });
+    mockPatch.mockResolvedValue({
+      data: { id: "task1", status: "in_progress" },
+    });
     render(<AgencyPage />);
 
     fireEvent.click(await screen.findByText("开始"));
 
     await waitFor(() => {
-      expect(mockPatch).toHaveBeenCalledWith("/ops/tasks/task1", { status: "in_progress" });
+      expect(mockPatch).toHaveBeenCalledWith("/ops/tasks/task1", {
+        status: "in_progress",
+      });
       expect(mockSuccess).toHaveBeenCalledWith("任务状态已更新");
     });
   });
 
   it("updates in-progress task status to completed", async () => {
-    mockWorkbench({ tasks: [task({ id: "task2", title: "配置页面", status: "in_progress", priority: "medium" })] });
+    mockWorkbench({
+      tasks: [
+        task({
+          id: "task2",
+          title: "配置页面",
+          status: "in_progress",
+          priority: "medium",
+        }),
+      ],
+    });
     mockPatch.mockResolvedValue({ data: { id: "task2", status: "completed" } });
     render(<AgencyPage />);
 
     fireEvent.click(await screen.findByText("完成"));
 
     await waitFor(() => {
-      expect(mockPatch).toHaveBeenCalledWith("/ops/tasks/task2", { status: "completed" });
+      expect(mockPatch).toHaveBeenCalledWith("/ops/tasks/task2", {
+        status: "completed",
+      });
     });
   });
 
   it("deletes completed tasks after confirmation", async () => {
-    mockWorkbench({ tasks: [task({ id: "task3", title: "已完成任务", status: "completed", priority: "low" })] });
+    mockWorkbench({
+      tasks: [
+        task({
+          id: "task3",
+          title: "已完成任务",
+          status: "completed",
+          priority: "low",
+        }),
+      ],
+    });
     mockDelete.mockResolvedValue({ status: 204 });
     render(<AgencyPage />);
 
@@ -254,7 +294,9 @@ describe("AgencyPage", () => {
 
     await waitFor(() => {
       expect(screen.getByText("工作台数据加载失败")).toBeInTheDocument();
-      expect(screen.getByRole("button", { name: /重新加载/ })).toBeInTheDocument();
+      expect(
+        screen.getByRole("button", { name: /重新加载/ })
+      ).toBeInTheDocument();
     });
   });
 
@@ -262,7 +304,12 @@ describe("AgencyPage", () => {
     mockWorkbench({
       clients: [],
       tasks: [],
-      workbenchSummary: summary({ total_clients: 1, ready_clients: 1, blocked_clients: 0, pending_tasks: 0 }),
+      workbenchSummary: summary({
+        total_clients: 1,
+        ready_clients: 1,
+        blocked_clients: 0,
+        pending_tasks: 0,
+      }),
     });
 
     render(<AgencyPage />);
@@ -276,22 +323,31 @@ describe("AgencyPage", () => {
     mockWorkbench({
       clients: [],
       tasks: [],
-      workbenchSummary: summary({ total_clients: 0, active_clients: 0, ready_clients: 0, blocked_clients: 0, pending_tasks: 0 }),
+      workbenchSummary: summary({
+        total_clients: 0,
+        active_clients: 0,
+        ready_clients: 0,
+        blocked_clients: 0,
+        pending_tasks: 0,
+      }),
     });
 
     render(<AgencyPage />);
 
     await waitFor(() => {
       expect(screen.getByText("还没有客户")).toBeInTheDocument();
-      expect(screen.getByText("初始化新客户后，这里会显示上线准备度和下一步动作。")).toBeInTheDocument();
+      expect(
+        screen.getByText("初始化新客户后，这里会显示上线准备度和下一步动作。")
+      ).toBeInTheDocument();
     });
   });
 
   it("sends workbench filters to the backend", async () => {
     render(<AgencyPage />);
 
-    fireEvent.change(screen.getByPlaceholderText("搜索客户名称"), { target: { value: "客户A" } });
-    fireEvent.click(screen.getByRole("button", { name: "search" }));
+    const searchInput = screen.getByPlaceholderText("搜索客户名称");
+    fireEvent.change(searchInput, { target: { value: "客户A" } });
+    fireEvent.keyDown(searchInput, { key: "Enter", code: "Enter" });
 
     await waitFor(() => {
       expect(mockGet).toHaveBeenCalledWith("/ops/workbench", {
@@ -312,13 +368,23 @@ describe("AgencyPage", () => {
 
     render(<AgencyPage />);
     fireEvent.click(screen.getByRole("button", { name: /初始化新客户/ }));
-    fireEvent.change(screen.getByLabelText("客户名称"), { target: { value: "新客户" } });
-    fireEvent.change(screen.getByLabelText("联系人"), { target: { value: "张三" } });
-    fireEvent.change(screen.getByLabelText("联系电话"), { target: { value: "13800000000" } });
-    fireEvent.change(screen.getByLabelText("联系邮箱"), { target: { value: "admin@new.test" } });
+    fireEvent.change(screen.getByLabelText("客户名称"), {
+      target: { value: "新客户" },
+    });
+    fireEvent.change(screen.getByLabelText("联系人"), {
+      target: { value: "张三" },
+    });
+    fireEvent.change(screen.getByLabelText("联系电话"), {
+      target: { value: "13800000000" },
+    });
+    fireEvent.change(screen.getByLabelText("联系邮箱"), {
+      target: { value: "admin@new.test" },
+    });
 
     fireEvent.click(screen.getByRole("button", { name: "下一步" }));
-    fireEvent.change(await screen.findByLabelText("品牌名称"), { target: { value: "新品牌" } });
+    fireEvent.change(await screen.findByLabelText("品牌名称"), {
+      target: { value: "新品牌" },
+    });
     fireEvent.click(screen.getByRole("button", { name: "下一步" }));
     await screen.findByLabelText("扫码页模板");
     fireEvent.click(screen.getByRole("button", { name: "下一步" }));
@@ -326,8 +392,12 @@ describe("AgencyPage", () => {
     fireEvent.click(await screen.findByRole("button", { name: "完成初始化" }));
 
     await waitFor(() => {
-      expect(screen.getByTestId("agency-init-credentials")).toHaveTextContent("admin@new.test");
-      expect(screen.getByTestId("agency-init-credentials")).toHaveTextContent("Ymt-NewClient123");
+      expect(screen.getByTestId("agency-init-credentials")).toHaveTextContent(
+        "admin@new.test"
+      );
+      expect(screen.getByTestId("agency-init-credentials")).toHaveTextContent(
+        "Ymt-NewClient123"
+      );
     });
   });
 });

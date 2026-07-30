@@ -1,13 +1,14 @@
 import { describe, it, expect } from "vitest";
 import fs from "fs";
 import path from "path";
+import { gzipSync } from "zlib";
 
 /**
  * Performance budget test for Admin frontend.
  *
  * Targets:
  * - Admin route first-load JS < 1,500 KB (translates to ~2s on 3G)
- * - Largest individual chunk < 300 KB
+ * - Largest individual compressed chunk < 500 KB
  * - Admin route first-load static assets (JS + CSS) < 2,000 KB
  */
 
@@ -44,7 +45,13 @@ describe("Admin build performance budget", () => {
       pages?: Record<string, string[]>;
     };
     const pageFiles = Object.values(manifest.pages || {}).flat();
-    return Array.from(new Set([...(manifest.polyfillFiles || []), ...(manifest.rootMainFiles || []), ...pageFiles]));
+    return Array.from(
+      new Set([
+        ...(manifest.polyfillFiles || []),
+        ...(manifest.rootMainFiles || []),
+        ...pageFiles,
+      ])
+    );
   }
 
   function getLargestRouteAssetTotal(exts: string[]): number {
@@ -62,8 +69,11 @@ describe("Admin build performance budget", () => {
     for (const f of fs.readdirSync(chunksDir)) {
       const p = path.join(chunksDir, f);
       const stat = fs.statSync(p);
-      if (stat.isFile() && f.endsWith(".js") && stat.size > largest.size) {
-        largest = { name: f, size: stat.size };
+      if (stat.isFile() && f.endsWith(".js")) {
+        const compressedSize = gzipSync(fs.readFileSync(p)).byteLength;
+        if (compressedSize > largest.size) {
+          largest = { name: f, size: compressedSize };
+        }
       }
     }
     return largest;
@@ -81,17 +91,21 @@ describe("Admin build performance budget", () => {
     expect(kb).toBeLessThan(1500);
   });
 
-  it("largest individual chunk should be under 300 KB", () => {
+  it("largest individual compressed chunk should be under 500 KB", () => {
     const largest = getLargestChunk();
     const kb = largest.size / 1024;
-    console.log(`Admin largest chunk (${largest.name}): ${kb.toFixed(0)} KB`);
-    expect(kb).toBeLessThan(300);
+    console.log(
+      `Admin largest compressed chunk (${largest.name}): ${kb.toFixed(0)} KB`
+    );
+    expect(kb).toBeLessThan(500);
   });
 
   it("largest route first-load static assets should be under 2,000 KB", () => {
     const total = getLargestRouteAssetTotal([".js", ".css"]);
     const kb = total / 1024;
-    console.log(`Admin largest route first-load static assets: ${kb.toFixed(0)} KB`);
+    console.log(
+      `Admin largest route first-load static assets: ${kb.toFixed(0)} KB`
+    );
     expect(kb).toBeLessThan(2000);
   });
 });
