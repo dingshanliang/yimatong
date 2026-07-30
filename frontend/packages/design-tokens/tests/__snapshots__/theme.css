@@ -68,12 +68,16 @@
   --color-link: var(--ymt-color-action-link);
   --color-success: var(--ymt-color-feedback-success);
   --color-success-bg: var(--ymt-color-feedback-success-bg);
+  --color-success-border: var(--ymt-color-feedback-success-border);
   --color-warning: var(--ymt-color-feedback-warning);
   --color-warning-bg: var(--ymt-color-feedback-warning-bg);
+  --color-warning-border: var(--ymt-color-feedback-warning-border);
   --color-danger: var(--ymt-color-feedback-danger);
   --color-danger-bg: var(--ymt-color-feedback-danger-bg);
+  --color-danger-border: var(--ymt-color-feedback-danger-border);
   --color-info: var(--ymt-color-feedback-info);
   --color-info-bg: var(--ymt-color-feedback-info-bg);
+  --color-info-border: var(--ymt-color-feedback-info-border);
   --color-focus-ring: var(--ymt-color-focus-ring);
 }
 
@@ -162,12 +166,16 @@
   --ymt-color-action-on-accent: #17211a;
   --ymt-color-feedback-success: #166534;
   --ymt-color-feedback-success-bg: #f0fdf4;
+  --ymt-color-feedback-success-border: #bbf7d0;
   --ymt-color-feedback-warning: #92400e;
   --ymt-color-feedback-warning-bg: #fffbeb;
+  --ymt-color-feedback-warning-border: #fde68a;
   --ymt-color-feedback-danger: #b91c1c;
   --ymt-color-feedback-danger-bg: #fef2f2;
+  --ymt-color-feedback-danger-border: #fecaca;
   --ymt-color-feedback-info: #1d4ed8;
   --ymt-color-feedback-info-bg: #eff6ff;
+  --ymt-color-feedback-info-border: #bfdbfe;
   --ymt-color-focus-ring: #166534;
   --ymt-color-chrome-sider: #092c18;
   --ymt-color-chrome-header: #ffffff;
@@ -205,12 +213,16 @@ html[data-theme="dark"] {
   --ymt-color-action-on-accent: #1f1603;
   --ymt-color-feedback-success: #86efac;
   --ymt-color-feedback-success-bg: #123b20;
+  --ymt-color-feedback-success-border: #4ade80;
   --ymt-color-feedback-warning: #fcd34d;
   --ymt-color-feedback-warning-bg: #3d2a08;
+  --ymt-color-feedback-warning-border: #f59e0b;
   --ymt-color-feedback-danger: #fca5a5;
   --ymt-color-feedback-danger-bg: #451a1a;
+  --ymt-color-feedback-danger-border: #f87171;
   --ymt-color-feedback-info: #93c5fd;
   --ymt-color-feedback-info-bg: #172554;
+  --ymt-color-feedback-info-border: #60a5fa;
   --ymt-color-focus-ring: #86efac;
   --ymt-color-chrome-sider: #041108;
   --ymt-color-chrome-header: #0d1f13;

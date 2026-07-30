@@ -93,12 +93,16 @@ const semanticThemeMappings = {
   "--color-link": "--ymt-color-action-link",
   "--color-success": "--ymt-color-feedback-success",
   "--color-success-bg": "--ymt-color-feedback-success-bg",
+  "--color-success-border": "--ymt-color-feedback-success-border",
   "--color-warning": "--ymt-color-feedback-warning",
   "--color-warning-bg": "--ymt-color-feedback-warning-bg",
+  "--color-warning-border": "--ymt-color-feedback-warning-border",
   "--color-danger": "--ymt-color-feedback-danger",
   "--color-danger-bg": "--ymt-color-feedback-danger-bg",
+  "--color-danger-border": "--ymt-color-feedback-danger-border",
   "--color-info": "--ymt-color-feedback-info",
   "--color-info-bg": "--ymt-color-feedback-info-bg",
+  "--color-info-border": "--ymt-color-feedback-info-border",
   "--color-focus-ring": "--ymt-color-focus-ring",
 };
 

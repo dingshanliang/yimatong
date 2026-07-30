@@ -99,7 +99,7 @@ export function PreviewRenderer() {
 
   if (!config) {
     return (
-      <div className="flex min-h-screen items-center justify-center text-gray-400">
+      <div className="flex min-h-screen items-center justify-center text-foreground-tertiary">
         等待编辑器数据...
       </div>
     );
@@ -109,14 +109,14 @@ export function PreviewRenderer() {
   const enabledModules = config.modules.filter((m) => m.enabled !== false);
 
   return (
-    <div className="mx-auto max-w-md min-h-screen bg-gray-50">
+    <div className="mx-auto max-w-md min-h-screen bg-canvas">
       <BrandHeader
         name={branding.name || "品牌预览"}
         logoUrl={branding.logo_url || ""}
         primaryColor={branding.primary_color}
       />
       <div
-        className={`mx-4 mt-3 rounded-full px-3 py-1 text-xs ${previewMode === "bound" ? "bg-green-50 text-green-700" : "bg-blue-50 text-blue-700"}`}
+        className={`mx-4 mt-3 rounded-full px-3 py-1 text-xs ${previewMode === "bound" ? "bg-success-bg text-success" : "bg-info-bg text-info"}`}
       >
         {previewMode === "bound"
           ? "草稿预览 · 已绑定真实产品"
@@ -212,8 +212,8 @@ function PreviewModule({
       );
     case "certificates":
       return (
-        <div className="mx-4 mt-3 rounded-2xl bg-white p-4 shadow-sm">
-          <h2 className="text-base font-semibold text-gray-900">资质证书</h2>
+        <div className="mx-4 mt-3 rounded-2xl bg-surface p-4 shadow-sm">
+          <h2 className="text-base font-semibold text-foreground">资质证书</h2>
           {filterAssets(assets, "certificate", config.certificate_ids).length >
           0 ? (
             <div className="mt-2 space-y-2">
@@ -222,14 +222,16 @@ function PreviewModule({
                 .map((asset) => (
                   <div
                     key={asset.id}
-                    className="rounded-xl bg-gray-50 p-3 text-sm text-gray-700"
+                    className="rounded-xl bg-muted p-3 text-sm text-foreground-secondary"
                   >
                     {asset.name}
                   </div>
                 ))}
             </div>
           ) : (
-            <p className="mt-2 text-sm text-gray-400">预览模式下显示示例证书</p>
+            <p className="mt-2 text-sm text-foreground-tertiary">
+              预览模式下显示示例证书
+            </p>
           )}
         </div>
       );
@@ -291,8 +293,8 @@ function PreviewModule({
       );
     case "media_section":
       return (
-        <div className="mx-4 mt-3 rounded-2xl bg-white p-4 shadow-sm">
-          <h2 className="text-base font-semibold text-gray-900">视频/图文</h2>
+        <div className="mx-4 mt-3 rounded-2xl bg-surface p-4 shadow-sm">
+          <h2 className="text-base font-semibold text-foreground">视频/图文</h2>
           {filterAssets(assets, ["image", "video", "story"], config.asset_ids)
             .length > 0 ? (
             <div className="mt-2 space-y-2">
@@ -305,14 +307,14 @@ function PreviewModule({
                 .map((asset) => (
                   <div
                     key={asset.id}
-                    className="rounded-xl bg-gray-50 p-3 text-sm text-gray-700"
+                    className="rounded-xl bg-muted p-3 text-sm text-foreground-secondary"
                   >
                     {asset.name}
                   </div>
                 ))}
             </div>
           ) : (
-            <p className="mt-2 text-sm text-gray-400">
+            <p className="mt-2 text-sm text-foreground-tertiary">
               {previewMode === "bound"
                 ? "未关联素材"
                 : "预览模式下显示占位内容"}
@@ -370,9 +372,9 @@ function PreviewModule({
     case "points_shop":
       return (
         <div className="px-4 mt-3">
-          <div className="rounded-2xl bg-white p-4 shadow-sm">
-            <h3 className="text-sm font-semibold text-gray-900">积分商城</h3>
-            <p className="mt-2 text-sm text-gray-400">
+          <div className="rounded-2xl bg-surface p-4 shadow-sm">
+            <h3 className="text-sm font-semibold text-foreground">积分商城</h3>
+            <p className="mt-2 text-sm text-foreground-tertiary">
               预览模式下显示积分商品列表占位内容
             </p>
           </div>
@@ -413,15 +415,17 @@ function PreviewModule({
     case "points_history":
       return (
         <div className="px-4 mt-3">
-          <div className="rounded-2xl bg-white p-4 shadow-sm">
-            <h3 className="text-sm font-semibold text-gray-900">积分明细</h3>
-            <p className="mt-2 text-sm text-gray-400">预览模式下显示占位内容</p>
+          <div className="rounded-2xl bg-surface p-4 shadow-sm">
+            <h3 className="text-sm font-semibold text-foreground">积分明细</h3>
+            <p className="mt-2 text-sm text-foreground-tertiary">
+              预览模式下显示占位内容
+            </p>
           </div>
         </div>
       );
     default:
       return (
-        <div className="mx-4 mt-3 rounded-2xl bg-white p-4 shadow-sm text-center text-gray-400">
+        <div className="mx-4 mt-3 rounded-2xl bg-surface p-4 shadow-sm text-center text-foreground-tertiary">
           未知模块类型: {module.type}
         </div>
       );

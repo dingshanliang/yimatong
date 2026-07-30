@@ -867,7 +867,7 @@ function ProductsTab({ onChanged }: { onChanged: () => void }) {
     {
       title: "积分价格",
       dataIndex: "points_cost",
-      render: (value) => <Tag color="orange">{value} 积分</Tag>,
+      render: (value) => <Tag color="#f59e0b">{value} 积分</Tag>,
     },
     {
       title: "库存",
@@ -1115,7 +1115,7 @@ function RedemptionsTab() {
     {
       title: "消耗积分",
       dataIndex: "points_cost",
-      render: (value) => <Tag color="orange">{value} 积分</Tag>,
+      render: (value) => <Tag color="#f59e0b">{value} 积分</Tag>,
     },
     {
       title: "关联权益",

@@ -894,7 +894,10 @@ export default function AIAssistantPage() {
       return (
         <div className="flex min-h-90 items-center justify-center">
           <Space orientation="vertical" align="center">
-            <RocketOutlined className="text-3xl text-blue-500" />
+            <RocketOutlined
+              className="text-3xl"
+              style={{ color: "var(--ymt-color-brand-primary)" }}
+            />
             <Text type="secondary">AI 正在生成建议...</Text>
           </Space>
         </div>
@@ -986,7 +989,7 @@ export default function AIAssistantPage() {
               <Divider className="!my-3" />
               <Space wrap>
                 {result.data.result.copywriting.selling_points.map((item) => (
-                  <Tag key={item.title} color="blue">
+                  <Tag key={item.title} color="#1d4ed8">
                     {item.title}
                   </Tag>
                 ))}
@@ -1041,7 +1044,7 @@ export default function AIAssistantPage() {
         )}
 
         {"generation_id" in result.data && (
-          <Tag color="blue">生成 ID: {result.data.generation_id}</Tag>
+          <Tag color="#1d4ed8">生成 ID: {result.data.generation_id}</Tag>
         )}
       </Space>
     );
@@ -1086,7 +1089,7 @@ export default function AIAssistantPage() {
             {selectedProduct ? (
               <>
                 <div className="mt-3 flex flex-wrap gap-2">
-                  <Tag color="blue">{selectedProduct.name}</Tag>
+                  <Tag color="#1d4ed8">{selectedProduct.name}</Tag>
                   <Tag color={selectedProduct.category ? "default" : "orange"}>
                     {selectedProduct.category || "未填写品类"}
                   </Tag>
@@ -1094,14 +1097,14 @@ export default function AIAssistantPage() {
                     {selectedProduct.origin || "未填写产地"}
                   </Tag>
                   {selectedProduct.description ? (
-                    <Tag color="green">已有产品介绍</Tag>
+                    <Tag color="#16a34a">已有产品介绍</Tag>
                   ) : (
-                    <Tag color="orange">缺产品介绍</Tag>
+                    <Tag color="#f59e0b">缺产品介绍</Tag>
                   )}
                   {selectedProduct.story_content ? (
-                    <Tag color="green">已有产品故事</Tag>
+                    <Tag color="#16a34a">已有产品故事</Tag>
                   ) : (
-                    <Tag color="orange">缺产品故事</Tag>
+                    <Tag color="#f59e0b">缺产品故事</Tag>
                   )}
                 </div>
                 <Alert
@@ -1171,7 +1174,7 @@ export default function AIAssistantPage() {
                 <div className="flex items-center justify-between gap-2">
                   <Text strong>{task.title}</Text>
                   {recommended.task === task.key && (
-                    <Tag color="gold">推荐</Tag>
+                    <Tag color="#f59e0b">推荐</Tag>
                   )}
                 </div>
                 <div

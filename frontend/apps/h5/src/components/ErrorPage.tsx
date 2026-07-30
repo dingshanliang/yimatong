@@ -42,26 +42,26 @@ const ERROR_CONFIG: Record<
     ),
     title: "查无此码",
     description: "未找到对应的产品信息，请确认二维码是否正确。",
-    bg: "bg-gray-50",
-    text: "text-gray-600",
-    iconBg: "bg-gray-100 text-gray-400",
+    bg: "bg-muted",
+    text: "text-foreground-secondary",
+    iconBg: "bg-muted text-foreground-tertiary",
   },
   not_activated: {
     icon: <Clock className="h-12 w-12" strokeWidth={1.5} aria-hidden="true" />,
     title: "码未激活",
     description:
       "该产品码尚未激活，产品信息暂未开放查询。如有疑问请联系商家或客服。",
-    bg: "bg-amber-50",
-    text: "text-amber-700",
-    iconBg: "bg-amber-100 text-amber-500",
+    bg: "bg-warning-bg",
+    text: "text-warning",
+    iconBg: "bg-warning text-on-action",
   },
   frozen: {
     icon: <Lock className="h-12 w-12" strokeWidth={1.5} aria-hidden="true" />,
     title: "码已冻结",
     description: "该码已被冻结，暂时无法查看。如有疑问请联系客服。",
-    bg: "bg-amber-50",
-    text: "text-amber-700",
-    iconBg: "bg-amber-100 text-amber-500",
+    bg: "bg-warning-bg",
+    text: "text-warning",
+    iconBg: "bg-warning text-on-action",
   },
   revoked: {
     icon: (
@@ -69,9 +69,9 @@ const ERROR_CONFIG: Record<
     ),
     title: "码已作废",
     description: "该码已被作废，相关产品信息已失效。",
-    bg: "bg-red-50",
-    text: "text-red-700",
-    iconBg: "bg-red-100 text-red-500",
+    bg: "bg-danger-bg",
+    text: "text-danger",
+    iconBg: "bg-danger text-on-action",
   },
   risk_detected: {
     icon: (
@@ -83,9 +83,9 @@ const ERROR_CONFIG: Record<
     ),
     title: "疑似风险",
     description: "系统检测到异常操作，已暂时限制访问。请联系客服核实。",
-    bg: "bg-red-50",
-    text: "text-red-700",
-    iconBg: "bg-red-100 text-red-500",
+    bg: "bg-danger-bg",
+    text: "text-danger",
+    iconBg: "bg-danger text-on-action",
   },
 };
 
@@ -108,7 +108,7 @@ export function ErrorPage({ errorCode, publicId, onRetry }: ErrorPageProps) {
       </div>
 
       {/* 错误标题 */}
-      <h2 className="mt-6 text-xl font-bold text-gray-900">{config.title}</h2>
+      <h2 className="mt-6 text-xl font-bold text-foreground">{config.title}</h2>
 
       {/* 错误描述 */}
       <p className={`mt-2 text-center text-sm ${config.text}`}>
@@ -117,9 +117,9 @@ export function ErrorPage({ errorCode, publicId, onRetry }: ErrorPageProps) {
 
       {/* 码 ID（如有） */}
       {publicId && (
-        <div className="mt-4 rounded-lg bg-gray-50 px-4 py-2">
-          <span className="text-xs text-gray-400">码编号：</span>
-          <span className="ml-1 font-mono text-sm text-gray-600">
+        <div className="mt-4 rounded-lg bg-muted px-4 py-2">
+          <span className="text-xs text-foreground-tertiary">码编号：</span>
+          <span className="ml-1 font-mono text-sm text-foreground-secondary">
             {publicId}
           </span>
         </div>
@@ -132,7 +132,7 @@ export function ErrorPage({ errorCode, publicId, onRetry }: ErrorPageProps) {
           <button
             type="button"
             onClick={onRetry}
-            className="w-full rounded-xl bg-blue-600 py-3 text-sm font-semibold text-white transition-colors active:bg-blue-700"
+            className="w-full rounded-xl bg-action py-3 text-sm font-semibold text-white transition-colors active:bg-action-active"
           >
             重新扫码
           </button>
@@ -140,28 +140,28 @@ export function ErrorPage({ errorCode, publicId, onRetry }: ErrorPageProps) {
           <button
             type="button"
             onClick={() => window.location.reload()}
-            className="w-full rounded-xl bg-blue-600 py-3 text-sm font-semibold text-white transition-colors active:bg-blue-700"
+            className="w-full rounded-xl bg-action py-3 text-sm font-semibold text-white transition-colors active:bg-action-active"
           >
             重新扫码
           </button>
         )}
 
         {/* 客服联系方式 */}
-        <div className="rounded-xl bg-gray-50 p-4">
-          <p className="text-center text-xs text-gray-400">
+        <div className="rounded-xl bg-muted p-4">
+          <p className="text-center text-xs text-foreground-tertiary">
             如需帮助，请联系客服
           </p>
           <div className="mt-2 flex items-center justify-center gap-4">
             <a
               href="tel:400-000-0000"
-              className="inline-flex items-center gap-1.5 text-sm text-blue-600"
+              className="inline-flex items-center gap-1.5 text-sm text-link"
             >
               <Phone className="h-4 w-4" aria-hidden="true" />
               电话咨询
             </a>
             <a
               href="#"
-              className="inline-flex items-center gap-1.5 text-sm text-green-600"
+              className="inline-flex items-center gap-1.5 text-sm text-success"
             >
               <WeChatIcon className="h-4 w-4" size={16} />
               在线客服

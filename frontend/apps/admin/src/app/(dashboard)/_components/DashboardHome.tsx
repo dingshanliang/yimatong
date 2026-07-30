@@ -124,7 +124,7 @@ export default function DashboardHome() {
           <Card
             size="small"
             className="h-full"
-            style={{ borderLeft: "3px solid #1677ff" }}
+            style={{ borderLeft: "3px solid var(--ymt-color-action-primary)" }}
           >
             <Statistic
               title="今日扫码"

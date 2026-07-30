@@ -80,30 +80,30 @@ interface BatchItem {
 type TabItem = ProductItem | CampaignItem | CodeBatchItem | BatchItem;
 
 const PRODUCT_STATUS_MAP: Record<string, { label: string; color: string }> = {
-  active: { label: "启用", color: "green" },
-  inactive: { label: "停用", color: "default" },
+  active: { label: "启用", color: "#16a34a" },
+  inactive: { label: "停用", color: "#8c8c8c" },
 };
 
 const CAMPAIGN_STATUS_MAP: Record<string, { label: string; color: string }> = {
-  draft: { label: "草稿", color: "default" },
-  pending: { label: "待开始", color: "geekblue" },
-  active: { label: "进行中", color: "green" },
-  paused: { label: "已暂停", color: "orange" },
-  ended: { label: "已结束", color: "gray" },
+  draft: { label: "草稿", color: "#8c8c8c" },
+  pending: { label: "待开始", color: "#1d4ed8" },
+  active: { label: "进行中", color: "#16a34a" },
+  paused: { label: "已暂停", color: "#f59e0b" },
+  ended: { label: "已结束", color: "#8c8c8c" },
 };
 
 const CODE_STATUS_MAP: Record<string, { label: string; color: string }> = {
-  pending: { label: "待生成", color: "default" },
-  generating: { label: "生成中", color: "blue" },
-  completed: { label: "已生成", color: "green" },
-  activated: { label: "已激活", color: "blue" },
-  failed: { label: "失败", color: "red" },
+  pending: { label: "待生成", color: "#8c8c8c" },
+  generating: { label: "生成中", color: "#1d4ed8" },
+  completed: { label: "已生成", color: "#16a34a" },
+  activated: { label: "已激活", color: "#1d4ed8" },
+  failed: { label: "失败", color: "#b91c1c" },
 };
 
 const BATCH_STATUS_MAP: Record<string, { label: string; color: string }> = {
-  active: { label: "有效", color: "green" },
-  recalled: { label: "已召回", color: "red" },
-  expired: { label: "已过期", color: "gray" },
+  active: { label: "有效", color: "#16a34a" },
+  recalled: { label: "已召回", color: "#b91c1c" },
+  expired: { label: "已过期", color: "#8c8c8c" },
 };
 
 type TabKey = "products" | "campaigns" | "code-batches" | "batches";
@@ -238,7 +238,7 @@ export default function BrandDetailPage() {
       dataIndex: "status",
       key: "status",
       render: (s: string) => {
-        const info = PRODUCT_STATUS_MAP[s] || { label: s, color: "default" };
+        const info = PRODUCT_STATUS_MAP[s] || { label: s, color: "#8c8c8c" };
         return <Tag color={info.color}>{info.label}</Tag>;
       },
     },
@@ -271,7 +271,7 @@ export default function BrandDetailPage() {
       key: "status",
       render: (_, record: CampaignItem) => {
         const s = record.computed_status || record.status;
-        const info = CAMPAIGN_STATUS_MAP[s] || { label: s, color: "default" };
+        const info = CAMPAIGN_STATUS_MAP[s] || { label: s, color: "#8c8c8c" };
         return <Tag color={info.color}>{info.label}</Tag>;
       },
     },
@@ -322,7 +322,7 @@ export default function BrandDetailPage() {
       dataIndex: "status",
       key: "status",
       render: (s: string) => {
-        const info = CODE_STATUS_MAP[s] || { label: s, color: "default" };
+        const info = CODE_STATUS_MAP[s] || { label: s, color: "#8c8c8c" };
         return <Tag color={info.color}>{info.label}</Tag>;
       },
     },
@@ -355,7 +355,7 @@ export default function BrandDetailPage() {
       dataIndex: "status",
       key: "status",
       render: (s: string) => {
-        const info = BATCH_STATUS_MAP[s] || { label: s, color: "default" };
+        const info = BATCH_STATUS_MAP[s] || { label: s, color: "#8c8c8c" };
         return <Tag color={info.color}>{info.label}</Tag>;
       },
     },

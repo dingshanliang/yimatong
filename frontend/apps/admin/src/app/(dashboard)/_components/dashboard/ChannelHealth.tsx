@@ -54,7 +54,11 @@ export default function ChannelHealth() {
       width: 90,
       render: (score: number) => {
         const color =
-          score >= 80 ? "#3f8600" : score >= 60 ? "#faad14" : "#cf1322";
+          score >= 80
+            ? "var(--ymt-color-feedback-success)"
+            : score >= 60
+              ? "var(--ymt-color-feedback-warning)"
+              : "var(--ymt-color-feedback-danger)";
         return <span style={{ fontWeight: 600, color }}>{score}</span>;
       },
     },

@@ -228,7 +228,7 @@ export default function TenantsPage() {
       render: (v: string | null) =>
         v ? (
           dayjs(v).isBefore(dayjs().add(30, "day")) ? (
-            <Tag color="red">{dayjs(v).format("YYYY-MM-DD")}</Tag>
+            <Tag color="#b91c1c">{dayjs(v).format("YYYY-MM-DD")}</Tag>
           ) : (
             dayjs(v).format("YYYY-MM-DD")
           )

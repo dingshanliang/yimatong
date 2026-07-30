@@ -90,9 +90,9 @@ const TYPE_OPTIONS = Object.entries(TYPE_LABELS).map(([value, label]) => ({
 }));
 
 const STATUS_META: Record<string, { label: string; color: string }> = {
-  unpublished: { label: "未发布", color: "default" },
-  published: { label: "已发布", color: "green" },
-  has_unpublished_draft: { label: "有未发布草稿", color: "orange" },
+  unpublished: { label: "未发布", color: "#8c8c8c" },
+  published: { label: "已发布", color: "#16a34a" },
+  has_unpublished_draft: { label: "有未发布草稿", color: "#f59e0b" },
 };
 
 function buildDefaultDSL() {
@@ -319,7 +319,7 @@ export default function PagesPage() {
           record.product_name
         ) : (
           <Tooltip title="未关联产品时，消费者扫码不会自动命中该页面">
-            <Tag color="warning">未关联产品</Tag>
+            <Tag color="#f59e0b">未关联产品</Tag>
           </Tooltip>
         ),
     },
@@ -341,7 +341,9 @@ export default function PagesPage() {
         return (
           <Space size={4} wrap>
             {record.published_version && (
-              <Tag color="blue">已发布 v{record.published_version.version}</Tag>
+              <Tag color="#1d4ed8">
+                已发布 v{record.published_version.version}
+              </Tag>
             )}
             {record.draft_version && (
               <Tag>草稿 v{record.draft_version.version}</Tag>

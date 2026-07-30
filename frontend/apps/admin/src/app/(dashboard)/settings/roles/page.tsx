@@ -2,7 +2,20 @@
 
 import { useState } from "react";
 import { useCrud } from "@/lib/hooks";
-import { App, Button, Checkbox, Form, Input, Modal, Popconfirm, Space, Switch, Table, Tag, Typography } from "antd";
+import {
+  App,
+  Button,
+  Checkbox,
+  Form,
+  Input,
+  Modal,
+  Popconfirm,
+  Space,
+  Switch,
+  Table,
+  Tag,
+  Typography,
+} from "antd";
 import { PlusOutlined } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
 
@@ -20,7 +33,10 @@ const PERMISSION_GROUPS = [
   { label: "品牌管理", permissions: ["brand:read", "brand:write"] },
   { label: "产品管理", permissions: ["product:read", "product:write"] },
   { label: "码管理", permissions: ["code:read", "code:write", "code:export"] },
-  { label: "页面管理", permissions: ["page:read", "page:write", "page:publish"] },
+  {
+    label: "页面管理",
+    permissions: ["page:read", "page:write", "page:publish"],
+  },
   { label: "活动管理", permissions: ["campaign:read", "campaign:write"] },
   { label: "权益管理", permissions: ["benefit:read", "benefit:write"] },
   { label: "统计查看", permissions: ["analytics:read", "analytics:export"] },
@@ -110,7 +126,8 @@ export default function RolesPage() {
       await removeRole(roleId);
       message.success("角色已删除");
     } catch (err) {
-      const data = (err as { response?: { data?: { detail?: string } } })?.response?.data;
+      const data = (err as { response?: { data?: { detail?: string } } })
+        ?.response?.data;
       if (data?.detail) {
         modal.error({
           title: "无法删除角色",
@@ -148,7 +165,7 @@ export default function RolesPage() {
       key: "permission_count",
       width: 100,
       render: (_, record) => (
-        <Tag color="blue">{record.permissions?.length || 0} 项</Tag>
+        <Tag color="#1d4ed8">{record.permissions?.length || 0} 项</Tag>
       ),
     },
     {
@@ -197,7 +214,11 @@ export default function RolesPage() {
         <Title level={4} className="!mb-0">
           角色权限管理
         </Title>
-        <Button type="primary" icon={<PlusOutlined />} onClick={openCreateModal}>
+        <Button
+          type="primary"
+          icon={<PlusOutlined />}
+          onClick={openCreateModal}
+        >
           新建角色
         </Button>
       </div>
@@ -253,12 +274,22 @@ export default function RolesPage() {
                       type="link"
                       size="small"
                       onClick={() => {
-                        const currentPermissions = form.getFieldValue("permissions") as string[] || [];
+                        const currentPermissions =
+                          (form.getFieldValue("permissions") as string[]) || [];
                         const groupPerms = group.permissions;
-                        const hasAll = groupPerms.every((p) => currentPermissions.includes(p));
+                        const hasAll = groupPerms.every((p) =>
+                          currentPermissions.includes(p)
+                        );
                         const newPermissions = hasAll
-                          ? currentPermissions.filter((p) => !groupPerms.includes(p))
-                          : [...new Set([...currentPermissions, ...groupPerms])];
+                          ? currentPermissions.filter(
+                              (p) => !groupPerms.includes(p)
+                            )
+                          : [
+                              ...new Set([
+                                ...currentPermissions,
+                                ...groupPerms,
+                              ]),
+                            ];
                         form.setFieldsValue({ permissions: newPermissions });
                       }}
                     >

@@ -19,9 +19,9 @@ const STATUS_TAGS: Record<
   ModuleReadiness["status"],
   { label: string; color: string }
 > = {
-  configured: { label: "已配置", color: "green" },
-  incomplete: { label: "待完善", color: "orange" },
-  example: { label: "使用示例数据", color: "blue" },
+  configured: { label: "已配置", color: "#16a34a" },
+  incomplete: { label: "待完善", color: "#f59e0b" },
+  example: { label: "使用示例数据", color: "#1d4ed8" },
 };
 
 export function ModuleItem({

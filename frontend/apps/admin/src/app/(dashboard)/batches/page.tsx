@@ -3,10 +3,24 @@
 import { useEffect, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { useCrud } from "@/lib/hooks";
-import { App, Button, Form, Modal, Select, Space, Table, Tag, Typography } from "antd";
+import {
+  App,
+  Button,
+  Form,
+  Modal,
+  Select,
+  Space,
+  Table,
+  Tag,
+  Typography,
+} from "antd";
 import { PlusOutlined } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
-import ProductionBatchFormFields, { buildBatchPayload, formatBatchSkuLabel, type ProductionBatchFormValues } from "@/components/ProductionBatchFormFields";
+import ProductionBatchFormFields, {
+  buildBatchPayload,
+  formatBatchSkuLabel,
+  type ProductionBatchFormValues,
+} from "@/components/ProductionBatchFormFields";
 import api from "@/lib/api";
 import dayjs from "dayjs";
 
@@ -40,9 +54,9 @@ interface SKU {
 }
 
 const BATCH_STATUS_MAP: Record<string, { label: string; color: string }> = {
-  active: { label: "有效", color: "green" },
-  recalled: { label: "已召回", color: "red" },
-  expired: { label: "已过期", color: "gray" },
+  active: { label: "有效", color: "#16a34a" },
+  recalled: { label: "已召回", color: "#b91c1c" },
+  expired: { label: "已过期", color: "#8c8c8c" },
 };
 
 export default function BatchesPage() {
@@ -53,26 +67,50 @@ export default function BatchesPage() {
   const [modalOpen, setModalOpen] = useState(false);
   const [editItem, setEditItem] = useState<ProductionBatch | null>(null);
   const [form] = Form.useForm<ProductionBatchFormValues>();
-  const [selectedProduct, setSelectedProduct] = useState<string | undefined>(undefined);
+  const [selectedProduct, setSelectedProduct] = useState<string | undefined>(
+    undefined
+  );
 
-  const { items: batches, total, page, loading, setPage, setFilter, create, update } = useCrud<ProductionBatch>("/production-batches");
+  const {
+    items: batches,
+    total,
+    page,
+    loading,
+    setPage,
+    setFilter,
+    create,
+    update,
+  } = useCrud<ProductionBatch>("/production-batches");
 
   const fetchProducts = useCallback(async () => {
     try {
-      const { data } = await api.get("/products", { params: { page_size: 100 } });
+      const { data } = await api.get("/products", {
+        params: { page_size: 100 },
+      });
       setProducts(data.items || []);
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
   }, []);
 
   const fetchSKUs = useCallback(async (productId?: string) => {
-    if (!productId) { setSKUs([]); return; }
+    if (!productId) {
+      setSKUs([]);
+      return;
+    }
     try {
-      const { data } = await api.get("/skus", { params: { product_id: productId, page_size: 100 } });
+      const { data } = await api.get("/skus", {
+        params: { product_id: productId, page_size: 100 },
+      });
       setSKUs(data.items || []);
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
   }, []);
 
-  useEffect(() => { fetchProducts(); }, [fetchProducts]);
+  useEffect(() => {
+    fetchProducts();
+  }, [fetchProducts]);
 
   const openCreate = () => {
     setEditItem(null);
@@ -127,32 +165,56 @@ export default function BatchesPage() {
   };
 
   const columns: ColumnsType<ProductionBatch> = [
-    { title: "产品", dataIndex: "product_name", key: "product_name", render: (v?: string) => v || "未关联" },
-    { title: "SKU", key: "sku", render: (_: unknown, record) => formatBatchSkuLabel({ name: record.sku_name || "", code: record.sku_code }) },
+    {
+      title: "产品",
+      dataIndex: "product_name",
+      key: "product_name",
+      render: (v?: string) => v || "未关联",
+    },
+    {
+      title: "SKU",
+      key: "sku",
+      render: (_: unknown, record) =>
+        formatBatchSkuLabel({
+          name: record.sku_name || "",
+          code: record.sku_code,
+        }),
+    },
     { title: "批次号", dataIndex: "batch_code", key: "batch_code" },
     { title: "生产日期", dataIndex: "production_date", key: "production_date" },
     { title: "过期日期", dataIndex: "expiry_date", key: "expiry_date" },
-    { title: "产地", dataIndex: "origin", key: "origin", render: (v?: string) => v || "未填写" },
+    {
+      title: "产地",
+      dataIndex: "origin",
+      key: "origin",
+      render: (v?: string) => v || "未填写",
+    },
     {
       title: "状态",
       dataIndex: "status",
       key: "status",
       render: (s: string) => {
-        const info = BATCH_STATUS_MAP[s] || { label: s, color: "default" };
+        const info = BATCH_STATUS_MAP[s] || { label: s, color: "#8c8c8c" };
         return <Tag color={info.color}>{info.label}</Tag>;
       },
     },
     {
       title: "操作",
       key: "actions",
-      render: (_: unknown, record) => <Button type="link" size="small" onClick={() => openEdit(record)}>编辑</Button>,
+      render: (_: unknown, record) => (
+        <Button type="link" size="small" onClick={() => openEdit(record)}>
+          编辑
+        </Button>
+      ),
     },
   ];
 
   return (
     <div>
       <div className="mb-4 flex items-center justify-between">
-        <Title level={4} className="!mb-0">生产批次管理</Title>
+        <Title level={4} className="!mb-0">
+          生产批次管理
+        </Title>
         <Space>
           <Select
             placeholder="按产品筛选"
@@ -174,19 +236,30 @@ export default function BatchesPage() {
         rowKey="id"
         loading={loading}
         pagination={{
-          current: page, total, pageSize: 20, onChange: setPage,
+          current: page,
+          total,
+          pageSize: 20,
+          onChange: setPage,
           showTotal: (t) => `共 ${t} 条`,
         }}
       />
       <Modal
         title={editItem ? "编辑生产批次" : "新建生产批次"}
         open={modalOpen}
-        onCancel={() => { setModalOpen(false); setSelectedProduct(undefined); setEditItem(null); }}
+        onCancel={() => {
+          setModalOpen(false);
+          setSelectedProduct(undefined);
+          setEditItem(null);
+        }}
         onOk={() => form.submit()}
         okText={editItem ? "更新批次" : "创建批次"}
         width={560}
       >
-        <Form<ProductionBatchFormValues> form={form} layout="vertical" onFinish={handleSubmit}>
+        <Form<ProductionBatchFormValues>
+          form={form}
+          layout="vertical"
+          onFinish={handleSubmit}
+        >
           <ProductionBatchFormFields
             form={form}
             products={products}
@@ -195,7 +268,9 @@ export default function BatchesPage() {
             editing={!!editItem}
             onProductChange={handleProductChange}
             onCreateSkuClick={handleCreateSkuClick}
-            onDateRangeReset={() => message.warning("保质期至不能早于生产日期，已清空原日期")}
+            onDateRangeReset={() =>
+              message.warning("保质期至不能早于生产日期，已清空原日期")
+            }
           />
         </Form>
       </Modal>

@@ -173,12 +173,12 @@ export default function CrmSettingsPage() {
             <Form.Item
               name="secret"
               label="应用密钥 (secret)"
-              rules={existingConnector ? [] : [{ required: true, message: "请输入应用密钥" }]}
-              extra={
+              rules={
                 existingConnector
-                  ? "留空则保持原有密钥不变"
-                  : undefined
+                  ? []
+                  : [{ required: true, message: "请输入应用密钥" }]
               }
+              extra={existingConnector ? "留空则保持原有密钥不变" : undefined}
             >
               <Input.Password placeholder="请输入应用密钥" />
             </Form.Item>
@@ -203,18 +203,18 @@ export default function CrmSettingsPage() {
         <Descriptions column={1} bordered>
           <Descriptions.Item label="配置状态">
             {connectionState.configured ? (
-              <Tag color="green">已配置</Tag>
+              <Tag color="#16a34a">已配置</Tag>
             ) : (
-              <Tag color="default">未配置</Tag>
+              <Tag color="#8c8c8c">未配置</Tag>
             )}
           </Descriptions.Item>
           <Descriptions.Item label="连接状态">
             {connectionState.connected === null ? (
               <Text type="secondary">未测试</Text>
             ) : connectionState.connected ? (
-              <Tag color="green">已连接</Tag>
+              <Tag color="#16a34a">已连接</Tag>
             ) : (
-              <Tag color="red">连接失败</Tag>
+              <Tag color="#b91c1c">连接失败</Tag>
             )}
           </Descriptions.Item>
           <Descriptions.Item label="最近同步时间">

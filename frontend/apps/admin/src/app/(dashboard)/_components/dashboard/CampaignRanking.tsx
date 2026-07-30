@@ -17,10 +17,10 @@ interface RankingItem {
 }
 
 const STATUS_MAP: Record<string, { label: string; color: string }> = {
-  draft: { label: "草稿", color: "default" },
-  active: { label: "进行中", color: "blue" },
-  paused: { label: "已暂停", color: "orange" },
-  ended: { label: "已结束", color: "gray" },
+  draft: { label: "草稿", color: "#8c8c8c" },
+  active: { label: "进行中", color: "#1d4ed8" },
+  paused: { label: "已暂停", color: "#f59e0b" },
+  ended: { label: "已结束", color: "#8c8c8c" },
 };
 
 export default function CampaignRanking() {
@@ -73,7 +73,7 @@ export default function CampaignRanking() {
       key: "status",
       width: 80,
       render: (status: string) => {
-        const info = STATUS_MAP[status] || { label: status, color: "default" };
+        const info = STATUS_MAP[status] || { label: status, color: "#8c8c8c" };
         return <Tag color={info.color}>{info.label}</Tag>;
       },
     },

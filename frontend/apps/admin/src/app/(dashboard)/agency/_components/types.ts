@@ -90,20 +90,21 @@ export interface IndustryTemplate {
 }
 
 export const STATUS_MAP: Record<string, { label: string; color: string }> = {
-  active: { label: "活跃", color: "green" },
-  suspended: { label: "已暂停", color: "default" },
-  onboarding: { label: "配置中", color: "blue" },
+  active: { label: "活跃", color: "#16a34a" },
+  suspended: { label: "已暂停", color: "#8c8c8c" },
+  onboarding: { label: "配置中", color: "#1d4ed8" },
 };
 
 export const PRIORITY_MAP: Record<string, { label: string; color: string }> = {
-  low: { label: "低", color: "default" },
-  medium: { label: "中", color: "blue" },
-  high: { label: "高", color: "red" },
+  low: { label: "低", color: "#8c8c8c" },
+  medium: { label: "中", color: "#1d4ed8" },
+  high: { label: "高", color: "#b91c1c" },
 };
 
-export const TASK_STATUS_MAP: Record<string, { label: string; color: string }> = {
-  pending: { label: "待处理", color: "default" },
-  in_progress: { label: "进行中", color: "processing" },
-  completed: { label: "已完成", color: "success" },
-  cancelled: { label: "已取消", color: "default" },
-};
+export const TASK_STATUS_MAP: Record<string, { label: string; color: string }> =
+  {
+    pending: { label: "待处理", color: "#8c8c8c" },
+    in_progress: { label: "进行中", color: "#1d4ed8" },
+    completed: { label: "已完成", color: "#16a34a" },
+    cancelled: { label: "已取消", color: "#8c8c8c" },
+  };

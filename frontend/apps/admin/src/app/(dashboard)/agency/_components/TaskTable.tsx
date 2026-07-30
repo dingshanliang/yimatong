@@ -13,7 +13,12 @@ interface TaskTableProps {
   onDelete: (taskId: string, taskTitle: string) => void;
 }
 
-export function TaskTable({ tasks, clients, onUpdateStatus, onDelete }: TaskTableProps) {
+export function TaskTable({
+  tasks,
+  clients,
+  onUpdateStatus,
+  onDelete,
+}: TaskTableProps) {
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [priorityFilter, setPriorityFilter] = useState<string>("all");
   const [searchText, setSearchText] = useState("");
@@ -21,8 +26,13 @@ export function TaskTable({ tasks, clients, onUpdateStatus, onDelete }: TaskTabl
   const sortedTasks = useMemo(() => {
     const filtered = tasks.filter((task) => {
       if (statusFilter !== "all" && task.status !== statusFilter) return false;
-      if (priorityFilter !== "all" && task.priority !== priorityFilter) return false;
-      if (searchText && !task.title.toLowerCase().includes(searchText.toLowerCase())) return false;
+      if (priorityFilter !== "all" && task.priority !== priorityFilter)
+        return false;
+      if (
+        searchText &&
+        !task.title.toLowerCase().includes(searchText.toLowerCase())
+      )
+        return false;
       return true;
     });
     return [...filtered].sort((a, b) => {
@@ -34,60 +44,108 @@ export function TaskTable({ tasks, clients, onUpdateStatus, onDelete }: TaskTabl
 
   const columns: ColumnsType<WorkbenchTask> = [
     {
-      title: "任务", dataIndex: "title", key: "title",
+      title: "任务",
+      dataIndex: "title",
+      key: "title",
       render: (title: string, record) => (
         <div>
           <div>{title}</div>
           {record.description && (
-            <div className="mt-1 text-xs text-text-muted line-clamp-1">{record.description}</div>
+            <div className="mt-1 text-xs text-text-muted line-clamp-1">
+              {record.description}
+            </div>
           )}
         </div>
       ),
     },
     {
-      title: "关联客户", dataIndex: "tenant_id", key: "tenant_id",
+      title: "关联客户",
+      dataIndex: "tenant_id",
+      key: "tenant_id",
       render: (v: string, record) => {
         const client = clients.find((c) => c.id === v);
         return record.tenant_name || client?.name || v?.slice(0, 8) + "...";
       },
     },
     {
-      title: "优先级", dataIndex: "priority", key: "priority", width: 80,
+      title: "优先级",
+      dataIndex: "priority",
+      key: "priority",
+      width: 80,
       render: (p: string) => {
-        const info = PRIORITY_MAP[p] || { label: p, color: "default" };
+        const info = PRIORITY_MAP[p] || { label: p, color: "#8c8c8c" };
         return <Tag color={info.color}>{info.label}</Tag>;
       },
     },
     {
-      title: "状态", dataIndex: "status", key: "status", width: 90,
+      title: "状态",
+      dataIndex: "status",
+      key: "status",
+      width: 90,
       render: (s: string) => {
-        const info = TASK_STATUS_MAP[s] || { label: s, color: "default" };
+        const info = TASK_STATUS_MAP[s] || { label: s, color: "#8c8c8c" };
         return <Tag color={info.color}>{info.label}</Tag>;
       },
     },
     {
-      title: "截止日", dataIndex: "due_date", key: "due_date", width: 120,
+      title: "截止日",
+      dataIndex: "due_date",
+      key: "due_date",
+      width: 120,
       render: (v: string | null, record) => {
         if (!v) return "—";
         const date = v.split("T")[0];
-        return record.overdue ? <Tag color="red">{date}（逾期）</Tag> : date;
+        return record.overdue ? (
+          <Tag color="#b91c1c">{date}（逾期）</Tag>
+        ) : (
+          date
+        );
       },
     },
     {
-      title: "操作", key: "actions", width: 140,
+      title: "操作",
+      key: "actions",
+      width: 140,
       render: (_: unknown, record) => {
         if (record.status === "completed" || record.status === "cancelled") {
-          return <Button size="small" type="link" danger onClick={() => onDelete(record.id, record.title)}>删除</Button>;
+          return (
+            <Button
+              size="small"
+              type="link"
+              danger
+              onClick={() => onDelete(record.id, record.title)}
+            >
+              删除
+            </Button>
+          );
         }
         return (
           <Space size="small">
             {record.status === "pending" && (
-              <Button size="small" type="link" onClick={() => onUpdateStatus(record.id, "in_progress")}>开始</Button>
+              <Button
+                size="small"
+                type="link"
+                onClick={() => onUpdateStatus(record.id, "in_progress")}
+              >
+                开始
+              </Button>
             )}
             {record.status === "in_progress" && (
-              <Button size="small" type="link" onClick={() => onUpdateStatus(record.id, "completed")}>完成</Button>
+              <Button
+                size="small"
+                type="link"
+                onClick={() => onUpdateStatus(record.id, "completed")}
+              >
+                完成
+              </Button>
             )}
-            <Button size="small" type="link" onClick={() => onUpdateStatus(record.id, "cancelled")}>取消</Button>
+            <Button
+              size="small"
+              type="link"
+              onClick={() => onUpdateStatus(record.id, "cancelled")}
+            >
+              取消
+            </Button>
           </Space>
         );
       },
@@ -103,7 +161,9 @@ export function TaskTable({ tasks, clients, onUpdateStatus, onDelete }: TaskTabl
             allowClear
             style={{ width: 200 }}
             onSearch={(v) => setSearchText(v)}
-            onChange={(e) => { if (!e.target.value) setSearchText(""); }}
+            onChange={(e) => {
+              if (!e.target.value) setSearchText("");
+            }}
           />
           <Select
             value={statusFilter}
@@ -128,7 +188,13 @@ export function TaskTable({ tasks, clients, onUpdateStatus, onDelete }: TaskTabl
           />
         </Space>
       </div>
-      <Table columns={columns} dataSource={sortedTasks} rowKey="id" pagination={false} size="small" />
+      <Table
+        columns={columns}
+        dataSource={sortedTasks}
+        rowKey="id"
+        pagination={false}
+        size="small"
+      />
     </Card>
   );
 }

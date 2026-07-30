@@ -57,25 +57,41 @@ export default function TenantDetailPage() {
   const [editOpen, setEditOpen] = useState(false);
   const [saving, setSaving] = useState(false);
 
-  const { data, mutate, isLoading } = useSWR<TenantDetail>(`/platform/tenants/${tenantId}`);
+  const { data, mutate, isLoading } = useSWR<TenantDetail>(
+    `/platform/tenants/${tenantId}`
+  );
   const [form] = Form.useForm();
 
   if (isLoading) {
-    return <div style={{ textAlign: "center", padding: 80 }}><Spin size="large" /></div>;
+    return (
+      <div style={{ textAlign: "center", padding: 80 }}>
+        <Spin size="large" />
+      </div>
+    );
   }
 
   if (!data) {
-    return <div style={{ textAlign: "center", padding: 80 }}><Text type="secondary">租户不存在</Text></div>;
+    return (
+      <div style={{ textAlign: "center", padding: 80 }}>
+        <Text type="secondary">租户不存在</Text>
+      </div>
+    );
   }
 
   const handleStatusChange = (newStatus: string) => {
-    const labels: Record<string, string> = { suspended: "暂停", active: "恢复", terminated: "终止" };
+    const labels: Record<string, string> = {
+      suspended: "暂停",
+      active: "恢复",
+      terminated: "终止",
+    };
     modal.confirm({
       title: `确认${labels[newStatus]}租户`,
       content: `确定要${labels[newStatus]}租户「${data.name}」吗？`,
       onOk: async () => {
         try {
-          await api.patch(`/platform/tenants/${tenantId}/status`, { status: newStatus });
+          await api.patch(`/platform/tenants/${tenantId}/status`, {
+            status: newStatus,
+          });
           message.success("操作成功");
           mutate();
         } catch (err) {
@@ -93,7 +109,10 @@ export default function TenantDetailPage() {
       if (values.plan) payload.plan = values.plan;
       if (values.industry) payload.industry = values.industry;
       if (values.notes) payload.notes = values.notes;
-      if (values.plan_expires_at) payload.plan_expires_at = (values.plan_expires_at as dayjs.Dayjs).toISOString();
+      if (values.plan_expires_at)
+        payload.plan_expires_at = (
+          values.plan_expires_at as dayjs.Dayjs
+        ).toISOString();
 
       await api.patch(`/platform/tenants/${tenantId}`, payload);
       message.success("更新成功");
@@ -106,26 +125,68 @@ export default function TenantDetailPage() {
     }
   };
 
-  const statusInfo = STATUS_MAP[data.status] ?? { color: "default", label: data.status };
-  const planInfo = PLAN_MAP[data.plan] ?? { color: "default", label: data.plan };
+  const statusInfo = STATUS_MAP[data.status] ?? {
+    color: "#8c8c8c",
+    label: data.status,
+  };
+  const planInfo = PLAN_MAP[data.plan] ?? {
+    color: "#8c8c8c",
+    label: data.plan,
+  };
 
   return (
     <div>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          marginBottom: 16,
+        }}
+      >
         <Space>
-          <Button icon={<ArrowLeftOutlined />} onClick={() => router.push("/tenants")} />
-          <Title level={4} style={{ margin: 0 }}>{data.name}</Title>
+          <Button
+            icon={<ArrowLeftOutlined />}
+            onClick={() => router.push("/tenants")}
+          />
+          <Title level={4} style={{ margin: 0 }}>
+            {data.name}
+          </Title>
           <Tag color={statusInfo.color}>{statusInfo.label}</Tag>
           <Tag color={planInfo.color}>{planInfo.label}</Tag>
         </Space>
         <Space>
           {data.status === "active" && (
-            <Button icon={<PauseCircleOutlined />} onClick={() => handleStatusChange("suspended")}>暂停</Button>
+            <Button
+              icon={<PauseCircleOutlined />}
+              onClick={() => handleStatusChange("suspended")}
+            >
+              暂停
+            </Button>
           )}
           {data.status === "suspended" && (
-            <Button icon={<PlayCircleOutlined />} type="primary" onClick={() => handleStatusChange("active")}>恢复</Button>
+            <Button
+              icon={<PlayCircleOutlined />}
+              type="primary"
+              onClick={() => handleStatusChange("active")}
+            >
+              恢复
+            </Button>
           )}
-          <Button icon={<EditOutlined />} onClick={() => { form.setFieldsValue({ ...data, plan_expires_at: data.plan_expires_at ? dayjs(data.plan_expires_at) : undefined }); setEditOpen(true); }}>编辑</Button>
+          <Button
+            icon={<EditOutlined />}
+            onClick={() => {
+              form.setFieldsValue({
+                ...data,
+                plan_expires_at: data.plan_expires_at
+                  ? dayjs(data.plan_expires_at)
+                  : undefined,
+              });
+              setEditOpen(true);
+            }}
+          >
+            编辑
+          </Button>
         </Space>
       </div>
 
@@ -138,16 +199,38 @@ export default function TenantDetailPage() {
             children: (
               <Card>
                 <Descriptions bordered column={2}>
-                  <Descriptions.Item label="租户 ID">{data.id}</Descriptions.Item>
-                  <Descriptions.Item label="Slug">{data.slug}</Descriptions.Item>
-                  <Descriptions.Item label="套餐">{planInfo.label}</Descriptions.Item>
-                  <Descriptions.Item label="状态">{statusInfo.label}</Descriptions.Item>
-                  <Descriptions.Item label="行业">{data.industry ?? "-"}</Descriptions.Item>
-                  <Descriptions.Item label="过期时间">{data.plan_expires_at ? dayjs(data.plan_expires_at).format("YYYY-MM-DD") : "永久"}</Descriptions.Item>
-                  <Descriptions.Item label="创建时间">{dayjs(data.created_at).format("YYYY-MM-DD HH:mm")}</Descriptions.Item>
-                  <Descriptions.Item label="备注">{data.notes ?? "-"}</Descriptions.Item>
-                  <Descriptions.Item label="账号数">{data.account_count}</Descriptions.Item>
-                  <Descriptions.Item label="组织数">{data.organization_count}</Descriptions.Item>
+                  <Descriptions.Item label="租户 ID">
+                    {data.id}
+                  </Descriptions.Item>
+                  <Descriptions.Item label="Slug">
+                    {data.slug}
+                  </Descriptions.Item>
+                  <Descriptions.Item label="套餐">
+                    {planInfo.label}
+                  </Descriptions.Item>
+                  <Descriptions.Item label="状态">
+                    {statusInfo.label}
+                  </Descriptions.Item>
+                  <Descriptions.Item label="行业">
+                    {data.industry ?? "-"}
+                  </Descriptions.Item>
+                  <Descriptions.Item label="过期时间">
+                    {data.plan_expires_at
+                      ? dayjs(data.plan_expires_at).format("YYYY-MM-DD")
+                      : "永久"}
+                  </Descriptions.Item>
+                  <Descriptions.Item label="创建时间">
+                    {dayjs(data.created_at).format("YYYY-MM-DD HH:mm")}
+                  </Descriptions.Item>
+                  <Descriptions.Item label="备注">
+                    {data.notes ?? "-"}
+                  </Descriptions.Item>
+                  <Descriptions.Item label="账号数">
+                    {data.account_count}
+                  </Descriptions.Item>
+                  <Descriptions.Item label="组织数">
+                    {data.organization_count}
+                  </Descriptions.Item>
                 </Descriptions>
               </Card>
             ),
@@ -160,7 +243,9 @@ export default function TenantDetailPage() {
                 {data.quota && Object.keys(data.quota).length > 0 ? (
                   <Descriptions bordered column={2}>
                     {Object.entries(data.quota).map(([key, value]) => (
-                      <Descriptions.Item key={key} label={key}>{value}</Descriptions.Item>
+                      <Descriptions.Item key={key} label={key}>
+                        {value}
+                      </Descriptions.Item>
                     ))}
                   </Descriptions>
                 ) : (
@@ -174,13 +259,18 @@ export default function TenantDetailPage() {
             label: "功能开关",
             children: (
               <Card>
-                {data.enabled_features && Object.keys(data.enabled_features).length > 0 ? (
+                {data.enabled_features &&
+                Object.keys(data.enabled_features).length > 0 ? (
                   <Descriptions bordered column={2}>
-                    {Object.entries(data.enabled_features).map(([key, value]) => (
-                      <Descriptions.Item key={key} label={key}>
-                        <Tag color={value ? "green" : "default"}>{value ? "已启用" : "已禁用"}</Tag>
-                      </Descriptions.Item>
-                    ))}
+                    {Object.entries(data.enabled_features).map(
+                      ([key, value]) => (
+                        <Descriptions.Item key={key} label={key}>
+                          <Tag color={value ? "#16a34a" : "#8c8c8c"}>
+                            {value ? "已启用" : "已禁用"}
+                          </Tag>
+                        </Descriptions.Item>
+                      )
+                    )}
                   </Descriptions>
                 ) : (
                   <Text type="secondary">暂无功能开关配置</Text>
@@ -204,7 +294,12 @@ export default function TenantDetailPage() {
             <Input />
           </Form.Item>
           <Form.Item name="plan" label="套餐">
-            <Select options={Object.entries(PLAN_MAP).map(([k, v]) => ({ value: k, label: v.label }))} />
+            <Select
+              options={Object.entries(PLAN_MAP).map(([k, v]) => ({
+                value: k,
+                label: v.label,
+              }))}
+            />
           </Form.Item>
           <Form.Item name="industry" label="行业">
             <Input />

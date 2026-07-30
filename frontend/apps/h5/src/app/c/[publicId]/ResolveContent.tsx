@@ -84,7 +84,7 @@ export function ResolveContent({
     codeStatus === "expired"
   ) {
     return (
-      <div className="mx-auto max-w-md min-h-screen bg-gray-50">
+      <div className="mx-auto max-w-md min-h-screen bg-canvas">
         <ErrorPage errorCode="revoked" publicId={publicId} />
       </div>
     );
@@ -95,7 +95,7 @@ export function ResolveContent({
     resultCode === "unactivated"
   ) {
     return (
-      <div className="mx-auto max-w-md min-h-screen bg-gray-50">
+      <div className="mx-auto max-w-md min-h-screen bg-canvas">
         <ErrorPage errorCode="not_activated" publicId={publicId} />
       </div>
     );
@@ -155,18 +155,18 @@ export function ResolveContent({
         {/* yimatong-zgb1.6 AC3：frozen 码保留溯源，但顶部提示审核中 + 权益暂停 */}
         {lifecycle === "frozen" && (
           <div
-            className="mx-4 mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800"
+            className="mx-4 mt-3 rounded-xl border border-warning bg-warning-bg p-3 text-sm text-warning"
             role="status"
             aria-label="该码正在审核中，权益暂时暂停"
           >
             <div className="flex items-center gap-2">
               <TriangleAlert
-                className="h-5 w-5 shrink-0 text-amber-600"
+                className="h-5 w-5 shrink-0 text-warning"
                 aria-hidden="true"
               />
               <div>
                 <p className="font-semibold">该码正在审核中</p>
-                <p className="mt-0.5 text-xs text-amber-700">
+                <p className="mt-0.5 text-xs text-warning">
                   溯源信息可正常查看，权益领取暂时暂停。如有疑问请联系品牌客服。
                 </p>
               </div>
@@ -178,18 +178,18 @@ export function ResolveContent({
         {(scanInfo?.risk_warning as
           { level?: string; message?: string } | undefined) && (
           <div
-            className="mx-4 mt-3 rounded-xl border border-orange-200 bg-orange-50 p-3 text-sm text-orange-800"
+            className="mx-4 mt-3 rounded-xl border border-warning bg-warning-bg p-3 text-sm text-warning"
             role="alert"
             aria-label="该码存在异常使用信号"
           >
             <div className="flex items-start gap-2">
               <TriangleAlert
-                className="mt-0.5 h-5 w-5 shrink-0 text-orange-600"
+                className="mt-0.5 h-5 w-5 shrink-0 text-warning"
                 aria-hidden="true"
               />
               <div>
                 <p className="font-semibold">该码存在异常使用信号</p>
-                <p className="mt-0.5 text-xs text-orange-700">
+                <p className="mt-0.5 text-xs text-warning">
                   {(scanInfo?.risk_warning as { message?: string }).message ||
                     "请审慎对待。如非本人操作，请联系品牌客服。"}
                 </p>
@@ -556,13 +556,13 @@ function CertificateRenderer({
   if (!certs?.length) return null;
 
   return (
-    <div className="mx-4 mt-3 rounded-2xl bg-white p-4 shadow-sm">
-      <h2 className="text-base font-semibold text-gray-900">资质证书</h2>
+    <div className="mx-4 mt-3 rounded-2xl bg-surface p-4 shadow-sm">
+      <h2 className="text-base font-semibold text-foreground">资质证书</h2>
       <div className="mt-3 space-y-3">
         {certs.map((cert, i) => (
           <div
             key={i}
-            className="flex items-start gap-3 rounded-xl border border-gray-100 p-3"
+            className="flex items-start gap-3 rounded-xl border border-base p-3"
           >
             {cert.image_url && (
               <img
@@ -572,12 +572,14 @@ function CertificateRenderer({
               />
             )}
             <div className="min-w-0">
-              <p className="text-sm font-medium text-gray-900">{cert.name}</p>
+              <p className="text-sm font-medium text-foreground">{cert.name}</p>
               {cert.issuer && (
-                <p className="text-xs text-gray-500">颁发机构：{cert.issuer}</p>
+                <p className="text-xs text-foreground-secondary">
+                  颁发机构：{cert.issuer}
+                </p>
               )}
               {cert.valid_until && (
-                <p className="text-xs text-gray-500">
+                <p className="text-xs text-foreground-secondary">
                   有效期至：{cert.valid_until}
                 </p>
               )}
@@ -586,7 +588,7 @@ function CertificateRenderer({
                   href={cert.file_url}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="mt-1 inline-block text-xs text-blue-600 hover:underline"
+                  className="mt-1 inline-block text-xs text-link hover:underline"
                 >
                   查看详情
                 </a>
@@ -620,8 +622,8 @@ function MediaRenderer({
   if (!items?.length) return null;
 
   return (
-    <div className="mx-4 mt-3 rounded-2xl bg-white p-4 shadow-sm">
-      <h2 className="text-base font-semibold text-gray-900">品牌故事</h2>
+    <div className="mx-4 mt-3 rounded-2xl bg-surface p-4 shadow-sm">
+      <h2 className="text-base font-semibold text-foreground">品牌故事</h2>
       <div className="mt-3 space-y-3">
         {items.map((item, i) =>
           item.type === "video" ? (
@@ -636,7 +638,9 @@ function MediaRenderer({
                 className="w-full rounded-xl"
               />
               {item.caption && (
-                <p className="mt-1 text-xs text-gray-500">{item.caption}</p>
+                <p className="mt-1 text-xs text-foreground-secondary">
+                  {item.caption}
+                </p>
               )}
             </div>
           ) : (
@@ -647,7 +651,9 @@ function MediaRenderer({
                 className="w-full rounded-xl object-cover"
               />
               {item.caption && (
-                <p className="mt-1 text-xs text-gray-500">{item.caption}</p>
+                <p className="mt-1 text-xs text-foreground-secondary">
+                  {item.caption}
+                </p>
               )}
             </div>
           )
@@ -682,7 +688,7 @@ function DefaultRender({
 }) {
   const _product = codeData.product as Record<string, unknown> | undefined;
   return (
-    <div className="mx-auto max-w-md min-h-screen bg-gray-50">
+    <div className="mx-auto max-w-md min-h-screen bg-canvas">
       <BrandHeader
         name={brandName}
         logoUrl={brandLogo}

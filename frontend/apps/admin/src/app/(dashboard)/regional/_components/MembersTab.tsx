@@ -2,7 +2,17 @@
 
 import { useEffect, useState } from "react";
 import api from "@/lib/api";
-import { Button, Form, Input, Modal, Select, Space, Table, Tag, message } from "antd";
+import {
+  Button,
+  Form,
+  Input,
+  Modal,
+  Select,
+  Space,
+  Table,
+  Tag,
+  message,
+} from "antd";
 import { PlusOutlined } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
 
@@ -19,18 +29,26 @@ type ClientOption = {
 };
 
 const statusMap: Record<string, { color: string; label: string }> = {
-  active: { color: "green", label: "活跃" },
-  suspended: { color: "orange", label: "暂停" },
-  expelled: { color: "red", label: "已移除" },
+  active: { color: "#16a34a", label: "活跃" },
+  suspended: { color: "#f59e0b", label: "暂停" },
+  expelled: { color: "#b91c1c", label: "已移除" },
 };
 
 const columns: ColumnsType<Member> = [
   { title: "企业名称", dataIndex: "member_name", key: "member_name" },
-  { title: "租户 ID", dataIndex: "tenant_id", key: "tenant_id", render: (v: string) => v?.slice(0, 8) + "..." },
   {
-    title: "状态", dataIndex: "status", key: "status", width: 100,
+    title: "租户 ID",
+    dataIndex: "tenant_id",
+    key: "tenant_id",
+    render: (v: string) => v?.slice(0, 8) + "...",
+  },
+  {
+    title: "状态",
+    dataIndex: "status",
+    key: "status",
+    width: 100,
     render: (v: string) => {
-      const info = statusMap[v] || { color: "default", label: v };
+      const info = statusMap[v] || { color: "#8c8c8c", label: v };
       return <Tag color={info.color}>{info.label}</Tag>;
     },
   },
@@ -49,9 +67,14 @@ export function MembersTab({ orgId }: { orgId: string }) {
     if (!orgId) return;
     setLoading(true);
     try {
-      const params = new URLSearchParams({ page: String(page), page_size: "20" });
+      const params = new URLSearchParams({
+        page: String(page),
+        page_size: "20",
+      });
       if (statusFilter) params.set("status", statusFilter);
-      const { data } = await api.get(`/regional/orgs/${orgId}/members?${params}`);
+      const { data } = await api.get(
+        `/regional/orgs/${orgId}/members?${params}`
+      );
       setItems(data?.items || []);
       setTotal(data?.total || 0);
     } catch {
@@ -61,9 +84,14 @@ export function MembersTab({ orgId }: { orgId: string }) {
     }
   };
 
-  useEffect(() => { fetch(); }, [orgId, page, statusFilter]);
+  useEffect(() => {
+    fetch();
+  }, [orgId, page, statusFilter]);
 
-  const handleAdd = async (values: { tenant_id: string; member_name: string }) => {
+  const handleAdd = async (values: {
+    tenant_id: string;
+    member_name: string;
+  }) => {
     try {
       await api.post(`/regional/orgs/${orgId}/members`, values);
       message.success("成员添加成功");
@@ -97,8 +125,15 @@ export function MembersTab({ orgId }: { orgId: string }) {
 
   const fetchClients = async () => {
     try {
-      const { data } = await api.get("/tenants", { params: { page: 1, page_size: 100 } });
-      setClients((data.items || []).map((item: Record<string, unknown>) => ({ id: String(item.id), name: String(item.name || "") })));
+      const { data } = await api.get("/tenants", {
+        params: { page: 1, page_size: 100 },
+      });
+      setClients(
+        (data.items || []).map((item: Record<string, unknown>) => ({
+          id: String(item.id),
+          name: String(item.name || ""),
+        }))
+      );
     } catch {
       setClients([]);
     }
@@ -112,17 +147,38 @@ export function MembersTab({ orgId }: { orgId: string }) {
   const actionColumns: ColumnsType<Member> = [
     ...columns,
     {
-      title: "操作", key: "actions", width: 200,
+      title: "操作",
+      key: "actions",
+      width: 200,
       render: (_: unknown, record: Member) => (
         <Space size="small">
           {record.status === "active" && (
             <>
-              <Button size="small" type="link" onClick={() => handleStatusChange(record.id, "suspended")}>暂停</Button>
-              <Button size="small" type="link" danger onClick={() => handleRemove(record.id)}>移除</Button>
+              <Button
+                size="small"
+                type="link"
+                onClick={() => handleStatusChange(record.id, "suspended")}
+              >
+                暂停
+              </Button>
+              <Button
+                size="small"
+                type="link"
+                danger
+                onClick={() => handleRemove(record.id)}
+              >
+                移除
+              </Button>
             </>
           )}
           {record.status === "suspended" && (
-            <Button size="small" type="link" onClick={() => handleStatusChange(record.id, "active")}>恢复</Button>
+            <Button
+              size="small"
+              type="link"
+              onClick={() => handleStatusChange(record.id, "active")}
+            >
+              恢复
+            </Button>
           )}
         </Space>
       ),
@@ -136,14 +192,21 @@ export function MembersTab({ orgId }: { orgId: string }) {
           placeholder="状态筛选"
           allowClear
           style={{ width: 120 }}
-          onChange={(v) => { setStatusFilter(v); setPage(1); }}
+          onChange={(v) => {
+            setStatusFilter(v);
+            setPage(1);
+          }}
           options={[
             { label: "活跃", value: "active" },
             { label: "暂停", value: "suspended" },
             { label: "已移除", value: "expelled" },
           ]}
         />
-        <Button type="primary" icon={<PlusOutlined />} onClick={openMemberModal}>
+        <Button
+          type="primary"
+          icon={<PlusOutlined />}
+          onClick={openMemberModal}
+        >
           添加成员
         </Button>
       </div>
@@ -152,24 +215,47 @@ export function MembersTab({ orgId }: { orgId: string }) {
         dataSource={items}
         rowKey="id"
         loading={loading}
-        pagination={{ current: page, total, pageSize: 20, onChange: setPage, showTotal: (t) => `共 ${t} 条` }}
+        pagination={{
+          current: page,
+          total,
+          pageSize: 20,
+          onChange: setPage,
+          showTotal: (t) => `共 ${t} 条`,
+        }}
       />
-      <Modal title="添加成员企业" open={open} onCancel={() => setOpen(false)} onOk={() => form.submit()} width={500}>
+      <Modal
+        title="添加成员企业"
+        open={open}
+        onCancel={() => setOpen(false)}
+        onOk={() => form.submit()}
+        width={500}
+      >
         <Form form={form} layout="vertical" onFinish={handleAdd}>
-          <Form.Item name="tenant_id" label="成员企业" rules={[{ required: true, message: "请选择成员企业" }]}>
+          <Form.Item
+            name="tenant_id"
+            label="成员企业"
+            rules={[{ required: true, message: "请选择成员企业" }]}
+          >
             <Select
               data-testid="member-client-select"
               showSearch
               placeholder="选择已开通客户"
               optionFilterProp="label"
-              options={clients.map((client) => ({ value: client.id, label: client.name }))}
+              options={clients.map((client) => ({
+                value: client.id,
+                label: client.name,
+              }))}
               onChange={(value) => {
                 const client = clients.find((item) => item.id === value);
                 if (client) form.setFieldValue("member_name", client.name);
               }}
             />
           </Form.Item>
-          <Form.Item name="member_name" label="企业名称" rules={[{ required: true }]}>
+          <Form.Item
+            name="member_name"
+            label="企业名称"
+            rules={[{ required: true }]}
+          >
             <Input placeholder="用于区域品牌成员列表展示" />
           </Form.Item>
         </Form>

@@ -1,7 +1,17 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { App, Button, Form, Input, Modal, Select, Space, Table, Tag } from "antd";
+import {
+  App,
+  Button,
+  Form,
+  Input,
+  Modal,
+  Select,
+  Space,
+  Table,
+  Tag,
+} from "antd";
 import { PlusOutlined } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
 import api from "@/lib/api";
@@ -37,7 +47,9 @@ export default function I18nPage() {
     }
   };
 
-  useEffect(() => { fetch(); }, [filterLocale]);
+  useEffect(() => {
+    fetch();
+  }, [filterLocale]);
 
   const handleCreate = async (values: Record<string, unknown>) => {
     try {
@@ -58,7 +70,9 @@ export default function I18nPage() {
       { key: "common.hello", locale: "en", value: "Hello" },
     ];
     try {
-      const { data } = await api.post("/i18n/translations/batch", { translations: sample });
+      const { data } = await api.post("/i18n/translations/batch", {
+        translations: sample,
+      });
       message.success(`批量导入 ${data.updated} 条`);
       fetch();
     } catch {
@@ -69,8 +83,11 @@ export default function I18nPage() {
   const columns: ColumnsType<Record<string, unknown>> = [
     { title: t("i18n.key"), dataIndex: "key", key: "key", width: 250 },
     {
-      title: t("i18n.locale"), dataIndex: "locale", key: "locale", width: 100,
-      render: (v: string) => <Tag color="blue">{v}</Tag>,
+      title: t("i18n.locale"),
+      dataIndex: "locale",
+      key: "locale",
+      width: 100,
+      render: (v: string) => <Tag color="#1d4ed8">{v}</Tag>,
     },
     { title: t("i18n.value"), dataIndex: "value", key: "value" },
   ];
@@ -90,7 +107,11 @@ export default function I18nPage() {
         </Space>
         <Space>
           <Button onClick={handleBatch}>{t("i18n.batch_import")}</Button>
-          <Button type="primary" icon={<PlusOutlined />} onClick={() => setOpen(true)}>
+          <Button
+            type="primary"
+            icon={<PlusOutlined />}
+            onClick={() => setOpen(true)}
+          >
             {t("i18n.new_translation")}
           </Button>
         </Space>
@@ -102,7 +123,10 @@ export default function I18nPage() {
         rowKey={(r) => `${r.key}-${r.locale}`}
         loading={loading}
         size="small"
-        pagination={{ pageSize: 50, showTotal: (total) => t("common.total").replace("{n}", String(total)) }}
+        pagination={{
+          pageSize: 50,
+          showTotal: (total) => t("common.total").replace("{n}", String(total)),
+        }}
       />
 
       <Modal
@@ -113,13 +137,25 @@ export default function I18nPage() {
         width={500}
       >
         <Form form={form} layout="vertical" onFinish={handleCreate}>
-          <Form.Item name="key" label={t("i18n.key")} rules={[{ required: true }]}>
+          <Form.Item
+            name="key"
+            label={t("i18n.key")}
+            rules={[{ required: true }]}
+          >
             <Input placeholder="e.g. common.hello" />
           </Form.Item>
-          <Form.Item name="locale" label={t("i18n.locale")} rules={[{ required: true }]}>
+          <Form.Item
+            name="locale"
+            label={t("i18n.locale")}
+            rules={[{ required: true }]}
+          >
             <Select options={LOCALES} />
           </Form.Item>
-          <Form.Item name="value" label={t("i18n.value")} rules={[{ required: true }]}>
+          <Form.Item
+            name="value"
+            label={t("i18n.value")}
+            rules={[{ required: true }]}
+          >
             <Input.TextArea rows={3} />
           </Form.Item>
         </Form>

@@ -12,17 +12,63 @@ interface LogsTabProps {
 }
 
 const columns: ColumnsType<SyncLog> = [
-  { title: "同步类型", dataIndex: "sync_type", key: "sync_type", render: (v: string) => <Tag color="blue">{v}</Tag> },
-  { title: "外部 ID", dataIndex: "external_id", key: "external_id", render: (v: string) => v || "-" },
-  { title: "数据摘要", dataIndex: "data_summary", key: "data_summary", ellipsis: true, render: (v: string) => v || "-" },
-  { title: "状态", dataIndex: "status", key: "status", render: (v: string) => { const info = SYNC_STATUS_MAP[v] || { label: v, color: "default" }; return <Tag color={info.color}>{info.label}</Tag>; } },
-  { title: "错误信息", dataIndex: "error_message", key: "error_message", ellipsis: true, render: (v: string | null) => v ? <Typography.Text type="danger" ellipsis title={v}>{v}</Typography.Text> : "-" },
-  { title: "创建时间", dataIndex: "created_at", key: "created_at", render: (v: string) => formatDate(v) },
+  {
+    title: "同步类型",
+    dataIndex: "sync_type",
+    key: "sync_type",
+    render: (v: string) => <Tag color="#1d4ed8">{v}</Tag>,
+  },
+  {
+    title: "外部 ID",
+    dataIndex: "external_id",
+    key: "external_id",
+    render: (v: string) => v || "-",
+  },
+  {
+    title: "数据摘要",
+    dataIndex: "data_summary",
+    key: "data_summary",
+    ellipsis: true,
+    render: (v: string) => v || "-",
+  },
+  {
+    title: "状态",
+    dataIndex: "status",
+    key: "status",
+    render: (v: string) => {
+      const info = SYNC_STATUS_MAP[v] || { label: v, color: "#8c8c8c" };
+      return <Tag color={info.color}>{info.label}</Tag>;
+    },
+  },
+  {
+    title: "错误信息",
+    dataIndex: "error_message",
+    key: "error_message",
+    ellipsis: true,
+    render: (v: string | null) =>
+      v ? (
+        <Typography.Text type="danger" ellipsis title={v}>
+          {v}
+        </Typography.Text>
+      ) : (
+        "-"
+      ),
+  },
+  {
+    title: "创建时间",
+    dataIndex: "created_at",
+    key: "created_at",
+    render: (v: string) => formatDate(v),
+  },
 ];
 
 export function LogsTab({ logs, loading }: LogsTabProps) {
   return (
-    <Table columns={columns} dataSource={logs} rowKey="id" loading={loading}
+    <Table
+      columns={columns}
+      dataSource={logs}
+      rowKey="id"
+      loading={loading}
       pagination={{ pageSize: 20, showTotal: (t) => `共 ${t} 条` }}
       locale={{ emptyText: "暂无同步日志" }}
     />

@@ -85,7 +85,7 @@ export default function AuditLogsPage() {
       ellipsis: true,
       render: (v: string) =>
         v === "platform" ? (
-          <Tag color="purple">平台</Tag>
+          <Tag color="#f59e0b">平台</Tag>
         ) : (
           <span style={{ fontSize: "var(--ymt-font-size-xs)" }}>
             {v.slice(0, 8)}…
@@ -98,7 +98,7 @@ export default function AuditLogsPage() {
       key: "action",
       width: 160,
       render: (v: string) => {
-        const color = ACTION_COLORS[v.split(":")[0]] ?? "blue";
+        const color = ACTION_COLORS[v.split(":")[0]] ?? "#1d4ed8";
         return <Tag color={color}>{v}</Tag>;
       },
     },

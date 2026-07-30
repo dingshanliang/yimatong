@@ -1,7 +1,18 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Button, Card, Form, Input, Modal, Select, Table, Tabs, Tag, Typography } from "antd";
+import {
+  Button,
+  Card,
+  Form,
+  Input,
+  Modal,
+  Select,
+  Table,
+  Tabs,
+  Tag,
+  Typography,
+} from "antd";
 import { PlusOutlined } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
 import api from "@/lib/api";
@@ -26,7 +37,12 @@ type Org = Record<string, unknown> & {
 
 const orgColumns: ColumnsType<Org> = [
   { title: "组织名称", dataIndex: "name", key: "name" },
-  { title: "类型", dataIndex: "org_type_label", key: "org_type_label", render: (v: string, record) => <Tag>{v || record.org_type}</Tag> },
+  {
+    title: "类型",
+    dataIndex: "org_type_label",
+    key: "org_type_label",
+    render: (v: string, record) => <Tag>{v || record.org_type}</Tag>,
+  },
   {
     title: "成员",
     key: "members",
@@ -36,12 +52,24 @@ const orgColumns: ColumnsType<Org> = [
       </span>
     ),
   },
-  { title: "共享模板", dataIndex: "template_count", key: "template_count", render: (v: number) => v || 0 },
+  {
+    title: "共享模板",
+    dataIndex: "template_count",
+    key: "template_count",
+    render: (v: number) => v || 0,
+  },
   {
     title: "下一步",
     dataIndex: "next_action",
     key: "next_action",
-    render: (v: string, record) => <Tag color="blue" data-testid={`regional-org-next-action-${record.id}`}>{v || "添加成员企业"}</Tag>,
+    render: (v: string, record) => (
+      <Tag
+        color="#1d4ed8"
+        data-testid={`regional-org-next-action-${record.id}`}
+      >
+        {v || "添加成员企业"}
+      </Tag>
+    ),
   },
 ];
 
@@ -84,30 +112,73 @@ export default function RegionalPage() {
   // 成员列表（用于 CampaignsTab）
   const [membersList, setMembersList] = useState<Record<string, unknown>[]>([]);
   useEffect(() => {
-    if (!selectedOrgId) { setMembersList([]); return; }
-    api.get(`/regional/orgs/${selectedOrgId}/members`, { params: { page_size: 100 } })
+    if (!selectedOrgId) {
+      setMembersList([]);
+      return;
+    }
+    api
+      .get(`/regional/orgs/${selectedOrgId}/members`, {
+        params: { page_size: 100 },
+      })
       .then(({ data }) => setMembersList(data.items || []))
       .catch(() => {});
   }, [selectedOrgId]);
 
   const tabItems = [
-    { key: "members", label: "成员管理", children: <MembersTab orgId={selectedOrgId} />, disabled: !selectedOrgId },
-    { key: "templates", label: "共享模板", children: <TemplatesTab orgId={selectedOrgId} />, disabled: !selectedOrgId },
-    { key: "dashboard", label: "基础看板", children: <DashboardTab orgId={selectedOrgId} orgName={selectedOrgName} />, disabled: !selectedOrgId },
-    { key: "advanced", label: "高级看板", children: <AdvancedDashboardTab orgId={selectedOrgId} orgName={selectedOrgName} />, disabled: !selectedOrgId },
-    { key: "campaigns", label: "统一活动", children: <CampaignsTab orgId={selectedOrgId} members={membersList} />, disabled: !selectedOrgId },
+    {
+      key: "members",
+      label: "成员管理",
+      children: <MembersTab orgId={selectedOrgId} />,
+      disabled: !selectedOrgId,
+    },
+    {
+      key: "templates",
+      label: "共享模板",
+      children: <TemplatesTab orgId={selectedOrgId} />,
+      disabled: !selectedOrgId,
+    },
+    {
+      key: "dashboard",
+      label: "基础看板",
+      children: (
+        <DashboardTab orgId={selectedOrgId} orgName={selectedOrgName} />
+      ),
+      disabled: !selectedOrgId,
+    },
+    {
+      key: "advanced",
+      label: "高级看板",
+      children: (
+        <AdvancedDashboardTab orgId={selectedOrgId} orgName={selectedOrgName} />
+      ),
+      disabled: !selectedOrgId,
+    },
+    {
+      key: "campaigns",
+      label: "统一活动",
+      children: <CampaignsTab orgId={selectedOrgId} members={membersList} />,
+      disabled: !selectedOrgId,
+    },
   ];
 
   return (
     <div>
-      <Title level={4} className="!mb-2">区域品牌</Title>
-      <div className="mb-4 text-sm text-text-muted">管理区域公用品牌、协会成员、统一模板和跨成员活动。</div>
+      <Title level={4} className="!mb-2">
+        区域品牌
+      </Title>
+      <div className="mb-4 text-sm text-text-muted">
+        管理区域公用品牌、协会成员、统一模板和跨成员活动。
+      </div>
 
       <div className="mb-4 flex justify-between items-center">
         <span className="text-sm text-text-muted">
           {selectedOrgId ? `当前组织: ${selectedOrgName}` : "请选择一个组织"}
         </span>
-        <Button type="primary" icon={<PlusOutlined />} onClick={() => setOpen(true)}>
+        <Button
+          type="primary"
+          icon={<PlusOutlined />}
+          onClick={() => setOpen(true)}
+        >
           新建组织
         </Button>
       </div>
@@ -123,7 +194,10 @@ export default function RegionalPage() {
             onClick: () => setSelectedOrgId(record.id),
             style: {
               cursor: "pointer",
-              background: record.id === selectedOrgId ? "var(--admin-table-row-selected-bg)" : undefined,
+              background:
+                record.id === selectedOrgId
+                  ? "var(--admin-table-row-selected-bg)"
+                  : undefined,
             },
           })}
         />
@@ -135,8 +209,19 @@ export default function RegionalPage() {
         </div>
       )}
 
-      <Modal title="新建区域组织" open={open} onCancel={() => setOpen(false)} onOk={() => form.submit()} width={500}>
-        <Form form={form} layout="vertical" onFinish={handleCreate} initialValues={{ org_type: "association" }}>
+      <Modal
+        title="新建区域组织"
+        open={open}
+        onCancel={() => setOpen(false)}
+        onOk={() => form.submit()}
+        width={500}
+      >
+        <Form
+          form={form}
+          layout="vertical"
+          onFinish={handleCreate}
+          initialValues={{ org_type: "association" }}
+        >
           <Form.Item name="name" label="组织名称" rules={[{ required: true }]}>
             <Input placeholder="例如：赣南脐橙协会" />
           </Form.Item>

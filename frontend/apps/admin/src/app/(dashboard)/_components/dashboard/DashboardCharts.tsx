@@ -17,7 +17,10 @@ interface DashboardChartsProps {
   loading?: boolean;
 }
 
-export default function DashboardCharts({ initialTrend, loading: parentLoading }: DashboardChartsProps) {
+export default function DashboardCharts({
+  initialTrend,
+  loading: parentLoading,
+}: DashboardChartsProps) {
   const [trend, setTrend] = useState<TrendRow[]>(initialTrend || []);
   const [dateRange, setDateRange] = useState<[Dayjs, Dayjs]>([
     dayjs().subtract(29, "day"),
@@ -71,7 +74,9 @@ export default function DashboardCharts({ initialTrend, loading: parentLoading }
     point: { shapeField: "square", sizeField: 3 },
     interaction: { tooltip: { marker: false } },
     style: { lineWidth: 2 },
-    scale: { color: { range: ["#1677ff", "#52c41a"] } },
+    // 取自 @yimatong/design-tokens（action-primary / feedback-success）；
+    // 图表在 JS 层解析颜色，不能用 CSS var()，故直接用 token 对应 hex。
+    scale: { color: { range: ["#15803d", "#166534"] } },
     axis: {
       y: { title: "数量" },
       x: { title: false },
@@ -96,17 +101,28 @@ export default function DashboardCharts({ initialTrend, loading: parentLoading }
               void fetchTrend([dates[0], dates[1]]);
             }
           }}
-          disabledDate={(current) => current && current.isAfter(dayjs().endOf("day"))}
+          disabledDate={(current) =>
+            current && current.isAfter(dayjs().endOf("day"))
+          }
         />
       }
     >
       {isLoading ? (
-        <div className="flex items-center justify-center" style={{ height: 280 }}>
+        <div
+          className="flex items-center justify-center"
+          style={{ height: 280 }}
+        >
           <Spin />
         </div>
       ) : chartData.length === 0 ? (
-        <div className="flex items-center justify-center" style={{ height: 280 }}>
-          <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无趋势数据" />
+        <div
+          className="flex items-center justify-center"
+          style={{ height: 280 }}
+        >
+          <Empty
+            image={Empty.PRESENTED_IMAGE_SIMPLE}
+            description="暂无趋势数据"
+          />
         </div>
       ) : (
         <div className="min-w-0">

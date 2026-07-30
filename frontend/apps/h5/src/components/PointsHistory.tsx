@@ -29,23 +29,23 @@ const TXN_META: Record<
   }
 > = {
   earning: {
-    badgeCls: "bg-green-50 text-green-700",
+    badgeCls: "bg-success-bg text-success",
     label: "收入",
-    amountColor: "text-green-600",
+    amountColor: "text-success",
     sign: "+",
     fallbackReason: "积分奖励",
   },
   expired: {
-    badgeCls: "bg-gray-100 text-gray-600",
+    badgeCls: "bg-muted text-foreground-secondary",
     label: "过期",
-    amountColor: "text-gray-500",
+    amountColor: "text-foreground-secondary",
     sign: "-",
     fallbackReason: "积分过期",
   },
   spending: {
-    badgeCls: "bg-orange-50 text-orange-700",
+    badgeCls: "bg-warning-bg text-warning",
     label: "支出",
-    amountColor: "text-orange-600",
+    amountColor: "text-warning",
     sign: "-",
     fallbackReason: "积分消耗",
   },
@@ -114,10 +114,10 @@ export function PointsHistory({ consumerId, scanToken }: PointsHistoryProps) {
             className="flex items-center justify-between animate-pulse"
           >
             <div className="flex items-center gap-2">
-              <div className="h-5 w-10 rounded bg-gray-200" />
-              <div className="h-4 w-20 rounded bg-gray-200" />
+              <div className="h-5 w-10 rounded bg-muted" />
+              <div className="h-4 w-20 rounded bg-muted" />
             </div>
-            <div className="h-4 w-12 rounded bg-gray-200" />
+            <div className="h-4 w-12 rounded bg-muted" />
           </div>
         ))}
       </div>
@@ -126,18 +126,20 @@ export function PointsHistory({ consumerId, scanToken }: PointsHistoryProps) {
 
   if (items.length === 0) {
     return (
-      <p className="py-4 text-center text-sm text-gray-400">暂无积分记录</p>
+      <p className="py-4 text-center text-sm text-foreground-tertiary">
+        暂无积分记录
+      </p>
     );
   }
 
   return (
     <div>
       {error && (
-        <p className="mb-2 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-600">
+        <p className="mb-2 rounded-lg bg-danger-bg px-3 py-2 text-xs text-danger">
           {error}
         </p>
       )}
-      <div className="divide-y divide-gray-100">
+      <div className="divide-y divide-base">
         {items.map((txn) => {
           const meta = TXN_META[txn.txn_type] || TXN_META.spending;
           return (
@@ -151,7 +153,7 @@ export function PointsHistory({ consumerId, scanToken }: PointsHistoryProps) {
                 >
                   {meta.label}
                 </span>
-                <span className="truncate text-sm text-gray-700">
+                <span className="truncate text-sm text-foreground-secondary">
                   {txn.reason || meta.fallbackReason}
                 </span>
               </div>
@@ -160,7 +162,7 @@ export function PointsHistory({ consumerId, scanToken }: PointsHistoryProps) {
                   {meta.sign}
                   {txn.amount}
                 </span>
-                <span className="text-xs text-gray-400 w-16 text-right">
+                <span className="text-xs text-foreground-tertiary w-16 text-right">
                   余 {txn.balance_after}
                 </span>
               </div>
@@ -173,7 +175,7 @@ export function PointsHistory({ consumerId, scanToken }: PointsHistoryProps) {
         <button
           onClick={() => fetchPage(page + 1)}
           disabled={loading}
-          className="mt-2 w-full rounded-xl py-2 text-xs text-gray-500 active:bg-gray-50 disabled:text-gray-300"
+          className="mt-2 w-full rounded-xl py-2 text-xs text-foreground-secondary active:bg-muted disabled:text-foreground-tertiary"
         >
           {loading ? "加载中..." : "加载更多"}
         </button>

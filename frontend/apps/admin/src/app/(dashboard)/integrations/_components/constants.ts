@@ -18,8 +18,8 @@ export const ROLE_OPTIONS = [
 ];
 
 export const STATUS_COLORS: Record<string, string> = {
-  delivered: "green",
-  pending: "blue",
-  retrying: "orange",
-  failed: "red",
+  delivered: "#16a34a",
+  pending: "#1d4ed8",
+  retrying: "#f59e0b",
+  failed: "#b91c1c",
 };

@@ -55,7 +55,11 @@ export function EditorHeader({
           {productName ? `关联产品：${productName}` : "未关联产品"}
         </Text>
         <Tag>{moduleCount} 个模块</Tag>
-        {issueCount > 0 ? <Tag color="orange">{issueCount} 项待确认</Tag> : <Tag color="green">可发布检查通过</Tag>}
+        {issueCount > 0 ? (
+          <Tag color="#f59e0b">{issueCount} 项待确认</Tag>
+        ) : (
+          <Tag color="#16a34a">可发布检查通过</Tag>
+        )}
       </div>
       <Space>
         {versionStatus === "draft" && (

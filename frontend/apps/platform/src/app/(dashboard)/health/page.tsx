@@ -50,10 +50,10 @@ interface HealthTenant {
 }
 
 const STATUS_CONFIG: Record<string, { color: string; label: string }> = {
-  healthy: { color: "green", label: "健康" },
-  warning: { color: "orange", label: "警告" },
-  critical: { color: "red", label: "危急" },
-  dormant: { color: "default", label: "休眠" },
+  healthy: { color: "#16a34a", label: "健康" },
+  warning: { color: "#f59e0b", label: "警告" },
+  critical: { color: "#b91c1c", label: "危急" },
+  dormant: { color: "#8c8c8c", label: "休眠" },
 };
 
 export default function HealthPage() {
@@ -150,7 +150,7 @@ export default function HealthPage() {
       render: (v: number | null) =>
         v !== null ? (
           v <= 30 ? (
-            <Tag color="red">{v} 天</Tag>
+            <Tag color="#b91c1c">{v} 天</Tag>
           ) : (
             <span>{v} 天</span>
           )

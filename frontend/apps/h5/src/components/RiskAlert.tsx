@@ -21,13 +21,16 @@ export function RiskAlert({
   detectedCity,
   contactUrl,
 }: RiskAlertProps) {
-  const isHighRisk = alertType === "multi_location" || alertType === "suspected_copy";
+  const isHighRisk =
+    alertType === "multi_location" || alertType === "suspected_copy";
   const recommendation = RECOMMENDATIONS[alertType];
 
   return (
     <div
       className={`rounded-2xl border p-4 shadow-sm ${
-        isHighRisk ? "border-red-200 bg-red-50" : "border-amber-200 bg-amber-50"
+        isHighRisk
+          ? "border-danger bg-danger-bg"
+          : "border-warning bg-warning-bg"
       }`}
     >
       <div className="flex items-start gap-2">
@@ -35,25 +38,32 @@ export function RiskAlert({
         <div className="flex-1">
           <p
             className={`text-sm font-semibold ${
-              isHighRisk ? "text-red-800" : "text-amber-800"
+              isHighRisk ? "text-danger" : "text-warning"
             }`}
           >
             {alertType === "multi_location" && "多地扫码预警"}
             {alertType === "suspected_copy" && "疑似复制码"}
             {alertType === "frequency" && "频繁扫码预警"}
-            {!["multi_location", "suspected_copy", "frequency"].includes(alertType) &&
-              "安全提醒"}
+            {!["multi_location", "suspected_copy", "frequency"].includes(
+              alertType
+            ) && "安全提醒"}
           </p>
           {detail && (
-            <p className={`mt-1 text-xs ${isHighRisk ? "text-red-600" : "text-amber-600"}`}>
+            <p
+              className={`mt-1 text-xs ${isHighRisk ? "text-danger" : "text-warning"}`}
+            >
               {detail}
             </p>
           )}
           {scanCount !== undefined && (
-            <p className="mt-1 text-xs text-gray-500">此码已被扫 {scanCount} 次</p>
+            <p className="mt-1 text-xs text-foreground-secondary">
+              此码已被扫 {scanCount} 次
+            </p>
           )}
           {detectedCity && (
-            <p className="mt-1 text-xs text-gray-500">异常扫码地点: {detectedCity}</p>
+            <p className="mt-1 text-xs text-foreground-secondary">
+              异常扫码地点: {detectedCity}
+            </p>
           )}
         </div>
       </div>
@@ -62,10 +72,12 @@ export function RiskAlert({
       {recommendation && (
         <div
           className={`mt-3 rounded-xl border p-3 ${
-            isHighRisk ? "border-red-100 bg-white/60" : "border-amber-100 bg-white/60"
+            isHighRisk
+              ? "border-danger bg-white/60"
+              : "border-warning bg-white/60"
           }`}
         >
-          <p className="text-xs text-gray-600">
+          <p className="text-xs text-foreground-secondary">
             <span className="font-medium">建议：</span>
             {recommendation}
           </p>
@@ -75,7 +87,7 @@ export function RiskAlert({
       {contactUrl && (
         <a
           href={contactUrl}
-          className="mt-3 block w-full rounded-xl border border-gray-200 bg-white py-2.5 text-center text-sm font-medium text-gray-700 active:bg-gray-50"
+          className="mt-3 block w-full rounded-xl border border-base bg-surface py-2.5 text-center text-sm font-medium text-foreground-secondary active:bg-muted"
         >
           联系客服
         </a>

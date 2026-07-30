@@ -72,7 +72,9 @@ export default function OnboardingWizard() {
 
     const fetchProgress = async () => {
       try {
-        const { data: resp } = await api.get<OnboardingData>("/tenants/me/onboarding");
+        const { data: resp } = await api.get<OnboardingData>(
+          "/tenants/me/onboarding"
+        );
         setData(resp);
         if (!resp.is_complete) {
           setVisible(true);
@@ -90,7 +92,9 @@ export default function OnboardingWizard() {
     try {
       await api.post(`/tenants/me/onboarding/step/${step}`);
       // Refresh progress
-      const { data: resp } = await api.get<OnboardingData>("/tenants/me/onboarding");
+      const { data: resp } = await api.get<OnboardingData>(
+        "/tenants/me/onboarding"
+      );
       setData(resp);
       if (resp.is_complete) {
         setVisible(false);
@@ -163,8 +167,8 @@ export default function OnboardingWizard() {
                       {cfg.icon}
                       <span>{cfg.title}</span>
                     </div>
-                    {isDone && <Tag color="success">已完成</Tag>}
-                    {isCurrent && <Tag color="processing">当前步骤</Tag>}
+                    {isDone && <Tag color="#16a34a">已完成</Tag>}
+                    {isCurrent && <Tag color="#1d4ed8">当前步骤</Tag>}
                   </div>
                 }
               >

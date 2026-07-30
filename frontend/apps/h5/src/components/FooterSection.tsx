@@ -14,7 +14,7 @@ export function FooterSection({
   }
 
   return (
-    <div className="mx-4 mb-6 mt-3 rounded-2xl bg-white p-4 shadow-sm">
+    <div className="mx-4 mb-6 mt-3 rounded-2xl bg-surface p-4 shadow-sm">
       <div className="flex items-center gap-2">
         {branding?.logo_url ? (
           <img
@@ -23,11 +23,11 @@ export function FooterSection({
             className="h-6 w-6 rounded object-cover"
           />
         ) : (
-          <div className="flex h-6 w-6 items-center justify-center rounded bg-gray-100 text-xs font-bold text-gray-500">
+          <div className="flex h-6 w-6 items-center justify-center rounded bg-muted text-xs font-bold text-foreground-secondary">
             {(branding?.name || "Y").charAt(0)}
           </div>
         )}
-        <span className="text-sm text-gray-500">
+        <span className="text-sm text-foreground-secondary">
           {hideEndorsement ? branding?.name || "" : "由一码通提供技术支持"}
         </span>
       </div>

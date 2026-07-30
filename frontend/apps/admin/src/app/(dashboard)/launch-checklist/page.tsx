@@ -143,7 +143,7 @@ export default function LaunchChecklistPage() {
         <Title level={4} className="!mb-0">
           上线检查清单
         </Title>
-        <Tag color={allRequiredDone ? "green" : "orange"}>
+        <Tag color={allRequiredDone ? "#16a34a" : "#f59e0b"}>
           {allRequiredDone ? "必填项已完成" : "必填项未完成"}
         </Tag>
       </div>
@@ -195,7 +195,7 @@ export default function LaunchChecklistPage() {
                     <span>{item.label}</span>
                     {item.required && (
                       <Tag
-                        color="red"
+                        color="#b91c1c"
                         className="ml-2"
                         style={{ fontSize: "var(--ymt-font-size-xs)" }}
                       >

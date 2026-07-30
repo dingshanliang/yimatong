@@ -39,8 +39,8 @@ interface DiversionClue {
 }
 
 const SEVERITY_MAP: Record<string, { label: string; color: string }> = {
-  high: { label: "高危", color: "red" },
-  medium: { label: "中危", color: "orange" },
+  high: { label: "高危", color: "#b91c1c" },
+  medium: { label: "中危", color: "#f59e0b" },
 };
 
 const RESOLUTION_OPTIONS = [
@@ -145,7 +145,7 @@ export default function AntiDiversionPage() {
       render: (v: string) => {
         const info = SEVERITY_MAP[v] || {
           label: v || "未知",
-          color: "default",
+          color: "#8c8c8c",
         };
         return <Tag color={info.color}>{info.label}</Tag>;
       },
@@ -176,11 +176,11 @@ export default function AntiDiversionPage() {
       width: 80,
       render: (v: boolean) =>
         v ? (
-          <Tag icon={<CheckCircleOutlined />} color="success">
+          <Tag icon={<CheckCircleOutlined />} color="#16a34a">
             已处理
           </Tag>
         ) : (
-          <Tag icon={<ExclamationCircleOutlined />} color="warning">
+          <Tag icon={<ExclamationCircleOutlined />} color="#f59e0b">
             待处理
           </Tag>
         ),

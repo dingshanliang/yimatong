@@ -35,12 +35,16 @@ export interface SemanticTokens {
     feedback: {
       success: string;
       successBg: string;
+      successBorder: string;
       warning: string;
       warningBg: string;
+      warningBorder: string;
       danger: string;
       dangerBg: string;
+      dangerBorder: string;
       info: string;
       infoBg: string;
+      infoBorder: string;
     };
     focus: {
       ring: string;
@@ -101,12 +105,16 @@ export const lightTokens = {
     feedback: {
       success: "#166534",
       successBg: "#f0fdf4",
+      successBorder: "#bbf7d0",
       warning: "#92400e",
       warningBg: "#fffbeb",
+      warningBorder: "#fde68a",
       danger: "#b91c1c",
       dangerBg: "#fef2f2",
+      dangerBorder: "#fecaca",
       info: "#1d4ed8",
       infoBg: "#eff6ff",
+      infoBorder: "#bfdbfe",
     },
     focus: {
       ring: "#166534",
@@ -160,12 +168,16 @@ export const darkTokens = {
     feedback: {
       success: "#86efac",
       successBg: "#123b20",
+      successBorder: "#4ade80",
       warning: "#fcd34d",
       warningBg: "#3d2a08",
+      warningBorder: "#f59e0b",
       danger: "#fca5a5",
       dangerBg: "#451a1a",
+      dangerBorder: "#f87171",
       info: "#93c5fd",
       infoBg: "#172554",
+      infoBorder: "#60a5fa",
     },
     focus: {
       ring: "#86efac",

@@ -80,14 +80,14 @@ interface CodeBatchFormValues {
 }
 
 const STATUS_MAP: Record<string, { label: string; color: string }> = {
-  pending: { label: "待生成", color: "default" },
-  generating: { label: "生成中", color: "blue" },
-  completed: { label: "已生成", color: "green" },
-  exported: { label: "已导出", color: "cyan" },
-  printing: { label: "印刷中", color: "orange" },
-  delivered: { label: "已交付", color: "purple" },
-  activated: { label: "已激活", color: "blue" },
-  failed: { label: "失败", color: "red" },
+  pending: { label: "待生成", color: "#8c8c8c" },
+  generating: { label: "生成中", color: "#1d4ed8" },
+  completed: { label: "已生成", color: "#16a34a" },
+  exported: { label: "已导出", color: "#1d4ed8" },
+  printing: { label: "印刷中", color: "#f59e0b" },
+  delivered: { label: "已交付", color: "#f59e0b" },
+  activated: { label: "已激活", color: "#1d4ed8" },
+  failed: { label: "失败", color: "#b91c1c" },
 };
 
 const FILTER_STATUS_OPTIONS = [
@@ -459,7 +459,7 @@ export default function CodesPage() {
       dataIndex: "status",
       key: "status",
       render: (s: string) => {
-        const info = STATUS_MAP[s] || { label: s, color: "default" };
+        const info = STATUS_MAP[s] || { label: s, color: "#8c8c8c" };
         return <Tag color={info.color}>{info.label}</Tag>;
       },
     },

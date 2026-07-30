@@ -27,25 +27,25 @@ const ACTION_STYLES: Record<
 > = {
   wecom_link: {
     icon: <WeChatIcon className="h-5 w-5" size={20} />,
-    bg: "bg-green-50",
-    text: "text-green-700",
+    bg: "bg-success-bg",
+    text: "text-success",
   },
   mini_program: {
     icon: <MiniProgramIcon className="h-5 w-5" size={20} />,
-    bg: "bg-blue-50",
-    text: "text-blue-700",
+    bg: "bg-info-bg",
+    text: "text-info",
   },
   external_shop: {
     icon: (
       <ExternalLink className="h-5 w-5" strokeWidth={2} aria-hidden="true" />
     ),
-    bg: "bg-orange-50",
-    text: "text-orange-700",
+    bg: "bg-warning-bg",
+    text: "text-warning",
   },
   wechat_official: {
     icon: <WeChatIcon className="h-5 w-5" size={20} />,
-    bg: "bg-green-50",
-    text: "text-green-700",
+    bg: "bg-success-bg",
+    text: "text-success",
   },
 };
 
@@ -79,7 +79,7 @@ export function PrivateDomainButtons({ buttons }: PrivateDomainButtonsProps) {
 
   return (
     <div className="space-y-3">
-      <h3 className="text-base font-semibold text-gray-900">关注我们</h3>
+      <h3 className="text-base font-semibold text-foreground">关注我们</h3>
       <div className="flex flex-wrap gap-2.5">
         {buttons.map((btn, idx) => {
           const s = ACTION_STYLES[btn.action];

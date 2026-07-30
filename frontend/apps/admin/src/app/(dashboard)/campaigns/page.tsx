@@ -251,11 +251,11 @@ const STATUS_MAP: Record<
   ComputedCampaignStatus,
   { label: string; color: string }
 > = {
-  draft: { label: "草稿", color: "default" },
-  pending: { label: "待开始", color: "geekblue" },
-  active: { label: "进行中", color: "green" },
-  paused: { label: "已暂停", color: "orange" },
-  ended: { label: "已结束", color: "gray" },
+  draft: { label: "草稿", color: "#8c8c8c" },
+  pending: { label: "待开始", color: "#1d4ed8" },
+  active: { label: "进行中", color: "#16a34a" },
+  paused: { label: "已暂停", color: "#f59e0b" },
+  ended: { label: "已结束", color: "#8c8c8c" },
 };
 
 function formatDateTime(value?: string | null) {
@@ -1037,7 +1037,7 @@ export default function CampaignsPage() {
         record.product_name ? (
           <Text>{record.product_name}</Text>
         ) : (
-          <Tag color="warning">未关联产品</Tag>
+          <Tag color="#f59e0b">未关联产品</Tag>
         ),
     },
     {
@@ -1047,7 +1047,7 @@ export default function CampaignsPage() {
       width: 110,
       render: (_, record) => {
         const status = getDisplayStatus(record);
-        const info = STATUS_MAP[status] || { label: status, color: "default" };
+        const info = STATUS_MAP[status] || { label: status, color: "#8c8c8c" };
         return <Tag color={info.color}>{info.label}</Tag>;
       },
     },

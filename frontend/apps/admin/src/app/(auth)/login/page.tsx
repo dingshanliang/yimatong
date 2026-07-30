@@ -182,7 +182,7 @@ export default function LoginPage() {
         <div className="admin-muted-panel mb-6 rounded-md border p-3">
           <div className="mb-3 flex items-center justify-between">
             <Text strong>演示快捷账号</Text>
-            <Tag color="green">Demo Ready</Tag>
+            <Tag color="#16a34a">Demo Ready</Tag>
           </div>
           <Space orientation="vertical" className="w-full" size={8}>
             {DEMO_ACCOUNTS.map((account) => (

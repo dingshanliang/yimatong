@@ -74,22 +74,22 @@ function createTabState<T>(): TabState<T> {
 }
 
 const SKU_STATUS_MAP: Record<string, { label: string; color: string }> = {
-  active: { label: "启用", color: "green" },
-  inactive: { label: "停用", color: "default" },
+  active: { label: "启用", color: "#16a34a" },
+  inactive: { label: "停用", color: "#8c8c8c" },
 };
 
 const BATCH_STATUS_MAP: Record<string, { label: string; color: string }> = {
-  active: { label: "有效", color: "green" },
-  recalled: { label: "已召回", color: "red" },
-  expired: { label: "已过期", color: "gray" },
+  active: { label: "有效", color: "#16a34a" },
+  recalled: { label: "已召回", color: "#b91c1c" },
+  expired: { label: "已过期", color: "#8c8c8c" },
 };
 
 const CODE_STATUS_MAP: Record<string, { label: string; color: string }> = {
-  pending: { label: "待生成", color: "default" },
-  generating: { label: "生成中", color: "blue" },
-  completed: { label: "已生成", color: "green" },
-  activated: { label: "已激活", color: "blue" },
-  failed: { label: "失败", color: "red" },
+  pending: { label: "待生成", color: "#8c8c8c" },
+  generating: { label: "生成中", color: "#1d4ed8" },
+  completed: { label: "已生成", color: "#16a34a" },
+  activated: { label: "已激活", color: "#1d4ed8" },
+  failed: { label: "失败", color: "#b91c1c" },
 };
 
 const CODE_TYPE_LABELS: Record<string, string> = {
@@ -217,7 +217,7 @@ export default function SKUDetailPage() {
       dataIndex: "status",
       key: "status",
       render: (s: string) => {
-        const info = BATCH_STATUS_MAP[s] || { label: s, color: "default" };
+        const info = BATCH_STATUS_MAP[s] || { label: s, color: "#8c8c8c" };
         return <Tag color={info.color}>{info.label}</Tag>;
       },
     },
@@ -262,7 +262,7 @@ export default function SKUDetailPage() {
       dataIndex: "status",
       key: "status",
       render: (s: string) => {
-        const info = CODE_STATUS_MAP[s] || { label: s, color: "default" };
+        const info = CODE_STATUS_MAP[s] || { label: s, color: "#8c8c8c" };
         return <Tag color={info.color}>{info.label}</Tag>;
       },
     },

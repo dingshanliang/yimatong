@@ -33,24 +33,24 @@ const STATUS_CONFIG: Record<
   success: {
     title: "领取成功",
     subtitle: "恭喜领取",
-    gradient: "from-red-50 via-amber-50 to-orange-50",
-    amountColor: "text-red-600",
+    gradient: "from-danger-bg via-warning-bg to-warning-bg",
+    amountColor: "text-danger",
     icon: "🧧",
     detailText: "已到微信零钱，请注意查收",
   },
   pending: {
     title: "处理中",
     subtitle: "红包发放中",
-    gradient: "from-amber-50 via-yellow-50 to-orange-50",
-    amountColor: "text-amber-600",
+    gradient: "from-warning-bg via-warning-bg to-warning-bg",
+    amountColor: "text-warning",
     icon: "⏳",
     detailText: "处理中，请稍后查看微信零钱明细",
   },
   failed: {
     title: "领取失败",
     subtitle: "很抱歉",
-    gradient: "from-gray-50 via-gray-100 to-gray-50",
-    amountColor: "text-gray-500",
+    gradient: "from-canvas via-muted to-canvas",
+    amountColor: "text-foreground-secondary",
     icon: "😿",
     detailText: "领取失败，请稍后再试",
   },
@@ -69,15 +69,9 @@ function RedPacketResultContent() {
 
   // 映射后端状态到展示状态
   let displayStatus: DisplayStatus;
-  if (
-    statusParam === "success" ||
-    statusParam === "delivered"
-  ) {
+  if (statusParam === "success" || statusParam === "delivered") {
     displayStatus = "success";
-  } else if (
-    statusParam === "pending" ||
-    statusParam === "claimed"
-  ) {
+  } else if (statusParam === "pending" || statusParam === "claimed") {
     displayStatus = "pending";
   } else {
     displayStatus = "failed";
@@ -90,19 +84,17 @@ function RedPacketResultContent() {
       className={`flex min-h-screen flex-col items-center bg-gradient-to-b ${config.gradient} px-6 pt-20`}
     >
       {/* 图标 */}
-      <div className="flex h-24 w-24 items-center justify-center rounded-full bg-white shadow-lg">
+      <div className="flex h-24 w-24 items-center justify-center rounded-full bg-surface shadow-lg">
         <span className="text-5xl">{config.icon}</span>
       </div>
 
       {/* 状态标题 */}
-      <h1 className="mt-6 text-xl font-bold text-gray-900">
-        {config.title}
-      </h1>
+      <h1 className="mt-6 text-xl font-bold text-foreground">{config.title}</h1>
 
       {/* 金额展示（仅成功和处理中显示） */}
       {displayStatus !== "failed" && isValidAmount && (
         <div className="mt-6 text-center">
-          <p className="text-sm text-gray-500">{config.subtitle}</p>
+          <p className="text-sm text-foreground-secondary">{config.subtitle}</p>
           <p className={`mt-1 text-5xl font-bold ${config.amountColor}`}>
             {fenToYuan(amountFen)}
             <span className="ml-1 text-lg font-medium">元</span>
@@ -111,11 +103,13 @@ function RedPacketResultContent() {
       )}
 
       {/* 详情文字 */}
-      <p className="mt-4 text-sm text-gray-500">{config.detailText}</p>
+      <p className="mt-4 text-sm text-foreground-secondary">
+        {config.detailText}
+      </p>
 
       {/* 订单号（调试用，可选显示） */}
       {claimId && (
-        <p className="mt-2 text-xs text-gray-400">
+        <p className="mt-2 text-xs text-foreground-tertiary">
           订单号：{claimId}
         </p>
       )}
@@ -123,7 +117,7 @@ function RedPacketResultContent() {
       {/* 底部装饰和按钮 */}
       <div className="mt-auto w-full pb-10">
         {displayStatus === "pending" && (
-          <p className="mb-4 text-center text-xs text-gray-400">
+          <p className="mb-4 text-center text-xs text-foreground-tertiary">
             一般 1-3 分钟内到账
           </p>
         )}
@@ -144,7 +138,7 @@ function RedPacketResultContent() {
               }
             }
           }}
-          className="w-full rounded-xl border border-gray-200 bg-white py-3 text-sm font-medium text-gray-700 active:bg-gray-50"
+          className="w-full rounded-xl border border-base bg-surface py-3 text-sm font-medium text-foreground-secondary active:bg-muted"
         >
           {displayStatus === "success" ? "完成" : "返回"}
         </button>
@@ -165,8 +159,8 @@ export default function RedPacketResultPage() {
   return (
     <Suspense
       fallback={
-        <div className="flex min-h-screen items-center justify-center bg-gray-50">
-          <p className="text-sm text-gray-400">加载中...</p>
+        <div className="flex min-h-screen items-center justify-center bg-canvas">
+          <p className="text-sm text-foreground-tertiary">加载中...</p>
         </div>
       }
     >

@@ -93,7 +93,7 @@ export default function QuotaPage() {
 function renderQuotaBar(record: QuotaUsageItem, key: string) {
   const limit = record.quota?.[key];
   if (limit === undefined || limit === null) return <Tag>未设置</Tag>;
-  if (limit === -1) return <Tag color="blue">无限制</Tag>;
+  if (limit === -1) return <Tag color="#1d4ed8">无限制</Tag>;
 
   // For now show limit only — actual usage tracking will come with health metrics in Wave 4
   return (

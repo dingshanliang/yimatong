@@ -122,19 +122,19 @@ export function PrivacyPolicy({
   };
 
   return (
-    <section className="rounded-2xl bg-white p-4 shadow-sm">
-      <h3 className="text-base font-semibold text-gray-900">隐私政策</h3>
+    <section className="rounded-2xl bg-surface p-4 shadow-sm">
+      <h3 className="text-base font-semibold text-foreground">隐私政策</h3>
 
       {/* 政策内容 */}
       <div className="mt-3 max-h-64 overflow-y-auto">
         {/* 判断是否为 HTML 富文本 */}
         {content.trim().startsWith("<") ? (
           <div
-            className="prose prose-sm max-w-none text-sm text-gray-600 [&_a]:text-blue-600 [&_a]:underline"
+            className="prose prose-sm max-w-none text-sm text-foreground-secondary [&_a]:text-link [&_a]:underline"
             dangerouslySetInnerHTML={{ __html: sanitizeHtml(content) }}
           />
         ) : (
-          <p className="whitespace-pre-wrap text-sm leading-relaxed text-gray-600">
+          <p className="whitespace-pre-wrap text-sm leading-relaxed text-foreground-secondary">
             {content}
           </p>
         )}
@@ -146,14 +146,14 @@ export function PrivacyPolicy({
           <button
             type="button"
             onClick={handleReject}
-            className="flex-1 rounded-xl border border-gray-200 py-2.5 text-sm font-medium text-gray-700 transition-colors active:bg-gray-50"
+            className="flex-1 rounded-xl border border-base py-2.5 text-sm font-medium text-foreground-secondary transition-colors active:bg-muted"
           >
             拒绝
           </button>
           <button
             type="button"
             onClick={handleAccept}
-            className="flex-1 rounded-xl bg-blue-600 py-2.5 text-sm font-semibold text-white transition-colors active:bg-blue-700"
+            className="flex-1 rounded-xl bg-action py-2.5 text-sm font-semibold text-on-action transition-colors active:bg-action-active"
           >
             同意（版本 {PRIVACY_POLICY_VERSION}）
           </button>
@@ -163,14 +163,14 @@ export function PrivacyPolicy({
       {/* 已同意状态 */}
       {showActions && accepted && !showRevokeConfirm && (
         <div className="mt-4 flex items-center justify-between">
-          <span className="inline-flex items-center gap-1.5 text-sm text-green-700">
+          <span className="inline-flex items-center gap-1.5 text-sm text-success">
             <CircleCheck className="h-4 w-4" aria-hidden="true" />
             已同意隐私政策
           </span>
           <button
             type="button"
             onClick={() => setShowRevokeConfirm(true)}
-            className="text-xs text-gray-400 underline-offset-2 hover:underline"
+            className="text-xs text-foreground-tertiary underline-offset-2 hover:underline"
           >
             撤回授权
           </button>
@@ -180,25 +180,25 @@ export function PrivacyPolicy({
       {/* 撤回确认弹窗 */}
       {showRevokeConfirm && (
         <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 sm:items-center">
-          <div className="w-full max-w-md rounded-t-2xl bg-white p-6 shadow-xl sm:rounded-2xl">
-            <h4 className="text-base font-semibold text-gray-900">
+          <div className="w-full max-w-md rounded-t-2xl bg-surface p-6 shadow-xl sm:rounded-2xl">
+            <h4 className="text-base font-semibold text-foreground">
               撤回授权确认
             </h4>
-            <p className="mt-2 text-sm text-gray-600">
+            <p className="mt-2 text-sm text-foreground-secondary">
               撤回授权后可能影响部分功能的正常使用，确定要撤回吗？
             </p>
             <div className="mt-4 flex gap-3">
               <button
                 type="button"
                 onClick={() => setShowRevokeConfirm(false)}
-                className="flex-1 rounded-xl border border-gray-200 py-2.5 text-sm text-gray-700 active:bg-gray-50"
+                className="flex-1 rounded-xl border border-base py-2.5 text-sm text-foreground-secondary active:bg-muted"
               >
                 取消
               </button>
               <button
                 type="button"
                 onClick={handleRevoke}
-                className="flex-1 rounded-xl bg-red-600 py-2.5 text-sm font-semibold text-white active:bg-red-700"
+                className="flex-1 rounded-xl bg-danger py-2.5 text-sm font-semibold text-on-action active:bg-danger"
               >
                 确认撤回
               </button>

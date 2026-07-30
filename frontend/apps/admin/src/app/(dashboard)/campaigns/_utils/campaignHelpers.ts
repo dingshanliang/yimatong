@@ -41,11 +41,11 @@ export const STATUS_MAP: Record<
   CampaignStatusType | "pending",
   { label: string; color: string }
 > = {
-  draft: { label: "草稿", color: "default" },
-  pending: { label: "待开始", color: "geekblue" },
-  active: { label: "进行中", color: "green" },
-  paused: { label: "已暂停", color: "orange" },
-  ended: { label: "已结束", color: "gray" },
+  draft: { label: "草稿", color: "#8c8c8c" },
+  pending: { label: "待开始", color: "#1d4ed8" },
+  active: { label: "进行中", color: "#16a34a" },
+  paused: { label: "已暂停", color: "#f59e0b" },
+  ended: { label: "已结束", color: "#8c8c8c" },
 };
 
 export const PARTICIPATION_LABELS: Record<string, string> = {
@@ -81,14 +81,18 @@ export function formatCampaignTime(record: CampaignRecord) {
       return { range: `${start} 至 ${end}`, hint: `剩余 ${days} 天` };
     }
   }
-  if (status === "pending") return { range: `${start} 至 ${end}`, hint: "未开始" };
-  if (status === "ended") return { range: `${start} 至 ${end}`, hint: "已结束" };
+  if (status === "pending")
+    return { range: `${start} 至 ${end}`, hint: "未开始" };
+  if (status === "ended")
+    return { range: `${start} 至 ${end}`, hint: "已结束" };
   return { range: `${start} 至 ${end}`, hint: "" };
 }
 
 // ── 访问器函数 ──────────────────────────────
 
-export function getDisplayStatus(record: CampaignRecord): ComputedCampaignStatus {
+export function getDisplayStatus(
+  record: CampaignRecord
+): ComputedCampaignStatus {
   return record.computed_status || record.status || "draft";
 }
 
@@ -110,7 +114,10 @@ export function getClaimCount(record: CampaignRecord) {
 
 // ── 转换函数 ──────────────────────────────
 
-export function toDateRange(startAt?: string, endAt?: string): [Dayjs, Dayjs] | undefined {
+export function toDateRange(
+  startAt?: string,
+  endAt?: string
+): [Dayjs, Dayjs] | undefined {
   const start = dayjs(startAt);
   const end = dayjs(endAt);
   if (!start.isValid() || !end.isValid()) return undefined;
@@ -136,16 +143,22 @@ export function formatParticipationCondition(value?: string) {
   return PARTICIPATION_LABELS[value || "any_scan"];
 }
 
-export function formatClaimLimit(campaignGoal?: string, claimLimitCount?: number) {
+export function formatClaimLimit(
+  campaignGoal?: string,
+  claimLimitCount?: number
+) {
   const count = claimLimitCount || 1;
-  const action = campaignGoal === "lottery" || campaignGoal === "points" ? "参与" : "领取";
+  const action =
+    campaignGoal === "lottery" || campaignGoal === "points" ? "参与" : "领取";
   return `每人限${action}${count}次`;
 }
 
 export function getProductLabel(products: ProductOption[], productId?: string) {
   const product = products.find((item) => item.id === productId);
   if (!product) return "";
-  return product.category ? `${product.name} · ${product.category}` : product.name;
+  return product.category
+    ? `${product.name} · ${product.category}`
+    : product.name;
 }
 
 export function getProductName(products: ProductOption[], productId?: string) {

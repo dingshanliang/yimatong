@@ -198,14 +198,14 @@ const ASSET_FILE_LINK_TEXT: Record<ProductAssetType, string> = {
 };
 
 const ASSET_STATUS_MAP: Record<string, { label: string; color: string }> = {
-  active: { label: "启用", color: "green" },
-  inactive: { label: "停用", color: "default" },
+  active: { label: "启用", color: "#16a34a" },
+  inactive: { label: "停用", color: "#8c8c8c" },
 };
 
 const BATCH_STATUS_MAP: Record<string, { label: string; color: string }> = {
-  active: { label: "有效", color: "green" },
-  recalled: { label: "已召回", color: "red" },
-  expired: { label: "已过期", color: "gray" },
+  active: { label: "有效", color: "#16a34a" },
+  recalled: { label: "已召回", color: "#b91c1c" },
+  expired: { label: "已过期", color: "#8c8c8c" },
 };
 
 const WORKBENCH_STEP_ACTIONS: Record<string, string> = {
@@ -684,7 +684,7 @@ export default function ProductWorkbenchPage() {
       dataIndex: "status",
       key: "status",
       render: (v: string) => {
-        const status = ASSET_STATUS_MAP[v] || { label: v, color: "default" };
+        const status = ASSET_STATUS_MAP[v] || { label: v, color: "#8c8c8c" };
         return <Tag color={status.color}>{status.label}</Tag>;
       },
     },
@@ -867,7 +867,7 @@ export default function ProductWorkbenchPage() {
       key: "published",
       render: (_: unknown, record) =>
         record.published_version ? (
-          <Tag color="blue">v{record.published_version.version}</Tag>
+          <Tag color="#1d4ed8">v{record.published_version.version}</Tag>
         ) : (
           <Tag>未发布</Tag>
         ),

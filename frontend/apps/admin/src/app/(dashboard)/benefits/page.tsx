@@ -522,7 +522,7 @@ export default function BenefitsPage() {
       render: (_: unknown, record) => {
         const info = BENEFIT_TYPE_MAP[record.benefit_type] || {
           label: record.benefit_type,
-          color: "default",
+          color: "#8c8c8c",
           description: "",
         };
         return (
@@ -697,7 +697,7 @@ export default function BenefitsPage() {
       dataIndex: "status",
       key: "status",
       render: (s: string) => {
-        const info = CLAIM_STATUS_MAP[s] || { label: s, color: "default" };
+        const info = CLAIM_STATUS_MAP[s] || { label: s, color: "#8c8c8c" };
         return <Tag color={info.color}>{info.label}</Tag>;
       },
     },
@@ -708,7 +708,7 @@ export default function BenefitsPage() {
       render: (s: string) => {
         const info = DELIVERY_STATUS_MAP[s] || {
           label: s || "-",
-          color: "default",
+          color: "#8c8c8c",
         };
         return <Tag color={info.color}>{info.label}</Tag>;
       },

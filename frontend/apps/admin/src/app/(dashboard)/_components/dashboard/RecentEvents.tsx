@@ -25,11 +25,11 @@ interface RecentAuditLog {
 }
 
 const EVENT_COLORS: Record<string, string> = {
-  scan_surge: "#1677ff",
-  campaign_status_change: "#52c41a",
-  channel_anomaly: "#cf1322",
-  new_signup: "#722ed1",
-  claim_milestone: "#fa8c16",
+  scan_surge: "var(--ymt-color-action-primary)",
+  campaign_status_change: "var(--ymt-color-feedback-success)",
+  channel_anomaly: "var(--ymt-color-feedback-danger)",
+  new_signup: "var(--ymt-color-brand-primary)",
+  claim_milestone: "var(--ymt-color-action-accent)",
 };
 
 export default function RecentEvents() {

@@ -45,16 +45,16 @@ export function TraceabilitySection({
   // 明确空态：缺失权威溯源数据时不静默隐藏，给出明确提示（yimatong-zgb1.2）。
   if (!hasData) {
     return (
-      <div className="mx-4 mt-3 rounded-2xl bg-white p-4 shadow-sm">
-        <h2 className="text-base font-semibold text-gray-900">溯源信息</h2>
-        <p className="mt-3 text-sm text-gray-500">暂无溯源信息</p>
+      <div className="mx-4 mt-3 rounded-2xl bg-surface p-4 shadow-sm">
+        <h2 className="text-base font-semibold text-foreground">溯源信息</h2>
+        <p className="mt-3 text-sm text-foreground-secondary">暂无溯源信息</p>
       </div>
     );
   }
 
   return (
-    <div className="mx-4 mt-3 rounded-2xl bg-white p-4 shadow-sm">
-      <h2 className="text-base font-semibold text-gray-900">溯源信息</h2>
+    <div className="mx-4 mt-3 rounded-2xl bg-surface p-4 shadow-sm">
+      <h2 className="text-base font-semibold text-foreground">溯源信息</h2>
       <div className="mt-3 space-y-2">
         {fields.map(
           (f) =>
@@ -63,14 +63,16 @@ export function TraceabilitySection({
                 key={f}
                 className="flex items-center justify-between text-sm"
               >
-                <span className="text-gray-500">{FIELD_LABELS[f] || f}</span>
-                <span className="font-medium text-gray-900">{data[f]}</span>
+                <span className="text-foreground-secondary">
+                  {FIELD_LABELS[f] || f}
+                </span>
+                <span className="font-medium text-foreground">{data[f]}</span>
               </div>
             )
         )}
         <div className="flex items-center justify-between text-sm">
-          <span className="text-gray-500">码编号</span>
-          <span className="font-medium text-gray-900">
+          <span className="text-foreground-secondary">码编号</span>
+          <span className="font-medium text-foreground">
             {(codeData?.public_id as string) || ""}
           </span>
         </div>

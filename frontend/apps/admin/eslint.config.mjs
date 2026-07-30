@@ -28,6 +28,12 @@ const designGates = {
         message:
           "Inline style 中禁止硬编码 px 字号，请使用 var(--ymt-font-size-*)。",
       },
+      {
+        selector:
+          "JSXAttribute[name.name='className'] Literal[value=/\\b(text|bg|border|from|via|to|ring|divide|outline|fill|stroke)-(red|green|blue|gray|grey|slate|amber|orange|yellow|purple|indigo|violet|pink|emerald|teal|cyan|sky|lime|rose)-\\d/i]",
+        message:
+          "禁止使用 Tailwind 标准调色板工具类，请改用 design token 语义类（text-foreground / bg-muted / text-success 等）。",
+      },
     ],
   },
 };

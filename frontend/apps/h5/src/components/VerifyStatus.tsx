@@ -45,10 +45,10 @@ const STATUS_CONFIG: Record<
     // 只说明这是平台首次记录的查验、产品资料来自品牌方权威备案。
     description:
       "这是本码首次查验。溯源资料来自品牌方权威备案，可作为正品依据。",
-    bg: "bg-green-50",
-    border: "border-green-200",
-    text: "text-green-700",
-    badge: "bg-green-600",
+    bg: "bg-success-bg",
+    border: "border-success",
+    text: "text-success",
+    badge: "bg-success",
     badgeText: "首次验证",
   },
   repeat_scan: {
@@ -58,20 +58,20 @@ const STATUS_CONFIG: Record<
     title: "重复查验",
     // yimatong-zgb1.4：重复查验不是异常，不引发恐慌。展示首查时间 + 累计次数即可。
     description: "本码已被查验过，下方为首次查验时间与累计次数。",
-    bg: "bg-amber-50",
-    border: "border-amber-200",
-    text: "text-amber-700",
-    badge: "bg-amber-600",
+    bg: "bg-warning-bg",
+    border: "border-warning",
+    text: "text-warning",
+    badge: "bg-warning",
     badgeText: "重复查验",
   },
   invalid: {
     icon: <CircleX className="h-8 w-8" strokeWidth={2} aria-hidden="true" />,
     title: "验证失败",
     description: "该码无效或已被篡改，请谨慎对待此产品。",
-    bg: "bg-red-50",
-    border: "border-red-200",
-    text: "text-red-700",
-    badge: "bg-red-600",
+    bg: "bg-danger-bg",
+    border: "border-danger",
+    text: "text-danger",
+    badge: "bg-danger",
     badgeText: "无效",
   },
 };
@@ -118,7 +118,7 @@ export function VerifyStatus({
         <div className={`shrink-0 ${config.text}`}>{config.icon}</div>
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
-            <h3 className="text-base font-semibold text-gray-900">
+            <h3 className="text-base font-semibold text-foreground">
               {config.title}
             </h3>
             <span
@@ -137,9 +137,9 @@ export function VerifyStatus({
       {(scanCount !== undefined || firstScanTime || lastScanTime) && (
         <div className="mt-3 flex gap-4 border-t border-white/50 pt-3">
           {scanCount !== undefined && (
-            <div className="flex items-center gap-1.5 text-sm text-gray-600">
+            <div className="flex items-center gap-1.5 text-sm text-foreground-secondary">
               <MinusCircle
-                className="h-4 w-4 text-gray-400"
+                className="h-4 w-4 text-foreground-tertiary"
                 aria-hidden="true"
               />
               <span>
@@ -149,15 +149,21 @@ export function VerifyStatus({
           )}
           {/* first_scan 状态：展示首次查验时间 */}
           {status === "first_scan" && firstScanTime && (
-            <div className="flex items-center gap-1.5 text-sm text-gray-600">
-              <Clock className="h-4 w-4 text-gray-400" aria-hidden="true" />
+            <div className="flex items-center gap-1.5 text-sm text-foreground-secondary">
+              <Clock
+                className="h-4 w-4 text-foreground-tertiary"
+                aria-hidden="true"
+              />
               <span>首次 {formatDateTime(firstScanTime)}</span>
             </div>
           )}
           {/* repeat_scan 状态：展示最近查验时间（不展示首次，AC1） */}
           {status === "repeat_scan" && lastScanTime && (
-            <div className="flex items-center gap-1.5 text-sm text-gray-600">
-              <Clock className="h-4 w-4 text-gray-400" aria-hidden="true" />
+            <div className="flex items-center gap-1.5 text-sm text-foreground-secondary">
+              <Clock
+                className="h-4 w-4 text-foreground-tertiary"
+                aria-hidden="true"
+              />
               <span>最近 {formatDateTime(lastScanTime)}</span>
             </div>
           )}

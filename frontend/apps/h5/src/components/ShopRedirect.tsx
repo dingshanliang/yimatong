@@ -29,33 +29,33 @@ const PLATFORM_STYLES: Record<
 > = {
   taobao: {
     label: "淘宝",
-    bg: "bg-orange-50",
-    text: "text-orange-700",
-    border: "border-orange-200",
+    bg: "bg-warning-bg",
+    text: "text-warning",
+    border: "border-warning",
   },
   jd: {
     label: "京东",
-    bg: "bg-red-50",
-    text: "text-red-700",
-    border: "border-red-200",
+    bg: "bg-danger-bg",
+    text: "text-danger",
+    border: "border-danger",
   },
   douyin: {
     label: "抖音",
-    bg: "bg-gray-50",
-    text: "text-gray-700",
-    border: "border-gray-200",
+    bg: "bg-muted",
+    text: "text-foreground-secondary",
+    border: "border-base",
   },
   pdd: {
     label: "拼多多",
-    bg: "bg-red-50",
-    text: "text-red-700",
-    border: "border-red-200",
+    bg: "bg-danger-bg",
+    text: "text-danger",
+    border: "border-danger",
   },
   other: {
     label: "其他",
-    bg: "bg-gray-50",
-    text: "text-gray-700",
-    border: "border-gray-200",
+    bg: "bg-muted",
+    text: "text-foreground-secondary",
+    border: "border-base",
   },
 };
 
@@ -84,7 +84,7 @@ export function ShopRedirect({ shops }: ShopRedirectProps) {
 
   return (
     <section className="space-y-3">
-      <h3 className="text-base font-semibold text-gray-900">官方购买渠道</h3>
+      <h3 className="text-base font-semibold text-foreground">官方购买渠道</h3>
 
       {/* 平台列表 */}
       <div className="space-y-2">
@@ -115,7 +115,7 @@ export function ShopRedirect({ shops }: ShopRedirectProps) {
               {/* 店铺信息 */}
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-2">
-                  <span className="text-sm font-semibold text-gray-900">
+                  <span className="text-sm font-semibold text-foreground">
                     {shop.name}
                   </span>
                   <span
@@ -128,7 +128,7 @@ export function ShopRedirect({ shops }: ShopRedirectProps) {
 
               {/* 跳转箭头 */}
               <ChevronRight
-                className="h-4 w-4 shrink-0 text-gray-400"
+                className="h-4 w-4 shrink-0 text-foreground-tertiary"
                 aria-hidden="true"
               />
             </button>
@@ -141,7 +141,7 @@ export function ShopRedirect({ shops }: ShopRedirectProps) {
         <button
           type="button"
           onClick={() => setExpanded(!expanded)}
-          className="flex w-full items-center justify-center gap-1.5 rounded-xl border border-gray-100 py-2.5 text-sm text-gray-500 transition-colors active:bg-gray-50"
+          className="flex w-full items-center justify-center gap-1.5 rounded-xl border border-base py-2.5 text-sm text-foreground-secondary transition-colors active:bg-muted"
         >
           <span>{expanded ? "收起" : "更多购买渠道"}</span>
           <ChevronDown

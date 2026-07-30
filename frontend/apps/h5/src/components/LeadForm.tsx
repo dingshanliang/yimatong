@@ -133,21 +133,21 @@ export function LeadForm({
 
   if (submitted) {
     return (
-      <div className="mt-3 rounded-2xl bg-white p-4 shadow-sm text-center">
-        <div className="mx-auto mb-2 flex h-10 w-10 items-center justify-center rounded-full bg-green-50">
-          <Check className="h-5 w-5 text-green-600" aria-hidden="true" />
+      <div className="mt-3 rounded-2xl bg-surface p-4 shadow-sm text-center">
+        <div className="mx-auto mb-2 flex h-10 w-10 items-center justify-center rounded-full bg-success-bg">
+          <Check className="h-5 w-5 text-success" aria-hidden="true" />
         </div>
-        <p className="text-sm font-medium text-gray-900">提交成功</p>
+        <p className="text-sm font-medium text-foreground">提交成功</p>
       </div>
     );
   }
 
   return (
-    <div className="mt-3 rounded-2xl bg-white p-4 shadow-sm">
-      <h2 className="text-base font-semibold text-gray-900">
+    <div className="mt-3 rounded-2xl bg-surface p-4 shadow-sm">
+      <h2 className="text-base font-semibold text-foreground">
         {title || "留下联系方式"}
       </h2>
-      <p className="mt-1 text-xs text-gray-400">
+      <p className="mt-1 text-xs text-foreground-tertiary">
         {subtitle || "品牌将通过此信息与您联系（选填）"}
       </p>
       <form className="mt-3 space-y-3" onSubmit={handleSubmit}>
@@ -161,7 +161,7 @@ export function LeadForm({
             <div key={f}>
               <label
                 htmlFor={`lead-${f}`}
-                className="block text-sm font-medium text-gray-700"
+                className="block text-sm font-medium text-foreground-secondary"
               >
                 {cfg.label}
               </label>
@@ -177,19 +177,19 @@ export function LeadForm({
                   (cfg as { autoComplete?: string }).autoComplete as string
                 }
                 placeholder={cfg.placeholder}
-                className="mt-1 block w-full rounded-xl border border-gray-200 px-3 py-2.5 text-sm text-gray-900 placeholder:text-gray-400 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 focus:outline-none"
+                className="mt-1 block w-full rounded-xl border border-base px-3 py-2.5 text-sm text-foreground placeholder:text-foreground-tertiary focus:border-focus-ring focus:ring-1 focus:ring-focus-ring focus:outline-none"
               />
             </div>
           );
         })}
         {/* yimatong-zgb1.5 AC3：PII 采集前的隐私授权勾选 + 场景版本明示 */}
         {needsPhone && (
-          <label className="flex items-start gap-2 rounded-xl bg-gray-50 p-2.5 text-xs text-gray-600">
+          <label className="flex items-start gap-2 rounded-xl bg-muted p-2.5 text-xs text-foreground-secondary">
             <input
               type="checkbox"
               checked={consentAgreed}
               onChange={(e) => setConsentAgreed(e.target.checked)}
-              className="mt-0.5 h-3.5 w-3.5 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+              className="mt-0.5 h-3.5 w-3.5 rounded border-strong text-action focus:ring-focus-ring"
               aria-label="同意隐私政策"
             />
             <span>
@@ -198,14 +198,14 @@ export function LeadForm({
             </span>
           </label>
         )}
-        {error && <p className="text-xs text-red-500">{error}</p>}
+        {error && <p className="text-xs text-danger">{error}</p>}
         <button
           type="submit"
           disabled={isSubmitting || (needsPhone && !consentAgreed)}
-          className={`w-full rounded-xl px-4 py-2.5 text-sm font-medium text-white transition-colors ${
+          className={`w-full rounded-xl px-4 py-2.5 text-sm font-medium text-on-action transition-colors ${
             isSubmitting || (needsPhone && !consentAgreed)
-              ? "bg-blue-400 cursor-not-allowed"
-              : "bg-blue-600 hover:bg-blue-700 active:bg-blue-800"
+              ? "bg-action/60 cursor-not-allowed"
+              : "bg-action hover:bg-action-hover active:bg-action-active"
           }`}
         >
           {isSubmitting ? "提交中..." : submitLabel || "提交"}

@@ -29,22 +29,30 @@ interface ExportLog {
 }
 
 const BATCH_STATUS_MAP: Record<string, { label: string; color: string }> = {
-  draft: { label: "草稿", color: "default" },
-  activated: { label: "已激活", color: "green" },
-  frozen: { label: "已冻结", color: "orange" },
-  voided: { label: "已作废", color: "red" },
+  draft: { label: "草稿", color: "#8c8c8c" },
+  activated: { label: "已激活", color: "#16a34a" },
+  frozen: { label: "已冻结", color: "#f59e0b" },
+  voided: { label: "已作废", color: "#b91c1c" },
 };
 
 export default function ExportsPage() {
   const { message } = App.useApp();
   const {
-    items: batches, total: batchTotal, page: batchPage, loading: batchLoading,
-    setPage: setBatchPage, mutate: mutateBatches,
+    items: batches,
+    total: batchTotal,
+    page: batchPage,
+    loading: batchLoading,
+    setPage: setBatchPage,
+    mutate: mutateBatches,
   } = useCrud<CodeBatch>("/code-batches");
 
   const {
-    items: exports, total: exportTotal, page: exportPage, loading: exportLoading,
-    setPage: setExportPage, mutate: mutateExports,
+    items: exports,
+    total: exportTotal,
+    page: exportPage,
+    loading: exportLoading,
+    setPage: setExportPage,
+    mutate: mutateExports,
   } = useCrud<ExportLog>("/analytics/exports");
 
   const [exportingId, setExportingId] = useState<string | null>(null);
@@ -64,15 +72,25 @@ export default function ExportsPage() {
   };
 
   const batchColumns: ColumnsType<CodeBatch> = [
-    { title: "批次名称", dataIndex: "name", key: "name", render: (v: string) => v || "—" },
+    {
+      title: "批次名称",
+      dataIndex: "name",
+      key: "name",
+      render: (v: string) => v || "—",
+    },
     { title: "码数量", dataIndex: "quantity", key: "quantity" },
-    { title: "码类型", dataIndex: "code_type", key: "code_type", render: (v: string) => v || "standard" },
+    {
+      title: "码类型",
+      dataIndex: "code_type",
+      key: "code_type",
+      render: (v: string) => v || "standard",
+    },
     {
       title: "状态",
       dataIndex: "status",
       key: "status",
       render: (s: string) => {
-        const info = BATCH_STATUS_MAP[s] || { label: s, color: "default" };
+        const info = BATCH_STATUS_MAP[s] || { label: s, color: "#8c8c8c" };
         return <Tag color={info.color}>{info.label}</Tag>;
       },
     },
@@ -94,16 +112,37 @@ export default function ExportsPage() {
 
   const exportColumns: ColumnsType<ExportLog> = [
     { title: "导出类型", dataIndex: "export_type", key: "export_type" },
-    { title: "资源 ID", dataIndex: "resource_id", key: "resource_id", render: (v: string) => v?.slice(0, 8) + "..." },
-    { title: "文件名", dataIndex: "file_name", key: "file_name", render: (v: string) => v || "—" },
+    {
+      title: "资源 ID",
+      dataIndex: "resource_id",
+      key: "resource_id",
+      render: (v: string) => v?.slice(0, 8) + "...",
+    },
+    {
+      title: "文件名",
+      dataIndex: "file_name",
+      key: "file_name",
+      render: (v: string) => v || "—",
+    },
     { title: "行数", dataIndex: "row_count", key: "row_count" },
     {
       title: "状态",
       dataIndex: "status",
       key: "status",
-      render: (s: string) => <Tag color={s === "completed" ? "green" : s === "failed" ? "red" : "blue"}>{s}</Tag>,
+      render: (s: string) => (
+        <Tag
+          color={s === "completed" ? "green" : s === "failed" ? "red" : "blue"}
+        >
+          {s}
+        </Tag>
+      ),
     },
-    { title: "导出时间", dataIndex: "created_at", key: "created_at", render: (v: string) => formatDate(v) },
+    {
+      title: "导出时间",
+      dataIndex: "created_at",
+      key: "created_at",
+      render: (v: string) => formatDate(v),
+    },
   ];
 
   return (

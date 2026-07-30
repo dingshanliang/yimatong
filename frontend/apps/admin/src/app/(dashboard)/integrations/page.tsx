@@ -2,7 +2,20 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Alert, App, Button, Card, Descriptions, Form, Input, Space, Steps, Tabs, Tag, Typography } from "antd";
+import {
+  Alert,
+  App,
+  Button,
+  Card,
+  Descriptions,
+  Form,
+  Input,
+  Space,
+  Steps,
+  Tabs,
+  Tag,
+  Typography,
+} from "antd";
 import { WebhooksTab } from "./_components/WebhooksTab";
 import { ApiKeysTab } from "./_components/ApiKeysTab";
 import { DeliveriesTab } from "./_components/DeliveriesTab";
@@ -42,33 +55,37 @@ function getWeComStage(status: WeComStatus | null) {
       tag: <Tag>未保存配置</Tag>,
       alertType: "info" as const,
       title: "先保存企业微信资料",
-      description: "保存后系统会生成可复制到企业微信后台的 URL、Token 和 EncodingAESKey。",
+      description:
+        "保存后系统会生成可复制到企业微信后台的 URL、Token 和 EncodingAESKey。",
     };
   }
   if (status.connected) {
     return {
       current: 3,
-      tag: <Tag color="success">已连接</Tag>,
+      tag: <Tag color="#16a34a">已连接</Tag>,
       alertType: "success" as const,
       title: "企业微信已连接",
-      description: "现在可以在活动中启用添加企业微信入口，或设置为添加后再领取权益。",
+      description:
+        "现在可以在活动中启用添加企业微信入口，或设置为添加后再领取权益。",
     };
   }
   if (status.config?.last_error || status.status === "error") {
     return {
       current: 2,
-      tag: <Tag color="error">连接失败</Tag>,
+      tag: <Tag color="#b91c1c">连接失败</Tag>,
       alertType: "warning" as const,
       title: "连接未通过",
-      description: status.config?.last_error || "请检查企业微信后台填写内容后重新检测。",
+      description:
+        status.config?.last_error || "请检查企业微信后台填写内容后重新检测。",
     };
   }
   return {
     current: 1,
-    tag: <Tag color="processing">待检测</Tag>,
+    tag: <Tag color="#1d4ed8">待检测</Tag>,
     alertType: "info" as const,
     title: "请完成企业微信后台填写",
-    description: "把右侧三项内容复制到企业微信后台对应位置，然后回到这里检测连接。",
+    description:
+      "把右侧三项内容复制到企业微信后台对应位置，然后回到这里检测连接。",
   };
 }
 
@@ -92,7 +109,8 @@ function WeComTab() {
     setStatus(data);
     form.setFieldsValue({
       corp_id: data.config?.corp_id || "",
-      customer_service_user_ids: data.config?.customer_service_user_ids?.join(",") || "",
+      customer_service_user_ids:
+        data.config?.customer_service_user_ids?.join(",") || "",
     });
   }, [form]);
 
@@ -133,7 +151,9 @@ function WeComTab() {
   const verify = async () => {
     setLoading(true);
     try {
-      const { data } = await api.post<WeComStatus>("/integrations/wecom/verify");
+      const { data } = await api.post<WeComStatus>(
+        "/integrations/wecom/verify"
+      );
       setStatus(data);
       message.success("企业微信连接正常");
     } catch (e: unknown) {
@@ -150,14 +170,21 @@ function WeComTab() {
         <Space orientation="vertical" size="middle" className="w-full">
           <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
             <div>
-              <Title level={5} className="!mb-1">企业微信客户联系</Title>
+              <Title level={5} className="!mb-1">
+                企业微信客户联系
+              </Title>
               <Paragraph type="secondary" className="!mb-0">
                 平台提供接收地址，你只需要在企业微信后台复制填写；连接后即可在活动中启用企业微信转化。
               </Paragraph>
             </div>
             {stage.tag}
           </div>
-          <Alert type={stage.alertType} showIcon title={stage.title} description={stage.description} />
+          <Alert
+            type={stage.alertType}
+            showIcon
+            title={stage.title}
+            description={stage.description}
+          />
           <Steps
             size="small"
             current={stage.current}
@@ -174,7 +201,11 @@ function WeComTab() {
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1fr)_460px]">
         <Card
           title="第 1 步：填写企业微信资料"
-          extra={status?.config?.last_verified_at ? <Tag color="success">最近检测通过</Tag> : undefined}
+          extra={
+            status?.config?.last_verified_at ? (
+              <Tag color="#16a34a">最近检测通过</Tag>
+            ) : undefined
+          }
         >
           <Form form={form} layout="vertical" onFinish={saveConfig}>
             <Form.Item
@@ -204,11 +235,21 @@ function WeComTab() {
               <Input placeholder="例如 zhangsan,lisi" />
             </Form.Item>
             <Space wrap>
-              <Button type="primary" htmlType="submit" loading={loading}>保存资料</Button>
-              <Button onClick={verify} loading={loading} disabled={!status?.callback_url}>检测连接</Button>
+              <Button type="primary" htmlType="submit" loading={loading}>
+                保存资料
+              </Button>
+              <Button
+                onClick={verify}
+                loading={loading}
+                disabled={!status?.callback_url}
+              >
+                检测连接
+              </Button>
             </Space>
             {!status?.callback_url && (
-              <Text type="secondary" className="mt-2 block">保存资料后即可复制到企业微信后台。</Text>
+              <Text type="secondary" className="mt-2 block">
+                保存资料后即可复制到企业微信后台。
+              </Text>
             )}
           </Form>
         </Card>
@@ -228,15 +269,23 @@ function WeComTab() {
             <Descriptions column={1} size="small" bordered>
               <Descriptions.Item label="URL">
                 <Space orientation="vertical" size={4} className="w-full">
-                  <Text copyable={false} className="break-all">{status?.callback_url || "保存资料后生成"}</Text>
-                  <Button size="small" disabled={!status?.callback_url} onClick={() => copyText(status?.callback_url)}>
+                  <Text copyable={false} className="break-all">
+                    {status?.callback_url || "保存资料后生成"}
+                  </Text>
+                  <Button
+                    size="small"
+                    disabled={!status?.callback_url}
+                    onClick={() => copyText(status?.callback_url)}
+                  >
                     复制 URL
                   </Button>
                 </Space>
               </Descriptions.Item>
               <Descriptions.Item label="Token">
                 <Space orientation="vertical" size={4} className="w-full">
-                  <Text className="break-all">{status?.secrets?.callback_token || "保存资料后生成"}</Text>
+                  <Text className="break-all">
+                    {status?.secrets?.callback_token || "保存资料后生成"}
+                  </Text>
                   <Button
                     size="small"
                     disabled={!status?.secrets?.callback_token}
@@ -248,7 +297,9 @@ function WeComTab() {
               </Descriptions.Item>
               <Descriptions.Item label="EncodingAESKey">
                 <Space orientation="vertical" size={4} className="w-full">
-                  <Text className="break-all">{status?.secrets?.encoding_aes_key || "保存资料后生成"}</Text>
+                  <Text className="break-all">
+                    {status?.secrets?.encoding_aes_key || "保存资料后生成"}
+                  </Text>
                   <Button
                     size="small"
                     disabled={!status?.secrets?.encoding_aes_key}
@@ -260,22 +311,39 @@ function WeComTab() {
               </Descriptions.Item>
             </Descriptions>
             {status?.config?.last_error && (
-              <Alert type="warning" showIcon title="最近一次检测未通过" description={status.config.last_error} />
+              <Alert
+                type="warning"
+                showIcon
+                title="最近一次检测未通过"
+                description={status.config.last_error}
+              />
             )}
             <Space wrap>
               {stage.tag}
               {status?.config?.last_verified_at && (
-                <Text type="secondary">最近检测：{formatDateTime(status.config.last_verified_at)}</Text>
+                <Text type="secondary">
+                  最近检测：{formatDateTime(status.config.last_verified_at)}
+                </Text>
               )}
               {status?.config?.last_event_at && (
-                <Text type="secondary">最近添加记录：{formatDateTime(status.config.last_event_at)}</Text>
+                <Text type="secondary">
+                  最近添加记录：{formatDateTime(status.config.last_event_at)}
+                </Text>
               )}
             </Space>
             <Space wrap>
-              <Button onClick={verify} loading={loading} disabled={!status?.callback_url}>
+              <Button
+                onClick={verify}
+                loading={loading}
+                disabled={!status?.callback_url}
+              >
                 检测连接
               </Button>
-              <Button type="primary" disabled={!status?.connected} onClick={() => router.push("/campaigns")}>
+              <Button
+                type="primary"
+                disabled={!status?.connected}
+                onClick={() => router.push("/campaigns")}
+              >
                 去活动中启用
               </Button>
             </Space>
@@ -296,7 +364,9 @@ const tabItems = [
 export default function IntegrationsPage() {
   return (
     <div>
-      <Title level={4} className="!mb-4">集成管理</Title>
+      <Title level={4} className="!mb-4">
+        集成管理
+      </Title>
       <Tabs defaultActiveKey="wecom" items={tabItems} />
     </div>
   );

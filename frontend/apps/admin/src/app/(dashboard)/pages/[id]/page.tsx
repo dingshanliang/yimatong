@@ -26,10 +26,10 @@ interface PageVersion {
 }
 
 const VERSION_STATUS_MAP: Record<string, { label: string; color: string }> = {
-  draft: { label: "草稿", color: "default" },
-  published: { label: "已发布", color: "blue" },
-  archived: { label: "已归档", color: "gray" },
-  offline: { label: "已下线", color: "orange" },
+  draft: { label: "草稿", color: "#8c8c8c" },
+  published: { label: "已发布", color: "#1d4ed8" },
+  archived: { label: "已归档", color: "#8c8c8c" },
+  offline: { label: "已下线", color: "#f59e0b" },
 };
 
 export default function VersionPage() {
@@ -45,7 +45,9 @@ export default function VersionPage() {
       try {
         const { data: tpl } = await api.get(`/page-templates/${params.id}`);
         setTemplateName(tpl.name);
-        const { data: vs } = await api.get(`/page-templates/${params.id}/versions`);
+        const { data: vs } = await api.get(
+          `/page-templates/${params.id}/versions`
+        );
         setVersions(vs);
       } catch {
         message.error("加载失败");
@@ -56,9 +58,13 @@ export default function VersionPage() {
 
   const refresh = async () => {
     try {
-      const { data: vs } = await api.get(`/page-templates/${params.id}/versions`);
+      const { data: vs } = await api.get(
+        `/page-templates/${params.id}/versions`
+      );
       setVersions(vs);
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
   };
 
   const publishVersion = async (versionId: string) => {
@@ -83,7 +89,9 @@ export default function VersionPage() {
 
   const rollbackVersion = async (versionId: string) => {
     try {
-      await api.post(`/page-templates/${params.id}/versions/${versionId}/rollback`);
+      await api.post(
+        `/page-templates/${params.id}/versions/${versionId}/rollback`
+      );
       message.success("已基于此版本创建草稿");
       refresh();
     } catch {
@@ -119,7 +127,7 @@ export default function VersionPage() {
       dataIndex: "status",
       key: "status",
       render: (s: string) => {
-        const info = VERSION_STATUS_MAP[s] || { label: s, color: "default" };
+        const info = VERSION_STATUS_MAP[s] || { label: s, color: "#8c8c8c" };
         return <Tag color={info.color}>{info.label}</Tag>;
       },
     },

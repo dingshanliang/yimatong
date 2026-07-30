@@ -4,7 +4,7 @@ import { Card, Tag } from "antd";
 
 export function GenerationIdTag({ id }: { id: string }) {
   return (
-    <Tag color="blue" className="mt-2">
+    <Tag color="#1d4ed8" className="mt-2">
       生成 ID: {id}
     </Tag>
   );
@@ -24,7 +24,11 @@ export function ResultCard({
   return (
     <Card
       className="mt-4"
-      title={<span>{icon} {title}</span>}
+      title={
+        <span>
+          {icon} {title}
+        </span>
+      }
     >
       {children}
       {generationId && <GenerationIdTag id={generationId} />}

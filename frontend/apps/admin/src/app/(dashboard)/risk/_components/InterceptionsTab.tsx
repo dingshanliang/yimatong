@@ -65,10 +65,10 @@ const columns: ColumnsType<Interception> = [
     render: (v: string) => {
       if (!v) return "—";
       const map: Record<string, { color: string; label: string }> = {
-        block: { color: "red", label: "冻结+暂停" },
-        warn: { color: "orange", label: "预警通知" },
+        block: { color: "#b91c1c", label: "冻结+暂停" },
+        warn: { color: "#f59e0b", label: "预警通知" },
       };
-      const info = map[v] || { color: "default", label: v };
+      const info = map[v] || { color: "#8c8c8c", label: v };
       return <Tag color={info.color}>{info.label}</Tag>;
     },
   },
