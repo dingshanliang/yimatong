@@ -36,6 +36,7 @@ from app.models.private_domain import PrivateDomainConfig  # noqa: F401
 from app.models.i18n import Translation  # noqa: F401
 from app.models.integration import SyncRecord  # noqa: F401
 from app.models.invite_code import TenantInviteCode  # noqa: F401
+from app.models.launch import LaunchRelease  # noqa: F401
 from app.models.member import ConsumerProfile, PointProduct, PointRedemption, PointRule, PointTransaction  # noqa: F401
 from app.models.page import PageTemplate, PageVersion  # noqa: F401
 from app.models.plan import PlanDefinition  # noqa: F401

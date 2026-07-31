@@ -206,6 +206,7 @@ class AgencyAuthScope(StrEnum):
     analytics = "analytics"
     products = "products"
     codes = "codes"
+    release_execute = "release:execute"
 
 
 class AgencyAuthStatus(StrEnum):

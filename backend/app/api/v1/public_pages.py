@@ -7,6 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
+from app.models.launch import LaunchRelease, LaunchReleaseStatus
 from app.models.page import PageVersion, PageVersionStatus
 
 public_page_router = APIRouter(tags=["public-pages"])
@@ -23,6 +24,14 @@ async def get_public_page(
     - 仅返回 published 状态的版本
     - 不暴露 tenant_id 等内部信息
     """
+    suspended = await db.scalar(
+        select(LaunchRelease.id).where(
+            LaunchRelease.page_version_id == version_id,
+            LaunchRelease.status == LaunchReleaseStatus.suspended,
+        )
+    )
+    if suspended:
+        raise HTTPException(status_code=409, detail="该上线版本已暂停，消费者暂时无法访问")
     result = await db.execute(
         select(PageVersion).where(
             PageVersion.id == version_id,

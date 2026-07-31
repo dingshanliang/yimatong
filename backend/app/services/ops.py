@@ -35,15 +35,13 @@ def _is_task_overdue(task: OpsTask, now: datetime) -> bool:
 
 
 def build_readiness_summary(status: dict) -> dict:
-    progress = status.get("onboarding_progress") or {}
     derived = {
         "brand_configured": status.get("brands", 0) >= 1,
         "product_created": status.get("products", 0) >= 1,
         "page_published": status.get("published_pages", 0) >= 1,
         "code_batch_activated": status.get("activated_batches", 0) >= 1,
     }
-    merged = {**derived, **progress}
-    missing = [(key, label, href) for key, label, href in READINESS_STEPS if not merged.get(key)]
+    missing = [(key, label, href) for key, label, href in READINESS_STEPS if not derived.get(key)]
     total_count = len(READINESS_STEPS)
     passed_count = total_count - len(missing)
     return {
@@ -122,7 +120,7 @@ async def get_tenant_status(
         .select_from(CodeBatch)
         .where(
             CodeBatch.tenant_id == tenant_id,
-            CodeBatch.status == CodeBatchStatus.completed,
+            CodeBatch.status == CodeBatchStatus.activated,
         )
     )
     activated = activated_batches.scalar() or 0
@@ -300,7 +298,7 @@ async def get_ops_workbench(
             await db.execute(
                 select(CodeBatch.tenant_id, func.count())
                 .group_by(CodeBatch.tenant_id)
-                .where(CodeBatch.tenant_id.in_(tenant_ids), CodeBatch.status == CodeBatchStatus.completed)
+                .where(CodeBatch.tenant_id.in_(tenant_ids), CodeBatch.status == CodeBatchStatus.activated)
             )
         ).all()
     )

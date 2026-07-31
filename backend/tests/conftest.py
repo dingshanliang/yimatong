@@ -1,5 +1,7 @@
 import os
 import sys
+import uuid
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -20,9 +22,9 @@ os.environ.setdefault("HMAC_PEPPER", "ff" * 32)
 from app.models.analytics import DailyScanStats  # noqa: E402, F401
 from app.models.audit import PlatformAuditLog  # noqa: E402, F401
 from app.models.base import Base  # noqa: E402
-from app.models.campaign import Benefit, BenefitClaim, Campaign  # noqa: E402, F401
+from app.models.campaign import Benefit, BenefitClaim, Campaign, CampaignStatus  # noqa: E402, F401
 from app.models.channel import AccountChannelScope, Distributor, DiversionClue, Region, Store  # noqa: E402, F401
-from app.models.code import CodeBatch, CodeItem  # noqa: E402, F401
+from app.models.code import CodeBatch, CodeBatchStatus, CodeItem, CodeItemStatus  # noqa: E402, F401
 from app.models.connector import BenefitDelivery, Connector, CouponCode, CouponPool  # noqa: E402, F401
 from app.models.consent import ConsentRecord  # noqa: E402, F401
 from app.models.diversion_evidence import DiversionEvidence  # noqa: E402, F401
@@ -33,6 +35,7 @@ from app.models.i18n import Translation  # noqa: E402, F401
 from app.models.integration import SyncRecord  # noqa: E402, F401
 from app.models.intent_event import IntentEvent  # noqa: E402, F401
 from app.models.invite_code import TenantInviteCode  # noqa: E402, F401
+from app.models.launch import LaunchRelease  # noqa: E402, F401
 from app.models.member import (  # noqa: E402, F401
     ConsumerProfile,
     PointProduct,
@@ -40,7 +43,7 @@ from app.models.member import (  # noqa: E402, F401
     PointRule,
     PointTransaction,
 )
-from app.models.page import PageTemplate, PageVersion  # noqa: E402, F401
+from app.models.page import PageTemplate, PageVersion, PageVersionStatus  # noqa: E402, F401
 from app.models.plan import PlanDefinition  # noqa: E402
 from app.models.private_domain import PrivateDomainConfig  # noqa: E402, F401
 from app.models.product import SKU, Brand, Product, ProductionBatch  # noqa: E402, F401
@@ -139,3 +142,67 @@ async def db():
             raise
         else:
             await session.commit()
+
+
+@pytest.fixture
+async def launch_facts(db):
+    """创建一组已满足上线门禁的真实数据库事实。"""
+    tenant_id = uuid.uuid4()
+    account_id = uuid.uuid4()
+    product_id = uuid.uuid4()
+    template = PageTemplate(
+        tenant_id=tenant_id,
+        product_id=product_id,
+        name="上线门禁页",
+        template_type="product_info",
+    )
+    db.add(template)
+    await db.flush()
+    version = PageVersion(
+        tenant_id=tenant_id,
+        page_template_id=template.id,
+        version=1,
+        config_json={"dsl_version": "1.0", "title": "正式页"},
+        status=PageVersionStatus.published,
+        created_by=account_id,
+    )
+    campaign = Campaign(
+        tenant_id=tenant_id,
+        product_id=product_id,
+        name="首发活动",
+        campaign_type="scan",
+        status=CampaignStatus.ACTIVE,
+        start_at="2026-07-01T00:00:00Z",
+        end_at="2026-12-31T00:00:00Z",
+        rules_json={},
+    )
+    batch = CodeBatch(
+        tenant_id=tenant_id,
+        product_id=product_id,
+        sku_id=uuid.uuid4(),
+        batch_code="LAUNCH-001",
+        quantity=1,
+        status=CodeBatchStatus.activated,
+        created_by=account_id,
+    )
+    db.add_all([version, campaign, batch])
+    await db.flush()
+    item = CodeItem(
+        tenant_id=tenant_id,
+        code_batch_id=batch.id,
+        public_id="LAUNCHCODE001",
+        status=CodeItemStatus.activated,
+    )
+    db.add(item)
+    await db.flush()
+    db.add(
+        ScanEvent(
+            tenant_id=tenant_id,
+            public_id=item.public_id,
+            scan_time=datetime.now(UTC),
+            is_valid_visit=True,
+            environment="test",
+        )
+    )
+    await db.flush()
+    return tenant_id, account_id, version, campaign, batch

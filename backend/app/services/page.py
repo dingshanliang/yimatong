@@ -271,6 +271,9 @@ async def create_page_version(
     db.add(v)
     await db.flush()
     await db.refresh(v)
+    from app.services.launch import invalidate_launch_releases_for_template
+
+    await invalidate_launch_releases_for_template(db, tenant_id, template_id, created_by)
     return _version_to_dict(v)
 
 

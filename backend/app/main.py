@@ -30,9 +30,11 @@ from app.api.v1.imports import import_router
 from app.api.v1.industry_templates import template_router
 from app.api.v1.integration import integration_router
 from app.api.v1.invite_codes import router as invite_codes_router
+from app.api.v1.launch_releases import router as launch_release_router
 from app.api.v1.members import member_router
 from app.api.v1.open_api import open_api_router
 from app.api.v1.ops import ops_router
+from app.api.v1.ops_launch_releases import router as ops_launch_release_router
 from app.api.v1.organizations import router as orgs_router
 from app.api.v1.page_templates import page_template_router, page_version_router
 from app.api.v1.password import router as password_router
@@ -320,6 +322,7 @@ app.include_router(code_item_router)
 app.include_router(task_router)
 app.include_router(page_template_router)
 app.include_router(page_version_router)
+app.include_router(launch_release_router)
 app.include_router(resolver_router)
 app.include_router(analytics_router)
 app.include_router(campaign_router)
@@ -327,6 +330,7 @@ app.include_router(benefit_router)
 app.include_router(agency_auth_router)
 app.include_router(agency_switch_router)
 app.include_router(ops_router)
+app.include_router(ops_launch_release_router)
 app.include_router(risk_router)
 app.include_router(risk_notification_router)
 app.include_router(channel_router)
