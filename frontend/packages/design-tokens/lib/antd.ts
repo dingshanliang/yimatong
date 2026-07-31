@@ -56,6 +56,13 @@ export function getAntdTheme(mode: ThemeMode): ThemeConfig {
         darkSubMenuItemBg: selected.color.chrome.sider,
         darkItemSelectedBg: selected.color.action.primary,
         darkItemSelectedColor: selected.color.action.onPrimary,
+        // Sider 始终是深绿色（chrome.sider 在 light/dark 都接近黑），Menu 通过
+        // theme="dark" 固定到 sider。若让 darkItemColor 走算法派生，dark 模式下会
+        // 从 text.inverse（dark=#07130b 近黑）推导，导致非高亮项文字在深色 sider 上
+        // 不可见。sider 是固定深色容器，菜单文字必须始终白色，与 app 主题解耦。
+        darkItemColor: "#ffffff",
+        darkItemHoverColor: "#ffffff",
+        darkItemDisabledColor: "rgba(255, 255, 255, 0.35)",
       },
       Card: {
         headerBg: "transparent",
