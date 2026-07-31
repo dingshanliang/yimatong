@@ -14,14 +14,15 @@ import {
   type ModuleConfig,
   type ModuleReadiness,
 } from "@/lib/page-dsl";
+import { STATUS_COLORS } from "@/lib/status-colors";
 
 const STATUS_TAGS: Record<
   ModuleReadiness["status"],
   { label: string; color: string }
 > = {
-  configured: { label: "已配置", color: "#16a34a" },
-  incomplete: { label: "待完善", color: "#f59e0b" },
-  example: { label: "使用示例数据", color: "#1d4ed8" },
+  configured: { label: "已配置", color: STATUS_COLORS.success },
+  incomplete: { label: "待完善", color: STATUS_COLORS.warning },
+  example: { label: "使用示例数据", color: STATUS_COLORS.processing },
 };
 
 export function ModuleItem({

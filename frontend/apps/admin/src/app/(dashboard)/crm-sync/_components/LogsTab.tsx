@@ -4,6 +4,7 @@ import { Table, Tag, Typography } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import type { SyncLog } from "./types";
 import { SYNC_STATUS_MAP } from "./constants";
+import { STATUS_COLORS } from "@/lib/status-colors";
 import { formatDate } from "./utils";
 
 interface LogsTabProps {
@@ -16,7 +17,7 @@ const columns: ColumnsType<SyncLog> = [
     title: "同步类型",
     dataIndex: "sync_type",
     key: "sync_type",
-    render: (v: string) => <Tag color="#1d4ed8">{v}</Tag>,
+    render: (v: string) => <Tag color={STATUS_COLORS.processing}>{v}</Tag>,
   },
   {
     title: "外部 ID",
@@ -36,7 +37,10 @@ const columns: ColumnsType<SyncLog> = [
     dataIndex: "status",
     key: "status",
     render: (v: string) => {
-      const info = SYNC_STATUS_MAP[v] || { label: v, color: "#8c8c8c" };
+      const info = SYNC_STATUS_MAP[v] || {
+        label: v,
+        color: STATUS_COLORS.neutral,
+      };
       return <Tag color={info.color}>{info.label}</Tag>;
     },
   },

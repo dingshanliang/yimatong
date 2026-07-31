@@ -33,6 +33,7 @@ import {
 } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
 import api, { extractErrorMessage } from "@/lib/api";
+import { STATUS_COLORS } from "@/lib/status-colors";
 
 const { Title, Text } = Typography;
 
@@ -645,8 +646,9 @@ const emptyPage = <T,>(): PageResult<T> => ({
 });
 
 function statusTag(status?: string) {
-  if (status === "active") return <Tag color="#16a34a">启用</Tag>;
-  if (status === "inactive") return <Tag color="#8c8c8c">停用</Tag>;
+  if (status === "active") return <Tag color={STATUS_COLORS.success}>启用</Tag>;
+  if (status === "inactive")
+    return <Tag color={STATUS_COLORS.neutral}>停用</Tag>;
   return <Tag>{status || "未知"}</Tag>;
 }
 
@@ -655,8 +657,9 @@ function productSkuLabel(productName?: string, skuName?: string) {
 }
 
 function severityTag(severity?: DiversionClue["severity"]) {
-  if (severity === "high") return <Tag color="#b91c1c">高风险</Tag>;
-  if (severity === "medium") return <Tag color="#f59e0b">中风险</Tag>;
+  if (severity === "high") return <Tag color={STATUS_COLORS.error}>高风险</Tag>;
+  if (severity === "medium")
+    return <Tag color={STATUS_COLORS.warning}>中风险</Tag>;
   return <Tag>低风险</Tag>;
 }
 
@@ -1518,9 +1521,9 @@ export default function ChannelsPage() {
       dataIndex: "resolved",
       render: (value) =>
         value ? (
-          <Tag color="#16a34a">已处理</Tag>
+          <Tag color={STATUS_COLORS.success}>已处理</Tag>
         ) : (
-          <Tag color="#b91c1c">待处理</Tag>
+          <Tag color={STATUS_COLORS.error}>待处理</Tag>
         ),
     },
     {
@@ -2139,10 +2142,10 @@ export default function ChannelsPage() {
               </Descriptions>
               <Space className="mt-2" wrap>
                 <Tag>总量 {selectedBatchCapacity.total}</Tag>
-                <Tag color="#1d4ed8">
+                <Tag color={STATUS_COLORS.processing}>
                   已登记 {selectedBatchCapacity.allocated}
                 </Tag>
-                <Tag color="#16a34a">
+                <Tag color={STATUS_COLORS.success}>
                   剩余 {selectedBatchCapacity.remaining}
                 </Tag>
               </Space>

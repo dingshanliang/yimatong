@@ -18,6 +18,7 @@ import {
 import { PlusOutlined, CopyOutlined } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
 import api from "@/lib/api";
+import { STATUS_COLORS } from "@/lib/status-colors";
 import { ROLE_OPTIONS } from "./constants";
 
 const { Text } = Typography;
@@ -76,7 +77,9 @@ export function ApiKeysTab() {
       title: "角色",
       dataIndex: "role",
       key: "role",
-      render: (role: string) => <Tag color="#1d4ed8">{role}</Tag>,
+      render: (role: string) => (
+        <Tag color={STATUS_COLORS.processing}>{role}</Tag>
+      ),
     },
     {
       title: "Key",

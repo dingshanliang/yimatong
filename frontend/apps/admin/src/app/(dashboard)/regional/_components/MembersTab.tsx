@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import api from "@/lib/api";
+import { STATUS_COLORS } from "@/lib/status-colors";
 import {
   Button,
   Form,
@@ -29,9 +30,9 @@ type ClientOption = {
 };
 
 const statusMap: Record<string, { color: string; label: string }> = {
-  active: { color: "#16a34a", label: "活跃" },
-  suspended: { color: "#f59e0b", label: "暂停" },
-  expelled: { color: "#b91c1c", label: "已移除" },
+  active: { color: STATUS_COLORS.success, label: "活跃" },
+  suspended: { color: STATUS_COLORS.warning, label: "暂停" },
+  expelled: { color: STATUS_COLORS.error, label: "已移除" },
 };
 
 const columns: ColumnsType<Member> = [
@@ -48,7 +49,7 @@ const columns: ColumnsType<Member> = [
     key: "status",
     width: 100,
     render: (v: string) => {
-      const info = statusMap[v] || { color: "#8c8c8c", label: v };
+      const info = statusMap[v] || { color: STATUS_COLORS.neutral, label: v };
       return <Tag color={info.color}>{info.label}</Tag>;
     },
   },

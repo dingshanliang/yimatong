@@ -4,6 +4,7 @@
  */
 
 import dayjs, { type Dayjs } from "dayjs";
+import { STATUS_COLORS } from "@/lib/status-colors";
 
 // ── 类型 ──────────────────────────────────
 
@@ -41,11 +42,11 @@ export const STATUS_MAP: Record<
   CampaignStatusType | "pending",
   { label: string; color: string }
 > = {
-  draft: { label: "草稿", color: "#8c8c8c" },
-  pending: { label: "待开始", color: "#1d4ed8" },
-  active: { label: "进行中", color: "#16a34a" },
-  paused: { label: "已暂停", color: "#f59e0b" },
-  ended: { label: "已结束", color: "#8c8c8c" },
+  draft: { label: "草稿", color: STATUS_COLORS.neutral },
+  pending: { label: "待开始", color: STATUS_COLORS.processing },
+  active: { label: "进行中", color: STATUS_COLORS.success },
+  paused: { label: "已暂停", color: STATUS_COLORS.warning },
+  ended: { label: "已结束", color: STATUS_COLORS.neutral },
 };
 
 export const PARTICIPATION_LABELS: Record<string, string> = {

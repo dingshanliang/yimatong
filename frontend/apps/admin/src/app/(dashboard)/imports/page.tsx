@@ -20,6 +20,7 @@ import {
 } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
 import api from "@/lib/api";
+import { STATUS_COLORS } from "@/lib/status-colors";
 
 const { Title, Text } = Typography;
 const { Dragger } = Upload;
@@ -37,10 +38,10 @@ interface ImportRecord {
 }
 
 const STATUS_MAP: Record<string, { label: string; color: string }> = {
-  pending: { label: "等待中", color: "#8c8c8c" },
-  processing: { label: "处理中", color: "#1d4ed8" },
-  completed: { label: "已完成", color: "#16a34a" },
-  failed: { label: "失败", color: "#b91c1c" },
+  pending: { label: "等待中", color: STATUS_COLORS.neutral },
+  processing: { label: "处理中", color: STATUS_COLORS.processing },
+  completed: { label: "已完成", color: STATUS_COLORS.success },
+  failed: { label: "失败", color: STATUS_COLORS.error },
 };
 
 function formatDate(dateStr?: string): string {
@@ -151,7 +152,10 @@ export default function ImportsPage() {
       dataIndex: "status",
       key: "status",
       render: (status: string) => {
-        const info = STATUS_MAP[status] || { label: status, color: "#8c8c8c" };
+        const info = STATUS_MAP[status] || {
+          label: status,
+          color: STATUS_COLORS.neutral,
+        };
         return <Tag color={info.color}>{info.label}</Tag>;
       },
     },

@@ -14,6 +14,7 @@ import {
 } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import { useAuthStore } from "@/lib/auth";
+import { STATUS_COLORS } from "@/lib/status-colors";
 import type { AgencyClientRow } from "./types";
 import { STATUS_MAP } from "./types";
 
@@ -81,7 +82,7 @@ export function ClientTable({
       render: (name: string, record) => {
         const info = STATUS_MAP[record.status] || {
           label: record.status,
-          color: "#8c8c8c",
+          color: STATUS_COLORS.neutral,
         };
         return (
           <Space orientation="vertical" size={2}>
@@ -115,7 +116,7 @@ export function ClientTable({
       key: "missing",
       render: (_: unknown, record) =>
         record.readiness.ready ? (
-          <Tag color="#16a34a">已具备上线条件</Tag>
+          <Tag color={STATUS_COLORS.success}>已具备上线条件</Tag>
         ) : (
           <span>缺：{record.readiness.missing_labels.join("、")}</span>
         ),
@@ -126,16 +127,22 @@ export function ClientTable({
       render: (_: unknown, record) => (
         <Space size={4} wrap>
           {record.task_summary.overdue > 0 && (
-            <Tag color="#b91c1c">逾期 {record.task_summary.overdue}</Tag>
+            <Tag color={STATUS_COLORS.error}>
+              逾期 {record.task_summary.overdue}
+            </Tag>
           )}
           {record.task_summary.pending > 0 && (
-            <Tag color="#1d4ed8">待办 {record.task_summary.pending}</Tag>
+            <Tag color={STATUS_COLORS.processing}>
+              待办 {record.task_summary.pending}
+            </Tag>
           )}
           {record.task_summary.in_progress > 0 && (
-            <Tag color="#1d4ed8">进行中 {record.task_summary.in_progress}</Tag>
+            <Tag color={STATUS_COLORS.processing}>
+              进行中 {record.task_summary.in_progress}
+            </Tag>
           )}
           {record.task_summary.high_priority > 0 && (
-            <Tag color="#b91c1c">
+            <Tag color={STATUS_COLORS.error}>
               高优先级 {record.task_summary.high_priority}
             </Tag>
           )}
@@ -157,9 +164,9 @@ export function ClientTable({
           (new Date(v).getTime() - Date.now()) / (1000 * 60 * 60 * 24)
         );
         return daysLeft < 0 ? (
-          <Tag color="#b91c1c">{date}（已过期）</Tag>
+          <Tag color={STATUS_COLORS.error}>{date}（已过期）</Tag>
         ) : daysLeft < 30 ? (
-          <Tag color="#b91c1c">
+          <Tag color={STATUS_COLORS.error}>
             {date}（剩余{daysLeft}天）
           </Tag>
         ) : (

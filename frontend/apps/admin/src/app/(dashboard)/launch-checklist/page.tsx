@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { List, Checkbox, Card, Progress, Typography, Tag } from "antd";
+import { STATUS_COLORS } from "@/lib/status-colors";
 
 const { Title } = Typography;
 
@@ -143,7 +144,11 @@ export default function LaunchChecklistPage() {
         <Title level={4} className="!mb-0">
           上线检查清单
         </Title>
-        <Tag color={allRequiredDone ? "#16a34a" : "#f59e0b"}>
+        <Tag
+          color={
+            allRequiredDone ? STATUS_COLORS.success : STATUS_COLORS.warning
+          }
+        >
           {allRequiredDone ? "必填项已完成" : "必填项未完成"}
         </Tag>
       </div>
@@ -195,7 +200,7 @@ export default function LaunchChecklistPage() {
                     <span>{item.label}</span>
                     {item.required && (
                       <Tag
-                        color="#b91c1c"
+                        color={STATUS_COLORS.error}
                         className="ml-2"
                         style={{ fontSize: "var(--ymt-font-size-xs)" }}
                       >

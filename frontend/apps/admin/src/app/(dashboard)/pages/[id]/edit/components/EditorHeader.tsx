@@ -7,6 +7,7 @@ import {
   SaveOutlined,
   SendOutlined,
 } from "@ant-design/icons";
+import { STATUS_COLORS } from "@/lib/status-colors";
 
 const { Text } = Typography;
 
@@ -56,9 +57,9 @@ export function EditorHeader({
         </Text>
         <Tag>{moduleCount} 个模块</Tag>
         {issueCount > 0 ? (
-          <Tag color="#f59e0b">{issueCount} 项待确认</Tag>
+          <Tag color={STATUS_COLORS.warning}>{issueCount} 项待确认</Tag>
         ) : (
-          <Tag color="#16a34a">可发布检查通过</Tag>
+          <Tag color={STATUS_COLORS.success}>可发布检查通过</Tag>
         )}
       </div>
       <Space>

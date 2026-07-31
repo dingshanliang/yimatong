@@ -16,6 +16,7 @@ import { ReloadOutlined, SearchOutlined } from "@ant-design/icons";
 import dayjs from "dayjs";
 import useSWR, { mutate } from "swr";
 import { ACTION_COLORS } from "@/lib/constants";
+import { STATUS_COLORS } from "@/lib/status-colors";
 
 const { Title } = Typography;
 const { RangePicker } = DatePicker;
@@ -85,7 +86,7 @@ export default function AuditLogsPage() {
       ellipsis: true,
       render: (v: string) =>
         v === "platform" ? (
-          <Tag color="#f59e0b">平台</Tag>
+          <Tag color={STATUS_COLORS.warning}>平台</Tag>
         ) : (
           <span style={{ fontSize: "var(--ymt-font-size-xs)" }}>
             {v.slice(0, 8)}…
@@ -98,7 +99,8 @@ export default function AuditLogsPage() {
       key: "action",
       width: 160,
       render: (v: string) => {
-        const color = ACTION_COLORS[v.split(":")[0]] ?? "#1d4ed8";
+        const color =
+          ACTION_COLORS[v.split(":")[0]] ?? STATUS_COLORS.processing;
         return <Tag color={color}>{v}</Tag>;
       },
     },

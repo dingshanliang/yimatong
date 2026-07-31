@@ -36,6 +36,7 @@ import type { ColumnsType } from "antd/es/table";
 import dayjs, { type Dayjs } from "dayjs";
 import api, { extractErrorMessage } from "@/lib/api";
 import { useCrud } from "@/lib/hooks";
+import { STATUS_COLORS } from "@/lib/status-colors";
 import type {
   Campaign,
   CampaignStatus,
@@ -251,11 +252,11 @@ const STATUS_MAP: Record<
   ComputedCampaignStatus,
   { label: string; color: string }
 > = {
-  draft: { label: "草稿", color: "#8c8c8c" },
-  pending: { label: "待开始", color: "#1d4ed8" },
-  active: { label: "进行中", color: "#16a34a" },
-  paused: { label: "已暂停", color: "#f59e0b" },
-  ended: { label: "已结束", color: "#8c8c8c" },
+  draft: { label: "草稿", color: STATUS_COLORS.neutral },
+  pending: { label: "待开始", color: STATUS_COLORS.processing },
+  active: { label: "进行中", color: STATUS_COLORS.success },
+  paused: { label: "已暂停", color: STATUS_COLORS.warning },
+  ended: { label: "已结束", color: STATUS_COLORS.neutral },
 };
 
 function formatDateTime(value?: string | null) {
@@ -1037,7 +1038,7 @@ export default function CampaignsPage() {
         record.product_name ? (
           <Text>{record.product_name}</Text>
         ) : (
-          <Tag color="#f59e0b">未关联产品</Tag>
+          <Tag color={STATUS_COLORS.warning}>未关联产品</Tag>
         ),
     },
     {
@@ -1047,7 +1048,10 @@ export default function CampaignsPage() {
       width: 110,
       render: (_, record) => {
         const status = getDisplayStatus(record);
-        const info = STATUS_MAP[status] || { label: status, color: "#8c8c8c" };
+        const info = STATUS_MAP[status] || {
+          label: status,
+          color: STATUS_COLORS.neutral,
+        };
         return <Tag color={info.color}>{info.label}</Tag>;
       },
     },

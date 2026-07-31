@@ -1,6 +1,7 @@
 "use client";
 
 import { useCrud } from "@/lib/hooks";
+import { STATUS_COLORS } from "@/lib/status-colors";
 import { Badge, Descriptions, Modal, Switch, Table, Tag } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import { useState } from "react";
@@ -65,10 +66,10 @@ const columns: ColumnsType<Interception> = [
     render: (v: string) => {
       if (!v) return "—";
       const map: Record<string, { color: string; label: string }> = {
-        block: { color: "#b91c1c", label: "冻结+暂停" },
-        warn: { color: "#f59e0b", label: "预警通知" },
+        block: { color: STATUS_COLORS.error, label: "冻结+暂停" },
+        warn: { color: STATUS_COLORS.warning, label: "预警通知" },
       };
-      const info = map[v] || { color: "#8c8c8c", label: v };
+      const info = map[v] || { color: STATUS_COLORS.neutral, label: v };
       return <Tag color={info.color}>{info.label}</Tag>;
     },
   },

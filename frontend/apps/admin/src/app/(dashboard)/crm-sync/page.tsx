@@ -18,6 +18,7 @@ import {
   SyncOutlined,
 } from "@ant-design/icons";
 import api from "@/lib/api";
+import { STATUS_COLORS } from "@/lib/status-colors";
 import { MappingsTab } from "./_components/MappingsTab";
 import { LogsTab } from "./_components/LogsTab";
 import type { SyncMapping, SyncLog } from "./_components/types";
@@ -107,9 +108,9 @@ export default function CrmSyncPage() {
         <Descriptions column={2} bordered size="small">
           <Descriptions.Item label="CRM 连接状态">
             {crmConfigured ? (
-              <Tag color="#16a34a">已配置</Tag>
+              <Tag color={STATUS_COLORS.success}>已配置</Tag>
             ) : (
-              <Tag color="#8c8c8c">未配置</Tag>
+              <Tag color={STATUS_COLORS.neutral}>未配置</Tag>
             )}
           </Descriptions.Item>
           <Descriptions.Item label="同步映射数">

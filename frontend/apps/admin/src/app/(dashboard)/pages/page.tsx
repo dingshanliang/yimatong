@@ -29,6 +29,7 @@ import api from "@/lib/api";
 import { formatDateTime } from "@/lib/format";
 import { useCrud } from "@/lib/hooks";
 import { createDefaultModules, createEmptyDSL } from "@/lib/page-dsl";
+import { STATUS_COLORS } from "@/lib/status-colors";
 
 const { Text, Title } = Typography;
 
@@ -90,9 +91,12 @@ const TYPE_OPTIONS = Object.entries(TYPE_LABELS).map(([value, label]) => ({
 }));
 
 const STATUS_META: Record<string, { label: string; color: string }> = {
-  unpublished: { label: "未发布", color: "#8c8c8c" },
-  published: { label: "已发布", color: "#16a34a" },
-  has_unpublished_draft: { label: "有未发布草稿", color: "#f59e0b" },
+  unpublished: { label: "未发布", color: STATUS_COLORS.neutral },
+  published: { label: "已发布", color: STATUS_COLORS.success },
+  has_unpublished_draft: {
+    label: "有未发布草稿",
+    color: STATUS_COLORS.warning,
+  },
 };
 
 function buildDefaultDSL() {
@@ -319,7 +323,7 @@ export default function PagesPage() {
           record.product_name
         ) : (
           <Tooltip title="未关联产品时，消费者扫码不会自动命中该页面">
-            <Tag color="#f59e0b">未关联产品</Tag>
+            <Tag color={STATUS_COLORS.warning}>未关联产品</Tag>
           </Tooltip>
         ),
     },
@@ -341,7 +345,7 @@ export default function PagesPage() {
         return (
           <Space size={4} wrap>
             {record.published_version && (
-              <Tag color="#1d4ed8">
+              <Tag color={STATUS_COLORS.processing}>
                 已发布 v{record.published_version.version}
               </Tag>
             )}

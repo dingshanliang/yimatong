@@ -18,6 +18,7 @@ import { CheckOutlined, DeleteOutlined, PlusOutlined } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
 import ImageUploadInput from "@/components/ImageUploadInput";
 import api from "@/lib/api";
+import { STATUS_COLORS } from "@/lib/status-colors";
 
 const { Title } = Typography;
 
@@ -120,9 +121,9 @@ export default function BrandingSettingsPage() {
       render: (_: unknown, record: Record<string, unknown>) => (
         <Space>
           {record.verified ? (
-            <Tag color="#16a34a">已验证</Tag>
+            <Tag color={STATUS_COLORS.success}>已验证</Tag>
           ) : (
-            <Tag color="#f59e0b">待验证</Tag>
+            <Tag color={STATUS_COLORS.warning}>待验证</Tag>
           )}
           <Tag>{String(record.ssl_status)}</Tag>
         </Space>

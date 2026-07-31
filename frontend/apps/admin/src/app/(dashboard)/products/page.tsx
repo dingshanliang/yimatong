@@ -31,6 +31,7 @@ import api, { extractErrorMessage } from "@/lib/api";
 import { useCrud } from "@/lib/hooks";
 import { useCategories } from "@/lib/use-categories";
 import { formatDate } from "@/lib/format";
+import { STATUS_COLORS } from "@/lib/status-colors";
 import { AIDrawer } from "./_components/AIDrawer";
 import type { Product, Brand } from "./_components/types";
 
@@ -230,7 +231,7 @@ export default function ProductsPage() {
       key: "status",
       render: (status: string, record: Product) => {
         if (status === "draft") {
-          return <Tag color="#f59e0b">草稿</Tag>;
+          return <Tag color={STATUS_COLORS.warning}>草稿</Tag>;
         }
         return (
           <Switch

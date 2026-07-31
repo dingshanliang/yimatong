@@ -12,6 +12,7 @@ import {
 } from "@ant-design/icons";
 import { useRouter } from "next/navigation";
 import api from "@/lib/api";
+import { STATUS_COLORS } from "@/lib/status-colors";
 
 const { Title, Text } = Typography;
 
@@ -167,8 +168,10 @@ export default function OnboardingWizard() {
                       {cfg.icon}
                       <span>{cfg.title}</span>
                     </div>
-                    {isDone && <Tag color="#16a34a">已完成</Tag>}
-                    {isCurrent && <Tag color="#1d4ed8">当前步骤</Tag>}
+                    {isDone && <Tag color={STATUS_COLORS.success}>已完成</Tag>}
+                    {isCurrent && (
+                      <Tag color={STATUS_COLORS.processing}>当前步骤</Tag>
+                    )}
                   </div>
                 }
               >

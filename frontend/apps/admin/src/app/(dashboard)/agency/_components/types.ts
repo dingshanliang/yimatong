@@ -1,3 +1,5 @@
+import { STATUS_COLORS } from "@/lib/status-colors";
+
 export interface Client {
   id: string;
   name: string;
@@ -90,21 +92,21 @@ export interface IndustryTemplate {
 }
 
 export const STATUS_MAP: Record<string, { label: string; color: string }> = {
-  active: { label: "活跃", color: "#16a34a" },
-  suspended: { label: "已暂停", color: "#8c8c8c" },
-  onboarding: { label: "配置中", color: "#1d4ed8" },
+  active: { label: "活跃", color: STATUS_COLORS.success },
+  suspended: { label: "已暂停", color: STATUS_COLORS.neutral },
+  onboarding: { label: "配置中", color: STATUS_COLORS.processing },
 };
 
 export const PRIORITY_MAP: Record<string, { label: string; color: string }> = {
-  low: { label: "低", color: "#8c8c8c" },
-  medium: { label: "中", color: "#1d4ed8" },
-  high: { label: "高", color: "#b91c1c" },
+  low: { label: "低", color: STATUS_COLORS.neutral },
+  medium: { label: "中", color: STATUS_COLORS.processing },
+  high: { label: "高", color: STATUS_COLORS.error },
 };
 
 export const TASK_STATUS_MAP: Record<string, { label: string; color: string }> =
   {
-    pending: { label: "待处理", color: "#8c8c8c" },
-    in_progress: { label: "进行中", color: "#1d4ed8" },
-    completed: { label: "已完成", color: "#16a34a" },
-    cancelled: { label: "已取消", color: "#8c8c8c" },
+    pending: { label: "待处理", color: STATUS_COLORS.neutral },
+    in_progress: { label: "进行中", color: STATUS_COLORS.processing },
+    completed: { label: "已完成", color: STATUS_COLORS.success },
+    cancelled: { label: "已取消", color: STATUS_COLORS.neutral },
   };

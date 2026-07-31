@@ -20,6 +20,7 @@ import {
   ReloadOutlined,
 } from "@ant-design/icons";
 import api, { extractErrorMessage } from "@/lib/api";
+import { STATUS_COLORS } from "@/lib/status-colors";
 import type { Connector } from "./types";
 import { TYPE_LABELS } from "./types";
 
@@ -116,7 +117,7 @@ export function ConnectorsTab({
       dataIndex: "connector_type",
       key: "type",
       render: (type: string) => (
-        <Tag color="#1d4ed8">{TYPE_LABELS[type] || type}</Tag>
+        <Tag color={STATUS_COLORS.processing}>{TYPE_LABELS[type] || type}</Tag>
       ),
     },
     {

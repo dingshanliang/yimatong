@@ -4,6 +4,7 @@ import { useCrud } from "@/lib/hooks";
 import { App, Button, Popconfirm, Table, Tag } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import api from "@/lib/api";
+import { STATUS_COLORS } from "@/lib/status-colors";
 
 type Alert = Record<string, unknown> & { id: string };
 
@@ -18,7 +19,7 @@ export function AlertsTab() {
       title: "类型",
       dataIndex: "alert_type",
       key: "alert_type",
-      render: (t: string) => <Tag color="#f59e0b">{t}</Tag>,
+      render: (t: string) => <Tag color={STATUS_COLORS.warning}>{t}</Tag>,
     },
     { title: "详情", dataIndex: "detail", key: "detail", ellipsis: true },
     {

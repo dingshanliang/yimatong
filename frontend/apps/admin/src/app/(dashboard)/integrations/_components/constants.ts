@@ -1,3 +1,5 @@
+import { STATUS_COLORS } from "@/lib/status-colors";
+
 export const EVENT_OPTIONS = [
   { value: "scan.created", label: "扫码事件" },
   { value: "claim.created", label: "领券事件" },
@@ -17,9 +19,9 @@ export const ROLE_OPTIONS = [
   { value: "full_access", label: "完全访问 (full_access)" },
 ];
 
-export const STATUS_COLORS: Record<string, string> = {
-  delivered: "#16a34a",
-  pending: "#1d4ed8",
-  retrying: "#f59e0b",
-  failed: "#b91c1c",
+export const INTEGRATION_STATUS: Record<string, string> = {
+  delivered: STATUS_COLORS.success,
+  pending: STATUS_COLORS.processing,
+  retrying: STATUS_COLORS.warning,
+  failed: STATUS_COLORS.error,
 };

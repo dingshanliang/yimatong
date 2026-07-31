@@ -18,6 +18,7 @@ import { ArrowLeftOutlined } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
 import api from "@/lib/api";
 import { formatDate } from "@/lib/format";
+import { STATUS_COLORS } from "@/lib/status-colors";
 
 const { Title, Text } = Typography;
 
@@ -74,22 +75,22 @@ function createTabState<T>(): TabState<T> {
 }
 
 const SKU_STATUS_MAP: Record<string, { label: string; color: string }> = {
-  active: { label: "启用", color: "#16a34a" },
-  inactive: { label: "停用", color: "#8c8c8c" },
+  active: { label: "启用", color: STATUS_COLORS.success },
+  inactive: { label: "停用", color: STATUS_COLORS.neutral },
 };
 
 const BATCH_STATUS_MAP: Record<string, { label: string; color: string }> = {
-  active: { label: "有效", color: "#16a34a" },
-  recalled: { label: "已召回", color: "#b91c1c" },
-  expired: { label: "已过期", color: "#8c8c8c" },
+  active: { label: "有效", color: STATUS_COLORS.success },
+  recalled: { label: "已召回", color: STATUS_COLORS.error },
+  expired: { label: "已过期", color: STATUS_COLORS.neutral },
 };
 
 const CODE_STATUS_MAP: Record<string, { label: string; color: string }> = {
-  pending: { label: "待生成", color: "#8c8c8c" },
-  generating: { label: "生成中", color: "#1d4ed8" },
-  completed: { label: "已生成", color: "#16a34a" },
-  activated: { label: "已激活", color: "#1d4ed8" },
-  failed: { label: "失败", color: "#b91c1c" },
+  pending: { label: "待生成", color: STATUS_COLORS.neutral },
+  generating: { label: "生成中", color: STATUS_COLORS.processing },
+  completed: { label: "已生成", color: STATUS_COLORS.success },
+  activated: { label: "已激活", color: STATUS_COLORS.processing },
+  failed: { label: "失败", color: STATUS_COLORS.error },
 };
 
 const CODE_TYPE_LABELS: Record<string, string> = {
@@ -217,7 +218,10 @@ export default function SKUDetailPage() {
       dataIndex: "status",
       key: "status",
       render: (s: string) => {
-        const info = BATCH_STATUS_MAP[s] || { label: s, color: "#8c8c8c" };
+        const info = BATCH_STATUS_MAP[s] || {
+          label: s,
+          color: STATUS_COLORS.neutral,
+        };
         return <Tag color={info.color}>{info.label}</Tag>;
       },
     },
@@ -262,7 +266,10 @@ export default function SKUDetailPage() {
       dataIndex: "status",
       key: "status",
       render: (s: string) => {
-        const info = CODE_STATUS_MAP[s] || { label: s, color: "#8c8c8c" };
+        const info = CODE_STATUS_MAP[s] || {
+          label: s,
+          color: STATUS_COLORS.neutral,
+        };
         return <Tag color={info.color}>{info.label}</Tag>;
       },
     },

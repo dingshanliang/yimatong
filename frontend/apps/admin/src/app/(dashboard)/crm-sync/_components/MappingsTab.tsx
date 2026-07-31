@@ -4,6 +4,7 @@ import { Table, Tag } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import type { SyncMapping } from "./types";
 import { DIRECTION_MAP, SYNC_STATUS_MAP } from "./constants";
+import { STATUS_COLORS } from "@/lib/status-colors";
 import { formatDate, maskId } from "./utils";
 
 interface MappingsTabProps {
@@ -35,7 +36,10 @@ const columns: ColumnsType<SyncMapping> = [
     dataIndex: "sync_direction",
     key: "sync_direction",
     render: (v: string) => {
-      const info = DIRECTION_MAP[v] || { label: v, color: "#8c8c8c" };
+      const info = DIRECTION_MAP[v] || {
+        label: v,
+        color: STATUS_COLORS.neutral,
+      };
       return <Tag color={info.color}>{info.label}</Tag>;
     },
   },
@@ -50,7 +54,10 @@ const columns: ColumnsType<SyncMapping> = [
     dataIndex: "status",
     key: "status",
     render: (v: string) => {
-      const info = SYNC_STATUS_MAP[v] || { label: v, color: "#8c8c8c" };
+      const info = SYNC_STATUS_MAP[v] || {
+        label: v,
+        color: STATUS_COLORS.neutral,
+      };
       return <Tag color={info.color}>{info.label}</Tag>;
     },
   },

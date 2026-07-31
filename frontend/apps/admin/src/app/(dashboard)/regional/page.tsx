@@ -16,6 +16,7 @@ import {
 import { PlusOutlined } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
 import api from "@/lib/api";
+import { STATUS_COLORS } from "@/lib/status-colors";
 import { MembersTab } from "./_components/MembersTab";
 import { TemplatesTab } from "./_components/TemplatesTab";
 import { DashboardTab } from "./_components/DashboardTab";
@@ -64,7 +65,7 @@ const orgColumns: ColumnsType<Org> = [
     key: "next_action",
     render: (v: string, record) => (
       <Tag
-        color="#1d4ed8"
+        color={STATUS_COLORS.processing}
         data-testid={`regional-org-next-action-${record.id}`}
       >
         {v || "添加成员企业"}

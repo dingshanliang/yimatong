@@ -1,6 +1,6 @@
 ---
 status: active
-last_verified: 2026-07-30
+last_verified: 2026-07-31
 accuracy: high
 ---
 
@@ -75,3 +75,34 @@ token 变更 PR 清单：改 `primitives.ts`/`themes.ts` 必须同步 `pnpm --fi
 
 - 迁移执行人按清单自查勾选
 - **批 0（样板批）与批 2（核心流程页）由用户抽查确认**；辅助页免检
+
+## 三、antd 状态色契约（Tag preset 单一事实来源）
+
+> 2026-07-31 收口：Admin/Platform 全量 `<Tag color>` 不再使用硬编码 hex，改走 antd **preset 状态名**，由 `getAntdTheme` 的 `colorSuccess/Warning/Error/Info` 种子 token 计算颜色。
+
+### 机制
+
+- `@yimatong/design-tokens/lib/antd.ts` 的 `getAntdTheme(mode)` 把 `colorSuccess/Warning/Error/Info` 绑定到 feedback 语义 token；深色模式叠加 `darkAlgorithm`。
+- 因此 antd `<Tag color="success|processing|warning|error|default">` 自动：① 颜色来自 design tokens 单一事实来源；② 深色模式自适应（无需维护双色）。
+- 集中映射 `apps/{admin,platform}/src/lib/status-colors.ts` 导出 `STATUS_COLORS`（值即 preset 名）与 `HEX_TO_STATUS`（历史 hex→preset 速查），是业务状态→语义色的唯一入口。
+
+### 语义口径
+
+| preset (STATUS_COLORS key) | 语义                                  | 历史 hex |
+| -------------------------- | ------------------------------------- | -------- |
+| `success`                  | 成功 / 活跃 / 已完成 / 健康           | #16a34a  |
+| `processing`               | 进行中 / 待处理 / 信息 / 蓝           | #1d4ed8  |
+| `warning`                  | 暂停 / 警告 / 预警 / 中危 / 琥珀类    | #f59e0b  |
+| `error`                    | 失败 / 危险 / 已终止 / 高危 / 红      | #b91c1c  |
+| `neutral`（→ "default"）   | 默认 / 草稿 / 未激活 / 占位（中性灰） | #8c8c8c  |
+
+### 使用约束
+
+- **`STATUS_COLORS` 仅用于 antd `<Tag color>`**。不要把 preset 名喂给 inline style 的 `color`/`background`、`Progress strokeColor`、`Badge status` 或 antd `Timeline color`——那些需要真实 CSS 颜色值，preset 名无效。
+- 需要真实颜色时走 CSS var（如 `Timeline` 用 `var(--ymt-color-feedback-info)`），仍来自 token。
+- 新增业务状态色：先归入上述语义口径，引用 `STATUS_COLORS.<preset>`；不要新增本地 hex 或本地 STATUS_MAP。
+
+### 收口范围（已验收）
+
+- 全量 `<Tag color="#hex">` 与本地 STATUS_MAP（约 50 文件）已迁移到 `STATUS_COLORS` 引用。
+- 深色模式已浏览器目测：campaigns 页 warning Tag 浅色 `#92400e`、深色 `#d9b644`，均来自 feedback token 且自适应。

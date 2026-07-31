@@ -5,6 +5,7 @@ import type { ColumnsType } from "antd/es/table";
 import { useRouter } from "next/navigation";
 import useSWR from "swr";
 import { STATUS_MAP, PLAN_MAP } from "@/lib/constants";
+import { STATUS_COLORS } from "@/lib/status-colors";
 
 const { Title } = Typography;
 
@@ -93,7 +94,7 @@ export default function QuotaPage() {
 function renderQuotaBar(record: QuotaUsageItem, key: string) {
   const limit = record.quota?.[key];
   if (limit === undefined || limit === null) return <Tag>未设置</Tag>;
-  if (limit === -1) return <Tag color="#1d4ed8">无限制</Tag>;
+  if (limit === -1) return <Tag color={STATUS_COLORS.processing}>无限制</Tag>;
 
   // For now show limit only — actual usage tracking will come with health metrics in Wave 4
   return (

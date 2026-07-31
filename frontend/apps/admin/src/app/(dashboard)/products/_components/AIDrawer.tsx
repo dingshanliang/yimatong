@@ -29,6 +29,7 @@ import {
   type PageCopyResult,
   type ExtractedFields,
 } from "@/lib/ai";
+import { STATUS_COLORS } from "@/lib/status-colors";
 import type { FormInstance } from "antd";
 
 const { Title, Text, Paragraph } = Typography;
@@ -268,7 +269,7 @@ export function AIDrawer({ open, onClose, form }: AIDrawerProps) {
                 </div>
                 <div>
                   <Text strong>推荐模板：</Text>
-                  <Tag color="#1d4ed8" className="ml-2">
+                  <Tag color={STATUS_COLORS.processing} className="ml-2">
                     {pageCopy.recommended_template.name}
                   </Tag>
                 </div>

@@ -21,6 +21,7 @@ import {
 import type { ColumnsType } from "antd/es/table";
 import api from "@/lib/api";
 import { formatDateTime } from "@/lib/format";
+import { STATUS_COLORS } from "@/lib/status-colors";
 
 const { Title } = Typography;
 
@@ -39,8 +40,8 @@ interface DiversionClue {
 }
 
 const SEVERITY_MAP: Record<string, { label: string; color: string }> = {
-  high: { label: "高危", color: "#b91c1c" },
-  medium: { label: "中危", color: "#f59e0b" },
+  high: { label: "高危", color: STATUS_COLORS.error },
+  medium: { label: "中危", color: STATUS_COLORS.warning },
 };
 
 const RESOLUTION_OPTIONS = [
@@ -145,7 +146,7 @@ export default function AntiDiversionPage() {
       render: (v: string) => {
         const info = SEVERITY_MAP[v] || {
           label: v || "未知",
-          color: "#8c8c8c",
+          color: STATUS_COLORS.neutral,
         };
         return <Tag color={info.color}>{info.label}</Tag>;
       },
@@ -176,11 +177,14 @@ export default function AntiDiversionPage() {
       width: 80,
       render: (v: boolean) =>
         v ? (
-          <Tag icon={<CheckCircleOutlined />} color="#16a34a">
+          <Tag icon={<CheckCircleOutlined />} color={STATUS_COLORS.success}>
             已处理
           </Tag>
         ) : (
-          <Tag icon={<ExclamationCircleOutlined />} color="#f59e0b">
+          <Tag
+            icon={<ExclamationCircleOutlined />}
+            color={STATUS_COLORS.warning}
+          >
             待处理
           </Tag>
         ),

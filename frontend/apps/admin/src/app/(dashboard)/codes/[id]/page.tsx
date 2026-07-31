@@ -20,6 +20,7 @@ import {
 import { ArrowLeftOutlined, DownloadOutlined } from "@ant-design/icons";
 import api, { extractErrorMessage } from "@/lib/api";
 import { formatDate, formatDateTime } from "@/lib/format";
+import { STATUS_COLORS } from "@/lib/status-colors";
 
 const { Title, Text } = Typography;
 
@@ -45,19 +46,19 @@ interface CodeBatchDetail {
 }
 
 const STATUS_MAP: Record<string, { label: string; color: string }> = {
-  pending: { label: "待生成", color: "#8c8c8c" },
-  generating: { label: "生成中", color: "#1d4ed8" },
-  completed: { label: "已生成", color: "#16a34a" },
-  exported: { label: "已导出", color: "#1d4ed8" },
-  printing: { label: "印刷中", color: "#f59e0b" },
-  delivered: { label: "已交付", color: "#f59e0b" },
-  activated: { label: "已激活", color: "#1d4ed8" },
-  failed: { label: "失败", color: "#b91c1c" },
-  created: { label: "已创建", color: "#8c8c8c" },
-  bound: { label: "已绑定", color: "#16a34a" },
-  expired: { label: "已过期", color: "#8c8c8c" },
-  revoked: { label: "已撤销", color: "#b91c1c" },
-  frozen: { label: "已冻结", color: "#f59e0b" },
+  pending: { label: "待生成", color: STATUS_COLORS.neutral },
+  generating: { label: "生成中", color: STATUS_COLORS.processing },
+  completed: { label: "已生成", color: STATUS_COLORS.success },
+  exported: { label: "已导出", color: STATUS_COLORS.processing },
+  printing: { label: "印刷中", color: STATUS_COLORS.warning },
+  delivered: { label: "已交付", color: STATUS_COLORS.warning },
+  activated: { label: "已激活", color: STATUS_COLORS.processing },
+  failed: { label: "失败", color: STATUS_COLORS.error },
+  created: { label: "已创建", color: STATUS_COLORS.neutral },
+  bound: { label: "已绑定", color: STATUS_COLORS.success },
+  expired: { label: "已过期", color: STATUS_COLORS.neutral },
+  revoked: { label: "已撤销", color: STATUS_COLORS.error },
+  frozen: { label: "已冻结", color: STATUS_COLORS.warning },
 };
 
 const CODE_TYPE_OPTIONS: Record<string, string> = {
@@ -233,7 +234,7 @@ export default function CodeBatchDetailPage() {
 
   const statusInfo = STATUS_MAP[batch.status] || {
     label: batch.status,
-    color: "#8c8c8c",
+    color: STATUS_COLORS.neutral,
   };
   const stats = batch.stats || {};
   const totalStats = Object.values(stats).reduce((a, b) => a + b, 0);

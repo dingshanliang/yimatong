@@ -15,6 +15,7 @@ import {
 } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import api from "@/lib/api";
+import { STATUS_COLORS } from "@/lib/status-colors";
 
 const { Title, Text } = Typography;
 
@@ -107,7 +108,9 @@ export default function ChannelPortalPage() {
     {
       title: "批次余量",
       dataIndex: "remaining_quantity",
-      render: (value) => <Tag color="#1d4ed8">剩余 {value || 0}</Tag>,
+      render: (value) => (
+        <Tag color={STATUS_COLORS.processing}>剩余 {value || 0}</Tag>
+      ),
     },
   ];
 
@@ -214,7 +217,11 @@ export default function ChannelPortalPage() {
                 title: "状态",
                 dataIndex: "read",
                 render: (v: boolean) =>
-                  v ? <Tag>已读</Tag> : <Tag color="#b91c1c">未读</Tag>,
+                  v ? (
+                    <Tag>已读</Tag>
+                  ) : (
+                    <Tag color={STATUS_COLORS.error}>未读</Tag>
+                  ),
               },
             ]}
             dataSource={alerts}

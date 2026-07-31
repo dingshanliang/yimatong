@@ -1,6 +1,7 @@
 "use client";
 
 import { useCrud } from "@/lib/hooks";
+import { STATUS_COLORS } from "@/lib/status-colors";
 import { Descriptions, Modal, Select, Table, Tag, Typography } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import { useState } from "react";
@@ -40,7 +41,7 @@ const columns: ColumnsType<Attribution> = [
     dataIndex: "match_type",
     key: "match_type",
     width: 100,
-    render: (v: string) => <Tag color="#1d4ed8">{v}</Tag>,
+    render: (v: string) => <Tag color={STATUS_COLORS.processing}>{v}</Tag>,
   },
   {
     title: "置信度",

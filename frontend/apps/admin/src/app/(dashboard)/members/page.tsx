@@ -34,6 +34,7 @@ import {
 } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
 import api, { extractErrorMessage } from "@/lib/api";
+import { STATUS_COLORS } from "@/lib/status-colors";
 
 const { Title, Text } = Typography;
 const { RangePicker } = DatePicker;
@@ -867,7 +868,7 @@ function ProductsTab({ onChanged }: { onChanged: () => void }) {
     {
       title: "积分价格",
       dataIndex: "points_cost",
-      render: (value) => <Tag color="#f59e0b">{value} 积分</Tag>,
+      render: (value) => <Tag color={STATUS_COLORS.warning}>{value} 积分</Tag>,
     },
     {
       title: "库存",
@@ -1115,7 +1116,7 @@ function RedemptionsTab() {
     {
       title: "消耗积分",
       dataIndex: "points_cost",
-      render: (value) => <Tag color="#f59e0b">{value} 积分</Tag>,
+      render: (value) => <Tag color={STATUS_COLORS.warning}>{value} 积分</Tag>,
     },
     {
       title: "关联权益",

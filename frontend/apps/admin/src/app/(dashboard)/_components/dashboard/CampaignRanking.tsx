@@ -5,6 +5,7 @@ import { Card, Empty, Spin, Table, Tag } from "antd";
 import { useRouter } from "next/navigation";
 import type { ColumnsType } from "antd/es/table";
 import api from "@/lib/api";
+import { STATUS_COLORS } from "@/lib/status-colors";
 import { OrderConversionRateHeader } from "../MetricHeaders";
 
 interface RankingItem {
@@ -17,10 +18,10 @@ interface RankingItem {
 }
 
 const STATUS_MAP: Record<string, { label: string; color: string }> = {
-  draft: { label: "草稿", color: "#8c8c8c" },
-  active: { label: "进行中", color: "#1d4ed8" },
-  paused: { label: "已暂停", color: "#f59e0b" },
-  ended: { label: "已结束", color: "#8c8c8c" },
+  draft: { label: "草稿", color: STATUS_COLORS.neutral },
+  active: { label: "进行中", color: STATUS_COLORS.processing },
+  paused: { label: "已暂停", color: STATUS_COLORS.warning },
+  ended: { label: "已结束", color: STATUS_COLORS.neutral },
 };
 
 export default function CampaignRanking() {
@@ -73,7 +74,10 @@ export default function CampaignRanking() {
       key: "status",
       width: 80,
       render: (status: string) => {
-        const info = STATUS_MAP[status] || { label: status, color: "#8c8c8c" };
+        const info = STATUS_MAP[status] || {
+          label: status,
+          color: STATUS_COLORS.neutral,
+        };
         return <Tag color={info.color}>{info.label}</Tag>;
       },
     },

@@ -28,6 +28,7 @@ import {
   type PageSuggestResult,
 } from "@/lib/ai";
 import { useCategories } from "@/lib/use-categories";
+import { STATUS_COLORS } from "@/lib/status-colors";
 import { ResultCard } from "./shared";
 
 const { Title, Text, Paragraph } = Typography;
@@ -230,7 +231,7 @@ export function PagePlanTab() {
               <Text strong>推荐模块结构：</Text>
               <div className="mt-2 flex flex-wrap gap-2">
                 {suggestResult.suggestion.modules.map((mod, idx) => (
-                  <Tag key={idx} color="#1d4ed8">
+                  <Tag key={idx} color={STATUS_COLORS.processing}>
                     {mod}
                   </Tag>
                 ))}

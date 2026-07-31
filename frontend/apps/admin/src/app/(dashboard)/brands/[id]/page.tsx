@@ -18,6 +18,7 @@ import { ArrowLeftOutlined, EditOutlined } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
 import api from "@/lib/api";
 import { formatDate } from "@/lib/format";
+import { STATUS_COLORS } from "@/lib/status-colors";
 import BrandFormModal from "../_components/BrandFormModal";
 
 const { Title } = Typography;
@@ -80,30 +81,30 @@ interface BatchItem {
 type TabItem = ProductItem | CampaignItem | CodeBatchItem | BatchItem;
 
 const PRODUCT_STATUS_MAP: Record<string, { label: string; color: string }> = {
-  active: { label: "启用", color: "#16a34a" },
-  inactive: { label: "停用", color: "#8c8c8c" },
+  active: { label: "启用", color: STATUS_COLORS.success },
+  inactive: { label: "停用", color: STATUS_COLORS.neutral },
 };
 
 const CAMPAIGN_STATUS_MAP: Record<string, { label: string; color: string }> = {
-  draft: { label: "草稿", color: "#8c8c8c" },
-  pending: { label: "待开始", color: "#1d4ed8" },
-  active: { label: "进行中", color: "#16a34a" },
-  paused: { label: "已暂停", color: "#f59e0b" },
-  ended: { label: "已结束", color: "#8c8c8c" },
+  draft: { label: "草稿", color: STATUS_COLORS.neutral },
+  pending: { label: "待开始", color: STATUS_COLORS.processing },
+  active: { label: "进行中", color: STATUS_COLORS.success },
+  paused: { label: "已暂停", color: STATUS_COLORS.warning },
+  ended: { label: "已结束", color: STATUS_COLORS.neutral },
 };
 
 const CODE_STATUS_MAP: Record<string, { label: string; color: string }> = {
-  pending: { label: "待生成", color: "#8c8c8c" },
-  generating: { label: "生成中", color: "#1d4ed8" },
-  completed: { label: "已生成", color: "#16a34a" },
-  activated: { label: "已激活", color: "#1d4ed8" },
-  failed: { label: "失败", color: "#b91c1c" },
+  pending: { label: "待生成", color: STATUS_COLORS.neutral },
+  generating: { label: "生成中", color: STATUS_COLORS.processing },
+  completed: { label: "已生成", color: STATUS_COLORS.success },
+  activated: { label: "已激活", color: STATUS_COLORS.processing },
+  failed: { label: "失败", color: STATUS_COLORS.error },
 };
 
 const BATCH_STATUS_MAP: Record<string, { label: string; color: string }> = {
-  active: { label: "有效", color: "#16a34a" },
-  recalled: { label: "已召回", color: "#b91c1c" },
-  expired: { label: "已过期", color: "#8c8c8c" },
+  active: { label: "有效", color: STATUS_COLORS.success },
+  recalled: { label: "已召回", color: STATUS_COLORS.error },
+  expired: { label: "已过期", color: STATUS_COLORS.neutral },
 };
 
 type TabKey = "products" | "campaigns" | "code-batches" | "batches";
@@ -238,7 +239,10 @@ export default function BrandDetailPage() {
       dataIndex: "status",
       key: "status",
       render: (s: string) => {
-        const info = PRODUCT_STATUS_MAP[s] || { label: s, color: "#8c8c8c" };
+        const info = PRODUCT_STATUS_MAP[s] || {
+          label: s,
+          color: STATUS_COLORS.neutral,
+        };
         return <Tag color={info.color}>{info.label}</Tag>;
       },
     },
@@ -271,7 +275,10 @@ export default function BrandDetailPage() {
       key: "status",
       render: (_, record: CampaignItem) => {
         const s = record.computed_status || record.status;
-        const info = CAMPAIGN_STATUS_MAP[s] || { label: s, color: "#8c8c8c" };
+        const info = CAMPAIGN_STATUS_MAP[s] || {
+          label: s,
+          color: STATUS_COLORS.neutral,
+        };
         return <Tag color={info.color}>{info.label}</Tag>;
       },
     },
@@ -322,7 +329,10 @@ export default function BrandDetailPage() {
       dataIndex: "status",
       key: "status",
       render: (s: string) => {
-        const info = CODE_STATUS_MAP[s] || { label: s, color: "#8c8c8c" };
+        const info = CODE_STATUS_MAP[s] || {
+          label: s,
+          color: STATUS_COLORS.neutral,
+        };
         return <Tag color={info.color}>{info.label}</Tag>;
       },
     },
@@ -355,7 +365,10 @@ export default function BrandDetailPage() {
       dataIndex: "status",
       key: "status",
       render: (s: string) => {
-        const info = BATCH_STATUS_MAP[s] || { label: s, color: "#8c8c8c" };
+        const info = BATCH_STATUS_MAP[s] || {
+          label: s,
+          color: STATUS_COLORS.neutral,
+        };
         return <Tag color={info.color}>{info.label}</Tag>;
       },
     },

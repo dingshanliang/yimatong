@@ -20,6 +20,7 @@ import { WebhooksTab } from "./_components/WebhooksTab";
 import { ApiKeysTab } from "./_components/ApiKeysTab";
 import { DeliveriesTab } from "./_components/DeliveriesTab";
 import api from "@/lib/api";
+import { STATUS_COLORS } from "@/lib/status-colors";
 
 const { Paragraph, Text, Title } = Typography;
 
@@ -62,7 +63,7 @@ function getWeComStage(status: WeComStatus | null) {
   if (status.connected) {
     return {
       current: 3,
-      tag: <Tag color="#16a34a">已连接</Tag>,
+      tag: <Tag color={STATUS_COLORS.success}>已连接</Tag>,
       alertType: "success" as const,
       title: "企业微信已连接",
       description:
@@ -72,7 +73,7 @@ function getWeComStage(status: WeComStatus | null) {
   if (status.config?.last_error || status.status === "error") {
     return {
       current: 2,
-      tag: <Tag color="#b91c1c">连接失败</Tag>,
+      tag: <Tag color={STATUS_COLORS.error}>连接失败</Tag>,
       alertType: "warning" as const,
       title: "连接未通过",
       description:
@@ -81,7 +82,7 @@ function getWeComStage(status: WeComStatus | null) {
   }
   return {
     current: 1,
-    tag: <Tag color="#1d4ed8">待检测</Tag>,
+    tag: <Tag color={STATUS_COLORS.processing}>待检测</Tag>,
     alertType: "info" as const,
     title: "请完成企业微信后台填写",
     description:
@@ -203,7 +204,7 @@ function WeComTab() {
           title="第 1 步：填写企业微信资料"
           extra={
             status?.config?.last_verified_at ? (
-              <Tag color="#16a34a">最近检测通过</Tag>
+              <Tag color={STATUS_COLORS.success}>最近检测通过</Tag>
             ) : undefined
           }
         >

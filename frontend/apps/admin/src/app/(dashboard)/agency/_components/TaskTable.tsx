@@ -5,6 +5,7 @@ import { Button, Card, Input, Select, Space, Table, Tag } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import type { AgencyClientRow, WorkbenchTask } from "./types";
 import { PRIORITY_MAP, TASK_STATUS_MAP } from "./types";
+import { STATUS_COLORS } from "@/lib/status-colors";
 
 interface TaskTableProps {
   tasks: WorkbenchTask[];
@@ -73,7 +74,10 @@ export function TaskTable({
       key: "priority",
       width: 80,
       render: (p: string) => {
-        const info = PRIORITY_MAP[p] || { label: p, color: "#8c8c8c" };
+        const info = PRIORITY_MAP[p] || {
+          label: p,
+          color: STATUS_COLORS.neutral,
+        };
         return <Tag color={info.color}>{info.label}</Tag>;
       },
     },
@@ -83,7 +87,10 @@ export function TaskTable({
       key: "status",
       width: 90,
       render: (s: string) => {
-        const info = TASK_STATUS_MAP[s] || { label: s, color: "#8c8c8c" };
+        const info = TASK_STATUS_MAP[s] || {
+          label: s,
+          color: STATUS_COLORS.neutral,
+        };
         return <Tag color={info.color}>{info.label}</Tag>;
       },
     },
@@ -96,7 +103,7 @@ export function TaskTable({
         if (!v) return "—";
         const date = v.split("T")[0];
         return record.overdue ? (
-          <Tag color="#b91c1c">{date}（逾期）</Tag>
+          <Tag color={STATUS_COLORS.error}>{date}（逾期）</Tag>
         ) : (
           date
         );

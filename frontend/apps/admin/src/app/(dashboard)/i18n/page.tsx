@@ -16,6 +16,7 @@ import { PlusOutlined } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
 import api from "@/lib/api";
 import { useI18n } from "@/lib/i18n";
+import { STATUS_COLORS } from "@/lib/status-colors";
 
 const LOCALES = [
   { value: "zh", label: "中文 (zh)" },
@@ -87,7 +88,7 @@ export default function I18nPage() {
       dataIndex: "locale",
       key: "locale",
       width: 100,
-      render: (v: string) => <Tag color="#1d4ed8">{v}</Tag>,
+      render: (v: string) => <Tag color={STATUS_COLORS.processing}>{v}</Tag>,
     },
     { title: t("i18n.value"), dataIndex: "value", key: "value" },
   ];

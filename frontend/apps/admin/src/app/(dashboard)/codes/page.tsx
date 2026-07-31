@@ -25,6 +25,7 @@ import {
 import type { ColumnsType } from "antd/es/table";
 import api from "@/lib/api";
 import { formatDate } from "@/lib/format";
+import { STATUS_COLORS } from "@/lib/status-colors";
 
 const { Title } = Typography;
 
@@ -80,14 +81,14 @@ interface CodeBatchFormValues {
 }
 
 const STATUS_MAP: Record<string, { label: string; color: string }> = {
-  pending: { label: "待生成", color: "#8c8c8c" },
-  generating: { label: "生成中", color: "#1d4ed8" },
-  completed: { label: "已生成", color: "#16a34a" },
-  exported: { label: "已导出", color: "#1d4ed8" },
-  printing: { label: "印刷中", color: "#f59e0b" },
-  delivered: { label: "已交付", color: "#f59e0b" },
-  activated: { label: "已激活", color: "#1d4ed8" },
-  failed: { label: "失败", color: "#b91c1c" },
+  pending: { label: "待生成", color: STATUS_COLORS.neutral },
+  generating: { label: "生成中", color: STATUS_COLORS.processing },
+  completed: { label: "已生成", color: STATUS_COLORS.success },
+  exported: { label: "已导出", color: STATUS_COLORS.processing },
+  printing: { label: "印刷中", color: STATUS_COLORS.warning },
+  delivered: { label: "已交付", color: STATUS_COLORS.warning },
+  activated: { label: "已激活", color: STATUS_COLORS.processing },
+  failed: { label: "失败", color: STATUS_COLORS.error },
 };
 
 const FILTER_STATUS_OPTIONS = [
@@ -459,7 +460,10 @@ export default function CodesPage() {
       dataIndex: "status",
       key: "status",
       render: (s: string) => {
-        const info = STATUS_MAP[s] || { label: s, color: "#8c8c8c" };
+        const info = STATUS_MAP[s] || {
+          label: s,
+          color: STATUS_COLORS.neutral,
+        };
         return <Tag color={info.color}>{info.label}</Tag>;
       },
     },

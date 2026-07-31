@@ -31,6 +31,7 @@ import useSWR from "swr";
 import api from "@/lib/api";
 import { extractErrorMessage } from "@/lib/api";
 import { STATUS_MAP, PLAN_MAP } from "@/lib/constants";
+import { STATUS_COLORS } from "@/lib/status-colors";
 
 const { Title } = Typography;
 
@@ -228,7 +229,9 @@ export default function TenantsPage() {
       render: (v: string | null) =>
         v ? (
           dayjs(v).isBefore(dayjs().add(30, "day")) ? (
-            <Tag color="#b91c1c">{dayjs(v).format("YYYY-MM-DD")}</Tag>
+            <Tag color={STATUS_COLORS.error}>
+              {dayjs(v).format("YYYY-MM-DD")}
+            </Tag>
           ) : (
             dayjs(v).format("YYYY-MM-DD")
           )

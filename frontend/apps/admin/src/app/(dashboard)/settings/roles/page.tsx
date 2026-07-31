@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useCrud } from "@/lib/hooks";
+import { STATUS_COLORS } from "@/lib/status-colors";
 import {
   App,
   Button,
@@ -165,7 +166,9 @@ export default function RolesPage() {
       key: "permission_count",
       width: 100,
       render: (_, record) => (
-        <Tag color="#1d4ed8">{record.permissions?.length || 0} 项</Tag>
+        <Tag color={STATUS_COLORS.processing}>
+          {record.permissions?.length || 0} 项
+        </Tag>
       ),
     },
     {

@@ -23,6 +23,7 @@ import dayjs from "dayjs";
 import useSWR, { mutate } from "swr";
 import api from "@/lib/api";
 import { extractErrorMessage } from "@/lib/api";
+import { STATUS_COLORS } from "@/lib/status-colors";
 import { useState } from "react";
 import { TenantHealthScoreHeader } from "../_components/HealthScoreHeader";
 import { message } from "antd";
@@ -50,10 +51,10 @@ interface HealthTenant {
 }
 
 const STATUS_CONFIG: Record<string, { color: string; label: string }> = {
-  healthy: { color: "#16a34a", label: "健康" },
-  warning: { color: "#f59e0b", label: "警告" },
-  critical: { color: "#b91c1c", label: "危急" },
-  dormant: { color: "#8c8c8c", label: "休眠" },
+  healthy: { color: STATUS_COLORS.success, label: "健康" },
+  warning: { color: STATUS_COLORS.warning, label: "警告" },
+  critical: { color: STATUS_COLORS.error, label: "危急" },
+  dormant: { color: STATUS_COLORS.neutral, label: "休眠" },
 };
 
 export default function HealthPage() {
@@ -150,7 +151,7 @@ export default function HealthPage() {
       render: (v: number | null) =>
         v !== null ? (
           v <= 30 ? (
-            <Tag color="#b91c1c">{v} 天</Tag>
+            <Tag color={STATUS_COLORS.error}>{v} 天</Tag>
           ) : (
             <span>{v} 天</span>
           )

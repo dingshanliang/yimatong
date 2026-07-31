@@ -3,27 +3,29 @@
  * Extracted from duplicated definitions across multiple page components.
  */
 
+import { STATUS_COLORS } from "./status-colors";
+
 export const STATUS_MAP: Record<string, { color: string; label: string }> = {
-  active: { color: "#16a34a", label: "活跃" },
-  suspended: { color: "#f59e0b", label: "暂停" },
-  terminated: { color: "#b91c1c", label: "已终止" },
+  active: { color: STATUS_COLORS.success, label: "活跃" },
+  suspended: { color: STATUS_COLORS.warning, label: "暂停" },
+  terminated: { color: STATUS_COLORS.error, label: "已终止" },
 };
 
 export const PLAN_MAP: Record<string, { color: string; label: string }> = {
-  free: { color: "#8c8c8c", label: "免费版" },
-  starter: { color: "#1d4ed8", label: "入门版" },
-  pro: { color: "#f59e0b", label: "专业版" },
-  enterprise: { color: "#f59e0b", label: "企业版" },
+  free: { color: STATUS_COLORS.neutral, label: "免费版" },
+  starter: { color: STATUS_COLORS.processing, label: "入门版" },
+  pro: { color: STATUS_COLORS.warning, label: "专业版" },
+  enterprise: { color: STATUS_COLORS.warning, label: "企业版" },
 };
 
 export const ACTION_COLORS: Record<string, string> = {
-  create_tenant: "#16a34a",
-  update_tenant: "#1d4ed8",
-  delete_tenant: "#b91c1c",
-  status_change: "#f59e0b",
-  assign_plan: "#f59e0b",
-  create_plan: "#1d4ed8",
-  update_plan: "#1d4ed8",
-  update_config: "#f59e0b",
-  refresh_health: "#16a34a",
+  create_tenant: STATUS_COLORS.success,
+  update_tenant: STATUS_COLORS.processing,
+  delete_tenant: STATUS_COLORS.error,
+  status_change: STATUS_COLORS.warning,
+  assign_plan: STATUS_COLORS.warning,
+  create_plan: STATUS_COLORS.processing,
+  update_plan: STATUS_COLORS.processing,
+  update_config: STATUS_COLORS.warning,
+  refresh_health: STATUS_COLORS.success,
 };

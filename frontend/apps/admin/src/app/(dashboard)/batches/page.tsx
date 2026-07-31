@@ -23,6 +23,7 @@ import ProductionBatchFormFields, {
 } from "@/components/ProductionBatchFormFields";
 import api from "@/lib/api";
 import dayjs from "dayjs";
+import { STATUS_COLORS } from "@/lib/status-colors";
 
 const { Title } = Typography;
 
@@ -54,9 +55,9 @@ interface SKU {
 }
 
 const BATCH_STATUS_MAP: Record<string, { label: string; color: string }> = {
-  active: { label: "有效", color: "#16a34a" },
-  recalled: { label: "已召回", color: "#b91c1c" },
-  expired: { label: "已过期", color: "#8c8c8c" },
+  active: { label: "有效", color: STATUS_COLORS.success },
+  recalled: { label: "已召回", color: STATUS_COLORS.error },
+  expired: { label: "已过期", color: STATUS_COLORS.neutral },
 };
 
 export default function BatchesPage() {
@@ -194,7 +195,10 @@ export default function BatchesPage() {
       dataIndex: "status",
       key: "status",
       render: (s: string) => {
-        const info = BATCH_STATUS_MAP[s] || { label: s, color: "#8c8c8c" };
+        const info = BATCH_STATUS_MAP[s] || {
+          label: s,
+          color: STATUS_COLORS.neutral,
+        };
         return <Tag color={info.color}>{info.label}</Tag>;
       },
     },

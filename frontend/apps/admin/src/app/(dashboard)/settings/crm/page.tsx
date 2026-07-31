@@ -19,6 +19,7 @@ import {
   SaveOutlined,
 } from "@ant-design/icons";
 import api, { extractErrorMessage } from "@/lib/api";
+import { STATUS_COLORS } from "@/lib/status-colors";
 
 const { Title, Text } = Typography;
 
@@ -203,18 +204,18 @@ export default function CrmSettingsPage() {
         <Descriptions column={1} bordered>
           <Descriptions.Item label="配置状态">
             {connectionState.configured ? (
-              <Tag color="#16a34a">已配置</Tag>
+              <Tag color={STATUS_COLORS.success}>已配置</Tag>
             ) : (
-              <Tag color="#8c8c8c">未配置</Tag>
+              <Tag color={STATUS_COLORS.neutral}>未配置</Tag>
             )}
           </Descriptions.Item>
           <Descriptions.Item label="连接状态">
             {connectionState.connected === null ? (
               <Text type="secondary">未测试</Text>
             ) : connectionState.connected ? (
-              <Tag color="#16a34a">已连接</Tag>
+              <Tag color={STATUS_COLORS.success}>已连接</Tag>
             ) : (
-              <Tag color="#b91c1c">连接失败</Tag>
+              <Tag color={STATUS_COLORS.error}>连接失败</Tag>
             )}
           </Descriptions.Item>
           <Descriptions.Item label="最近同步时间">

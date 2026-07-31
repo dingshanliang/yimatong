@@ -16,6 +16,7 @@ import {
 } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import api from "@/lib/api";
+import { STATUS_COLORS } from "@/lib/status-colors";
 
 const { Title, Text } = Typography;
 
@@ -80,7 +81,9 @@ export default function StorePortalPage() {
     {
       title: "批次余量",
       dataIndex: "remaining_quantity",
-      render: (value) => <Tag color="#1d4ed8">剩余 {value || 0}</Tag>,
+      render: (value) => (
+        <Tag color={STATUS_COLORS.processing}>剩余 {value || 0}</Tag>
+      ),
     },
   ];
 

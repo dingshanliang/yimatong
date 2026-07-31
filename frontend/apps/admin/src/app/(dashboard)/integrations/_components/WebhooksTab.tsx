@@ -20,6 +20,7 @@ import {
 import { PlusOutlined, CopyOutlined } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
 import api from "@/lib/api";
+import { STATUS_COLORS } from "@/lib/status-colors";
 import { EVENT_OPTIONS } from "./constants";
 
 const { Text } = Typography;
@@ -112,7 +113,9 @@ export function WebhooksTab() {
       key: "batch",
       render: (_, record) =>
         record.batch_mode ? (
-          <Tag color="#1d4ed8">批量 ({String(record.batch_size)})</Tag>
+          <Tag color={STATUS_COLORS.processing}>
+            批量 ({String(record.batch_size)})
+          </Tag>
         ) : (
           <Tag>逐条</Tag>
         ),

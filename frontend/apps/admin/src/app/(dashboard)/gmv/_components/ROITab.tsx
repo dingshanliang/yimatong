@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import api from "@/lib/api";
+import { STATUS_COLORS } from "@/lib/status-colors";
 import {
   OrderConversionRateHeader,
   OrderConversionRateTitle,
@@ -51,12 +52,12 @@ const columns: ColumnsType<ROIItem> = [
     width: 80,
     render: (v: string) => {
       const map: Record<string, string> = {
-        active: "#16a34a",
-        draft: "#8c8c8c",
-        paused: "#f59e0b",
-        ended: "#b91c1c",
+        active: STATUS_COLORS.success,
+        draft: STATUS_COLORS.neutral,
+        paused: STATUS_COLORS.warning,
+        ended: STATUS_COLORS.error,
       };
-      return <Tag color={map[v] || "#8c8c8c"}>{v}</Tag>;
+      return <Tag color={map[v] || STATUS_COLORS.neutral}>{v}</Tag>;
     },
   },
   {

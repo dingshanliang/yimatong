@@ -19,15 +19,16 @@ import {
 import { ArrowLeftOutlined } from "@ant-design/icons";
 import api, { extractErrorMessage } from "@/lib/api";
 import { formatDateTime } from "@/lib/format";
+import { STATUS_COLORS } from "@/lib/status-colors";
 import type { Campaign, Benefit } from "@yimatong/shared";
 
 const { Title, Text } = Typography;
 
 const STATUS_MAP: Record<string, { label: string; color: string }> = {
-  draft: { label: "草稿", color: "#8c8c8c" },
-  active: { label: "进行中", color: "#1d4ed8" },
-  paused: { label: "已暂停", color: "#f59e0b" },
-  ended: { label: "已结束", color: "#8c8c8c" },
+  draft: { label: "草稿", color: STATUS_COLORS.neutral },
+  active: { label: "进行中", color: STATUS_COLORS.processing },
+  paused: { label: "已暂停", color: STATUS_COLORS.warning },
+  ended: { label: "已结束", color: STATUS_COLORS.neutral },
 };
 
 const CAMPAIGN_TYPE_MAP: Record<string, string> = {
@@ -100,7 +101,7 @@ export default function CampaignDetailPage() {
 
   const statusInfo = STATUS_MAP[campaign.status] || {
     label: campaign.status,
-    color: "#8c8c8c",
+    color: STATUS_COLORS.neutral,
   };
   const stockPercent =
     campaign.stock_total > 0

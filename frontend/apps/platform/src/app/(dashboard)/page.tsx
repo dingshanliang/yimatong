@@ -97,7 +97,7 @@ export default function PlatformDashboardPage() {
             {data?.recent_audit_logs?.length ? (
               <Timeline
                 items={data.recent_audit_logs.map((log) => ({
-                  color: "#1d4ed8",
+                  color: "var(--ymt-color-feedback-info)",
                   children: (
                     <div key={log.id}>
                       <Text strong>{log.action}</Text>

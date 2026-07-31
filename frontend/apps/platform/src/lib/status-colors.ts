@@ -1,23 +1,44 @@
 /**
- * 业务状态 → design token 语义色集中映射（platform 同构 admin）。
+ * 业务状态 → antd Tag preset 名集中映射（design tokens 单一事实来源，platform 同构 admin）。
  *
- * 颜色值取自 @yimatong/design-tokens 的 light 语义层（单一事实来源），
- * 用于 antd <Tag color> 直接渲染 hex。深色模式下 Tag 不自动切换色板
- * （已知遗留，后续可接 ConfigProvider 双色映射）。
+ * 值用 antd `<Tag color>` 的 **preset 状态名**（success/processing/warning/
+ * error/default），而非 hex。理由：preset 名由 antd 经 ConfigProvider 的
+ * `colorSuccess/Warning/Error/Info` 种子 token 计算（见
+ * `@yimatong/design-tokens/lib/antd.ts` getAntdTheme），而该种子已绑定本仓库
+ * design tokens 的 feedback 语义层。因此：
+ *   1. 颜色始终来自 design tokens 单一事实来源（不散落 hex）；
+ *   2. 深色模式自动自适应（darkAlgorithm + dark feedback tokens），无需双色维护。
  *
  * 语义口径（与 docs/02_tech/design-system/tokens.md 对齐）：
- *   success  成功 / 活跃 / 健康
- *   info     信息 / 入门
- *   warning  暂停 / 警告 / 专业
- *   danger   失败 / 危险 / 已终止 / 危急
- *   neutral  默认 / 免费 / 休眠
+ *   success    成功 / 活跃 / 健康
+ *   processing 信息 / 入门 / 蓝
+ *   warning    暂停 / 警告 / 专业 / 琥珀类
+ *   error      失败 / 危险 / 已终止 / 危急 / 红
+ *   default    默认 / 免费 / 休眠（中性灰）
+ *
+ * 仅用于 antd `<Tag color={...}>`。不要把 preset 名喂给 inline style 的
+ * color/background、Progress strokeColor 或 Badge status——那些需要真实 CSS 颜色值。
  */
+
+/** antd `<Tag color>` 接受的 preset 状态名（design tokens 语义色）。 */
 export const STATUS_COLORS = {
-  success: "#16a34a",
-  info: "#1d4ed8",
-  warning: "#f59e0b",
-  danger: "#b91c1c",
-  neutral: "#8c8c8c",
+  success: "success",
+  processing: "processing",
+  warning: "warning",
+  error: "error",
+  neutral: "default",
 } as const;
 
 export type StatusColor = keyof typeof STATUS_COLORS;
+
+/**
+ * 旧 hex → preset 速查，便于把硬编码 hex 的本地 STATUS_MAP 平移到集中映射。
+ * 仅覆盖历史代码出现过的 5 个 hex。
+ */
+export const HEX_TO_STATUS: Record<string, StatusColor> = {
+  "#16a34a": "success",
+  "#1d4ed8": "processing",
+  "#f59e0b": "warning",
+  "#b91c1c": "error",
+  "#8c8c8c": "neutral",
+};

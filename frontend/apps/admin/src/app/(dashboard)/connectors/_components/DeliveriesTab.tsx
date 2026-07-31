@@ -4,6 +4,7 @@ import { useState, useCallback, useEffect } from "react";
 import { App, Button, Table, Tag } from "antd";
 import { SendOutlined, ReloadOutlined } from "@ant-design/icons";
 import api, { extractErrorMessage } from "@/lib/api";
+import { STATUS_COLORS } from "@/lib/status-colors";
 import type { Delivery } from "./types";
 
 export function DeliveriesTab() {
@@ -52,11 +53,13 @@ export function DeliveriesTab() {
       key: "status",
       render: (status: string) => {
         const colors: Record<string, string> = {
-          pending: "#f59e0b",
-          success: "#16a34a",
-          failed: "#b91c1c",
+          pending: STATUS_COLORS.warning,
+          success: STATUS_COLORS.success,
+          failed: STATUS_COLORS.error,
         };
-        return <Tag color={colors[status] || "#8c8c8c"}>{status}</Tag>;
+        return (
+          <Tag color={colors[status] || STATUS_COLORS.neutral}>{status}</Tag>
+        );
       },
     },
     {

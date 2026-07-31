@@ -39,6 +39,7 @@ import {
 import type { ColumnsType } from "antd/es/table";
 import api from "@/lib/api";
 import { useCrud } from "@/lib/hooks";
+import { STATUS_COLORS } from "@/lib/status-colors";
 import { BenefitConfigFields } from "./_components/BenefitConfigFields";
 import {
   BENEFIT_TYPE_MAP,
@@ -522,7 +523,7 @@ export default function BenefitsPage() {
       render: (_: unknown, record) => {
         const info = BENEFIT_TYPE_MAP[record.benefit_type] || {
           label: record.benefit_type,
-          color: "#8c8c8c",
+          color: STATUS_COLORS.neutral,
           description: "",
         };
         return (
@@ -697,7 +698,10 @@ export default function BenefitsPage() {
       dataIndex: "status",
       key: "status",
       render: (s: string) => {
-        const info = CLAIM_STATUS_MAP[s] || { label: s, color: "#8c8c8c" };
+        const info = CLAIM_STATUS_MAP[s] || {
+          label: s,
+          color: STATUS_COLORS.neutral,
+        };
         return <Tag color={info.color}>{info.label}</Tag>;
       },
     },
@@ -708,7 +712,7 @@ export default function BenefitsPage() {
       render: (s: string) => {
         const info = DELIVERY_STATUS_MAP[s] || {
           label: s || "-",
-          color: "#8c8c8c",
+          color: STATUS_COLORS.neutral,
         };
         return <Tag color={info.color}>{info.label}</Tag>;
       },

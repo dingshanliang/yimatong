@@ -29,6 +29,7 @@ import useSWR from "swr";
 import api from "@/lib/api";
 import { extractErrorMessage } from "@/lib/api";
 import { STATUS_MAP, PLAN_MAP } from "@/lib/constants";
+import { STATUS_COLORS } from "@/lib/status-colors";
 
 const { Title, Text } = Typography;
 
@@ -126,11 +127,11 @@ export default function TenantDetailPage() {
   };
 
   const statusInfo = STATUS_MAP[data.status] ?? {
-    color: "#8c8c8c",
+    color: STATUS_COLORS.neutral,
     label: data.status,
   };
   const planInfo = PLAN_MAP[data.plan] ?? {
-    color: "#8c8c8c",
+    color: STATUS_COLORS.neutral,
     label: data.plan,
   };
 
@@ -265,7 +266,13 @@ export default function TenantDetailPage() {
                     {Object.entries(data.enabled_features).map(
                       ([key, value]) => (
                         <Descriptions.Item key={key} label={key}>
-                          <Tag color={value ? "#16a34a" : "#8c8c8c"}>
+                          <Tag
+                            color={
+                              value
+                                ? STATUS_COLORS.success
+                                : STATUS_COLORS.neutral
+                            }
+                          >
                             {value ? "已启用" : "已禁用"}
                           </Tag>
                         </Descriptions.Item>

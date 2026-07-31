@@ -15,6 +15,7 @@ import type { ColumnsType } from "antd/es/table";
 import dayjs from "dayjs";
 import api from "@/lib/api";
 import { createEmptyDSL } from "@/lib/page-dsl";
+import { STATUS_COLORS } from "@/lib/status-colors";
 
 interface PageVersion {
   id: string;
@@ -26,10 +27,10 @@ interface PageVersion {
 }
 
 const VERSION_STATUS_MAP: Record<string, { label: string; color: string }> = {
-  draft: { label: "草稿", color: "#8c8c8c" },
-  published: { label: "已发布", color: "#1d4ed8" },
-  archived: { label: "已归档", color: "#8c8c8c" },
-  offline: { label: "已下线", color: "#f59e0b" },
+  draft: { label: "草稿", color: STATUS_COLORS.neutral },
+  published: { label: "已发布", color: STATUS_COLORS.processing },
+  archived: { label: "已归档", color: STATUS_COLORS.neutral },
+  offline: { label: "已下线", color: STATUS_COLORS.warning },
 };
 
 export default function VersionPage() {
@@ -127,7 +128,10 @@ export default function VersionPage() {
       dataIndex: "status",
       key: "status",
       render: (s: string) => {
-        const info = VERSION_STATUS_MAP[s] || { label: s, color: "#8c8c8c" };
+        const info = VERSION_STATUS_MAP[s] || {
+          label: s,
+          color: STATUS_COLORS.neutral,
+        };
         return <Tag color={info.color}>{info.label}</Tag>;
       },
     },

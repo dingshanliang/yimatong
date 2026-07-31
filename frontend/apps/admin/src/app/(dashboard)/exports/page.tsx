@@ -6,6 +6,7 @@ import { DownloadOutlined } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
 import api from "@/lib/api";
 import { useCrud } from "@/lib/hooks";
+import { STATUS_COLORS } from "@/lib/status-colors";
 
 const { Title } = Typography;
 
@@ -29,10 +30,10 @@ interface ExportLog {
 }
 
 const BATCH_STATUS_MAP: Record<string, { label: string; color: string }> = {
-  draft: { label: "草稿", color: "#8c8c8c" },
-  activated: { label: "已激活", color: "#16a34a" },
-  frozen: { label: "已冻结", color: "#f59e0b" },
-  voided: { label: "已作废", color: "#b91c1c" },
+  draft: { label: "草稿", color: STATUS_COLORS.neutral },
+  activated: { label: "已激活", color: STATUS_COLORS.success },
+  frozen: { label: "已冻结", color: STATUS_COLORS.warning },
+  voided: { label: "已作废", color: STATUS_COLORS.error },
 };
 
 export default function ExportsPage() {
@@ -90,7 +91,10 @@ export default function ExportsPage() {
       dataIndex: "status",
       key: "status",
       render: (s: string) => {
-        const info = BATCH_STATUS_MAP[s] || { label: s, color: "#8c8c8c" };
+        const info = BATCH_STATUS_MAP[s] || {
+          label: s,
+          color: STATUS_COLORS.neutral,
+        };
         return <Tag color={info.color}>{info.label}</Tag>;
       },
     },
