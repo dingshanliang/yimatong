@@ -1,8 +1,18 @@
 "use client";
 
-import { Button, DatePicker, Input, Select, Space, Switch, Tag, Typography } from "antd";
+import {
+  Button,
+  DatePicker,
+  Input,
+  Select,
+  Space,
+  Switch,
+  Tag,
+  Typography,
+} from "antd";
 import { PlusOutlined } from "@ant-design/icons";
 import dayjs from "dayjs";
+import { STATUS_COLORS } from "@/lib/status-colors";
 import type { PageDSL, CampaignPeriod } from "@/lib/page-dsl";
 
 const { Text } = Typography;
@@ -31,7 +41,9 @@ export function RoutingConfig({
   };
 
   const updatePeriod = (index: number, updates: Record<string, unknown>) => {
-    const newPeriods = periods.map((p, i) => (i === index ? { ...p, ...updates } : p));
+    const newPeriods = periods.map((p, i) =>
+      i === index ? { ...p, ...updates } : p
+    );
     updateRouting({ campaign_periods: newPeriods });
   };
 
@@ -63,7 +75,13 @@ export function RoutingConfig({
         {periods.map((period, i) => (
           <div key={i} className="rounded border p-3">
             <div className="flex items-center gap-2 mb-2">
-              <Tag color={period.mode === "evergreen" ? "green" : "blue"}>
+              <Tag
+                color={
+                  period.mode === "evergreen"
+                    ? STATUS_COLORS.success
+                    : STATUS_COLORS.processing
+                }
+              >
                 {period.mode === "evergreen" ? "常驻" : "活动期"}
               </Tag>
               <Select
@@ -87,20 +105,26 @@ export function RoutingConfig({
                   size="small"
                   placeholder="活动 ID（可选）"
                   value={period.campaign_id || ""}
-                  onChange={(e) => updatePeriod(i, { campaign_id: e.target.value })}
+                  onChange={(e) =>
+                    updatePeriod(i, { campaign_id: e.target.value })
+                  }
                 />
                 <Space>
                   <DatePicker
                     size="small"
                     placeholder="开始时间"
                     value={period.start_at ? dayjs(period.start_at) : undefined}
-                    onChange={(d) => updatePeriod(i, { start_at: d?.toISOString() || "" })}
+                    onChange={(d) =>
+                      updatePeriod(i, { start_at: d?.toISOString() || "" })
+                    }
                   />
                   <DatePicker
                     size="small"
                     placeholder="结束时间"
                     value={period.end_at ? dayjs(period.end_at) : undefined}
-                    onChange={(d) => updatePeriod(i, { end_at: d?.toISOString() || "" })}
+                    onChange={(d) =>
+                      updatePeriod(i, { end_at: d?.toISOString() || "" })
+                    }
                   />
                 </Space>
               </div>

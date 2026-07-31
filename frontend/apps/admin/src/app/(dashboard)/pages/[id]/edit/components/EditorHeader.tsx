@@ -49,7 +49,13 @@ export function EditorHeader({
           返回
         </Button>
         <span className="truncate font-medium">{templateName}</span>
-        <Tag color={versionStatus === "draft" ? "default" : "blue"}>
+        <Tag
+          color={
+            versionStatus === "draft"
+              ? STATUS_COLORS.neutral
+              : STATUS_COLORS.processing
+          }
+        >
           {versionStatus === "draft" ? "草稿" : "已发布"} v{version}
         </Tag>
         <Text type="secondary" className="hidden text-xs lg:inline">

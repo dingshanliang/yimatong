@@ -30,6 +30,7 @@ import {
 import type { ColumnsType } from "antd/es/table";
 import api from "@/lib/api";
 import { useCrud } from "@/lib/hooks";
+import { STATUS_COLORS } from "@/lib/status-colors";
 
 const { Text, Title } = Typography;
 
@@ -94,9 +95,7 @@ function buildTreeSelectData(
 }[] {
   const tree = buildOrgTree(orgs);
 
-  function filterNode(
-    node: Organization
-  ): {
+  function filterNode(node: Organization): {
     title: string;
     value: string;
     children?: { title: string; value: string }[];
@@ -447,7 +446,9 @@ export default function AccountsPage() {
       width: 100,
       render: (isActive: boolean, record) => (
         <Tag
-          color={isActive !== false ? "success" : "default"}
+          color={
+            isActive !== false ? STATUS_COLORS.success : STATUS_COLORS.neutral
+          }
           data-testid={`account-status-${record.id}`}
         >
           {isActive !== false ? "已启用" : "已停用"}

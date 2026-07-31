@@ -311,7 +311,8 @@ export default function CodeBatchDetailPage() {
                 <Row gutter={[8, 8]}>
                   {Object.entries(stats).map(([key, value]) => {
                     const label = STATUS_MAP[key]?.label || key;
-                    const color = STATUS_MAP[key]?.color || "default";
+                    const color =
+                      STATUS_MAP[key]?.color || STATUS_COLORS.neutral;
                     return (
                       <Col span={12} key={key}>
                         <Statistic

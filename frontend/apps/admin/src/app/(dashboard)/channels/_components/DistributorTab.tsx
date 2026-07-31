@@ -5,6 +5,7 @@ import { useCrud } from "@/lib/hooks";
 import { Button, Form, Input, message, Modal, Table, Tag } from "antd";
 import { PlusOutlined } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
+import { STATUS_COLORS } from "@/lib/status-colors";
 
 type Distributor = Record<string, unknown> & { id: string };
 
@@ -15,12 +16,20 @@ const columns: ColumnsType<Distributor> = [
     title: "状态",
     dataIndex: "status",
     key: "status",
-    render: (s: string) => <Tag color={s === "active" ? "green" : "default"}>{s === "active" ? "启用" : s || "—"}</Tag>,
+    render: (s: string) => (
+      <Tag
+        color={s === "active" ? STATUS_COLORS.success : STATUS_COLORS.neutral}
+      >
+        {s === "active" ? "启用" : s || "—"}
+      </Tag>
+    ),
   },
 ];
 
 export function DistributorTab() {
-  const { items, total, page, loading, setPage, create } = useCrud<Distributor>("/channels/distributors");
+  const { items, total, page, loading, setPage, create } = useCrud<Distributor>(
+    "/channels/distributors"
+  );
   const [open, setOpen] = useState(false);
   const [form] = Form.useForm();
 
@@ -39,7 +48,11 @@ export function DistributorTab() {
   return (
     <>
       <div className="mb-4 flex justify-end">
-        <Button type="primary" icon={<PlusOutlined />} onClick={() => setOpen(true)}>
+        <Button
+          type="primary"
+          icon={<PlusOutlined />}
+          onClick={() => setOpen(true)}
+        >
           新建经销商
         </Button>
       </div>
@@ -48,9 +61,21 @@ export function DistributorTab() {
         dataSource={items}
         rowKey="id"
         loading={loading}
-        pagination={{ current: page, total, pageSize: 20, onChange: setPage, showTotal: (t) => `共 ${t} 条` }}
+        pagination={{
+          current: page,
+          total,
+          pageSize: 20,
+          onChange: setPage,
+          showTotal: (t) => `共 ${t} 条`,
+        }}
       />
-      <Modal title="新建经销商" open={open} onCancel={() => setOpen(false)} onOk={() => form.submit()} width={500}>
+      <Modal
+        title="新建经销商"
+        open={open}
+        onCancel={() => setOpen(false)}
+        onOk={() => form.submit()}
+        width={500}
+      >
         <Form form={form} layout="vertical" onFinish={handleCreate}>
           <Form.Item name="name" label="名称" rules={[{ required: true }]}>
             <Input />

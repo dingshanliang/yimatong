@@ -5,6 +5,7 @@ import { App, Button, Form, Input, Modal, Select, Table, Tag } from "antd";
 import { PlusOutlined } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
 import api from "@/lib/api";
+import { STATUS_COLORS } from "@/lib/status-colors";
 
 interface Props {
   orgId: string;
@@ -22,7 +23,9 @@ export function CampaignsTab({ orgId, members }: Props) {
     if (!orgId) return;
     setLoading(true);
     try {
-      const { data } = await api.get(`/regional/orgs/${orgId}/unified-campaigns`);
+      const { data } = await api.get(
+        `/regional/orgs/${orgId}/unified-campaigns`
+      );
       setItems(Array.isArray(data) ? data : []);
     } catch {
       message.error("加载统一活动失败");
@@ -31,7 +34,9 @@ export function CampaignsTab({ orgId, members }: Props) {
     }
   };
 
-  useEffect(() => { fetch(); }, [orgId]);
+  useEffect(() => {
+    fetch();
+  }, [orgId]);
 
   const handleCreate = async (values: Record<string, unknown>) => {
     try {
@@ -50,15 +55,28 @@ export function CampaignsTab({ orgId, members }: Props) {
     { title: "活动名称", dataIndex: "name", key: "name" },
     { title: "参与成员数", dataIndex: "member_count", key: "member_count" },
     {
-      title: "状态", dataIndex: "status", key: "status",
+      title: "状态",
+      dataIndex: "status",
+      key: "status",
       render: (v: string) => {
-        const color = v === "active" ? "green" : v === "draft" ? "default" : "red";
-        return <Tag color={color}>{v === "active" ? "进行中" : v === "draft" ? "草稿" : v}</Tag>;
+        const color =
+          v === "active"
+            ? STATUS_COLORS.success
+            : v === "draft"
+              ? STATUS_COLORS.neutral
+              : STATUS_COLORS.error;
+        return (
+          <Tag color={color}>
+            {v === "active" ? "进行中" : v === "draft" ? "草稿" : v}
+          </Tag>
+        );
       },
     },
     {
-      title: "创建时间", dataIndex: "created_at", key: "created_at",
-      render: (v: string) => v ? new Date(v).toLocaleDateString() : "—",
+      title: "创建时间",
+      dataIndex: "created_at",
+      key: "created_at",
+      render: (v: string) => (v ? new Date(v).toLocaleDateString() : "—"),
     },
   ];
 
@@ -70,13 +88,30 @@ export function CampaignsTab({ orgId, members }: Props) {
   return (
     <>
       <div className="mb-4 flex justify-end">
-        <Button type="primary" icon={<PlusOutlined />} onClick={() => setOpen(true)}>
+        <Button
+          type="primary"
+          icon={<PlusOutlined />}
+          onClick={() => setOpen(true)}
+        >
           创建统一活动
         </Button>
       </div>
-      <Table columns={columns} dataSource={items} rowKey="id" loading={loading} size="small" pagination={{ pageSize: 20 }} />
+      <Table
+        columns={columns}
+        dataSource={items}
+        rowKey="id"
+        loading={loading}
+        size="small"
+        pagination={{ pageSize: 20 }}
+      />
 
-      <Modal title="创建统一营销活动" open={open} onCancel={() => setOpen(false)} onOk={() => form.submit()} width={500}>
+      <Modal
+        title="创建统一营销活动"
+        open={open}
+        onCancel={() => setOpen(false)}
+        onOk={() => form.submit()}
+        width={500}
+      >
         <Form form={form} layout="vertical" onFinish={handleCreate}>
           <Form.Item name="name" label="活动名称" rules={[{ required: true }]}>
             <Input />
@@ -85,7 +120,11 @@ export function CampaignsTab({ orgId, members }: Props) {
             <Input.TextArea rows={3} />
           </Form.Item>
           <Form.Item name="member_ids" label="参与成员（空=全部）">
-            <Select mode="multiple" options={memberOptions} placeholder="选择成员企业" />
+            <Select
+              mode="multiple"
+              options={memberOptions}
+              placeholder="选择成员企业"
+            />
           </Form.Item>
         </Form>
       </Modal>

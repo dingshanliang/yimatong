@@ -435,7 +435,13 @@ export default function BrandDetailPage() {
             </Descriptions.Item>
             <Descriptions.Item label="状态">
               {brand && (
-                <Tag color={brand.status === "active" ? "green" : "default"}>
+                <Tag
+                  color={
+                    brand.status === "active"
+                      ? STATUS_COLORS.success
+                      : STATUS_COLORS.neutral
+                  }
+                >
                   {brand.status === "active" ? "启用" : "停用"}
                 </Tag>
               )}

@@ -18,6 +18,7 @@ import type { ColumnsType } from "antd/es/table";
 import type { Dayjs } from "dayjs";
 import { AUDIT_ACTION_LABELS, formatAuditAction } from "@/lib/audit";
 import { useCrud } from "@/lib/hooks";
+import { STATUS_COLORS } from "@/lib/status-colors";
 
 const { Title, Text } = Typography;
 const { RangePicker } = DatePicker;
@@ -131,7 +132,11 @@ export default function AuditLogsPage() {
         dataIndex: "result",
         width: 90,
         render: (result: string) => (
-          <Tag color={result === "success" ? "green" : "red"}>
+          <Tag
+            color={
+              result === "success" ? STATUS_COLORS.success : STATUS_COLORS.error
+            }
+          >
             {result === "success" ? "成功" : "失败"}
           </Tag>
         ),

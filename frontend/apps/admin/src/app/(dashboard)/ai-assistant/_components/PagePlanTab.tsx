@@ -212,7 +212,12 @@ export function PagePlanTab() {
           <Title level={5}>推荐页面模块</Title>
           <div className="flex flex-wrap gap-2">
             {pageCopyResult.result.page_suggestion.modules.map((mod) => (
-              <Tag key={mod.id} color={mod.enabled ? "blue" : "default"}>
+              <Tag
+                key={mod.id}
+                color={
+                  mod.enabled ? STATUS_COLORS.processing : STATUS_COLORS.neutral
+                }
+              >
                 {mod.type}
               </Tag>
             ))}

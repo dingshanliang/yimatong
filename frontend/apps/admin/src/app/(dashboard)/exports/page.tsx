@@ -135,7 +135,13 @@ export default function ExportsPage() {
       key: "status",
       render: (s: string) => (
         <Tag
-          color={s === "completed" ? "green" : s === "failed" ? "red" : "blue"}
+          color={
+            s === "completed"
+              ? STATUS_COLORS.success
+              : s === "failed"
+                ? STATUS_COLORS.error
+                : STATUS_COLORS.processing
+          }
         >
           {s}
         </Tag>

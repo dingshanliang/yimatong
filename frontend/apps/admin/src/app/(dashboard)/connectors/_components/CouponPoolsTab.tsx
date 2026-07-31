@@ -4,6 +4,7 @@ import { useState } from "react";
 import { App, Button, Form, Input, Modal, Progress, Table, Tag } from "antd";
 import { EyeOutlined, PlusOutlined, ReloadOutlined } from "@ant-design/icons";
 import api, { extractErrorMessage } from "@/lib/api";
+import { STATUS_COLORS } from "@/lib/status-colors";
 import { useCrud, usePaginatedList } from "@/lib/hooks";
 import type { Pool, PoolCode } from "./types";
 
@@ -95,7 +96,11 @@ export function CouponPoolsTab() {
       title: "状态",
       key: "status",
       render: (_: unknown, record: Pool) => (
-        <Tag color={record.remaining > 0 ? "green" : "red"}>
+        <Tag
+          color={
+            record.remaining > 0 ? STATUS_COLORS.success : STATUS_COLORS.error
+          }
+        >
           {record.remaining > 0 ? "有库存" : "已耗尽"}
         </Tag>
       ),
@@ -131,7 +136,9 @@ export function CouponPoolsTab() {
       dataIndex: "distributed",
       key: "distributed",
       render: (v: boolean) => (
-        <Tag color={v ? "blue" : "default"}>{v ? "是" : "否"}</Tag>
+        <Tag color={v ? STATUS_COLORS.processing : STATUS_COLORS.neutral}>
+          {v ? "是" : "否"}
+        </Tag>
       ),
     },
   ];

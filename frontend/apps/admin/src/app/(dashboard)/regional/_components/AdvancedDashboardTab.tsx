@@ -1,9 +1,19 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { App, Card, InputNumber, Select, Space, Statistic, Table, Tag } from "antd";
+import {
+  App,
+  Card,
+  InputNumber,
+  Select,
+  Space,
+  Statistic,
+  Table,
+  Tag,
+} from "antd";
 import type { ColumnsType } from "antd/es/table";
 import api from "@/lib/api";
+import { STATUS_COLORS } from "@/lib/status-colors";
 
 interface Props {
   orgId: string;
@@ -14,16 +24,21 @@ export function AdvancedDashboardTab({ orgId, orgName }: Props) {
   const [data, setData] = useState<Record<string, unknown>>({});
   const [daysBack, setDaysBack] = useState(30);
   const [loading, setLoading] = useState(false);
-  const [drilldown, setDrilldown] = useState<"member" | "product" | "daily">("member");
+  const [drilldown, setDrilldown] = useState<"member" | "product" | "daily">(
+    "member"
+  );
   const { message } = App.useApp();
 
   const fetch = async () => {
     if (!orgId) return;
     setLoading(true);
     try {
-      const { data: d } = await api.get(`/regional/orgs/${orgId}/advanced-dashboard`, {
-        params: { days_back: daysBack },
-      });
+      const { data: d } = await api.get(
+        `/regional/orgs/${orgId}/advanced-dashboard`,
+        {
+          params: { days_back: daysBack },
+        }
+      );
       setData(d || {});
     } catch {
       message.error("加载高级看板失败");
@@ -32,14 +47,21 @@ export function AdvancedDashboardTab({ orgId, orgName }: Props) {
     }
   };
 
-  useEffect(() => { fetch(); }, [orgId, daysBack]);
+  useEffect(() => {
+    fetch();
+  }, [orgId, daysBack]);
 
   const byMember = (data.by_member || []) as Record<string, unknown>[];
   const dailyTrend = (data.daily_trend || []) as Record<string, unknown>[];
 
   const memberCols: ColumnsType<Record<string, unknown>> = [
     { title: "成员企业", dataIndex: "member_name", key: "member_name" },
-    { title: "扫码量", dataIndex: "scan_count", key: "scan_count", sorter: (a, b) => Number(a.scan_count) - Number(b.scan_count) },
+    {
+      title: "扫码量",
+      dataIndex: "scan_count",
+      key: "scan_count",
+      sorter: (a, b) => Number(a.scan_count) - Number(b.scan_count),
+    },
     { title: "领取量", dataIndex: "claim_count", key: "claim_count" },
     { title: "上期扫码", dataIndex: "prev_scan_count", key: "prev_scan_count" },
     {
@@ -48,8 +70,18 @@ export function AdvancedDashboardTab({ orgId, orgName }: Props) {
       key: "scan_change_pct",
       render: (v: number | null) => {
         if (v === null || v === undefined) return <Tag>—</Tag>;
-        const color = v > 0 ? "green" : v < 0 ? "red" : "default";
-        return <Tag color={color}>{v > 0 ? "+" : ""}{v}%</Tag>;
+        const color =
+          v > 0
+            ? STATUS_COLORS.success
+            : v < 0
+              ? STATUS_COLORS.error
+              : STATUS_COLORS.neutral;
+        return (
+          <Tag color={color}>
+            {v > 0 ? "+" : ""}
+            {v}%
+          </Tag>
+        );
       },
     },
   ];
@@ -64,9 +96,20 @@ export function AdvancedDashboardTab({ orgId, orgName }: Props) {
       <div className="mb-4 flex items-center justify-between">
         <Space>
           <span className="text-sm text-text-muted">近</span>
-          <InputNumber min={7} max={365} value={daysBack} onChange={(v) => setDaysBack(v || 30)} size="small" style={{ width: 70 }} />
+          <InputNumber
+            min={7}
+            max={365}
+            value={daysBack}
+            onChange={(v) => setDaysBack(v || 30)}
+            size="small"
+            style={{ width: 70 }}
+          />
           <span className="text-sm text-text-muted">天</span>
-          <Select value={drilldown} onChange={setDrilldown} size="small" style={{ width: 120 }}
+          <Select
+            value={drilldown}
+            onChange={setDrilldown}
+            size="small"
+            style={{ width: 120 }}
             options={[
               { value: "member", label: "按成员企业" },
               { value: "daily", label: "按日趋势" },
@@ -77,9 +120,27 @@ export function AdvancedDashboardTab({ orgId, orgName }: Props) {
       </div>
 
       <div className="mb-4 grid grid-cols-3 gap-4">
-        <Card size="small"><Statistic title="成员企业" value={Number(data.member_count ?? 0)} loading={loading} /></Card>
-        <Card size="small"><Statistic title="总扫码量" value={Number(data.total_scans ?? 0)} loading={loading} /></Card>
-        <Card size="small"><Statistic title="总领取量" value={Number(data.total_claims ?? 0)} loading={loading} /></Card>
+        <Card size="small">
+          <Statistic
+            title="成员企业"
+            value={Number(data.member_count ?? 0)}
+            loading={loading}
+          />
+        </Card>
+        <Card size="small">
+          <Statistic
+            title="总扫码量"
+            value={Number(data.total_scans ?? 0)}
+            loading={loading}
+          />
+        </Card>
+        <Card size="small">
+          <Statistic
+            title="总领取量"
+            value={Number(data.total_claims ?? 0)}
+            loading={loading}
+          />
+        </Card>
       </div>
 
       {drilldown === "member" && (

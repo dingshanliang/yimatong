@@ -23,7 +23,7 @@ import dayjs from "dayjs";
 import useSWR, { mutate } from "swr";
 import api from "@/lib/api";
 import { extractErrorMessage } from "@/lib/api";
-import { STATUS_COLORS } from "@/lib/status-colors";
+import { STATUS_COLORS, STATUS_TOKEN_COLORS } from "@/lib/status-colors";
 import { useState } from "react";
 import { TenantHealthScoreHeader } from "../_components/HealthScoreHeader";
 import { message } from "antd";
@@ -101,12 +101,12 @@ export default function HealthPage() {
       render: (score: number) => {
         const color =
           score >= 75
-            ? "var(--ymt-color-feedback-success)"
+            ? STATUS_TOKEN_COLORS.success
             : score >= 50
-              ? "var(--ymt-color-feedback-warning)"
+              ? STATUS_TOKEN_COLORS.warning
               : score >= 25
-                ? "var(--ymt-color-feedback-danger)"
-                : "var(--ymt-color-text-tertiary)";
+                ? STATUS_TOKEN_COLORS.error
+                : STATUS_TOKEN_COLORS.neutral;
         return <span style={{ fontWeight: "bold", color }}>{score}</span>;
       },
     },

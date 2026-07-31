@@ -27,7 +27,9 @@ export function AlertsTab() {
       dataIndex: "resolved",
       key: "resolved",
       render: (v: boolean) => (
-        <Tag color={v ? "green" : "red"}>{v ? "已处理" : "待处理"}</Tag>
+        <Tag color={v ? STATUS_COLORS.success : STATUS_COLORS.error}>
+          {v ? "已处理" : "待处理"}
+        </Tag>
       ),
     },
     {

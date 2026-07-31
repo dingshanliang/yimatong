@@ -4,6 +4,7 @@ import { useEffect, useRef, useState, useCallback } from "react";
 import { Select, Slider, Tag, Typography } from "antd";
 import { MobileOutlined, DesktopOutlined } from "@ant-design/icons";
 import type { PageDSL, PagePreviewContext } from "@/lib/page-dsl";
+import { STATUS_COLORS } from "@/lib/status-colors";
 
 const { Text } = Typography;
 
@@ -111,7 +112,11 @@ export function PreviewPanel({
             }))}
             style={{ width: 150 }}
           />
-          <Tag color={usesExampleData ? "blue" : "green"}>
+          <Tag
+            color={
+              usesExampleData ? STATUS_COLORS.processing : STATUS_COLORS.success
+            }
+          >
             {usesExampleData
               ? "草稿预览 · 示例数据"
               : "草稿预览 · 已绑定真实产品"}

@@ -32,6 +32,20 @@ export const STATUS_COLORS = {
 export type StatusColor = keyof typeof STATUS_COLORS;
 
 /**
+ * 需要真实 CSS 颜色值的组件使用的 design-token 映射。
+ * 不要把这里的 CSS var 改成 antd preset，也不要把 STATUS_COLORS 用到这些位置。
+ */
+export const STATUS_TOKEN_COLORS = {
+  success: "var(--ymt-color-feedback-success)",
+  processing: "var(--ymt-color-feedback-info)",
+  warning: "var(--ymt-color-feedback-warning)",
+  error: "var(--ymt-color-feedback-danger)",
+  neutral: "var(--ymt-color-text-tertiary)",
+} as const;
+
+export type StatusTokenColor = keyof typeof STATUS_TOKEN_COLORS;
+
+/**
  * 旧 hex → preset 速查，便于把硬编码 hex 的本地 STATUS_MAP 平移到集中映射。
  * 仅覆盖历史代码出现过的 5 个 hex。
  */

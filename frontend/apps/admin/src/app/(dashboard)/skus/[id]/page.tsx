@@ -385,7 +385,11 @@ export default function SKUDetailPage() {
                 </Descriptions.Item>
                 <Descriptions.Item label="规格">{specText}</Descriptions.Item>
                 <Descriptions.Item label="状态">
-                  <Tag color={SKU_STATUS_MAP[sku.status]?.color || "default"}>
+                  <Tag
+                    color={
+                      SKU_STATUS_MAP[sku.status]?.color || STATUS_COLORS.neutral
+                    }
+                  >
                     {SKU_STATUS_MAP[sku.status]?.label || sku.status}
                   </Tag>
                 </Descriptions.Item>

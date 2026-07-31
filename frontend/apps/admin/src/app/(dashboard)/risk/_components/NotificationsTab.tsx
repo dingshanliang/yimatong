@@ -2,6 +2,7 @@
 
 import api from "@/lib/api";
 import { useCrud } from "@/lib/hooks";
+import { STATUS_COLORS, STATUS_TOKEN_COLORS } from "@/lib/status-colors";
 import { Badge, Button, Card, Empty, List, Tag, message } from "antd";
 
 type RiskNotification = Record<string, unknown> & {
@@ -70,13 +71,17 @@ export function NotificationsTab() {
                 <div className="flex items-center gap-2 mb-1">
                   <Tag
                     color={
-                      item.notification_type === "risk_block" ? "red" : "orange"
+                      item.notification_type === "risk_block"
+                        ? STATUS_COLORS.error
+                        : STATUS_COLORS.warning
                     }
                   >
                     {item.notification_type === "risk_block" ? "阻断" : "预警"}
                   </Tag>
                   <span className="font-medium">{item.title}</span>
-                  {!item.read && <Badge status="processing" />}
+                  {!item.read && (
+                    <Badge color={STATUS_TOKEN_COLORS.processing} />
+                  )}
                 </div>
                 <p className="text-sm text-text-muted whitespace-pre-line">
                   {item.detail}

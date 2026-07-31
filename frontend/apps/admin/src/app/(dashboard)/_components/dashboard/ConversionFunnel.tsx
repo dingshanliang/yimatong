@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Card, Empty, Progress, Spin, Typography } from "antd";
 import api from "@/lib/api";
+import { STATUS_TOKEN_COLORS } from "@/lib/status-colors";
 
 const { Text, Title } = Typography;
 
@@ -18,11 +19,11 @@ interface FunnelData {
 }
 
 const STEP_COLORS = [
-  "var(--ymt-color-feedback-info)",
-  "var(--ymt-color-feedback-success)",
-  "var(--ymt-color-feedback-warning)",
+  STATUS_TOKEN_COLORS.processing,
+  STATUS_TOKEN_COLORS.success,
+  STATUS_TOKEN_COLORS.warning,
   "var(--ymt-color-action-accent)",
-  "var(--ymt-color-feedback-danger)",
+  STATUS_TOKEN_COLORS.error,
 ];
 
 export default function ConversionFunnel() {
@@ -114,7 +115,7 @@ export default function ConversionFunnel() {
                 <Text
                   strong
                   style={{
-                    color: STEP_COLORS[idx] || "var(--ymt-color-feedback-info)",
+                    color: STEP_COLORS[idx] || STATUS_TOKEN_COLORS.processing,
                     whiteSpace: "nowrap",
                   }}
                 >
@@ -124,9 +125,7 @@ export default function ConversionFunnel() {
               <Progress
                 percent={progressPercent}
                 showInfo={false}
-                strokeColor={
-                  STEP_COLORS[idx] || "var(--ymt-color-feedback-info)"
-                }
+                strokeColor={STEP_COLORS[idx] || STATUS_TOKEN_COLORS.processing}
                 railColor="var(--ant-color-fill-secondary)"
                 size={["100%", 8]}
               />

@@ -1001,7 +1001,11 @@ export default function AIAssistantPage() {
                 {result.data.result.page_suggestion.modules.map((module) => (
                   <Tag
                     key={module.id}
-                    color={module.enabled ? "green" : "default"}
+                    color={
+                      module.enabled
+                        ? STATUS_COLORS.success
+                        : STATUS_COLORS.neutral
+                    }
                   >
                     {module.type}
                   </Tag>
@@ -1095,10 +1099,22 @@ export default function AIAssistantPage() {
                   <Tag color={STATUS_COLORS.processing}>
                     {selectedProduct.name}
                   </Tag>
-                  <Tag color={selectedProduct.category ? "default" : "orange"}>
+                  <Tag
+                    color={
+                      selectedProduct.category
+                        ? STATUS_COLORS.neutral
+                        : STATUS_COLORS.warning
+                    }
+                  >
                     {selectedProduct.category || "未填写品类"}
                   </Tag>
-                  <Tag color={selectedProduct.origin ? "default" : "orange"}>
+                  <Tag
+                    color={
+                      selectedProduct.origin
+                        ? STATUS_COLORS.neutral
+                        : STATUS_COLORS.warning
+                    }
+                  >
                     {selectedProduct.origin || "未填写产地"}
                   </Tag>
                   {selectedProduct.description ? (

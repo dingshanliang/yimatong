@@ -4,6 +4,7 @@ import React, { useEffect, useState } from "react";
 import { App, Button, Select, Space, Table, Tag, Typography } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import api from "@/lib/api";
+import { STATUS_COLORS } from "@/lib/status-colors";
 import { INTEGRATION_STATUS } from "./constants";
 
 const { Text } = Typography;
@@ -48,7 +49,7 @@ export function DeliveriesTab() {
       dataIndex: "status",
       key: "status",
       render: (s: string) => (
-        <Tag color={INTEGRATION_STATUS[s] || "default"}>{s}</Tag>
+        <Tag color={INTEGRATION_STATUS[s] || STATUS_COLORS.neutral}>{s}</Tag>
       ),
     },
     { title: "重试次数", dataIndex: "retry_count", key: "retry_count" },

@@ -20,6 +20,7 @@ import { CheckOutlined, BellOutlined } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
 import api from "@/lib/api";
 import { useAuthStore } from "@/lib/auth";
+import { STATUS_COLORS } from "@/lib/status-colors";
 import { ChannelHealthScoreHeader } from "../../_components/HealthScoreHeader";
 import { ChannelConversionRateHeader } from "../../_components/MetricHeaders";
 
@@ -337,7 +338,12 @@ export function ChannelHealthCard() {
       dataIndex: "health_score",
       key: "health_score",
       render: (v: number) => {
-        const color = v >= 80 ? "green" : v >= 60 ? "orange" : "red";
+        const color =
+          v >= 80
+            ? STATUS_COLORS.success
+            : v >= 60
+              ? STATUS_COLORS.warning
+              : STATUS_COLORS.error;
         return <Tag color={color}>{v}</Tag>;
       },
     },
@@ -437,7 +443,12 @@ export function ConversionCard() {
       dataIndex: "vs_average",
       key: "vs_average",
       render: (v: number) => {
-        const color = v > 0 ? "green" : v < 0 ? "red" : "default";
+        const color =
+          v > 0
+            ? STATUS_COLORS.success
+            : v < 0
+              ? STATUS_COLORS.error
+              : STATUS_COLORS.neutral;
         return (
           <Tag color={color}>
             {v > 0 ? "+" : ""}
@@ -524,7 +535,9 @@ export function DiversionCard() {
       dataIndex: "resolved",
       key: "resolved",
       render: (v: boolean) => (
-        <Tag color={v ? "green" : "red"}>{v ? "已处理" : "待处理"}</Tag>
+        <Tag color={v ? STATUS_COLORS.success : STATUS_COLORS.error}>
+          {v ? "已处理" : "待处理"}
+        </Tag>
       ),
     },
     {

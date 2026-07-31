@@ -822,7 +822,7 @@ export default function ProductWorkbenchPage() {
       dataIndex: "status",
       key: "status",
       render: (s: string) => (
-        <Tag color={BATCH_STATUS_MAP[s]?.color || "default"}>
+        <Tag color={BATCH_STATUS_MAP[s]?.color || STATUS_COLORS.neutral}>
           {BATCH_STATUS_MAP[s]?.label || s}
         </Tag>
       ),
@@ -1062,7 +1062,11 @@ export default function ProductWorkbenchPage() {
                       {completionSteps.map((step) => (
                         <Tag
                           key={`${step.key}-${step.label}`}
-                          color={step.done ? "green" : "default"}
+                          color={
+                            step.done
+                              ? STATUS_COLORS.success
+                              : STATUS_COLORS.neutral
+                          }
                         >
                           {step.label}
                         </Tag>

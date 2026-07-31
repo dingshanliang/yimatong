@@ -34,7 +34,7 @@ import {
 } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
 import api, { extractErrorMessage } from "@/lib/api";
-import { STATUS_COLORS } from "@/lib/status-colors";
+import { STATUS_COLORS, STATUS_TOKEN_COLORS } from "@/lib/status-colors";
 
 const { Title, Text } = Typography;
 const { RangePicker } = DatePicker;
@@ -174,7 +174,7 @@ function MemberOverview({
       value: overview?.low_stock_products ?? 0,
       color:
         (overview?.low_stock_products ?? 0) > 0
-          ? "var(--ymt-color-feedback-danger)"
+          ? STATUS_TOKEN_COLORS.error
           : undefined,
     },
   ];
@@ -309,10 +309,10 @@ function ConsumersTab({ onChanged }: { onChanged: () => void }) {
         <Tag
           color={
             type === "earning"
-              ? "green"
+              ? STATUS_COLORS.success
               : type === "expired"
-                ? "default"
-                : "orange"
+                ? STATUS_COLORS.neutral
+                : STATUS_COLORS.warning
           }
         >
           {type === "earning" ? "收入" : type === "expired" ? "过期" : "支出"}
@@ -1127,7 +1127,11 @@ function RedemptionsTab() {
       title: "状态",
       dataIndex: "status",
       render: (value) => (
-        <Tag color={value === "success" ? "green" : "red"}>
+        <Tag
+          color={
+            value === "success" ? STATUS_COLORS.success : STATUS_COLORS.error
+          }
+        >
           {value === "success" ? "成功" : "失败"}
         </Tag>
       ),

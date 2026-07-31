@@ -5,6 +5,7 @@ import { Button, Card, Empty, Spin, Timeline, Typography } from "antd";
 import { useRouter } from "next/navigation";
 import api from "@/lib/api";
 import { formatAuditAction } from "@/lib/audit";
+import { STATUS_TOKEN_COLORS } from "@/lib/status-colors";
 
 const { Text } = Typography;
 
@@ -113,8 +114,8 @@ export default function RecentEvents() {
                   color:
                     log.action.includes("deleted") ||
                     log.action.includes("disabled")
-                      ? "red"
-                      : "blue",
+                      ? STATUS_TOKEN_COLORS.error
+                      : STATUS_TOKEN_COLORS.processing,
                   content: (
                     <div>
                       <Text>

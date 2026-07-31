@@ -1,7 +1,7 @@
 "use client";
 
 import { useCrud } from "@/lib/hooks";
-import { STATUS_COLORS } from "@/lib/status-colors";
+import { STATUS_COLORS, STATUS_TOKEN_COLORS } from "@/lib/status-colors";
 import { Badge, Descriptions, Modal, Switch, Table, Tag } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import { useState } from "react";
@@ -41,7 +41,7 @@ const columns: ColumnsType<Interception> = [
     key: "action",
     width: 80,
     render: (a: string) => (
-      <Tag color={a === "block" ? "red" : "orange"}>
+      <Tag color={a === "block" ? STATUS_COLORS.error : STATUS_COLORS.warning}>
         {a === "block" ? "拦截" : "预警"}
       </Tag>
     ),
@@ -53,9 +53,9 @@ const columns: ColumnsType<Interception> = [
     width: 100,
     render: (v: boolean) =>
       v ? (
-        <Badge status="processing" text="自动" />
+        <Badge color={STATUS_TOKEN_COLORS.processing} text="自动" />
       ) : (
-        <Badge status="default" text="手动" />
+        <Badge color={STATUS_TOKEN_COLORS.neutral} text="手动" />
       ),
   },
   {
@@ -146,10 +146,10 @@ export function InterceptionsTab() {
                 <Tag
                   color={
                     step.status === "success"
-                      ? "green"
+                      ? STATUS_COLORS.success
                       : step.status === "failed"
-                        ? "red"
-                        : "default"
+                        ? STATUS_COLORS.error
+                        : STATUS_COLORS.neutral
                   }
                 >
                   {step.status}
@@ -157,7 +157,7 @@ export function InterceptionsTab() {
                 {step.error && (
                   <span
                     className="text-xs ml-2"
-                    style={{ color: "var(--ymt-color-feedback-danger)" }}
+                    style={{ color: STATUS_TOKEN_COLORS.error }}
                   >
                     {step.error}
                   </span>
