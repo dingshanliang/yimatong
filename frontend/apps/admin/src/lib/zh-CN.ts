@@ -36,6 +36,8 @@ const zhCN: Record<string, string> = {
   "menu.roles": "角色权限",
   "menu.compliance": "合规设置",
   "menu.tenant": "租户设置",
+  "menu.brand-profile": "品牌定制",
+  "menu.custom-domain": "自定义域名",
   "menu.audit-logs": "操作日志",
   "menu.agency": "代运营",
   "menu.launch-checklist": "上线检查",

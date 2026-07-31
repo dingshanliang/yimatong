@@ -152,13 +152,20 @@ async def build_json_response(
                 result["code_data"]["test_reports"] = test_reports
                 result["code_data"]["certificates"] = certificates
 
-    # 租户级品牌定制槽位（yimatong-z6i0.10）：并入 tenant_branding，
+    # 租户级品牌定制槽位（yimatong-z6i0.10 / ADR-0001）：并入 tenant_branding，
     # H5 按「页面 DSL brand_theme → 租户 brand_profile → 默认主题」三层回退解析。
-    # 品牌的 name/logo_url 优先级高于 profile 同名字段，保证产品品牌展示不被覆盖。
+    # brand_profile 含五槽位（primary_color/radius_preset/background_preset/
+    # hide_yimatong_brand/logo_url）。
+    # 合并顺序：租户 brand_profile 优先于产品品牌 brand_data（ADR-0001 决策意图：
+    # 品牌方在 Admin 自助设置的 Logo 必须生效，不被产品品牌 logo 覆盖）。
     tenant_result = await db.execute(select(Tenant.brand_profile).where(Tenant.id == tenant_uuid))
     brand_profile = tenant_result.scalar_one_or_none() or {}
     if brand_profile:
-        result["tenant_branding"] = {**brand_profile, **(result.get("tenant_branding") or {})}
+        existing = result.get("tenant_branding") or {}
+        # logo_url：租户配了就用租户的；没配才回退到产品品牌 logo
+        if not brand_profile.get("logo_url") and existing.get("logo_url"):
+            existing = {**existing, "logo_url": existing["logo_url"]}
+        result["tenant_branding"] = {**existing, **brand_profile}
 
     # 查询页面配置（缓存优先）
     template_id = data.get("template_id")

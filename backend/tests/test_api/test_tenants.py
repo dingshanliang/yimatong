@@ -166,3 +166,49 @@ class TestDeleteTenant:
             headers=_platform_admin_headers(),
         )
         assert resp.json()["status"] == "terminated"
+
+
+class TestTenantSelfBrandProfile:
+    """租户自助 brand_profile 五槽位（ADR-0001：logo_url 并入 brand_profile）"""
+
+    async def test_update_brand_profile_with_logo_url(self, client: AsyncClient, sample_tenant):
+        """PATCH /me 写入完整五槽位（含 logo_url），GET /me 读回一致"""
+        tid = sample_tenant["id"]
+        profile = {
+            "primary_color": "#1F7A4D",
+            "radius_preset": "md",
+            "background_preset": "tinted",
+            "hide_yimatong_brand": True,
+            "logo_url": "https://cdn.example.com/t/logo.png",
+        }
+        resp = await client.patch(
+            "/api/v1/tenants/me",
+            json={"brand_profile": profile},
+            headers=_auth_headers(tid),
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["brand_profile"] == profile
+
+        # 读回一致
+        resp = await client.get("/api/v1/tenants/me", headers=_auth_headers(tid))
+        assert resp.json()["brand_profile"] == profile
+
+    async def test_update_brand_profile_rejects_bad_logo_url(self, client: AsyncClient, sample_tenant):
+        """非法 logo_url 被 422 拒绝"""
+        tid = sample_tenant["id"]
+        resp = await client.patch(
+            "/api/v1/tenants/me",
+            json={"brand_profile": {"logo_url": "javascript:alert(1)"}},
+            headers=_auth_headers(tid),
+        )
+        assert resp.status_code == 422
+
+    async def test_update_brand_profile_rejects_unknown_slot(self, client: AsyncClient, sample_tenant):
+        """未知槽位（如 custom_css）被拒绝，保护受控槽位边界"""
+        tid = sample_tenant["id"]
+        resp = await client.patch(
+            "/api/v1/tenants/me",
+            json={"brand_profile": {"custom_css": "body{}"}},
+            headers=_auth_headers(tid),
+        )
+        assert resp.status_code == 422

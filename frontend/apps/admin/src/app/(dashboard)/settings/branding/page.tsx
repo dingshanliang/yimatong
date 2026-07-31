@@ -9,21 +9,25 @@ import {
   Input,
   Modal,
   Space,
-  Switch,
   Table,
   Tag,
   Typography,
 } from "antd";
 import { CheckOutlined, DeleteOutlined, PlusOutlined } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
-import ImageUploadInput from "@/components/ImageUploadInput";
 import api from "@/lib/api";
 import { STATUS_COLORS } from "@/lib/status-colors";
 
-const { Title } = Typography;
+const { Title, Text } = Typography;
 
+/**
+ * 自定义域名管理（白标）
+ *
+ * 注意：本页只管理「自定义域名 / CNAME 验证」这类后台门面配置（白标）。
+ * 影响消费者扫码 H5 外观的「品牌定制」请到 /settings/brand-profile。
+ * 术语区分见 CONTEXT.md：白标(whitelabel) vs 品牌定制(brand_profile)。
+ */
 export default function BrandingSettingsPage() {
-  const [config, setConfig] = useState<Record<string, unknown>>({});
   const [domains, setDomains] = useState<Record<string, unknown>[]>([]);
   const [loading, setLoading] = useState(false);
   const [domainOpen, setDomainOpen] = useState(false);
@@ -43,40 +47,22 @@ export default function BrandingSettingsPage() {
       .catch(() => {});
   }, []);
 
-  const fetchConfig = useCallback(async () => {
+  const fetchDomains = useCallback(async () => {
     if (!orgId) return;
     setLoading(true);
-    try {
-      const { data } = await api.get(
-        `/regional/orgs/${orgId}/whitelabel-config`
-      );
-      setConfig(data || {});
-    } catch {
-      /* silent */
-    }
     try {
       const { data } = await api.get(`/regional/orgs/${orgId}/domains`);
       setDomains(Array.isArray(data) ? data : []);
     } catch {
-      /* silent */
+      setDomains([]);
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   }, [orgId]);
 
   useEffect(() => {
-    fetchConfig();
-  }, [fetchConfig]);
-
-  const handleSave = async (values: Record<string, unknown>) => {
-    if (!orgId) return;
-    try {
-      await api.put(`/regional/orgs/${orgId}/whitelabel-config`, values);
-      message.success("白标配置已保存");
-      fetchConfig();
-    } catch {
-      message.error("保存失败");
-    }
-  };
+    fetchDomains();
+  }, [fetchDomains]);
 
   const handleAddDomain = async (values: { domain: string }) => {
     if (!orgId) return;
@@ -85,7 +71,7 @@ export default function BrandingSettingsPage() {
       message.success("域名已添加");
       setDomainOpen(false);
       domainForm.resetFields();
-      fetchConfig();
+      fetchDomains();
     } catch {
       message.error("添加失败");
     }
@@ -96,7 +82,7 @@ export default function BrandingSettingsPage() {
     try {
       await api.post(`/regional/orgs/${orgId}/domains/${domainId}/verify`);
       message.success("域名验证成功");
-      fetchConfig();
+      fetchDomains();
     } catch {
       message.error("验证失败");
     }
@@ -107,7 +93,7 @@ export default function BrandingSettingsPage() {
     try {
       await api.delete(`/regional/orgs/${orgId}/domains/${domainId}`);
       message.success("域名已删除");
-      fetchConfig();
+      fetchDomains();
     } catch {
       message.error("删除失败");
     }
@@ -160,96 +146,13 @@ export default function BrandingSettingsPage() {
 
   return (
     <div style={{ maxWidth: 800 }}>
-      <Title level={4} className="!mb-4">
-        品牌定制
+      <Title level={4} className="!mb-1">
+        自定义域名
       </Title>
-
-      <Card title="品牌外观" size="small" className="mb-4">
-        <Form
-          layout="vertical"
-          onFinish={handleSave}
-          initialValues={{
-            brand_name: config.brand_name || "",
-            primary_color: config.primary_color || "#000000",
-            hide_yimatong: config.hide_yimatong || false,
-            logo_url: config.logo_url || "",
-            favicon_url: config.favicon_url || "",
-            login_bg_url: config.login_bg_url || "",
-            font_family: config.font_family || "",
-            custom_css: config.custom_css || "",
-          }}
-        >
-          <Form.Item name="brand_name" label="品牌名称">
-            <Input placeholder="留空使用一码通默认" />
-          </Form.Item>
-          <Form.Item name="primary_color" label="主色调">
-            <Input placeholder="#000000" />
-          </Form.Item>
-          <Form.Item
-            name="logo_url"
-            label="品牌 Logo 图片（可选）"
-            extra="用于 H5 页头和品牌展示。可直接上传，也可粘贴公开可访问的图片链接。"
-            rules={[
-              {
-                type: "url",
-                message: "请输入以 http:// 或 https:// 开头的图片链接",
-              },
-            ]}
-          >
-            <ImageUploadInput module="brand-logo" previewAlt="品牌 Logo 预览" />
-          </Form.Item>
-          <Form.Item
-            name="favicon_url"
-            label="浏览器图标（可选）"
-            extra="用于浏览器标签页图标。可上传 PNG/JPG/WebP，或粘贴已有图片链接。"
-            rules={[
-              {
-                type: "url",
-                message: "请输入以 http:// 或 https:// 开头的图片链接",
-              },
-            ]}
-          >
-            <ImageUploadInput
-              module="brand-icon"
-              buttonText="上传图标"
-              previewAlt="浏览器图标预览"
-            />
-          </Form.Item>
-          <Form.Item
-            name="login_bg_url"
-            label="登录页背景图（可选）"
-            extra="用于后台登录页品牌背景。可直接上传，也可粘贴公开图片链接。"
-            rules={[
-              {
-                type: "url",
-                message: "请输入以 http:// 或 https:// 开头的图片链接",
-              },
-            ]}
-          >
-            <ImageUploadInput
-              module="branding"
-              buttonText="上传背景图"
-              previewAlt="登录页背景图预览"
-            />
-          </Form.Item>
-          <Form.Item name="font_family" label="字体">
-            <Input placeholder="如: 'Noto Sans SC', sans-serif" />
-          </Form.Item>
-          <Form.Item
-            name="hide_yimatong"
-            label="隐藏一码通标识"
-            valuePropName="checked"
-          >
-            <Switch />
-          </Form.Item>
-          <Form.Item name="custom_css" label="自定义 CSS">
-            <Input.TextArea rows={4} placeholder="/* 自定义样式 */" />
-          </Form.Item>
-          <Button type="primary" htmlType="submit">
-            保存配置
-          </Button>
-        </Form>
-      </Card>
+      <Text type="secondary" className="mb-4 block">
+        在自有域名下运营一码通后台与登录入口。若要调整消费者扫码页的品牌外观，请前往
+        <a href="/settings/brand-profile"> 品牌定制</a>。
+      </Text>
 
       <Card
         title="自定义域名"

@@ -37,6 +37,7 @@ import {
   GlobalOutlined,
   MoonOutlined,
   SunOutlined,
+  BgColorsOutlined,
 } from "@ant-design/icons";
 import type { MenuProps } from "antd";
 import { useAuthStore } from "@/lib/auth";
@@ -113,9 +114,11 @@ const MENU_PERMISSIONS: Record<TenantType, MenuPolicy> = {
       "/analytics",
       "/exports",
       "settings-group",
+      "/settings/brand-profile",
       "/settings/roles",
       "/settings/compliance",
       "/settings/tenant",
+      "/settings/branding",
       "/settings/audit-logs",
       "/i18n",
     ],
@@ -284,6 +287,11 @@ function DashboardInner({ children }: { children: React.ReactNode }) {
       label: t("menu.settings"),
       children: [
         {
+          key: "/settings/brand-profile",
+          icon: <BgColorsOutlined />,
+          label: t("menu.brand-profile"),
+        },
+        {
           key: "/settings/roles",
           icon: <UserAddOutlined />,
           label: t("menu.roles"),
@@ -297,6 +305,11 @@ function DashboardInner({ children }: { children: React.ReactNode }) {
           key: "/settings/tenant",
           icon: <ShopOutlined />,
           label: t("menu.tenant"),
+        },
+        {
+          key: "/settings/branding",
+          icon: <GlobalOutlined />,
+          label: t("menu.custom-domain"),
         },
         {
           key: "/settings/audit-logs",

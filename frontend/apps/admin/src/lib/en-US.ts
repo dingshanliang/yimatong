@@ -36,6 +36,8 @@ const enUS: Record<string, string> = {
   "menu.roles": "Roles & Permissions",
   "menu.compliance": "Compliance",
   "menu.tenant": "Tenant Settings",
+  "menu.brand-profile": "Branding",
+  "menu.custom-domain": "Custom Domain",
   "menu.audit-logs": "Audit Logs",
   "menu.agency": "Agency",
   "menu.launch-checklist": "Launch Checklist",

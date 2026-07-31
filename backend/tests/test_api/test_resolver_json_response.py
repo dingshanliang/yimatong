@@ -164,3 +164,29 @@ class TestResolverJsonResponse:
         # 新增首查时间字段，读自 code_items.first_scanned_at
         assert data["scan_info"]["first_scan_time"] is not None
         assert data["scan_info"]["verification_time"] is not None
+
+    @pytest.mark.anyio
+    async def test_tenant_brand_profile_logo_injected(self, client, traceability_setup, db_session):
+        """ADR-0001：租户 brand_profile.logo_url 注入 tenant_branding，
+        且优先于产品品牌 logo（品牌方自助配置必须生效）。"""
+        # traceability_setup 已建租户 + 产品品牌（无 logo）。先给租户设 brand_profile
+        tenant_resp = await client.get("/api/v1/tenants", headers=_platform_admin_headers())
+        tid = tenant_resp.json()["items"][0]["id"]
+        tenant_headers = {
+            "Authorization": f"Bearer {create_access_token(tid, '00000000-0000-0000-0000-000000000001', 'admin')}"
+        }
+        await client.patch(
+            "/api/v1/tenants/me",
+            json={"brand_profile": {"logo_url": "https://cdn.example.com/tenant-logo.png"}},
+            headers=tenant_headers,
+        )
+
+        resp = await client.get(
+            f"/c/{traceability_setup}",
+            headers={"Accept": "application/json"},
+        )
+        data = resp.json()
+        branding = data.get("tenant_branding") or {}
+        assert branding.get("logo_url") == "https://cdn.example.com/tenant-logo.png", (
+            "租户 brand_profile.logo_url 必须注入 tenant_branding"
+        )

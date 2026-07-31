@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { BrandHeader } from "@/components/BrandHeader";
+import { BrandStyle } from "@/components/BrandStyle";
 import { FooterSection } from "@/components/FooterSection";
 import { ProductCard } from "@/components/ProductCard";
 import { VerifyStatus } from "@/components/VerifyStatus";
@@ -19,6 +20,7 @@ import { OuterCodeGuide } from "@/components/OuterCodeGuide";
 import { RiskAlert } from "@/components/RiskAlert";
 import { DualCodeVerify } from "@/components/DualCodeVerify";
 import { TestReportSection } from "@/components/TestReportSection";
+import { resolveBrandSlots, type TenantBranding } from "@/lib/brand-theme";
 
 type ModuleConfig = {
   id: string;
@@ -29,11 +31,7 @@ type ModuleConfig = {
 
 type PreviewConfig = {
   modules: ModuleConfig[];
-  tenant_branding?: {
-    name?: string;
-    logo_url?: string;
-    primary_color?: string;
-  };
+  tenant_branding?: TenantBranding;
 };
 
 type PreviewProduct = {
@@ -107,33 +105,41 @@ export function PreviewRenderer() {
 
   const branding = config.tenant_branding || {};
   const enabledModules = config.modules.filter((m) => m.enabled !== false);
+  // 消费五槽位（决策3：预览与真实扫码页同机制，brand-theme.ts 三层回退）
+  const brandSlots = resolveBrandSlots(
+    branding,
+    config as Record<string, unknown>
+  );
 
   return (
-    <div className="mx-auto max-w-md min-h-screen bg-canvas">
-      <BrandHeader
-        name={branding.name || "品牌预览"}
-        logoUrl={branding.logo_url || ""}
-        primaryColor={branding.primary_color}
-      />
-      <div
-        className={`mx-4 mt-3 rounded-full px-3 py-1 text-xs ${previewMode === "bound" ? "bg-success-bg text-success" : "bg-info-bg text-info"}`}
-      >
-        {previewMode === "bound"
-          ? "草稿预览 · 已绑定真实产品"
-          : "草稿预览 · 示例数据"}
-      </div>
-      {enabledModules.map((mod) => (
-        <PreviewModule
-          key={mod.id}
-          module={mod}
-          previewContext={previewContext}
-          previewMode={previewMode}
+    <BrandStyle slots={brandSlots}>
+      <div className="mx-auto max-w-md min-h-screen">
+        <BrandHeader
+          name={branding.name || "品牌预览"}
+          logoUrl={branding.logo_url || ""}
+          primaryColor={brandSlots.primaryColor}
         />
-      ))}
-      <FooterSection
-        branding={{ name: branding.name, logo_url: branding.logo_url }}
-      />
-    </div>
+        <div
+          className={`mx-4 mt-3 rounded-full px-3 py-1 text-xs ${previewMode === "bound" ? "bg-success-bg text-success" : "bg-info-bg text-info"}`}
+        >
+          {previewMode === "bound"
+            ? "草稿预览 · 已绑定真实产品"
+            : "草稿预览 · 示例数据"}
+        </div>
+        {enabledModules.map((mod) => (
+          <PreviewModule
+            key={mod.id}
+            module={mod}
+            previewContext={previewContext}
+            previewMode={previewMode}
+          />
+        ))}
+        <FooterSection
+          branding={{ name: branding.name, logo_url: branding.logo_url }}
+          hideEndorsement={brandSlots.hideYimatongBrand}
+        />
+      </div>
+    </BrandStyle>
   );
 }
 
