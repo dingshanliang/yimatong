@@ -23,6 +23,12 @@ class Settings(BaseSettings):
     # 后端对外地址（用于构建回调 URL 等）
     base_url: str = "http://localhost:8000"
 
+    # 接管域名真实核验：默认使用系统 DNS 和公网 443；本地/受控验收可指定独立解析器。
+    takeover_dns_nameserver: str = ""
+    takeover_dns_port: int = 53
+    takeover_tls_port: int = 443
+    takeover_tls_ca_file: str = ""
+
     # CORS 配置（逗号分隔的前端域名）
     cors_origins: str = (
         "http://localhost:3000,http://localhost:3001,http://localhost:3002,"

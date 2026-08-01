@@ -21,10 +21,10 @@ const securityHeaders = [
     key: "Content-Security-Policy",
     value: [
       "default-src 'self'",
-      "script-src 'self'",
-      "style-src 'self' 'unsafe-inline'",
+      `script-src 'self'${process.env.NODE_ENV !== "production" ? " 'unsafe-inline' 'unsafe-eval'" : ""}`,
+      `style-src 'self' 'unsafe-inline'${process.env.NODE_ENV !== "production" ? " https://fonts.googleapis.com" : ""}`,
       "img-src 'self' data: blob: https:",
-      "font-src 'self'",
+      `font-src 'self'${process.env.NODE_ENV !== "production" ? " https://fonts.gstatic.com" : ""}`,
       `connect-src ${connectSrc}`,
       `frame-ancestors ${frameAncestors}`,
       "base-uri 'self'",

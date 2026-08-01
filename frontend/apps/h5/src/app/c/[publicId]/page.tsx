@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { API_BASE } from "@/lib/api";
+import { SERVER_API_BASE } from "@/lib/api";
 import { ResolveContent } from "./ResolveContent";
 
 interface CodePageProps {
@@ -32,7 +32,7 @@ export default async function CodePage({ params }: CodePageProps) {
   let htmlContent: string | null = null;
 
   try {
-    const res = await fetch(`${API_BASE}/c/${publicId}`, {
+    const res = await fetch(`${SERVER_API_BASE}/c/${publicId}`, {
       headers: { Accept: "application/json, text/html" },
       cache: "no-store",
     });

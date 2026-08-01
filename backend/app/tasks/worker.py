@@ -241,7 +241,7 @@ async def worker_loop() -> None:
         try:
             async with aioredis.from_url(settings.redis_url) as r:
                 # BRPOP with 1s timeout
-                result = await r.brpop(REDIS_QUEUE_KEY, TAKEOVER_IMPORT_QUEUE_KEY, timeout=1)
+                result = await r.brpop([REDIS_QUEUE_KEY, TAKEOVER_IMPORT_QUEUE_KEY], timeout=1)
                 if result:
                     queue_key, item_id = result
                     if queue_key.decode() == TAKEOVER_IMPORT_QUEUE_KEY:

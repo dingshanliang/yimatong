@@ -1,6 +1,10 @@
 import axios from "axios";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "";
+const SERVER_API_BASE =
+  process.env.NEXT_PUBLIC_API_URL ||
+  process.env.BACKEND_URL ||
+  "http://localhost:8000";
 
 /**
  * API 客户端 — 走 /api/v1/ 前缀
@@ -52,7 +56,7 @@ const resolverClient = axios.create({
   timeout: 10000,
 });
 
-export { apiClient, resolverClient, API_BASE };
+export { apiClient, resolverClient, API_BASE, SERVER_API_BASE };
 
 export function getConsumerId(): string | null {
   if (typeof window === "undefined") return null;

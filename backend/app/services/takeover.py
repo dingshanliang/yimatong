@@ -983,30 +983,42 @@ def _parse_certificate_expiry(value: str | None) -> datetime | None:
 
 
 def _inspect_dns_and_tls_sync(domain: str, expected_cname: str) -> dict:
+    from app.core.config import settings
+
     observed_cnames: list[str] = []
     observed_ips: list[str] = []
     ttl: int | None = None
     dns_error = None
+    resolver = None
     try:
         import dns.resolver
 
-        answer = dns.resolver.resolve(domain, "CNAME", lifetime=5)
+        resolver = dns.resolver.Resolver()
+        if settings.takeover_dns_nameserver:
+            resolver.nameservers = [settings.takeover_dns_nameserver]
+            resolver.nameserver_ports = {settings.takeover_dns_nameserver: settings.takeover_dns_port}
+        answer = resolver.resolve(domain, "CNAME", lifetime=5)
         observed_cnames = [_normalize_domain(str(item.target)) or "" for item in answer]
         ttl = int(answer.rrset.ttl) if answer.rrset else None
     except Exception as exc:  # pragma: no cover - actual network is covered by deployment smoke
         dns_error = str(exc)
     try:
-        infos = socket.getaddrinfo(domain, 443, type=socket.SOCK_STREAM)
-        observed_ips = sorted({info[4][0] for info in infos})
-    except OSError as exc:  # pragma: no cover - actual network is covered by deployment smoke
+        if resolver:
+            answer = resolver.resolve(domain, "A", lifetime=5)
+            observed_ips = sorted({str(item) for item in answer})
+        else:
+            infos = socket.getaddrinfo(domain, settings.takeover_tls_port, type=socket.SOCK_STREAM)
+            observed_ips = sorted({info[4][0] for info in infos})
+    except Exception as exc:  # pragma: no cover - actual network is covered by deployment smoke
         if not dns_error:
             dns_error = str(exc)
     tls_status = "invalid"
     certificate_expires_at = None
     tls_error = None
     try:
-        context = ssl.create_default_context()
-        with socket.create_connection((domain, 443), timeout=5) as raw_socket:
+        context = ssl.create_default_context(cafile=settings.takeover_tls_ca_file or None)
+        tls_host = observed_ips[0] if observed_ips else domain
+        with socket.create_connection((tls_host, settings.takeover_tls_port), timeout=5) as raw_socket:
             with context.wrap_socket(raw_socket, server_hostname=domain) as tls_socket:
                 certificate = tls_socket.getpeercert()
                 certificate_expires_at = _parse_certificate_expiry(certificate.get("notAfter"))
