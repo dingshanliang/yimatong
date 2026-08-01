@@ -52,6 +52,8 @@ from app.api.v1.risk_notifications import risk_notification_router
 from app.api.v1.risk_rules import risk_rule_router
 from app.api.v1.roles import router as roles_router
 from app.api.v1.scan_events import scan_event_router
+from app.api.v1.takeovers import gateway_router as takeover_gateway_router
+from app.api.v1.takeovers import router as takeover_router
 from app.api.v1.tasks import task_router
 from app.api.v1.tenants import router as tenants_router
 from app.api.v1.webhooks import webhook_router
@@ -358,6 +360,8 @@ app.include_router(wechat_oauth_router)
 app.include_router(public_page_router)
 app.include_router(import_router)
 app.include_router(private_domain_router)
+app.include_router(takeover_router)
+app.include_router(takeover_gateway_router)
 app.include_router(dashboard_router)
 app.include_router(risk_evaluate_router)
 app.include_router(prd_compat_router)

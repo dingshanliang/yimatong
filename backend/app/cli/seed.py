@@ -17,13 +17,14 @@ from app.models.connector import Connector  # noqa: F401 - register connector ta
 from app.models.page import PageTemplate, PageTemplateStatus, PageVersion, PageVersionStatus, TemplateType
 from app.models.product import SKU, Brand, Product, ProductionBatch
 from app.models.scan import ScanEvent
-from app.models.tenant import Account, Organization, Role, Tenant, account_roles
+from app.models.tenant import Account, Organization, Permission, Role, Tenant, account_roles, role_permissions
 from app.services.analytics import aggregate_daily_stats
 from app.services.channel import create_account_scope
 from app.services.code import activate_batch, create_code_batch
 from app.services.public_id import generate_public_id
 from app.services.tenant import create_tenant
 from app.utils import utcnow
+from app.utils.auth_rbac import WEB_ROLE_PERMISSIONS
 from app.utils.security import hash_password
 
 app = typer.Typer(help="Seed data for development")
@@ -103,11 +104,32 @@ async def _ensure_role(db: AsyncSession, tenant_id: uuid.UUID, name: str, descri
     role = result.scalar_one_or_none()
     if role:
         role.description = description
-        return role
-    role = Role(tenant_id=tenant_id, name=name, description=description)
-    db.add(role)
-    await db.flush()
-    await db.refresh(role)
+    else:
+        role = Role(tenant_id=tenant_id, name=name, description=description)
+        db.add(role)
+        await db.flush()
+        await db.refresh(role)
+
+    for code in WEB_ROLE_PERMISSIONS.get(name, []):
+        permission = await db.scalar(
+            select(Permission).where(Permission.tenant_id == tenant_id, Permission.code == code)
+        )
+        if permission is None:
+            permission = Permission(
+                tenant_id=tenant_id,
+                code=code,
+                description=f"默认权限：{code}",
+            )
+            db.add(permission)
+            await db.flush()
+        linked = await db.scalar(
+            select(role_permissions.c.role_id).where(
+                role_permissions.c.role_id == role.id,
+                role_permissions.c.permission_id == permission.id,
+            )
+        )
+        if linked is None:
+            await db.execute(role_permissions.insert().values(role_id=role.id, permission_id=permission.id))
     return role
 
 

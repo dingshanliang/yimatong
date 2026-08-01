@@ -11,6 +11,7 @@ const enUS: Record<string, string> = {
   "menu.skus": "SKUs",
   "menu.batches": "Production Batches",
   "menu.codes": "Codes",
+  "menu.takeover": "Legacy Code Takeover",
   "menu.pages": "Pages",
   "menu.ai-assistant": "AI Assistant",
   "menu.campaigns": "Campaigns",

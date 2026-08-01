@@ -15,6 +15,7 @@ from app.models.launch import LaunchRelease, LaunchReleaseStatus
 from app.models.page import PageTemplate, PageVersion, PageVersionStatus
 from app.models.scan import ScanEvent
 from app.services.audit import write_audit_log
+from app.services.takeover import build_takeover_launch_gate_check
 
 
 def _digest(payload: dict) -> str:
@@ -118,6 +119,9 @@ async def build_launch_readiness(
             "已有有效扫码访问记录" if scan_passed else "请用真实码完成一次扫码，并确认扫码页正常打开",
         ),
     ]
+    takeover_check = await build_takeover_launch_gate_check(db, tenant_id)
+    if takeover_check:
+        checks.append(takeover_check)
     snapshot = {
         "version": 1,
         "tenant_id": str(tenant_id),

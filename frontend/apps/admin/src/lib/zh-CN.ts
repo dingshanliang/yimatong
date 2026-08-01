@@ -11,6 +11,7 @@ const zhCN: Record<string, string> = {
   "menu.skus": "SKU 管理",
   "menu.batches": "生产批次",
   "menu.codes": "码管理",
+  "menu.takeover": "既有码接管",
   "menu.pages": "页面管理",
   "menu.ai-assistant": "AI 助手",
   "menu.campaigns": "活动管理",

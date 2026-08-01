@@ -27,6 +27,11 @@ WEB_ROLE_PERMISSIONS: dict[str, list[str]] = {
         "campaign:manage",
         "analytics:view",
         "export:run",
+        "takeover:prepare",
+        "takeover:approve",
+        "takeover:execute",
+        "takeover:rollback",
+        "takeover:audit",
     ],
     "operator": [
         "product:create",
@@ -37,6 +42,8 @@ WEB_ROLE_PERMISSIONS: dict[str, list[str]] = {
         "page:publish",
         "campaign:create",
         "analytics:view",
+        "takeover:prepare",
+        "takeover:audit",
     ],
     "platform_admin": [
         "platform:admin",
@@ -55,6 +62,11 @@ WEB_ROLE_PERMISSIONS: dict[str, list[str]] = {
         "campaign:manage",
         "analytics:view",
         "export:run",
+        "takeover:prepare",
+        "takeover:approve",
+        "takeover:execute",
+        "takeover:rollback",
+        "takeover:audit",
     ],
 }
 

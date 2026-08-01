@@ -45,6 +45,7 @@ class TenantScopeMiddleware(BaseHTTPMiddleware):
             or request.url.path.startswith("/api/v1/consumers/points/")
             or request.url.path.startswith("/api/v1/files/public/")
             or request.url.path == "/api/v1/benefit-claims"
+            or request.url.path.startswith("/api/v1/takeover/gateway")
             or request.url.path.startswith("/api/v1/integrations/wecom/callback/")
             or request.url.path == "/api/v1/integrations/wecom/contact-way"
             or request.url.path == "/api/v1/integrations/wecom/mock-added"

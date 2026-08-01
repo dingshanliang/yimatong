@@ -26,6 +26,7 @@ dependencies = [
     "pyyaml>=6.0.0",
     "openpyxl>=3.1.5",
     "email-validator>=2.2.0",
+    "dnspython>=2.8.0",
 ]
 
 [dependency-groups]

@@ -38,6 +38,7 @@ import {
   MoonOutlined,
   SunOutlined,
   BgColorsOutlined,
+  SwapOutlined,
 } from "@ant-design/icons";
 import type { MenuProps } from "antd";
 import { useAuthStore } from "@/lib/auth";
@@ -208,6 +209,11 @@ function DashboardInner({ children }: { children: React.ReactNode }) {
       label: t("menu.group.traceability"),
       children: [
         { key: "/codes", icon: <QrcodeOutlined />, label: t("menu.codes") },
+        {
+          key: "/codes/takeover",
+          icon: <SwapOutlined />,
+          label: t("menu.takeover"),
+        },
         { key: "/pages", icon: <FileTextOutlined />, label: t("menu.pages") },
       ],
     },
