@@ -18,12 +18,12 @@ class TestValidateFile:
         assert validate_file("image.webp", "image/webp", 4096) is None
 
     def test_invalid_extension(self):
-        result = validate_file("doc.pdf", "application/pdf", 1024)
+        result = validate_file("doc.exe", "application/octet-stream", 1024)
         assert result is not None
         assert "not allowed" in result.lower()
 
     def test_invalid_mime_type(self):
-        result = validate_file("fake.png", "application/pdf", 1024)
+        result = validate_file("fake.png", "application/x-unknown", 1024)
         assert result is not None
 
     def test_file_too_large(self):

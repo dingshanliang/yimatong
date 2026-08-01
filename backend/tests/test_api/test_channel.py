@@ -54,6 +54,12 @@ async def setup_tenant(client: AsyncClient):
     tid = resp.json()["id"]
     token = create_access_token(tid, "00000000-0000-0000-0000-000000000001", "admin")
     headers = {"Authorization": f"Bearer {token}"}
+    feature_resp = await client.patch(
+        "/api/v1/tenants/me",
+        json={"enabled_features": {"channel_store": True}},
+        headers=headers,
+    )
+    assert feature_resp.status_code == 200
 
     brand = await client.post("/api/v1/brands", json={"name": "测试品牌"}, headers=headers)
     product = await client.post(

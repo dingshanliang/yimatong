@@ -53,7 +53,7 @@ class TestTenantScopeInjection:
         headers = _auth_header(str(tenant.id))
         resp = await client.get("/api/v1/organizations", headers=headers)
         assert resp.status_code == 200
-        orgs = resp.json()
+        orgs = resp.json()["items"]
         assert len(orgs) >= 1
         assert all(o["tenant_id"] == str(tenant.id) for o in orgs)
 
@@ -100,7 +100,7 @@ class TestTenantScopeInjection:
         headers_b = _auth_header(str(tenant_b.id))
         resp = await client.get("/api/v1/organizations", headers=headers_b)
         assert resp.status_code == 200
-        orgs = resp.json()
+        orgs = resp.json()["items"]
         assert all(o["tenant_id"] != str(tenant_a.id) for o in orgs)
 
     @pytest.mark.anyio

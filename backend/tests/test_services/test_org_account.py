@@ -1,7 +1,6 @@
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from fastapi import HTTPException
 
 
 @pytest.mark.asyncio
@@ -32,7 +31,7 @@ async def test_create_account_rejects_duplicate_email():
 
     db.execute = mock_execute
 
-    with pytest.raises(HTTPException) as exc_info:
+    with pytest.raises(ValueError, match="already exists|已存在"):
         await create_account(
             db=db,
             tenant_id=MagicMock(),
@@ -41,5 +40,3 @@ async def test_create_account_rejects_duplicate_email():
             name="重复用户",
             password="Test12345678",
         )
-    assert exc_info.value.status_code == 409
-    assert "already exists" in exc_info.value.detail.lower() or "已存在" in exc_info.value.detail

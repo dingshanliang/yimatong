@@ -92,8 +92,8 @@ class TestFileUpload:
             data={"module": "brands"},
             headers=headers,
         )
-        assert resp.status_code == 400
-        assert "not allowed" in resp.json()["detail"].lower()
+        assert resp.status_code == 415
+        assert "类型" in resp.json()["detail"]
 
     @pytest.mark.anyio
     async def test_upload_pdf_success(self, client: AsyncClient, tenant_with_auth):
@@ -128,8 +128,8 @@ class TestFileUpload:
             data={"module": "brands"},
             headers=headers,
         )
-        assert resp.status_code == 400
-        assert "size" in resp.json()["detail"].lower()
+        assert resp.status_code == 413
+        assert "大小" in resp.json()["detail"]
 
     @pytest.mark.anyio
     async def test_get_file_metadata(self, client: AsyncClient, tenant_with_auth):

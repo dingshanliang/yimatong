@@ -84,5 +84,5 @@ class TestAPIIsolation:
 
         orgs_b = await client.get("/api/v1/organizations", headers=headers_b)
         assert orgs_b.status_code == 200
-        names = [o["name"] for o in orgs_b.json()]
+        names = [o["name"] for o in orgs_b.json()["items"]]
         assert "A的秘密部门" not in names

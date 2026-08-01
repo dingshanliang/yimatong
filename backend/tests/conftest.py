@@ -17,6 +17,7 @@ os.environ.setdefault("redis_url", "redis://localhost:6379/0")
 os.environ.setdefault("secret_key", "test-secret-key")
 os.environ.setdefault("AES_MASTER_KEY_V1", "00" * 32)
 os.environ.setdefault("HMAC_PEPPER", "ff" * 32)
+os.environ.setdefault("platform_admin_password_hash", "$2b$12$SerdnBjOttEIIry2900ELOiJYuZb.tVykMjV3fV6T2SIIHOOAkMre")
 
 # 必须在设置环境变量后导入
 from app.models.analytics import DailyScanStats  # noqa: E402, F401

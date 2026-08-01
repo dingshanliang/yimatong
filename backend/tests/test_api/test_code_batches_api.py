@@ -168,7 +168,7 @@ class TestListCodeBatchesAPI:
         _, headers, product_id, sku_id, production_batch_id = auth_setup
 
         # 先创建两个批次
-        await client.post(
+        first = await client.post(
             "/api/v1/code-batches",
             json={
                 "product_id": product_id,
@@ -178,7 +178,7 @@ class TestListCodeBatchesAPI:
             },
             headers=headers,
         )
-        await client.post(
+        second = await client.post(
             "/api/v1/code-batches",
             json={
                 "product_id": product_id,
@@ -188,6 +188,10 @@ class TestListCodeBatchesAPI:
             },
             headers=headers,
         )
+        assert first.status_code == 201
+        assert second.status_code == 201
+        assert first.json()["batch_code"] == "PB-API-001"
+        assert second.json()["batch_code"] == "PB-API-001-2"
 
         resp = await client.get("/api/v1/code-batches", headers=headers)
         assert resp.status_code == 200

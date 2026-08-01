@@ -65,11 +65,23 @@ async def e2e_setup(client: AsyncClient):
         json={"product_id": prod.json()["id"], "code": "E2E-SKU", "name": "E2E SKU"},
         headers=headers,
     )
+    production_batch = await client.post(
+        "/api/v1/production-batches",
+        json={
+            "product_id": prod.json()["id"],
+            "sku_id": sku.json()["id"],
+            "batch_code": "E2E-PB-001",
+            "production_date": "2026-07-01",
+            "expiry_date": "2027-07-01",
+        },
+        headers=headers,
+    )
     batch = await client.post(
         "/api/v1/code-batches",
         json={
             "product_id": prod.json()["id"],
             "sku_id": sku.json()["id"],
+            "production_batch_id": production_batch.json()["id"],
             "batch_code": "E2E-001",
             "quantity": 3,
         },

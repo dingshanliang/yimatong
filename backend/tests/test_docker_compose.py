@@ -74,6 +74,10 @@ class TestDockerComposeServices:
             "backend",
             "worker",
             "migration",
+            "db-init",
+            "seed",
+            "admin",
+            "h5",
             "mock-sms",
             "mock-wechat",
         }

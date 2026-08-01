@@ -67,7 +67,7 @@ async def dashboard_setup(client: AsyncClient, db_session: AsyncSession):
     for i in range(7):
         s = DailyScanStats(
             tenant_id=uuid.UUID(tid),
-            date=today.replace(day=max(1, today.day - i)) if today.day > i else today,
+            date=today - timedelta(days=i),
             total_scans=100 + i,
             uv=50 + i,
             first_scans=20 + i,

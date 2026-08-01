@@ -350,7 +350,12 @@ class TestSSEAlertStream:
         from unittest.mock import patch
 
         tid, headers = setup_tenant
-        token = headers["Authorization"].split(" ", 1)[1]
+        ticket_response = await client.post(
+            "/api/v1/risk-dashboard/alerts/ticket",
+            headers=headers,
+        )
+        assert ticket_response.status_code == 200
+        ticket = ticket_response.json()["ticket"]
 
         # Patch StreamingResponse 为同步返回，避免无限流卡住测试
         from fastapi.responses import StreamingResponse as OrigStreamingResponse  # noqa: N814
@@ -369,7 +374,7 @@ class TestSSEAlertStream:
         with patch("app.api.v1.risk_dashboard.StreamingResponse", FiniteSR):
             resp = await client.get(
                 "/api/v1/risk-dashboard/alerts/stream",
-                params={"token": token},
+                params={"ticket": ticket},
             )
         assert resp.status_code == 200
         assert "text/event-stream" in resp.headers.get("content-type", "")
@@ -383,6 +388,6 @@ class TestSSEAlertStream:
     async def test_sse_with_invalid_token_returns_401(self, client: AsyncClient, setup_tenant):
         resp = await client.get(
             "/api/v1/risk-dashboard/alerts/stream",
-            params={"token": "invalid-token"},
+            params={"ticket": "invalid-token"},
         )
         assert resp.status_code == 401

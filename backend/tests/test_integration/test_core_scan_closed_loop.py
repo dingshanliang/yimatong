@@ -656,9 +656,7 @@ class TestCodeStateTransitions:
         resp = await client.get(f"/c/{public_id}", headers={"Accept": "application/json"})
         assert resp.status_code == 200
         data = resp.json()
-        assert data["code_data"]["status"] == "not_active", (
-            f"未激活码应返回 not_active，实际 {data['code_data']['status']}"
-        )
+        assert data["code_data"]["status"] == "created", f"未激活码应返回 created，实际 {data['code_data']['status']}"
 
     @pytest.mark.anyio
     async def test_invalid_public_id_404(self, client: AsyncClient):

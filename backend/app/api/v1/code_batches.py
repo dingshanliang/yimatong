@@ -109,6 +109,7 @@ async def create_code_batch_endpoint(
             account_id,
             code_type=body.code_type,
             generation_mode=body.generation_mode,
+            batch_code=body.batch_code,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

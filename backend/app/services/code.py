@@ -36,6 +36,7 @@ async def create_code_batch(
     created_by: uuid.UUID,
     code_type: str = CodeType.single,
     generation_mode: str = CodeGenerationMode.item_level,
+    batch_code: str | None = None,
 ) -> dict:
     # Quota check
     from app.models.tenant import Tenant
@@ -71,12 +72,27 @@ async def create_code_batch(
     elif generation_mode != CodeGenerationMode.item_level:
         raise ValueError("Invalid generation mode")
 
+    requested_batch_code = batch_code or production_batch.batch_code
+    existing_batch_codes_result = await db.execute(
+        select(CodeBatch.batch_code).where(
+            CodeBatch.tenant_id == tenant_id,
+            CodeBatch.batch_code.like(f"{requested_batch_code}%"),
+        )
+    )
+    existing_batch_codes = set(existing_batch_codes_result.scalars().all())
+    resolved_batch_code = requested_batch_code
+    suffix = 2
+    while resolved_batch_code in existing_batch_codes:
+        suffix_text = f"-{suffix}"
+        resolved_batch_code = f"{requested_batch_code[: 100 - len(suffix_text)]}{suffix_text}"
+        suffix += 1
+
     batch = CodeBatch(
         tenant_id=tenant_id,
         product_id=product_id,
         sku_id=sku_id,
         production_batch_id=production_batch_id,
-        batch_code=production_batch.batch_code,
+        batch_code=resolved_batch_code,
         quantity=quantity,
         created_by=created_by,
         code_type=code_type,

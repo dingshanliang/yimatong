@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
 from app.main import app
 from app.services.scan_token import create_scan_token
+from app.utils.client_ip import compute_ip_hash
 from app.utils.security import create_access_token
 from tests.conftest import TestSessionLocal
 
@@ -67,6 +68,10 @@ async def auth_setup(client: AsyncClient):
     return tenant_id, {"Authorization": f"Bearer {token}"}
 
 
+def _scan_token(tenant_id: str, public_id: str) -> str:
+    return create_scan_token(public_id, compute_ip_hash("127.0.0.1"), tenant_id=tenant_id)
+
+
 async def create_product(client: AsyncClient, headers: dict[str, str]) -> str:
     brand = await client.post("/api/v1/brands", json={"name": "企微品牌"}, headers=headers)
     product = await client.post(
@@ -79,7 +84,7 @@ async def create_product(client: AsyncClient, headers: dict[str, str]) -> str:
 
 @pytest.mark.anyio
 async def test_wecom_required_claim_waits_for_callback_then_allows_claim(client: AsyncClient, auth_setup):
-    _, headers = auth_setup
+    tenant_id, headers = auth_setup
     product_id = await create_product(client, headers)
 
     config = await client.post(
@@ -121,7 +126,7 @@ async def test_wecom_required_claim_waits_for_callback_then_allows_claim(client:
         headers=headers,
     )
     benefit_id = benefit.json()["id"]
-    scan_token = create_scan_token("PUBLIC12345", "ip-hash")
+    scan_token = _scan_token(tenant_id, "PUBLIC12345")
 
     blocked = await client.post(
         "/api/v1/benefit-claims",
@@ -145,7 +150,7 @@ async def test_wecom_required_claim_waits_for_callback_then_allows_claim(client:
 
 @pytest.mark.anyio
 async def test_wecom_guide_mode_does_not_block_claim(client: AsyncClient, auth_setup):
-    _, headers = auth_setup
+    tenant_id, headers = auth_setup
     product_id = await create_product(client, headers)
     campaign = await client.post(
         "/api/v1/campaigns",
@@ -171,7 +176,7 @@ async def test_wecom_guide_mode_does_not_block_claim(client: AsyncClient, auth_s
     )
     claimed = await client.post(
         "/api/v1/benefit-claims",
-        json={"benefit_id": benefit.json()["id"], "scan_token": create_scan_token("PUBLIC67890", "ip-hash")},
+        json={"benefit_id": benefit.json()["id"], "scan_token": _scan_token(tenant_id, "PUBLIC67890")},
     )
     assert claimed.status_code == 201
     assert claimed.json()["status"] == "claimed"

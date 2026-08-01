@@ -72,7 +72,13 @@ async def full_setup(client: AsyncClient):
     # 创建生产批次（码批次需要 production_batch_id）
     pb = await client.post(
         "/api/v1/production-batches",
-        json={"product_id": product_id, "sku_id": sku_id, "batch_code": "E-001", "production_date": "2024-01-01"},
+        json={
+            "product_id": product_id,
+            "sku_id": sku_id,
+            "batch_code": "E-001",
+            "production_date": "2024-01-01",
+            "expiry_date": "2027-01-01",
+        },
         headers=headers,
     )
     production_batch_id = pb.json()["id"]
@@ -165,11 +171,23 @@ class TestResolvePageEngine:
             json={"product_id": prod.json()["id"], "code": "NT-SKU", "name": "NT SKU"},
             headers=headers,
         )
+        production_batch = await client.post(
+            "/api/v1/production-batches",
+            json={
+                "product_id": prod.json()["id"],
+                "sku_id": sku.json()["id"],
+                "batch_code": "NT-PB-001",
+                "production_date": "2026-07-01",
+                "expiry_date": "2027-07-01",
+            },
+            headers=headers,
+        )
         batch = await client.post(
             "/api/v1/code-batches",
             json={
                 "product_id": prod.json()["id"],
                 "sku_id": sku.json()["id"],
+                "production_batch_id": production_batch.json()["id"],
                 "batch_code": "NT-001",
                 "quantity": 1,
             },

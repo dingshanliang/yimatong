@@ -19,7 +19,7 @@ runner = CliRunner()
 
 
 class TestSeedTenant:
-    @patch("app.services.tenant.create_tenant", new_callable=AsyncMock)
+    @patch("app.cli.seed.create_tenant", new_callable=AsyncMock)
     @patch("app.cli.seed._get_tenant_by_slug", new_callable=AsyncMock)
     @patch("app.cli.seed.async_session")
     def test_seed_tenant_creates_new(self, mock_session, mock_get, mock_create):
