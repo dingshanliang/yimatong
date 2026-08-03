@@ -84,11 +84,13 @@ export default function BrandProfilePage() {
   const [profile, setProfile] = useState<BrandProfile>({});
   const [primaryColor, setPrimaryColor] = useState<string>(DEFAULT_PRIMARY);
 
-  // 预览 iframe（决策 3：复用 H5 /preview + postMessage）
+  // 预览 iframe（决策 3：复用页面编辑器同款预览机制）
+  // 与 PreviewPanel 一致：优先用 NEXT_PUBLIC_H5_URL，fallback 到 admin 内置 /page-preview（同源，无跨域问题）
   const iframeRef = useRef<HTMLIFrameElement>(null);
-  const [previewReady, setPreviewReady] = useState(false);
   const configuredH5Url = process.env.NEXT_PUBLIC_H5_URL?.replace(/\/$/, "");
-  const previewUrl = configuredH5Url ? `${configuredH5Url}/preview` : null;
+  const previewUrl = configuredH5Url
+    ? `${configuredH5Url}/preview`
+    : "/page-preview";
 
   // 加载当前 brand_profile
   const fetchProfile = useCallback(async () => {
@@ -114,48 +116,50 @@ export default function BrandProfilePage() {
 
   // 把当前编辑中的配置拼成 tenant_branding，推给 H5 预览。
   // tenant_branding 是 dsl 的顶层字段（H5 PreviewRenderer 从 config.tenant_branding 读）。
+  // 不依赖 preview-ready 握手（存在竞态：H5 的 ready 消息可能在 admin 监听器注册前发出），
+  // 改为 onLoad 触发 + 短间隔重试，确保覆盖 H5 listener 注册窗口。
   const sendPreview = useCallback(() => {
-    if (!iframeRef.current?.contentWindow || !previewReady || !previewUrl)
-      return;
+    if (!iframeRef.current?.contentWindow || !previewUrl) return;
     const origin = new URL(previewUrl, window.location.origin).origin;
-    iframeRef.current.contentWindow.postMessage(
-      {
-        type: "preview-dsl",
-        payload: {
-          dsl: {
-            modules: [
-              { id: "hero", type: "product_hero", enabled: true },
-              { id: "benefit", type: "benefit_claim", enabled: true },
-            ],
-            tenant_branding: {
-              name: "品牌预览",
-              logo_url: profile.logo_url,
-              primary_color: colorCheck.ok ? primaryColor : DEFAULT_PRIMARY,
-              radius_preset: profile.radius_preset,
-              background_preset: profile.background_preset,
-              hide_yimatong_brand: profile.hide_yimatong_brand,
-            },
+    const message = {
+      type: "preview-dsl",
+      payload: {
+        dsl: {
+          modules: [
+            { id: "hero", type: "product_hero", enabled: true },
+            { id: "benefit", type: "benefit_claim", enabled: true },
+          ],
+          tenant_branding: {
+            name: "品牌预览",
+            logo_url: profile.logo_url,
+            primary_color: colorCheck.ok ? primaryColor : DEFAULT_PRIMARY,
+            radius_preset: profile.radius_preset,
+            background_preset: profile.background_preset,
+            hide_yimatong_brand: profile.hide_yimatong_brand,
           },
-          previewContext: {},
-          previewMode: "example",
         },
+        previewContext: {},
+        previewMode: "example",
       },
-      origin
-    );
-  }, [previewReady, previewUrl, profile, primaryColor, colorCheck]);
+    };
+    iframeRef.current.contentWindow.postMessage(message, origin);
+  }, [previewUrl, profile, primaryColor, colorCheck]);
 
+  // 配置变化时立即推送
   useEffect(() => {
     sendPreview();
   }, [sendPreview]);
 
-  // 监听 H5 预览就绪
-  useEffect(() => {
-    function handleMessage(event: MessageEvent) {
-      if (event.data?.type === "preview-ready") setPreviewReady(true);
-    }
-    window.addEventListener("message", handleMessage);
-    return () => window.removeEventListener("message", handleMessage);
-  }, []);
+  // iframe 加载完成后重试几次，覆盖 H5 listener 注册窗口（握手竞态兜底）
+  const handleIframeLoad = useCallback(() => {
+    let attempts = 0;
+    const retry = () => {
+      attempts += 1;
+      sendPreview();
+      if (attempts < 4) setTimeout(retry, 500);
+    };
+    retry();
+  }, [sendPreview]);
 
   const handleSave = async () => {
     if (!colorCheck.ok) {
@@ -277,31 +281,25 @@ export default function BrandProfilePage() {
       {/* 右：H5 实时预览 */}
       <div className="w-full lg:flex-1">
         <Card size="small" title="H5 实时预览">
-          {previewUrl ? (
-            <div className="flex justify-center">
-              <div
-                style={{
-                  width: 375,
-                  height: 667,
-                  border: "3px solid var(--ymt-color-border)",
-                  borderRadius: "var(--ymt-radius-xl)",
-                  overflow: "hidden",
-                }}
-              >
-                <iframe
-                  ref={iframeRef}
-                  src={previewUrl}
-                  style={{ width: "100%", height: "100%", border: "none" }}
-                  title="H5 品牌预览"
-                />
-              </div>
+          <div className="flex justify-center">
+            <div
+              style={{
+                width: 375,
+                height: 667,
+                border: "3px solid var(--ymt-color-border)",
+                borderRadius: "var(--ymt-radius-xl)",
+                overflow: "hidden",
+              }}
+            >
+              <iframe
+                ref={iframeRef}
+                src={previewUrl}
+                onLoad={handleIframeLoad}
+                style={{ width: "100%", height: "100%", border: "none" }}
+                title="H5 品牌预览"
+              />
             </div>
-          ) : (
-            <Text type="secondary">
-              未配置
-              NEXT_PUBLIC_H5_URL，无法显示实时预览。配置后可在此预览消费者扫码页效果。
-            </Text>
-          )}
+          </div>
         </Card>
       </div>
     </div>
