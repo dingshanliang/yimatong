@@ -14,6 +14,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = logging.getLogger(__name__)
 
+
+class RedPacketTransferFailed(RuntimeError):
+    """微信转账明确失败；预算/库存已在服务层回滚并写入 failed claim。
+
+    调用方应当 commit（持久化补偿与 failed 审计记录）后再向用户返回失败，
+    而不是回滚——回滚会把回滚后的预算扣减和 failed 记录一起撤销，丢失审计。
+    与"红包已抢光/预算用尽"等扣减前抛出的 RuntimeError 区分：那些情况没有
+    需要持久化的补偿，调用方回滚即可。
+    """
+
+
 # 乐观锁预算扣减 SQL
 _DEDUCT_BUDGET_SQL = text("""
     UPDATE benefits
@@ -26,6 +37,33 @@ _DEDUCT_BUDGET_SQL = text("""
     AND stock_used < stock_total
     AND (COALESCE((config_json->>'claimed_budget')::int, 0) + :amount) <= (config_json->>'budget')::int
 """)
+
+# 失败补偿：把刚扣掉的预算和库存加回去。stock_used > 0 守卫防止并发回滚越界。
+_REFUND_BUDGET_SQL = text("""
+    UPDATE benefits
+    SET config_json = jsonb_set(
+        config_json, '{claimed_budget}',
+        GREATEST(COALESCE((config_json->>'claimed_budget')::int, 0) - :amount, 0)::text::jsonb
+    ),
+    stock_used = stock_used - 1
+    WHERE id = :benefit_id
+    AND stock_used > 0
+""")
+
+
+async def deduct_redpacket_budget(db: AsyncSession, benefit_id: uuid.UUID, amount: int) -> int:
+    """乐观锁扣减红包预算与库存。返回受影响行数（0 = 抢光/预算不足）。
+
+    单独成函数便于测试替换（SQLite 没有 jsonb_set），生产路径用 PG 专属 SQL。
+    """
+    result = await db.execute(_DEDUCT_BUDGET_SQL, {"benefit_id": benefit_id, "amount": amount})
+    return result.rowcount or 0
+
+
+async def refund_redpacket_budget(db: AsyncSession, benefit_id: uuid.UUID, amount: int) -> int:
+    """失败补偿：加回预算与库存。返回受影响行数。"""
+    result = await db.execute(_REFUND_BUDGET_SQL, {"benefit_id": benefit_id, "amount": amount})
+    return result.rowcount or 0
 
 
 async def claim_red_packet(
@@ -88,11 +126,7 @@ async def claim_red_packet(
         amount = remaining
 
     # 3. 乐观锁扣减预算
-    result = await db.execute(
-        _DEDUCT_BUDGET_SQL,
-        {"benefit_id": benefit_id, "amount": amount},
-    )
-    if result.rowcount == 0:
+    if await deduct_redpacket_budget(db, benefit_id, amount) == 0:
         raise RuntimeError("红包已抢光")
 
     # 4. 创建 BenefitClaim
@@ -130,22 +164,49 @@ async def claim_red_packet(
     conn_result = await db.execute(select(Connector).where(Connector.id == connector_id))
     connector = conn_result.scalar_one_or_none()
 
-    if connector:
-        adapter = get_adapter(connector)
-        delivery_result = await adapter.deliver(connector, consumer_id, delivery.benefit_config)
-
-        delivery.status = delivery_result.status
-        delivery.external_data = delivery_result.external_data
-        if delivery_result.status == "success":
-            claim.status = "delivered"
-
+    if connector is None:
+        # 没有可用 connector：保持 pending，交给现有 BenefitDelivery 重试/对账路径。
         return {
             "amount": amount,
             "claim_id": claim.id,
-            "status": delivery_result.status,
+            "status": "pending",
             "delivery_id": delivery.id,
         }
 
+    adapter = get_adapter(connector)
+    delivery_result = await adapter.deliver(connector, consumer_id, delivery.benefit_config)
+    delivery.status = delivery_result.status
+    delivery.external_data = delivery_result.external_data
+
+    if delivery_result.status == "success":
+        claim.status = "delivered"
+        return {
+            "amount": amount,
+            "claim_id": claim.id,
+            "status": "success",
+            "delivery_id": delivery.id,
+        }
+
+    if delivery_result.status == "failed":
+        # DC-01 补偿：转账明确失败时立即把预算和库存加回去，并把 claim 标记为
+        # failed。这样品牌的红包预算不会被一次失败的转账永久占用（之前的实现
+        # 会留下 status=claimed + 已扣预算但用户没收到钱，需要人工对账）。
+        # pending（超时/可重试）不回滚：交给现有 BenefitDelivery 重试队列，
+        # 后续重试或异步查询转账明细时再决定最终状态。
+        await refund_redpacket_budget(db, benefit_id, amount)
+        claim.status = "failed"
+        await db.flush()
+        logger.warning(
+            "Red packet transfer failed, budget refunded: benefit=%s claim=%s msg=%s",
+            benefit_id,
+            claim.id,
+            delivery_result.message,
+        )
+        raise RedPacketTransferFailed(f"红包转账失败：{delivery_result.message or 'transfer failed'}")
+
+    # pending（超时 / 429 / 502 / 503）：保持 claim=claimed、delivery=pending，
+    # 现有 BenefitDelivery 重试机制（benefit_delivery_handler + next_retry_at）
+    # 负责后续投递或异步查询转账明细确认最终结果。
     return {
         "amount": amount,
         "claim_id": claim.id,

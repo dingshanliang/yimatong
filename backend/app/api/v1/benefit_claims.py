@@ -251,7 +251,7 @@ async def _handle_cash_red_packet_claim(
     from sqlalchemy import func
 
     from app.models.campaign import BenefitClaim
-    from app.services.redpacket import claim_red_packet
+    from app.services.redpacket import RedPacketTransferFailed, claim_red_packet
 
     rp_config = benefit.config_json
     daily_limit = rp_config.get("daily_limit_per_user", 3)
@@ -307,9 +307,14 @@ async def _handle_cash_red_packet_claim(
             openid=consumer.wechat_openid,
             total_count=total_count,
         )
+    except RedPacketTransferFailed as e:
+        # 转账明确失败：服务层已把预算/库存加回去并写入 failed claim。必须 commit
+        # 持久化这次补偿与审计，再向用户返回失败；回滚会撤销补偿，等于没退。
+        await db.commit()
+        raise HTTPException(status_code=410, detail=str(e)) from e
     except (RuntimeError, ValueError) as e:
         status_code = 400 if isinstance(e, ValueError) else 410
-        raise HTTPException(status_code=status_code, detail=str(e))
+        raise HTTPException(status_code=status_code, detail=str(e)) from e
 
     await db.commit()
 
