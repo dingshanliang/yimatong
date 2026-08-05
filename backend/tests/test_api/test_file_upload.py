@@ -119,7 +119,9 @@ class TestFileUpload:
             data = resp.json()
             assert str(tid) in data["file_url"]
             assert "product-document" in data["file_url"]
-            assert data["public_url"].endswith(".pdf")
+            # PDF 属于敏感/不可公开类型，上传不再返回永久公开 URL；必须走已认证的
+            # /files/{file_id} 预签路径（短期 URL + 授权保护）。见 RU16-F02。
+            assert "public_url" not in data
 
     @pytest.mark.anyio
     async def test_upload_file_too_large(self, client: AsyncClient, tenant_with_auth):

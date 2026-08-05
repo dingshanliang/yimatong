@@ -12,6 +12,9 @@ from app.models.channel import Distributor, DiversionClue
 from app.models.risk import RiskAlert
 from app.models.scan import ScanEvent
 
+# 导出行数上限，与分析看板导出一致，避免无界查询耗尽 worker 内存。
+_EXPORT_ROW_LIMIT = 50_000
+
 
 async def get_repeat_scan_stats(
     db: AsyncSession,
@@ -254,7 +257,10 @@ async def export_risk_data(
     if data_type == "alerts":
         writer.writerow(["id", "alert_type", "public_id", "detail", "resolved"])
         result = await db.execute(
-            select(RiskAlert).where(RiskAlert.tenant_id == tenant_id).order_by(RiskAlert.id.desc())
+            select(RiskAlert)
+            .where(RiskAlert.tenant_id == tenant_id)
+            .order_by(RiskAlert.id.desc())
+            .limit(_EXPORT_ROW_LIMIT)
         )
         for alert in result.scalars().all():
             writer.writerow([str(alert.id), alert.alert_type, alert.public_id, alert.detail, alert.resolved])
@@ -262,7 +268,10 @@ async def export_risk_data(
     elif data_type == "diversions":
         writer.writerow(["id", "public_id", "expected_region", "detected_city", "resolved"])
         result = await db.execute(
-            select(DiversionClue).where(DiversionClue.tenant_id == tenant_id).order_by(DiversionClue.id.desc())
+            select(DiversionClue)
+            .where(DiversionClue.tenant_id == tenant_id)
+            .order_by(DiversionClue.id.desc())
+            .limit(_EXPORT_ROW_LIMIT)
         )
         for clue in result.scalars().all():
             writer.writerow([str(clue.id), clue.public_id, clue.expected_region, clue.detected_city, clue.resolved])
