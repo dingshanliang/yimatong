@@ -69,6 +69,11 @@ class FakeResetCache:
     async def rate_limit_check(self, key: str, max_attempts: int, window_seconds: int):
         return True, max_attempts
 
+    # b69b3563 把 confirm_password_reset 的限流改成跨 worker 共享的
+    # rate_limit_check_shared；测试桩需要提供同名方法，否则激活流程的限流调用
+    # 会抛 AttributeError。行为与 rate_limit_check 一致：单进程测试恒放行。
+    rate_limit_check_shared = rate_limit_check
+
 
 @pytest.mark.anyio
 async def test_platform_initialization_materializes_complete_database_state(db):
