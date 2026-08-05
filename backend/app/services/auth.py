@@ -402,8 +402,14 @@ async def confirm_password_reset(
     Raises:
         AuthError: 重置失败
     """
-    # 速率限制
-    allowed, _ = await cache.rate_limit_check_shared(f"reset_rate:{account_id_str}", max_attempts=5, window_seconds=60)
+    # 速率限制：与其他认证边界一致，跨 worker 共享且 Redis 不可用时 fail-closed
+    # 返回 503，而不是让 SharedSecurityCacheUnavailable 冒泡成 500。
+    try:
+        allowed, _ = await cache.rate_limit_check_shared(
+            f"reset_rate:{account_id_str}", max_attempts=5, window_seconds=60
+        )
+    except SharedSecurityCacheUnavailable as exc:
+        raise AuthError(503, "密码重置服务暂时不可用，请稍后重试") from exc
     if not allowed:
         raise AuthError(429, "重置尝试过于频繁，请稍后再试", headers={"Retry-After": "60"})
 
