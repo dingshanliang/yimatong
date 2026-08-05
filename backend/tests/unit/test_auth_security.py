@@ -122,6 +122,9 @@ async def test_jwt_auth_loads_permissions_to_request_state():
     mock_result.one_or_none.return_value = (mock_account, TenantStatus.active)
 
     mock_db = AsyncMock()
+    # _load_account_access 现在用 set_session_tenant_context（一条 set_config 执行）
+    # 建立租户上下文，再执行账户/租户查询。让 _session_uses_postgresql 返回 True，
+    # 否则会跳过 set_config，side_effect 数量就对不上。
     mock_db.execute.side_effect = [MagicMock(), mock_result]
 
     mock_session = AsyncMock()
@@ -131,6 +134,7 @@ async def test_jwt_auth_loads_permissions_to_request_state():
     tenant_id = str(uuid.uuid4())
     with (
         patch("app.core.database._is_pg", True),
+        patch("app.core.database._session_uses_postgresql", return_value=True),
         patch("app.core.database.async_session_factory", return_value=mock_session),
     ):
         has_access, permissions = await middleware._load_account_access(str(uuid.uuid4()), "admin", 0, tenant_id)
