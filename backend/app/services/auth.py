@@ -403,7 +403,7 @@ async def confirm_password_reset(
         AuthError: 重置失败
     """
     # 速率限制
-    allowed, _ = await cache.rate_limit_check(f"reset_rate:{account_id_str}", max_attempts=5, window_seconds=60)
+    allowed, _ = await cache.rate_limit_check_shared(f"reset_rate:{account_id_str}", max_attempts=5, window_seconds=60)
     if not allowed:
         raise AuthError(429, "重置尝试过于频繁，请稍后再试", headers={"Retry-After": "60"})
 
