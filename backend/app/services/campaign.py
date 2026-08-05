@@ -712,11 +712,16 @@ async def claim_benefit(
     if existing_claim:
         return {"status": "idempotent", "claim": _claim_to_dict(existing_claim)}
 
-    # 查询权益（含活动状态校验）
+    # 查询权益（含活动状态校验）。对权益行加 FOR UPDATE 行锁，使同一权益的
+    # 并发领取串行化：每人限额的 count-then-insert 与库存原子扣减之间不再出现
+    # 两个并发请求同时通过限额检查、随后都插入领取记录的竞态（与红包领取路径
+    # benefit_claims._handle_cash_red_packet_claim 的加锁方式一致）。SQLite 测试
+    # 忽略该提示；PostgreSQL 在事务内持有行锁直到 commit。
     benefit_result = await db.execute(
         select(Benefit)
         .where(Benefit.id == benefit_id, Benefit.tenant_id == tenant_id)
-        .join(Campaign, Campaign.id == Benefit.campaign_id, isouter=True),
+        .join(Campaign, Campaign.id == Benefit.campaign_id, isouter=True)
+        .with_for_update(),
     )
     benefit = benefit_result.scalar_one_or_none()
     if not benefit:
