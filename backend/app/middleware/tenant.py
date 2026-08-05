@@ -296,12 +296,15 @@ class TenantScopeMiddleware(BaseHTTPMiddleware):
 
         if tenant_id in {None, "platform"}:
             return False
-        from app.core.database import _is_pg, async_session_factory, engine
+        from app.core.database import _is_pg
 
-        uses_default_sqlite_factory = not _is_pg and async_session_factory.kw.get("bind") is engine
-        if uses_default_sqlite_factory:
-            # SQLite API 测试的 middleware session 与 fixture 事务隔离；状态机本身
-            # 由 helper/middleware 单测覆盖，真实运行时均使用 PostgreSQL。
+        if not _is_pg:
+            # 套餐到期是生产计费状态，由 PostgreSQL 实时读取。SQLite 仅用于单连接
+            # API/单元测试：control_session_factory 是独立引擎，没有 fixture 数据，
+            # 强行查询会抛 "no such table" 并被下面的 fail-closed 分支误判为套餐过期。
+            # 状态机本身由 helper/middleware 单测覆盖；真实运行时均使用 PostgreSQL。
+            # 注意：判定依据是运行时方言（_is_pg），而不是 async_session_factory 的
+            # 对象身份——后者会被测试 patch 改变，从而使本短路失效。
             return False
         try:
             import uuid
