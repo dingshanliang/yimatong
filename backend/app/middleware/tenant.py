@@ -306,17 +306,17 @@ class TenantScopeMiddleware(BaseHTTPMiddleware):
         try:
             import uuid
 
-            from sqlalchemy import select, text
+            from sqlalchemy import select
 
             from app.models.tenant import Tenant
             from app.services.entitlement import is_plan_expired
 
             validated_tenant_id = uuid.UUID(tenant_id)
-            from app.core.database import control_session_factory
+            from app.core.database import control_session_factory, set_session_tenant_context
 
             async with control_session_factory() as db:
                 if _is_pg:
-                    await db.execute(text(f"SET LOCAL app.tenant_id = '{validated_tenant_id}'"))
+                    await set_session_tenant_context(db, validated_tenant_id)
                 expires_at = await db.scalar(select(Tenant.plan_expires_at).where(Tenant.id == validated_tenant_id))
                 return is_plan_expired(expires_at)
         except Exception:
@@ -355,7 +355,7 @@ class TenantScopeMiddleware(BaseHTTPMiddleware):
         try:
             import uuid
 
-            from sqlalchemy import select, text
+            from sqlalchemy import select
             from sqlalchemy.orm import selectinload
 
             from app.models.tenant import Account, Role, Tenant, TenantStatus
@@ -365,7 +365,9 @@ class TenantScopeMiddleware(BaseHTTPMiddleware):
                     if tenant_id is None:
                         return False, []
                     validated_tenant_id = str(uuid.UUID(tenant_id))
-                    await db.execute(text(f"SET LOCAL app.tenant_id = '{validated_tenant_id}'"))
+                    from app.core.database import set_session_tenant_context
+
+                    await set_session_tenant_context(db, validated_tenant_id)
                 result = await db.execute(
                     select(Account, Tenant.status)
                     .options(selectinload(Account.roles).selectinload(Role.permissions))

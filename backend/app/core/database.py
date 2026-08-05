@@ -43,15 +43,35 @@ async def set_session_tenant_context(session: AsyncSession, tenant_id: uuid.UUID
     This is used by self-authenticating public/scan-token endpoints after they
     have derived the tenant from trusted server-side evidence. Runtime
     principals have no SET privilege on the independent bypass parameter.
+
+    Note: this only sets ``app.tenant_id``; it does not clear ``app.bypass_rls``.
+    RLS safety on a fresh runtime session comes from the strict policy
+    (``tenant_id = current_tenant_id() OR (NULL AND bypass)``): a non-NULL
+    tenant context makes the bypass branch unreachable regardless of the bypass
+    flag. Callers must open a fresh session (as ``get_db`` does) rather than
+    reuse one that may carry a leftover bypass setting.
     """
 
     validated_tenant_id = uuid.UUID(str(tenant_id))
+    await _apply_tenant_context(session, validated_tenant_id)
+    return validated_tenant_id
+
+
+async def _apply_tenant_context(session: AsyncSession, tenant_id: uuid.UUID) -> None:
+    """Parameterized SET LOCAL for the validated tenant id.
+
+    ``asyncpg`` does not accept a bound parameter for ``SET LOCAL``, so the
+    value is rendered through ``set_config(..., true)`` which does. The tenant
+    id is always a validated UUID here; callers must validate before reaching
+    this helper. Never build the statement with an f-string interpolation of an
+    untrusted or unvalidated value.
+    """
+
     if _session_uses_postgresql(session):
         await session.execute(
             text("SELECT set_config('app.tenant_id', :tenant_id, true)"),
-            {"tenant_id": str(validated_tenant_id)},
+            {"tenant_id": str(tenant_id)},
         )
-    return validated_tenant_id
 
 
 async def bootstrap_tenant_row(
@@ -134,18 +154,27 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
 
         tenant_id = get_request_tenant_id()
         if tenant_id and _is_pg:
-            from sqlalchemy import text
-
-            # asyncpg does not support parameterized SET LOCAL.
-            # Validate strict UUID format before f-string to prevent injection.
-            # Also allow known safe non-UUID identifiers (e.g. "platform").
+            # Validate strict UUID format (or the safe "platform" sentinel)
+            # before any statement reaches the database. The actual statement
+            # is rendered parameterized via set_config in _apply_tenant_context.
             validated_id = str(tenant_id)
             if validated_id not in ("platform",):
                 try:
                     uuid.UUID(validated_id)
                 except ValueError:
                     raise ValueError(f"Invalid tenant_id format: {validated_id}")
-            await session.execute(text(f"SET LOCAL app.tenant_id = '{validated_id}'"))
+            # "platform" is a non-UUID control-plane sentinel that must not be
+            # passed through _apply_tenant_context's UUID path; set it directly
+            # with the same parameterized helper form.
+            if validated_id == "platform":
+                from sqlalchemy import text
+
+                await session.execute(
+                    text("SELECT set_config('app.tenant_id', :tenant_id, true)"),
+                    {"tenant_id": "platform"},
+                )
+            else:
+                await _apply_tenant_context(session, uuid.UUID(validated_id))
         try:
             yield session
             await session.commit()
@@ -210,14 +239,12 @@ async def get_db_for_consumer() -> AsyncGenerator[AsyncSession, None]:
 
         tenant_id = get_request_tenant_id()
         if tenant_id and _is_pg:
-            from sqlalchemy import text
-
             validated_id = str(tenant_id)
             try:
-                uuid.UUID(validated_id)
-            except ValueError:
-                raise ValueError(f"Invalid tenant_id format: {validated_id}")
-            await session.execute(text(f"SET LOCAL app.tenant_id = '{validated_id}'"))
+                parsed = uuid.UUID(validated_id)
+            except ValueError as exc:
+                raise ValueError(f"Invalid tenant_id format: {validated_id}") from exc
+            await _apply_tenant_context(session, parsed)
         try:
             yield session
             await session.commit()

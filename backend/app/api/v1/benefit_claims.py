@@ -65,7 +65,9 @@ async def claim_benefit_h5(
         raise HTTPException(status_code=401, detail="invalid token: corrupt tenant_id")
 
     # scan_token 是该公开端点的可信租户来源。业务查询前在同一事务中建立
-    # PostgreSQL RLS 上下文，并显式关闭任何遗留 bypass 状态。
+    # PostgreSQL RLS 上下文。该路由使用 get_db 打开全新运行时会话，没有遗留
+    # bypass 设置；set_session_tenant_context 只设置 app.tenant_id，使严格 RLS
+    # 策略的 bypass 分支（NULL AND bypass）不可达。不要在此处复用会话。
     tid = await set_session_tenant_context(db, tid)
 
     from app.services.entitlement import (
