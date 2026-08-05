@@ -7,10 +7,10 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
-from app.core.dependencies import get_current_account_id, get_current_role, get_current_tenant
+from app.core.dependencies import get_current_account_id, get_current_role, get_current_tenant, get_redis_cache
 from app.models.tenant import Account
 from app.services.audit import write_audit_log
-from app.services.redis_cache import AsyncRedisCache
+from app.services.redis_cache import AsyncRedisCache, SharedSecurityCacheUnavailable
 from app.utils.security import clear_auth_cookies, hash_password, validate_password_strength, verify_password
 
 router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
@@ -67,12 +67,18 @@ async def reset_password(
     tenant_id: uuid.UUID = Depends(get_current_tenant),
     role: str = Depends(get_current_role),
     actor_id: uuid.UUID = Depends(get_current_account_id),
+    cache: AsyncRedisCache = Depends(get_redis_cache),
 ):
     if role not in ADMIN_ROLES:
         raise HTTPException(status_code=403, detail="仅管理员可重置密码")
-    # 速率限制：每 account_id 每分钟最多 10 次
-    cache = AsyncRedisCache()
-    allowed, _ = await cache.rate_limit_check(f"admin_reset:{body.account_id}", max_attempts=10, window_seconds=60)
+    # 速率限制：每 account_id 每分钟最多 10 次。必须跨 worker 共享，否则每个
+    # worker 各自计 10 次/分钟，与 login/confirm-reset 的认证边界限流不一致。
+    try:
+        allowed, _ = await cache.rate_limit_check_shared(
+            f"admin_reset:{body.account_id}", max_attempts=10, window_seconds=60
+        )
+    except SharedSecurityCacheUnavailable as exc:
+        raise HTTPException(status_code=503, detail="重置服务暂时不可用，请稍后重试") from exc
     if not allowed:
         raise HTTPException(status_code=429, detail="重置操作过于频繁", headers={"Retry-After": "60"})
     result = await db.execute(select(Account).where(Account.id == body.account_id, Account.tenant_id == tenant_id))
