@@ -236,7 +236,10 @@ async def _pause_related_campaigns(
 
     if paused_ids:
         await db.flush()
-        # 为每个暂停的活动发事件
+        # 为每个暂停的活动发事件。注意：当前复用 campaign.ended 事件名以便 webhook
+        # dispatcher（订阅 campaign.ended）能投递暂停通知；payload.status=PAUSED 区分
+        # 可恢复暂停与终态结束。若改为 campaign.paused 需同步在 webhook_dispatcher 的
+        # event_types 中注册，否则暂停通知会丢失（见 RU09-F02）。
         for cid in paused_ids:
             await event_bus.emit(
                 "campaign.ended",
