@@ -41,10 +41,12 @@ WEB_ROLE_PERMISSIONS: dict[str, list[str]] = {
         "page:create",
         "page:publish",
         "campaign:create",
+        "campaign:manage",
         "analytics:view",
         "takeover:prepare",
         "takeover:audit",
     ],
+    "viewer": [],
     "platform_admin": [
         "platform:admin",
         "tenant:manage",
@@ -186,17 +188,25 @@ def require_role(*allowed_roles: str):
         role = getattr(request.state, "role", None)
         if role not in allowed_roles:
             raise HTTPException(status_code=403, detail="Insufficient permissions")
+        if role == "platform_admin" and (
+            getattr(request.state, "account_id", None) != "platform-admin"
+            or getattr(request.state, "tenant_id", None) != "platform"
+            or getattr(request.state, "tenant_type", None) != "platform"
+            or getattr(request.state, "auth_method", None) != "platform_cookie"
+        ):
+            raise HTTPException(status_code=403, detail="Invalid platform principal")
         return role
 
     return _check
 
 
 def require_permission(permission: str):
-    """FastAPI 依赖：检查当前请求的权限。支持 JWT 和 API Key。"""
+    """FastAPI 依赖：按固定角色契约与实际授权双重检查权限。"""
 
     async def _check(request: Request) -> None:
+        role = getattr(request.state, "role", None)
         permissions: list[str] = getattr(request.state, "permissions", [])
-        if permission not in permissions:
+        if permission not in ALL_ROLE_PERMISSIONS.get(role, []) or permission not in permissions:
             raise HTTPException(status_code=403, detail=f"Missing permission: {permission}")
 
     return _check

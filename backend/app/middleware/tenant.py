@@ -1,6 +1,10 @@
+import hmac
+
 from fastapi import Request
 from starlette.middleware.base import BaseHTTPMiddleware
 
+from app.core.config import settings
+from app.services.redis_cache import SharedSecurityCacheUnavailable
 from app.utils.security import verify_access_token
 
 # Open API 路径前缀，使用 API Key 认证
@@ -48,11 +52,10 @@ class TenantScopeMiddleware(BaseHTTPMiddleware):
             or request.url.path.startswith("/api/v1/takeover/gateway")
             or request.url.path.startswith("/api/v1/integrations/wecom/callback/")
             or request.url.path == "/api/v1/integrations/wecom/contact-way"
-            or request.url.path == "/api/v1/integrations/wecom/mock-added"
             or request.url.path == "/api/v1/platform/auth/login"
             or request.url.path.startswith("/api/v1/connectors/connectors/")
             and request.url.path.endswith("/callback")
-            or request.url.path.startswith("/api/v1/wechat/")
+            or request.url.path in {"/api/v1/wechat/auth-url", "/api/v1/wechat/oauth-callback"}
         ):
             return await call_next(request)
 
@@ -60,8 +63,60 @@ class TenantScopeMiddleware(BaseHTTPMiddleware):
         if request.url.path.startswith(OPEN_API_PREFIX):
             return await self._authenticate_api_key(request, call_next)
 
+        # The platform control plane is cookie-only. Never let an Admin bearer
+        # token (or even a valid platform bearer token copied into JavaScript)
+        # cross this independent authentication boundary.
+        is_platform_control_plane = (
+            request.url.path.startswith("/api/v1/platform/")
+            or (
+                request.url.path.startswith("/api/v1/invite-codes")
+                and request.url.path != "/api/v1/invite-codes/register"
+            )
+            or (
+                request.url.path.startswith("/api/v1/tenants") and not request.url.path.startswith("/api/v1/tenants/me")
+            )
+            or (request.url.path.startswith("/api/v1/ops") and request.cookies.get("platform_access_token") is not None)
+        )
+        if is_platform_control_plane:
+            return await self._authenticate_platform_cookie(request, call_next)
+
         # 默认：JWT Bearer Token 认证
         return await self._authenticate_jwt(request, call_next)
+
+    async def _authenticate_platform_cookie(self, request: Request, call_next):
+        from starlette.responses import JSONResponse
+
+        token = request.cookies.get("platform_access_token")
+        if not token:
+            return JSONResponse(status_code=401, content={"detail": "Missing platform session"})
+        try:
+            payload = await verify_access_token(token)
+        except SharedSecurityCacheUnavailable:
+            return JSONResponse(status_code=503, content={"detail": "认证服务暂时不可用"})
+        if payload is None:
+            return JSONResponse(status_code=401, content={"detail": "Invalid or expired platform session"})
+        if (
+            payload.get("role") != "platform_admin"
+            or payload.get("sub") != "platform-admin"
+            or payload.get("tenant_id") != "platform"
+            or payload.get("tenant_type") != "platform"
+        ):
+            return JSONResponse(status_code=403, content={"detail": "Invalid platform principal"})
+        if request.method not in {"GET", "HEAD", "OPTIONS"}:
+            if request.headers.get("Origin") != settings.platform_public_url:
+                return JSONResponse(status_code=403, content={"detail": "Invalid platform request origin"})
+            csrf_cookie = request.cookies.get("platform_csrf_token", "")
+            csrf_header = request.headers.get("X-Platform-CSRF", "")
+            if not csrf_cookie or not csrf_header or not hmac.compare_digest(csrf_cookie, csrf_header):
+                return JSONResponse(status_code=403, content={"detail": "Invalid platform CSRF token"})
+
+        request.state.tenant_id = "platform"
+        request.state.account_id = "platform-admin"
+        request.state.tenant_type = "platform"
+        request.state.role = "platform_admin"
+        request.state.permissions = []
+        request.state.auth_method = "platform_cookie"
+        return await call_next(request)
 
     async def _authenticate_jwt(self, request: Request, call_next):
         from starlette.responses import JSONResponse
@@ -74,15 +129,24 @@ class TenantScopeMiddleware(BaseHTTPMiddleware):
         if not token:
             return JSONResponse(status_code=401, content={"detail": "Missing or invalid token"})
 
-        payload = await verify_access_token(token)
+        try:
+            payload = await verify_access_token(token)
+        except SharedSecurityCacheUnavailable:
+            return JSONResponse(status_code=503, content={"detail": "认证服务暂时不可用"})
         if payload is None:
             return JSONResponse(status_code=401, content={"detail": "Invalid or expired token"})
+
+        if (
+            payload.get("role") == "platform_admin"
+            or payload.get("tenant_id") == "platform"
+            or payload.get("tenant_type") == "platform"
+        ):
+            return JSONResponse(status_code=401, content={"detail": "Platform session cookie required"})
 
         tenant_id = payload.get("tenant_id")
         acting_tenant_id = payload.get("acting_tenant_id")
         request.state.tenant_id = tenant_id
         request.state.account_id = payload.get("sub")
-        request.state.role = payload.get("role")
         request.state.tenant_type = payload.get("tenant_type", "brand")
         request.state.auth_method = "jwt"
         # 加载数据库中的权限，并校验账户状态与 token 版本。
@@ -95,25 +159,58 @@ class TenantScopeMiddleware(BaseHTTPMiddleware):
         if not has_access:
             return JSONResponse(status_code=401, content={"detail": "账户已停用或登录状态已失效"})
         request.state.permissions = permissions
+        request.state.role = payload.get("role")
+        request.state.auth_version = payload.get("auth_version", 0)
+
+        if payload.get("must_change_password") and request.url.path not in {
+            "/api/v1/auth/change-password",
+            "/api/v1/auth/logout",
+        }:
+            return JSONResponse(status_code=403, content={"detail": "首次登录必须先修改临时密码"})
 
         # Agency context switching: if acting_tenant_id is present, use it for RLS
         if acting_tenant_id:
-            request.state.acting_tenant_id = acting_tenant_id
-            request.state.original_tenant_id = tenant_id
-            rls_tenant_id = acting_tenant_id
+            if request.url.path == "/api/v1/agency/exit-context":
+                # The original agency account and tenant were validated above.
+                # Exiting must remain possible after the client authorization is
+                # revoked, expires, or the client tenant is suspended.
+                request.state.acting_tenant_id = acting_tenant_id
+                request.state.original_tenant_id = tenant_id
+                request.state.tenant_id = tenant_id
+                request.state.agency_scopes = []
+                rls_tenant_id = tenant_id
+            else:
+                live_scopes = await self._load_acting_authorization(tenant_id, acting_tenant_id)
+                if live_scopes is None:
+                    return JSONResponse(status_code=403, content={"detail": "代运营授权已失效"})
+                if not self._acting_path_is_explicitly_supported(request.url.path, live_scopes, request.method):
+                    return JSONResponse(status_code=403, content={"detail": "当前代运营授权不允许访问该功能"})
+                request.state.acting_tenant_id = acting_tenant_id
+                request.state.original_tenant_id = tenant_id
+                request.state.tenant_id = acting_tenant_id
+                request.state.agency_scopes = live_scopes
+                rls_tenant_id = acting_tenant_id
         else:
             request.state.acting_tenant_id = None
             request.state.original_tenant_id = None
+            if request.state.tenant_type == "agency" and self._is_brand_write_surface(request.url.path, request.method):
+                return JSONResponse(
+                    status_code=403,
+                    content={"detail": "代运营服务商必须先进入已授权的客户工作区才能修改品牌数据"},
+                )
             rls_tenant_id = tenant_id
 
-        # Set context var for RLS (consumed by get_db)
-        from app.core.context import set_request_tenant_id
+        if self._requires_active_plan(request) and await self._tenant_plan_blocks_write(rls_tenant_id):
+            return self._plan_expired_response()
 
-        set_request_tenant_id(rls_tenant_id)
+        # Set context var for RLS (consumed by get_db)
+        from app.core.context import reset_request_tenant_id, set_request_tenant_id
+
+        context_token = set_request_tenant_id(rls_tenant_id)
         try:
             return await call_next(request)
         finally:
-            set_request_tenant_id(None)
+            reset_request_tenant_id(context_token)
 
     async def _authenticate_api_key(self, request: Request, call_next):
         from starlette.responses import JSONResponse
@@ -123,14 +220,16 @@ class TenantScopeMiddleware(BaseHTTPMiddleware):
             return JSONResponse(status_code=401, content={"detail": "Missing X-Api-Key header"})
 
         # 查询数据库验证 API Key
-        from app.core.database import async_session_factory
+        from app.core.database import async_session_factory, bootstrap_tenant_row
         from app.models.webhook import ApiKey
 
         async with async_session_factory() as db:
             from sqlalchemy import select
 
-            result = await db.execute(select(ApiKey).where(ApiKey.key == api_key_str, ApiKey.revoked.is_(False)))
-            key = result.scalar_one_or_none()
+            key = await bootstrap_tenant_row(
+                db,
+                select(ApiKey).where(ApiKey.key == api_key_str, ApiKey.revoked.is_(False)),
+            )
 
             if not key:
                 return JSONResponse(status_code=401, content={"detail": "Invalid or revoked API key"})
@@ -139,6 +238,14 @@ class TenantScopeMiddleware(BaseHTTPMiddleware):
 
             if key.expires_at and key.expires_at < datetime.now(UTC):
                 return JSONResponse(status_code=401, content={"detail": "API key has expired"})
+
+            if self._requires_active_plan(request):
+                from app.models.tenant import Tenant
+                from app.services.entitlement import is_plan_expired
+
+                tenant = await db.get(Tenant, key.tenant_id)
+                if tenant is None or is_plan_expired(tenant.plan_expires_at):
+                    return self._plan_expired_response()
 
             # 更新 last_used_at
             key.last_used_at = datetime.now(UTC)
@@ -154,13 +261,65 @@ class TenantScopeMiddleware(BaseHTTPMiddleware):
             request.state.api_key_id = str(key.id)
 
         # Set context var for RLS
-        from app.core.context import set_request_tenant_id
+        from app.core.context import reset_request_tenant_id, set_request_tenant_id
 
-        set_request_tenant_id(tenant_id)
+        context_token = set_request_tenant_id(tenant_id)
         try:
             return await call_next(request)
         finally:
-            set_request_tenant_id(None)
+            reset_request_tenant_id(context_token)
+
+    @staticmethod
+    def _requires_active_plan(request: Request) -> bool:
+        if request.method in {"GET", "HEAD"}:
+            return False
+        return request.url.path not in {
+            "/api/v1/auth/change-password",
+            "/api/v1/auth/logout",
+            "/api/v1/agency/exit-context",
+        }
+
+    @staticmethod
+    def _plan_expired_response():
+        from starlette.responses import JSONResponse
+
+        from app.services.entitlement import PLAN_EXPIRED_CODE, PLAN_EXPIRED_DETAIL
+
+        return JSONResponse(
+            status_code=403,
+            content={"code": PLAN_EXPIRED_CODE, "detail": PLAN_EXPIRED_DETAIL},
+        )
+
+    async def _tenant_plan_blocks_write(self, tenant_id: str | None) -> bool:
+        """生产从数据库读取实时到期时间；读取失败时写请求 fail closed。"""
+
+        if tenant_id in {None, "platform"}:
+            return False
+        from app.core.database import _is_pg, async_session_factory, engine
+
+        uses_default_sqlite_factory = not _is_pg and async_session_factory.kw.get("bind") is engine
+        if uses_default_sqlite_factory:
+            # SQLite API 测试的 middleware session 与 fixture 事务隔离；状态机本身
+            # 由 helper/middleware 单测覆盖，真实运行时均使用 PostgreSQL。
+            return False
+        try:
+            import uuid
+
+            from sqlalchemy import select, text
+
+            from app.models.tenant import Tenant
+            from app.services.entitlement import is_plan_expired
+
+            validated_tenant_id = uuid.UUID(tenant_id)
+            from app.core.database import control_session_factory
+
+            async with control_session_factory() as db:
+                if _is_pg:
+                    await db.execute(text(f"SET LOCAL app.tenant_id = '{validated_tenant_id}'"))
+                expires_at = await db.scalar(select(Tenant.plan_expires_at).where(Tenant.id == validated_tenant_id))
+                return is_plan_expired(expires_at)
+        except Exception:
+            return True
 
     async def _load_permissions(self, account_id: str | None, role: str | None) -> list[str]:
         """从数据库加载账户权限；普通租户不得回退到代码模板。"""
@@ -198,7 +357,7 @@ class TenantScopeMiddleware(BaseHTTPMiddleware):
             from sqlalchemy import select, text
             from sqlalchemy.orm import selectinload
 
-            from app.models.tenant import Account, Role
+            from app.models.tenant import Account, Role, Tenant, TenantStatus
 
             async with async_session_factory() as db:
                 if _is_pg:
@@ -207,23 +366,173 @@ class TenantScopeMiddleware(BaseHTTPMiddleware):
                     validated_tenant_id = str(uuid.UUID(tenant_id))
                     await db.execute(text(f"SET LOCAL app.tenant_id = '{validated_tenant_id}'"))
                 result = await db.execute(
-                    select(Account)
+                    select(Account, Tenant.status)
                     .options(selectinload(Account.roles).selectinload(Role.permissions))
-                    .where(Account.id == uuid.UUID(account_id))
+                    .join(Tenant, Tenant.id == Account.tenant_id)
+                    .where(
+                        Account.id == uuid.UUID(account_id),
+                        Account.tenant_id == uuid.UUID(tenant_id),
+                    )
                 )
-                account = result.scalar_one_or_none()
-                if not account:
+                row = result.one_or_none()
+                if not row:
                     return False, []
+                account, tenant_status = row
                 account_auth_version = getattr(account, "auth_version", 0)
                 if not isinstance(account_auth_version, int):
                     account_auth_version = 0
-                if account.is_active is False or (token_auth_version or 0) != account_auth_version:
+                if (
+                    account.is_active is False
+                    or tenant_status != TenantStatus.active
+                    or (token_auth_version or 0) != account_auth_version
+                ):
                     return False, []
                 permissions = set()
                 for role_obj in account.roles:
+                    if role_obj.name not in {"admin", "operator", "viewer"}:
+                        continue
                     for perm in role_obj.permissions:
                         permissions.add(perm.code)
                 return True, list(permissions)
         except Exception:
             # 权限读取异常必须 fail-closed，避免数据库故障扩大权限。
             return False, []
+
+    @staticmethod
+    def _is_brand_write_surface(path: str, method: str) -> bool:
+        if method not in {"POST", "PUT", "PATCH", "DELETE"}:
+            return False
+        brand_prefixes = (
+            "/api/v1/brands",
+            "/api/v1/products",
+            "/api/v1/product-assets",
+            "/api/v1/skus",
+            "/api/v1/production-batches",
+            "/api/v1/page-templates",
+            "/api/v1/page-versions",
+            "/api/v1/campaigns",
+            "/api/v1/benefits",
+            "/api/v1/code-batches",
+            "/api/v1/code-items",
+        )
+        return path == "/api/v1/files/upload" or any(
+            path == prefix or path.startswith(f"{prefix}/") for prefix in brand_prefixes
+        )
+
+    @staticmethod
+    def _acting_path_is_explicitly_supported(path: str, scopes: list[str], method: str = "GET") -> bool:
+        """Map live agency scopes to explicit API surfaces; unmatched routes fail closed."""
+        if path == "/api/v1/agency/exit-context":
+            return True
+        # Dashboard shell needs exactly one live entitlement read after entering
+        # any authorized client workspace. It exposes no profile or quota data.
+        if path == "/api/v1/tenants/me/entitlement":
+            return method == "GET"
+        scope_prefixes = {
+            "products": (
+                "/api/v1/brands",
+                "/api/v1/products",
+                "/api/v1/skus",
+                "/api/v1/production-batches",
+            ),
+            "pages": ("/api/v1/page-templates", "/api/v1/page-versions"),
+            "campaigns": ("/api/v1/campaigns", "/api/v1/benefits"),
+            "codes": ("/api/v1/code-batches", "/api/v1/code-items"),
+            "analytics": ("/api/v1/analytics",),
+        }
+        read_dependencies = {
+            "pages": ("/api/v1/products", "/api/v1/brands", "/api/v1/skus"),
+            "campaigns": (
+                "/api/v1/products",
+                "/api/v1/brands",
+                "/api/v1/skus",
+                "/api/v1/integrations/wecom",
+            ),
+            "codes": (
+                "/api/v1/brands",
+                "/api/v1/products",
+                "/api/v1/skus",
+                "/api/v1/production-batches",
+            ),
+        }
+        if path.startswith("/api/v1/ops/launch-releases"):
+            return "pages" in scopes or "release:execute" in scopes
+        if path.startswith("/api/v1/product-assets/"):
+            return method in {"PATCH", "DELETE"} and "products" in scopes
+        # Product material editing uploads a file before attaching its returned
+        # URL to a product asset. Keep this exception exact and method-bound so
+        # the products scope does not become general access to the files API.
+        if path == "/api/v1/files/upload":
+            return method == "POST" and "products" in scopes
+        # Product forms read the current tenant's category options. Keep this
+        # dependency exact and read-only: products scope must not gain access
+        # to tenant profile or category mutation surfaces.
+        if path == "/api/v1/tenants/me/categories":
+            return method == "GET" and "products" in scopes
+        if path.startswith("/api/v1/integrations/wecom"):
+            return (
+                method == "GET"
+                and path
+                in {
+                    "/api/v1/integrations/wecom",
+                    "/api/v1/integrations/wecom/members",
+                }
+                and "campaigns" in scopes
+            )
+        if any(
+            path == prefix or path.startswith(f"{prefix}/")
+            for scope in scopes
+            for prefix in scope_prefixes.get(scope, ())
+        ):
+            return True
+        return method == "GET" and any(
+            path == prefix or path.startswith(f"{prefix}/")
+            for scope in scopes
+            for prefix in read_dependencies.get(scope, ())
+        )
+
+    async def _load_acting_authorization(self, agency_tenant_id: str, client_tenant_id: str) -> list[str] | None:
+        """Load the live authorization; JWT scope is never the runtime truth."""
+        try:
+            import uuid
+            from datetime import UTC, datetime
+
+            from sqlalchemy import select, text
+
+            from app.core.database import _is_pg, async_session_factory, control_session_factory
+            from app.models.tenant import AgencyAuthorization, AgencyAuthStatus, Tenant, TenantStatus
+
+            agency_id = uuid.UUID(agency_tenant_id)
+            client_id = uuid.UUID(client_tenant_id)
+            session_factory = control_session_factory if _is_pg else async_session_factory
+            async with session_factory() as db:
+                if _is_pg:
+                    await db.execute(text("SELECT set_config('app.tenant_id', '', true)"))
+                    await db.execute(text("SELECT set_config('app.bypass_rls', 'true', true)"))
+                authorization = (
+                    await db.execute(
+                        select(AgencyAuthorization).where(
+                            AgencyAuthorization.agency_tenant_id == agency_id,
+                            AgencyAuthorization.client_tenant_id == client_id,
+                            AgencyAuthorization.status == AgencyAuthStatus.active,
+                        )
+                    )
+                ).scalar_one_or_none()
+                if authorization is None:
+                    return None
+                expires_at = authorization.expires_at
+                if expires_at is not None:
+                    if expires_at.tzinfo is None:
+                        expires_at = expires_at.replace(tzinfo=UTC)
+                    if expires_at <= datetime.now(UTC):
+                        return None
+                statuses = dict(
+                    (
+                        await db.execute(select(Tenant.id, Tenant.status).where(Tenant.id.in_([agency_id, client_id])))
+                    ).all()
+                )
+                if statuses.get(agency_id) != TenantStatus.active or statuses.get(client_id) != TenantStatus.active:
+                    return None
+                return list(authorization.scope)
+        except Exception:
+            return None

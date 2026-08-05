@@ -1,17 +1,24 @@
+import hashlib
+import hmac
+import json
 import secrets
 import uuid
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
 from app.models.invite_code import InviteCodeStatus, TenantInviteCode
-from app.models.tenant import Tenant
+from app.models.invite_registration import InviteRegistrationReceipt
 from app.modules.brand_tenant_initialization import (
     BrandTenantInitialization,
     ControlledInviteOpening,
     InitializeBrandTenant,
 )
+from app.utils.email import normalize_email
 
 
 def _generate_invite_code() -> str:
@@ -111,8 +118,45 @@ async def list_invite_codes(
     return items, total
 
 
+class IdempotencyConflictError(ValueError):
+    """The key was already bound to a different canonical request."""
+
+
+@dataclass(frozen=True)
+class TenantRegistrationResult:
+    tenant_id: uuid.UUID
+    tenant_slug: str
+
+
+def _keyed_digest(value: bytes) -> str:
+    """Return a non-reversible persisted digest using the configured HMAC pepper."""
+    return hmac.new(settings.hmac_pepper.encode(), value, hashlib.sha256).hexdigest()
+
+
+def _canonical_registration_hash(
+    *,
+    invite_code: str,
+    name: str,
+    admin_email: str,
+    admin_name: str,
+    admin_password: str,
+    industry: str | None,
+) -> str:
+    canonical = {
+        "admin_email": normalize_email(admin_email),
+        "admin_name": admin_name.strip(),
+        "admin_password": admin_password,
+        "industry": industry.strip() if industry else None,
+        "invite_code": invite_code.strip().upper(),
+        "name": name.strip(),
+    }
+    serialized = json.dumps(canonical, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+    return _keyed_digest(serialized)
+
+
 async def register_tenant_with_invite(
     db: AsyncSession,
+    idempotency_key: str,
     invite_code: str,
     name: str,
     slug: str | None,
@@ -120,10 +164,49 @@ async def register_tenant_with_invite(
     admin_name: str,
     admin_password: str,
     industry: str | None = None,
-) -> Tenant:
-    """使用受控邀请码初始化品牌租户，注册完成后直接启用。"""
+) -> TenantRegistrationResult:
+    """原子初始化品牌租户并持久化可重放的公共注册回执。"""
     if slug is not None:
         raise ValueError("租户标识由系统自动生成，无需填写")
+
+    admin_email = normalize_email(admin_email)
+    key_hash = _keyed_digest(idempotency_key.encode())
+    request_hash = _canonical_registration_hash(
+        invite_code=invite_code,
+        name=name,
+        admin_email=admin_email,
+        admin_name=admin_name,
+        admin_password=admin_password,
+        industry=industry,
+    )
+    receipt_row = (
+        await db.execute(
+            select(InviteRegistrationReceipt).where(InviteRegistrationReceipt.idempotency_key_hash == key_hash)
+        )
+    ).scalar_one_or_none()
+    if receipt_row is not None and not hmac.compare_digest(receipt_row.request_hash, request_hash):
+        raise IdempotencyConflictError("同一幂等键不能用于不同的注册请求")
+
+    if receipt_row is None:
+        candidate = InviteRegistrationReceipt(idempotency_key_hash=key_hash, request_hash=request_hash)
+        try:
+            async with db.begin_nested():
+                db.add(candidate)
+                await db.flush()
+            receipt_row = candidate
+        except IntegrityError:
+            receipt_row = (
+                await db.execute(
+                    select(InviteRegistrationReceipt).where(InviteRegistrationReceipt.idempotency_key_hash == key_hash)
+                )
+            ).scalar_one()
+            if not hmac.compare_digest(receipt_row.request_hash, request_hash):
+                raise IdempotencyConflictError("同一幂等键不能用于不同的注册请求") from None
+
+    if receipt_row.tenant_id is not None and receipt_row.tenant_slug is not None:
+        return TenantRegistrationResult(tenant_id=receipt_row.tenant_id, tenant_slug=receipt_row.tenant_slug)
+    if receipt_row.tenant_id is not None or receipt_row.tenant_slug is not None:  # pragma: no cover
+        raise RuntimeError("注册幂等回执不完整")
 
     try:
         receipt = await BrandTenantInitialization(db).initialize(
@@ -133,7 +216,7 @@ async def register_tenant_with_invite(
                 admin_email=admin_email,
                 industry=industry,
                 opening=ControlledInviteOpening(
-                    invite_code=invite_code,
+                    invite_code=invite_code.strip().upper(),
                     chosen_password=admin_password,
                 ),
             )
@@ -145,10 +228,10 @@ async def register_tenant_with_invite(
             raise ValueError(str(exc)) from exc
         raise
 
-    tenant = await db.get(Tenant, receipt.tenant_id)
-    if tenant is None:  # pragma: no cover
-        raise RuntimeError("租户初始化结果不可读取")
-    return tenant
+    receipt_row.tenant_id = receipt.tenant_id
+    receipt_row.tenant_slug = receipt.tenant_key
+    await db.flush()
+    return TenantRegistrationResult(tenant_id=receipt.tenant_id, tenant_slug=receipt.tenant_key)
 
 
 async def toggle_invite_code_status(

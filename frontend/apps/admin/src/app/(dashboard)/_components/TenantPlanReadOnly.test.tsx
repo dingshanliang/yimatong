@@ -1,0 +1,34 @@
+import { fireEvent, render, screen } from "@testing-library/react";
+import Link from "next/link";
+import { describe, expect, it, vi } from "vitest";
+
+import TenantPlanReadOnly from "./TenantPlanReadOnly";
+
+describe("TenantPlanReadOnly", () => {
+  it("keeps read navigation visible while explaining that writes are centrally blocked", () => {
+    render(
+      <TenantPlanReadOnly active refreshing={false} onRefresh={vi.fn()}>
+        <Link href="/campaigns">查看活动</Link>
+        <button type="button">新建活动</button>
+      </TenantPlanReadOnly>
+    );
+
+    expect(screen.getByRole("link", { name: "查看活动" })).toHaveAttribute(
+      "href",
+      "/campaigns"
+    );
+    expect(screen.getByText(/请联系一码通平台管理员续期/)).toBeVisible();
+  });
+
+  it("lets the user refresh the entitlement after renewal", () => {
+    const onRefresh = vi.fn();
+    render(
+      <TenantPlanReadOnly active refreshing={false} onRefresh={onRefresh}>
+        <div>只读数据</div>
+      </TenantPlanReadOnly>
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "刷新套餐状态" }));
+    expect(onRefresh).toHaveBeenCalledOnce();
+  });
+});

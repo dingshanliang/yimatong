@@ -9,6 +9,7 @@ from sqlalchemy.orm import selectinload
 from app.models.tenant import Account, Organization, Role, account_roles
 from app.services.audit import write_audit_log
 from app.utils import escape_like_pattern
+from app.utils.email import normalize_email
 from app.utils.security import hash_password
 
 
@@ -20,6 +21,17 @@ def generate_initial_password(length: int = 14) -> str:
 async def create_organization(
     db: AsyncSession, tenant_id: uuid.UUID, name: str, parent_id: uuid.UUID | None
 ) -> Organization:
+    if parent_id is not None:
+        parent = (
+            await db.execute(
+                select(Organization).where(
+                    Organization.id == parent_id,
+                    Organization.tenant_id == tenant_id,
+                )
+            )
+        ).scalar_one_or_none()
+        if parent is None:
+            raise ValueError("Parent organization not found in current tenant")
     org = Organization(tenant_id=tenant_id, name=name, parent_id=parent_id)
     db.add(org)
     await db.flush()
@@ -53,6 +65,16 @@ async def list_organizations(
     return {"items": items, "total": total}
 
 
+async def list_organization_tree(db: AsyncSession, tenant_id: uuid.UUID) -> list[Organization]:
+    """Return the complete tenant-scoped organization set used to build hierarchy selectors."""
+    result = await db.execute(
+        select(Organization)
+        .where(Organization.tenant_id == tenant_id)
+        .order_by(Organization.created_at, Organization.id)
+    )
+    return list(result.scalars().all())
+
+
 async def count_accounts_by_org(db: AsyncSession, tenant_id: uuid.UUID) -> dict[uuid.UUID, int]:
     result = await db.execute(
         select(Account.organization_id, func.count())
@@ -70,7 +92,9 @@ async def create_account(
     name: str,
     password: str | None,
     role_ids: list[uuid.UUID] | None = None,
+    must_change_password: bool = False,
 ) -> Account:
+    email = normalize_email(email)
     password = password or generate_initial_password()
     org_result = await db.execute(
         select(Organization).where(Organization.id == organization_id, Organization.tenant_id == tenant_id)
@@ -90,6 +114,8 @@ async def create_account(
         email=email,
         hashed_password=hashed,
         name=name,
+        must_change_password=must_change_password,
+        roles=[],
     )
     db.add(account)
     await db.flush()
@@ -97,8 +123,16 @@ async def create_account(
     if role_ids:
         from app.models.tenant import Role
 
-        result = await db.execute(select(Role).where(Role.id.in_(role_ids), Role.tenant_id == tenant_id))
+        result = await db.execute(
+            select(Role).where(
+                Role.id.in_(role_ids),
+                Role.tenant_id == tenant_id,
+                Role.name.in_(("admin", "operator", "viewer")),
+            )
+        )
         roles = list(result.scalars().all())
+        if len(roles) != len(set(role_ids)):
+            raise ValueError("One or more roles are not assignable built-in roles")
         account.roles = roles
 
     await db.flush()
@@ -225,11 +259,14 @@ async def update_account(
     db: AsyncSession,
     tenant_id: uuid.UUID,
     account_id: uuid.UUID,
+    actor_id: uuid.UUID,
     name: str | None,
     organization_id: uuid.UUID | None = None,
     role_ids: list[uuid.UUID] | None = None,
 ) -> Account | None:
-    result = await db.execute(select(Account).where(Account.id == account_id, Account.tenant_id == tenant_id))
+    result = await db.execute(
+        select(Account).where(Account.id == account_id, Account.tenant_id == tenant_id).with_for_update()
+    )
     account = result.scalar_one_or_none()
     if not account:
         return None
@@ -246,8 +283,42 @@ async def update_account(
     if role_ids is not None:
         from app.models.tenant import Role
 
-        result = await db.execute(select(Role).where(Role.id.in_(role_ids), Role.tenant_id == tenant_id))
-        account.roles = list(result.scalars().all())
+        result = await db.execute(
+            select(Role).where(
+                Role.id.in_(role_ids),
+                Role.tenant_id == tenant_id,
+                Role.name.in_(("admin", "operator", "viewer")),
+            )
+        )
+        roles = list(result.scalars().all())
+        if len(roles) != len(set(role_ids)):
+            raise ValueError("One or more roles do not belong to current tenant")
+        if {role.id for role in account.roles} != {role.id for role in roles}:
+            was_admin = any(role.name == "admin" for role in account.roles)
+            remains_admin = any(role.name == "admin" for role in roles)
+            if account.is_active and was_admin and not remains_admin:
+                if account.id == actor_id:
+                    raise ValueError("不能移除当前登录账户的管理员角色")
+                active_admin_ids = set(
+                    (
+                        await db.execute(
+                            select(Account.id)
+                            .join(account_roles, account_roles.c.account_id == Account.id)
+                            .join(Role, Role.id == account_roles.c.role_id)
+                            .where(
+                                Account.tenant_id == tenant_id,
+                                Account.is_active.is_(True),
+                                Role.tenant_id == tenant_id,
+                                Role.name == "admin",
+                            )
+                            .with_for_update(of=Account)
+                        )
+                    ).scalars()
+                )
+                if len(active_admin_ids) <= 1:
+                    raise ValueError("不能移除租户最后一个有效管理员的角色")
+            account.roles = roles
+            account.auth_version += 1
     await db.flush()
     await db.refresh(account)
     return account

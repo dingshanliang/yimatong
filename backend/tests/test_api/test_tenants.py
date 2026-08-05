@@ -4,10 +4,12 @@ from collections.abc import AsyncGenerator
 
 import pytest
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.main import app
+from app.models.audit import PlatformAuditLog
 from app.utils.security import create_access_token
 from tests.conftest import TestSessionLocal
 
@@ -16,7 +18,11 @@ def _platform_admin_headers() -> dict:
     from app.utils.security import create_access_token
 
     token = create_access_token("platform", "platform-admin", "platform_admin")
-    return {"Authorization": f"Bearer {token}"}
+    return {
+        "Cookie": f"platform_access_token={token}; platform_csrf_token=test-platform-csrf",
+        "Origin": "http://localhost:3002",
+        "X-Platform-CSRF": "test-platform-csrf",
+    }
 
 
 @pytest.fixture
@@ -37,8 +43,8 @@ async def client(db_session: AsyncSession):
     app.dependency_overrides.clear()
 
 
-def _auth_headers(tenant_id: str) -> dict:
-    token = create_access_token(tenant_id, "00000000-0000-0000-0000-000000000001", "admin")
+def _auth_headers(tenant_id: str, role: str = "admin") -> dict:
+    token = create_access_token(tenant_id, "00000000-0000-0000-0000-000000000001", role)
     return {"Authorization": f"Bearer {token}"}
 
 
@@ -152,6 +158,43 @@ class TestUpdateTenant:
         assert resp.status_code == 404
 
 
+class TestTenantOnboarding:
+    @pytest.mark.anyio
+    async def test_viewer_cannot_complete_onboarding_step(self, client: AsyncClient, sample_tenant):
+        response = await client.post(
+            "/api/v1/tenants/me/onboarding/step/create_product",
+            headers=_auth_headers(sample_tenant["id"], role="viewer"),
+        )
+
+        assert response.status_code == 403
+        progress = await client.get(
+            "/api/v1/tenants/me/onboarding",
+            headers=_auth_headers(sample_tenant["id"]),
+        )
+        assert "create_product" not in progress.json()["completed_steps"]
+
+    @pytest.mark.anyio
+    async def test_admin_completion_writes_actor_and_step_audit(
+        self, client: AsyncClient, db_session: AsyncSession, sample_tenant
+    ):
+        response = await client.post(
+            "/api/v1/tenants/me/onboarding/step/create_product",
+            headers=_auth_headers(sample_tenant["id"]),
+        )
+
+        assert response.status_code == 200
+        audit = (
+            await db_session.execute(
+                select(PlatformAuditLog).where(
+                    PlatformAuditLog.target_tenant_id == sample_tenant["id"],
+                    PlatformAuditLog.action == "tenant_onboarding_step_completed",
+                )
+            )
+        ).scalar_one()
+        assert audit.operator_id == "00000000-0000-0000-0000-000000000001"
+        assert audit.details == {"step": "create_product"}
+
+
 class TestDeleteTenant:
     @pytest.mark.anyio
     async def test_soft_delete_tenant(self, client: AsyncClient, sample_tenant):
@@ -212,3 +255,27 @@ class TestTenantSelfBrandProfile:
             headers=_auth_headers(tid),
         )
         assert resp.status_code == 422
+
+
+class TestTenantSelfContact:
+    @pytest.mark.anyio
+    async def test_contact_email_update_preserves_other_compliance_settings(self, client: AsyncClient, sample_tenant):
+        tenant_id = sample_tenant["id"]
+        seeded = await client.patch(
+            f"/api/v1/tenants/{tenant_id}",
+            json={"compliance_settings": {"consent_required": True}},
+            headers=_platform_admin_headers(),
+        )
+        assert seeded.status_code == 200
+
+        updated = await client.patch(
+            "/api/v1/tenants/me",
+            json={"contact_email": "owner@example.com"},
+            headers=_auth_headers(tenant_id),
+        )
+
+        assert updated.status_code == 200
+        assert updated.json()["compliance_settings"] == {
+            "consent_required": True,
+            "contact_email": "owner@example.com",
+        }

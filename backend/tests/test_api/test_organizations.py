@@ -1,5 +1,6 @@
 """A2-002: 组织与账号 CRUD 验收测试"""
 
+import uuid
 from collections.abc import AsyncGenerator
 
 import pytest
@@ -8,7 +9,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.main import app
-from app.utils.security import create_access_token
+from app.models.tenant import Organization
+from app.utils.security import create_access_token, decode_token
 from tests.conftest import TestSessionLocal
 
 
@@ -16,7 +18,11 @@ def _platform_admin_headers() -> dict:
     from app.utils.security import create_access_token
 
     token = create_access_token("platform", "platform-admin", "platform_admin")
-    return {"Authorization": f"Bearer {token}"}
+    return {
+        "Cookie": f"platform_access_token={token}; platform_csrf_token=test-platform-csrf",
+        "Origin": "http://localhost:3002",
+        "X-Platform-CSRF": "test-platform-csrf",
+    }
 
 
 @pytest.fixture
@@ -71,6 +77,38 @@ class TestOrganizationCRUD:
         assert data["tenant_id"] == tenant_id
 
     @pytest.mark.anyio
+    async def test_create_organization_rejects_parent_from_another_tenant(self, client: AsyncClient, tenant_with_auth):
+        first_tenant_id, first_headers = tenant_with_auth
+        second_resp = await client.post(
+            "/api/v1/tenants",
+            json={
+                "name": "Other Tenant",
+                "admin_email": "other@example.com",
+                "admin_name": "Other Admin",
+                "admin_password": "Pass1234",
+            },
+            headers=_platform_admin_headers(),
+        )
+        assert second_resp.status_code == 201
+        second_headers = _auth_headers(second_resp.json()["id"])
+        parent_resp = await client.post(
+            "/api/v1/organizations",
+            json={"name": "Other Parent"},
+            headers=second_headers,
+        )
+        assert parent_resp.status_code == 201
+
+        response = await client.post(
+            "/api/v1/organizations",
+            json={"name": "Invalid Child", "parent_id": parent_resp.json()["id"]},
+            headers=first_headers,
+        )
+
+        assert response.status_code == 400
+        assert response.json()["detail"] == "Parent organization not found in current tenant"
+        assert first_tenant_id != second_resp.json()["id"]
+
+    @pytest.mark.anyio
     async def test_list_organizations(self, client: AsyncClient, tenant_with_auth):
         _, headers = tenant_with_auth
         await client.post("/api/v1/organizations", json={"name": "部门A"}, headers=headers)
@@ -82,6 +120,52 @@ class TestOrganizationCRUD:
         assert "page" in data
         assert "page_size" in data
         assert isinstance(data["items"], list)
+
+    @pytest.mark.anyio
+    async def test_organization_tree_returns_every_tenant_node_without_pagination(
+        self, client: AsyncClient, db_session: AsyncSession, tenant_with_auth
+    ):
+        tenant_id, headers = tenant_with_auth
+        baseline = await client.get("/api/v1/organizations/tree", headers=headers)
+        baseline_ids = {item["id"] for item in baseline.json()}
+        parent_id = None
+        created_ids: list[str] = []
+        for index in range(105):
+            org_id = uuid.uuid4()
+            db_session.add(
+                Organization(
+                    id=org_id,
+                    tenant_id=uuid.UUID(tenant_id),
+                    name=f"层级组织 {index:03d}",
+                    parent_id=parent_id,
+                )
+            )
+            created_ids.append(str(org_id))
+            parent_id = org_id
+        await db_session.flush()
+
+        response = await client.get("/api/v1/organizations/tree", headers=headers)
+
+        assert response.status_code == 200
+        returned = response.json()
+        returned_ids = {item["id"] for item in returned}
+        assert returned_ids == baseline_ids | set(created_ids)
+        assert len(returned) > 100
+        by_id = {item["id"]: item for item in returned}
+        assert by_id[created_ids[-1]]["parent_id"] == created_ids[-2]
+
+    @pytest.mark.anyio
+    async def test_custom_role_creation_is_rejected_until_fine_grained_gates_are_supported(
+        self, client: AsyncClient, tenant_with_auth
+    ):
+        _, headers = tenant_with_auth
+        resp = await client.post(
+            "/api/v1/roles",
+            json={"name": "custom-product-manager", "permission_ids": []},
+            headers=headers,
+        )
+
+        assert resp.status_code == 409
 
 
 class TestAccountCRUD:
@@ -110,8 +194,38 @@ class TestAccountCRUD:
         assert resp.json()["is_active"] is True
 
     @pytest.mark.anyio
-    async def test_create_account_can_generate_initial_password(self, client: AsyncClient, tenant_with_auth):
+    async def test_create_account_rejects_case_variant_of_existing_email(self, client: AsyncClient, tenant_with_auth):
         _, headers = tenant_with_auth
+        org_resp = await client.post("/api/v1/organizations", json={"name": "Identity Org"}, headers=headers)
+        org_id = org_resp.json()["id"]
+        first = await client.post(
+            "/api/v1/accounts",
+            json={
+                "email": "member@example.com",
+                "name": "First Member",
+                "password": "Test1234",
+                "organization_id": org_id,
+            },
+            headers=headers,
+        )
+        duplicate = await client.post(
+            "/api/v1/accounts",
+            json={
+                "email": "  MEMBER@EXAMPLE.COM  ",
+                "name": "Duplicate Member",
+                "password": "Test1234",
+                "organization_id": org_id,
+            },
+            headers=headers,
+        )
+
+        assert first.status_code == 201
+        assert first.json()["email"] == "member@example.com"
+        assert duplicate.status_code == 409
+
+    @pytest.mark.anyio
+    async def test_create_account_can_generate_initial_password(self, client: AsyncClient, tenant_with_auth):
+        tenant_id, headers = tenant_with_auth
         org_resp = await client.post("/api/v1/organizations", json={"name": "运营部"}, headers=headers)
         org_id = org_resp.json()["id"]
 
@@ -125,6 +239,41 @@ class TestAccountCRUD:
         data = resp.json()
         assert data["organization_name"] == "运营部"
         assert len(data["initial_password"]) >= 12
+        assert data["must_change_password"] is True
+
+        tenant_slug = (await client.get("/api/v1/tenants/me", headers=headers)).json()["slug"]
+        login = await client.post(
+            "/api/v1/auth/login",
+            json={
+                "email": "ops@test.com",
+                "password": data["initial_password"],
+                "tenant_slug": tenant_slug,
+            },
+        )
+        assert login.status_code == 200
+        token = login.json()["access_token"]
+        assert decode_token(token)["must_change_password"] is True
+
+        blocked = await client.get(
+            "/api/v1/tenants/me",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert blocked.status_code == 403
+        assert blocked.json()["detail"] == "首次登录必须先修改临时密码"
+
+        changed = await client.post(
+            "/api/v1/auth/change-password",
+            json={"old_password": data["initial_password"], "new_password": "ChangedPass34"},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert changed.status_code == 200
+        relogin = await client.post(
+            "/api/v1/auth/login",
+            json={"email": "ops@test.com", "password": "ChangedPass34", "tenant_slug": tenant_slug},
+        )
+        assert relogin.status_code == 200
+        assert decode_token(relogin.json()["access_token"])["must_change_password"] is False
+        assert tenant_id
 
     @pytest.mark.anyio
     async def test_lists_include_business_context(self, client: AsyncClient, tenant_with_auth):
@@ -150,6 +299,40 @@ class TestAccountCRUD:
         assert account_item["organization_name"] == "销售部"
         assert account_item["is_active"] is True
         assert "initial_password" not in account_item
+
+    @pytest.mark.anyio
+    async def test_account_roles_round_trip_through_create_list_and_update(self, client: AsyncClient, tenant_with_auth):
+        _, headers = tenant_with_auth
+        org_resp = await client.post("/api/v1/organizations", json={"name": "角色测试部"}, headers=headers)
+        roles_resp = await client.get("/api/v1/roles", headers=headers)
+        roles = {role["name"]: role for role in roles_resp.json()}
+
+        create_resp = await client.post(
+            "/api/v1/accounts",
+            json={
+                "email": "role-user@test.com",
+                "name": "角色账号",
+                "password": "RolePass1234",
+                "organization_id": org_resp.json()["id"],
+                "role_ids": [roles["operator"]["id"]],
+            },
+            headers=headers,
+        )
+
+        assert create_resp.status_code == 201
+        assert [role["name"] for role in create_resp.json()["roles"]] == ["operator"]
+
+        list_resp = await client.get("/api/v1/accounts", headers=headers)
+        listed = next(item for item in list_resp.json()["items"] if item["email"] == "role-user@test.com")
+        assert [role["name"] for role in listed["roles"]] == ["operator"]
+
+        update_resp = await client.patch(
+            f"/api/v1/accounts/{create_resp.json()['id']}",
+            json={"role_ids": [roles["viewer"]["id"]]},
+            headers=headers,
+        )
+        assert update_resp.status_code == 200
+        assert [role["name"] for role in update_resp.json()["roles"]] == ["viewer"]
 
     @pytest.mark.anyio
     async def test_admin_can_disable_and_enable_another_account(self, client: AsyncClient, tenant_with_auth):

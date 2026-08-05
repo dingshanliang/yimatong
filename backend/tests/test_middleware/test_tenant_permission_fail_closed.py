@@ -54,3 +54,40 @@ async def test_platform_role_only_bypasses_account_lookup_in_platform_boundary(m
     assert "platform:admin" in platform_permissions
     assert tenant_access is False
     assert tenant_permissions == []
+
+
+def test_acting_context_routes_are_mapped_to_live_scope():
+    middleware = TenantScopeMiddleware(Starlette())
+
+    assert middleware._acting_path_is_explicitly_supported("/api/v1/products", ["products"])
+    assert middleware._acting_path_is_explicitly_supported("/api/v1/product-assets/123", ["products"], "PATCH")
+    assert middleware._acting_path_is_explicitly_supported("/api/v1/product-assets/123", ["products"], "DELETE")
+    assert not middleware._acting_path_is_explicitly_supported("/api/v1/product-assets/123", ["products"], "GET")
+    assert middleware._acting_path_is_explicitly_supported("/api/v1/files/upload", ["products"], "POST")
+    assert not middleware._acting_path_is_explicitly_supported("/api/v1/files/upload", ["products"], "GET")
+    assert not middleware._acting_path_is_explicitly_supported("/api/v1/files/123", ["products"], "GET")
+    assert middleware._acting_path_is_explicitly_supported("/api/v1/tenants/me/categories", ["products"], "GET")
+    assert middleware._acting_path_is_explicitly_supported("/api/v1/tenants/me/entitlement", ["campaigns"], "GET")
+    assert not middleware._acting_path_is_explicitly_supported("/api/v1/tenants/me/entitlement", ["campaigns"], "POST")
+    assert not middleware._acting_path_is_explicitly_supported(
+        "/api/v1/tenants/me/entitlement/details", ["campaigns"], "GET"
+    )
+    assert not middleware._acting_path_is_explicitly_supported("/api/v1/tenants/me/categories", ["products"], "POST")
+    assert not middleware._acting_path_is_explicitly_supported(
+        "/api/v1/tenants/me/categories/custom", ["products"], "GET"
+    )
+    assert not middleware._acting_path_is_explicitly_supported("/api/v1/product-assets/123", ["pages"], "PATCH")
+    assert middleware._acting_path_is_explicitly_supported("/api/v1/page-versions/123", ["pages"])
+    assert middleware._acting_path_is_explicitly_supported("/api/v1/products", ["pages"], "GET")
+    assert not middleware._acting_path_is_explicitly_supported("/api/v1/products", ["pages"], "POST")
+    assert middleware._acting_path_is_explicitly_supported("/api/v1/integrations/wecom", ["campaigns"], "GET")
+    assert not middleware._acting_path_is_explicitly_supported("/api/v1/analytics/dashboard", ["products"])
+    assert not middleware._acting_path_is_explicitly_supported("/api/v1/tenants/me", ["products", "pages"])
+
+
+def test_agency_without_acting_context_cannot_write_product_materials():
+    middleware = TenantScopeMiddleware(Starlette())
+
+    assert middleware._is_brand_write_surface("/api/v1/product-assets/123", "PATCH")
+    assert middleware._is_brand_write_surface("/api/v1/files/upload", "POST")
+    assert not middleware._is_brand_write_surface("/api/v1/files/upload", "GET")

@@ -7,6 +7,7 @@ from sqlalchemy import (
     CheckConstraint,
     DateTime,
     ForeignKey,
+    ForeignKeyConstraint,
     Index,
     String,
     UniqueConstraint,
@@ -70,6 +71,12 @@ class Benefit(Base):
     )
 
     __table_args__ = (
+        UniqueConstraint("tenant_id", "id", name="uq_benefits_tenant_id_id"),
+        ForeignKeyConstraint(
+            ["tenant_id", "connector_id"],
+            ["connectors.tenant_id", "connectors.id"],
+            name="fk_benefits_tenant_connector",
+        ),
         CheckConstraint("stock_used <= stock_total", name="check_benefit_stock_not_exceeded"),
         CheckConstraint("stock_total >= 0", name="check_benefit_stock_total_non_negative"),
         CheckConstraint("per_person_limit >= 1", name="check_benefit_per_person_limit_min"),

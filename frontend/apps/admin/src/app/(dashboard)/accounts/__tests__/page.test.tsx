@@ -8,6 +8,7 @@ const mockPost = vi.fn();
 const mockPatch = vi.fn();
 const mockDelete = vi.fn();
 const mockClipboardWriteText = vi.fn();
+let mockCurrentRole = "admin";
 let mockAccounts = [
   {
     id: "acct-1",
@@ -16,7 +17,13 @@ let mockAccounts = [
     organization_id: "org-1",
     organization_name: "销售部",
     is_active: true,
+    roles: [{ id: "role-operator", name: "operator" }],
   },
+];
+const mockRoles = [
+  { id: "role-admin", name: "admin" },
+  { id: "role-operator", name: "operator" },
+  { id: "role-viewer", name: "viewer" },
 ];
 
 vi.mock("antd", async () => {
@@ -44,10 +51,16 @@ vi.mock("@/lib/api", () => ({
   },
 }));
 
+vi.mock("@/lib/auth", () => ({
+  useAuthStore: (selector: (state: { user: { role: string } }) => unknown) =>
+    selector({ user: { role: mockCurrentRole } }),
+}));
+
 const mockMutateAccounts = vi.fn();
 vi.mock("@/lib/hooks", () => ({
   useCrud: (path: string) => ({
-    items: path === "/accounts" ? mockAccounts : [],
+    items:
+      path === "/accounts" ? mockAccounts : path === "/roles" ? mockRoles : [],
     total: path === "/accounts" ? mockAccounts.length : 0,
     page: 1,
     loading: false,
@@ -60,6 +73,7 @@ vi.mock("@/lib/hooks", () => ({
 describe("AccountsPage", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockCurrentRole = "admin";
     mockAccounts = [
       {
         id: "acct-1",
@@ -68,6 +82,7 @@ describe("AccountsPage", () => {
         organization_id: "org-1",
         organization_name: "销售部",
         is_active: true,
+        roles: [{ id: "role-operator", name: "operator" }],
       },
     ];
     Object.defineProperty(navigator, "clipboard", {
@@ -79,7 +94,7 @@ describe("AccountsPage", () => {
     mockDelete.mockResolvedValue({ status: 204 });
     mockPost.mockResolvedValue({ data: {} });
     mockGet.mockImplementation((url: string) => {
-      if (url === "/organizations") {
+      if (url === "/organizations/tree") {
         return Promise.resolve({
           data: [
             { id: "org-1", name: "销售部", account_count: 1 },
@@ -109,6 +124,29 @@ describe("AccountsPage", () => {
       expect(screen.getByTestId("account-status-acct-1")).toHaveTextContent(
         "已启用"
       );
+      expect(screen.getByText("运营人员")).toBeInTheDocument();
+    });
+  });
+
+  it("keeps the current roles when editing an account", async () => {
+    render(<AccountsPage />);
+    await screen.findByTestId("org-account-count-org-1");
+    fireEvent.click(screen.getByRole("tab", { name: "账户管理" }));
+    fireEvent.mouseEnter(
+      screen.getByRole("button", { name: "操作菜单-销售账号" })
+    );
+    fireEvent.click(await screen.findByText("编辑账户"));
+
+    const dialog = await screen.findByRole("dialog");
+    expect(dialog).toHaveTextContent("编辑账户");
+    fireEvent.click(screen.getByRole("button", { name: /保\s*存/ }));
+
+    await waitFor(() => {
+      expect(mockPatch).toHaveBeenCalledWith("/accounts/acct-1", {
+        name: "销售账号",
+        organization_id: "org-1",
+        role_ids: ["role-operator"],
+      });
     });
   });
 
@@ -145,6 +183,7 @@ describe("AccountsPage", () => {
         organization_id: "org-1",
         organization_name: "销售部",
         is_active: false,
+        roles: [{ id: "role-operator", name: "operator" }],
       },
     ];
 
@@ -224,7 +263,10 @@ describe("AccountsPage", () => {
       screen.getByText(/账户用于员工或渠道伙伴登录后台/)
     ).toBeInTheDocument();
     expect(
-      screen.getByText(/所属组织决定账号可查看和操作的数据范围/)
+      screen.getByText(/组织本身不会自动限制数据范围/)
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/所属组织用于归类和管理账号，不会自动限制数据范围/)
     ).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: /新建账户/ }));
@@ -255,11 +297,12 @@ describe("AccountsPage", () => {
       expect(screen.getByText("销售部")).toBeInTheDocument();
     });
     expect(screen.getByText("市场部")).toBeInTheDocument();
+    expect(mockGet).toHaveBeenCalledWith("/organizations/tree");
   });
 
   it("renders parent-child organizations as tree data", async () => {
     mockGet.mockImplementation((url: string) => {
-      if (url === "/organizations") {
+      if (url === "/organizations/tree") {
         return Promise.resolve({
           data: [
             {
@@ -300,5 +343,38 @@ describe("AccountsPage", () => {
     // Each org row should have an action dropdown button
     const menuButtons = screen.getAllByRole("button", { name: /操作菜单/ });
     expect(menuButtons.length).toBeGreaterThanOrEqual(2); // org-1 and org-2
+  });
+
+  it("gives operators a read-only account directory", async () => {
+    mockCurrentRole = "operator";
+    render(<AccountsPage />);
+    await screen.findByTestId("org-account-count-org-1");
+
+    expect(screen.getByText("组织用于账户归类和日常管理")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /新建组织/ })
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /操作菜单/ })
+    ).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("tab", { name: "账户管理" }));
+
+    expect(screen.getByText("当前为只读模式")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /新建账户/ })
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /操作菜单/ })
+    ).not.toBeInTheDocument();
+  });
+
+  it("shows viewers a useful access boundary without loading directory data", () => {
+    mockCurrentRole = "viewer";
+    render(<AccountsPage />);
+
+    expect(screen.getByText("当前角色不能查看账户目录")).toBeInTheDocument();
+    expect(screen.getByText(/联系租户管理员处理/)).toBeInTheDocument();
+    expect(mockGet).not.toHaveBeenCalled();
   });
 });

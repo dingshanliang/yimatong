@@ -8,12 +8,18 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
-from app.core.dependencies import get_current_tenant
+from app.core.dependencies import get_current_account_id, get_current_tenant
 from app.models.tenant import Permission, Role, account_roles, role_permissions
 from app.schemas.role import PermissionCreate, PermissionRead, RoleCreate, RoleRead, RoleUpdate
+from app.services.audit import write_audit_log
 from app.utils.auth_rbac import require_role
 
 router = APIRouter(prefix="/api/v1/roles", tags=["roles"])
+
+
+async def _require_role_templates_read_only() -> None:
+    """当前权限门禁仍以固定角色为契约，禁止创建会产生虚假授权预期的自定义角色。"""
+    raise HTTPException(status_code=409, detail="当前版本仅支持查看和分配内置角色，暂不支持自定义角色权限")
 
 
 # ---------------------------------------------------------------------------
@@ -27,7 +33,9 @@ async def list_roles(
     tenant_id: uuid.UUID = Depends(get_current_tenant),
     _role: str = Depends(require_role("admin", "operator")),
 ):
-    result = await db.execute(select(Role).where(Role.tenant_id == tenant_id))
+    result = await db.execute(
+        select(Role).where(Role.tenant_id == tenant_id, Role.name.in_(("admin", "operator", "viewer")))
+    )
     return result.scalars().all()
 
 
@@ -36,7 +44,9 @@ async def create_role(
     body: RoleCreate,
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
+    actor_id: uuid.UUID = Depends(get_current_account_id),
     _role: str = Depends(require_role("admin")),
+    _read_only: None = Depends(_require_role_templates_read_only),
 ):
     existing = await db.execute(select(Role).where(Role.tenant_id == tenant_id, Role.name == body.name))
     if existing.scalar_one_or_none():
@@ -45,6 +55,28 @@ async def create_role(
     role = Role(tenant_id=tenant_id, name=body.name, description=body.description)
     db.add(role)
     await db.flush()
+    if body.permission_ids:
+        permissions = list(
+            (
+                await db.execute(
+                    select(Permission).where(
+                        Permission.id.in_(body.permission_ids),
+                        Permission.tenant_id == tenant_id,
+                    )
+                )
+            ).scalars()
+        )
+        if len(permissions) != len(set(body.permission_ids)):
+            raise HTTPException(status_code=400, detail="一个或多个权限不属于当前租户")
+        role.permissions = permissions
+    await write_audit_log(
+        db,
+        str(actor_id),
+        str(tenant_id),
+        "role_created",
+        f"role:{role.id}",
+        {"name": role.name, "permission_ids": [str(item.id) for item in role.permissions]},
+    )
     await db.refresh(role)
     return role
 
@@ -55,12 +87,16 @@ async def update_role(
     body: RoleUpdate,
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
+    actor_id: uuid.UUID = Depends(get_current_account_id),
     _role: str = Depends(require_role("admin")),
+    _read_only: None = Depends(_require_role_templates_read_only),
 ):
     result = await db.execute(select(Role).where(Role.id == role_id, Role.tenant_id == tenant_id))
     role = result.scalar_one_or_none()
     if not role:
         raise HTTPException(status_code=404, detail="角色不存在")
+    if role.name == "admin" and body.name not in (None, "admin"):
+        raise HTTPException(status_code=400, detail="内置管理员角色不能重命名")
 
     updates = body.model_dump(exclude_unset=True)
     if "name" in updates:
@@ -72,7 +108,29 @@ async def update_role(
         role.name = updates["name"]
     if "description" in updates:
         role.description = updates["description"]
+    if body.permission_ids is not None:
+        permissions = list(
+            (
+                await db.execute(
+                    select(Permission).where(
+                        Permission.id.in_(body.permission_ids),
+                        Permission.tenant_id == tenant_id,
+                    )
+                )
+            ).scalars()
+        )
+        if len(permissions) != len(set(body.permission_ids)):
+            raise HTTPException(status_code=400, detail="一个或多个权限不属于当前租户")
+        role.permissions = permissions
 
+    await write_audit_log(
+        db,
+        str(actor_id),
+        str(tenant_id),
+        "role_updated",
+        f"role:{role.id}",
+        {"changed_fields": sorted(updates), "permission_ids": [str(item.id) for item in role.permissions]},
+    )
     await db.flush()
     await db.refresh(role)
     return role
@@ -83,12 +141,16 @@ async def delete_role(
     role_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
+    actor_id: uuid.UUID = Depends(get_current_account_id),
     _role: str = Depends(require_role("admin")),
+    _read_only: None = Depends(_require_role_templates_read_only),
 ):
     result = await db.execute(select(Role).where(Role.id == role_id, Role.tenant_id == tenant_id))
     role = result.scalar_one_or_none()
     if not role:
         raise HTTPException(status_code=404, detail="角色不存在")
+    if role.name == "admin":
+        raise HTTPException(status_code=400, detail="内置管理员角色不能删除")
 
     # Check if any accounts are using this role
     count_result = await db.execute(
@@ -99,6 +161,14 @@ async def delete_role(
         raise HTTPException(status_code=409, detail=f"该角色正在被 {count} 个账户使用，请先解除关联后再删除")
 
     await db.delete(role)
+    await write_audit_log(
+        db,
+        str(actor_id),
+        str(tenant_id),
+        "role_deleted",
+        f"role:{role_id}",
+        {"name": role.name},
+    )
     await db.flush()
 
 
@@ -122,7 +192,9 @@ async def create_permission(
     body: PermissionCreate,
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
+    actor_id: uuid.UUID = Depends(get_current_account_id),
     _role: str = Depends(require_role("admin")),
+    _read_only: None = Depends(_require_role_templates_read_only),
 ):
     existing = await db.execute(
         select(Permission).where(Permission.tenant_id == tenant_id, Permission.code == body.code)
@@ -133,6 +205,14 @@ async def create_permission(
     perm = Permission(tenant_id=tenant_id, code=body.code, description=body.description)
     db.add(perm)
     await db.flush()
+    await write_audit_log(
+        db,
+        str(actor_id),
+        str(tenant_id),
+        "permission_created",
+        f"permission:{perm.id}",
+        {"code": perm.code},
+    )
     await db.refresh(perm)
     return perm
 
@@ -148,7 +228,9 @@ async def assign_permission(
     permission_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
+    actor_id: uuid.UUID = Depends(get_current_account_id),
     _role: str = Depends(require_role("admin")),
+    _read_only: None = Depends(_require_role_templates_read_only),
 ):
     role_result = await db.execute(select(Role).where(Role.id == role_id, Role.tenant_id == tenant_id))
     if not role_result.scalar_one_or_none():
@@ -164,6 +246,14 @@ async def assign_permission(
         await db.flush()
     except IntegrityError:
         raise HTTPException(status_code=409, detail="该角色已拥有此权限")
+    await write_audit_log(
+        db,
+        str(actor_id),
+        str(tenant_id),
+        "role_permission_assigned",
+        f"role:{role_id}",
+        {"permission_id": str(permission_id)},
+    )
     return {"ok": True}
 
 
@@ -173,7 +263,9 @@ async def unassign_permission(
     permission_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
+    actor_id: uuid.UUID = Depends(get_current_account_id),
     _role: str = Depends(require_role("admin")),
+    _read_only: None = Depends(_require_role_templates_read_only),
 ):
     # Validate role belongs to tenant
     role_result = await db.execute(select(Role).where(Role.id == role_id, Role.tenant_id == tenant_id))
@@ -185,5 +277,13 @@ async def unassign_permission(
             role_permissions.c.role_id == role_id,
             role_permissions.c.permission_id == permission_id,
         )
+    )
+    await write_audit_log(
+        db,
+        str(actor_id),
+        str(tenant_id),
+        "role_permission_unassigned",
+        f"role:{role_id}",
+        {"permission_id": str(permission_id)},
     )
     await db.flush()

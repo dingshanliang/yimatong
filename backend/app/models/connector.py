@@ -3,7 +3,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import JSON, DateTime, Index, Integer, LargeBinary, String, func
+from sqlalchemy import JSON, DateTime, ForeignKeyConstraint, Index, Integer, LargeBinary, String, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column
 from uuid6 import uuid7
 
@@ -25,7 +25,10 @@ class Connector(Base):
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
 
-    __table_args__ = (Index("ix_connectors_tenant_type", "tenant_id", "connector_type"),)
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "id", name="uq_connectors_tenant_id_id"),
+        Index("ix_connectors_tenant_type", "tenant_id", "connector_type"),
+    )
 
 
 class CouponPool(Base):
@@ -84,6 +87,16 @@ class BenefitDelivery(Base):
     )
 
     __table_args__ = (
+        ForeignKeyConstraint(
+            ["tenant_id", "connector_id"],
+            ["connectors.tenant_id", "connectors.id"],
+            name="fk_benefit_deliveries_tenant_connector",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "benefit_id"],
+            ["benefits.tenant_id", "benefits.id"],
+            name="fk_benefit_deliveries_tenant_benefit",
+        ),
         Index("ix_benefit_deliveries_tenant_status", "tenant_id", "status"),
         Index("ix_benefit_deliveries_retry", "status", "next_retry_at"),
     )

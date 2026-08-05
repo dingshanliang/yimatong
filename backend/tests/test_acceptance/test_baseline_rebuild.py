@@ -43,6 +43,27 @@ from tests.test_acceptance.verifier import (
 # 验收测试：需要真实 infra PG；默认不在普通 pytest 运行中执行
 pytestmark = [pytest.mark.acceptance, pytest.mark.asyncio]
 
+
+async def _set_rls_context(
+    conn: asyncpg.Connection,
+    *,
+    tenant_id: uuid.UUID | None = None,
+    bypass: bool = False,
+) -> None:
+    """Set a complete RLS context so matrix cases cannot inherit prior state."""
+    await conn.execute("SELECT set_config('app.tenant_id', $1, true)", str(tenant_id) if tenant_id else "")
+    await conn.execute("SELECT set_config('app.bypass_rls', $1, true)", "true" if bypass else "false")
+
+
+async def _assert_insert_denied(conn: asyncpg.Connection, query: str, *args: object) -> None:
+    """Contain an expected WITH CHECK violation in a savepoint."""
+    savepoint = conn.transaction()
+    await savepoint.start()
+    with pytest.raises(asyncpg.exceptions.InsufficientPrivilegeError):
+        await conn.execute(query, *args)
+    await savepoint.rollback()
+
+
 # ── 门禁 1：干净 DB 完成迁移 ──────────────────────────────────────────────
 # （migrated_pg_url fixture 本身就跑了 alembic upgrade head，若失败 fixture 会 fail）
 
@@ -64,6 +85,22 @@ class TestCleanEnvRebuild:
             assert rls is True, f"RLS not enabled on code_items (relrowsecurity={rls})"
         finally:
             await conn.close()
+
+    async def test_invite_registration_receipt_rejects_partial_completion(self, control_pg_conn):
+        """幂等回执的 tenant id 与 slug 必须作为同一个完成状态写入。"""
+        savepoint = control_pg_conn.transaction()
+        await savepoint.start()
+        with pytest.raises(asyncpg.exceptions.CheckViolationError):
+            await control_pg_conn.execute(
+                "INSERT INTO invite_registration_receipts "
+                "(id, idempotency_key_hash, request_hash, tenant_slug) "
+                "VALUES ($1, $2, $3, $4)",
+                uuid.uuid4(),
+                "a" * 64,
+                "b" * 64,
+                "partial-result",
+            )
+        await savepoint.rollback()
 
     async def test_baseline_seed_creates_required_entities(self, bypass_session, migrated_pg_url):
         """门禁 AC：基准租户具备首条扫码旅程默认权限与业务数据。"""
@@ -133,6 +170,231 @@ class TestTenantIsolation:
         # 既不设 app.tenant_id 也不设 app.bypass_rls
         rows = await asyncpg_conn.fetch("SELECT count(*)::int AS c FROM brands")
         assert rows[0]["c"] == 0, "session without tenant_id+bypass should see zero rows"
+
+    async def test_ops_tasks_rls_crud_matrix(self, bypass_session, migrated_pg_url, asyncpg_conn, control_pg_conn):
+        """ops_tasks 只允许行所属租户读写；第三方与无上下文均 fail closed。"""
+        await seed_baseline(migrated_pg_url)
+        await bypass_session.rollback()
+        await bypass_session.execute(text("SET LOCAL app.bypass_rls = 'true'"))
+        iso = await verify_isolation_rls(bypass_session)
+        owner_id = uuid.UUID(iso["db_assertions"]["base_tenant_id"])
+        counterparty_id = uuid.UUID(iso["db_assertions"]["control_tenant_id"])
+        third_id = uuid.uuid4()
+        owner_task_id = uuid.uuid4()
+        bypass_task_id = uuid.uuid4()
+        await bypass_session.execute(
+            text(
+                "INSERT INTO tenants (id, name, slug, status, plan, tenant_type, created_at, updated_at) "
+                "VALUES (:id, 'Ops Third Tenant', :slug, 'active', 'free', 'brand', now(), now())"
+            ),
+            {"id": third_id, "slug": f"ops-third-{third_id.hex[:8]}"},
+        )
+        await bypass_session.execute(
+            text(
+                "INSERT INTO ops_tasks (id, tenant_id, title, status, priority, created_at, updated_at) "
+                "VALUES (:id, :tenant_id, 'owner task', 'pending', 'medium', now(), now())"
+            ),
+            {"id": owner_task_id, "tenant_id": owner_id},
+        )
+        await bypass_session.commit()
+
+        await _set_rls_context(asyncpg_conn, tenant_id=owner_id)
+        assert await asyncpg_conn.fetchval("SELECT count(*) FROM ops_tasks WHERE id = $1", owner_task_id) == 1
+        own_insert_id = uuid.uuid4()
+        await asyncpg_conn.execute(
+            "INSERT INTO ops_tasks (id, tenant_id, title, status, priority, created_at, updated_at) "
+            "VALUES ($1, $2, 'own task', 'pending', 'medium', now(), now())",
+            own_insert_id,
+            owner_id,
+        )
+        assert (
+            await asyncpg_conn.execute(
+                "UPDATE ops_tasks SET status = 'in_progress', updated_at = now() WHERE id = $1", own_insert_id
+            )
+            == "UPDATE 1"
+        )
+        assert await asyncpg_conn.execute("DELETE FROM ops_tasks WHERE id = $1", own_insert_id) == "DELETE 1"
+
+        foreign_insert_sql = (
+            "INSERT INTO ops_tasks (id, tenant_id, title, status, priority, created_at, updated_at) "
+            "VALUES ($1, $2, 'foreign task', 'pending', 'medium', now(), now())"
+        )
+        for foreign_tenant_id in (counterparty_id, third_id):
+            await _set_rls_context(asyncpg_conn, tenant_id=foreign_tenant_id)
+            assert await asyncpg_conn.fetchval("SELECT count(*) FROM ops_tasks WHERE id = $1", owner_task_id) == 0
+            await _assert_insert_denied(asyncpg_conn, foreign_insert_sql, uuid.uuid4(), owner_id)
+            assert (
+                await asyncpg_conn.execute(
+                    "UPDATE ops_tasks SET status = 'completed', updated_at = now() WHERE id = $1", owner_task_id
+                )
+                == "UPDATE 0"
+            )
+            assert await asyncpg_conn.execute("DELETE FROM ops_tasks WHERE id = $1", owner_task_id) == "DELETE 0"
+
+        await _set_rls_context(asyncpg_conn)
+        assert await asyncpg_conn.fetchval("SELECT count(*) FROM ops_tasks WHERE id = $1", owner_task_id) == 0
+        await _assert_insert_denied(asyncpg_conn, foreign_insert_sql, uuid.uuid4(), owner_id)
+        assert (
+            await asyncpg_conn.execute(
+                "UPDATE ops_tasks SET status = 'completed', updated_at = now() WHERE id = $1", owner_task_id
+            )
+            == "UPDATE 0"
+        )
+        assert await asyncpg_conn.execute("DELETE FROM ops_tasks WHERE id = $1", owner_task_id) == "DELETE 0"
+
+        assert await control_pg_conn.fetchval("SELECT count(*) FROM ops_tasks WHERE id = $1", owner_task_id) == 1
+        await control_pg_conn.execute(foreign_insert_sql, bypass_task_id, owner_id)
+        assert (
+            await control_pg_conn.execute(
+                "UPDATE ops_tasks SET status = 'completed', updated_at = now() WHERE id = $1", bypass_task_id
+            )
+            == "UPDATE 1"
+        )
+        assert await control_pg_conn.execute("DELETE FROM ops_tasks WHERE id = $1", bypass_task_id) == "DELETE 1"
+
+    async def test_database_rejects_cross_tenant_organization_parent(
+        self, bypass_session, migrated_pg_url, asyncpg_conn
+    ):
+        await seed_baseline(migrated_pg_url)
+        await bypass_session.rollback()
+        await bypass_session.execute(text("SET LOCAL app.bypass_rls = 'true'"))
+        iso = await verify_isolation_rls(bypass_session)
+        base_id = uuid.UUID(iso["db_assertions"]["base_tenant_id"])
+        ctrl_id = uuid.UUID(iso["db_assertions"]["control_tenant_id"])
+        parent_id = uuid.uuid4()
+        await bypass_session.execute(
+            text(
+                "INSERT INTO organizations (id, tenant_id, name, created_at, updated_at) "
+                "VALUES (:id, :tenant_id, 'Base Parent', now(), now())"
+            ),
+            {"id": parent_id, "tenant_id": base_id},
+        )
+        await bypass_session.commit()
+
+        await asyncpg_conn.execute(f"SET LOCAL app.tenant_id = '{ctrl_id}'")
+        savepoint = asyncpg_conn.transaction()
+        await savepoint.start()
+        with pytest.raises(asyncpg.exceptions.ForeignKeyViolationError):
+            await asyncpg_conn.execute(
+                "INSERT INTO organizations (id, tenant_id, name, parent_id, created_at, updated_at) "
+                "VALUES ($1, $2, 'Cross Tenant Child', $3, now(), now())",
+                uuid.uuid4(),
+                ctrl_id,
+                parent_id,
+            )
+        await savepoint.rollback()
+
+    async def test_agency_authorization_rls_crud_matrix(self, bypass_session, migrated_pg_url, asyncpg_conn):
+        """授权双方可读，但只有客户租户可写；第三方与无上下文均 fail closed。"""
+        await seed_baseline(migrated_pg_url)
+        await bypass_session.rollback()
+        await bypass_session.execute(text("SET LOCAL app.bypass_rls = 'true'"))
+        iso = await verify_isolation_rls(bypass_session)
+        client_id = uuid.UUID(iso["db_assertions"]["base_tenant_id"])
+        third_id = uuid.UUID(iso["db_assertions"]["control_tenant_id"])
+        agency_id = uuid.uuid4()
+        authorization_id = uuid.uuid4()
+        await bypass_session.execute(
+            text(
+                "INSERT INTO tenants (id, name, slug, status, plan, tenant_type, created_at, updated_at) "
+                "VALUES (:id, 'Acceptance Agency', :slug, 'active', 'free', 'agency', now(), now())"
+            ),
+            {"id": agency_id, "slug": f"acceptance-agency-{agency_id.hex[:8]}"},
+        )
+        await bypass_session.execute(
+            text(
+                "INSERT INTO agency_authorizations "
+                "(id, agency_tenant_id, client_tenant_id, scope, status, granted_at, created_at, updated_at) "
+                "VALUES (:id, :agency_id, :client_id, CAST(:scope AS json), 'active', now(), now(), now())"
+            ),
+            {"id": authorization_id, "agency_id": agency_id, "client_id": client_id, "scope": '["pages"]'},
+        )
+        await bypass_session.commit()
+
+        insert_sql = (
+            "INSERT INTO agency_authorizations "
+            "(id, agency_tenant_id, client_tenant_id, scope, status, granted_at, created_at, updated_at) "
+            "VALUES ($1, $2, $3, '[\"pages\"]'::json, 'revoked', now(), now(), now())"
+        )
+
+        await _set_rls_context(asyncpg_conn, tenant_id=client_id)
+        assert (
+            await asyncpg_conn.fetchval("SELECT count(*) FROM agency_authorizations WHERE id = $1", authorization_id)
+            == 1
+        )
+        client_insert_id = uuid.uuid4()
+        await asyncpg_conn.execute(insert_sql, client_insert_id, agency_id, client_id)
+        assert (
+            await asyncpg_conn.execute(
+                "UPDATE agency_authorizations SET scope = '[\"analytics\"]'::json, updated_at = now() WHERE id = $1",
+                client_insert_id,
+            )
+            == "UPDATE 1"
+        )
+        assert (
+            await asyncpg_conn.execute("DELETE FROM agency_authorizations WHERE id = $1", client_insert_id)
+            == "DELETE 1"
+        )
+
+        await _set_rls_context(asyncpg_conn, tenant_id=agency_id)
+        assert (
+            await asyncpg_conn.fetchval("SELECT count(*) FROM agency_authorizations WHERE id = $1", authorization_id)
+            == 1
+        )
+        await _assert_insert_denied(asyncpg_conn, insert_sql, uuid.uuid4(), agency_id, client_id)
+        assert (
+            await asyncpg_conn.execute(
+                "UPDATE agency_authorizations SET scope = '[\"analytics\"]'::json, updated_at = now() WHERE id = $1",
+                authorization_id,
+            )
+            == "UPDATE 0"
+        )
+        assert (
+            await asyncpg_conn.execute("DELETE FROM agency_authorizations WHERE id = $1", authorization_id)
+            == "DELETE 0"
+        )
+
+        for hidden_tenant_id in (third_id, None):
+            await _set_rls_context(asyncpg_conn, tenant_id=hidden_tenant_id)
+            assert (
+                await asyncpg_conn.fetchval(
+                    "SELECT count(*) FROM agency_authorizations WHERE id = $1", authorization_id
+                )
+                == 0
+            )
+            await _assert_insert_denied(asyncpg_conn, insert_sql, uuid.uuid4(), agency_id, client_id)
+            assert (
+                await asyncpg_conn.execute(
+                    "UPDATE agency_authorizations SET scope = '[\"analytics\"]'::json, updated_at = now() WHERE id = $1",
+                    authorization_id,
+                )
+                == "UPDATE 0"
+            )
+            assert (
+                await asyncpg_conn.execute("DELETE FROM agency_authorizations WHERE id = $1", authorization_id)
+                == "DELETE 0"
+            )
+
+        await _set_rls_context(asyncpg_conn, bypass=True)
+        # A NOBYPASSRLS runtime principal cannot promote itself by setting the
+        # custom GUC string.  Only the independently configured control role,
+        # which owns the parameter SET privilege, may enter this branch.
+        assert (
+            await asyncpg_conn.fetchval("SELECT count(*) FROM agency_authorizations WHERE id = $1", authorization_id)
+            == 0
+        )
+        await _assert_insert_denied(asyncpg_conn, insert_sql, uuid.uuid4(), agency_id, client_id)
+        assert (
+            await asyncpg_conn.execute(
+                "UPDATE agency_authorizations SET scope = '[\"analytics\"]'::json, updated_at = now() WHERE id = $1",
+                authorization_id,
+            )
+            == "UPDATE 0"
+        )
+        assert (
+            await asyncpg_conn.execute("DELETE FROM agency_authorizations WHERE id = $1", authorization_id)
+            == "DELETE 0"
+        )
 
 
 # ── 门禁：默认权限经真实 API 可用 ──────────────────────────────────────────

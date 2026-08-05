@@ -16,7 +16,7 @@ import app.services.connectors.coupon_pool  # noqa: F401
 import app.services.connectors.generic_http  # noqa: F401
 import app.services.connectors.wechat_pay_transfer  # noqa: F401
 import app.services.connectors.wecom_crm  # noqa: F401
-from app.core.database import get_db
+from app.core.database import bootstrap_tenant_row, get_db
 from app.core.dependencies import get_current_tenant
 from app.models.connector import BenefitDelivery, Connector
 from app.services.connectors import get_adapter
@@ -377,8 +377,10 @@ async def delivery_callback_endpoint(
     db: AsyncSession = Depends(get_db),
 ):
     """外部系统回调端点 — 不走 JWT 认证，由适配器签名验证保护。"""
-    conn_result = await db.execute(select(Connector).where(Connector.id == conn_id))
-    connector = conn_result.scalar_one_or_none()
+    connector = await bootstrap_tenant_row(
+        db,
+        select(Connector).where(Connector.id == conn_id),
+    )
     if not connector:
         raise HTTPException(status_code=404, detail="Connector not found")
 
@@ -408,7 +410,7 @@ async def delivery_callback_endpoint(
             BenefitDelivery.status == "pending",
             sa_func.jsonb_extract_path_text(BenefitDelivery.benefit_config, "out_bill_no") == result.external_id,
         )
-        delivery_row = await db.execute(delivery_stmt)
+        delivery_row = await db.execute(delivery_stmt.with_for_update())
         delivery = delivery_row.scalar_one_or_none()
 
         # 回退：按最新 pending 匹配
@@ -423,7 +425,7 @@ async def delivery_callback_endpoint(
                 .order_by(BenefitDelivery.created_at.desc())
                 .limit(1)
             )
-            delivery_row = await db.execute(delivery_stmt)
+            delivery_row = await db.execute(delivery_stmt.with_for_update())
             delivery = delivery_row.scalar_one_or_none()
 
         if delivery:
@@ -442,7 +444,12 @@ async def delivery_callback_endpoint(
                     try:
                         claim_id = uuid.UUID(out_bill_no)
                         await db.execute(
-                            sa_update(BenefitClaim).where(BenefitClaim.id == claim_id).values(status="delivered")
+                            sa_update(BenefitClaim)
+                            .where(
+                                BenefitClaim.id == claim_id,
+                                BenefitClaim.tenant_id == connector.tenant_id,
+                            )
+                            .values(status="delivered")
                         )
                     except ValueError:
                         pass
@@ -478,7 +485,12 @@ async def retry_delivery_endpoint(
     if delivery.status == "success":
         return _delivery_to_dict(delivery)
 
-    conn_result = await db.execute(select(Connector).where(Connector.id == delivery.connector_id))
+    conn_result = await db.execute(
+        select(Connector).where(
+            Connector.id == delivery.connector_id,
+            Connector.tenant_id == tenant_id,
+        )
+    )
     connector = conn_result.scalar_one_or_none()
     if not connector:
         delivery.status = "failed"

@@ -7,7 +7,7 @@ from uuid6 import uuid7
 
 from app.models.audit import PlatformAuditLog
 from app.models.tenant import Account, Organization, Role, Tenant, account_roles
-from app.services.organization import set_account_active_status
+from app.services.organization import set_account_active_status, update_account
 from app.utils.security import hash_password
 
 
@@ -127,4 +127,19 @@ async def test_last_active_admin_cannot_be_disabled(db: AsyncSession):
             account_id=target.id,
             is_active=False,
             reason="错误操作",
+        )
+
+
+@pytest.mark.anyio
+async def test_admin_cannot_remove_own_admin_role(db: AsyncSession):
+    tenant, actor, _target, _admin_role = await _build_accounts(db)
+
+    with pytest.raises(ValueError, match="当前登录账户的管理员角色"):
+        await update_account(
+            db,
+            tenant_id=tenant.id,
+            account_id=actor.id,
+            actor_id=actor.id,
+            name=None,
+            role_ids=[],
         )

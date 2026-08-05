@@ -3,6 +3,7 @@ from datetime import datetime
 
 from pydantic import BaseModel, Field, field_validator
 
+from app.utils.email import normalize_email
 from app.utils.security import validate_password_strength
 
 
@@ -34,7 +35,12 @@ class AccountCreate(BaseModel):
     name: str = Field(..., max_length=100)
     password: str | None = Field(None, min_length=8)
     organization_id: uuid.UUID
-    role_ids: list[uuid.UUID] = []
+    role_ids: list[uuid.UUID] = Field(default_factory=list)
+
+    @field_validator("email")
+    @classmethod
+    def _normalize_email(cls, value: str) -> str:
+        return normalize_email(value)
 
     @field_validator("password")
     @classmethod
@@ -47,6 +53,14 @@ class AccountCreate(BaseModel):
         return v
 
 
+class AccountRoleRead(BaseModel):
+    id: uuid.UUID
+    name: str
+    description: str | None = None
+
+    model_config = {"from_attributes": True}
+
+
 class AccountRead(BaseModel):
     id: uuid.UUID
     tenant_id: uuid.UUID
@@ -55,6 +69,8 @@ class AccountRead(BaseModel):
     email: str
     name: str
     is_active: bool
+    must_change_password: bool = False
+    roles: list[AccountRoleRead] = Field(default_factory=list)
     created_at: datetime | None = None
 
     model_config = {"from_attributes": True}

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   App,
   Button,
@@ -22,6 +22,7 @@ import {
   UserSwitchOutlined,
 } from "@ant-design/icons";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import axios from "axios";
 import { useAuthStore } from "@/lib/auth";
 import { STATUS_COLORS } from "@/lib/status-colors";
@@ -92,12 +93,45 @@ export default function LoginPage() {
   const router = useRouter();
   const login = useAuthStore((s) => s.login);
   const { message } = App.useApp();
-  const [form] = Form.useForm<{ email: string; password: string }>();
+  const [form] = Form.useForm<{
+    email: string;
+    password: string;
+    tenant_slug?: string;
+  }>();
   const [loading, setLoading] = useState(false);
   const [loadingAccount, setLoadingAccount] = useState<string | null>(null);
 
+  useEffect(() => {
+    let email: string | undefined;
+    let tenantSlug: string | undefined;
+    try {
+      const raw = window.sessionStorage.getItem("registration-login-handoff");
+      window.sessionStorage.removeItem("registration-login-handoff");
+      if (raw) {
+        const handoff = JSON.parse(raw) as {
+          email?: unknown;
+          tenantSlug?: unknown;
+        };
+        email =
+          typeof handoff.email === "string" ? handoff.email.trim() : undefined;
+        tenantSlug =
+          typeof handoff.tenantSlug === "string"
+            ? handoff.tenantSlug.trim()
+            : undefined;
+      }
+    } catch {
+      // Invalid or unavailable session storage falls back to manual entry.
+    }
+    if (email || tenantSlug) {
+      form.setFieldsValue({
+        email: email || undefined,
+        tenant_slug: tenantSlug || undefined,
+      });
+    }
+  }, [form]);
+
   const onFinish = async (
-    values: { email: string; password: string },
+    values: { email: string; password: string; tenant_slug?: string },
     redirectTo = "/",
     tenantSlug?: string
   ) => {
@@ -106,10 +140,14 @@ export default function LoginPage() {
       await login(
         values.email,
         values.password,
-        tenantSlug ? { tenantSlug } : undefined
+        values.tenant_slug?.trim() || tenantSlug
+          ? { tenantSlug: values.tenant_slug?.trim() || tenantSlug }
+          : undefined
       );
-      message.success("登录成功");
-      router.push(redirectTo);
+      const mustChangePassword =
+        useAuthStore.getState().user?.must_change_password === true;
+      message.success(mustChangePassword ? "请先修改临时密码" : "登录成功");
+      router.push(mustChangePassword ? "/change-password" : redirectTo);
     } catch (err) {
       const data = (err as { response?: { data?: { detail?: string } } })
         ?.response?.data;
@@ -136,17 +174,14 @@ export default function LoginPage() {
           (window.location.hostname === "127.0.0.1"
             ? "http://127.0.0.1:8000"
             : "http://localhost:8000");
-        const { data } = await axios.post(
+        await axios.post(
           `${API_BASE}/api/v1/platform/auth/login`,
           {
             email: account.email,
             password: account.password,
-          }
+          },
+          { withCredentials: true }
         );
-        const { access_token } = data;
-        localStorage.setItem("platform_access_token", access_token);
-        const secure = window.location.protocol === "https:" ? "; Secure" : "";
-        document.cookie = `platform_access_token=${access_token}; path=/; max-age=${30 * 24 * 3600}; SameSite=Lax${secure}`;
         message.success("平台管理员登录成功，正在跳转…");
         // 跳转到平台管理后台（端口 3002）
         const platformUrl =
@@ -156,6 +191,7 @@ export default function LoginPage() {
         form.setFieldsValue({
           email: account.email,
           password: account.password,
+          tenant_slug: "demo",
         });
         await onFinish(
           { email: account.email, password: account.password },
@@ -251,15 +287,27 @@ export default function LoginPage() {
               autoComplete="current-password"
             />
           </Form.Item>
+          <Form.Item
+            name="tenant_slug"
+            label="工作区标识（可选）"
+            extra="同一邮箱加入多个工作区时必填；请向管理员获取。"
+          >
+            <Input placeholder="例如 demo" autoComplete="organization" />
+          </Form.Item>
           <Form.Item>
             <Button type="primary" htmlType="submit" loading={loading} block>
               手动登录
             </Button>
           </Form.Item>
           <div className="text-center">
-            <Text type="secondary" className="text-sm">
-              忘记密码？请联系您的管理员重置
-            </Text>
+            <Space orientation="vertical" size={4}>
+              <Text type="secondary" className="text-sm">
+                忘记密码？请联系您的管理员重置
+              </Text>
+              <Text className="text-sm">
+                收到平台邀请码？<Link href="/register">创建品牌账号</Link>
+              </Text>
+            </Space>
           </div>
         </Form>
       </Card>

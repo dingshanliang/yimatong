@@ -8,9 +8,9 @@ from __future__ import annotations
 import logging
 import uuid
 
-from sqlalchemy import select, update
+from sqlalchemy import select
 
-from app.core.database import async_session_factory
+from app.core.database import async_session_factory, bootstrap_tenant_keys, set_session_tenant_context
 from app.models.member import (
     ConsumerProfile,
     PointTransaction,
@@ -28,68 +28,77 @@ async def expire_points_batch() -> int:
     now = utcnow()
     processed = 0
 
-    async with async_session_factory() as db:
-        # 查找所有已过期但未清零的收入记录
-        result = await db.execute(
-            select(PointTransaction)
+    async with async_session_factory() as bootstrap_db:
+        work_keys = await bootstrap_tenant_keys(
+            bootstrap_db,
+            select(PointTransaction.id, PointTransaction.tenant_id)
             .where(
                 PointTransaction.expires_at.is_not(None),
                 PointTransaction.expires_at <= now,
                 PointTransaction.txn_type == PointTransactionType.earning,
                 PointTransaction.amount > 0,
             )
-            .order_by(PointTransaction.expires_at)
-            .limit(BATCH_SIZE)
+            .order_by(PointTransaction.expires_at, PointTransaction.id)
+            .limit(BATCH_SIZE),
         )
-        expired_txns = list(result.scalars().all())
-        if not expired_txns:
-            return 0
+    if not work_keys:
+        return 0
 
-        # 按 consumer_id 分组，计算每个消费者的总过期积分
-        consumer_expired: dict[tuple[uuid.UUID, uuid.UUID], int] = {}
-        for txn in expired_txns:
-            key = (txn.tenant_id, txn.consumer_id)
-            consumer_expired[key] = consumer_expired.get(key, 0) + txn.amount
+    tenant_work: dict[uuid.UUID, list[uuid.UUID]] = {}
+    for txn_id, tenant_id in work_keys:
+        tenant_work.setdefault(tenant_id, []).append(txn_id)
 
-        # 对每个消费者扣减余额并创建过期记录
-        for (tid, cid), total_expired in consumer_expired.items():
-            try:
-                # 获取消费者当前余额
-                profile_result = await db.execute(
-                    select(ConsumerProfile).where(
-                        ConsumerProfile.id == cid,
-                        ConsumerProfile.tenant_id == tid,
+    for tenant_id, txn_ids in tenant_work.items():
+        async with async_session_factory() as db:
+            await set_session_tenant_context(db, tenant_id)
+            expired_txns = list(
+                (
+                    await db.scalars(
+                        select(PointTransaction)
+                        .where(
+                            PointTransaction.id.in_(txn_ids),
+                            PointTransaction.tenant_id == tenant_id,
+                            PointTransaction.amount > 0,
+                        )
+                        .with_for_update()
                     )
-                )
-                profile = profile_result.scalar_one_or_none()
-                if not profile or profile.total_points <= 0:
-                    continue
+                ).all()
+            )
+            consumer_expired: dict[uuid.UUID, int] = {}
+            for txn in expired_txns:
+                consumer_expired[txn.consumer_id] = consumer_expired.get(txn.consumer_id, 0) + txn.amount
 
-                deduct = min(total_expired, profile.total_points)
-                new_balance = profile.total_points - deduct
-                profile.total_points = new_balance
-
-                expire_txn = PointTransaction(
-                    tenant_id=tid,
-                    consumer_id=cid,
-                    amount=-deduct,
-                    balance_after=new_balance,
-                    txn_type=PointTransactionType.expired,
-                    reason="积分过期清零",
-                )
-                db.add(expire_txn)
-                processed += 1
+            for cid, total_expired in consumer_expired.items():
+                try:
+                    profile = await db.scalar(
+                        select(ConsumerProfile)
+                        .where(ConsumerProfile.id == cid, ConsumerProfile.tenant_id == tenant_id)
+                        .with_for_update()
+                    )
+                    if profile and profile.total_points > 0:
+                        deduct = min(total_expired, profile.total_points)
+                        new_balance = profile.total_points - deduct
+                        profile.total_points = new_balance
+                        db.add(
+                            PointTransaction(
+                                tenant_id=tenant_id,
+                                consumer_id=cid,
+                                amount=-deduct,
+                                balance_after=new_balance,
+                                txn_type=PointTransactionType.expired,
+                                reason="积分过期清零",
+                            )
+                        )
+                        processed += 1
+                except Exception:
+                    logger.warning("Failed to expire points for consumer %s", cid, exc_info=True)
+            for txn in expired_txns:
+                txn.amount = 0
+            try:
+                await db.commit()
             except Exception:
-                logger.warning("Failed to expire points for consumer %s", cid, exc_info=True)
-
-        await db.commit()
-
-    # 标记已处理的过期记录（设 amount=0 防止重复处理）
-    async with async_session_factory() as db:
-        txn_ids = [t.id for t in expired_txns]
-        if txn_ids:
-            await db.execute(update(PointTransaction).where(PointTransaction.id.in_(txn_ids)).values(amount=0))
-            await db.commit()
+                await db.rollback()
+                raise
 
     logger.info("Expired points processed: %d consumers", processed)
     return processed

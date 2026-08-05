@@ -1,13 +1,18 @@
 """A6-001: 码解析公开路由验收测试"""
 
+import uuid
 from collections.abc import AsyncGenerator
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.main import app
+from app.models.scan import ScanEvent
+from app.models.tenant import Tenant
 from app.utils.security import create_access_token
 from tests.conftest import TestSessionLocal
 
@@ -16,7 +21,11 @@ def _platform_admin_headers() -> dict:
     from app.utils.security import create_access_token
 
     token = create_access_token("platform", "platform-admin", "platform_admin")
-    return {"Authorization": f"Bearer {token}"}
+    return {
+        "Cookie": f"platform_access_token={token}; platform_csrf_token=test-platform-csrf",
+        "Origin": "http://localhost:3002",
+        "X-Platform-CSRF": "test-platform-csrf",
+    }
 
 
 @pytest.fixture
@@ -162,3 +171,101 @@ class TestPublicResolve:
         resp = await client.get(f"/c/{public_id}")
         # 不带任何 auth header 也能访问
         assert resp.status_code != 401
+
+    @pytest.mark.anyio
+    async def test_expired_plan_blocks_scan_and_renewal_immediately_restores_it(
+        self,
+        client: AsyncClient,
+        db_session: AsyncSession,
+        setup_activated_code,
+    ):
+        tenant_id, _, _, _, public_id = setup_activated_code
+        tenant = await db_session.get(Tenant, uuid.UUID(tenant_id))
+        tenant.plan_expires_at = datetime.now(UTC) - timedelta(seconds=1)
+        await db_session.flush()
+
+        expired = await client.get(f"/c/{public_id}", headers={"Accept": "application/json"})
+        assert expired.status_code == 403
+        assert expired.json() == {
+            "code": "TENANT_PLAN_EXPIRED",
+            "detail": "租户套餐已过期，当前仅支持查看；请联系平台续期",
+        }
+
+        tenant.plan_expires_at = datetime.now(UTC) + timedelta(days=1)
+        await db_session.flush()
+        renewed = await client.get(f"/c/{public_id}", headers={"Accept": "application/json"})
+        assert renewed.status_code == 200
+
+    @pytest.mark.anyio
+    async def test_expired_plan_returns_safe_browser_page(
+        self,
+        client: AsyncClient,
+        db_session: AsyncSession,
+        setup_activated_code,
+    ):
+        tenant_id, _, _, _, public_id = setup_activated_code
+        tenant = await db_session.get(Tenant, uuid.UUID(tenant_id))
+        tenant.plan_expires_at = datetime.now(UTC) - timedelta(seconds=1)
+        await db_session.flush()
+
+        response = await client.get(f"/c/{public_id}", headers={"Accept": "text/html"})
+
+        assert response.status_code == 403
+        assert response.headers["content-type"].startswith("text/html")
+        assert "当前无法继续查验" in response.text
+        assert "联系商品品牌方" in response.text
+        assert "TENANT_PLAN_EXPIRED" not in response.text
+        assert "plan_expires_at" not in response.text
+
+    @pytest.mark.anyio
+    async def test_max_scans_charges_successful_repeat_scans_and_blocks_overage(
+        self,
+        client: AsyncClient,
+        db_session: AsyncSession,
+        setup_activated_code,
+    ):
+        tenant_id, _, _, _, public_id = setup_activated_code
+        tenant_uuid = uuid.UUID(tenant_id)
+        tenant = await db_session.get(Tenant, tenant_uuid)
+        tenant.quota = {**(tenant.quota or {}), "max_scans": 1}
+        await db_session.flush()
+
+        first = await client.get(f"/c/{public_id}", headers={"Accept": "application/json"})
+        second = await client.get(f"/c/{public_id}", headers={"Accept": "application/json"})
+
+        assert first.status_code == 200
+        assert second.status_code == 429
+        assert second.json() == {
+            "code": "QUOTA_EXCEEDED",
+            "detail": "扫码服务额度已用完，请联系品牌方",
+        }
+        serialized_error = second.text.lower()
+        assert "current" not in serialized_error
+        assert "limit" not in serialized_error
+        assert "max_scans" not in serialized_error
+        assert not any(char.isdigit() for char in second.json()["detail"])
+        events = await db_session.execute(
+            select(ScanEvent).where(ScanEvent.tenant_id == tenant_uuid, ScanEvent.public_id == public_id)
+        )
+        assert len(list(events.scalars())) == 1
+
+    @pytest.mark.anyio
+    async def test_max_scans_returns_safe_browser_page(
+        self,
+        client: AsyncClient,
+        db_session: AsyncSession,
+        setup_activated_code,
+    ):
+        tenant_id, _, _, _, public_id = setup_activated_code
+        tenant = await db_session.get(Tenant, uuid.UUID(tenant_id))
+        tenant.quota = {**(tenant.quota or {}), "max_scans": 0}
+        await db_session.flush()
+
+        response = await client.get(f"/c/{public_id}", headers={"Accept": "text/html"})
+
+        assert response.status_code == 429
+        assert response.headers["content-type"].startswith("text/html")
+        assert "当前无法继续查验" in response.text
+        assert "联系商品品牌方" in response.text
+        assert "max_scans" not in response.text
+        assert "QUOTA_EXCEEDED" not in response.text

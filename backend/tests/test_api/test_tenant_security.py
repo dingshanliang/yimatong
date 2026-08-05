@@ -15,7 +15,11 @@ from app.utils.security import create_access_token
 
 def _platform_admin_headers() -> dict:
     token = create_access_token("platform", "platform-admin", "platform_admin")
-    return {"Authorization": f"Bearer {token}"}
+    return {
+        "Cookie": f"platform_access_token={token}; platform_csrf_token=test-platform-csrf",
+        "Origin": "http://localhost:3002",
+        "X-Platform-CSRF": "test-platform-csrf",
+    }
 
 
 def _tenant_admin_headers(tenant_id: str, role: str = "admin") -> dict:
@@ -66,7 +70,7 @@ async def sample_tenant(client: AsyncClient):
 
 
 class TestPlatformAdminOnlyEndpoints:
-    """所有 CRUD 端点需要 platform_admin 角色。"""
+    """平台 CRUD 只接受独立平台 Cookie，普通 Admin 凭证不进入该认证边界。"""
 
     @pytest.mark.anyio
     async def test_create_tenant_requires_platform_admin(self, client: AsyncClient):
@@ -83,21 +87,21 @@ class TestPlatformAdminOnlyEndpoints:
             },
             headers=headers,
         )
-        assert resp.status_code == 403
+        assert resp.status_code == 401
 
     @pytest.mark.anyio
     async def test_list_tenants_requires_platform_admin(self, client: AsyncClient):
         """普通 admin 角色不能列出所有租户。"""
         headers = _tenant_admin_headers("some-tenant-id", "admin")
         resp = await client.get("/api/v1/tenants", headers=headers)
-        assert resp.status_code == 403
+        assert resp.status_code == 401
 
     @pytest.mark.anyio
     async def test_get_tenant_by_id_requires_platform_admin(self, client: AsyncClient, sample_tenant):
         """普通 admin 角色不能通过 ID 查看任意租户。"""
         headers = _tenant_admin_headers("some-tenant-id", "admin")
         resp = await client.get(f"/api/v1/tenants/{sample_tenant['id']}", headers=headers)
-        assert resp.status_code == 403
+        assert resp.status_code == 401
 
     @pytest.mark.anyio
     async def test_update_tenant_by_id_requires_platform_admin(self, client: AsyncClient, sample_tenant):
@@ -108,14 +112,14 @@ class TestPlatformAdminOnlyEndpoints:
             json={"name": "被篡改的名字"},
             headers=headers,
         )
-        assert resp.status_code == 403
+        assert resp.status_code == 401
 
     @pytest.mark.anyio
     async def test_delete_tenant_requires_platform_admin(self, client: AsyncClient, sample_tenant):
         """普通 admin 角色不能删除租户。"""
         headers = _tenant_admin_headers("some-tenant-id", "admin")
         resp = await client.delete(f"/api/v1/tenants/{sample_tenant['id']}", headers=headers)
-        assert resp.status_code == 403
+        assert resp.status_code == 401
 
     @pytest.mark.anyio
     async def test_operator_role_also_denied(self, client: AsyncClient):
@@ -132,7 +136,7 @@ class TestPlatformAdminOnlyEndpoints:
             },
             headers=headers,
         )
-        assert resp.status_code == 403
+        assert resp.status_code == 401
 
 
 # ── Test: /me 端点字段限制 ────────────────────────────────────────
@@ -169,6 +173,18 @@ class TestMeEndpointFieldRestriction:
         data = resp.json()
         # quota 不应被改变
         assert data["quota"]["max_codes"] == 10000
+
+    @pytest.mark.anyio
+    async def test_me_cannot_enable_platform_features(self, client: AsyncClient, sample_tenant):
+        headers = _tenant_admin_headers(sample_tenant["id"])
+        resp = await client.patch(
+            "/api/v1/tenants/me",
+            json={"enabled_features": {"white_label": True}},
+            headers=headers,
+        )
+
+        assert resp.status_code == 200
+        assert not resp.json().get("enabled_features", {}).get("white_label", False)
 
     @pytest.mark.anyio
     async def test_me_cannot_change_tenant_type(self, client: AsyncClient, sample_tenant):

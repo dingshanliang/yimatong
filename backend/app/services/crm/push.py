@@ -67,9 +67,10 @@ async def handle_consumer_created(event_type: str, data: dict, tenant_id_str: st
     if not consumer_id:
         return
 
-    from app.core.database import async_session_factory
+    from app.core.database import async_session_factory, set_session_tenant_context
 
     async with async_session_factory() as db:
+        await set_session_tenant_context(db, tenant_id)
         # 获取消费者
         result = await db.execute(
             select(ConsumerProfile).where(
@@ -170,9 +171,10 @@ async def handle_consumer_updated(event_type: str, data: dict, tenant_id_str: st
     if not consumer_id:
         return
 
-    from app.core.database import async_session_factory
+    from app.core.database import async_session_factory, set_session_tenant_context
 
     async with async_session_factory() as db:
+        await set_session_tenant_context(db, tenant_id)
         result = await db.execute(
             select(ConsumerProfile).where(
                 ConsumerProfile.tenant_id == tenant_id,

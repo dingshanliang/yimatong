@@ -19,7 +19,11 @@ def _platform_admin_headers() -> dict:
     from app.utils.security import create_access_token
 
     token = create_access_token("platform", "platform-admin", "platform_admin")
-    return {"Authorization": f"Bearer {token}"}
+    return {
+        "Cookie": f"platform_access_token={token}; platform_csrf_token=test-platform-csrf",
+        "Origin": "http://localhost:3002",
+        "X-Platform-CSRF": "test-platform-csrf",
+    }
 
 
 @pytest.fixture
@@ -296,7 +300,7 @@ class TestMemberOverview:
         await client.post(
             "/api/v1/members/points/award", json={"consumer_id": cid, "points": 100, "reason": "测试"}, headers=headers
         )
-        token = await create_scan_context(db_session, tid)
+        token = await create_scan_context(db_session, tid, consumer_id=cid)
         exchange = await client.post(
             "/api/v1/consumers/points/exchanges",
             json={"consumer_id": cid, "product_id": product.json()["id"]},
@@ -428,7 +432,7 @@ class TestPointProducts:
             json={"name": "积分券", "points_cost": 50, "stock": 1, "per_consumer_limit": 1},
             headers=headers,
         )
-        token = await create_scan_context(db_session, tid)
+        token = await create_scan_context(db_session, tid, consumer_id=cid)
 
         products = await client.get(
             "/api/v1/consumers/points/products",
@@ -598,6 +602,48 @@ class TestConsumerIdentityBinding:
         )
         assert resp.status_code == 403
         assert "mismatch" in resp.json()["detail"]
+
+    @pytest.mark.anyio
+    async def test_private_routes_reject_unbound_scan_token(
+        self,
+        client: AsyncClient,
+        setup_tenant,
+        db_session: AsyncSession,
+    ):
+        tid, headers = setup_tenant
+        consumer = await client.post("/api/v1/members/consumers", json={}, headers=headers)
+        cid = consumer.json()["id"]
+        token = await create_scan_context(db_session, tid)
+        auth = {"Authorization": f"Bearer {token}"}
+
+        responses = [
+            await client.get("/api/v1/consumers/me", params={"consumer_id": cid}, headers=auth),
+            await client.get("/api/v1/consumers/points/me", params={"consumer_id": cid}, headers=auth),
+            await client.get("/api/v1/consumers/points/transactions", params={"consumer_id": cid}, headers=auth),
+            await client.get("/api/v1/consumers/points/products", params={"consumer_id": cid}, headers=auth),
+        ]
+        assert [response.status_code for response in responses] == [401, 401, 401, 401]
+
+    @pytest.mark.anyio
+    async def test_private_reads_reject_same_tenant_other_consumer(
+        self,
+        client: AsyncClient,
+        setup_tenant,
+        db_session: AsyncSession,
+    ):
+        tid, headers = setup_tenant
+        c1 = (await client.post("/api/v1/members/consumers", json={}, headers=headers)).json()["id"]
+        c2 = (await client.post("/api/v1/members/consumers", json={}, headers=headers)).json()["id"]
+        token = await create_scan_context(db_session, tid, consumer_id=c1)
+        auth = {"Authorization": f"Bearer {token}"}
+
+        responses = [
+            await client.get("/api/v1/consumers/me", params={"consumer_id": c2}, headers=auth),
+            await client.get("/api/v1/consumers/points/me", params={"consumer_id": c2}, headers=auth),
+            await client.get("/api/v1/consumers/points/transactions", params={"consumer_id": c2}, headers=auth),
+            await client.get("/api/v1/consumers/points/products", params={"consumer_id": c2}, headers=auth),
+        ]
+        assert [response.status_code for response in responses] == [403, 403, 403, 403]
 
 
 class TestConcurrentOperations:

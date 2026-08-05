@@ -3,7 +3,9 @@
 import uuid
 from datetime import datetime
 
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, field_validator
+
+from app.utils.email import normalize_email
 
 
 class InviteCodeCreateRequest(BaseModel):
@@ -21,6 +23,7 @@ class InviteCodeResponse(BaseModel):
     status: str
     expires_at: datetime | None
     created_at: datetime
+    registration_url: str = Field(..., description="基于 canonical Admin 公网基址生成的完整注册链接")
 
     model_config = {"from_attributes": True}
 
@@ -34,7 +37,13 @@ class TenantRegisterRequest(BaseModel):
     admin_password: str = Field(..., min_length=8, max_length=128)
     industry: str | None = Field(None, max_length=50)
 
+    @field_validator("admin_email")
+    @classmethod
+    def _normalize_admin_email(cls, value: EmailStr) -> str:
+        return normalize_email(str(value))
+
 
 class TenantRegisterResponse(BaseModel):
     tenant_id: uuid.UUID
+    tenant_slug: str
     message: str

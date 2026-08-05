@@ -1,16 +1,24 @@
+import hashlib
+import json
+import secrets
 import uuid
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, time, timedelta
+from zoneinfo import ZoneInfo
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, EmailStr
-from sqlalchemy import case, func, select, text
+from sqlalchemy import case, func, select, text, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.database import _is_pg, get_db_with_bypass
+from app.core.dependencies import get_redis_cache
 from app.models.plan import PlanDefinition
-from app.models.tenant import Account, Organization, Tenant, TenantPlan, TenantStatus
+from app.models.platform_opening import PlatformTenantOpening
+from app.models.scan import ScanEvent
+from app.models.tenant import Account, Organization, Tenant, TenantPlan, TenantStatus, TenantType
 from app.models.tenant_health import TenantHealthMetrics
 from app.modules.brand_tenant_initialization import (
     BrandTenantAlreadyExists,
@@ -22,7 +30,8 @@ from app.modules.brand_tenant_initialization import (
 from app.modules.initial_admin_activation import InitialAdminActivation, InitialAdminNotPending
 from app.schemas.common import PaginatedResponse
 from app.services.audit import query_audit_logs, write_audit_log
-from app.services.redis_cache import AsyncRedisCache
+from app.services.auth import logout_session
+from app.services.redis_cache import AsyncRedisCache, SharedSecurityCacheUnavailable
 from app.services.tenant_health import refresh_all_health_metrics
 from app.utils.auth_rbac import require_role
 from app.utils.security import create_access_token, verify_password
@@ -40,9 +49,9 @@ class PlatformLoginRequest(BaseModel):
     password: str
 
 
-class PlatformTokenResponse(BaseModel):
-    access_token: str
-    token_type: str = "bearer"
+class PlatformSessionResponse(BaseModel):
+    authenticated: bool
+    principal: str
 
 
 class AuditLogRead(BaseModel):
@@ -64,16 +73,17 @@ class TenantCreate(BaseModel):
     notes: str | None = None
     admin_email: EmailStr
     admin_name: str
+    tenant_type: TenantType = TenantType.brand
 
 
 class TenantUpdate(BaseModel):
     name: str | None = None
-    plan: TenantPlan | None = None
     industry: str | None = None
     notes: str | None = None
     quota: dict | None = None
     enabled_features: dict | None = None
-    plan_expires_at: datetime | None = None
+
+    model_config = {"extra": "forbid"}
 
 
 class TenantStatusUpdate(BaseModel):
@@ -108,9 +118,16 @@ class ActivationLinkRead(BaseModel):
     activation_url: str
 
 
+class TenantListRead(TenantRead):
+    initial_admin_state: str | None = None
+    activation_retryable: bool = False
+
+
 class TenantDetail(TenantRead):
     account_count: int = 0
     organization_count: int = 0
+    initial_admin_state: str | None = None
+    activation_retryable: bool = False
 
 
 class DashboardSummary(BaseModel):
@@ -127,18 +144,29 @@ class DashboardSummary(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-@router.post("/auth/login", response_model=PlatformTokenResponse)
-async def platform_login(body: PlatformLoginRequest, request: Request):
+@router.post("/auth/login", response_model=PlatformSessionResponse)
+async def platform_login(
+    body: PlatformLoginRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db_with_bypass),
+    cache: AsyncRedisCache = Depends(get_redis_cache),
+):
     """平台管理员独立认证路径"""
-    # IP 速率限制
-    client_ip = (
-        request.headers.get("X-Forwarded-For", request.client.host if request.client else "unknown")
-        .split(",")[0]
-        .strip()
-    )
-    cache = AsyncRedisCache()
-    allowed, _ = await cache.rate_limit_check(f"platform_login_rate:{client_ip}", max_attempts=10, window_seconds=300)
-    if not allowed:
+    # request.client is populated by the ASGI server. Forwarded headers are only
+    # safe when the server itself is configured with a trusted proxy boundary.
+    client_ip = request.client.host if request.client else "unknown"
+    normalized_email = body.email.strip().lower()
+    account_key = hashlib.sha256(normalized_email.encode()).hexdigest()
+    try:
+        ip_allowed, _ = await cache.rate_limit_check_shared(
+            f"platform_login_rate:ip:{client_ip}", max_attempts=10, window_seconds=300
+        )
+        account_allowed, _ = await cache.rate_limit_check_shared(
+            f"platform_login_rate:account:{account_key}", max_attempts=10, window_seconds=300
+        )
+    except SharedSecurityCacheUnavailable as exc:
+        raise HTTPException(status_code=503, detail="登录服务暂时不可用，请稍后重试") from exc
+    if not ip_allowed or not account_allowed:
         raise HTTPException(status_code=429, detail="尝试过于频繁", headers={"Retry-After": "300"})
 
     if not settings.platform_admin_password_hash:
@@ -148,23 +176,19 @@ async def platform_login(body: PlatformLoginRequest, request: Request):
     ):
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
+    # 登录审计与凭证签发采用 fail-closed 边界。
+    await write_audit_log(db, "platform-admin", "platform", "platform_login", f"ip:{client_ip}")
+    await db.commit()
+
     token = create_access_token(
         tenant_id="platform",
         account_id="platform-admin",
         role="platform_admin",
+        tenant_type="platform",
     )
 
-    # 审计日志
-    try:
-        from app.core.database import async_session_factory
-
-        async with async_session_factory() as db:
-            await write_audit_log(db, "platform-admin", "platform", "platform_login", f"ip:{client_ip}")
-            await db.commit()
-    except Exception:
-        pass  # 审计失败不影响登录
-
-    response = JSONResponse(content={"access_token": token, "token_type": "bearer"})
+    response = JSONResponse(content={"authenticated": True, "principal": "platform_admin"})
+    csrf_token = secrets.token_urlsafe(32)
     # Platform uses separate cookie name
     response.set_cookie(
         "platform_access_token",
@@ -173,6 +197,43 @@ async def platform_login(body: PlatformLoginRequest, request: Request):
         httponly=True,
         secure=settings.cookie_secure,
         samesite=settings.cookie_samesite,
+        domain=settings.cookie_domain or None,
+        path="/",
+    )
+    response.set_cookie(
+        "platform_csrf_token",
+        csrf_token,
+        max_age=settings.access_token_expire_minutes * 60,
+        httponly=False,
+        secure=settings.cookie_secure,
+        samesite=settings.cookie_samesite,
+        domain=settings.cookie_domain or None,
+        path="/",
+    )
+    return response
+
+
+@router.post("/auth/logout")
+async def platform_logout(
+    request: Request,
+    db: AsyncSession = Depends(get_db_with_bypass),
+    cache: AsyncRedisCache = Depends(get_redis_cache),
+    _role: str = Depends(require_role("platform_admin")),
+):
+    """撤销平台 access token，并清除独立的 HttpOnly cookie。"""
+    token = request.cookies.get("platform_access_token")
+    try:
+        await logout_session(db=db, access_token=token, refresh_token_str=None, cache=cache)
+    except SharedSecurityCacheUnavailable as exc:
+        raise HTTPException(status_code=503, detail="登出服务暂时不可用，请稍后重试") from exc
+    response = JSONResponse(content={"status": "ok"})
+    response.delete_cookie(
+        "platform_access_token",
+        domain=settings.cookie_domain or None,
+        path="/",
+    )
+    response.delete_cookie(
+        "platform_csrf_token",
         domain=settings.cookie_domain or None,
         path="/",
     )
@@ -250,7 +311,11 @@ async def list_tenants(
     _role: str = Depends(require_role("platform_admin")),
 ):
     """租户列表（分页、筛选）"""
-    stmt = select(Tenant).order_by(Tenant.created_at.desc())
+    stmt = (
+        select(Tenant, PlatformTenantOpening.initial_admin_state)
+        .outerjoin(PlatformTenantOpening, PlatformTenantOpening.tenant_id == Tenant.id)
+        .order_by(Tenant.created_at.desc())
+    )
     count_stmt = select(func.count()).select_from(Tenant)
 
     if status:
@@ -269,10 +334,19 @@ async def list_tenants(
 
     stmt = stmt.offset((page - 1) * page_size).limit(page_size)
     result = await db.execute(stmt)
-    items = list(result.scalars().all())
+    rows = list(result.all())
 
     return PaginatedResponse(
-        items=[TenantRead.model_validate(t) for t in items],
+        items=[
+            TenantListRead(
+                **TenantRead.model_validate(tenant).model_dump(),
+                initial_admin_state=initial_admin_state,
+                activation_retryable=(
+                    tenant.status != TenantStatus.terminated and initial_admin_state == "pending_activation"
+                ),
+            )
+            for tenant, initial_admin_state in rows
+        ],
         total=total,
         page=page,
         page_size=page_size,
@@ -282,55 +356,92 @@ async def list_tenants(
 @router.post("/tenants", response_model=TenantOpeningRead, status_code=201)
 async def create_tenant(
     body: TenantCreate,
+    idempotency_key: str = Header(..., alias="Idempotency-Key", min_length=1, max_length=100),
     db: AsyncSession = Depends(get_db_with_bypass),
     _role: str = Depends(require_role("platform_admin")),
 ):
     """初始化品牌租户；初始管理员通过单次链接自行设置密码。"""
-    try:
-        receipt = await BrandTenantInitialization(db).initialize(
-            InitializeBrandTenant(
-                name=body.name,
-                admin_name=body.admin_name,
-                admin_email=str(body.admin_email),
-                industry=body.industry,
-                notes=body.notes,
-                opening=PlatformOpening(
-                    operator_id="platform-admin",
-                    plan_name=body.plan.value,
-                ),
+    request_hash = hashlib.sha256(
+        json.dumps(body.model_dump(mode="json"), sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    opening = (
+        await db.execute(select(PlatformTenantOpening).where(PlatformTenantOpening.idempotency_key == idempotency_key))
+    ).scalar_one_or_none()
+    if opening is not None and opening.request_hash != request_hash:
+        raise HTTPException(status_code=409, detail="同一幂等键不能用于不同的租户创建请求")
+
+    created_now = False
+    if opening is None:
+        candidate = PlatformTenantOpening(idempotency_key=idempotency_key, request_hash=request_hash)
+        try:
+            async with db.begin_nested():
+                db.add(candidate)
+                await db.flush()
+            opening = candidate
+            created_now = True
+        except IntegrityError:
+            opening = (
+                await db.execute(
+                    select(PlatformTenantOpening).where(PlatformTenantOpening.idempotency_key == idempotency_key)
+                )
+            ).scalar_one()
+            if opening.request_hash != request_hash:
+                raise HTTPException(status_code=409, detail="同一幂等键不能用于不同的租户创建请求") from None
+
+    if opening.tenant_id is None:
+        try:
+            receipt = await BrandTenantInitialization(db).initialize(
+                InitializeBrandTenant(
+                    name=body.name,
+                    admin_name=body.admin_name,
+                    admin_email=str(body.admin_email),
+                    industry=body.industry,
+                    notes=body.notes,
+                    opening=PlatformOpening(
+                        operator_id="platform-admin",
+                        plan_name=body.plan.value,
+                        tenant_type=body.tenant_type.value,
+                    ),
+                )
             )
-        )
-    except BrandTenantAlreadyExists as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
-    except PlanDefinitionUnavailable as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except BrandTenantAlreadyExists as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except PlanDefinitionUnavailable as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+        opening.tenant_id = receipt.tenant_id
+        opening.initial_admin_id = receipt.initial_admin_id
+        opening.initial_admin_state = receipt.initial_admin_state.value
+    elif opening.initial_admin_id is None or opening.initial_admin_state is None:  # pragma: no cover
+        raise HTTPException(status_code=500, detail="租户创建幂等回执不完整")
 
     # 租户初始化是原子边界；链接签发失败不得撤销已经初始化完成的租户。
     await db.commit()
     if _is_pg:
         # SET LOCAL 会在显式 commit 后失效；激活签发仍是受控跨租户操作。
         await db.execute(text("SET LOCAL app.bypass_rls = 'true'"))
-    tenant = await db.get(Tenant, receipt.tenant_id)
+    tenant = await db.get(Tenant, opening.tenant_id)
     if tenant is None:  # pragma: no cover
         raise HTTPException(status_code=500, detail="租户初始化结果不可读取")
 
     activation_url: str | None = None
-    activation_retryable = False
-    try:
-        ticket = await InitialAdminActivation(db, AsyncRedisCache()).issue_or_reissue(
-            tenant_id=receipt.tenant_id,
-            operator_id="platform-admin",
-            initial_admin_id=receipt.initial_admin_id,
-        )
-        activation_url = ticket.url
-    except Exception:
-        activation_retryable = True
+    activation_retryable = not created_now and opening.initial_admin_state == "pending_activation"
+    if created_now:
+        try:
+            ticket = await InitialAdminActivation(db, AsyncRedisCache()).issue_or_reissue(
+                tenant_id=opening.tenant_id,
+                operator_id="platform-admin",
+                initial_admin_id=opening.initial_admin_id,
+            )
+            activation_url = ticket.url
+        except Exception:
+            activation_retryable = True
 
     tenant_data = TenantRead.model_validate(tenant).model_dump()
     return TenantOpeningRead(
         **tenant_data,
-        initial_admin_id=receipt.initial_admin_id,
-        initial_admin_state=receipt.initial_admin_state.value,
+        initial_admin_id=opening.initial_admin_id,
+        initial_admin_state=opening.initial_admin_state,
         activation_url=activation_url,
         activation_retryable=activation_retryable,
     )
@@ -346,10 +457,26 @@ async def reissue_initial_admin_activation(
     _role: str = Depends(require_role("platform_admin")),
 ):
     """重新签发初始管理员激活链接；新链接会覆盖旧链接。"""
+    tenant_status = await db.scalar(select(Tenant.status).where(Tenant.id == tenant_id).with_for_update())
+    if tenant_status == TenantStatus.terminated:
+        raise HTTPException(status_code=409, detail="已终止租户不能重新签发管理员激活链接")
+    opening = (
+        await db.execute(
+            select(PlatformTenantOpening)
+            .where(
+                PlatformTenantOpening.tenant_id == tenant_id,
+                PlatformTenantOpening.initial_admin_state == "pending_activation",
+            )
+            .with_for_update()
+        )
+    ).scalar_one_or_none()
+    if opening is None or opening.initial_admin_id is None:
+        raise HTTPException(status_code=409, detail="没有待激活的初始管理员")
     try:
         ticket = await InitialAdminActivation(db, AsyncRedisCache()).issue_or_reissue(
             tenant_id=tenant_id,
             operator_id="platform-admin",
+            initial_admin_id=opening.initial_admin_id,
         )
     except InitialAdminNotPending as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
@@ -381,17 +508,24 @@ async def get_tenant(
                 .correlate(Tenant)
                 .scalar_subquery()
                 .label("organization_count"),
+                select(PlatformTenantOpening.initial_admin_state)
+                .where(PlatformTenantOpening.tenant_id == tenant_id)
+                .correlate(Tenant)
+                .scalar_subquery()
+                .label("initial_admin_state"),
             ).where(Tenant.id == tenant_id)
         )
     ).one_or_none()
     if not row:
         raise HTTPException(status_code=404, detail="Tenant not found")
 
-    tenant, account_count, org_count = row
+    tenant, account_count, org_count, initial_admin_state = row
     return TenantDetail(
         **{c.name: getattr(tenant, c.name) for c in tenant.__table__.columns},
         account_count=int(account_count or 0),
         organization_count=int(org_count or 0),
+        initial_admin_state=initial_admin_state,
+        activation_retryable=(tenant.status != TenantStatus.terminated and initial_admin_state == "pending_activation"),
     )
 
 
@@ -438,7 +572,22 @@ async def update_tenant_status(
         raise HTTPException(status_code=404, detail="Tenant not found")
 
     old_status = tenant.status
+    if old_status == TenantStatus.terminated and body.status != TenantStatus.terminated:
+        raise HTTPException(status_code=409, detail="已终止租户不能恢复")
+    if old_status == body.status:
+        if body.status == TenantStatus.terminated:
+            await InitialAdminActivation(db, AsyncRedisCache()).cancel_pending(tenant_id=tenant_id)
+        return tenant
     tenant.status = body.status
+    if body.status == TenantStatus.terminated:
+        await InitialAdminActivation(db, AsyncRedisCache()).cancel_pending(tenant_id=tenant_id)
+    should_revoke_sessions = (
+        old_status == TenantStatus.active and body.status != TenantStatus.active
+    ) or body.status == TenantStatus.terminated
+    if should_revoke_sessions:
+        await db.execute(
+            update(Account).where(Account.tenant_id == tenant_id).values(auth_version=Account.auth_version + 1)
+        )
     await db.flush()
 
     await write_audit_log(
@@ -464,7 +613,12 @@ async def delete_tenant(
     if not tenant:
         raise HTTPException(status_code=404, detail="Tenant not found")
 
-    tenant.status = TenantStatus.terminated
+    await InitialAdminActivation(db, AsyncRedisCache()).cancel_pending(tenant_id=tenant_id)
+    if tenant.status != TenantStatus.terminated:
+        tenant.status = TenantStatus.terminated
+        await db.execute(
+            update(Account).where(Account.tenant_id == tenant_id).values(auth_version=Account.auth_version + 1)
+        )
 
     await write_audit_log(
         db,
@@ -500,7 +654,7 @@ async def list_audit_logs(
 
 
 class PlanCreate(BaseModel):
-    name: str
+    name: TenantPlan
     display_name: str
     description: str | None = None
     price_yearly: int = 0
@@ -537,8 +691,16 @@ class PlanRead(BaseModel):
 
 class AssignPlanRequest(BaseModel):
     plan_id: str
-    expires_at: datetime | None = None
+    expires_on: date | None = None
     override_quota: dict | None = None
+
+
+BUSINESS_TIMEZONE = ZoneInfo("Asia/Shanghai")
+
+
+def plan_expiry_for_business_date(expires_on: date) -> datetime:
+    """Return the inclusive end of a China business day as a UTC instant."""
+    return datetime.combine(expires_on, time.max, tzinfo=BUSINESS_TIMEZONE).astimezone(UTC)
 
 
 class QuotaUsageItem(BaseModel):
@@ -557,6 +719,21 @@ async def list_plans(
 ):
     """套餐定义列表"""
     result = await db.execute(select(PlanDefinition).order_by(PlanDefinition.sort_order))
+    return list(result.scalars().all())
+
+
+@router.get("/plans/active", response_model=list[PlanRead])
+async def list_active_plans(
+    db: AsyncSession = Depends(get_db_with_bypass),
+    _role: str = Depends(require_role("platform_admin")),
+):
+    """平台开租户表单可选择的实时有效套餐定义。"""
+    supported_names = tuple(item.value for item in TenantPlan)
+    result = await db.execute(
+        select(PlanDefinition)
+        .where(PlanDefinition.is_active.is_(True), PlanDefinition.name.in_(supported_names))
+        .order_by(PlanDefinition.sort_order)
+    )
     return list(result.scalars().all())
 
 
@@ -613,18 +790,14 @@ async def assign_plan_to_tenant(
     if not plan:
         raise HTTPException(status_code=404, detail="Plan definition not found")
 
-    # Map plan name to TenantPlan enum
-    plan_enum_map = {
-        "free": TenantPlan.free,
-        "starter": TenantPlan.starter,
-        "pro": TenantPlan.pro,
-        "enterprise": TenantPlan.enterprise,
-    }
-    tenant.plan = plan_enum_map.get(plan.name, TenantPlan.free)
+    try:
+        tenant.plan = TenantPlan(plan.name)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail="Unsupported plan definition name") from exc
     tenant.quota = body.override_quota or plan.quota_defaults or {}
     tenant.enabled_features = plan.feature_flags or {}
-    if body.expires_at:
-        tenant.plan_expires_at = body.expires_at
+    if "expires_on" in body.model_fields_set:
+        tenant.plan_expires_at = plan_expiry_for_business_date(body.expires_on) if body.expires_on else None
     await db.flush()
 
     await write_audit_log(db, "platform-admin", str(tenant_id), "assign_plan", f"plan:{plan.name}")
@@ -660,6 +833,7 @@ async def list_quota_usage(
         products = (await db.execute(select(func.count(Product.id)).where(Product.tenant_id == tid))).scalar() or 0
         accounts = (await db.execute(select(func.count(Account.id)).where(Account.tenant_id == tid))).scalar() or 0
         codes = (await db.execute(select(func.count(CodeItem.id)).where(CodeItem.tenant_id == tid))).scalar() or 0
+        scans = (await db.execute(select(func.count(ScanEvent.id)).where(ScanEvent.tenant_id == tid))).scalar() or 0
 
         items.append(
             QuotaUsageItem(
@@ -673,6 +847,7 @@ async def list_quota_usage(
                     "products": products,
                     "accounts": accounts,
                     "codes": codes,
+                    "scans": scans,
                 },
             )
         )

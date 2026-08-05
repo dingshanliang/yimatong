@@ -32,6 +32,9 @@ import api from "@/lib/api";
 import { extractErrorMessage } from "@/lib/api";
 import { STATUS_MAP, PLAN_MAP } from "@/lib/constants";
 import { STATUS_COLORS } from "@/lib/status-colors";
+import { canRetryInitialAdminActivation } from "./activation";
+import { planExpiryLabel } from "./plan-date";
+import { shouldRotateTenantOpeningKey } from "./tenant-opening-idempotency";
 
 const { Title } = Typography;
 
@@ -44,6 +47,8 @@ interface Tenant {
   plan_expires_at: string | null;
   industry: string | null;
   created_at: string;
+  initial_admin_state: string | null;
+  activation_retryable: boolean;
 }
 
 interface TenantFormValues {
@@ -53,12 +58,19 @@ interface TenantFormValues {
   notes?: string;
   admin_email: string;
   admin_name: string;
+  tenant_type: "brand" | "agency";
 }
 
 interface TenantOpeningResponse extends Tenant {
   initial_admin_state: "pending_activation";
   activation_url: string | null;
   activation_retryable: boolean;
+}
+
+interface ActivePlanDefinition {
+  id: string;
+  name: string;
+  display_name: string;
 }
 
 export default function TenantsPage() {
@@ -73,6 +85,7 @@ export default function TenantsPage() {
   const [searchInput, setSearchInput] = useState("");
   const [createOpen, setCreateOpen] = useState(false);
   const [creating, setCreating] = useState(false);
+  const [createIdempotencyKey, setCreateIdempotencyKey] = useState("");
 
   const swrKey = useMemo(() => {
     const p = new URLSearchParams({
@@ -89,6 +102,9 @@ export default function TenantsPage() {
     items: Tenant[];
     total: number;
   }>(swrKey);
+  const { data: activePlans, isLoading: activePlansLoading } = useSWR<
+    ActivePlanDefinition[]
+  >("/platform/plans/active");
 
   const [form] = Form.useForm<TenantFormValues>();
 
@@ -97,9 +113,11 @@ export default function TenantsPage() {
     try {
       const { data } = await api.post<TenantOpeningResponse>(
         "/platform/tenants",
-        values
+        values,
+        { headers: { "Idempotency-Key": createIdempotencyKey } }
       );
       setCreateOpen(false);
+      setCreateIdempotencyKey("");
       form.resetFields();
       mutate();
       if (data.activation_url) {
@@ -121,10 +139,13 @@ export default function TenantsPage() {
         modal.warning({
           title: "租户已创建，激活链接尚未生成",
           content:
-            "租户数据已经完整保存。请稍后在租户详情中重新生成管理员激活链接。",
+            "租户数据已经完整保存。请稍后从租户列表或详情中的“恢复管理员激活”重新生成链接。",
         });
       }
     } catch (err) {
+      if (shouldRotateTenantOpeningKey(err)) {
+        setCreateIdempotencyKey(crypto.randomUUID());
+      }
       message.error(extractErrorMessage(err, "创建失败"));
     } finally {
       setCreating(false);
@@ -222,21 +243,19 @@ export default function TenantsPage() {
       ellipsis: true,
     },
     {
-      title: "过期时间",
+      title: "有效期至（北京时间）",
       dataIndex: "plan_expires_at",
       key: "plan_expires_at",
       width: 140,
       render: (v: string | null) =>
         v ? (
           dayjs(v).isBefore(dayjs().add(30, "day")) ? (
-            <Tag color={STATUS_COLORS.error}>
-              {dayjs(v).format("YYYY-MM-DD")}
-            </Tag>
+            <Tag color={STATUS_COLORS.error}>{planExpiryLabel(v)}</Tag>
           ) : (
-            dayjs(v).format("YYYY-MM-DD")
+            planExpiryLabel(v)
           )
         ) : (
-          <Tag>永久</Tag>
+          <Tag>{planExpiryLabel(null)}</Tag>
         ),
     },
     {
@@ -264,13 +283,15 @@ export default function TenantsPage() {
             label: "查看详情",
             onClick: () => router.push(`/tenants/${record.id}`),
           },
-          {
+        ];
+        if (canRetryInitialAdminActivation(record)) {
+          items.push({
             key: "activation",
             icon: <KeyOutlined />,
-            label: "生成管理员激活链接",
+            label: "恢复管理员激活",
             onClick: () => handleActivationLink(record),
-          },
-        ];
+          });
+        }
         if (record.status === "active") {
           items.push({
             key: "suspend",
@@ -321,7 +342,12 @@ export default function TenantsPage() {
         <Button
           type="primary"
           icon={<PlusOutlined />}
-          onClick={() => setCreateOpen(true)}
+          onClick={() => {
+            setCreateIdempotencyKey(crypto.randomUUID());
+            form.setFieldValue("plan", activePlans?.[0]?.name);
+            setCreateOpen(true);
+          }}
+          disabled={activePlansLoading || !activePlans?.length}
         >
           创建租户
         </Button>
@@ -396,6 +422,7 @@ export default function TenantsPage() {
         open={createOpen}
         onCancel={() => {
           setCreateOpen(false);
+          setCreateIdempotencyKey("");
           form.resetFields();
         }}
         onOk={() => form.submit()}
@@ -413,11 +440,24 @@ export default function TenantsPage() {
           >
             <Input placeholder="例：某某食品科技有限公司" />
           </Form.Item>
-          <Form.Item name="plan" label="套餐" initialValue="free">
+          <Form.Item name="tenant_type" label="租户类型" initialValue="brand">
             <Select
-              options={Object.entries(PLAN_MAP).map(([k, v]) => ({
-                value: k,
-                label: v.label,
+              options={[
+                { value: "brand", label: "品牌客户" },
+                { value: "agency", label: "代运营服务商" },
+              ]}
+            />
+          </Form.Item>
+          <Form.Item
+            name="plan"
+            label="套餐"
+            rules={[{ required: true, message: "请选择当前有效套餐" }]}
+          >
+            <Select
+              loading={activePlansLoading}
+              options={(activePlans ?? []).map((plan) => ({
+                value: plan.name,
+                label: plan.display_name,
               }))}
             />
           </Form.Item>

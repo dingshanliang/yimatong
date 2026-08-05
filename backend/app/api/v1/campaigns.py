@@ -33,6 +33,7 @@ from app.services.campaign import (
 )
 from app.services.campaign_analytics import get_campaign_comparison, get_campaign_funnel
 from app.services.quota import QuotaExceededError, check_quota_for_tenant
+from app.utils.auth_rbac import require_permission
 
 campaign_router = APIRouter(prefix="/api/v1/campaigns", tags=["campaigns"])
 
@@ -54,6 +55,7 @@ async def create_campaign_endpoint(
     body: CampaignCreateRequest,
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
+    _permission: None = Depends(require_permission("campaign:create")),
 ):
     # Quota check
     try:
@@ -88,6 +90,7 @@ async def list_campaigns_endpoint(
     page_size: int = Query(20, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
+    _permission: None = Depends(require_permission("analytics:view")),
 ):
     items, total = await list_campaigns(
         db,
@@ -108,6 +111,7 @@ async def get_campaign_endpoint(
     campaign_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
+    _permission: None = Depends(require_permission("analytics:view")),
 ):
     data = await get_campaign(db, tenant_id, campaign_id)
     if not data:
@@ -121,6 +125,7 @@ async def update_campaign_endpoint(
     body: CampaignUpdateRequest,
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
+    _permission: None = Depends(require_permission("campaign:manage")),
 ):
     product_id = _request_product_id(body.product_id, body.rules_json)
     if product_id is not None and not await campaign_product_exists(db, tenant_id, product_id):
@@ -142,6 +147,7 @@ async def change_campaign_status_endpoint(
     body: CampaignStatusRequest,
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
+    _permission: None = Depends(require_permission("campaign:manage")),
 ):
     if body.status == "active":
         blockers = await get_campaign_activation_blockers(db, tenant_id, campaign_id)
@@ -163,6 +169,7 @@ async def delete_campaign_endpoint(
     campaign_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
+    _permission: None = Depends(require_permission("campaign:manage")),
 ):
     deleted = await delete_campaign(db, tenant_id, campaign_id)
     if not deleted:
@@ -179,6 +186,7 @@ async def create_benefit_endpoint(
     body: BenefitCreateRequest,
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
+    _permission: None = Depends(require_permission("campaign:create")),
 ):
     try:
         return await create_benefit(
@@ -202,6 +210,7 @@ async def attach_benefit_endpoint(
     benefit_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
+    _permission: None = Depends(require_permission("campaign:manage")),
 ):
     try:
         data = await attach_benefit_to_campaign(db, tenant_id, campaign_id, benefit_id)
@@ -218,6 +227,7 @@ async def detach_benefit_endpoint(
     benefit_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
+    _permission: None = Depends(require_permission("campaign:manage")),
 ):
     try:
         data = await detach_benefit_from_campaign(db, tenant_id, campaign_id, benefit_id)
@@ -233,6 +243,7 @@ async def list_benefits_endpoint(
     campaign_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
+    _permission: None = Depends(require_permission("analytics:view")),
 ):
     return await list_benefits(db, tenant_id, campaign_id)
 
@@ -246,6 +257,7 @@ async def claim_benefit_endpoint(
     body: ClaimRequest,
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
+    _permission: None = Depends(require_permission("campaign:create")),
 ):
     result = await claim_benefit(
         db,
@@ -275,6 +287,7 @@ async def campaign_funnel_endpoint(
     campaign_id: uuid.UUID = Query(...),
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
+    _permission: None = Depends(require_permission("analytics:view")),
 ):
     data = await get_campaign_funnel(db, tenant_id, campaign_id)
     if not data:
@@ -287,6 +300,7 @@ async def campaign_comparison_endpoint(
     campaign_ids: str = Query(..., description="逗号分隔的活动ID"),
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
+    _permission: None = Depends(require_permission("analytics:view")),
 ):
     ids = [uuid.UUID(x.strip()) for x in campaign_ids.split(",")[:10]]
     return await get_campaign_comparison(db, tenant_id, ids)

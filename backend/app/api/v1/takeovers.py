@@ -11,7 +11,7 @@ from fastapi.responses import RedirectResponse, StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.database import get_db, get_db_with_bypass
+from app.core.database import get_db
 from app.core.dependencies import get_current_account_id, get_current_tenant
 from app.models.takeover import (
     TakeoverCutoverEvent,
@@ -563,14 +563,20 @@ async def resolve_takeover_gateway(
     project_id: uuid.UUID | None = Query(default=None),
     legacy_url: str | None = Query(default=None),
     response_mode: str = Query(default="json", pattern="^(json|redirect)$"),
-    db: AsyncSession = Depends(get_db_with_bypass),
+    db: AsyncSession = Depends(get_db),
 ):
+    from app.core.database import bootstrap_tenant_row
+
     project = None
     host = (request.headers.get("host") or "").split(":", 1)[0].lower().rstrip(".")
     if project_id:
-        project = await db.scalar(select(TakeoverProject).where(TakeoverProject.id == project_id))
+        project = await bootstrap_tenant_row(
+            db,
+            select(TakeoverProject).where(TakeoverProject.id == project_id).limit(1),
+        )
     else:
-        project = await db.scalar(
+        project = await bootstrap_tenant_row(
+            db,
             select(TakeoverProject)
             .join(TakeoverRouteVersion, TakeoverRouteVersion.project_id == TakeoverProject.id)
             .where(
@@ -578,6 +584,7 @@ async def resolve_takeover_gateway(
                 TakeoverRouteVersion.status.in_(PUBLIC_ROUTE_STATUSES),
             )
             .order_by(TakeoverRouteVersion.created_at.desc())
+            .limit(1),
         )
     if not project:
         raise HTTPException(status_code=404, detail="未找到已激活的接管域名")
@@ -604,11 +611,14 @@ async def resolve_takeover_gateway(
 async def redirect_takeover_gateway_path(
     request: Request,
     legacy_path: str,
-    db: AsyncSession = Depends(get_db_with_bypass),
+    db: AsyncSession = Depends(get_db),
 ):
     """域名网关转发到的真实旧路径；浏览器请求直接得到 307。"""
+    from app.core.database import bootstrap_tenant_row
+
     host = (request.headers.get("host") or "").split(":", 1)[0].lower().rstrip(".")
-    project = await db.scalar(
+    project = await bootstrap_tenant_row(
+        db,
         select(TakeoverProject)
         .join(TakeoverRouteVersion, TakeoverRouteVersion.project_id == TakeoverProject.id)
         .where(
@@ -616,6 +626,7 @@ async def redirect_takeover_gateway_path(
             TakeoverRouteVersion.status.in_(PUBLIC_ROUTE_STATUSES),
         )
         .order_by(TakeoverRouteVersion.created_at.desc())
+        .limit(1),
     )
     if not project:
         raise HTTPException(status_code=404, detail="未找到已激活的接管域名")

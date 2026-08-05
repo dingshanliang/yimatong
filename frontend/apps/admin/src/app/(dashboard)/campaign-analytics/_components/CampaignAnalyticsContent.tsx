@@ -1,7 +1,21 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
-import { App, Button, Card, Col, DatePicker, Progress, Row, Select, Skeleton, Space, Statistic, Table, Typography } from "antd";
+import {
+  App,
+  Button,
+  Card,
+  Col,
+  DatePicker,
+  Progress,
+  Row,
+  Select,
+  Skeleton,
+  Space,
+  Statistic,
+  Table,
+  Typography,
+} from "antd";
 import {
   ScanOutlined,
   UserOutlined,
@@ -42,7 +56,11 @@ interface Campaign {
   name: string;
 }
 
-export default function CampaignAnalyticsContent() {
+export default function CampaignAnalyticsContent({
+  restrictedToAnalytics = false,
+}: {
+  restrictedToAnalytics?: boolean;
+}) {
   const { message } = App.useApp();
   const [dateRange, setDateRange] = useState<[Dayjs, Dayjs]>([
     dayjs().subtract(30, "day"),
@@ -52,8 +70,12 @@ export default function CampaignAnalyticsContent() {
   const [loading, setLoading] = useState(false);
   const [codeBatches, setCodeBatches] = useState<CodeBatch[]>([]);
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
-  const [selectedCampaign, setSelectedCampaign] = useState<string | undefined>(undefined);
-  const [selectedBatch, setSelectedBatch] = useState<string | undefined>(undefined);
+  const [selectedCampaign, setSelectedCampaign] = useState<string | undefined>(
+    undefined
+  );
+  const [selectedBatch, setSelectedBatch] = useState<string | undefined>(
+    undefined
+  );
   const [codeStats, setCodeStats] = useState<CodeStats | null>(null);
   const [codeStatsLoading, setCodeStatsLoading] = useState(false);
   const [exporting, setExporting] = useState(false);
@@ -104,31 +126,29 @@ export default function CampaignAnalyticsContent() {
     }
   }, []);
 
-  const fetchCodeStats = useCallback(
-    async (batchId: string) => {
-      setCodeStatsLoading(true);
-      try {
-        const { data } = await api.get("/analytics/code-stats", {
-          params: { code_batch_id: batchId },
-        });
-        setCodeStats(data);
-      } catch {
-        setCodeStats(null);
-      } finally {
-        setCodeStatsLoading(false);
-      }
-    },
-    []
-  );
+  const fetchCodeStats = useCallback(async (batchId: string) => {
+    setCodeStatsLoading(true);
+    try {
+      const { data } = await api.get("/analytics/code-stats", {
+        params: { code_batch_id: batchId },
+      });
+      setCodeStats(data);
+    } catch {
+      setCodeStats(null);
+    } finally {
+      setCodeStatsLoading(false);
+    }
+  }, []);
 
   useEffect(() => {
     fetchTrend();
   }, [fetchTrend]);
 
   useEffect(() => {
+    if (restrictedToAnalytics) return;
     fetchCodeBatches();
     fetchCampaigns();
-  }, [fetchCodeBatches, fetchCampaigns]);
+  }, [fetchCodeBatches, fetchCampaigns, restrictedToAnalytics]);
 
   useEffect(() => {
     if (selectedBatch) {
@@ -191,7 +211,9 @@ export default function CampaignAnalyticsContent() {
   ];
 
   const activatedPercent = codeStats?.total
-    ? Math.round(((codeStats.by_status?.activated ?? 0) / codeStats.total) * 100)
+    ? Math.round(
+        ((codeStats.by_status?.activated ?? 0) / codeStats.total) * 100
+      )
     : 0;
   const boundPercent = codeStats?.total
     ? Math.round(((codeStats.by_status?.bound ?? 0) / codeStats.total) * 100)
@@ -203,19 +225,21 @@ export default function CampaignAnalyticsContent() {
 
       <div className="mb-4">
         <Space wrap>
-          <Select
-            placeholder="全部活动"
-            allowClear
-            showSearch
-            optionFilterProp="label"
-            style={{ width: 200 }}
-            value={selectedCampaign}
-            onChange={(v) => setSelectedCampaign(v)}
-            options={campaigns.map((c) => ({
-              value: c.id,
-              label: c.name,
-            }))}
-          />
+          {!restrictedToAnalytics && (
+            <Select
+              placeholder="全部活动"
+              allowClear
+              showSearch
+              optionFilterProp="label"
+              style={{ width: 200 }}
+              value={selectedCampaign}
+              onChange={(v) => setSelectedCampaign(v)}
+              options={campaigns.map((c) => ({
+                value: c.id,
+                label: c.name,
+              }))}
+            />
+          )}
           <RangePicker
             value={dateRange}
             onChange={(dates) => {
@@ -224,7 +248,11 @@ export default function CampaignAnalyticsContent() {
               }
             }}
           />
-          <Button icon={<DownloadOutlined />} onClick={handleExport} loading={exporting}>
+          <Button
+            icon={<DownloadOutlined />}
+            onClick={handleExport}
+            loading={exporting}
+          >
             导出 Excel
           </Button>
         </Space>
@@ -233,7 +261,11 @@ export default function CampaignAnalyticsContent() {
       <Row gutter={[16, 16]} className="mb-6">
         <Col xs={24} sm={12} lg={6}>
           <Card loading={loading}>
-            <Statistic title="总扫码" value={totals.total_scans} prefix={<ScanOutlined />} />
+            <Statistic
+              title="总扫码"
+              value={totals.total_scans}
+              prefix={<ScanOutlined />}
+            />
           </Card>
         </Col>
         <Col xs={24} sm={12} lg={6}>
@@ -243,12 +275,20 @@ export default function CampaignAnalyticsContent() {
         </Col>
         <Col xs={24} sm={12} lg={6}>
           <Card loading={loading}>
-            <Statistic title="首扫" value={totals.first_scans} prefix={<RocketOutlined />} />
+            <Statistic
+              title="首扫"
+              value={totals.first_scans}
+              prefix={<RocketOutlined />}
+            />
           </Card>
         </Col>
         <Col xs={24} sm={12} lg={6}>
           <Card loading={loading}>
-            <Statistic title="复扫" value={totals.rescans} prefix={<RedoOutlined />} />
+            <Statistic
+              title="复扫"
+              value={totals.rescans}
+              prefix={<RedoOutlined />}
+            />
           </Card>
         </Col>
       </Row>
@@ -257,7 +297,9 @@ export default function CampaignAnalyticsContent() {
         {loading ? (
           <Skeleton active paragraph={{ rows: 4 }} />
         ) : (
-          trend.length > 0 && <ScanTrendChart data={trend} height={300} showMulti />
+          trend.length > 0 && (
+            <ScanTrendChart data={trend} height={300} showMulti />
+          )
         )}
         <Table
           columns={trendColumns}
@@ -269,52 +311,60 @@ export default function CampaignAnalyticsContent() {
         />
       </Card>
 
-      <Card title="码批次统计" size="small" loading={codeStatsLoading}>
-        <div className="mb-4">
-          <Select
-            placeholder="选择码批次"
-            allowClear
-            showSearch
-            optionFilterProp="label"
-            style={{ width: 300 }}
-            value={selectedBatch}
-            onChange={(v) => setSelectedBatch(v)}
-            options={codeBatches.map((b) => ({
-              value: b.id,
-              label: `${b.batch_code} (${b.quantity} 码)`,
-            }))}
-          />
-        </div>
-        {selectedBatch && codeStats && (
-          <Row gutter={[24, 16]}>
-            <Col xs={24} md={8}>
-              <Statistic title="总码数" value={codeStats.total} />
-              <Progress percent={100} size="small" className="mt-2" />
-            </Col>
-            <Col xs={24} md={8}>
-              <Statistic title="已激活" value={codeStats.by_status?.activated ?? 0} />
-              <Progress
-                percent={activatedPercent}
-                size="small"
-                className="mt-2"
-                status={activatedPercent === 100 ? "success" : "active"}
-              />
-            </Col>
-            <Col xs={24} md={8}>
-              <Statistic title="已绑定" value={codeStats.by_status?.bound ?? 0} />
-              <Progress
-                percent={boundPercent}
-                size="small"
-                className="mt-2"
-                status={boundPercent === 100 ? "success" : "active"}
-              />
-            </Col>
-          </Row>
-        )}
-        {selectedBatch && !codeStats && !codeStatsLoading && (
-          <div className="text-text-muted">暂无统计数据</div>
-        )}
-      </Card>
+      {!restrictedToAnalytics && (
+        <Card title="码批次统计" size="small" loading={codeStatsLoading}>
+          <div className="mb-4">
+            <Select
+              placeholder="选择码批次"
+              allowClear
+              showSearch
+              optionFilterProp="label"
+              style={{ width: 300 }}
+              value={selectedBatch}
+              onChange={(v) => setSelectedBatch(v)}
+              options={codeBatches.map((b) => ({
+                value: b.id,
+                label: `${b.batch_code} (${b.quantity} 码)`,
+              }))}
+            />
+          </div>
+          {selectedBatch && codeStats && (
+            <Row gutter={[24, 16]}>
+              <Col xs={24} md={8}>
+                <Statistic title="总码数" value={codeStats.total} />
+                <Progress percent={100} size="small" className="mt-2" />
+              </Col>
+              <Col xs={24} md={8}>
+                <Statistic
+                  title="已激活"
+                  value={codeStats.by_status?.activated ?? 0}
+                />
+                <Progress
+                  percent={activatedPercent}
+                  size="small"
+                  className="mt-2"
+                  status={activatedPercent === 100 ? "success" : "active"}
+                />
+              </Col>
+              <Col xs={24} md={8}>
+                <Statistic
+                  title="已绑定"
+                  value={codeStats.by_status?.bound ?? 0}
+                />
+                <Progress
+                  percent={boundPercent}
+                  size="small"
+                  className="mt-2"
+                  status={boundPercent === 100 ? "success" : "active"}
+                />
+              </Col>
+            </Row>
+          )}
+          {selectedBatch && !codeStats && !codeStatsLoading && (
+            <div className="text-text-muted">暂无统计数据</div>
+          )}
+        </Card>
+      )}
     </div>
   );
 }

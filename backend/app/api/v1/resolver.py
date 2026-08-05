@@ -5,10 +5,10 @@ import uuid
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import HTMLResponse, JSONResponse
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.database import get_db
+from app.core.database import _session_uses_postgresql, get_db, set_session_tenant_context
 from app.middleware.rate_limit import rate_limiter
 from app.models.code import CodeItem, CodeItemStatus, CodeType, to_lifecycle
 from app.models.scan import ScanEvent
@@ -23,6 +23,7 @@ from app.services.page_templates import (
     build_code_page,
 )
 from app.services.public_id import validate_public_id
+from app.services.quota import QuotaExceededError, check_quota_incremental_locked
 from app.services.resolve_cache import resolve_cache
 from app.services.resolver import resolve_public_code
 from app.services.resolver_response import build_json_response
@@ -68,33 +69,51 @@ async def resolve_code_endpoint(
     if not validate_public_id(public_id):
         return _not_found(want_json)
 
-    # 2. 缓存查询 -> DB 回退
+    # 2. 公开码只能用精确 public_id 做一次受控租户定位。定位完成后立即
+    # 关闭 bypass 并在同一事务写入精确 tenant RLS context；后续码、套餐、
+    # 配额、页面和事件查询都只能看见该租户。
+    tenant_uuid = await _scope_public_code_tenant(db, public_id)
+    if tenant_uuid is None:
+        return _not_found(want_json)
+
+    # 3. 缓存查询 -> DB 回退。缓存租户必须与数据库定位结果一致，避免
+    # 污染或过期缓存把另一个租户的数据带入当前会话。
     cached = await resolve_cache.get(f"resolve:{public_id}")
     data = cached or await resolve_public_code(db, public_id)
     if data and not cached:
         await resolve_cache.set(f"resolve:{public_id}", data)
 
-    if not data:
+    if not data or data.get("tenant_id") != str(tenant_uuid):
         return _not_found(want_json)
+
+    from app.services.entitlement import TenantPlanExpiredError, require_active_plan
+
+    try:
+        await require_active_plan(db, tenant_uuid)
+    except TenantPlanExpiredError:
+        return _plan_expired(want_json)
 
     status = data["status"]
 
-    # 3. 终止性状态（revoked/created/expired）— 不颁发 token、不返回溯源
+    # 4. 终止性状态（revoked/created/expired）— 不颁发 token、不返回溯源
     if status in _TERMINAL_STATUSES:
         return _error_status(status, public_id, want_json)
 
-    # 4. 计算 IP hash（一次，复用）
+    # 5. 计算 IP hash（一次，复用）
     ip_hash = compute_ip_hash(client_ip)
 
-    # 5. 记录扫码事件（frozen 也记录查验，但不颁发 scan_token → 权益自然暂停）
+    # 6. 记录扫码事件（frozen 也记录查验，但不颁发 scan_token → 权益自然暂停）
     user_agent = request.headers.get("user-agent", "")
     is_frozen = status == CodeItemStatus.frozen
+    try:
+        await check_quota_incremental_locked(db, tenant_uuid, "max_scans", ScanEvent)
+    except QuotaExceededError:
+        return _quota_exceeded(want_json)
     # yimatong-zgb1.10：读取 visitor_id（H5 localStorage 携带，X-Visitor-ID 头）
     request_visitor_id = request.headers.get("X-Visitor-ID") or None
     # yimatong-zgb1.10 Decision 22：解析或签发匿名访客（first-party 稳定 ID）
     from app.services.visitor import resolve_or_create_visitor
 
-    tenant_uuid = uuid.UUID(data["tenant_id"])
     visitor = await resolve_or_create_visitor(
         db,
         tenant_id=tenant_uuid,
@@ -107,20 +126,23 @@ async def resolve_code_endpoint(
     is_robot = _is_robot_traffic(user_agent, request)
     is_valid_visit = status in (CodeItemStatus.activated, CodeItemStatus.frozen) and not is_robot
     # frozen 仍记录扫码事实（消费者查看了溯源），但不颁发 scan_token
-    scan_info = await _record_scan(
-        db,
-        data,
-        public_id,
-        ip_hash,
-        user_agent,
-        status,
-        visitor_id=visitor_id,
-        is_valid_visit=is_valid_visit,
-    )
+    try:
+        scan_info = await _record_scan(
+            db,
+            data,
+            public_id,
+            ip_hash,
+            user_agent,
+            status,
+            visitor_id=visitor_id,
+            is_valid_visit=is_valid_visit,
+        )
+    except QuotaExceededError:
+        return _quota_exceeded(want_json)
     # 把签发的 visitor_id 放进 scan_info，H5 存 localStorage
     scan_info["visitor_id"] = visitor_id
 
-    # 6. 生成 scan_token（含 tenant_id）— frozen 不颁发（权益暂停，AC3）
+    # 7. 生成 scan_token（含 tenant_id）— frozen 不颁发（权益暂停，AC3）
     scan_token = None
     if not is_frozen:
         scan_token = create_scan_token(
@@ -133,16 +155,40 @@ async def resolve_code_endpoint(
         scan_info["benefit_paused"] = True
         scan_info["paused_reason"] = "frozen"
 
-    # 7. JSON 模式
+    # 8. JSON 模式
     if want_json:
         resp = await build_json_response(db, data, scan_token, scan_info)
         return JSONResponse(content=resp)
 
-    # 8. HTML 模式
+    # 9. HTML 模式
     return await _html_response(db, data, public_id)
 
 
 # -- 内部辅助函数 --
+
+
+async def _scope_public_code_tenant(db: AsyncSession, public_id: str) -> uuid.UUID | None:
+    """Locate one public code's tenant, then lock the session to that tenant.
+
+    The temporary bypass is intentionally confined to a projection of
+    ``CodeItem.tenant_id`` constrained by the already validated public ID.  No
+    business object is loaded while bypass is active.
+    """
+
+    if _session_uses_postgresql(db):
+        from app.core.database import control_session_factory
+
+        async with control_session_factory() as control_db:
+            await control_db.execute(text("SELECT set_config('app.tenant_id', '', true)"))
+            await control_db.execute(text("SELECT set_config('app.bypass_rls', 'true', true)"))
+            tenant_id = await control_db.scalar(
+                select(CodeItem.tenant_id).where(CodeItem.public_id == public_id).limit(1)
+            )
+    else:
+        tenant_id = await db.scalar(select(CodeItem.tenant_id).where(CodeItem.public_id == public_id).limit(1))
+    if tenant_id is None:
+        return None
+    return await set_session_tenant_context(db, tenant_id)
 
 
 def _not_found(want_json: bool):
@@ -156,6 +202,44 @@ def _not_found(want_json: bool):
             },
         )
     return HTMLResponse(content=NOT_FOUND_PAGE, status_code=404)
+
+
+def _browser_service_unavailable(reason: str, status_code: int) -> HTMLResponse:
+    return HTMLResponse(
+        status_code=status_code,
+        content=f"""<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>暂时无法继续查验</title>
+</head>
+<body style="font-family:system-ui,-apple-system,sans-serif;max-width:36rem;margin:12vh auto;padding:0 1.5rem">
+  <main>
+    <h1 style="font-size:1.5rem">当前无法继续查验</h1><p>{reason}</p>
+    <p>请稍后再试；如持续无法使用，请联系商品品牌方处理。</p>
+  </main>
+</body></html>""",
+    )
+
+
+def _plan_expired(want_json: bool):
+    from app.services.entitlement import PLAN_EXPIRED_CODE, PLAN_EXPIRED_DETAIL
+
+    if not want_json:
+        return _browser_service_unavailable("品牌方的服务套餐当前已到期。", 403)
+    return JSONResponse(
+        status_code=403,
+        content={"code": PLAN_EXPIRED_CODE, "detail": PLAN_EXPIRED_DETAIL},
+    )
+
+
+def _quota_exceeded(want_json: bool):
+    if not want_json:
+        return _browser_service_unavailable("品牌方当前可用的扫码服务次数已用完。", 429)
+    return JSONResponse(
+        status_code=429,
+        content={"code": "QUOTA_EXCEEDED", "detail": "扫码服务额度已用完，请联系品牌方"},
+    )
 
 
 # 终止状态映射：(HTTP 状态码, HTML 模板)
@@ -281,6 +365,8 @@ async def _record_scan(
         scan_info["verification_time"] = event.scan_time.isoformat()
         # yimatong-zgb1.5：last_scan_time = 本次查验时间（与 verification_time 同值，契约字段名更清晰）
         scan_info["last_scan_time"] = event.scan_time.isoformat()
+    except QuotaExceededError:
+        raise
     except Exception:
         logger.exception("Failed to record scan event for public_id=%s", public_id)
     return scan_info

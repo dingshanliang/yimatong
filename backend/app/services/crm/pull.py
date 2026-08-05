@@ -171,28 +171,28 @@ async def _sync_single_contact(
 
 async def crm_pull_job(ctx: dict) -> dict:
     """arq 定时任务入口：拉取所有租户的企微联系人变更。"""
-    from app.core.database import async_session_factory
+    from app.core.database import async_session_factory, bootstrap_tenant_keys, set_session_tenant_context
 
     logger.info("CRM pull job started")
 
     total_stats = {"tenants": 0, "pulled": 0, "created": 0, "updated": 0, "errors": 0}
 
-    async with async_session_factory() as db:
-        # 获取所有启用了企微 CRM 的租户
-        result = await db.execute(
-            select(Connector.tenant_id)
+    async with async_session_factory() as bootstrap_db:
+        work_keys = await bootstrap_tenant_keys(
+            bootstrap_db,
+            select(Connector.id, Connector.tenant_id)
             .where(
                 Connector.connector_type == "wecom_crm",
                 Connector.enabled == True,  # noqa: E712
             )
-            .distinct()
+            .order_by(Connector.id)
+            .limit(1000),
         )
-        tenant_ids = [row[0] for row in result.fetchall()]
+    tenant_ids = list(dict.fromkeys(tenant_id for _, tenant_id in work_keys))
 
     for tenant_id in tenant_ids:
-        from app.core.database import async_session_factory
-
         async with async_session_factory() as db:
+            await set_session_tenant_context(db, tenant_id)
             stats = await sync_wecom_contacts_for_tenant(db, tenant_id)
             total_stats["tenants"] += 1
             for k in ("pulled", "created", "updated", "errors"):

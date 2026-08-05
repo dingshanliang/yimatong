@@ -6,6 +6,7 @@ const mockConfirm = vi.fn();
 const mockSuccess = vi.fn();
 const mockError = vi.fn();
 const mockPush = vi.fn();
+const mockSwitchAgencyContext = vi.fn();
 
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: mockPush }),
@@ -39,6 +40,15 @@ vi.mock("@/lib/api", () => ({
   },
   extractErrorMessage: (_error: unknown, fallback: string) => fallback,
   registerAuthInterceptorHandlers: vi.fn(),
+}));
+
+vi.mock("@/lib/auth", () => ({
+  useAuthStore: {
+    getState: () => ({
+      switchAgencyContext: mockSwitchAgencyContext,
+      user: { agency_scope: ["products"] },
+    }),
+  },
 }));
 
 function summary(overrides = {}) {
@@ -135,6 +145,7 @@ function mockWorkbench({
 describe("AgencyPage", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockSwitchAgencyContext.mockResolvedValue(undefined);
     mockWorkbench();
   });
 
@@ -205,6 +216,71 @@ describe("AgencyPage", () => {
 
     await waitFor(() => {
       expect(mockPush).toHaveBeenCalledWith("/pages");
+    });
+  });
+
+  it("enters an authorized client before navigating to its first module", async () => {
+    mockWorkbench({
+      clients: [
+        client({ agency_scope: ["products"], full_workbench_access: false }),
+      ],
+    });
+    render(<AgencyPage />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /进入管理/ }));
+
+    await waitFor(() => {
+      expect(mockSwitchAgencyContext).toHaveBeenCalledWith("t1");
+      expect(mockPush).toHaveBeenCalledWith("/products");
+    });
+  });
+
+  it("refreshes the workbench and asks for reauthorization when entering returns 403", async () => {
+    mockWorkbench({
+      clients: [
+        client({ agency_scope: ["products"], full_workbench_access: false }),
+      ],
+    });
+    mockSwitchAgencyContext.mockRejectedValue({ response: { status: 403 } });
+    render(<AgencyPage />);
+    await screen.findAllByText("客户A");
+    const callsBeforeEnter = mockGet.mock.calls.length;
+
+    fireEvent.click(screen.getByRole("button", { name: /进入管理/ }));
+
+    await waitFor(() => {
+      expect(mockGet.mock.calls.length).toBeGreaterThan(callsBeforeEnter);
+      expect(mockError).toHaveBeenCalledWith(
+        "该客户的代运营授权已失效，请联系客户重新授权后再进入"
+      );
+      expect(mockPush).not.toHaveBeenCalled();
+    });
+  });
+
+  it("stays on the workbench and allows retry after a network failure", async () => {
+    mockWorkbench({
+      clients: [
+        client({ agency_scope: ["products"], full_workbench_access: false }),
+      ],
+    });
+    mockSwitchAgencyContext
+      .mockRejectedValueOnce(new Error("network"))
+      .mockResolvedValueOnce(undefined);
+    render(<AgencyPage />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /进入管理/ }));
+    await waitFor(() => {
+      expect(mockError).toHaveBeenCalledWith("进入客户失败，请检查网络后重试");
+      expect(mockPush).not.toHaveBeenCalled();
+    });
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /进入管理/ })).toBeEnabled();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /进入管理/ }));
+    await waitFor(() => {
+      expect(mockSwitchAgencyContext).toHaveBeenCalledTimes(2);
+      expect(mockPush).toHaveBeenCalledWith("/products");
     });
   });
 
@@ -356,48 +432,15 @@ describe("AgencyPage", () => {
     });
   });
 
-  it("shows generated admin credentials after client initialization", async () => {
-    mockPost.mockResolvedValue({
-      data: {
-        id: "tenant-1",
-        name: "新客户",
-        admin_email: "admin@new.test",
-        initial_password: "Ymt-NewClient123",
-      },
-    });
-
+  it("does not expose direct tenant creation from the agency workbench", async () => {
     render(<AgencyPage />);
-    fireEvent.click(screen.getByRole("button", { name: /初始化新客户/ }));
-    fireEvent.change(screen.getByLabelText("客户名称"), {
-      target: { value: "新客户" },
-    });
-    fireEvent.change(screen.getByLabelText("联系人"), {
-      target: { value: "张三" },
-    });
-    fireEvent.change(screen.getByLabelText("联系电话"), {
-      target: { value: "13800000000" },
-    });
-    fireEvent.change(screen.getByLabelText("联系邮箱"), {
-      target: { value: "admin@new.test" },
-    });
-
-    fireEvent.click(screen.getByRole("button", { name: "下一步" }));
-    fireEvent.change(await screen.findByLabelText("品牌名称"), {
-      target: { value: "新品牌" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "下一步" }));
-    await screen.findByLabelText("扫码页模板");
-    fireEvent.click(screen.getByRole("button", { name: "下一步" }));
-    await screen.findByText("配置确认");
-    fireEvent.click(await screen.findByRole("button", { name: "完成初始化" }));
 
     await waitFor(() => {
-      expect(screen.getByTestId("agency-init-credentials")).toHaveTextContent(
-        "admin@new.test"
-      );
-      expect(screen.getByTestId("agency-init-credentials")).toHaveTextContent(
-        "Ymt-NewClient123"
-      );
+      expect(screen.getByText("代运营工作台")).toBeInTheDocument();
     });
+    expect(
+      screen.queryByRole("button", { name: /初始化新客户/ })
+    ).not.toBeInTheDocument();
+    expect(mockPost).not.toHaveBeenCalledWith("/tenants", expect.anything());
   });
 });

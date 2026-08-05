@@ -1,7 +1,11 @@
 import { create } from "zustand";
-import api, { registerAuthInterceptorHandlers } from "./api";
+import { parseJwtPayload } from "@yimatong/shared";
+import api, {
+  AgencyContextRevalidationError,
+  registerAuthInterceptorHandlers,
+} from "./api";
 
-interface AuthUser {
+export interface AuthUser {
   account_id: string;
   tenant_id: string;
   role: string;
@@ -11,14 +15,20 @@ interface AuthUser {
   // Agency context
   acting_tenant_id: string | null;
   agency_scope: string[] | null;
+  must_change_password: boolean;
 }
 
 interface AuthState {
   user: AuthUser | null;
   token: string | null;
   loading: boolean;
-  login: (email: string, password: string, options?: { tenantSlug?: string }) => Promise<void>;
-  logout: () => void;
+  login: (
+    email: string,
+    password: string,
+    options?: { tenantSlug?: string }
+  ) => Promise<void>;
+  logout: () => Promise<void>;
+  clearSession: () => void;
   hydrate: () => void;
   silentRefresh: () => Promise<string | null>;
   switchAgencyContext: (clientTenantId: string) => Promise<void>;
@@ -33,7 +43,16 @@ function ensureTenantType(user: AuthUser): AuthUser {
   if (!user.tenant_type) user.tenant_type = "brand";
   if (user.acting_tenant_id === undefined) user.acting_tenant_id = null;
   if (user.agency_scope === undefined) user.agency_scope = null;
+  if (user.must_change_password === undefined)
+    user.must_change_password = false;
   return user;
+}
+
+function clearBrowserSession() {
+  localStorage.removeItem("access_token");
+  localStorage.removeItem("refresh_token");
+  localStorage.removeItem("auth_store");
+  document.cookie = "access_token=; path=/; max-age=0";
 }
 
 export const useAuthStore = create<AuthState>((set) => ({
@@ -54,39 +73,61 @@ export const useAuthStore = create<AuthState>((set) => ({
         password,
         ...(options?.tenantSlug ? { tenant_slug: options.tenantSlug } : {}),
       });
-      const { access_token, refresh_token, expires_in } = data;
-      _persistTokens(access_token, refresh_token, expires_in);
+      const { access_token, refresh_token } = data;
+      _persistTokens(access_token, refresh_token);
 
       // Decode JWT to extract user info
-      const payload = JSON.parse(atob(access_token.split(".")[1]));
+      const payload = parseJwtPayload(access_token);
+      if (!payload) throw new Error("登录令牌无效");
       const user: AuthUser = {
-        account_id: payload.sub,
-        tenant_id: payload.tenant_id,
-        role: payload.role,
-        tenant_type: payload.tenant_type || "brand",
+        account_id: String(payload.sub),
+        tenant_id: String(payload.tenant_id),
+        role: String(payload.role),
+        tenant_type: String(payload.tenant_type || "brand"),
         email,
-        name: payload.name || email,
-        acting_tenant_id: payload.acting_tenant_id || null,
-        agency_scope: payload.scope || null,
+        name: typeof payload.name === "string" ? payload.name : email,
+        acting_tenant_id:
+          typeof payload.acting_tenant_id === "string"
+            ? payload.acting_tenant_id
+            : null,
+        agency_scope: Array.isArray(payload.scope)
+          ? payload.scope.filter(
+              (scope): scope is string => typeof scope === "string"
+            )
+          : null,
+        must_change_password: payload.must_change_password === true,
       };
       localStorage.setItem("auth_store", JSON.stringify(user));
       set({ user, token: access_token, loading: false });
-    } catch {
+    } catch (error) {
       set({ loading: false });
-      throw new Error("登录失败，请检查邮箱和密码");
+      throw error;
     }
   },
 
-  logout: () => {
-    localStorage.removeItem("access_token");
-    localStorage.removeItem("refresh_token");
-    localStorage.removeItem("auth_store");
-    document.cookie = "access_token=; path=/; max-age=0";
+  logout: async () => {
+    const refreshToken = localStorage.getItem("refresh_token");
+    try {
+      await api.post("/auth/logout", {
+        ...(refreshToken ? { refresh_token: refreshToken } : {}),
+      });
+    } catch {
+      // 网络异常或服务端登录态已失效时，仍需保证本机退出完成。
+    } finally {
+      clearBrowserSession();
+      set({ user: null, token: null });
+    }
+  },
+
+  clearSession: () => {
+    clearBrowserSession();
     set({ user: null, token: null });
   },
 
   switchAgencyContext: async (clientTenantId: string) => {
-    const { data } = await api.post("/agency/switch-context", { client_tenant_id: clientTenantId });
+    const { data } = await api.post("/agency/switch-context", {
+      client_tenant_id: clientTenantId,
+    });
     const stored = localStorage.getItem("auth_store");
     const base = stored ? JSON.parse(stored) : {};
     const updatedUser: AuthUser = {
@@ -138,11 +179,11 @@ export const useAuthStore = create<AuthState>((set) => ({
 
 registerAuthInterceptorHandlers({
   silentRefresh: () => useAuthStore.getState().silentRefresh(),
-  logout: () => useAuthStore.getState().logout(),
+  logout: () => useAuthStore.getState().clearSession(),
 });
 
 /** 将 access_token 和 refresh_token 持久化到 localStorage + cookie */
-function _persistTokens(accessToken: string, refreshToken: string, _expiresIn?: number) {
+function _persistTokens(accessToken: string, refreshToken: string) {
   localStorage.setItem("access_token", accessToken);
   localStorage.setItem("refresh_token", refreshToken);
   // cookie 供 Next.js middleware 读取，max-age 用 refresh token 的有效期（30天）
@@ -161,36 +202,92 @@ function _applyTokenUpdate(accessToken: string, updatedUser: AuthUser) {
 
 async function _doSilentRefresh(): Promise<string | null> {
   try {
-    // 使用 cookie 自动携带 refresh_token，body 为空
-    const { data } = await api.post("/auth/refresh", {});
-    const { access_token, refresh_token: newRefreshToken, expires_in } = data;
-    _persistTokens(access_token, newRefreshToken, expires_in);
+    const previousAccessToken = localStorage.getItem("access_token");
+    const previousPayload = previousAccessToken
+      ? parseJwtPayload(previousAccessToken)
+      : null;
+    const previousActingTenant =
+      typeof previousPayload?.acting_tenant_id === "string"
+        ? previousPayload.acting_tenant_id
+        : null;
+    const currentRefreshToken = localStorage.getItem("refresh_token");
+    const { data } = await api.post("/auth/refresh", {
+      ...(currentRefreshToken ? { refresh_token: currentRefreshToken } : {}),
+    });
+    const { access_token: baseAccessToken, refresh_token: newRefreshToken } =
+      data;
+    const basePayload = parseJwtPayload(baseAccessToken);
+    if (!basePayload) throw new Error("刷新令牌响应无效");
+    if (typeof basePayload.acting_tenant_id === "string") {
+      throw new Error("刷新令牌未退出原代运营客户上下文");
+    }
+    _persistTokens(baseAccessToken, newRefreshToken);
 
-    // 更新 zustand state
+    // Refresh intentionally returns the base agency token. Apply that safe
+    // context first so failed revalidation exits the client workspace without
+    // destroying the still-valid agency session.
     const stored = localStorage.getItem("auth_store");
-    if (stored) {
-      const payload = JSON.parse(atob(access_token.split(".")[1]));
-      const parsedStored = JSON.parse(stored);
-      const user: AuthUser = {
-        account_id: payload.sub,
-        tenant_id: payload.tenant_id,
-        role: payload.role,
-        tenant_type: payload.tenant_type || "brand",
+    const existingUser = useAuthStore.getState().user;
+    let baseUser: AuthUser | null = null;
+    if (stored || existingUser) {
+      const parsedStored = stored ? JSON.parse(stored) : existingUser;
+      baseUser = {
+        account_id: String(basePayload.sub),
+        tenant_id: String(basePayload.tenant_id),
+        role: String(basePayload.role),
+        tenant_type: String(basePayload.tenant_type || "brand"),
         email: parsedStored.email,
         name: parsedStored.name || parsedStored.email,
-        acting_tenant_id: payload.acting_tenant_id || parsedStored.acting_tenant_id || null,
-        agency_scope: payload.scope || parsedStored.agency_scope || null,
+        acting_tenant_id: null,
+        agency_scope: null,
+        must_change_password: basePayload.must_change_password === true,
       };
-      localStorage.setItem("auth_store", JSON.stringify(user));
-      useAuthStore.setState({ user, token: access_token });
+      _applyTokenUpdate(baseAccessToken, baseUser);
     } else {
-      useAuthStore.setState({ token: access_token });
+      useAuthStore.setState({ token: baseAccessToken });
     }
 
-    return access_token;
-  } catch {
+    if (!previousActingTenant) return baseAccessToken;
+
+    try {
+      const { data: switched } = await api.post(
+        "/agency/switch-context",
+        { client_tenant_id: previousActingTenant },
+        {
+          headers: { Authorization: `Bearer ${baseAccessToken}` },
+          skipAuthRefresh: true,
+        }
+      );
+      const actingAccessToken = switched.access_token;
+      const actingPayload = parseJwtPayload(actingAccessToken);
+      if (actingPayload?.acting_tenant_id !== previousActingTenant) {
+        throw new AgencyContextRevalidationError();
+      }
+      const liveScope = Array.isArray(switched.scope)
+        ? switched.scope.filter(
+            (scope: unknown): scope is string => typeof scope === "string"
+          )
+        : [];
+      const currentUser = baseUser ?? useAuthStore.getState().user;
+      if (currentUser) {
+        _applyTokenUpdate(actingAccessToken, {
+          ...currentUser,
+          acting_tenant_id: previousActingTenant,
+          agency_scope: liveScope,
+        });
+      } else {
+        _persistTokens(actingAccessToken, newRefreshToken);
+        useAuthStore.setState({ token: actingAccessToken });
+      }
+      return actingAccessToken;
+    } catch (error) {
+      if (error instanceof AgencyContextRevalidationError) throw error;
+      throw new AgencyContextRevalidationError();
+    }
+  } catch (error) {
+    if (error instanceof AgencyContextRevalidationError) throw error;
     // refresh 失败，清除登录态
-    useAuthStore.getState().logout();
+    useAuthStore.getState().clearSession();
     return null;
   }
 }
@@ -202,7 +299,10 @@ if (typeof window !== "undefined" && window.localStorage) {
   const stored = window.localStorage.getItem("auth_store");
   if (token && stored) {
     try {
-      useAuthStore.setState({ user: ensureTenantType(JSON.parse(stored)), token });
+      useAuthStore.setState({
+        user: ensureTenantType(JSON.parse(stored)),
+        token,
+      });
     } catch {
       // 自动 hydrate 失败静默忽略，留给运行时 hydrate 处理
     }

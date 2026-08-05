@@ -1,21 +1,19 @@
 "use client";
 
-import { Card, Table, Tag, Typography } from "antd";
+import { Card, Progress, Table, Tag, Typography } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import { useRouter } from "next/navigation";
 import useSWR from "swr";
 import { STATUS_MAP, PLAN_MAP } from "@/lib/constants";
 import { STATUS_COLORS } from "@/lib/status-colors";
+import {
+  buildQuotaDisplay,
+  quotaDisplayLabels,
+  type QuotaKey,
+  type QuotaUsageItem,
+} from "./quota-display";
 
-const { Title } = Typography;
-
-interface QuotaUsageItem {
-  tenant_id: string;
-  tenant_name: string;
-  plan: string;
-  quota: Record<string, number> | null;
-  status: string;
-}
+const { Text, Title } = Typography;
 
 export default function QuotaPage() {
   const router = useRouter();
@@ -52,6 +50,13 @@ export default function QuotaPage() {
       width: 200,
       render: (_: unknown, record: QuotaUsageItem) =>
         renderQuotaBar(record, "max_campaigns"),
+    },
+    {
+      title: "扫码额度",
+      key: "scans",
+      width: 200,
+      render: (_: unknown, record: QuotaUsageItem) =>
+        renderQuotaBar(record, "max_scans"),
     },
     {
       title: "账号额度",
@@ -91,17 +96,45 @@ export default function QuotaPage() {
   );
 }
 
-function renderQuotaBar(record: QuotaUsageItem, key: string) {
-  const limit = record.quota?.[key];
-  if (limit === undefined || limit === null) return <Tag>未设置</Tag>;
-  if (limit === -1) return <Tag color={STATUS_COLORS.processing}>无限制</Tag>;
+export function renderQuotaBar(record: QuotaUsageItem, key: QuotaKey) {
+  const display = buildQuotaDisplay(record, key);
+  const labels = quotaDisplayLabels(display);
+  const stateColor =
+    display.state === "已超限"
+      ? STATUS_COLORS.error
+      : display.state === "已用尽" || display.state === "接近限额"
+        ? STATUS_COLORS.warning
+        : display.state === "正常" || display.state === "无限制"
+          ? STATUS_COLORS.success
+          : STATUS_COLORS.neutral;
 
-  // For now show limit only — actual usage tracking will come with health metrics in Wave 4
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-      <span style={{ fontSize: "var(--ymt-font-size-xs)" }}>
-        限额 {limit.toLocaleString()}
-      </span>
+    <div style={{ minWidth: 190 }}>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: "2px 8px" }}>
+        <Text style={{ fontSize: "var(--ymt-font-size-xs)" }}>
+          {labels.used}
+        </Text>
+        <Text style={{ fontSize: "var(--ymt-font-size-xs)" }}>
+          {labels.limit}
+        </Text>
+        <Text style={{ fontSize: "var(--ymt-font-size-xs)" }}>
+          {labels.remaining}
+        </Text>
+        <Text style={{ fontSize: "var(--ymt-font-size-xs)" }}>
+          {labels.percent}
+        </Text>
+        <Tag color={stateColor} style={{ marginInlineEnd: 0 }}>
+          {display.state}
+        </Tag>
+      </div>
+      {display.progressPercent !== null && (
+        <Progress
+          percent={display.progressPercent}
+          showInfo={false}
+          size="small"
+          status={display.state === "已超限" ? "exception" : "normal"}
+        />
+      )}
     </div>
   );
 }

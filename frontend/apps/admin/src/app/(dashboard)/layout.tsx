@@ -1,9 +1,11 @@
 "use client";
 
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
+import useSWR from "swr";
 import { useRouter, usePathname } from "next/navigation";
 import {
   Button,
+  App,
   ConfigProvider,
   Layout,
   Menu,
@@ -42,11 +44,19 @@ import {
 } from "@ant-design/icons";
 import type { MenuProps } from "antd";
 import { useAuthStore } from "@/lib/auth";
+import { extractErrorMessage } from "@/lib/api";
 import { I18nProvider, useI18n } from "@/lib/i18n";
 import { useAdminTheme } from "@/lib/theme-provider";
 import zhCN from "antd/locale/zh_CN";
 import enUS from "antd/locale/en_US";
 import OnboardingWizard from "./_components/OnboardingWizard";
+import TenantPlanReadOnly from "./_components/TenantPlanReadOnly";
+import {
+  TENANT_PLAN_EXPIRED_EVENT,
+  isTenantPlanExpired,
+  setTenantPlanReadOnly,
+  tenantEntitlementKey,
+} from "@/lib/plan-entitlement";
 
 const { Header, Sider, Content } = Layout;
 
@@ -152,9 +162,48 @@ const ROLE_PORTAL_MAP: Record<string, string> = {
 function DashboardInner({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
-  const { user, hydrate, logout } = useAuthStore();
+  const { user, hydrate, logout, exitAgencyContext } = useAuthStore();
+  const { message } = App.useApp();
+  const [exitingAgencyContext, setExitingAgencyContext] = useState(false);
+  const [serverReportedPlanExpired, setServerReportedPlanExpired] =
+    useState(false);
   const { locale, setLocale, t } = useI18n();
   const { isDark, toggleMode } = useAdminTheme();
+  const {
+    data: currentTenant,
+    mutate: refreshCurrentTenant,
+    isValidating: refreshingPlan,
+  } = useSWR<{
+    tenant_id: string;
+    plan: string;
+    plan_expires_at: string | null;
+    read_only: boolean;
+  }>(user ? tenantEntitlementKey(user.acting_tenant_id) : null, {
+    refreshInterval: 60_000,
+    revalidateOnFocus: true,
+  });
+  const planExpired =
+    serverReportedPlanExpired ||
+    currentTenant?.read_only === true ||
+    isTenantPlanExpired(currentTenant?.plan_expires_at);
+
+  useEffect(() => {
+    const markExpired = () => setServerReportedPlanExpired(true);
+    window.addEventListener(TENANT_PLAN_EXPIRED_EVENT, markExpired);
+    return () =>
+      window.removeEventListener(TENANT_PLAN_EXPIRED_EVENT, markExpired);
+  }, []);
+
+  useEffect(() => {
+    if (currentTenant && !isTenantPlanExpired(currentTenant.plan_expires_at)) {
+      setServerReportedPlanExpired(false);
+    }
+  }, [currentTenant]);
+
+  useEffect(() => {
+    setTenantPlanReadOnly(planExpired);
+    return () => setTenantPlanReadOnly(false);
+  }, [planExpired]);
 
   useEffect(() => {
     hydrate();
@@ -164,6 +213,19 @@ function DashboardInner({ children }: { children: React.ReactNode }) {
   }, [hydrate, router]);
 
   const selectedKeys = [pathname];
+
+  const handleExitAgencyContext = async () => {
+    setExitingAgencyContext(true);
+    try {
+      await exitAgencyContext();
+      message.success("已退出客户工作区");
+      router.push("/agency");
+    } catch (error) {
+      message.error(extractErrorMessage(error, "退出客户工作区失败，请重试"));
+    } finally {
+      setExitingAgencyContext(false);
+    }
+  };
 
   const openKeys = MENU_OPEN_KEY_RULES.filter(({ prefixes }) =>
     prefixes.some(
@@ -293,6 +355,11 @@ function DashboardInner({ children }: { children: React.ReactNode }) {
       label: t("menu.settings"),
       children: [
         {
+          key: "/settings/agency-authorizations",
+          icon: <TeamOutlined />,
+          label: "代运营授权",
+        },
+        {
           key: "/settings/brand-profile",
           icon: <BgColorsOutlined />,
           label: t("menu.brand-profile"),
@@ -347,12 +414,16 @@ function DashboardInner({ children }: { children: React.ReactNode }) {
     // Agency in client context: show brand-like menu filtered by agency_scope
     if (tenantType === "agency" && user?.acting_tenant_id) {
       const scope = user.agency_scope || [];
-      const scopeAllowlist = new Set([
-        "/", // always show dashboard
-        ...scope,
-        "/analytics",
-        "settings-group",
-      ]);
+      const scopeMenuItems: Record<string, string[]> = {
+        products: ["/brands", "/products", "/skus", "/batches"],
+        pages: ["/pages"],
+        campaigns: ["/campaigns", "/benefits"],
+        codes: ["/codes"],
+        analytics: ["/", "/analytics"],
+      };
+      const scopeAllowlist = new Set(
+        scope.flatMap((item) => scopeMenuItems[item] || [])
+      );
 
       function isScopeAllowed(key: string): boolean {
         return scopeAllowlist.has(key);
@@ -445,8 +516,8 @@ function DashboardInner({ children }: { children: React.ReactNode }) {
       key: "logout",
       icon: <LogoutOutlined />,
       label: t("common.logout"),
-      onClick: () => {
-        logout();
+      onClick: async () => {
+        await logout();
         router.replace("/login");
       },
     },
@@ -508,10 +579,8 @@ function DashboardInner({ children }: { children: React.ReactNode }) {
                     color: "var(--ymt-color-text-inverse)",
                     padding: "0 4px",
                   }}
-                  onClick={() => {
-                    useAuthStore.getState().exitAgencyContext();
-                    router.push("/");
-                  }}
+                  loading={exitingAgencyContext}
+                  onClick={handleExitAgencyContext}
                 >
                   退出客户
                 </Button>
@@ -547,8 +616,14 @@ function DashboardInner({ children }: { children: React.ReactNode }) {
             </Space>
           </Header>
           <Content className="admin-content my-4 rounded-lg p-5 max-w-360 mx-auto w-full flex-1">
-            {user?.tenant_type === "brand" && <OnboardingWizard />}
-            {children}
+            <TenantPlanReadOnly
+              active={planExpired}
+              refreshing={refreshingPlan}
+              onRefresh={() => void refreshCurrentTenant()}
+            >
+              {user?.tenant_type === "brand" && <OnboardingWizard />}
+              {children}
+            </TenantPlanReadOnly>
           </Content>
         </Layout>
       </Layout>

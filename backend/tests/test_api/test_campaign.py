@@ -17,7 +17,11 @@ def _platform_admin_headers() -> dict:
     from app.utils.security import create_access_token
 
     token = create_access_token("platform", "platform-admin", "platform_admin")
-    return {"Authorization": f"Bearer {token}"}
+    return {
+        "Cookie": f"platform_access_token={token}; platform_csrf_token=test-platform-csrf",
+        "Origin": "http://localhost:3002",
+        "X-Platform-CSRF": "test-platform-csrf",
+    }
 
 
 RULES_JSON = {
@@ -425,6 +429,52 @@ class TestCampaignCRUD:
 
 
 class TestBenefitAndClaim:
+    @pytest.mark.anyio
+    async def test_create_benefit_rejects_cross_tenant_connector(
+        self,
+        client: AsyncClient,
+        db_session: AsyncSession,
+        auth_setup,
+    ):
+        from app.models.connector import Connector
+
+        tenant_id, headers = auth_setup
+        foreign_connector = Connector(
+            tenant_id=uuid.uuid4(),
+            name="其他租户连接器",
+            connector_type="generic_http",
+            config={"api_url": "https://example.com"},
+        )
+        db_session.add(foreign_connector)
+        await db_session.flush()
+        campaign = await client.post(
+            "/api/v1/campaigns",
+            json={
+                "name": "连接器隔离活动",
+                "campaign_type": "coupon",
+                "start_at": "2026-06-01",
+                "end_at": "2026-06-30",
+                "rules_json": RULES_JSON,
+            },
+            headers=headers,
+        )
+
+        response = await client.post(
+            f"/api/v1/campaigns/{campaign.json()['id']}/benefits",
+            json={
+                "name": "越权外部权益",
+                "benefit_type": "platform_coupon",
+                "config_json": {"amount": 5},
+                "stock_total": 10,
+                "connector_id": str(foreign_connector.id),
+            },
+            headers=headers,
+        )
+
+        assert tenant_id != str(foreign_connector.tenant_id)
+        assert response.status_code == 400
+        assert response.json()["detail"] == "Connector not found"
+
     @pytest.mark.anyio
     async def test_create_benefit(self, client: AsyncClient, auth_setup):
         _, headers = auth_setup

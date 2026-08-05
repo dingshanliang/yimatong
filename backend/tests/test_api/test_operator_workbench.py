@@ -1,5 +1,6 @@
 """yimatong-udt: 代运营工作台 API 验收测试"""
 
+import uuid
 from collections.abc import AsyncGenerator
 from datetime import UTC, datetime, timedelta
 
@@ -7,17 +8,37 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.database import get_db
+from app.core.database import get_db, get_db_with_bypass
+from app.core.dependencies import get_redis_cache
 from app.main import app
+from app.models.tenant import (
+    Account,
+    AgencyAuthorization,
+    AgencyAuthStatus,
+    OpsTask,
+    Organization,
+    Tenant,
+    TenantStatus,
+    TenantType,
+)
 from app.utils.security import create_access_token
 from tests.conftest import TestSessionLocal
+
+
+class AllowingPlatformLoginCache:
+    async def rate_limit_check_shared(self, key: str, max_attempts: int, window_seconds: int) -> tuple[bool, int]:
+        return True, 9
 
 
 def _platform_admin_headers() -> dict:
     from app.utils.security import create_access_token
 
-    token = create_access_token("platform", "platform-admin", "platform_admin")
-    return {"Authorization": f"Bearer {token}"}
+    token = create_access_token("platform", "platform-admin", "platform_admin", tenant_type="platform")
+    return {
+        "Cookie": f"platform_access_token={token}; platform_csrf_token=test-platform-csrf",
+        "Origin": "http://localhost:3002",
+        "X-Platform-CSRF": "test-platform-csrf",
+    }
 
 
 @pytest.fixture
@@ -31,7 +52,12 @@ async def client(db_session: AsyncSession):
     async def override_get_db():
         yield db_session
 
+    async def override_get_redis_cache():
+        return AllowingPlatformLoginCache()
+
     app.dependency_overrides[get_db] = override_get_db
+    app.dependency_overrides[get_db_with_bypass] = override_get_db
+    app.dependency_overrides[get_redis_cache] = override_get_redis_cache
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as c:
         yield c
@@ -40,14 +66,17 @@ async def client(db_session: AsyncSession):
 
 @pytest.fixture
 async def platform_admin_client(client: AsyncClient):
-    """创建平台管理员 token（代运营人员）"""
+    """创建与服务端 HttpOnly 会话等价的平台 Cookie。"""
     token = create_access_token(
-        "00000000-0000-0000-0000-000000000000",
-        "00000000-0000-0000-0000-000000000001",
+        "platform",
+        "platform-admin",
         "platform_admin",
         tenant_type="platform",
     )
-    client.headers["Authorization"] = f"Bearer {token}"
+    client.cookies.set("platform_access_token", token)
+    client.cookies.set("platform_csrf_token", "test-platform-csrf")
+    client.headers["Origin"] = "http://localhost:3002"
+    client.headers["X-Platform-CSRF"] = "test-platform-csrf"
     return client
 
 
@@ -253,6 +282,148 @@ class TestOpsTasks:
 
 
 class TestOpsWorkbench:
+    @pytest.mark.anyio
+    async def test_real_platform_login_cookie_can_access_workbench(self, client: AsyncClient):
+        login = await client.post(
+            "/api/v1/platform/auth/login",
+            json={"email": "platform@yimatong.cn", "password": "platform_admin_2026"},
+        )
+        assert login.status_code == 200
+
+        assert "platform_access_token=" in login.headers["set-cookie"]
+        response = await client.get("/api/v1/ops/workbench")
+
+        assert response.status_code == 200
+
+    @pytest.mark.anyio
+    async def test_platform_bearer_without_cookie_cannot_access_workbench(self, client: AsyncClient):
+        token = create_access_token(
+            "platform",
+            "platform-admin",
+            "platform_admin",
+            tenant_type="platform",
+        )
+
+        response = await client.get(
+            "/api/v1/ops/workbench",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+        assert response.status_code == 401
+        assert response.json()["detail"] == "Platform session cookie required"
+
+    @pytest.mark.anyio
+    async def test_pages_only_agency_sees_only_authorized_client_with_redacted_workbench(
+        self, client: AsyncClient, db_session: AsyncSession
+    ):
+        agency = Tenant(
+            name="页面代运营",
+            slug=f"agency-{uuid.uuid4().hex[:8]}",
+            status=TenantStatus.active,
+            tenant_type=TenantType.agency,
+        )
+        authorized = Tenant(
+            name="已授权品牌",
+            slug=f"brand-{uuid.uuid4().hex[:8]}",
+            status=TenantStatus.active,
+            tenant_type=TenantType.brand,
+        )
+        unauthorized = Tenant(
+            name="未授权品牌",
+            slug=f"brand-{uuid.uuid4().hex[:8]}",
+            status=TenantStatus.active,
+            tenant_type=TenantType.brand,
+        )
+        db_session.add_all([agency, authorized, unauthorized])
+        await db_session.flush()
+        organization = Organization(tenant_id=agency.id, name="代运营组织")
+        db_session.add(organization)
+        await db_session.flush()
+        account = Account(
+            tenant_id=agency.id,
+            organization_id=organization.id,
+            email="pages-only@example.com",
+            hashed_password="unused",
+            name="页面运营",
+        )
+        db_session.add_all(
+            [
+                account,
+                AgencyAuthorization(
+                    agency_tenant_id=agency.id,
+                    client_tenant_id=authorized.id,
+                    scope=["pages"],
+                    status=AgencyAuthStatus.active,
+                ),
+                OpsTask(tenant_id=authorized.id, title="授权客户私有任务"),
+                OpsTask(tenant_id=unauthorized.id, title="未授权客户私有任务"),
+            ]
+        )
+        await db_session.commit()
+        token = create_access_token(str(agency.id), str(account.id), "admin", tenant_type="agency")
+
+        response = await client.get(
+            "/api/v1/ops/workbench",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert [row["id"] for row in data["clients"]] == [str(authorized.id)]
+        row = data["clients"][0]
+        assert row["agency_scope"] == ["pages"]
+        assert row["full_workbench_access"] is False
+        assert row["readiness"]["missing_keys"] == ["authorization_scope"]
+        assert data["tasks"] == []
+        assert data["summary"]["blocked_clients"] == 0
+
+        blocked_response = await client.get(
+            "/api/v1/ops/workbench?readiness=blocked",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert blocked_response.status_code == 200
+        assert blocked_response.json()["clients"] == []
+
+    @pytest.mark.anyio
+    async def test_partial_scope_contract_preserves_redaction_fields(
+        self, platform_admin_client: AsyncClient, monkeypatch
+    ):
+        async def fake_workbench(*args, **kwargs):
+            return {
+                "summary": {"total_clients": 1, "active_clients": 1},
+                "clients": [
+                    {
+                        "id": "00000000-0000-0000-0000-000000000010",
+                        "name": "部分授权客户",
+                        "status": "active",
+                        "plan": "free",
+                        "readiness": {
+                            "ready": False,
+                            "passed_count": 0,
+                            "total_count": 0,
+                            "percent": 0,
+                            "missing_keys": ["authorization_scope"],
+                            "missing_labels": ["当前授权仅允许进入指定业务模块"],
+                        },
+                        "task_summary": {"pending": 0, "in_progress": 0, "overdue": 0, "high_priority": 0},
+                        "next_action": {"type": "scope", "label": "进入管理", "href": "/pages", "task_title": ""},
+                        "agency_scope": ["pages"],
+                        "full_workbench_access": False,
+                    }
+                ],
+                "tasks": [],
+                "total": 1,
+                "page": 1,
+                "page_size": 20,
+            }
+
+        monkeypatch.setattr("app.api.v1.ops.get_ops_workbench", fake_workbench)
+        response = await platform_admin_client.get("/api/v1/ops/workbench")
+        assert response.status_code == 200
+        row = response.json()["clients"][0]
+        assert row["agency_scope"] == ["pages"]
+        assert row["full_workbench_access"] is False
+        assert response.json()["tasks"] == []
+
     @pytest.mark.anyio
     async def test_ops_workbench_returns_client_queue_shape(
         self,

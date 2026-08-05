@@ -2,15 +2,28 @@ import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 import { parseJwtPayload } from "@yimatong/shared";
 
-const PUBLIC_PATHS = ["/login"];
+const PUBLIC_PATHS = ["/login", "/register", "/reset-password"];
 
 // Route access rules by tenant_type
 const AGENCY_ONLY_ROUTES = ["/agency"];
 const BRAND_ONLY_ROUTES = [
-  "/brands", "/products", "/skus", "/batches",
-  "/codes", "/pages", "/campaigns", "/benefits", "/members",
-  "/channels", "/regional", "/accounts",
-  "/integrations", "/connectors", "/risk", "/launch-checklist",
+  "/brands",
+  "/products",
+  "/skus",
+  "/batches",
+  "/codes",
+  "/pages",
+  "/campaigns",
+  "/benefits",
+  "/members",
+  "/channels",
+  "/regional",
+  "/accounts",
+  "/integrations",
+  "/connectors",
+  "/risk",
+  "/launch-checklist",
+  "/settings/agency-authorizations",
 ];
 
 function matchesRoute(pathname: string, routes: string[]): boolean {
@@ -20,7 +33,10 @@ function matchesRoute(pathname: string, routes: string[]): boolean {
 export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
-  if (PUBLIC_PATHS.some((p) => pathname.startsWith(p))) {
+  const isPublicPath = PUBLIC_PATHS.some((p) => pathname.startsWith(p));
+
+  // 邀请注册必须能从交付链接直接进入，也不能被浏览器里残留的失效登录 cookie 阻断。
+  if (pathname === "/register" || pathname.startsWith("/register/")) {
     return NextResponse.next();
   }
 
@@ -28,6 +44,7 @@ export function middleware(request: NextRequest) {
   const token = request.cookies.get("access_token")?.value;
 
   if (!token) {
+    if (isPublicPath) return NextResponse.next();
     const loginUrl = new URL("/login", request.url);
     return NextResponse.redirect(loginUrl);
   }
@@ -41,14 +58,35 @@ export function middleware(request: NextRequest) {
     const tenantType = payload.tenant_type || "brand";
     const role = (payload.role || "").toLowerCase();
 
+    if (payload.must_change_password === true) {
+      if (pathname !== "/change-password") {
+        return NextResponse.redirect(new URL("/change-password", request.url));
+      }
+      return NextResponse.next();
+    }
+
+    if (pathname === "/change-password") {
+      return NextResponse.redirect(new URL("/", request.url));
+    }
+
+    if (isPublicPath) return NextResponse.next();
+
     // Portal users can only access their portal + dashboard root
     if (role === "distributor") {
-      if (pathname !== "/" && pathname !== "/channel-portal" && !pathname.startsWith("/channel-portal/")) {
+      if (
+        pathname !== "/" &&
+        pathname !== "/channel-portal" &&
+        !pathname.startsWith("/channel-portal/")
+      ) {
         return NextResponse.redirect(new URL("/channel-portal", request.url));
       }
     }
     if (role === "store_guide") {
-      if (pathname !== "/" && pathname !== "/store-portal" && !pathname.startsWith("/store-portal/")) {
+      if (
+        pathname !== "/" &&
+        pathname !== "/store-portal" &&
+        !pathname.startsWith("/store-portal/")
+      ) {
         return NextResponse.redirect(new URL("/store-portal", request.url));
       }
     }

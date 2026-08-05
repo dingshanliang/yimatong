@@ -1,8 +1,9 @@
 import uuid
 from datetime import datetime
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, EmailStr, Field, field_validator
 
+from app.utils.email import normalize_email
 from app.utils.security import validate_password_strength
 
 
@@ -34,6 +35,11 @@ class TenantCreate(BaseModel):
 
     notes: str | None = Field(None, max_length=1000, description="备注")
     template_id: int | None = Field(None, description="行业模板 ID，创建后自动应用")
+
+    @field_validator("admin_email")
+    @classmethod
+    def _normalize_admin_email(cls, value: str) -> str:
+        return normalize_email(value)
 
 
 class TenantUpdate(BaseModel):
@@ -78,7 +84,7 @@ class TenantUpdateSelf(BaseModel):
     notes: str | None = Field(None, max_length=1000)
     categories: list[str] | None = None
     onboarding_progress: dict | None = None
-    enabled_features: dict | None = None
+    contact_email: EmailStr | None = None
     brand_profile: dict | None = None
 
     @field_validator("brand_profile")
@@ -136,6 +142,15 @@ class TenantRead(BaseModel):
 
 class CategoriesResponse(BaseModel):
     categories: list[str] = Field(default_factory=list, description="租户品类列表")
+
+
+class TenantEntitlementRead(BaseModel):
+    """当前有效租户的精确只读套餐状态。"""
+
+    tenant_id: uuid.UUID
+    plan: str
+    plan_expires_at: datetime | None = None
+    read_only: bool
 
 
 class TenantListItem(BaseModel):
@@ -240,6 +255,8 @@ class OpsWorkbenchClient(BaseModel):
     readiness: OpsReadinessSummary
     task_summary: OpsTaskSummary
     next_action: OpsNextAction
+    agency_scope: list[str] = Field(default_factory=list)
+    full_workbench_access: bool = False
 
 
 class OpsWorkbenchTask(OpsTaskRead):

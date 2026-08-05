@@ -18,6 +18,7 @@ class PlatformOpening:
 
     operator_id: str
     plan_name: str = "free"
+    tenant_type: str = "brand"
 
 
 @dataclass(frozen=True)

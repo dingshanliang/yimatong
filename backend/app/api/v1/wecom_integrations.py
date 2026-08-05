@@ -5,28 +5,57 @@ from __future__ import annotations
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import JSONResponse, PlainTextResponse
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.database import get_db
+from app.core.config import settings
+from app.core.database import _session_uses_postgresql, get_db, set_session_tenant_context
 from app.core.dependencies import get_current_tenant
 from app.models.campaign import Benefit
 from app.models.connector import Connector
 from app.models.wecom import WeComContactWay
+from app.services.entitlement import (
+    PLAN_EXPIRED_CODE,
+    PLAN_EXPIRED_DETAIL,
+    TenantPlanExpiredError,
+    require_active_plan,
+)
 from app.services.wecom_integration import (
     WeComIntegrationError,
     decrypt_wecom_echo,
     get_wecom_status,
+    list_configured_wecom_members,
     list_wecom_members,
     parse_wecom_callback_body,
     process_wecom_callback_event,
     upsert_wecom_connector,
     verify_wecom_connector,
 )
+from app.utils.auth_rbac import require_permission
 
 wecom_integration_router = APIRouter(prefix="/api/v1/integrations/wecom", tags=["wecom-integrations"])
+
+
+async def _scope_public_connector_tenant(db: AsyncSession, connector_id: uuid.UUID) -> Connector | None:
+    """Locate exactly one callback connector, then lock the session to its tenant."""
+
+    if _session_uses_postgresql(db):
+        from app.core.database import control_session_factory
+
+        async with control_session_factory() as control_db:
+            await control_db.execute(text("SELECT set_config('app.tenant_id', '', true)"))
+            await control_db.execute(text("SELECT set_config('app.bypass_rls', 'true', true)"))
+            tenant_id = await control_db.scalar(
+                select(Connector.tenant_id).where(Connector.id == connector_id).limit(1)
+            )
+    else:
+        tenant_id = await db.scalar(select(Connector.tenant_id).where(Connector.id == connector_id).limit(1))
+    if tenant_id is None:
+        return None
+    await set_session_tenant_context(db, tenant_id)
+    return await db.scalar(select(Connector).where(Connector.id == connector_id, Connector.tenant_id == tenant_id))
 
 
 class WeComConfigRequest(BaseModel):
@@ -43,10 +72,16 @@ class ContactWayRequest(BaseModel):
 
 @wecom_integration_router.get("", summary="读取企业微信接入状态")
 async def get_wecom_integration_endpoint(
+    request: Request,
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
+    _permission: None = Depends(require_permission("campaign:manage")),
 ):
-    return await get_wecom_status(db, tenant_id)
+    return await get_wecom_status(
+        db,
+        tenant_id,
+        include_callback_credentials=getattr(request.state, "acting_tenant_id", None) is None,
+    )
 
 
 @wecom_integration_router.post("", summary="保存企业微信接入配置")
@@ -54,7 +89,10 @@ async def save_wecom_integration_endpoint(
     body: WeComConfigRequest,
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
+    _permission: None = Depends(require_permission("campaign:manage")),
 ):
+    if settings.environment == "production" and body.mock_mode:
+        raise HTTPException(status_code=400, detail="生产环境不允许启用企业微信模拟模式")
     return await upsert_wecom_connector(
         db,
         tenant_id,
@@ -69,6 +107,7 @@ async def save_wecom_integration_endpoint(
 async def verify_wecom_integration_endpoint(
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
+    _permission: None = Depends(require_permission("campaign:manage")),
 ):
     try:
         return await verify_wecom_connector(db, tenant_id)
@@ -78,10 +117,14 @@ async def verify_wecom_integration_endpoint(
 
 @wecom_integration_router.get("/members", summary="读取可添加客户成员")
 async def list_wecom_members_endpoint(
+    request: Request,
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
+    _permission: None = Depends(require_permission("campaign:manage")),
 ):
     try:
+        if getattr(request.state, "acting_tenant_id", None) is not None:
+            return {"items": await list_configured_wecom_members(db, tenant_id)}
         return {"items": await list_wecom_members(db, tenant_id)}
     except WeComIntegrationError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -92,21 +135,34 @@ async def get_contact_way_endpoint(
     body: ContactWayRequest,
     db: AsyncSession = Depends(get_db),
 ):
-    import jwt
-
-    from app.core.config import settings
+    from app.services.scan_token import verify_scan_token
     from app.services.wecom_integration import get_or_create_claim_contact_way
 
-    try:
-        payload = jwt.decode(body.scan_token, settings.secret_key, algorithms=["HS256"])
-    except jwt.exceptions.DecodeError:
-        raise HTTPException(status_code=401, detail="invalid token")
-    except jwt.exceptions.ExpiredSignatureError:
-        raise HTTPException(status_code=401, detail="token expired")
-    if payload.get("type") != "scan_token":
-        raise HTTPException(status_code=401, detail="invalid token type")
+    payload = verify_scan_token(body.scan_token)
+    if payload is None:
+        raise HTTPException(status_code=401, detail="invalid or expired scan token")
 
-    benefit_result = await db.execute(select(Benefit).where(Benefit.id == body.benefit_id))
+    token_tenant_id = payload.get("tenant_id")
+    if not token_tenant_id:
+        raise HTTPException(status_code=401, detail="scan token tenant missing")
+    try:
+        parsed_tenant_id = uuid.UUID(token_tenant_id)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=401, detail="invalid scan token tenant")
+    await set_session_tenant_context(db, parsed_tenant_id)
+    try:
+        await require_active_plan(db, parsed_tenant_id)
+    except TenantPlanExpiredError:
+        return JSONResponse(
+            status_code=403,
+            content={"code": PLAN_EXPIRED_CODE, "detail": PLAN_EXPIRED_DETAIL},
+        )
+    benefit_result = await db.execute(
+        select(Benefit).where(
+            Benefit.id == body.benefit_id,
+            Benefit.tenant_id == parsed_tenant_id,
+        )
+    )
     benefit = benefit_result.scalar_one_or_none()
     if not benefit:
         raise HTTPException(status_code=404, detail="Benefit not found")
@@ -117,7 +173,6 @@ async def get_contact_way_endpoint(
             benefit=benefit,
             scan_token=body.scan_token,
         )
-        await db.commit()
     except WeComIntegrationError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -125,9 +180,10 @@ async def get_contact_way_endpoint(
     visitor_id = payload.get("visitor_id") or None
     public_id = payload.get("public_id")
     if visitor_id and public_id:
-        from app.models.intent_event import IntentEvent
+        from app.services.intent_event import insert_intent_event_idempotent
 
-        intent = IntentEvent(
+        await insert_intent_event_idempotent(
+            db,
             tenant_id=benefit.tenant_id,
             event_type="wecom_click",
             public_id=public_id,
@@ -135,11 +191,9 @@ async def get_contact_way_endpoint(
             client_event_id=f"wecom_click:{contact_way.state}",
             page_version_id=str(benefit.campaign_id) if benefit.campaign_id else None,
         )
-        db.add(intent)
-        try:
-            await db.commit()
-        except Exception:
-            await db.rollback()
+    # Contact-way and its intent evidence commit atomically while the
+    # transaction-local tenant RLS context is still active.
+    await db.commit()
 
     return {"qr_code": contact_way.qr_code, "state": contact_way.state}
 
@@ -153,8 +207,7 @@ async def verify_wecom_callback_endpoint(
     echostr: str = Query(...),
     db: AsyncSession = Depends(get_db),
 ):
-    connector_result = await db.execute(select(Connector).where(Connector.id == connector_id))
-    connector = connector_result.scalar_one_or_none()
+    connector = await _scope_public_connector_tenant(db, connector_id)
     if not connector:
         raise HTTPException(status_code=404, detail="Enterprise WeChat integration not found")
     try:
@@ -170,8 +223,7 @@ async def receive_wecom_callback_endpoint(
     request: Request,
     db: AsyncSession = Depends(get_db),
 ):
-    connector_result = await db.execute(select(Connector).where(Connector.id == connector_id))
-    connector = connector_result.scalar_one_or_none()
+    connector = await _scope_public_connector_tenant(db, connector_id)
     if not connector:
         raise HTTPException(status_code=404, detail="Enterprise WeChat integration not found")
     try:
@@ -187,19 +239,31 @@ async def receive_wecom_callback_endpoint(
     return PlainTextResponse("success" if result.get("status") in {"recorded", "duplicate", "ignored"} else "fail")
 
 
-@wecom_integration_router.get("/mock-added", summary="本地模拟添加企业微信")
+@wecom_integration_router.post("/mock-added", summary="本地受控模拟添加企业微信")
 async def mock_wecom_added_endpoint(
     state: str,
     db: AsyncSession = Depends(get_db),
+    tenant_id: uuid.UUID = Depends(get_current_tenant),
+    _permission: None = Depends(require_permission("campaign:manage")),
 ):
-    way_result = await db.execute(select(WeComContactWay).where(WeComContactWay.state == state))
+    if settings.environment == "production":
+        raise HTTPException(status_code=404, detail="Not found")
+    way_result = await db.execute(
+        select(WeComContactWay).where(WeComContactWay.state == state, WeComContactWay.tenant_id == tenant_id)
+    )
     way = way_result.scalar_one_or_none()
     if not way:
         raise HTTPException(status_code=404, detail="Contact entry not found")
+    connector = await db.scalar(
+        select(Connector).where(Connector.id == way.connector_id, Connector.tenant_id == tenant_id)
+    )
+    if connector is None or not connector.config.get("mock_mode"):
+        raise HTTPException(status_code=403, detail="Mock mode is not enabled for this tenant")
     result = await process_wecom_callback_event(
         db,
         connector_id=way.connector_id,
         event={
+            "Event": "change_external_contact",
             "ChangeType": "add_external_contact",
             "ExternalUserID": f"mock-{state[-10:]}",
             "UserID": (way.user_ids or ["demo-member"])[0],

@@ -109,6 +109,9 @@ export function LeadForm({
       if (res.data?.consumer_id && typeof window !== "undefined") {
         localStorage.setItem("consumer_id", res.data.consumer_id);
       }
+      if (res.data?.scan_token && typeof window !== "undefined") {
+        localStorage.setItem("scan_token", res.data.scan_token);
+      }
       setSubmitted(true);
     } catch (err: unknown) {
       // yimatong-zgb1.5：后端 consent gating 返回 403 consent_required / consent_withdrawn

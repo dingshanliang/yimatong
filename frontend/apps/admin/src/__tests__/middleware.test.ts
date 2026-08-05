@@ -1,0 +1,67 @@
+import { describe, expect, it } from "vitest";
+import { NextRequest } from "next/server";
+
+import { middleware } from "../middleware";
+
+function jwt(payload: Record<string, unknown>) {
+  const encode = (value: Record<string, unknown>) =>
+    btoa(JSON.stringify(value))
+      .replace(/\+/g, "-")
+      .replace(/\//g, "_")
+      .replace(/=+$/, "");
+  return `${encode({ alg: "none" })}.${encode(payload)}.signature`;
+}
+
+function request(pathname: string, payload?: Record<string, unknown>) {
+  return new NextRequest(`http://localhost${pathname}`, {
+    headers: payload ? { cookie: `access_token=${jwt(payload)}` } : undefined,
+  });
+}
+
+describe("admin middleware password-change gate", () => {
+  it("allows invited customers to open registration without a session", () => {
+    const response = middleware(request("/register?invite_code=INVITE123"));
+
+    expect(response.status).toBe(200);
+  });
+
+  it("does not let a stale cookie block the public registration link", () => {
+    const response = middleware(
+      new NextRequest("http://localhost/register?invite_code=INVITE123", {
+        headers: { cookie: "access_token=invalid-token" },
+      })
+    );
+
+    expect(response.status).toBe(200);
+  });
+
+  it("redirects every other page to change-password for temporary credentials", () => {
+    const response = middleware(
+      request("/login", {
+        sub: "account-1",
+        tenant_id: "tenant-1",
+        role: "operator",
+        must_change_password: true,
+      })
+    );
+
+    expect(response.status).toBe(307);
+    expect(response.headers.get("location")).toBe(
+      "http://localhost/change-password"
+    );
+  });
+
+  it("does not allow a normal session to reopen the forced password page", () => {
+    const response = middleware(
+      request("/change-password", {
+        sub: "account-1",
+        tenant_id: "tenant-1",
+        role: "operator",
+        must_change_password: false,
+      })
+    );
+
+    expect(response.status).toBe(307);
+    expect(response.headers.get("location")).toBe("http://localhost/");
+  });
+});

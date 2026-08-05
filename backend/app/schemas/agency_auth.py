@@ -3,12 +3,21 @@
 import uuid
 from datetime import datetime
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class AuthorizationCreate(BaseModel):
-    agency_tenant_id: uuid.UUID
-    scope: list[str] = Field(default_factory=lambda: ["pages", "campaigns", "analytics"])
+    agency_tenant_id: uuid.UUID | None = None
+    agency_slug: str | None = Field(None, min_length=1, max_length=50)
+    scope: list[str] = Field(default_factory=lambda: ["products", "pages", "campaigns", "codes", "analytics"])
+
+    @model_validator(mode="after")
+    def _exactly_one_agency_reference(self):
+        if (self.agency_tenant_id is None) == (self.agency_slug is None):
+            raise ValueError("请使用代运营服务商标识或 ID 指定一个服务商")
+        if self.agency_slug is not None:
+            self.agency_slug = self.agency_slug.strip().lower()
+        return self
 
 
 class AuthorizationUpdate(BaseModel):

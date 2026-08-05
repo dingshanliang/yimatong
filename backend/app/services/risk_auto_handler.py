@@ -170,7 +170,7 @@ async def _check_and_record_diversion(
 
 async def _handle_scan_created(event_type: str, data: dict, tenant_id: str) -> None:
     """scan.created 事件处理器：常规风控评估 + 跨区检测。"""
-    from app.core.database import async_session_factory
+    from app.core.database import async_session_factory, set_session_tenant_context
 
     public_id = data.get("public_id")
     if not public_id:
@@ -179,6 +179,7 @@ async def _handle_scan_created(event_type: str, data: dict, tenant_id: str) -> N
     tenant_uuid = uuid.UUID(tenant_id)
 
     async with async_session_factory() as db:
+        await set_session_tenant_context(db, tenant_uuid)
         try:
             # 检查码是否已冻结，冻结码跳过评估
             item_result = await db.execute(

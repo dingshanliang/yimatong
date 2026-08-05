@@ -1,7 +1,33 @@
 import axios from "axios";
+import { parseJwtPayload } from "@yimatong/shared";
+import {
+  TenantPlanReadOnlyError,
+  reportTenantPlanExpired,
+  tenantPlanBlocksMethod,
+} from "./plan-entitlement";
+
+declare module "axios" {
+  interface AxiosRequestConfig {
+    skipAuthRefresh?: boolean;
+  }
+
+  interface InternalAxiosRequestConfig {
+    skipAuthRefresh?: boolean;
+  }
+}
+
+export class AgencyContextRevalidationError extends Error {
+  constructor() {
+    super("代运营客户授权已失效，请重新选择客户");
+    this.name = "AgencyContextRevalidationError";
+  }
+}
 
 function getDefaultApiBase() {
-  if (typeof window !== "undefined" && window.location.hostname === "127.0.0.1") {
+  if (
+    typeof window !== "undefined" &&
+    window.location.hostname === "127.0.0.1"
+  ) {
     return "http://127.0.0.1:8000";
   }
   return "http://localhost:8000";
@@ -23,11 +49,16 @@ interface AuthInterceptorHandlers {
 
 let authHandlers: AuthInterceptorHandlers | null = null;
 
-export function registerAuthInterceptorHandlers(handlers: AuthInterceptorHandlers) {
+export function registerAuthInterceptorHandlers(
+  handlers: AuthInterceptorHandlers
+) {
   authHandlers = handlers;
 }
 
 api.interceptors.request.use((config) => {
+  if (tenantPlanBlocksMethod(config.method)) {
+    return Promise.reject(new TenantPlanReadOnlyError());
+  }
   if (typeof window !== "undefined") {
     const token = localStorage.getItem("access_token");
     if (token) {
@@ -51,10 +82,65 @@ function processQueue(error: unknown, token: string | null = null) {
   failedQueue = [];
 }
 
+function bearerTokenFromRequest(headers: unknown): string | null {
+  if (!headers || typeof headers !== "object") return null;
+  const candidate = headers as {
+    Authorization?: unknown;
+    authorization?: unknown;
+    get?: (name: string) => unknown;
+  };
+  const value =
+    candidate.get?.("Authorization") ??
+    candidate.Authorization ??
+    candidate.authorization;
+  return typeof value === "string" && value.startsWith("Bearer ")
+    ? value.slice(7)
+    : null;
+}
+
+export function refreshPreservesActingContext(
+  originalToken: string | null,
+  refreshedToken: string
+): boolean {
+  if (!originalToken) return true;
+  const originalActingTenant = parseJwtPayload(originalToken)?.acting_tenant_id;
+  if (typeof originalActingTenant !== "string") return true;
+  return (
+    parseJwtPayload(refreshedToken)?.acting_tenant_id === originalActingTenant
+  );
+}
+
+function rejectDroppedActingContext(
+  originalToken: string | null,
+  refreshedToken: string
+) {
+  if (refreshPreservesActingContext(originalToken, refreshedToken)) return null;
+  const error = new Error("代运营客户上下文已失效，请重新选择客户");
+  if (typeof window !== "undefined") {
+    window.location.href = "/agency";
+  }
+  return error;
+}
+
 api.interceptors.response.use(
   (res) => res,
   async (error) => {
     const originalRequest = error.config;
+    const originalToken = bearerTokenFromRequest(originalRequest?.headers);
+
+    if (
+      error.response?.status === 403 &&
+      error.response?.data?.code === "TENANT_PLAN_EXPIRED"
+    ) {
+      reportTenantPlanExpired();
+      return Promise.reject(error);
+    }
+
+    // switch-context revalidation is itself part of the refresh transaction.
+    // Retrying it through the interceptor would wait on the same refresh promise.
+    if (originalRequest?.skipAuthRefresh) {
+      return Promise.reject(error);
+    }
 
     // 非 401 或已重试过，直接拒绝
     if (error.response?.status !== 401 || originalRequest._retry) {
@@ -72,9 +158,11 @@ api.interceptors.response.use(
 
     if (isRefreshing) {
       // 已有刷新请求进行中，排队等待
-      return new Promise((resolve, reject) => {
+      return new Promise<string>((resolve, reject) => {
         failedQueue.push({ resolve, reject });
       }).then((token) => {
+        const contextError = rejectDroppedActingContext(originalToken, token);
+        if (contextError) throw contextError;
         originalRequest.headers.Authorization = `Bearer ${token}`;
         return api(originalRequest);
       });
@@ -95,21 +183,37 @@ api.interceptors.response.use(
         return Promise.reject(error);
       }
 
+      const contextError = rejectDroppedActingContext(originalToken, newToken);
+      if (contextError) {
+        processQueue(contextError);
+        return Promise.reject(contextError);
+      }
+
       processQueue(null, newToken);
       originalRequest.headers.Authorization = `Bearer ${newToken}`;
       return api(originalRequest);
     } catch (refreshError) {
       processQueue(refreshError);
+      if (
+        refreshError instanceof AgencyContextRevalidationError &&
+        typeof window !== "undefined"
+      ) {
+        window.location.href = "/agency";
+      }
       return Promise.reject(refreshError);
     } finally {
       isRefreshing = false;
     }
-  },
+  }
 );
 
-export function extractErrorMessage(err: unknown, fallback = "操作失败"): string {
+export function extractErrorMessage(
+  err: unknown,
+  fallback = "操作失败"
+): string {
   if (axios.isAxiosError(err)) {
-    const data = err.response?.data as { detail?: unknown; message?: unknown } | undefined;
+    const data = err.response?.data as
+      { detail?: unknown; message?: unknown } | undefined;
     const detail = data?.detail ?? data?.message;
     if (typeof detail === "string") {
       return detail || fallback;
@@ -118,13 +222,24 @@ export function extractErrorMessage(err: unknown, fallback = "操作失败"): st
       const firstMessage = detail
         .map((item) => {
           if (typeof item === "string") return item;
-          if (item && typeof item === "object" && "msg" in item && typeof item.msg === "string") return item.msg;
+          if (
+            item &&
+            typeof item === "object" &&
+            "msg" in item &&
+            typeof item.msg === "string"
+          )
+            return item.msg;
           return null;
         })
         .find(Boolean);
       return firstMessage || fallback;
     }
-    if (detail && typeof detail === "object" && "msg" in detail && typeof detail.msg === "string") {
+    if (
+      detail &&
+      typeof detail === "object" &&
+      "msg" in detail &&
+      typeof detail.msg === "string"
+    ) {
       return detail.msg || fallback;
     }
     return fallback;

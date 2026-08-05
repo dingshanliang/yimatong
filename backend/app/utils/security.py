@@ -33,15 +33,22 @@ def create_access_token(
     tenant_id: str,
     account_id: str,
     role: str,
-    tenant_type: str = "brand",
+    tenant_type: str | None = None,
     extra: dict | None = None,
 ) -> str:
     expire = datetime.now(UTC) + timedelta(minutes=settings.access_token_expire_minutes)
+    resolved_tenant_type = tenant_type
+    if resolved_tenant_type is None:
+        resolved_tenant_type = (
+            "platform"
+            if tenant_id == "platform" and account_id == "platform-admin" and role == "platform_admin"
+            else "brand"
+        )
     payload = {
         "sub": str(account_id),
         "tenant_id": str(tenant_id),
         "role": role,
-        "tenant_type": tenant_type,
+        "tenant_type": resolved_tenant_type,
         "exp": expire,
         "type": "access",
         "jti": str(uuid.uuid4()),

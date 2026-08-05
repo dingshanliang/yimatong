@@ -4,6 +4,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.core.database import bootstrap_tenant_row
 from app.models.code import CodeItem
 from app.models.page import PageTemplate
 
@@ -13,6 +14,13 @@ async def resolve_public_code(
     public_id: str,
 ) -> dict | None:
     """解析公开码，返回码信息+关联数据（使用 selectinload 预加载 CodeBatch）"""
+    bootstrap_item = await bootstrap_tenant_row(
+        db,
+        select(CodeItem).where(CodeItem.public_id == public_id),
+    )
+    if bootstrap_item is None:
+        return None
+
     result = await db.execute(
         select(CodeItem).options(selectinload(CodeItem.code_batch)).where(CodeItem.public_id == public_id)
     )

@@ -13,7 +13,6 @@ import {
   Tag,
 } from "antd";
 import type { ColumnsType } from "antd/es/table";
-import { useAuthStore } from "@/lib/auth";
 import { STATUS_COLORS } from "@/lib/status-colors";
 import type { AgencyClientRow } from "./types";
 import { STATUS_MAP } from "./types";
@@ -31,6 +30,8 @@ interface ClientTableProps {
   }) => void;
   onOpenChecklist: (clientId: string, clientName: string) => void;
   onCreateTask: (clientId: string, title: string) => void;
+  onEnterClient: (client: AgencyClientRow) => void;
+  enteringClientId?: string;
 }
 
 function renderEmpty(hasAnyClients: boolean, hasError: boolean) {
@@ -72,6 +73,8 @@ export function ClientTable({
   onFilterChange,
   onOpenChecklist,
   onCreateTask,
+  onEnterClient,
+  enteringClientId,
 }: ClientTableProps) {
   const router = useRouter();
   const columns: ColumnsType<AgencyClientRow> = [
@@ -98,24 +101,29 @@ export function ClientTable({
     {
       title: "上线准备度",
       key: "readiness",
-      render: (_: unknown, record) => (
-        <Space orientation="vertical" size={2} className="min-w-28">
-          <Progress
-            percent={record.readiness.percent}
-            size="small"
-            status={record.readiness.ready ? "success" : "active"}
-          />
-          <span>
-            {record.readiness.passed_count}/{record.readiness.total_count}
-          </span>
-        </Space>
-      ),
+      render: (_: unknown, record) =>
+        record.full_workbench_access === false ? (
+          <Tag>仅限已授权模块</Tag>
+        ) : (
+          <Space orientation="vertical" size={2} className="min-w-28">
+            <Progress
+              percent={record.readiness.percent}
+              size="small"
+              status={record.readiness.ready ? "success" : "active"}
+            />
+            <span>
+              {record.readiness.passed_count}/{record.readiness.total_count}
+            </span>
+          </Space>
+        ),
     },
     {
       title: "缺失配置",
       key: "missing",
       render: (_: unknown, record) =>
-        record.readiness.ready ? (
+        record.full_workbench_access === false ? (
+          <span>{(record.agency_scope || []).join("、")}</span>
+        ) : record.readiness.ready ? (
           <Tag color={STATUS_COLORS.success}>已具备上线条件</Tag>
         ) : (
           <span>缺：{record.readiness.missing_labels.join("、")}</span>
@@ -182,34 +190,41 @@ export function ClientTable({
           <Button
             size="small"
             type="primary"
-            onClick={async () => {
-              await useAuthStore.getState().switchAgencyContext(record.id);
-              router.push("/");
-            }}
+            loading={enteringClientId === record.id}
+            disabled={
+              Boolean(enteringClientId) && enteringClientId !== record.id
+            }
+            onClick={() => onEnterClient(record)}
           >
             进入管理
           </Button>
-          <Button
-            size="small"
-            onClick={() => router.push(record.next_action.href)}
-          >
-            {record.next_action.label}
-          </Button>
-          <Button
-            size="small"
-            onClick={() => onOpenChecklist(record.id, record.name)}
-          >
-            上线检查
-          </Button>
-          <Button
-            size="small"
-            type="link"
-            onClick={() =>
-              onCreateTask(record.id, record.next_action.task_title)
-            }
-          >
-            创建任务
-          </Button>
+          {record.full_workbench_access !== false && (
+            <Button
+              size="small"
+              onClick={() => router.push(record.next_action.href)}
+            >
+              {record.next_action.label}
+            </Button>
+          )}
+          {record.full_workbench_access !== false && (
+            <Button
+              size="small"
+              onClick={() => onOpenChecklist(record.id, record.name)}
+            >
+              上线检查
+            </Button>
+          )}
+          {record.full_workbench_access !== false && (
+            <Button
+              size="small"
+              type="link"
+              onClick={() =>
+                onCreateTask(record.id, record.next_action.task_title)
+              }
+            >
+              创建任务
+            </Button>
+          )}
         </Space>
       ),
     },

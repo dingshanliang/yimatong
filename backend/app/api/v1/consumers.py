@@ -7,7 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.context import set_consumer_tenant_id
-from app.core.database import get_db_for_consumer
+from app.core.database import get_db_for_consumer, set_session_tenant_context
 from app.models.member import ConsumerProfile
 from app.schemas.common import PaginatedResponse
 from app.schemas.member import ExchangeRequest as PointsExchangeRequest
@@ -15,7 +15,7 @@ from app.schemas.member import LeadCaptureRequest
 from app.services.member import get_consumer_profile, list_point_transactions
 from app.services.point_shop import exchange_product, list_consumer_point_products
 from app.services.resolver import resolve_public_code
-from app.services.scan_token import verify_scan_token
+from app.services.scan_token import create_scan_token, verify_scan_token
 from app.utils.client_ip import compute_ip_hash, get_client_ip
 from app.utils.crypto import encrypt_phone, hash_phone
 
@@ -29,8 +29,8 @@ def _extract_bearer_token(request: Request) -> str:
     return auth_header[7:]
 
 
-async def _resolve_scan_context(request: Request, db: AsyncSession) -> tuple[uuid.UUID, uuid.UUID | None]:
-    """Resolve tenant_id and optional bound consumer_id from scan_token."""
+async def _resolve_scan_context(request: Request, db: AsyncSession) -> tuple[uuid.UUID, uuid.UUID]:
+    """Resolve tenant and the required private consumer subject from scan_token."""
     token = _extract_bearer_token(request)
     payload = verify_scan_token(token)
     if not payload or not payload.get("public_id"):
@@ -40,7 +40,7 @@ async def _resolve_scan_context(request: Request, db: AsyncSession) -> tuple[uui
     tid = payload.get("tenant_id")
     tenant_uuid: uuid.UUID
     if tid:
-        tenant_uuid = uuid.UUID(tid)
+        tenant_uuid = await set_session_tenant_context(db, tid)
     else:
         code_data = await resolve_public_code(db, payload["public_id"])
         if not code_data:
@@ -50,13 +50,18 @@ async def _resolve_scan_context(request: Request, db: AsyncSession) -> tuple[uui
     set_consumer_tenant_id(str(tenant_uuid))
 
     cid_str = payload.get("consumer_id")
-    bound_consumer_id = uuid.UUID(cid_str) if cid_str else None
+    if not cid_str:
+        raise HTTPException(status_code=401, detail="consumer-bound scan_token required")
+    try:
+        bound_consumer_id = uuid.UUID(cid_str)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=401, detail="invalid consumer subject")
     return tenant_uuid, bound_consumer_id
 
 
-def _verify_consumer_ownership(bound_consumer_id: uuid.UUID | None, requested_consumer_id: uuid.UUID) -> None:
-    """If scan_token has bound consumer_id, verify request matches."""
-    if bound_consumer_id and bound_consumer_id != requested_consumer_id:
+def _verify_consumer_ownership(bound_consumer_id: uuid.UUID, requested_consumer_id: uuid.UUID) -> None:
+    """Reject request identifiers that disagree with the credential subject."""
+    if bound_consumer_id != requested_consumer_id:
         raise HTTPException(status_code=403, detail="consumer_id mismatch with token")
 
 
@@ -82,17 +87,26 @@ async def lead_capture(
     if payload is None:
         raise HTTPException(status_code=401, detail="invalid_token")
 
+    token_tenant_id = payload.get("tenant_id")
+    if token_tenant_id:
+        tenant_id = await set_session_tenant_context(db, token_tenant_id)
+    else:
+        code_data = await resolve_public_code(db, body.public_id)
+        if not code_data:
+            raise HTTPException(status_code=404, detail="code not found")
+        tenant_id = uuid.UUID(code_data["tenant_id"])
+    set_consumer_tenant_id(str(tenant_id))
+    token_consumer_id = payload.get("consumer_id")
+    try:
+        bound_consumer_id = uuid.UUID(token_consumer_id) if token_consumer_id else None
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=401, detail="invalid consumer subject")
+
     # yimatong-zgb1.5：采集手机号前检查 consent
     encrypted_phone = None
     phone_hash = None
     profile = None
     if body.phone:
-        # 先反查 tenant_id（consent 检查 + 存储都需要）
-        code_data = await resolve_public_code(db, body.public_id)
-        if not code_data:
-            raise HTTPException(status_code=404, detail="code not found")
-        tenant_id = uuid.UUID(code_data["tenant_id"])
-
         # consent gating：privacy 类型必须 granted 且未撤回
         from app.models.consent import ConsentType
         from app.services.consent import has_active_consent
@@ -154,6 +168,10 @@ async def lead_capture(
             )
             db.add(profile)
         else:
+            if bound_consumer_id is None:
+                raise HTTPException(status_code=403, detail="consumer_identity_required")
+            if bound_consumer_id != profile.id:
+                raise HTTPException(status_code=403, detail="consumer_id mismatch with token")
             if body.name:
                 profile.nickname = body.name
             if extra:
@@ -162,7 +180,19 @@ async def lead_capture(
                 profile.extra_data = existing
         await db.commit()
 
-    return {"status": "ok", "consumer_id": str(profile.id) if phone_hash and profile else None}
+    bound_token = None
+    if phone_hash and profile:
+        bound_token = create_scan_token(
+            public_id=body.public_id,
+            ip_hash=ip_hash,
+            tenant_id=str(tenant_id),
+            consumer_id=str(profile.id),
+        )
+    return {
+        "status": "ok",
+        "consumer_id": str(profile.id) if phone_hash and profile else None,
+        "scan_token": bound_token,
+    }
 
 
 @consumer_router.get("/me")
@@ -180,28 +210,24 @@ async def get_consumer_me(
             raise HTTPException(status_code=400, detail="invalid consumer_id")
 
         _verify_consumer_ownership(bound_cid, cid)
+    else:
+        cid = bound_cid
 
-        result = await db.execute(
-            select(ConsumerProfile).where(
-                ConsumerProfile.id == cid,
-                ConsumerProfile.tenant_id == tenant_id,
-            )
+    result = await db.execute(
+        select(ConsumerProfile).where(
+            ConsumerProfile.id == cid,
+            ConsumerProfile.tenant_id == tenant_id,
         )
-        profile = result.scalar_one_or_none()
-        if not profile:
-            raise HTTPException(status_code=404, detail="consumer not found")
-
-        return {
-            "consumer_id": str(profile.id),
-            "member_level": profile.member_level,
-            "total_points": profile.total_points,
-            "nickname": profile.nickname,
-        }
+    )
+    profile = result.scalar_one_or_none()
+    if not profile:
+        raise HTTPException(status_code=404, detail="consumer not found")
 
     return {
-        "consumer_id": None,
-        "member_level": "normal",
-        "total_points": 0,
+        "consumer_id": str(profile.id),
+        "member_level": profile.member_level,
+        "total_points": profile.total_points,
+        "nickname": profile.nickname,
     }
 
 
@@ -212,17 +238,10 @@ async def get_consumer_points_me(
     db: AsyncSession = Depends(get_db_for_consumer),
 ):
     tenant_id, bound_cid = await _resolve_scan_context(request, db)
-    if not consumer_id:
-        return {
-            "consumer_id": None,
-            "member_level": "normal",
-            "total_points": 0,
-            "recent_transactions": [],
-        }
+    if consumer_id is not None:
+        _verify_consumer_ownership(bound_cid, consumer_id)
 
-    _verify_consumer_ownership(bound_cid, consumer_id)
-
-    profile = await get_consumer_profile(db, tenant_id, consumer_id)
+    profile = await get_consumer_profile(db, tenant_id, bound_cid)
     if not profile:
         raise HTTPException(status_code=404, detail="consumer not found")
     return profile
@@ -239,7 +258,7 @@ async def list_consumer_points_transactions(
     tenant_id, bound_cid = await _resolve_scan_context(request, db)
     _verify_consumer_ownership(bound_cid, consumer_id)
 
-    txns, total = await list_point_transactions(db, tenant_id, consumer_id, page=page, page_size=page_size)
+    txns, total = await list_point_transactions(db, tenant_id, bound_cid, page=page, page_size=page_size)
     return PaginatedResponse(
         items=[
             {
@@ -269,7 +288,7 @@ async def list_consumer_points_products(
     _verify_consumer_ownership(bound_cid, consumer_id)
 
     try:
-        return {"items": await list_consumer_point_products(db, tenant_id, consumer_id)}
+        return {"items": await list_consumer_point_products(db, tenant_id, bound_cid)}
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
 
@@ -284,6 +303,6 @@ async def create_consumer_points_exchange(
     _verify_consumer_ownership(bound_cid, body.consumer_id)
 
     try:
-        return await exchange_product(db, tenant_id, body.consumer_id, body.product_id)
+        return await exchange_product(db, tenant_id, bound_cid, body.product_id)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))

@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.event_bus import event_bus
 from app.models.code import CodeItem
 from app.models.scan import ScanEvent
+from app.services.quota import check_quota_incremental_locked
 from app.utils import utcnow
 
 
@@ -29,6 +30,10 @@ async def record_scan_event(
     防止 control tenant 用错 tenant_id 调用时污染 baseline 的 first_scanned_at
     （public_id 全局 unique 已兜底，应用层显式过滤是 defense-in-depth）。
     """
+    # 每一条成功落库的权威扫码事实（包括重复扫码）计一次 max_scans；
+    # 无效码、终止状态和写入失败不会产生 ScanEvent，因此不计费。
+    await check_quota_incremental_locked(db, tenant_id, "max_scans", ScanEvent)
+
     # 原子判断首扫：更新 first_scanned_at，若之前为空则为首扫。
     # tenant_id 维度过滤：即使 public_id 全局唯一，应用层也显式限定本租户的码，
     # 避免跨租户调用方误写其他租户的首查事实。

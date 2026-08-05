@@ -9,6 +9,7 @@ from fastapi import HTTPException, Request
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.database import bootstrap_tenant_row
 from app.models.webhook import ApiKey
 
 
@@ -24,8 +25,10 @@ async def authenticate_api_key(
     if not api_key_str:
         raise HTTPException(status_code=401, detail="Missing X-Api-Key header")
 
-    result = await db.execute(select(ApiKey).where(ApiKey.key == api_key_str, ApiKey.revoked.is_(False)))
-    key = result.scalar_one_or_none()
+    key = await bootstrap_tenant_row(
+        db,
+        select(ApiKey).where(ApiKey.key == api_key_str, ApiKey.revoked.is_(False)),
+    )
     if not key:
         raise HTTPException(status_code=401, detail="Invalid or revoked API key")
 

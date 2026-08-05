@@ -19,7 +19,7 @@ sys.path.insert(0, str(backend_dir))
 # Set test env vars before importing app code
 os.environ.setdefault("database_url", "sqlite+aiosqlite://")
 os.environ.setdefault("redis_url", "redis://localhost:6379/0")
-os.environ.setdefault("secret_key", "test-secret-key-for-e2e")
+os.environ.setdefault("secret_key", "test-e2e-secret-key-0123456789-ABCDEFGHIJKLMNOPQRSTUVWXYZ")
 os.environ.setdefault("AES_MASTER_KEY_V1", "00" * 32)
 os.environ.setdefault("HMAC_PEPPER", "ff" * 32)
 

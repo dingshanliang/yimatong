@@ -21,7 +21,11 @@ def _platform_admin_headers() -> dict:
     from app.utils.security import create_access_token
 
     token = create_access_token("platform", "platform-admin", "platform_admin")
-    return {"Authorization": f"Bearer {token}"}
+    return {
+        "Cookie": f"platform_access_token={token}; platform_csrf_token=test-platform-csrf",
+        "Origin": "http://localhost:3002",
+        "X-Platform-CSRF": "test-platform-csrf",
+    }
 
 
 RULES_JSON = {
@@ -97,6 +101,71 @@ async def campaign_and_benefit(client: AsyncClient, auth_setup):
     )
     bid = benefit.json()["id"]
     return cid, bid, headers
+
+
+class TestBenefitPermissions:
+    @pytest.mark.anyio
+    async def test_operator_can_create_view_update_and_delete_benefit(self, client: AsyncClient, auth_setup):
+        tenant_id, _ = auth_setup
+        token = create_access_token(tenant_id, str(uuid.uuid4()), "operator")
+        headers = {"Authorization": f"Bearer {token}"}
+
+        created = await client.post(
+            "/api/v1/benefits",
+            json={
+                "name": "运营权益",
+                "benefit_type": "platform_coupon",
+                "config_json": {"amount": 10},
+                "stock_total": 10,
+                "per_person_limit": 1,
+            },
+            headers=headers,
+        )
+        assert created.status_code == 201
+        benefit_id = created.json()["id"]
+
+        assert (await client.get("/api/v1/benefits", headers=headers)).status_code == 200
+        assert (await client.get("/api/v1/benefits/summary", headers=headers)).status_code == 200
+        assert (await client.get("/api/v1/benefits/admin/claims", headers=headers)).status_code == 200
+        assert (await client.get(f"/api/v1/benefits/{benefit_id}", headers=headers)).status_code == 200
+
+        updated = await client.patch(
+            f"/api/v1/benefits/{benefit_id}",
+            json={"name": "运营权益已更新"},
+            headers=headers,
+        )
+        assert updated.status_code == 200
+        assert updated.json()["name"] == "运营权益已更新"
+        assert (await client.delete(f"/api/v1/benefits/{benefit_id}", headers=headers)).status_code == 200
+
+    @pytest.mark.anyio
+    async def test_viewer_cannot_access_benefit_management(self, client: AsyncClient, campaign_and_benefit, auth_setup):
+        _, benefit_id, _ = campaign_and_benefit
+        tenant_id, _ = auth_setup
+        token = create_access_token(tenant_id, str(uuid.uuid4()), "viewer")
+        headers = {"Authorization": f"Bearer {token}"}
+
+        requests = [
+            client.post(
+                "/api/v1/benefits",
+                json={
+                    "name": "越权权益",
+                    "benefit_type": "platform_coupon",
+                    "config_json": {},
+                    "stock_total": 1,
+                    "per_person_limit": 1,
+                },
+                headers=headers,
+            ),
+            client.get("/api/v1/benefits", headers=headers),
+            client.get("/api/v1/benefits/summary", headers=headers),
+            client.get("/api/v1/benefits/admin/claims", headers=headers),
+            client.get(f"/api/v1/benefits/{benefit_id}", headers=headers),
+            client.patch(f"/api/v1/benefits/{benefit_id}", json={"name": "越权修改"}, headers=headers),
+            client.delete(f"/api/v1/benefits/{benefit_id}", headers=headers),
+        ]
+        responses = [await request for request in requests]
+        assert [response.status_code for response in responses] == [403] * len(responses)
 
 
 class TestBenefitsList:

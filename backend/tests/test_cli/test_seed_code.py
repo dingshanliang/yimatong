@@ -11,7 +11,7 @@ backend_dir = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(backend_dir))
 os.environ.setdefault("database_url", "sqlite+aiosqlite://")
 os.environ.setdefault("redis_url", "redis://localhost:6379/0")
-os.environ.setdefault("secret_key", "test-secret-key")
+os.environ.setdefault("secret_key", "test-secret-key-0123456789-ABCDEFGHIJKLMNOPQRSTUVWXYZ")
 
 from app.cli.seed import app  # noqa: E402
 

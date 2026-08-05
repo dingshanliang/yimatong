@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.main import app
-from app.models.tenant import Account, Role
+from app.models.tenant import Account, Role, Tenant, TenantStatus
 from app.utils.security import decode_token, hash_password
 from tests.conftest import TestSessionLocal
 
@@ -22,7 +22,7 @@ async def db_session() -> AsyncGenerator[AsyncSession, None]:
 
 
 @pytest.fixture
-async def client(db_session: AsyncSession):
+async def client(db_session: AsyncSession, shared_security_cache):
     async def override_get_db():
         yield db_session
 
@@ -74,6 +74,15 @@ class TestLogin:
         assert "access_token" in data
         assert "refresh_token" in data
         assert data["token_type"] == "bearer"
+
+    @pytest.mark.anyio
+    async def test_login_email_identity_is_case_and_whitespace_insensitive(self, client: AsyncClient, seeded_account):
+        resp = await client.post(
+            "/api/v1/auth/login",
+            json={"email": "  LOGIN@TEST.COM  ", "password": "Password1"},
+        )
+
+        assert resp.status_code == 200
 
     @pytest.mark.anyio
     async def test_login_uses_assigned_account_role(
@@ -132,6 +141,74 @@ class TestLogin:
         assert payload["sub"] == str(demo_account.id)
 
     @pytest.mark.anyio
+    async def test_login_requires_tenant_slug_when_email_is_duplicated(
+        self, client: AsyncClient, db_session: AsyncSession, seeded_account
+    ):
+        from uuid6 import uuid7
+
+        from app.models.tenant import Organization, Tenant
+
+        other_tenant = Tenant(id=uuid7(), name="另一工作区", slug=f"other-{uuid7().hex[:8]}")
+        db_session.add(other_tenant)
+        await db_session.flush()
+        other_org = Organization(id=uuid7(), tenant_id=other_tenant.id, name="另一部门")
+        db_session.add(other_org)
+        await db_session.flush()
+        db_session.add(
+            Account(
+                id=uuid7(),
+                tenant_id=other_tenant.id,
+                organization_id=other_org.id,
+                email=seeded_account.email,
+                hashed_password=hash_password("OtherPassword1"),
+                name="另一用户",
+            )
+        )
+        await db_session.commit()
+
+        resp = await client.post(
+            "/api/v1/auth/login",
+            json={"email": seeded_account.email, "password": "Password1"},
+        )
+
+        assert resp.status_code == 409
+        assert resp.json()["detail"] == "该邮箱关联多个工作区，请填写工作区标识"
+
+    @pytest.mark.anyio
+    async def test_duplicate_email_wrong_password_does_not_reveal_multiple_workspaces(
+        self, client: AsyncClient, db_session: AsyncSession, seeded_account
+    ):
+        from uuid6 import uuid7
+
+        from app.models.tenant import Organization, Tenant
+
+        other_tenant = Tenant(id=uuid7(), name="另一工作区", slug=f"other-{uuid7().hex[:8]}")
+        db_session.add(other_tenant)
+        await db_session.flush()
+        other_org = Organization(id=uuid7(), tenant_id=other_tenant.id, name="另一部门")
+        db_session.add(other_org)
+        await db_session.flush()
+        db_session.add(
+            Account(
+                id=uuid7(),
+                tenant_id=other_tenant.id,
+                organization_id=other_org.id,
+                email=seeded_account.email,
+                hashed_password=hash_password("OtherPassword1"),
+                name="另一用户",
+            )
+        )
+        await db_session.commit()
+
+        response = await client.post(
+            "/api/v1/auth/login",
+            json={"email": seeded_account.email, "password": "CompletelyWrong1"},
+        )
+
+        assert response.status_code == 401
+        assert response.json()["detail"] == "邮箱或密码不正确"
+
+    @pytest.mark.anyio
     async def test_login_failure_returns_401(self, client: AsyncClient, seeded_account):
         resp = await client.post(
             "/api/v1/auth/login",
@@ -162,6 +239,31 @@ class TestLogin:
 
         assert resp.status_code == 403
         assert resp.json()["detail"] == "账户已停用，请联系租户管理员"
+
+    @pytest.mark.anyio
+    async def test_suspended_tenant_cannot_login_or_refresh(
+        self, client: AsyncClient, db_session: AsyncSession, seeded_account
+    ):
+        login_resp = await client.post(
+            "/api/v1/auth/login",
+            json={"email": "login@test.com", "password": "Password1"},
+        )
+        refresh_token = login_resp.json()["refresh_token"]
+        tenant = await db_session.get(Tenant, seeded_account.tenant_id)
+        tenant.status = TenantStatus.suspended
+        await db_session.commit()
+
+        blocked_login = await client.post(
+            "/api/v1/auth/login",
+            json={"email": "login@test.com", "password": "Password1"},
+        )
+        blocked_refresh = await client.post(
+            "/api/v1/auth/refresh",
+            json={"refresh_token": refresh_token},
+        )
+
+        assert blocked_login.status_code == 403
+        assert blocked_refresh.status_code == 401
 
     @pytest.mark.anyio
     async def test_login_success_records_last_login_time(

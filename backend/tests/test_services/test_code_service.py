@@ -24,6 +24,7 @@ from app.models.code import (
     CodeType,
 )
 from app.models.product import SKU, BatchStatus, Brand, Product, ProductionBatch
+from app.models.tenant import Tenant
 from app.services.code import (
     activate_batch,
     create_code_batch,
@@ -33,6 +34,7 @@ from app.services.code import (
     void_batch,
 )
 from app.services.code_state import InvalidStateTransitionError
+from app.services.quota import QuotaExceededError
 
 engine = create_async_engine("sqlite+aiosqlite://")
 TestSession = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
@@ -141,6 +143,57 @@ class TestCreateCodeBatch:
                 assert len(item.public_id) > 0
                 assert item.status == CodeItemStatus.created
                 assert item.tenant_id == tenant_id
+
+    @pytest.mark.anyio
+    async def test_create_batch_enforces_cumulative_max_codes(self):
+        async with TestSession() as db:
+            tenant_id, _, product_id, sku_id, production_batch_id = await _create_prerequisites(db)
+            db.add(
+                Tenant(
+                    id=tenant_id,
+                    name="累计码量租户",
+                    slug=f"code-limit-{tenant_id.hex[:8]}",
+                    quota={"max_codes": 1, "max_codes_per_batch": 100},
+                )
+            )
+            await db.flush()
+
+            with pytest.raises(QuotaExceededError, match="max_codes"):
+                await create_code_batch(
+                    db,
+                    tenant_id,
+                    product_id,
+                    sku_id,
+                    production_batch_id,
+                    quantity=2,
+                    created_by=_uuid(),
+                )
+
+    @pytest.mark.anyio
+    async def test_paired_codes_charge_each_generated_code_item(self):
+        async with TestSession() as db:
+            tenant_id, _, product_id, sku_id, production_batch_id = await _create_prerequisites(db)
+            db.add(
+                Tenant(
+                    id=tenant_id,
+                    name="双码配额租户",
+                    slug=f"paired-limit-{tenant_id.hex[:8]}",
+                    quota={"max_codes": 3, "max_codes_per_batch": 100},
+                )
+            )
+            await db.flush()
+
+            with pytest.raises(QuotaExceededError, match="max_codes"):
+                await create_code_batch(
+                    db,
+                    tenant_id,
+                    product_id,
+                    sku_id,
+                    production_batch_id,
+                    quantity=2,
+                    created_by=_uuid(),
+                    code_type=CodeType.paired,
+                )
 
     @pytest.mark.anyio
     async def test_create_batch_product_not_found(self):

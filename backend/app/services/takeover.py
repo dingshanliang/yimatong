@@ -20,7 +20,7 @@ from email.utils import parsedate_to_datetime
 from urllib.parse import parse_qs, unquote, urlparse
 
 from fastapi import HTTPException, status
-from sqlalchemy import func, select, text
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.code import CodeBatch, CodeItem
@@ -675,7 +675,12 @@ async def queue_import(
 
 
 async def submit_import(
-    db: AsyncSession, project: TakeoverProject, job: TakeoverImportJob, account_id: uuid.UUID
+    db: AsyncSession,
+    project: TakeoverProject,
+    job: TakeoverImportJob,
+    account_id: uuid.UUID,
+    *,
+    write_audit: bool = True,
 ) -> TakeoverImportJob:
     if job.project_id != project.id or job.tenant_id != project.tenant_id:
         raise HTTPException(status_code=404, detail="导入任务不存在")
@@ -736,26 +741,40 @@ async def submit_import(
     job.completed_at = _now()
     project.status = TakeoverProjectStatus.needs_fix if failed else TakeoverProjectStatus.draft
     await db.flush()
-    await write_audit_log(
-        db,
-        str(account_id),
-        str(project.tenant_id),
-        "takeover_import_submitted",
-        f"takeover_import:{job.id}",
-        {"project_id": str(project.id), "counts": job.counts},
-    )
+    if write_audit:
+        await write_audit_log(
+            db,
+            str(account_id),
+            str(project.tenant_id),
+            "takeover_import_submitted",
+            f"takeover_import:{job.id}",
+            {"project_id": str(project.id), "counts": job.counts},
+        )
     return job
 
 
 async def process_import_job(job_id: uuid.UUID | str) -> None:
     """Worker 入口：领取一个待处理任务，并将最终状态持久化。"""
-    from app.core.database import _is_pg, async_session_factory
+    from app.core.database import async_session_factory, bootstrap_tenant_keys, set_session_tenant_context
+
+    parsed_job_id = uuid.UUID(str(job_id))
+    async with async_session_factory() as bootstrap_db:
+        work_keys = await bootstrap_tenant_keys(
+            bootstrap_db,
+            select(TakeoverImportJob.id, TakeoverImportJob.tenant_id)
+            .where(TakeoverImportJob.id == parsed_job_id)
+            .limit(1),
+        )
+    if not work_keys:
+        return
+    _, tenant_id = work_keys[0]
 
     async with async_session_factory() as db:
-        if _is_pg:
-            await db.execute(text("SET LOCAL app.bypass_rls = 'true'"))
+        await set_session_tenant_context(db, tenant_id)
         job = await db.scalar(
-            select(TakeoverImportJob).where(TakeoverImportJob.id == uuid.UUID(str(job_id))).with_for_update()
+            select(TakeoverImportJob)
+            .where(TakeoverImportJob.id == parsed_job_id, TakeoverImportJob.tenant_id == tenant_id)
+            .with_for_update()
         )
         if not job or job.status not in {TakeoverImportStatus.dry_run, TakeoverImportStatus.pending}:
             return
@@ -773,15 +792,44 @@ async def process_import_job(job_id: uuid.UUID | str) -> None:
         job.status = TakeoverImportStatus.processing
         await db.flush()
         try:
-            await submit_import(db, project, job, job.created_by)
+            await submit_import(db, project, job, job.created_by, write_audit=False)
+            audit_payload = {
+                "operator_id": str(job.created_by),
+                "tenant_id": tenant_id,
+                "resource": f"takeover_import:{job.id}",
+                "details": {"project_id": str(project.id), "counts": job.counts},
+            }
             await db.commit()
+            from sqlalchemy import text
+
+            from app.core.database import control_session_factory
+
+            try:
+                async with control_session_factory() as audit_db:
+                    await audit_db.execute(text("SET LOCAL app.bypass_rls = 'true'"))
+                    await write_audit_log(
+                        audit_db,
+                        audit_payload["operator_id"],
+                        str(audit_payload["tenant_id"]),
+                        "takeover_import_submitted",
+                        audit_payload["resource"],
+                        audit_payload["details"],
+                    )
+                    await audit_db.commit()
+            except Exception:
+                # The business transaction is already durable.  Do not turn a
+                # successful import into a retryable failed job (which could
+                # duplicate aliases); surface the independent audit failure.
+                logger.exception("Failed to persist takeover import audit for job %s", parsed_job_id)
         except Exception:
             await db.rollback()
             async with async_session_factory() as failed_db:
-                if _is_pg:
-                    await failed_db.execute(text("SET LOCAL app.bypass_rls = 'true'"))
+                await set_session_tenant_context(failed_db, tenant_id)
                 failed_job = await failed_db.scalar(
-                    select(TakeoverImportJob).where(TakeoverImportJob.id == uuid.UUID(str(job_id)))
+                    select(TakeoverImportJob).where(
+                        TakeoverImportJob.id == parsed_job_id,
+                        TakeoverImportJob.tenant_id == tenant_id,
+                    )
                 )
                 if failed_job:
                     failed_job.status = TakeoverImportStatus.failed

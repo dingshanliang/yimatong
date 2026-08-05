@@ -38,17 +38,28 @@ async def create_code_batch(
     generation_mode: str = CodeGenerationMode.item_level,
     batch_code: str | None = None,
 ) -> dict:
-    # Quota check
+    # 套餐与累计配额必须在租户行锁内检查；当前事务随后完成码写入，
+    # 保证同租户并发生成不会同时越过 max_codes。
     from app.models.tenant import Tenant
-    from app.services.quota import QuotaExceededError, check_quota
+    from app.services.quota import check_quota, check_quota_incremental_locked
 
-    generation_quantity = 1 if generation_mode == CodeGenerationMode.batch_level else quantity
+    if generation_mode == CodeGenerationMode.batch_level:
+        generated_code_count = 1
+    elif generation_mode == CodeGenerationMode.item_level:
+        generated_code_count = quantity * (2 if code_type == CodeType.paired else 1)
+    else:
+        raise ValueError("Invalid generation mode")
+
+    await check_quota_incremental_locked(
+        db,
+        tenant_id,
+        "max_codes",
+        CodeItem,
+        generated_code_count,
+    )
     tenant = await db.get(Tenant, tenant_id)
     if tenant and tenant.quota:
-        try:
-            check_quota(tenant.quota, "max_codes_per_batch", generation_quantity)
-        except QuotaExceededError:
-            raise
+        check_quota(tenant.quota, "max_codes_per_batch", generated_code_count)
 
     product = await db.get(Product, product_id)
     if not product or product.tenant_id != tenant_id:
@@ -69,8 +80,6 @@ async def create_code_batch(
     if generation_mode == CodeGenerationMode.batch_level:
         quantity = 1
         code_type = CodeType.single
-    elif generation_mode != CodeGenerationMode.item_level:
-        raise ValueError("Invalid generation mode")
 
     requested_batch_code = batch_code or production_batch.batch_code
     existing_batch_codes_result = await db.execute(

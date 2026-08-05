@@ -7,6 +7,9 @@ const api = axios.create({
   timeout: 15000,
   headers: { "Content-Type": "application/json" },
   withCredentials: true,
+  withXSRFToken: true,
+  xsrfCookieName: "platform_csrf_token",
+  xsrfHeaderName: "X-Platform-CSRF",
 });
 
 let logoutHandler: (() => void) | null = null;
@@ -14,16 +17,6 @@ let logoutHandler: (() => void) | null = null;
 export function registerPlatformLogoutHandler(handler: () => void) {
   logoutHandler = handler;
 }
-
-api.interceptors.request.use((config) => {
-  if (typeof window !== "undefined") {
-    const token = localStorage.getItem("platform_access_token");
-    if (token) {
-      config.headers.Authorization = `Bearer ${token}`;
-    }
-  }
-  return config;
-});
 
 api.interceptors.response.use(
   (res) => res,
@@ -35,12 +28,16 @@ api.interceptors.response.use(
       }
     }
     return Promise.reject(error);
-  },
+  }
 );
 
-export function extractErrorMessage(err: unknown, fallback = "操作失败"): string {
+export function extractErrorMessage(
+  err: unknown,
+  fallback = "操作失败"
+): string {
   if (axios.isAxiosError(err)) {
-    const data = err.response?.data as { detail?: unknown; message?: unknown } | undefined;
+    const data = err.response?.data as
+      { detail?: unknown; message?: unknown } | undefined;
     const detail = data?.detail ?? data?.message;
     if (typeof detail === "string") {
       return detail || fallback;
@@ -49,7 +46,13 @@ export function extractErrorMessage(err: unknown, fallback = "操作失败"): st
       const firstMessage = detail
         .map((item) => {
           if (typeof item === "string") return item;
-          if (item && typeof item === "object" && "msg" in item && typeof item.msg === "string") return item.msg;
+          if (
+            item &&
+            typeof item === "object" &&
+            "msg" in item &&
+            typeof item.msg === "string"
+          )
+            return item.msg;
           return null;
         })
         .find(Boolean);

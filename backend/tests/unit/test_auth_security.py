@@ -5,6 +5,17 @@ import uuid
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from pydantic import ValidationError
+
+_PRODUCTION_SETTINGS = {
+    "environment": "production",
+    "admin_public_url": "https://admin.example.com",
+    "platform_public_url": "https://platform.example.com",
+    "cookie_secure": True,
+    "secret_key": "prod-secret-key-8YQ2jZ6xF4mN9pR7sT5vW3kL1cB0dA",
+    "hmac_pepper": "prod-hmac-pepper-1Kx9Qm4Vt7Za2Nc8Wd5Yp3Rf6Bs0Gj",
+    "ip_hash_secret": "prod-ip-hash-secret-6Tp2Mz8Qa4Wn9Yc1Rk7Vf5Bj3Hs0Ld",
+}
 
 
 def test_config_rejects_empty_secret_key():
@@ -25,6 +36,66 @@ def test_config_rejects_empty_secret_key():
             os.environ.pop("SECRET_KEY", None)
 
 
+@pytest.mark.parametrize(
+    "secret_key",
+    [
+        "dev-secret-key-change-in-production",
+        "short-secret",
+        "a" * 64,
+        "password-password-password-password-password-password",
+    ],
+)
+def test_production_rejects_example_short_or_low_entropy_secret_key(secret_key: str):
+    from app.core.config import Settings
+
+    with pytest.raises(ValidationError, match="SECRET_KEY") as exc_info:
+        Settings(_env_file=None, **(_PRODUCTION_SETTINGS | {"secret_key": secret_key}))
+
+    assert secret_key not in str(exc_info.value)
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        ("hmac_pepper", "", "HMAC_PEPPER"),
+        ("hmac_pepper", "ff" * 32, "HMAC_PEPPER"),
+        ("hmac_pepper", _PRODUCTION_SETTINGS["secret_key"], "HMAC_PEPPER"),
+        ("ip_hash_secret", "yimatong-default-ip-hash-secret-change-in-production", "IP_HASH_SECRET"),
+        ("ip_hash_secret", _PRODUCTION_SETTINGS["secret_key"], "IP_HASH_SECRET"),
+        ("ip_hash_secret", _PRODUCTION_SETTINGS["hmac_pepper"], "IP_HASH_SECRET"),
+    ],
+)
+def test_production_requires_independent_non_default_application_secrets(field: str, value: str, message: str):
+    from app.core.config import Settings
+
+    with pytest.raises(ValidationError, match=message) as exc_info:
+        Settings(_env_file=None, **(_PRODUCTION_SETTINGS | {field: value}))
+
+    if value:
+        assert value not in str(exc_info.value)
+
+
+def test_production_accepts_independent_strong_application_secrets():
+    from app.core.config import Settings
+
+    configured = Settings(_env_file=None, **_PRODUCTION_SETTINGS)
+
+    assert configured.environment == "production"
+
+
+def test_development_and_test_keep_local_secret_compatibility():
+    from app.core.config import Settings
+
+    for environment in ("development", "test"):
+        configured = Settings(
+            _env_file=None,
+            environment=environment,
+            secret_key="local-only",
+            hmac_pepper="",
+        )
+        assert configured.secret_key == "local-only"
+
+
 @pytest.mark.asyncio
 async def test_jwt_auth_loads_permissions_to_request_state():
     """JWT 认证应将账户的权限列表加载到 request.state.permissions"""
@@ -37,24 +108,34 @@ async def test_jwt_auth_loads_permissions_to_request_state():
     mock_perm.code = "product:create"
 
     mock_role = MagicMock()
+    mock_role.name = "admin"
     mock_role.permissions = [mock_perm]
 
     mock_account = MagicMock()
     mock_account.roles = [mock_role]
+    mock_account.is_active = True
+    mock_account.auth_version = 0
 
     mock_result = MagicMock()
-    mock_result.scalar_one_or_none.return_value = mock_account
+    from app.models.tenant import TenantStatus
+
+    mock_result.one_or_none.return_value = (mock_account, TenantStatus.active)
 
     mock_db = AsyncMock()
-    mock_db.execute.return_value = mock_result
+    mock_db.execute.side_effect = [MagicMock(), mock_result]
 
     mock_session = AsyncMock()
     mock_session.__aenter__ = AsyncMock(return_value=mock_db)
     mock_session.__aexit__ = AsyncMock(return_value=False)
 
-    with patch("app.core.database.async_session_factory", return_value=mock_session):
-        permissions = await middleware._load_permissions(str(uuid.uuid4()), "admin")
+    tenant_id = str(uuid.uuid4())
+    with (
+        patch("app.core.database._is_pg", True),
+        patch("app.core.database.async_session_factory", return_value=mock_session),
+    ):
+        has_access, permissions = await middleware._load_account_access(str(uuid.uuid4()), "admin", 0, tenant_id)
 
+    assert has_access is True
     assert "product:create" in permissions
 
 
@@ -65,9 +146,15 @@ async def test_load_permissions_fails_closed_on_database_error():
 
     middleware = TenantScopeMiddleware(app=MagicMock())
 
-    with patch("app.core.database.async_session_factory", side_effect=Exception("DB error")):
-        permissions = await middleware._load_permissions("some-id", "admin")
+    with (
+        patch("app.core.database._is_pg", True),
+        patch("app.core.database.async_session_factory", side_effect=Exception("DB error")),
+    ):
+        has_access, permissions = await middleware._load_account_access(
+            str(uuid.uuid4()), "admin", 0, str(uuid.uuid4())
+        )
 
+    assert has_access is False
     assert permissions == []
 
 
@@ -79,18 +166,24 @@ async def test_load_permissions_fails_closed_for_missing_account():
     middleware = TenantScopeMiddleware(app=MagicMock())
 
     mock_result = MagicMock()
-    mock_result.scalar_one_or_none.return_value = None
+    mock_result.one_or_none.return_value = None
 
     mock_db = AsyncMock()
-    mock_db.execute.return_value = mock_result
+    mock_db.execute.side_effect = [MagicMock(), mock_result]
 
     mock_session = AsyncMock()
     mock_session.__aenter__ = AsyncMock(return_value=mock_db)
     mock_session.__aexit__ = AsyncMock(return_value=False)
 
-    with patch("app.core.database.async_session_factory", return_value=mock_session):
-        permissions = await middleware._load_permissions("nonexistent-id", "admin")
+    with (
+        patch("app.core.database._is_pg", True),
+        patch("app.core.database.async_session_factory", return_value=mock_session),
+    ):
+        has_access, permissions = await middleware._load_account_access(
+            str(uuid.uuid4()), "admin", 0, str(uuid.uuid4())
+        )
 
+    assert has_access is False
     assert permissions == []
 
 
@@ -129,3 +222,24 @@ async def test_verify_refresh_token_accepts_valid():
         result = await verify_refresh_token(token)
         assert result is not None
         assert result.get("type") == "refresh"
+
+
+@pytest.mark.asyncio
+async def test_logout_persists_refresh_token_when_access_token_is_invalid(db):
+    from app.models.auth_security import ConsumedRefreshToken
+    from app.services.auth import logout_session
+    from app.utils.security import create_refresh_token, decode_token
+
+    refresh_token = create_refresh_token("test-account-id")
+    refresh_jti = decode_token(refresh_token)["jti"]
+    cache = AsyncMock()
+
+    await logout_session(
+        db=db,
+        access_token="invalid-access-token",
+        refresh_token_str=refresh_token,
+        cache=cache,
+    )
+
+    assert await db.get(ConsumedRefreshToken, refresh_jti) is not None
+    cache.revoke_token.assert_not_awaited()

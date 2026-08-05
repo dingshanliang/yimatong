@@ -2,14 +2,21 @@
 
 from __future__ import annotations
 
+import uuid
 from collections.abc import AsyncGenerator
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.main import app
+from app.models.campaign import Benefit
+from app.models.intent_event import IntentEvent
+from app.models.tenant import Tenant
+from app.models.wecom import WeComContactWay
 from app.services.scan_token import create_scan_token
 from app.utils.client_ip import compute_ip_hash
 from app.utils.security import create_access_token
@@ -20,7 +27,11 @@ def _platform_admin_headers() -> dict:
     from app.utils.security import create_access_token
 
     token = create_access_token("platform", "platform-admin", "platform_admin")
-    return {"Authorization": f"Bearer {token}"}
+    return {
+        "Cookie": f"platform_access_token={token}; platform_csrf_token=test-platform-csrf",
+        "Origin": "http://localhost:3002",
+        "X-Platform-CSRF": "test-platform-csrf",
+    }
 
 
 RULES_JSON = {
@@ -72,6 +83,74 @@ def _scan_token(tenant_id: str, public_id: str) -> str:
     return create_scan_token(public_id, compute_ip_hash("127.0.0.1"), tenant_id=tenant_id)
 
 
+@pytest.mark.anyio
+async def test_expired_plan_blocks_consumer_benefit_claim(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    auth_setup,
+):
+    tenant_id, _ = auth_setup
+    tenant_uuid = uuid.UUID(tenant_id)
+    benefit = Benefit(
+        tenant_id=tenant_uuid,
+        name="到期套餐权益",
+        benefit_type="platform_coupon",
+        config_json={},
+        stock_total=1,
+        status="active",
+    )
+    db_session.add(benefit)
+    tenant = await db_session.get(Tenant, tenant_uuid)
+    tenant.plan_expires_at = datetime.now(UTC) - timedelta(seconds=1)
+    await db_session.flush()
+
+    response = await client.post(
+        "/api/v1/benefit-claims",
+        json={"benefit_id": str(benefit.id), "scan_token": _scan_token(tenant_id, "EXPIREDPLAN1")},
+    )
+
+    assert response.status_code == 403
+    assert response.json() == {
+        "code": "TENANT_PLAN_EXPIRED",
+        "detail": "租户套餐已过期，当前仅支持查看；请联系平台续期",
+    }
+
+
+@pytest.mark.anyio
+async def test_expired_plan_blocks_contact_way_before_any_business_write(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    auth_setup,
+):
+    tenant_id, _ = auth_setup
+    tenant_uuid = uuid.UUID(tenant_id)
+    benefit = Benefit(
+        tenant_id=tenant_uuid,
+        name="到期套餐企微权益",
+        benefit_type="platform_coupon",
+        config_json={},
+        stock_total=1,
+        status="active",
+    )
+    db_session.add(benefit)
+    tenant = await db_session.get(Tenant, tenant_uuid)
+    tenant.plan_expires_at = datetime.now(UTC) - timedelta(seconds=1)
+    await db_session.commit()
+
+    response = await client.post(
+        "/api/v1/integrations/wecom/contact-way",
+        json={"benefit_id": str(benefit.id), "scan_token": _scan_token(tenant_id, "EXPIRED-WECOM")},
+    )
+
+    assert response.status_code == 403
+    assert response.json() == {
+        "code": "TENANT_PLAN_EXPIRED",
+        "detail": "租户套餐已过期，当前仅支持查看；请联系平台续期",
+    }
+    assert await db_session.scalar(select(func.count()).select_from(WeComContactWay)) == 0
+    assert await db_session.scalar(select(func.count()).select_from(IntentEvent)) == 0
+
+
 async def create_product(client: AsyncClient, headers: dict[str, str]) -> str:
     brand = await client.post("/api/v1/brands", json={"name": "企微品牌"}, headers=headers)
     product = await client.post(
@@ -83,7 +162,7 @@ async def create_product(client: AsyncClient, headers: dict[str, str]) -> str:
 
 
 @pytest.mark.anyio
-async def test_wecom_required_claim_waits_for_callback_then_allows_claim(client: AsyncClient, auth_setup):
+async def test_wecom_required_claim_rejects_public_and_mock_confirmation(client: AsyncClient, auth_setup, monkeypatch):
     tenant_id, headers = auth_setup
     product_id = await create_product(client, headers)
 
@@ -101,6 +180,13 @@ async def test_wecom_required_claim_waits_for_callback_then_allows_claim(client:
     verify = await client.post("/api/v1/integrations/wecom/verify", headers=headers)
     assert verify.status_code == 200
     assert verify.json()["connected"] is True
+
+    connector_id = config.json()["connector_id"]
+    forged_callback = await client.post(
+        f"/api/v1/integrations/wecom/callback/{connector_id}",
+        json={"ChangeType": "add_external_contact", "ExternalUserID": "forged"},
+    )
+    assert forged_callback.status_code == 400
 
     campaign = await client.post(
         "/api/v1/campaigns",
@@ -137,15 +223,37 @@ async def test_wecom_required_claim_waits_for_callback_then_allows_claim(client:
     assert detail["code"] == "require_wecom_contact"
     assert detail["qr_code"]
 
-    added = await client.get(f"/api/v1/integrations/wecom/mock-added?state={detail['state']}")
+    public_get = await client.get(f"/api/v1/integrations/wecom/mock-added?state={detail['state']}")
+    assert public_get.status_code in {401, 405}
+
+    added = await client.post(
+        f"/api/v1/integrations/wecom/mock-added?state={detail['state']}",
+        headers=headers,
+    )
     assert added.status_code == 200
+
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "environment", "production")
+    production_mock = await client.post(
+        f"/api/v1/integrations/wecom/mock-added?state={detail['state']}",
+        headers=headers,
+    )
+    assert production_mock.status_code == 404
+    production_config = await client.post(
+        "/api/v1/integrations/wecom",
+        json={"corp_id": "ww-production-mock", "mock_mode": True},
+        headers=headers,
+    )
+    assert production_config.status_code == 400
+    monkeypatch.setattr(settings, "environment", "test")
 
     claimed = await client.post(
         "/api/v1/benefit-claims",
         json={"benefit_id": benefit_id, "scan_token": scan_token},
     )
-    assert claimed.status_code == 201
-    assert claimed.json()["status"] == "claimed"
+    assert claimed.status_code == 403
+    assert claimed.json()["detail"]["code"] == "require_wecom_contact"
 
 
 @pytest.mark.anyio
@@ -180,3 +288,52 @@ async def test_wecom_guide_mode_does_not_block_claim(client: AsyncClient, auth_s
     )
     assert claimed.status_code == 201
     assert claimed.json()["status"] == "claimed"
+
+
+@pytest.mark.anyio
+async def test_wecom_management_requires_explicit_permission(client: AsyncClient, auth_setup):
+    tenant_id, _ = auth_setup
+    viewer_token = create_access_token(tenant_id, "00000000-0000-0000-0000-000000000001", "viewer")
+    headers = {"Authorization": f"Bearer {viewer_token}"}
+
+    status = await client.get("/api/v1/integrations/wecom", headers=headers)
+    saved = await client.post(
+        "/api/v1/integrations/wecom",
+        json={"corp_id": "ww-denied", "mock_mode": True},
+        headers=headers,
+    )
+
+    assert status.status_code == 403
+    assert status.json()["detail"] == "Missing permission: campaign:manage"
+    assert saved.status_code == 403
+    assert saved.json()["detail"] == "Missing permission: campaign:manage"
+
+
+@pytest.mark.anyio
+async def test_contact_way_rejects_benefit_from_another_scan_token_tenant(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    auth_setup,
+):
+    tenant_a, _ = auth_setup
+    tenant_b = uuid.uuid4()
+    benefit = Benefit(
+        tenant_id=tenant_b,
+        name="其他租户企微权益",
+        benefit_type="platform_coupon",
+        config_json={"validity_type": "campaign_period"},
+        stock_total=1,
+    )
+    db_session.add(benefit)
+    await db_session.flush()
+
+    response = await client.post(
+        "/api/v1/integrations/wecom/contact-way",
+        json={
+            "benefit_id": str(benefit.id),
+            "scan_token": _scan_token(tenant_a, "CROSS-TENANT-WECOM"),
+        },
+    )
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Benefit not found"

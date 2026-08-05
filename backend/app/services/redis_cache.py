@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import time
+from asyncio import Lock
 from typing import TYPE_CHECKING
 
 from app.core.config import settings
@@ -15,6 +16,10 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _redis_pool: redis.asyncio.Redis | None = None
+
+
+class SharedSecurityCacheUnavailable(RuntimeError):
+    """安全凭证不能降级到单进程内存时抛出。"""
 
 
 async def get_redis_pool() -> redis.asyncio.Redis | None:
@@ -49,10 +54,12 @@ async def close_redis_pool() -> None:
 class AsyncRedisCache:
     """异步 Redis 缓存，自动降级到内存"""
 
+    _mem_lock = Lock()
+    _mem_store: dict[str, tuple[str, float]] = {}
+
     def __init__(self, prefix: str = "ymt", default_ttl: int = 300):
         self.prefix = prefix
         self.default_ttl = default_ttl
-        self._mem_store: dict[str, tuple[str, float]] = {}
 
     def _key(self, k: str) -> str:
         return f"{self.prefix}:{k}"
@@ -91,6 +98,36 @@ class AsyncRedisCache:
                 pass
         self._mem_store[full_key] = (serialized, time.time() + ttl)
 
+    async def set_shared(self, key: str, value: dict, ttl: int) -> None:
+        """安全凭证必须写入所有 worker 共享的 Redis，禁止内存降级。"""
+        r = await get_redis_pool()
+        if r is None:
+            raise SharedSecurityCacheUnavailable("共享安全缓存不可用")
+        try:
+            await r.setex(self._key(key), ttl, json.dumps(value))
+        except Exception as exc:
+            raise SharedSecurityCacheUnavailable("共享安全缓存不可用") from exc
+
+    async def set_shared_if_absent(self, key: str, value: dict, ttl: int) -> bool:
+        """Restore a consumed credential only when no newer credential exists."""
+        r = await get_redis_pool()
+        if r is None:
+            raise SharedSecurityCacheUnavailable("共享安全缓存不可用")
+        try:
+            return bool(await r.set(self._key(key), json.dumps(value), nx=True, ex=ttl))
+        except Exception as exc:
+            raise SharedSecurityCacheUnavailable("共享安全缓存不可用") from exc
+
+    async def get_shared(self, key: str) -> dict | None:
+        r = await get_redis_pool()
+        if r is None:
+            raise SharedSecurityCacheUnavailable("共享安全缓存不可用")
+        try:
+            raw = await r.get(self._key(key))
+            return json.loads(raw) if raw else None
+        except Exception as exc:
+            raise SharedSecurityCacheUnavailable("共享安全缓存不可用") from exc
+
     async def invalidate(self, key: str) -> None:
         full_key = self._key(key)
         r = await get_redis_pool()
@@ -102,11 +139,80 @@ class AsyncRedisCache:
                 pass
         self._mem_store.pop(full_key, None)
 
+    async def consume(self, key: str, expected: dict) -> bool:
+        """Atomically delete a JSON value only when it still matches expected."""
+        full_key = self._key(key)
+        serialized = json.dumps(expected)
+        r = await get_redis_pool()
+        if r:
+            try:
+                result = await r.eval(
+                    "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end",
+                    1,
+                    full_key,
+                    serialized,
+                )
+                return bool(result)
+            except Exception:
+                return False
+        async with self._mem_lock:
+            entry = self._mem_store.get(full_key)
+            if entry is None or time.time() > entry[1] or entry[0] != serialized:
+                return False
+            del self._mem_store[full_key]
+            return True
+
+    async def consume_shared(self, key: str, expected: dict) -> bool:
+        full_key = self._key(key)
+        serialized = json.dumps(expected)
+        r = await get_redis_pool()
+        if r is None:
+            raise SharedSecurityCacheUnavailable("共享安全缓存不可用")
+        try:
+            result = await r.eval(
+                "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end",
+                1,
+                full_key,
+                serialized,
+            )
+            return bool(result)
+        except Exception as exc:
+            raise SharedSecurityCacheUnavailable("共享安全缓存不可用") from exc
+
     async def revoke_token(self, jti: str, ttl: int) -> None:
-        await self.set(f"revoked:{jti}", {"revoked": True}, ttl=ttl)
+        await self.set_shared(f"revoked:{jti}", {"revoked": True}, ttl=ttl)
 
     async def is_token_revoked(self, jti: str) -> bool:
-        return await self.get(f"revoked:{jti}") is not None
+        return await self.get_shared(f"revoked:{jti}") is not None
+
+    async def rate_limit_check_shared(self, key: str, max_attempts: int, window_seconds: int) -> tuple[bool, int]:
+        """Atomic shared rate limit for authentication boundaries.
+
+        Security-sensitive callers must not fall back to per-process memory,
+        otherwise each worker would enforce an independent limit.
+        """
+        r = await get_redis_pool()
+        if r is None:
+            raise SharedSecurityCacheUnavailable("共享安全缓存不可用")
+        try:
+            count = int(
+                await r.eval(
+                    """
+                    local current = redis.call('INCR', KEYS[1])
+                    if current == 1 then
+                        redis.call('EXPIRE', KEYS[1], ARGV[1])
+                    end
+                    return current
+                    """,
+                    1,
+                    self._key(f"rl:{key}"),
+                    window_seconds,
+                )
+            )
+        except Exception as exc:
+            raise SharedSecurityCacheUnavailable("共享安全缓存不可用") from exc
+        remaining = max(0, max_attempts - count)
+        return count <= max_attempts, remaining
 
     async def rate_limit_check(self, key: str, max_attempts: int, window_seconds: int) -> tuple[bool, int]:
         """滑动窗口速率限制。返回 (allowed, remaining_attempts)。"""

@@ -14,14 +14,16 @@ sys.path.insert(0, str(backend_dir))
 # 设置测试环境变量（在导入 app 之前）
 os.environ.setdefault("database_url", "sqlite+aiosqlite://")
 os.environ.setdefault("redis_url", "redis://localhost:6379/0")
-os.environ.setdefault("secret_key", "test-secret-key")
+os.environ.setdefault("secret_key", "test-secret-key-0123456789-ABCDEFGHIJKLMNOPQRSTUVWXYZ")
 os.environ.setdefault("AES_MASTER_KEY_V1", "00" * 32)
 os.environ.setdefault("HMAC_PEPPER", "ff" * 32)
+os.environ.setdefault("IP_HASH_SECRET", "test-ip-hash-secret-9876543210-ZYXWVUTSRQPONMLKJIHGFEDCBA")
 os.environ.setdefault("platform_admin_password_hash", "$2b$12$SerdnBjOttEIIry2900ELOiJYuZb.tVykMjV3fV6T2SIIHOOAkMre")
 
 # 必须在设置环境变量后导入
 from app.models.analytics import DailyScanStats  # noqa: E402, F401
 from app.models.audit import PlatformAuditLog  # noqa: E402, F401
+from app.models.auth_security import ConsumedRefreshToken  # noqa: E402, F401
 from app.models.base import Base  # noqa: E402
 from app.models.campaign import Benefit, BenefitClaim, Campaign, CampaignStatus  # noqa: E402, F401
 from app.models.channel import AccountChannelScope, Distributor, DiversionClue, Region, Store  # noqa: E402, F401
@@ -36,6 +38,7 @@ from app.models.i18n import Translation  # noqa: E402, F401
 from app.models.integration import SyncRecord  # noqa: E402, F401
 from app.models.intent_event import IntentEvent  # noqa: E402, F401
 from app.models.invite_code import TenantInviteCode  # noqa: E402, F401
+from app.models.invite_registration import InviteRegistrationReceipt  # noqa: E402, F401
 from app.models.launch import LaunchRelease  # noqa: E402, F401
 from app.models.member import (  # noqa: E402, F401
     ConsumerProfile,
@@ -89,6 +92,7 @@ from app.models.tenant import (  # noqa: E402, F401
 from app.models.visitor import AnonymousVisitor  # noqa: E402, F401
 from app.models.webhook import ApiKey, WebhookDelivery, WebhookEndpoint  # noqa: E402, F401
 from app.models.wecom import WeComContactWay, WeComExternalContact  # noqa: E402, F401
+from app.services.redis_cache import AsyncRedisCache, SharedSecurityCacheUnavailable  # noqa: E402
 from app.utils.crypto import EnvKeyProvider, init_crypto  # noqa: E402
 
 # 初始化加密模块（读取上面设置的环境变量）
@@ -97,6 +101,54 @@ init_crypto(EnvKeyProvider())
 TEST_DATABASE_URL = "sqlite+aiosqlite://"
 test_engine = create_async_engine(TEST_DATABASE_URL, echo=False)
 TestSessionLocal = async_sessionmaker(test_engine, class_=AsyncSession, expire_on_commit=False)
+
+
+class SharedSecurityCacheState:
+    """Per-test shared-security cache used by API tests without a real Redis."""
+
+    def __init__(self) -> None:
+        self.revoked_jtis: set[str] = set()
+        self.rate_counts: dict[str, int] = {}
+        self.rate_keys: list[str] = []
+        self.fail_reads = False
+        self.fail_writes = False
+        self.fail_rate_limits = False
+
+
+@pytest.fixture(autouse=True)
+def shared_security_cache(monkeypatch: pytest.MonkeyPatch) -> SharedSecurityCacheState:
+    """Provide deterministic shared security operations for every isolated test."""
+    state = SharedSecurityCacheState()
+
+    async def is_token_revoked(_cache: AsyncRedisCache, jti: str) -> bool:
+        if state.fail_reads:
+            raise SharedSecurityCacheUnavailable("test shared cache read failure")
+        return jti in state.revoked_jtis
+
+    async def revoke_token(_cache: AsyncRedisCache, jti: str, ttl: int) -> None:
+        del ttl
+        if state.fail_writes:
+            raise SharedSecurityCacheUnavailable("test shared cache write failure")
+        state.revoked_jtis.add(jti)
+
+    async def rate_limit_check_shared(
+        _cache: AsyncRedisCache,
+        key: str,
+        max_attempts: int,
+        window_seconds: int,
+    ) -> tuple[bool, int]:
+        del window_seconds
+        if state.fail_rate_limits:
+            raise SharedSecurityCacheUnavailable("test shared rate-limit failure")
+        state.rate_keys.append(key)
+        count = state.rate_counts.get(key, 0) + 1
+        state.rate_counts[key] = count
+        return count <= max_attempts, max(0, max_attempts - count)
+
+    monkeypatch.setattr(AsyncRedisCache, "is_token_revoked", is_token_revoked)
+    monkeypatch.setattr(AsyncRedisCache, "revoke_token", revoke_token)
+    monkeypatch.setattr(AsyncRedisCache, "rate_limit_check_shared", rate_limit_check_shared)
+    return state
 
 
 @pytest.fixture(autouse=True)

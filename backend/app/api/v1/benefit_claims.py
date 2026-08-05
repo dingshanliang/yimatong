@@ -3,10 +3,11 @@
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import JSONResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.database import get_db
+from app.core.database import get_db, set_session_tenant_context
 from app.middleware.rate_limit import rate_limiter
 from app.schemas.benefit_claim import BenefitClaimRequest
 from app.services.redis_cache import AsyncRedisCache
@@ -59,9 +60,28 @@ async def claim_benefit_h5(
     if not token_tenant_id:
         raise HTTPException(status_code=401, detail="invalid token: missing tenant_id")
     try:
-        tid = uuid.UUID(token_tenant_id)
-    except ValueError:
+        tid = uuid.UUID(str(token_tenant_id))
+    except (TypeError, ValueError):
         raise HTTPException(status_code=401, detail="invalid token: corrupt tenant_id")
+
+    # scan_token 是该公开端点的可信租户来源。业务查询前在同一事务中建立
+    # PostgreSQL RLS 上下文，并显式关闭任何遗留 bypass 状态。
+    tid = await set_session_tenant_context(db, tid)
+
+    from app.services.entitlement import (
+        PLAN_EXPIRED_CODE,
+        PLAN_EXPIRED_DETAIL,
+        TenantPlanExpiredError,
+        require_active_plan,
+    )
+
+    try:
+        await require_active_plan(db, tid)
+    except TenantPlanExpiredError:
+        return JSONResponse(
+            status_code=403,
+            content={"code": PLAN_EXPIRED_CODE, "detail": PLAN_EXPIRED_DETAIL},
+        )
 
     result = await db.execute(select(Benefit).where(Benefit.id == benefit_id, Benefit.tenant_id == tid))
     benefit = result.scalar_one_or_none()
@@ -207,7 +227,10 @@ async def _handle_cash_red_packet_claim(
     if consumer_id_str:
         try:
             consumer_result = await db.execute(
-                select(ConsumerProfile).where(ConsumerProfile.id == uuid.UUID(consumer_id_str))
+                select(ConsumerProfile).where(
+                    ConsumerProfile.id == uuid.UUID(consumer_id_str),
+                    ConsumerProfile.tenant_id == tenant_id,
+                )
             )
             consumer = consumer_result.scalar_one_or_none()
         except ValueError:
@@ -237,7 +260,9 @@ async def _handle_cash_red_packet_claim(
     from app.models.campaign import Benefit as BenefitModel
 
     # 锁定权益行，防止并发读取到相同的 claimed_count
-    locked_benefit = await db.execute(select(BenefitModel).where(BenefitModel.id == benefit.id).with_for_update())
+    locked_benefit = await db.execute(
+        select(BenefitModel).where(BenefitModel.id == benefit.id, BenefitModel.tenant_id == tenant_id).with_for_update()
+    )
     _locked = locked_benefit.scalar_one_or_none()
 
     total_count_result = await db.execute(
@@ -245,6 +270,7 @@ async def _handle_cash_red_packet_claim(
         .select_from(BenefitClaim)
         .where(
             BenefitClaim.benefit_id == benefit.id,
+            BenefitClaim.tenant_id == tenant_id,
             BenefitClaim.consumer_id == str(consumer.id),
         )
     )
@@ -260,6 +286,7 @@ async def _handle_cash_red_packet_claim(
         .select_from(BenefitClaim)
         .where(
             BenefitClaim.benefit_id == benefit.id,
+            BenefitClaim.tenant_id == tenant_id,
             BenefitClaim.consumer_id == str(consumer.id),
             BenefitClaim.created_at >= today_start,
         )

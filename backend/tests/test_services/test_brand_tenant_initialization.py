@@ -1,5 +1,6 @@
 import uuid
 from datetime import UTC, datetime, timedelta
+from unittest.mock import patch
 
 import pytest
 from sqlalchemy import func, select
@@ -7,7 +8,8 @@ from sqlalchemy import func, select
 from app.models.audit import PlatformAuditLog
 from app.models.invite_code import InviteCodeStatus, TenantInviteCode
 from app.models.plan import PlanDefinition
-from app.models.tenant import Account, Organization, Permission, Role, Tenant, account_roles
+from app.models.platform_opening import PlatformTenantOpening
+from app.models.tenant import Account, Organization, Permission, Role, Tenant, TenantStatus, account_roles
 from app.modules.brand_tenant_initialization import (
     BrandTenantInitialization,
     ControlledInviteOpening,
@@ -16,7 +18,7 @@ from app.modules.brand_tenant_initialization import (
     PlatformOpening,
     TrustedAutomationOpening,
 )
-from app.modules.initial_admin_activation import InitialAdminActivation
+from app.modules.initial_admin_activation import InitialAdminActivation, InitialAdminNotPending
 from app.services.auth import AuthError, confirm_password_reset
 from app.utils.auth_rbac import WEB_ROLE_PERMISSIONS
 from app.utils.security import hash_password
@@ -40,11 +42,29 @@ class FakeResetCache:
     async def set(self, key: str, value: dict, ttl: int) -> None:
         self.values[key] = value
 
+    set_shared = set
+
+    async def set_shared_if_absent(self, key: str, value: dict, ttl: int) -> bool:
+        if key in self.values:
+            return False
+        self.values[key] = value
+        return True
+
     async def get(self, key: str) -> dict | None:
         return self.values.get(key)
 
+    get_shared = get
+
     async def invalidate(self, key: str) -> None:
         self.values.pop(key, None)
+
+    async def consume(self, key: str, expected: dict) -> bool:
+        if self.values.get(key) != expected:
+            return False
+        self.values.pop(key, None)
+        return True
+
+    consume_shared = consume
 
     async def rate_limit_check(self, key: str, max_attempts: int, window_seconds: int):
         return True, max_attempts
@@ -62,6 +82,7 @@ async def test_platform_initialization_materializes_complete_database_state(db):
         await db.execute(select(Role).where(Role.tenant_id == receipt.tenant_id, Role.name == "admin"))
     ).scalar_one()
     await db.refresh(role, attribute_names=["permissions"])
+    fixed_roles = list((await db.execute(select(Role).where(Role.tenant_id == receipt.tenant_id))).scalars().all())
 
     assert receipt.initial_admin_state is InitialAdminState.pending_activation
     assert account is not None and account.is_active is False
@@ -71,6 +92,7 @@ async def test_platform_initialization_materializes_complete_database_state(db):
     assert tenant.enabled_features == {"ai_assistant": True}
     assert tenant.categories
     assert {permission.code for permission in role.permissions} == set(WEB_ROLE_PERMISSIONS["admin"])
+    assert {item.name for item in fixed_roles} == {"admin", "operator", "viewer"}
     assert (
         await db.scalar(
             select(func.count())
@@ -168,6 +190,15 @@ async def test_audit_failure_rolls_back_every_initialized_record(db, monkeypatch
 @pytest.mark.anyio
 async def test_pending_admin_can_activate_and_reissued_link_invalidates_old_link(db):
     receipt = await BrandTenantInitialization(db).initialize(_command(PlatformOpening(operator_id="platform-admin")))
+    db.add(
+        PlatformTenantOpening(
+            idempotency_key=f"test-{uuid.uuid4()}",
+            request_hash="a" * 64,
+            tenant_id=receipt.tenant_id,
+            initial_admin_id=receipt.initial_admin_id,
+            initial_admin_state="pending_activation",
+        )
+    )
     await db.commit()
     cache = FakeResetCache()
     activation = InitialAdminActivation(db, cache)
@@ -197,6 +228,136 @@ async def test_pending_admin_can_activate_and_reissued_link_invalidates_old_link
     await confirm_password_reset(
         db=db,
         token=second_token,
+        account_id_str=str(receipt.initial_admin_id),
+        new_password="CustomerPass123",
+        client_ip="127.0.0.1",
+        cache=cache,
+    )
+    account = await db.get(Account, receipt.initial_admin_id)
+    assert account is not None and account.is_active is True
+    with pytest.raises(InitialAdminNotPending):
+        await activation.issue_or_reissue(
+            tenant_id=receipt.tenant_id,
+            initial_admin_id=receipt.initial_admin_id,
+            operator_id="platform-admin",
+        )
+
+
+@pytest.mark.anyio
+async def test_cancelled_pending_activation_rejects_an_already_issued_token(db):
+    receipt = await BrandTenantInitialization(db).initialize(_command(PlatformOpening(operator_id="platform-admin")))
+    opening = PlatformTenantOpening(
+        idempotency_key=f"test-{uuid.uuid4()}",
+        request_hash="e" * 64,
+        tenant_id=receipt.tenant_id,
+        initial_admin_id=receipt.initial_admin_id,
+        initial_admin_state="pending_activation",
+    )
+    db.add(opening)
+    await db.commit()
+    cache = FakeResetCache()
+    activation = InitialAdminActivation(db, cache)
+    ticket = await activation.issue_or_reissue(
+        tenant_id=receipt.tenant_id,
+        initial_admin_id=receipt.initial_admin_id,
+        operator_id="platform-admin",
+    )
+    token = ticket.url.split("token=", 1)[1].split("&", 1)[0]
+
+    tenant = await db.get(Tenant, receipt.tenant_id)
+    tenant.status = TenantStatus.terminated
+    assert await activation.cancel_pending(tenant_id=receipt.tenant_id) is True
+    await db.commit()
+
+    with pytest.raises(AuthError, match="激活状态已失效"):
+        await confirm_password_reset(
+            db=db,
+            token=token,
+            account_id_str=str(receipt.initial_admin_id),
+            new_password="CustomerPass123",
+            client_ip="127.0.0.1",
+            cache=cache,
+        )
+    await db.refresh(opening)
+    assert opening.initial_admin_state == "cancelled"
+
+
+@pytest.mark.anyio
+async def test_failed_activation_does_not_overwrite_newer_token(db):
+    receipt = await BrandTenantInitialization(db).initialize(_command(PlatformOpening(operator_id="platform-admin")))
+    db.add(
+        PlatformTenantOpening(
+            idempotency_key=f"test-{uuid.uuid4()}",
+            request_hash="c" * 64,
+            tenant_id=receipt.tenant_id,
+            initial_admin_id=receipt.initial_admin_id,
+            initial_admin_state="pending_activation",
+        )
+    )
+    await db.commit()
+    cache = FakeResetCache()
+    ticket = await InitialAdminActivation(db, cache).issue_or_reissue(
+        tenant_id=receipt.tenant_id,
+        initial_admin_id=receipt.initial_admin_id,
+        operator_id="platform-admin",
+    )
+    token = ticket.url.split("token=", 1)[1].split("&", 1)[0]
+    reset_key = f"reset:{receipt.initial_admin_id}"
+    newer_record = {"token_hash": "newer", "account_id": str(receipt.initial_admin_id)}
+
+    async def install_newer_before_restore(key: str, value: dict, ttl: int) -> bool:
+        cache.values[key] = newer_record
+        return False
+
+    cache.set_shared_if_absent = install_newer_before_restore
+    with patch("app.services.audit.write_audit_log", side_effect=RuntimeError("audit unavailable")):
+        with pytest.raises(RuntimeError, match="audit unavailable"):
+            await confirm_password_reset(
+                db=db,
+                token=token,
+                account_id_str=str(receipt.initial_admin_id),
+                new_password="CustomerPass123",
+                client_ip="127.0.0.1",
+                cache=cache,
+            )
+    assert cache.values[reset_key] == newer_record
+
+
+@pytest.mark.anyio
+async def test_activation_token_is_restored_when_password_transaction_fails(db):
+    receipt = await BrandTenantInitialization(db).initialize(_command(PlatformOpening(operator_id="platform-admin")))
+    db.add(
+        PlatformTenantOpening(
+            idempotency_key=f"test-{uuid.uuid4()}",
+            request_hash="b" * 64,
+            tenant_id=receipt.tenant_id,
+            initial_admin_id=receipt.initial_admin_id,
+            initial_admin_state="pending_activation",
+        )
+    )
+    await db.commit()
+    cache = FakeResetCache()
+    ticket = await InitialAdminActivation(db, cache).issue_or_reissue(
+        tenant_id=receipt.tenant_id,
+        initial_admin_id=receipt.initial_admin_id,
+        operator_id="platform-admin",
+    )
+    token = ticket.url.split("token=", 1)[1].split("&", 1)[0]
+
+    with patch("app.services.audit.write_audit_log", side_effect=RuntimeError("audit unavailable")):
+        with pytest.raises(RuntimeError, match="audit unavailable"):
+            await confirm_password_reset(
+                db=db,
+                token=token,
+                account_id_str=str(receipt.initial_admin_id),
+                new_password="CustomerPass123",
+                client_ip="127.0.0.1",
+                cache=cache,
+            )
+
+    await confirm_password_reset(
+        db=db,
+        token=token,
         account_id_str=str(receipt.initial_admin_id),
         new_password="CustomerPass123",
         client_ip="127.0.0.1",

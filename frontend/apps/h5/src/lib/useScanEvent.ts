@@ -14,11 +14,55 @@ interface UseScanEventOptions {
   enabled?: boolean;
 }
 
+interface ScanEventPayload {
+  event_type: "view";
+  public_id: string;
+  page_version_id?: string;
+  timestamp: string;
+  client_event_id: string;
+}
+
+interface ReportScanEventOptions {
+  url: string;
+  scanToken?: string;
+  payload: ScanEventPayload;
+  fetchImpl?: typeof fetch;
+  maxAttempts?: number;
+}
+
+export async function reportScanEventWithRetry({
+  url,
+  scanToken,
+  payload,
+  fetchImpl = fetch,
+  maxAttempts = 2,
+}: ReportScanEventOptions): Promise<boolean> {
+  if (!scanToken) return false;
+
+  const body = JSON.stringify(payload);
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    try {
+      const response = await fetchImpl(url, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${scanToken}`,
+        },
+        body,
+        keepalive: true,
+      });
+      if (response.ok) return true;
+    } catch {
+      // A bounded retry uses the exact same client_event_id and request body.
+    }
+  }
+  return false;
+}
+
 /**
  * 扫码事件上报 hook
  *
- * 在组件 mount 时通过 sendBeacon 或 fetch 上报 view 事件。
- * 支持页面卸载时可靠上报（使用 sendBeacon 降级到 fetch keepalive）。
+ * 在组件 mount 时通过带 Bearer 认证的 keepalive fetch 上报 view 事件。
  */
 export function useScanEvent({
   publicId,
@@ -27,51 +71,28 @@ export function useScanEvent({
   enabled = true,
 }: UseScanEventOptions) {
   const reported = useRef(false);
+  const clientEventId = useRef<string | null>(null);
 
   useEffect(() => {
-    if (!enabled || !publicId || reported.current) return;
+    if (!enabled || !publicId || !scanToken || reported.current) return;
 
     reported.current = true;
+    clientEventId.current ??= globalThis.crypto.randomUUID();
 
-    const payload = {
+    const payload: ScanEventPayload = {
       event_type: "view",
       public_id: publicId,
       page_version_id: pageVersionId,
       timestamp: new Date().toISOString(),
+      client_event_id: clientEventId.current,
     };
 
-    // 尝试使用 sendBeacon（支持页面卸载时可靠上报）
-    const reportWithBeacon = () => {
-      if (typeof navigator !== "undefined" && navigator.sendBeacon) {
-        const blob = new Blob([JSON.stringify(payload)], {
-          type: "application/json",
-        });
-        const url = `${apiClient.defaults.baseURL}/scan-events`;
-        return navigator.sendBeacon(url, blob);
-      }
-      return false;
-    };
-
-    // 降级使用 fetch keepalive
-    const reportWithFetch = async () => {
-      try {
-        await fetch(`${apiClient.defaults.baseURL}/scan-events`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            ...(scanToken ? { Authorization: `Bearer ${scanToken}` } : {}),
-          },
-          body: JSON.stringify(payload),
-          keepalive: true,
-        });
-      } catch {
-        // 扫码事件上报失败不应阻断用户体验，静默处理
-      }
-    };
-
-    // 优先 sendBeacon，降级 fetch
-    if (!reportWithBeacon()) {
-      reportWithFetch();
-    }
+    // sendBeacon 无法附加 Authorization；scan_token 只放 Bearer header，
+    // 不放 URL。有限重试复用同一个 client_event_id，由后端原子去重。
+    void reportScanEventWithRetry({
+      url: `${apiClient.defaults.baseURL}/scan-events`,
+      scanToken,
+      payload,
+    });
   }, [enabled, publicId, pageVersionId, scanToken]);
 }

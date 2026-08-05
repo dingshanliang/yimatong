@@ -27,7 +27,7 @@ router = APIRouter(
 
 
 def _agency_context(request: Request) -> tuple[uuid.UUID, uuid.UUID]:
-    original = getattr(request.state, "tenant_id", None)
+    original = getattr(request.state, "original_tenant_id", None)
     acting = getattr(request.state, "acting_tenant_id", None)
     if not original or not acting:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="请先切换到要协作的品牌客户")

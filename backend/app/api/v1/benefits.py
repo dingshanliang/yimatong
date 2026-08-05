@@ -18,6 +18,7 @@ from app.services.campaign import (
     list_benefit_claims_admin,
     update_benefit,
 )
+from app.utils.auth_rbac import require_permission
 
 benefit_router = APIRouter(prefix="/api/v1/benefits", tags=["benefits"])
 
@@ -27,6 +28,7 @@ async def create_benefit_endpoint(
     body: BenefitCreateRequest,
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
+    _permission: None = Depends(require_permission("campaign:create")),
 ):
     return await create_benefit(
         db,
@@ -52,6 +54,7 @@ async def list_benefits_endpoint(
     page_size: int = Query(20, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
+    _permission: None = Depends(require_permission("analytics:view")),
 ):
     items, total = await list_all_benefits(
         db,
@@ -71,6 +74,7 @@ async def list_benefits_endpoint(
 async def benefit_summary_endpoint(
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
+    _permission: None = Depends(require_permission("analytics:view")),
 ):
     return await get_benefit_summary(db, tenant_id)
 
@@ -89,6 +93,7 @@ async def list_benefit_claims_admin_endpoint(
     page_size: int = Query(20, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
+    _permission: None = Depends(require_permission("analytics:view")),
 ):
     items, total = await list_benefit_claims_admin(
         db,
@@ -109,6 +114,7 @@ async def get_benefit_endpoint(
     benefit_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
+    _permission: None = Depends(require_permission("analytics:view")),
 ):
     data = await get_benefit(db, tenant_id, benefit_id)
     if not data:
@@ -122,6 +128,7 @@ async def update_benefit_endpoint(
     body: BenefitUpdateRequest,
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
+    _permission: None = Depends(require_permission("campaign:manage")),
 ):
     try:
         data = await update_benefit(
@@ -142,6 +149,7 @@ async def delete_benefit_endpoint(
     benefit_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
+    _permission: None = Depends(require_permission("campaign:manage")),
 ):
     deleted = await delete_benefit(db, tenant_id, benefit_id)
     if deleted is None:

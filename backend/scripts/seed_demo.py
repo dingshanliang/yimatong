@@ -10,13 +10,14 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 
 import typer
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 # 确保可以 import app 模块
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app.core.config import settings
+from app.core.database import set_session_tenant_context
 from app.models.campaign import Benefit, BenefitClaim, Campaign, CampaignStatus
 from app.models.channel import (
     AccountChannelScope,
@@ -61,6 +62,10 @@ app = typer.Typer(help="一码通演示数据生成器")
 
 engine = create_async_engine(str(settings.database_url))
 async_session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+control_engine = create_async_engine(
+    str(settings.control_database_url or settings.migration_database_url or settings.database_url)
+)
+control_session = async_sessionmaker(control_engine, class_=AsyncSession, expire_on_commit=False)
 
 TENANT_SLUG = "demo"
 TENANT_NAME = "青岭良仓演示租户"
@@ -634,6 +639,73 @@ async def _ensure_tenant(db: AsyncSession) -> Tenant:
     )
     tenant.enabled_features = {**(tenant.enabled_features or {}), **DEMO_ENABLED_FEATURES}
     return tenant
+
+
+async def _ensure_demo_agency(client_tenant_id: uuid.UUID) -> None:
+    """Seed the agency via bounded control discovery plus tenant transactions."""
+    agency_slug = "demo-agency"
+    async with control_session() as db:
+        await db.execute(text("SELECT set_config('app.tenant_id', '', true)"))
+        await db.execute(text("SELECT set_config('app.bypass_rls', 'true', true)"))
+        agency_tenant = await db.scalar(select(Tenant).where(Tenant.slug == agency_slug).limit(1))
+        if agency_tenant is None:
+            agency_tenant = Tenant(
+                name="示例代运营服务商",
+                slug=agency_slug,
+                tenant_type="agency",
+                plan="pro",
+            )
+            db.add(agency_tenant)
+            await db.flush()
+        agency_tenant_id = agency_tenant.id
+        await db.commit()
+
+    async with async_session() as db:
+        await set_session_tenant_context(db, agency_tenant_id)
+        agency_org = await db.scalar(select(Organization).where(Organization.tenant_id == agency_tenant_id).limit(1))
+        if agency_org is None:
+            agency_org = Organization(tenant_id=agency_tenant_id, name="示例代运营服务商")
+            db.add(agency_org)
+            await db.flush()
+        agency_admin = await db.scalar(
+            select(Account).where(
+                Account.tenant_id == agency_tenant_id,
+                Account.email == "agency_admin@demo.com",
+            )
+        )
+        if agency_admin is None:
+            db.add(
+                Account(
+                    tenant_id=agency_tenant_id,
+                    organization_id=agency_org.id,
+                    email="agency_admin@demo.com",
+                    hashed_password=hash_password("demopass"),
+                    name="代运营管理员",
+                )
+            )
+        await db.commit()
+
+    async with async_session() as db:
+        await set_session_tenant_context(db, client_tenant_id)
+        authorization = await db.scalar(
+            select(AgencyAuthorization).where(
+                AgencyAuthorization.agency_tenant_id == agency_tenant_id,
+                AgencyAuthorization.client_tenant_id == client_tenant_id,
+                AgencyAuthorization.status == AgencyAuthStatus.active,
+            )
+        )
+        if authorization is None:
+            db.add(
+                AgencyAuthorization(
+                    agency_tenant_id=agency_tenant_id,
+                    client_tenant_id=client_tenant_id,
+                    scope=["pages", "campaigns", "analytics", "products", "codes"],
+                    status=AgencyAuthStatus.active,
+                    granted_by=None,
+                )
+            )
+        await db.commit()
+    typer.echo(f"  Ensured demo agency tenant: {agency_slug}")
 
 
 async def _ensure_org(db: AsyncSession, tenant_id: uuid.UUID) -> Organization:
@@ -1768,12 +1840,19 @@ def generate():
     async def _run():
         start = time.time()
 
+        async with control_session() as db:
+            await db.execute(text("SELECT set_config('app.tenant_id', '', true)"))
+            await db.execute(text("SELECT set_config('app.bypass_rls', 'true', true)"))
+            tenant = await _ensure_tenant(db)
+            tenant_id = tenant.id
+            await db.commit()
+
         # ── 阶段 A：基础数据（租户/品牌/码/渠道/扫码）──
         async with async_session() as db:
+            await set_session_tenant_context(db, tenant_id)
             p = Progress(10)
 
             # 1. 租户与账号
-            tenant = await _ensure_tenant(db)
             org = await _ensure_org(db, tenant.id)
             accounts = await _ensure_accounts(db, tenant.id, org.id)
             admin_account = next((a for a in accounts if a.email == "admin@demo.com"), accounts[0])
@@ -1806,53 +1885,14 @@ def generate():
             event_count = await _ensure_scan_events(db, tenant_id, code_items)
             p.step("扫码事件", f"({event_count:,} 次)")
 
-            # --- Demo Agency Tenant ---
-            agency_slug = "demo-agency"
-            result = await db.execute(select(Tenant).where(Tenant.slug == agency_slug))
-            existing_agency = result.scalar_one_or_none()
-            if not existing_agency:
-                agency_tenant = Tenant(
-                    name="示例代运营服务商",
-                    slug=agency_slug,
-                    tenant_type="agency",
-                    plan="pro",
-                )
-                db.add(agency_tenant)
-                await db.flush()
-
-                agency_org = Organization(
-                    tenant_id=agency_tenant.id,
-                    name="示例代运营服务商",
-                )
-                db.add(agency_org)
-                await db.flush()
-
-                agency_admin = Account(
-                    tenant_id=agency_tenant.id,
-                    organization_id=agency_org.id,
-                    email="agency_admin@demo.com",
-                    hashed_password=hash_password("demopass"),
-                    name="代运营管理员",
-                )
-                db.add(agency_admin)
-                await db.flush()
-
-                auth = AgencyAuthorization(
-                    agency_tenant_id=agency_tenant.id,
-                    client_tenant_id=tenant.id,
-                    scope=["pages", "campaigns", "analytics", "products", "codes"],
-                    status=AgencyAuthStatus.active,
-                    granted_by=None,
-                )
-                db.add(auth)
-                await db.flush()
-                typer.echo(f"  Created demo agency tenant: {agency_slug}")
-
             # 提交阶段 A，关闭 session 释放 identity map
             await db.commit()
 
+        await _ensure_demo_agency(tenant_id)
+
         # ── 阶段 B：业务数据（消费者/活动/风控/页面/统计）── 新 session，干净的 identity map
         async with async_session() as db:
+            await set_session_tenant_context(db, tenant_id)
             # 6. 消费者
             consumers, consumer_ids = await _ensure_consumers(db, tenant_id)
             p.step("消费者与积分", f"({len(consumers)} 人)")
@@ -1897,13 +1937,18 @@ def clean():
     """清理所有演示数据"""
 
     async def _run():
-        async with async_session() as db:
+        async with control_session() as db:
+            await db.execute(text("SELECT set_config('app.tenant_id', '', true)"))
+            await db.execute(text("SELECT set_config('app.bypass_rls', 'true', true)"))
             result = await db.execute(select(Tenant).where(Tenant.slug == TENANT_SLUG))
             tenant = result.scalar_one_or_none()
             if not tenant:
                 typer.echo(f"未找到演示租户 '{TENANT_SLUG}'")
                 return
-            await _clean_demo_data(db, tenant.id)
+            tenant_id = tenant.id
+        async with async_session() as db:
+            await set_session_tenant_context(db, tenant_id)
+            await _clean_demo_data(db, tenant_id)
             await db.commit()
 
     asyncio.run(_run())
@@ -1914,11 +1959,16 @@ def reset():
     """清理后重新生成"""
 
     async def _run():
-        async with async_session() as db:
+        async with control_session() as db:
+            await db.execute(text("SELECT set_config('app.tenant_id', '', true)"))
+            await db.execute(text("SELECT set_config('app.bypass_rls', 'true', true)"))
             result = await db.execute(select(Tenant).where(Tenant.slug == TENANT_SLUG))
             tenant = result.scalar_one_or_none()
-            if tenant:
-                await _clean_demo_data(db, tenant.id)
+            tenant_id = tenant.id if tenant else None
+        if tenant_id:
+            async with async_session() as db:
+                await set_session_tenant_context(db, tenant_id)
+                await _clean_demo_data(db, tenant_id)
                 await db.commit()
 
     asyncio.run(_run())

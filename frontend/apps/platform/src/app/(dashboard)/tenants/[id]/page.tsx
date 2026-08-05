@@ -30,6 +30,8 @@ import api from "@/lib/api";
 import { extractErrorMessage } from "@/lib/api";
 import { STATUS_MAP, PLAN_MAP } from "@/lib/constants";
 import { STATUS_COLORS } from "@/lib/status-colors";
+import { canRetryInitialAdminActivation } from "../activation";
+import { planExpiryLabel, toChinaBusinessDate } from "../plan-date";
 
 const { Title, Text } = Typography;
 
@@ -47,6 +49,15 @@ interface TenantDetail {
   created_at: string;
   account_count: number;
   organization_count: number;
+  initial_admin_state: string | null;
+  activation_retryable: boolean;
+}
+
+interface PlanDefinition {
+  id: string;
+  name: TenantDetail["plan"];
+  display_name: string;
+  is_active: boolean;
 }
 
 export default function TenantDetailPage() {
@@ -55,13 +66,17 @@ export default function TenantDetailPage() {
   const { modal, message } = App.useApp();
   const tenantId = params.id as string;
 
-  const [editOpen, setEditOpen] = useState(false);
-  const [saving, setSaving] = useState(false);
+  const [basicEditOpen, setBasicEditOpen] = useState(false);
+  const [planEditOpen, setPlanEditOpen] = useState(false);
+  const [savingBasic, setSavingBasic] = useState(false);
+  const [savingPlan, setSavingPlan] = useState(false);
 
   const { data, mutate, isLoading } = useSWR<TenantDetail>(
     `/platform/tenants/${tenantId}`
   );
-  const [form] = Form.useForm();
+  const { data: planDefinitions } = useSWR<PlanDefinition[]>("/platform/plans");
+  const [basicForm] = Form.useForm();
+  const [planForm] = Form.useForm();
 
   if (isLoading) {
     return (
@@ -102,27 +117,72 @@ export default function TenantDetailPage() {
     });
   };
 
-  const handleEdit = async (values: Record<string, unknown>) => {
-    setSaving(true);
+  const handleBasicEdit = async (values: {
+    name: string;
+    industry?: string;
+    notes?: string;
+  }) => {
+    setSavingBasic(true);
     try {
-      const payload: Record<string, unknown> = {};
-      if (values.name) payload.name = values.name;
-      if (values.plan) payload.plan = values.plan;
-      if (values.industry) payload.industry = values.industry;
-      if (values.notes) payload.notes = values.notes;
-      if (values.plan_expires_at)
-        payload.plan_expires_at = (
-          values.plan_expires_at as dayjs.Dayjs
-        ).toISOString();
-
-      await api.patch(`/platform/tenants/${tenantId}`, payload);
-      message.success("更新成功");
-      setEditOpen(false);
+      await api.patch(`/platform/tenants/${tenantId}`, {
+        name: values.name,
+        industry: values.industry?.trim() || null,
+        notes: values.notes?.trim() || null,
+      });
+      message.success("基本信息已保存");
+      setBasicEditOpen(false);
       mutate();
     } catch (err) {
-      message.error(extractErrorMessage(err, "更新失败"));
+      message.error(extractErrorMessage(err, "基本信息保存失败"));
     } finally {
-      setSaving(false);
+      setSavingBasic(false);
+    }
+  };
+
+  const handlePlanEdit = async (values: {
+    plan: TenantDetail["plan"];
+    plan_expires_at?: dayjs.Dayjs;
+  }) => {
+    setSavingPlan(true);
+    try {
+      const selectedPlan = planDefinitions?.find(
+        (plan) => plan.name === values.plan
+      );
+      if (!selectedPlan) {
+        throw new Error("套餐配置尚未加载，请稍后重试");
+      }
+      await api.post(`/platform/tenants/${tenantId}/assign-plan`, {
+        plan_id: selectedPlan.id,
+        expires_on: values.plan_expires_at
+          ? values.plan_expires_at.format("YYYY-MM-DD")
+          : null,
+      });
+      message.success("套餐与权益已保存");
+      setPlanEditOpen(false);
+      mutate();
+    } catch (err) {
+      message.error(extractErrorMessage(err, "套餐保存失败"));
+    } finally {
+      setSavingPlan(false);
+    }
+  };
+
+  const handleActivationLink = async () => {
+    try {
+      const { data: activation } = await api.post<{ activation_url: string }>(
+        `/platform/tenants/${tenantId}/initial-admin-activation`
+      );
+      modal.success({
+        title: "管理员激活链接已生成",
+        width: 560,
+        content: (
+          <Typography.Paragraph copyable={{ text: activation.activation_url }}>
+            {activation.activation_url}
+          </Typography.Paragraph>
+        ),
+      });
+    } catch (error) {
+      message.error(extractErrorMessage(error, "激活链接生成失败"));
     }
   };
 
@@ -174,19 +234,39 @@ export default function TenantDetailPage() {
               恢复
             </Button>
           )}
+          {canRetryInitialAdminActivation(data) && (
+            <Button
+              icon={<PlayCircleOutlined />}
+              onClick={handleActivationLink}
+            >
+              恢复管理员激活
+            </Button>
+          )}
           <Button
             icon={<EditOutlined />}
             onClick={() => {
-              form.setFieldsValue({
-                ...data,
-                plan_expires_at: data.plan_expires_at
-                  ? dayjs(data.plan_expires_at)
-                  : undefined,
+              basicForm.setFieldsValue({
+                name: data.name,
+                industry: data.industry,
+                notes: data.notes,
               });
-              setEditOpen(true);
+              setBasicEditOpen(true);
             }}
           >
-            编辑
+            编辑基本信息
+          </Button>
+          <Button
+            onClick={() => {
+              planForm.setFieldsValue({
+                plan: data.plan,
+                plan_expires_at: data.plan_expires_at
+                  ? dayjs(toChinaBusinessDate(data.plan_expires_at))
+                  : undefined,
+              });
+              setPlanEditOpen(true);
+            }}
+          >
+            调整套餐
           </Button>
         </Space>
       </div>
@@ -216,9 +296,7 @@ export default function TenantDetailPage() {
                     {data.industry ?? "-"}
                   </Descriptions.Item>
                   <Descriptions.Item label="过期时间">
-                    {data.plan_expires_at
-                      ? dayjs(data.plan_expires_at).format("YYYY-MM-DD")
-                      : "永久"}
+                    {planExpiryLabel(data.plan_expires_at)}
                   </Descriptions.Item>
                   <Descriptions.Item label="创建时间">
                     {dayjs(data.created_at).format("YYYY-MM-DD HH:mm")}
@@ -289,34 +367,57 @@ export default function TenantDetailPage() {
       />
 
       <Modal
-        title="编辑租户"
-        open={editOpen}
-        onCancel={() => setEditOpen(false)}
-        onOk={() => form.submit()}
-        confirmLoading={saving}
+        title="编辑基本信息"
+        open={basicEditOpen}
+        onCancel={() => setBasicEditOpen(false)}
+        onOk={() => basicForm.submit()}
+        confirmLoading={savingBasic}
         width={520}
       >
-        <Form form={form} layout="vertical" onFinish={handleEdit}>
+        <Form form={basicForm} layout="vertical" onFinish={handleBasicEdit}>
           <Form.Item name="name" label="名称" rules={[{ required: true }]}>
             <Input />
-          </Form.Item>
-          <Form.Item name="plan" label="套餐">
-            <Select
-              options={Object.entries(PLAN_MAP).map(([k, v]) => ({
-                value: k,
-                label: v.label,
-              }))}
-            />
           </Form.Item>
           <Form.Item name="industry" label="行业">
             <Input />
           </Form.Item>
-          <Form.Item name="plan_expires_at" label="过期时间">
-            <DatePicker style={{ width: "100%" }} />
-          </Form.Item>
           <Form.Item name="notes" label="备注">
             <Input.TextArea rows={3} />
           </Form.Item>
+        </Form>
+      </Modal>
+
+      <Modal
+        title="调整套餐与权益"
+        open={planEditOpen}
+        onCancel={() => setPlanEditOpen(false)}
+        onOk={() => planForm.submit()}
+        confirmLoading={savingPlan}
+        width={520}
+      >
+        <Form form={planForm} layout="vertical" onFinish={handlePlanEdit}>
+          <Form.Item name="plan" label="套餐" rules={[{ required: true }]}>
+            <Select
+              loading={!planDefinitions}
+              options={planDefinitions
+                ?.filter(
+                  (plan) =>
+                    plan.name in PLAN_MAP &&
+                    (plan.is_active || plan.name === data.plan)
+                )
+                .map((plan) => ({
+                  value: plan.name,
+                  label: plan.display_name,
+                }))}
+            />
+          </Form.Item>
+          <Form.Item name="plan_expires_at" label="有效期至（北京时间）">
+            <DatePicker style={{ width: "100%" }} />
+          </Form.Item>
+          <Typography.Paragraph type="secondary">
+            所选日期整日有效，到北京时间当天 23:59:59
+            后到期。保存后会原子更新套餐、额度和功能权益。
+          </Typography.Paragraph>
         </Form>
       </Modal>
     </div>

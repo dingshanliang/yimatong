@@ -56,6 +56,8 @@ export interface AgencyClientRow extends Client {
   readiness: ReadinessSummary;
   task_summary: TaskSummary;
   next_action: NextAction;
+  agency_scope?: string[];
+  full_workbench_access?: boolean;
 }
 
 export interface WorkbenchSummary {

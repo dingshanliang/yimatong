@@ -51,6 +51,13 @@ progress.md
 .codegraph/
 .zcode/
 .playwright-mcp/
+.playwright-cli/
 skills-lock.json
 login-page.png
 .serena/
+
+# Independent review loop run state (session artifact, not reusable config)
+.agents/independent-review-loop.yaml
+
+# Generated marketing artifacts (source md + generator script are tracked)
+docs/04_marketing_sales/*.docx

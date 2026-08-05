@@ -2,12 +2,12 @@ import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse, RedirectResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.core.database import get_db, get_db_with_bypass
+from app.core.database import get_db, get_db_for_auth, get_db_with_bypass
 from app.core.dependencies import get_current_account_id, get_current_tenant, get_redis_cache
 from app.models.tenant import Account
 from app.schemas.common import UNAUTHORIZED_EXAMPLE, ErrorDetail
@@ -19,7 +19,9 @@ from app.services.auth import (
     logout_session,
     refresh_access_token,
 )
-from app.services.redis_cache import AsyncRedisCache
+from app.services.redis_cache import AsyncRedisCache, SharedSecurityCacheUnavailable
+from app.utils.auth_rbac import require_permission
+from app.utils.email import normalize_email
 from app.utils.security import (
     clear_auth_cookies,
     set_auth_cookies,
@@ -46,6 +48,11 @@ class LoginRequest(BaseModel):
     email: str = Field(..., max_length=255, description="登录邮箱", examples=["admin@example.com"])
     password: str = Field(..., min_length=6, description="密码", examples=["SecurePass123!"])
     tenant_slug: str | None = Field(None, max_length=100, description="租户标识，用于多租户同邮箱登录")
+
+    @field_validator("email")
+    @classmethod
+    def _normalize_email(cls, value: str) -> str:
+        return normalize_email(value)
 
 
 class TokenResponse(BaseModel):
@@ -75,7 +82,7 @@ class GenerateResetTokenRequest(BaseModel):
 
 class GenerateResetTokenResponse(BaseModel):
     reset_token: str = Field(..., description="一次性重置令牌")
-    reset_url: str = Field(..., description="完整的重置链接（拼好 base_url）")
+    reset_url: str = Field(..., description="基于 canonical Admin 公网基址生成的完整重置链接")
 
 
 class ConfirmResetPasswordRequest(BaseModel):
@@ -89,11 +96,9 @@ class ConfirmResetPasswordRequest(BaseModel):
 
 
 def _client_ip(request: Request) -> str:
-    return (
-        request.headers.get("X-Forwarded-For", request.client.host if request.client else "unknown")
-        .split(",")[0]
-        .strip()
-    )
+    # Proxy headers are trustworthy only when the ASGI server is configured
+    # with trusted proxy addresses; request.client already reflects that policy.
+    return request.client.host if request.client else "unknown"
 
 
 def _build_token_response(token_pair: dict) -> JSONResponse:
@@ -116,7 +121,7 @@ def _build_token_response(token_pair: dict) -> JSONResponse:
 async def login(
     body: LoginRequest,
     request: Request,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db_for_auth),
     cache: AsyncRedisCache = Depends(get_redis_cache),
 ):
     try:
@@ -142,7 +147,7 @@ async def login(
 async def refresh(
     request: Request,
     body: RefreshRequest | None = None,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db_for_auth),
     cache: AsyncRedisCache = Depends(get_redis_cache),
 ):
     refresh_token = body.refresh_token if body and body.refresh_token else request.cookies.get("refresh_token")
@@ -192,20 +197,28 @@ async def me(
     summary="登出",
     response_description="登出成功，当前 access_token 加入黑名单",
 )
-async def logout(request: Request, cache: AsyncRedisCache = Depends(get_redis_cache)):
-    """登出端点：将当前 access token 的 jti 加入黑名单"""
+async def logout(
+    request: Request,
+    body: RefreshRequest | None = None,
+    db: AsyncSession = Depends(get_db),
+    cache: AsyncRedisCache = Depends(get_redis_cache),
+):
+    """登出端点：全局撤销当前 access/refresh 会话。"""
     auth_header = request.headers.get("Authorization", "")
     token = auth_header[7:] if auth_header.startswith("Bearer ") else request.cookies.get("access_token")
 
-    refresh_token_str = request.cookies.get("refresh_token") or ""
+    refresh_token_str = body.refresh_token if body and body.refresh_token else None
     if not refresh_token_str:
-        try:
-            body = await request.json()
-            refresh_token_str = body.get("refresh_token", "")
-        except Exception:
-            pass
-
-    await logout_session(access_token=token, refresh_token_str=refresh_token_str or None, cache=cache)
+        refresh_token_str = request.cookies.get("refresh_token")
+    try:
+        await logout_session(
+            db=db,
+            access_token=token,
+            refresh_token_str=refresh_token_str,
+            cache=cache,
+        )
+    except SharedSecurityCacheUnavailable as exc:
+        raise HTTPException(status_code=503, detail="登出服务暂时不可用，请稍后重试") from exc
 
     response = JSONResponse(content={"status": "ok"})
     clear_auth_cookies(response)
@@ -222,11 +235,19 @@ async def generate_reset_token(
     body: GenerateResetTokenRequest,
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
+    operator_id: uuid.UUID = Depends(get_current_account_id),
     cache: AsyncRedisCache = Depends(get_redis_cache),
+    _permission: None = Depends(require_permission("account:manage")),
 ):
     """管理员为指定账户生成一次性密码重置令牌，存入 Redis（1 小时有效）。"""
     try:
-        result = await generate_password_reset(db=db, account_id_str=body.account_id, tenant_id=tenant_id, cache=cache)
+        result = await generate_password_reset(
+            db=db,
+            account_id_str=body.account_id,
+            tenant_id=tenant_id,
+            cache=cache,
+            operator_id=str(operator_id),
+        )
     except AuthError as e:
         raise HTTPException(status_code=e.code, detail=e.detail) from e
     return GenerateResetTokenResponse(reset_token=result["reset_token"], reset_url=result["reset_url"])
@@ -262,6 +283,10 @@ async def confirm_reset_password(
     summary="重置密码页面（重定向到前端）",
 )
 async def reset_page_redirect(token: str, account_id: str):
-    """将后端短链重定向到前端重置密码页面。"""
-    frontend_url = settings.cors_origins.split(",")[0].strip()
-    return RedirectResponse(f"{frontend_url}/reset-password?token={token}&account_id={account_id}")
+    """兼容历史后端短链，重定向到 canonical Admin 重置密码页面。"""
+    return RedirectResponse(
+        settings.build_admin_url(
+            "/reset-password",
+            {"token": token, "account_id": account_id},
+        )
+    )

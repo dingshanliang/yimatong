@@ -45,6 +45,7 @@ from app.modules.brand_tenant_initialization.interface import (
 )
 from app.services.audit import write_audit_log
 from app.utils.auth_rbac import WEB_ROLE_PERMISSIONS
+from app.utils.email import normalize_email
 from app.utils.security import hash_password, validate_password_strength
 
 
@@ -65,6 +66,9 @@ class BrandTenantInitialization:
             admin_state = InitialAdminState.pending_activation
             stable_key = None
             invite = None
+            tenant_type = TenantType(opening.tenant_type)
+            if tenant_type not in {TenantType.brand, TenantType.agency}:
+                raise InvalidInitializationInput("平台当前仅支持开通品牌或代运营租户")
         elif isinstance(opening, ControlledInviteOpening):
             validate_password_strength(opening.chosen_password)
             invite = await self._lock_valid_brand_invite(opening.invite_code)
@@ -73,6 +77,7 @@ class BrandTenantInitialization:
             password_hash = hash_password(opening.chosen_password)
             admin_state = InitialAdminState.active
             stable_key = None
+            tenant_type = TenantType.brand
         elif isinstance(opening, TrustedAutomationOpening):
             validate_password_strength(opening.chosen_password)
             plan_name = opening.plan_name
@@ -81,6 +86,7 @@ class BrandTenantInitialization:
             admin_state = InitialAdminState.active
             stable_key = opening.stable_tenant_key
             invite = None
+            tenant_type = TenantType.brand
         else:  # pragma: no cover - sealed union guard
             raise InvalidInitializationInput("不支持的租户开通来源")
 
@@ -88,8 +94,9 @@ class BrandTenantInitialization:
         tenant_key = stable_key or await self._generate_available_key(command.name)
         await self._assert_tenant_key_available(tenant_key)
 
-        permission_codes = tuple(WEB_ROLE_PERMISSIONS.get("admin", ()))
-        if not permission_codes or len(permission_codes) != len(set(permission_codes)):
+        role_templates = {name: tuple(WEB_ROLE_PERMISSIONS.get(name, ())) for name in ("admin", "operator", "viewer")}
+        permission_codes = tuple(dict.fromkeys(code for codes in role_templates.values() for code in codes))
+        if not role_templates["admin"] or any(len(codes) != len(set(codes)) for codes in role_templates.values()):
             raise PermissionTemplateInvalid("品牌管理员权限模板无效")
 
         tenant_id, organization_id, account_id = uuid7(), uuid7(), uuid7()
@@ -100,7 +107,7 @@ class BrandTenantInitialization:
             slug=tenant_key,
             status=TenantStatus.active,
             plan=TenantPlan(plan.name),
-            tenant_type=TenantType.brand,
+            tenant_type=tenant_type,
             industry=command.industry,
             notes=command.notes,
             quota=dict(plan.quota_defaults or {}),
@@ -116,7 +123,7 @@ class BrandTenantInitialization:
             id=account_id,
             tenant_id=tenant_id,
             organization_id=organization_id,
-            email=command.admin_email.strip().lower(),
+            email=normalize_email(command.admin_email),
             hashed_password=password_hash,
             name=command.admin_name.strip(),
             is_active=admin_state is InitialAdminState.active,
@@ -124,8 +131,11 @@ class BrandTenantInitialization:
         self._db.add_all([tenant, organization, account])
         await self._db.flush()
 
-        role = Role(tenant_id=tenant_id, name="admin", description="品牌管理员")
-        self._db.add(role)
+        role_descriptions = {"admin": "品牌管理员", "operator": "运营人员", "viewer": "无业务操作权限成员"}
+        roles = {
+            name: Role(tenant_id=tenant_id, name=name, description=role_descriptions[name]) for name in role_templates
+        }
+        self._db.add_all(list(roles.values()))
         await self._db.flush()
 
         permissions = [
@@ -134,11 +144,15 @@ class BrandTenantInitialization:
         ]
         self._db.add_all(permissions)
         await self._db.flush()
-        await self._db.execute(account_roles.insert().values(account_id=account_id, role_id=role.id))
-        await self._db.execute(
-            role_permissions.insert(),
-            [{"role_id": role.id, "permission_id": permission.id} for permission in permissions],
-        )
+        await self._db.execute(account_roles.insert().values(account_id=account_id, role_id=roles["admin"].id))
+        permissions_by_code = {permission.code: permission for permission in permissions}
+        role_permission_rows = [
+            {"role_id": roles[role_name].id, "permission_id": permissions_by_code[code].id}
+            for role_name, codes in role_templates.items()
+            for code in codes
+        ]
+        if role_permission_rows:
+            await self._db.execute(role_permissions.insert(), role_permission_rows)
 
         if invite is not None:
             invite.used_count += 1

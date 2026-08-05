@@ -54,18 +54,30 @@ async def on_claim_created(event_type: str, data: dict, tenant_id: str) -> None:
     if not benefit_id or not consumer_id:
         return
 
+    event_tenant_id = uuid.UUID(tenant_id)
     async with async_session_factory() as db:
-        from sqlalchemy import text
+        from app.core.database import set_session_tenant_context
 
-        await db.execute(text("SET LOCAL app.bypass_rls = 'true'"))
+        await set_session_tenant_context(db, event_tenant_id)
         # 查询权益
-        benefit_result = await db.execute(select(Benefit).where(Benefit.id == uuid.UUID(benefit_id)))
+        benefit_result = await db.execute(
+            select(Benefit).where(
+                Benefit.id == uuid.UUID(benefit_id),
+                Benefit.tenant_id == event_tenant_id,
+            )
+        )
         benefit = benefit_result.scalar_one_or_none()
         if not benefit or not benefit.connector_id:
             return  # 平台内权益，不需要外部发放
 
         # 查询连接器
-        conn_result = await db.execute(select(Connector).where(Connector.id == benefit.connector_id))
+        conn_result = await db.execute(
+            select(Connector).where(
+                Connector.id == benefit.connector_id,
+                Connector.tenant_id == benefit.tenant_id,
+                Connector.tenant_id == event_tenant_id,
+            )
+        )
         connector = conn_result.scalar_one_or_none()
         if not connector or not connector.enabled:
             logger.warning("Connector %s not found or disabled for benefit %s", benefit.connector_id, benefit_id)
@@ -76,6 +88,7 @@ async def on_claim_created(event_type: str, data: dict, tenant_id: str) -> None:
             update(BenefitClaim)
             .where(
                 BenefitClaim.benefit_id == benefit.id,
+                BenefitClaim.tenant_id == event_tenant_id,
                 BenefitClaim.consumer_id == consumer_id,
             )
             .values(delivery_status="pending")
@@ -84,7 +97,7 @@ async def on_claim_created(event_type: str, data: dict, tenant_id: str) -> None:
         # 执行发放
         await _do_deliver(
             db,
-            uuid.UUID(tenant_id),
+            event_tenant_id,
             connector,
             consumer_id,
             benefit.config_json,
@@ -104,6 +117,28 @@ async def _do_deliver(
     claim_id: uuid.UUID | None = None,
 ) -> BenefitDelivery:
     """执行外部发放，写入 BenefitDelivery 记录。"""
+    if connector.tenant_id != tenant_id:
+        raise ValueError("Connector does not belong to delivery tenant")
+    if benefit_id is not None:
+        benefit_exists = await db.scalar(
+            select(Benefit.id).where(
+                Benefit.id == benefit_id,
+                Benefit.tenant_id == tenant_id,
+                Benefit.connector_id == connector.id,
+            )
+        )
+        if benefit_exists is None:
+            raise ValueError("Benefit does not belong to delivery connector tenant")
+    if claim_id is not None:
+        claim_exists = await db.scalar(
+            select(BenefitClaim.id).where(
+                BenefitClaim.id == claim_id,
+                BenefitClaim.tenant_id == tenant_id,
+                BenefitClaim.benefit_id == benefit_id,
+            )
+        )
+        if claim_exists is None:
+            raise ValueError("Claim does not belong to delivery benefit tenant")
     cb = _get_circuit_breaker(connector)
 
     delivery = BenefitDelivery(
@@ -145,7 +180,14 @@ async def _do_deliver(
 
         # 更新 claim delivery_status
         if delivery.status == DeliveryStatus.SUCCESS:
-            await _update_claim_delivery_status(db, connector.id, consumer_id, "delivered", claim_id=claim_id)
+            await _update_claim_delivery_status(
+                db,
+                tenant_id,
+                connector.id,
+                consumer_id,
+                "delivered",
+                claim_id=claim_id,
+            )
 
         db.add(delivery)
         await db.flush()
@@ -163,6 +205,7 @@ async def _do_deliver(
 
 async def _update_claim_delivery_status(
     db: AsyncSession,
+    tenant_id: uuid.UUID,
     connector_id: uuid.UUID,
     consumer_id: str,
     status: str,
@@ -174,6 +217,7 @@ async def _update_claim_delivery_status(
             update(BenefitClaim)
             .where(
                 BenefitClaim.id == claim_id,
+                BenefitClaim.tenant_id == tenant_id,
             )
             .values(delivery_status=status)
         )
@@ -184,7 +228,13 @@ async def _update_claim_delivery_status(
         update(BenefitClaim)
         .where(
             BenefitClaim.consumer_id == consumer_id,
-            BenefitClaim.benefit_id.in_(select(Benefit.id).where(Benefit.connector_id == connector_id)),
+            BenefitClaim.tenant_id == tenant_id,
+            BenefitClaim.benefit_id.in_(
+                select(Benefit.id).where(
+                    Benefit.tenant_id == tenant_id,
+                    Benefit.connector_id == connector_id,
+                )
+            ),
         )
         .values(delivery_status=status)
     )

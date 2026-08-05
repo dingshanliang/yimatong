@@ -118,7 +118,7 @@ async def update_tenant(
     if quota is not None:
         tenant.quota = quota
     if compliance_settings is not None:
-        existing = tenant.compliance_settings or {}
+        existing = dict(tenant.compliance_settings or {})
         existing.update(compliance_settings)
         tenant.compliance_settings = existing
     if plan_expires_at is not None:
@@ -132,7 +132,7 @@ async def update_tenant(
     if categories is not None:
         tenant.categories = categories
     if brand_profile is not None:
-        existing = tenant.brand_profile or {}
+        existing = dict(tenant.brand_profile or {})
         existing.update(brand_profile)
         tenant.brand_profile = existing
     await db.flush()

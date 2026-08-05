@@ -26,6 +26,7 @@ from app.services.organization import (
     delete_organization,
     generate_initial_password,
     list_accounts,
+    list_organization_tree,
     list_organizations,
     set_account_active_status,
     update_account,
@@ -50,7 +51,10 @@ async def create_org_endpoint(
     actor_id: uuid.UUID = Depends(get_current_account_id),
     _role: str = Depends(require_role("admin")),
 ):
-    org = await create_organization(db, tenant_id=tenant_id, name=body.name, parent_id=body.parent_id)
+    try:
+        org = await create_organization(db, tenant_id=tenant_id, name=body.name, parent_id=body.parent_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
     await write_audit_log(
         db,
         str(actor_id),
@@ -84,6 +88,28 @@ async def list_orgs_endpoint(
         for org in result["items"]
     ]
     return PaginatedResponse(items=items, total=result["total"], page=page, page_size=page_size)
+
+
+@router.get("/organizations/tree", response_model=list[OrganizationRead], summary="完整组织树数据")
+async def list_org_tree_endpoint(
+    db: AsyncSession = Depends(get_db),
+    tenant_id: uuid.UUID = Depends(get_current_tenant),
+    _role: str = Depends(require_role("admin", "operator")),
+):
+    """返回当前租户全部组织节点，供层级展示与组织选择使用。"""
+    organizations = await list_organization_tree(db, tenant_id=tenant_id)
+    account_counts = await count_accounts_by_org(db, tenant_id)
+    return [
+        OrganizationRead(
+            id=org.id,
+            tenant_id=org.tenant_id,
+            name=org.name,
+            parent_id=org.parent_id,
+            account_count=account_counts.get(org.id, 0),
+            created_at=org.created_at,
+        )
+        for org in organizations
+    ]
 
 
 @router.patch("/organizations/{org_id}", response_model=OrganizationRead, summary="更新组织")
@@ -199,6 +225,7 @@ async def create_account_endpoint(
             name=body.name,
             password=body.password or initial_password,
             role_ids=body.role_ids,
+            must_change_password=initial_password is not None,
         )
     except ValueError as e:
         if "already exists" in str(e):
@@ -224,6 +251,8 @@ async def create_account_endpoint(
         "email": account.email,
         "name": account.name,
         "is_active": account.is_active,
+        "must_change_password": account.must_change_password,
+        "roles": [{"id": role.id, "name": role.name, "description": role.description} for role in account.roles],
         "initial_password": initial_password,
     }
 
@@ -253,6 +282,8 @@ async def list_accounts_endpoint(
             "email": account.email,
             "name": account.name,
             "is_active": account.is_active,
+            "must_change_password": account.must_change_password,
+            "roles": [{"id": role.id, "name": role.name, "description": role.description} for role in account.roles],
         }
         for account in result["items"]
     ]
@@ -273,6 +304,7 @@ async def update_account_endpoint(
             db=db,
             tenant_id=tenant_id,
             account_id=account_id,
+            actor_id=actor_id,
             name=body.name,
             organization_id=body.organization_id,
             role_ids=body.role_ids,
@@ -329,19 +361,17 @@ async def delete_account_endpoint(
     actor_id: uuid.UUID = Depends(get_current_account_id),
     _role: str = Depends(require_role("admin")),
 ):
-    """软删除账户 — 栘除组织关联并标记为已删除。"""
-    result = await db.execute(select(Account).where(Account.id == account_id, Account.tenant_id == tenant_id))
-    account = result.scalar_one_or_none()
+    """停用账户并撤销现有会话；保留账户与审计历史。"""
+    try:
+        account = await set_account_active_status(
+            db=db,
+            tenant_id=tenant_id,
+            actor_id=actor_id,
+            account_id=account_id,
+            is_active=False,
+            reason="账户删除操作",
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
     if not account:
         raise HTTPException(status_code=404, detail="Account not found")
-    account_name = account.name
-    await db.delete(account)
-    await db.flush()
-    await write_audit_log(
-        db,
-        str(actor_id),
-        str(tenant_id),
-        "account_deleted",
-        f"account:{account_id}",
-        {"resource_name": account_name, "before": "active", "after": "deleted", "result": "success"},
-    )

@@ -6,7 +6,8 @@ from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.database import get_db
+from app.core.context import set_consumer_tenant_id
+from app.core.database import get_db_for_consumer, set_session_tenant_context
 from app.services.consent import grant_consent, withdraw_consent
 from app.services.scan_token import verify_scan_token
 from app.utils.client_ip import compute_ip_hash, get_client_ip
@@ -26,7 +27,7 @@ class ConsentRequest(BaseModel):
 async def create_consent(
     request: Request,
     body: ConsentRequest,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db_for_consumer),
 ):
     """消费者授予同意（隐私政策、营销等）。
 
@@ -55,9 +56,12 @@ async def create_consent(
     if not tenant_id:
         return {"status": "ignored", "reason": "cannot_determine_tenant"}
 
+    tenant_uuid = await set_session_tenant_context(db, tenant_id)
+    set_consumer_tenant_id(str(tenant_uuid))
+
     record = await grant_consent(
         db=db,
-        tenant_id=uuid.UUID(tenant_id),
+        tenant_id=tenant_uuid,
         consent_type=body.consent_type,
         public_id=body.public_id,
         ip_hash=ip_hash,
@@ -80,7 +84,7 @@ async def create_consent(
 async def withdraw_consent_endpoint(
     consent_id: uuid.UUID,
     request: Request,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db_for_consumer),
 ):
     """消费者撤回同意"""
     client_ip = get_client_ip(request)
@@ -97,7 +101,9 @@ async def withdraw_consent_endpoint(
     if not tenant_id:
         return {"status": "ignored", "reason": "no_tenant_context"}
 
-    record = await withdraw_consent(db, uuid.UUID(tenant_id), consent_id)
+    tenant_uuid = await set_session_tenant_context(db, tenant_id)
+    set_consumer_tenant_id(str(tenant_uuid))
+    record = await withdraw_consent(db, tenant_uuid, consent_id)
     if not record:
         return {"status": "ignored", "reason": "not_found"}
     return {

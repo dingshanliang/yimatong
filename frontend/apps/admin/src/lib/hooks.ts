@@ -7,7 +7,10 @@ import api from "./api";
 // ---------------------------------------------------------------------------
 
 export function usePaginatedList<T>(
-  fetchFn: (params: { page: number; page_size: number }) => Promise<{ items: T[]; total: number }>,
+  fetchFn: (params: {
+    page: number;
+    page_size: number;
+  }) => Promise<{ items: T[]; total: number }>,
   deps: unknown[] = [],
   pageSize = 20
 ) {
@@ -23,7 +26,8 @@ export function usePaginatedList<T>(
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
-    fetchFnRef.current({ page, page_size: pageSize })
+    fetchFnRef
+      .current({ page, page_size: pageSize })
       .then((result) => {
         if (!cancelled) {
           setItems(result.items || []);
@@ -39,7 +43,9 @@ export function usePaginatedList<T>(
       .finally(() => {
         if (!cancelled) setLoading(false);
       });
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, [page, pageSize, refreshKey, ...deps]);
 
   const refresh = useCallback(() => setRefreshKey((k) => k + 1), []);
@@ -66,47 +72,47 @@ interface PaginatedResponse<T> {
  */
 export function useCrud<T extends { id: string }>(
   basePath: string,
-  opts: { pageSize?: number } = {},
+  opts: { pageSize?: number } = {}
 ) {
   const { pageSize = 20 } = opts;
   const [page, setPage] = useState(1);
   const [filters, setFilters] = useState<Record<string, string | number>>({});
 
   const filterStr = new URLSearchParams(
-    Object.entries(filters).sort().map(([k, v]) => [k, String(v)]),
+    Object.entries(filters)
+      .sort()
+      .map(([k, v]) => [k, String(v)])
   ).toString();
   const swrKey = `${basePath}?page=${page}&page_size=${pageSize}${filterStr ? `&${filterStr}` : ""}`;
 
-  const { data, isLoading, mutate } = useSWR<PaginatedResponse<T>>(swrKey);
+  const { data, isLoading, mutate } = useSWR<PaginatedResponse<T> | T[]>(
+    swrKey
+  );
 
-  const items = data?.items ?? [];
-  const total = data?.total ?? 0;
+  const items = Array.isArray(data) ? data : (data?.items ?? []);
+  const total = Array.isArray(data) ? data.length : (data?.total ?? 0);
 
   const create = useCallback(
     (body: Record<string, unknown>) =>
       api.post(basePath, body).then(() => mutate()),
-    [basePath, mutate],
+    [basePath, mutate]
   );
 
   const update = useCallback(
     (id: string, body: Record<string, unknown>) =>
       api.patch(`${basePath}/${id}`, body).then(() => mutate()),
-    [basePath, mutate],
+    [basePath, mutate]
   );
 
   const remove = useCallback(
-    (id: string) =>
-      api.delete(`${basePath}/${id}`).then(() => mutate()),
-    [basePath, mutate],
+    (id: string) => api.delete(`${basePath}/${id}`).then(() => mutate()),
+    [basePath, mutate]
   );
 
-  const setFilter = useCallback(
-    (next: Record<string, string | number>) => {
-      setFilters(next);
-      setPage(1);
-    },
-    [],
-  );
+  const setFilter = useCallback((next: Record<string, string | number>) => {
+    setFilters(next);
+    setPage(1);
+  }, []);
 
   const resetFilters = useCallback(() => {
     setFilters({});
@@ -114,12 +120,19 @@ export function useCrud<T extends { id: string }>(
   }, []);
 
   return {
-    items, total, page, pageSize,
+    items,
+    total,
+    page,
+    pageSize,
     loading: isLoading,
     filters,
-    setPage, setFilter, resetFilters,
+    setPage,
+    setFilter,
+    resetFilters,
     mutate,
-    create, update, remove,
+    create,
+    update,
+    remove,
   };
 }
 

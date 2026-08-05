@@ -18,6 +18,7 @@ import {
   SunOutlined,
   MoonOutlined,
   LogoutOutlined,
+  KeyOutlined,
 } from "@ant-design/icons";
 import type { MenuProps } from "antd";
 import { usePlatformAuth } from "@/lib/platform-auth";
@@ -29,6 +30,7 @@ const { Text } = Typography;
 const menuItems: MenuProps["items"] = [
   { key: "/", icon: <DashboardOutlined />, label: "首页看板" },
   { key: "/tenants", icon: <TeamOutlined />, label: "租户管理" },
+  { key: "/invite-codes", icon: <KeyOutlined />, label: "邀请码" },
   { key: "/plans", icon: <CrownOutlined />, label: "套餐管理" },
   { key: "/quota", icon: <DashboardFilled />, label: "额度监控" },
   { key: "/health", icon: <HeartOutlined />, label: "客户健康度" },
@@ -53,9 +55,9 @@ export default function DashboardLayout({
     router.push(key);
   };
 
-  const handleLogout = () => {
-    logout();
-    router.push("/login");
+  const handleLogout = async () => {
+    await logout();
+    router.replace("/login");
   };
 
   const userMenuItems: MenuProps["items"] = [

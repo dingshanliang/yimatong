@@ -14,7 +14,6 @@ from urllib.parse import quote
 
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from sqlalchemy import select
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from uuid6 import uuid7
 
@@ -82,18 +81,24 @@ async def get_active_wecom_connector(db: AsyncSession, tenant_id: uuid.UUID) -> 
     return result.scalar_one_or_none()
 
 
-async def get_wecom_status(db: AsyncSession, tenant_id: uuid.UUID) -> dict:
+async def get_wecom_status(
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    *,
+    include_callback_credentials: bool = True,
+) -> dict:
     connector = await get_active_wecom_connector(db, tenant_id)
     if not connector:
-        return {
+        status = {
             "connected": False,
             "status": "not_configured",
             "callback_url": None,
             "config": {},
-            "secrets": {},
         }
-    secrets_data = decrypt_secrets(connector.secrets_encrypted or b"")
-    return {
+        if include_callback_credentials:
+            status["secrets"] = {}
+        return status
+    status = {
         "connected": connector.config.get("status") == "connected",
         "status": connector.config.get("status", "configured"),
         "connector_id": str(connector.id),
@@ -106,12 +111,23 @@ async def get_wecom_status(db: AsyncSession, tenant_id: uuid.UUID) -> dict:
             "last_error": connector.config.get("last_error"),
             "mock_mode": connector.config.get("mock_mode", False),
         },
-        "secrets": {
+    }
+    if include_callback_credentials:
+        secrets_data = decrypt_secrets(connector.secrets_encrypted or b"")
+        status["secrets"] = {
             "secret": mask_secrets({"secret": secrets_data.get("secret", "")}).get("secret"),
             "callback_token": secrets_data.get("callback_token", ""),
             "encoding_aes_key": secrets_data.get("encoding_aes_key", ""),
-        },
-    }
+        }
+    return status
+
+
+async def list_configured_wecom_members(db: AsyncSession, tenant_id: uuid.UUID) -> list[str]:
+    """Return only persisted member ids without decrypting connector credentials."""
+    connector = await get_active_wecom_connector(db, tenant_id)
+    if not connector:
+        return []
+    return list(connector.config.get("customer_service_user_ids") or [])
 
 
 async def upsert_wecom_connector(
@@ -123,6 +139,8 @@ async def upsert_wecom_connector(
     customer_service_user_ids: list[str] | None = None,
     mock_mode: bool = False,
 ) -> dict:
+    if settings.environment == "production" and mock_mode:
+        raise WeComIntegrationError("生产环境不允许启用企业微信模拟模式")
     result = await db.execute(
         select(Connector).where(
             Connector.tenant_id == tenant_id,
@@ -170,6 +188,8 @@ async def verify_wecom_connector(db: AsyncSession, tenant_id: uuid.UUID) -> dict
 
     secrets_data = decrypt_secrets(connector.secrets_encrypted or b"")
     if connector.config.get("mock_mode"):
+        if settings.environment == "production":
+            raise WeComIntegrationError("生产环境不允许使用企业微信模拟模式")
         connector.config = {
             **connector.config,
             "status": "connected",
@@ -229,6 +249,8 @@ async def get_or_create_claim_contact_way(
     connector = await get_active_wecom_connector(db, tenant_id)
     if not connector or connector.config.get("status") != "connected":
         raise WeComIntegrationError("企微添加入口暂不可用，请稍后再试")
+    if settings.environment == "production" and connector.config.get("mock_mode"):
+        raise WeComIntegrationError("生产环境不允许使用企业微信模拟模式")
 
     token_hash = scan_token_hash(scan_token)
     existing_result = await db.execute(
@@ -295,8 +317,7 @@ async def has_confirmed_wecom_contact(
 ) -> bool:
     """yimatong-zgb1.12 Decision 26：只有完整 add_external_contact 才算确认。
 
-    排除 welcome_code_pending（half-add，待客户确认）的行。
-    mock_added 行在 demo 模式下仍可确认（verification_source 不强制过滤，由部署环境控制）。
+    排除 welcome_code_pending（half-add，待客户确认）以及任何非验签 mock 证据。
     """
     token_hash = scan_token_hash(scan_token)
     result = await db.execute(
@@ -305,6 +326,7 @@ async def has_confirmed_wecom_contact(
             WeComExternalContact.benefit_id == benefit_id,
             WeComExternalContact.scan_token_hash == token_hash,
             WeComExternalContact.status == WeComExternalContactStatus.ACTIVE,
+            WeComExternalContact.verification_source == "confirmed_callback",
             # yimatong-zgb1.12：排除 half-add（welcome_code_pending）
             WeComExternalContact.welcome_code_pending.is_(False),
         )
@@ -319,24 +341,43 @@ async def process_wecom_callback_event(
     event: dict,
     verification_source: str = "confirmed_callback",
 ) -> dict:
-    """处理企微回调事件。
-
-    yimatong-zgb1.12 Decision 26：
-    - verification_source='confirmed_callback'（默认，验签回调）或 'mock_added'（本地演示，非确认）
-    - add_half_external_contact 不计为 ACTIVE（welcome_code_pending=True，待客户确认）
-    - 事件指纹幂等（change_type + CreateTime + external_userid 的 sha256）
-    """
-    connector_result = await db.execute(select(Connector).where(Connector.id == connector_id))
+    """Apply one verified callback with monotonic, row-locked state transitions."""
+    connector_result = await db.execute(select(Connector).where(Connector.id == connector_id).with_for_update())
     connector = connector_result.scalar_one_or_none()
     if not connector or connector.connector_type != WeComConnectorType.CUSTOMER_CONTACT:
         raise WeComIntegrationError("企业微信配置不存在")
+    if verification_source == "mock_added":
+        if settings.environment == "production" or not connector.config.get("mock_mode"):
+            raise WeComIntegrationError("当前环境不允许企业微信模拟回调")
+    elif verification_source != "confirmed_callback":
+        raise WeComIntegrationError("未知的企业微信回调验证来源")
 
-    change_type = str(event.get("ChangeType") or event.get("change_type") or "")
+    event_type = str(event.get("Event") or event.get("event") or "").strip()
+    if event_type != "change_external_contact":
+        return {"status": "ignored", "reason": "unsupported_event"}
+
+    change_type = str(event.get("ChangeType") or event.get("change_type") or "").strip()
+    supported_types = {WECOM_EVENT_ADD, WECOM_EVENT_ADD_HALF, WECOM_EVENT_DELETE, WECOM_EVENT_DELETE_FOLLOW}
+    if change_type not in supported_types:
+        return {"status": "ignored", "reason": "unsupported_change_type"}
+
     state = event.get("State") or event.get("state")
     external_userid = event.get("ExternalUserID") or event.get("external_userid")
     user_id = event.get("UserID") or event.get("user_id")
     if not external_userid:
         return {"status": "ignored", "reason": "missing_external_userid"}
+
+    raw_create_time = event.get("CreateTime") or event.get("create_time")
+    if raw_create_time in (None, "") and verification_source == "mock_added":
+        raw_create_time = int(datetime.now(UTC).timestamp())
+    try:
+        create_time = int(raw_create_time)
+        event_time = datetime.fromtimestamp(create_time, UTC)
+        event_sequence = int(event.get("Sequence") or event.get("sequence") or 0)
+    except (TypeError, ValueError, OverflowError):
+        return {"status": "ignored", "reason": "invalid_event_order"}
+    if create_time < 0 or event_sequence < 0:
+        return {"status": "ignored", "reason": "invalid_event_order"}
 
     contact_way = None
     if state:
@@ -348,44 +389,47 @@ async def process_wecom_callback_event(
         )
         contact_way = way_result.scalar_one_or_none()
 
-    # yimatong-zgb1.12 Decision 26：add_half_external_contact 不计为 ACTIVE
     is_half_add = change_type == WECOM_EVENT_ADD_HALF
     is_delete = change_type in {WECOM_EVENT_DELETE, WECOM_EVENT_DELETE_FOLLOW}
-    if is_delete:
-        status = WeComExternalContactStatus.DELETED
-    elif is_half_add:
-        # half-add：客户尚未确认，不计为 ACTIVE（welcome_code_pending=True）
-        status = WeComExternalContactStatus.ACTIVE  # 保留行但标记 pending
-    else:
-        status = WeComExternalContactStatus.ACTIVE
-
-    # yimatong-zgb1.12：事件指纹幂等（change_type + CreateTime + external_userid）
-    create_time = str(event.get("CreateTime") or event.get("create_time") or "")
-    fingerprint_input = f"{change_type}|{create_time}|{external_userid}|{state or ''}"
+    fingerprint_input = f"{change_type}|{create_time}|{event_sequence}|{external_userid}|{state or ''}"
     event_fingerprint = hashlib.sha256(fingerprint_input.encode()).hexdigest()
 
-    # 幂等检查：同指纹的事件已处理过则跳过
-    if create_time:
-        dup_check = await db.execute(
-            select(WeComExternalContact.id).where(
-                WeComExternalContact.tenant_id == connector.tenant_id,
-                WeComExternalContact.event_fingerprint == event_fingerprint,
-            )
-        )
-        if dup_check.scalar_one_or_none():
-            return {"status": "duplicate", "reason": "event_fingerprint_exists"}
-
-    now = datetime.now(UTC)
-    existing_result = await db.execute(
-        select(WeComExternalContact).where(
+    dup_check = await db.execute(
+        select(WeComExternalContact.id).where(
             WeComExternalContact.tenant_id == connector.tenant_id,
-            WeComExternalContact.connector_id == connector.id,
-            WeComExternalContact.external_userid == external_userid,
-            WeComExternalContact.state == state,
+            WeComExternalContact.event_fingerprint == event_fingerprint,
         )
     )
-    contact = existing_result.scalar_one_or_none()
-    if not contact:
+    if dup_check.scalar_one_or_none():
+        return {"status": "duplicate", "reason": "event_fingerprint_exists"}
+
+    identity_filters = [
+        WeComExternalContact.tenant_id == connector.tenant_id,
+        WeComExternalContact.connector_id == connector.id,
+        WeComExternalContact.external_userid == external_userid,
+    ]
+    if is_delete:
+        if state:
+            identity_filters.append(WeComExternalContact.state == state)
+        elif user_id:
+            identity_filters.append(WeComExternalContact.user_id == user_id)
+    else:
+        identity_filters.append(
+            WeComExternalContact.state == state if state is not None else WeComExternalContact.state.is_(None)
+        )
+    contacts = list(
+        (
+            await db.execute(
+                select(WeComExternalContact)
+                .where(*identity_filters)
+                .order_by(WeComExternalContact.id)
+                .with_for_update()
+            )
+        )
+        .scalars()
+        .all()
+    )
+    if not contacts:
         contact = WeComExternalContact(
             tenant_id=connector.tenant_id,
             connector_id=connector.id,
@@ -394,33 +438,56 @@ async def process_wecom_callback_event(
             user_id=user_id,
         )
         db.add(contact)
+        contacts = [contact]
 
-    contact.contact_way_id = contact_way.id if contact_way else None
-    contact.campaign_id = contact_way.campaign_id if contact_way else None
-    contact.benefit_id = contact_way.benefit_id if contact_way else None
-    contact.scan_token_hash = contact_way.scan_token_hash if contact_way else None
-    contact.user_id = user_id
-    contact.unionid = event.get("UnionID") or event.get("unionid")
-    contact.status = status
-    contact.raw_event = event
-    # yimatong-zgb1.12：记录验签来源 + 事件类型 + 指纹 + 待验证标记
-    contact.verification_source = verification_source
-    contact.change_type = change_type
-    contact.event_fingerprint = event_fingerprint
-    contact.welcome_code_pending = is_half_add
-    if is_delete:
-        contact.deleted_at = now
-    elif not is_half_add:
-        # 只有完整 add 才记 added_at（half-add 不算确认添加）
-        contact.added_at = now
-        contact.deleted_at = None
+    event_rank = {WECOM_EVENT_ADD_HALF: 0, WECOM_EVENT_ADD: 1, WECOM_EVENT_DELETE: 2, WECOM_EVENT_DELETE_FOLLOW: 2}
+    updated = 0
+    for contact in contacts:
+        current_order = (
+            contact.event_time or datetime.min.replace(tzinfo=UTC),
+            contact.event_sequence if contact.event_sequence is not None else -1,
+            event_rank.get(contact.change_type or "", -1),
+        )
+        incoming_order = (event_time, event_sequence, event_rank[change_type])
+        if incoming_order <= current_order:
+            continue
 
-    connector.config = {**connector.config, "last_event_at": now.isoformat()}
-    try:
-        await db.flush()
-    except IntegrityError:
-        await db.rollback()
-        return {"status": "duplicate"}
+        if contact_way is not None:
+            contact.contact_way_id = contact_way.id
+            contact.campaign_id = contact_way.campaign_id
+            contact.benefit_id = contact_way.benefit_id
+            contact.scan_token_hash = contact_way.scan_token_hash
+        contact.user_id = user_id or contact.user_id
+        contact.unionid = event.get("UnionID") or event.get("unionid") or contact.unionid
+        contact.status = WeComExternalContactStatus.DELETED if is_delete else WeComExternalContactStatus.ACTIVE
+        contact.raw_event = event
+        if change_type == WECOM_EVENT_ADD:
+            contact.verification_source = verification_source
+        elif is_half_add:
+            contact.verification_source = (
+                "pending_callback" if verification_source == "confirmed_callback" else verification_source
+            )
+        else:
+            contact.verification_source = (
+                "termination_callback" if verification_source == "confirmed_callback" else verification_source
+            )
+        contact.change_type = change_type
+        contact.event_fingerprint = event_fingerprint
+        contact.event_time = event_time
+        contact.event_sequence = event_sequence
+        contact.welcome_code_pending = is_half_add
+        if is_delete:
+            contact.deleted_at = event_time
+        elif not is_half_add:
+            contact.added_at = event_time
+            contact.deleted_at = None
+        updated += 1
+
+    if updated == 0:
+        return {"status": "ignored", "reason": "non_newer_event"}
+
+    connector.config = {**connector.config, "last_event_at": event_time.isoformat()}
+    await db.flush()
     return {"status": "recorded", "change_type": change_type}
 
 
@@ -458,13 +525,11 @@ def parse_wecom_callback_body(body: bytes, connector: Connector, query: dict[str
     if not text:
         return {}
     if text.lstrip().startswith("{"):
-        import json
-
-        return json.loads(text)
+        raise WeComIntegrationError("企业微信生产回调不接受未验签 JSON")
     payload = parse_wecom_xml(text)
     encrypted = payload.get("Encrypt")
     if not encrypted:
-        return payload
+        raise WeComIntegrationError("企业微信回调缺少加密消息")
     secrets_data = decrypt_secrets(connector.secrets_encrypted or b"")
     signature = query.get("msg_signature") or query.get("signature") or ""
     timestamp = query.get("timestamp") or ""

@@ -33,6 +33,7 @@ FAILED_RETAIN_DAYS = 90
 
 # 轮询间隔（秒）
 POLL_INTERVAL = 5
+CLEANUP_BATCH_SIZE = 100
 
 
 async def _get_db():
@@ -44,11 +45,13 @@ async def _get_db():
 
 async def process_single_delivery(delivery_id: str) -> None:
     """处理单条 webhook 投递。"""
-    from app.core.database import async_session_factory
+    from app.core.database import async_session_factory, bootstrap_tenant_row
 
     async with async_session_factory() as db:
-        result = await db.execute(select(WebhookDelivery).where(WebhookDelivery.id == delivery_id))
-        delivery = result.scalar_one_or_none()
+        delivery = await bootstrap_tenant_row(
+            db,
+            select(WebhookDelivery).where(WebhookDelivery.id == delivery_id).with_for_update(),
+        )
         if not delivery:
             logger.warning("Delivery %s not found", delivery_id)
             return
@@ -57,7 +60,12 @@ async def process_single_delivery(delivery_id: str) -> None:
             return
 
         # 查找 endpoint
-        ep_result = await db.execute(select(WebhookEndpoint).where(WebhookEndpoint.id == delivery.endpoint_id))
+        ep_result = await db.execute(
+            select(WebhookEndpoint).where(
+                WebhookEndpoint.id == delivery.endpoint_id,
+                WebhookEndpoint.tenant_id == delivery.tenant_id,
+            )
+        )
         endpoint = ep_result.scalar_one_or_none()
         if not endpoint or not endpoint.enabled:
             delivery.status = "failed"
@@ -103,34 +111,45 @@ async def poll_pending_retries() -> int:
     """查询到期的重试投递，重新入队。返回入队数量。"""
     import redis.asyncio as aioredis
 
-    from app.core.database import async_session_factory
+    from app.core.database import async_session_factory, bootstrap_tenant_keys, set_session_tenant_context
 
     count = 0
-    async with async_session_factory() as db:
-        result = await db.execute(
-            select(WebhookDelivery)
+    async with async_session_factory() as control_db:
+        work_keys = await bootstrap_tenant_keys(
+            control_db,
+            select(WebhookDelivery.id, WebhookDelivery.tenant_id)
             .where(
                 WebhookDelivery.status == "retrying",
                 WebhookDelivery.next_retry_at <= datetime.now(UTC),
             )
-            .limit(100)
+            .order_by(WebhookDelivery.next_retry_at, WebhookDelivery.id)
+            .limit(100),
         )
-        deliveries = list(result.scalars().all())
 
-        if deliveries:
-            async with aioredis.from_url(settings.redis_url) as r:
-                for d in deliveries:
+    if work_keys:
+        async with aioredis.from_url(settings.redis_url) as r:
+            for delivery_id, tenant_id in work_keys:
+                async with async_session_factory() as db:
+                    await set_session_tenant_context(db, tenant_id)
+                    d = await db.scalar(
+                        select(WebhookDelivery).where(
+                            WebhookDelivery.id == delivery_id,
+                            WebhookDelivery.tenant_id == tenant_id,
+                        )
+                    )
+                    if d is None or d.status != "retrying" or d.next_retry_at > datetime.now(UTC):
+                        continue
                     d.status = "pending"
                     await r.lpush(REDIS_QUEUE_KEY, str(d.id))
                     count += 1
-            await db.commit()
+                    await db.commit()
 
     return count
 
 
 async def poll_benefit_delivery_retries() -> int:
     """查询到期的外部权益发放重试，执行重试。返回重试数量。"""
-    from app.core.database import async_session_factory
+    from app.core.database import async_session_factory, bootstrap_tenant_keys, set_session_tenant_context
     from app.models.connector import BenefitDelivery, Connector
     from app.services.benefit_delivery_handler import (
         DeliveryStatus,
@@ -141,24 +160,37 @@ async def poll_benefit_delivery_retries() -> int:
     retry_backoff_base = 2
 
     count = 0
-    async with async_session_factory() as db:
-        now = datetime.now(UTC)
-        result = await db.execute(
-            select(BenefitDelivery)
+    now = datetime.now(UTC)
+    async with async_session_factory() as control_db:
+        work_keys = await bootstrap_tenant_keys(
+            control_db,
+            select(BenefitDelivery.id, BenefitDelivery.tenant_id)
             .where(
                 BenefitDelivery.status == DeliveryStatus.PENDING,
                 BenefitDelivery.retry_count < BenefitDelivery.max_retries,
                 BenefitDelivery.next_retry_at <= now,
             )
-            .limit(100)
+            .limit(100),
         )
-        deliveries = list(result.scalars().all())
 
-        for d in deliveries:
-            conn_result = await db.execute(select(Connector).where(Connector.id == d.connector_id))
+    for delivery_id, tenant_id in work_keys:
+        async with async_session_factory() as db:
+            await set_session_tenant_context(db, tenant_id)
+            d = await db.scalar(
+                select(BenefitDelivery).where(
+                    BenefitDelivery.id == delivery_id,
+                    BenefitDelivery.tenant_id == tenant_id,
+                )
+            )
+            if d is None:
+                continue
+            conn_result = await db.execute(
+                select(Connector).where(Connector.id == d.connector_id, Connector.tenant_id == d.tenant_id)
+            )
             connector = conn_result.scalar_one_or_none()
             if not connector or not connector.enabled:
                 d.status = DeliveryStatus.FAILED
+                await db.commit()
                 continue
 
             cb = _get_circuit_breaker(connector)
@@ -181,49 +213,70 @@ async def poll_benefit_delivery_retries() -> int:
                     backoff = retry_backoff_base**d.retry_count
                     d.next_retry_at = datetime.now(UTC) + timedelta(seconds=backoff)
 
-        if deliveries:
             await db.commit()
 
     return count
 
 
 async def cleanup_old_deliveries() -> int:
-    """清理过期的投递记录。返回删除数量。"""
-    from app.core.database import async_session_factory
+    """Archive a bounded batch of still-terminal, still-expired deliveries."""
+    from app.core.database import async_session_factory, bootstrap_tenant_keys, set_session_tenant_context
 
     now = datetime.now(UTC)
-    count = 0
-    async with async_session_factory() as db:
+    async with async_session_factory() as control_db:
         # 清理成功的（> 30 天）
         success_cutoff = now - timedelta(days=SUCCESS_RETAIN_DAYS)
-        result = await db.execute(
-            update(WebhookDelivery)
-            .where(
-                WebhookDelivery.status == "delivered",
-                WebhookDelivery.created_at < success_cutoff,
-            )
-            .values(status="archived")
-            .returning(WebhookDelivery.id)
+        success_keys = await bootstrap_tenant_keys(
+            control_db,
+            select(WebhookDelivery.id, WebhookDelivery.tenant_id)
+            .where(WebhookDelivery.status == "delivered", WebhookDelivery.created_at < success_cutoff)
+            .order_by(WebhookDelivery.created_at, WebhookDelivery.id)
+            .limit(CLEANUP_BATCH_SIZE),
         )
-        archived = len(result.fetchall())
-
-        # 清理失败的（> 90 天）
         failed_cutoff = now - timedelta(days=FAILED_RETAIN_DAYS)
-        result = await db.execute(
-            update(WebhookDelivery)
-            .where(
-                WebhookDelivery.status == "failed",
-                WebhookDelivery.created_at < failed_cutoff,
-            )
-            .values(status="archived")
-            .returning(WebhookDelivery.id)
+        failed_keys = await bootstrap_tenant_keys(
+            control_db,
+            select(WebhookDelivery.id, WebhookDelivery.tenant_id)
+            .where(WebhookDelivery.status == "failed", WebhookDelivery.created_at < failed_cutoff)
+            .order_by(WebhookDelivery.created_at, WebhookDelivery.id)
+            .limit(CLEANUP_BATCH_SIZE),
         )
-        failed = len(result.fetchall())
 
-        count = archived + failed
-        if count > 0:
-            await db.commit()
-            logger.info("Archived %d old deliveries (success=%d, failed=%d)", count, archived, failed)
+    archived = 0
+    failed = 0
+    # Keep the terminal branches separate: the mutation rechecks the exact
+    # status and cutoff selected by the control index. A concurrent retry or
+    # state recovery therefore wins and is never archived from stale keys.
+    for keys, expected_status, cutoff, counter_name in (
+        (success_keys, "delivered", success_cutoff, "archived"),
+        (failed_keys, "failed", failed_cutoff, "failed"),
+    ):
+        for delivery_id, tenant_id in keys:
+            async with async_session_factory() as db:
+                await set_session_tenant_context(db, tenant_id)
+                result = await db.execute(
+                    update(WebhookDelivery)
+                    .where(
+                        WebhookDelivery.id == delivery_id,
+                        WebhookDelivery.tenant_id == tenant_id,
+                        WebhookDelivery.status == expected_status,
+                        WebhookDelivery.created_at < cutoff,
+                    )
+                    .values(status="archived")
+                    .returning(WebhookDelivery.id)
+                )
+                if result.scalar_one_or_none() is None:
+                    await db.rollback()
+                    continue
+                await db.commit()
+                if counter_name == "archived":
+                    archived += 1
+                else:
+                    failed += 1
+
+    count = archived + failed
+    if count > 0:
+        logger.info("Archived %d old deliveries (success=%d, failed=%d)", count, archived, failed)
 
     return count
 

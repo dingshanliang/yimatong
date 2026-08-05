@@ -243,7 +243,7 @@ class TestRefreshDoesNotDoubleCountFirst:
         # 模拟 H5 触发 telemetry（此前会插第 2 条）
         tele = await client.post(
             "/scan-events",
-            json={"event_type": "view", "public_id": public_id},
+            json={"event_type": "view", "public_id": public_id, "client_event_id": "first-verification-view"},
             headers={"Authorization": f"Bearer {token}", "X-Real-IP": "203.0.113.7"},
         )
         assert tele.status_code == 201, f"telemetry 应 201，实际 {tele.status_code}: {tele.text}"

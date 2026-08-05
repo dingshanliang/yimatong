@@ -3,11 +3,12 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Alert, App, Button, Space, Typography } from "antd";
 import { PlusOutlined } from "@ant-design/icons";
+import { useRouter } from "next/navigation";
 import api, { extractErrorMessage } from "@/lib/api";
+import { useAuthStore } from "@/lib/auth";
 import { StatsCards } from "./_components/StatsCards";
 import { ClientTable } from "./_components/ClientTable";
 import { TaskTable } from "./_components/TaskTable";
-import { InitClientModal } from "./_components/InitClientModal";
 import { CreateTaskModal, ChecklistModal } from "./_components/TaskModals";
 import type {
   AgencyClientRow,
@@ -31,11 +32,12 @@ const EMPTY_SUMMARY: WorkbenchSummary = {
 
 export default function AgencyPage() {
   const { message, modal } = App.useApp();
+  const router = useRouter();
   const [clients, setClients] = useState<AgencyClientRow[]>([]);
   const [tasks, setTasks] = useState<WorkbenchTask[]>([]);
   const [loading, setLoading] = useState(false);
   const [workbenchError, setWorkbenchError] = useState(false);
-  const [initModalOpen, setInitModalOpen] = useState(false);
+  const [enteringClientId, setEnteringClientId] = useState<string>();
   const [taskModalOpen, setTaskModalOpen] = useState(false);
   const [taskInitialValues, setTaskInitialValues] = useState<{
     tenantId?: string;
@@ -200,6 +202,40 @@ export default function AgencyPage() {
     setTaskModalOpen(true);
   };
 
+  const handleEnterClient = async (client: AgencyClientRow) => {
+    setEnteringClientId(client.id);
+    try {
+      await useAuthStore.getState().switchAgencyContext(client.id);
+      const liveScope = useAuthStore.getState().user?.agency_scope;
+      const scope = liveScope || client.agency_scope || [];
+      const firstAllowedRoute = scope.includes("analytics")
+        ? "/analytics"
+        : scope.includes("products")
+          ? "/products"
+          : scope.includes("pages")
+            ? "/pages"
+            : scope.includes("campaigns")
+              ? "/campaigns"
+              : scope.includes("codes")
+                ? "/codes"
+                : "/agency";
+      router.push(firstAllowedRoute);
+    } catch (error: unknown) {
+      const status = (error as { response?: { status?: number } })?.response
+        ?.status;
+      if (status === 403) {
+        await fetchWorkbench(workbenchFilter);
+        message.error("该客户的代运营授权已失效，请联系客户重新授权后再进入");
+      } else {
+        message.error(
+          extractErrorMessage(error, "进入客户失败，请检查网络后重试")
+        );
+      }
+    } finally {
+      setEnteringClientId(undefined);
+    }
+  };
+
   const handleOpenEmptyTaskModal = () => {
     setTaskInitialValues({});
     setTaskModalOpen(true);
@@ -217,16 +253,11 @@ export default function AgencyPage() {
           代运营工作台
         </Title>
         <Space>
-          <Button icon={<PlusOutlined />} onClick={handleOpenEmptyTaskModal}>
-            新建任务
-          </Button>
-          <Button
-            type="primary"
-            icon={<PlusOutlined />}
-            onClick={() => setInitModalOpen(true)}
-          >
-            初始化新客户
-          </Button>
+          {clients.some((client) => client.full_workbench_access) && (
+            <Button icon={<PlusOutlined />} onClick={handleOpenEmptyTaskModal}>
+              新建任务
+            </Button>
+          )}
         </Space>
       </div>
 
@@ -274,25 +305,20 @@ export default function AgencyPage() {
         onFilterChange={handleFilterChange}
         onOpenChecklist={handleOpenChecklist}
         onCreateTask={handleCreateTaskFromClient}
+        onEnterClient={handleEnterClient}
+        enteringClientId={enteringClientId}
       />
       <TaskTable
         tasks={tasks}
-        clients={clients}
+        clients={clients.filter((client) => client.full_workbench_access)}
         onUpdateStatus={handleUpdateTaskStatus}
         onDelete={confirmDeleteTask}
       />
 
-      <InitClientModal
-        open={initModalOpen}
-        onClose={() => setInitModalOpen(false)}
-        onSuccess={() => {
-          fetchWorkbench(workbenchFilter);
-        }}
-      />
       <CreateTaskModal
         open={taskModalOpen}
         onClose={handleCloseTaskModal}
-        clients={clients}
+        clients={clients.filter((client) => client.full_workbench_access)}
         initialTenantId={taskInitialValues.tenantId}
         initialTitle={taskInitialValues.title}
         onSuccess={() => {

@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.main import app
+from app.models.audit import PlatformAuditLog
 from app.models.tenant import Account
 from app.utils.security import create_access_token, hash_password, verify_password
 from tests.conftest import TestSessionLocal
@@ -21,7 +22,11 @@ async def db_session() -> AsyncGenerator[AsyncSession, None]:
 
 
 @pytest.fixture
-async def client(db_session: AsyncSession):
+async def client(db_session: AsyncSession, shared_security_cache):
+    # Password routes exercise JWT revocation checks on every request. Keep the
+    # focused API suite independent from a developer's local Redis availability.
+    del shared_security_cache
+
     async def override_get_db():
         yield db_session
 
@@ -74,6 +79,12 @@ class TestChangePassword:
             headers=headers,
         )
         assert resp.status_code == 200
+        set_cookies = resp.headers.get_list("set-cookie")
+        assert any("access_token=" in cookie and "Max-Age=0" in cookie for cookie in set_cookies)
+        assert any(
+            "refresh_token=" in cookie and "Max-Age=0" in cookie and "Path=/api/v1/auth/refresh" in cookie
+            for cookie in set_cookies
+        )
 
         # 验证密码确实改了
         result = await db_session.execute(select(Account).where(Account.id == seeded_account.id))
@@ -97,7 +108,7 @@ class TestResetPassword:
         headers = _auth_headers(str(seeded_account.tenant_id), str(seeded_account.id))
         resp = await client.post(
             "/api/v1/auth/reset-password",
-            json={"account_id": str(seeded_account.id), "new_password": "ResetPass1"},
+            json={"account_id": str(seeded_account.id), "new_password": "ResetPass1", "reason": "用户申请重置"},
             headers=headers,
         )
         assert resp.status_code == 200
@@ -105,6 +116,54 @@ class TestResetPassword:
         result = await db_session.execute(select(Account).where(Account.id == seeded_account.id))
         account = result.scalar_one()
         assert verify_password("ResetPass1", account.hashed_password)
+        assert account.auth_version == 1
+        audit = (
+            await db_session.execute(
+                select(PlatformAuditLog).where(PlatformAuditLog.action == "account_password_reset_by_admin")
+            )
+        ).scalar_one()
+        assert audit.operator_id == str(seeded_account.id)
+        assert audit.details["reason"] == "用户申请重置"
+
+    @pytest.mark.anyio
+    async def test_reset_password_rolls_back_when_audit_fails(
+        self, client: AsyncClient, db_session: AsyncSession, seeded_account, monkeypatch
+    ):
+        async def fail_audit(*args, **kwargs):
+            raise RuntimeError("audit unavailable")
+
+        monkeypatch.setattr("app.api.v1.password.write_audit_log", fail_audit)
+        account_id = seeded_account.id
+        headers = _auth_headers(str(seeded_account.tenant_id), str(account_id))
+        with pytest.raises(RuntimeError, match="audit unavailable"):
+            await client.post(
+                "/api/v1/auth/reset-password",
+                json={
+                    "account_id": str(account_id),
+                    "new_password": "ResetPass1",
+                    "reason": "用户申请重置",
+                },
+                headers=headers,
+            )
+        db_session.expire_all()
+        account = await db_session.get(Account, account_id)
+        assert verify_password("OldPass12", account.hashed_password)
+        assert account.auth_version == 0
+
+    @pytest.mark.anyio
+    async def test_operator_cannot_generate_reset_token(self, client: AsyncClient, seeded_account):
+        headers = {
+            "Authorization": (
+                "Bearer " + create_access_token(str(seeded_account.tenant_id), str(seeded_account.id), "operator")
+            )
+        }
+        resp = await client.post(
+            "/api/v1/auth/generate-reset-token",
+            json={"account_id": str(seeded_account.id)},
+            headers=headers,
+        )
+
+        assert resp.status_code == 403
 
 
 class TestPasswordStrength:

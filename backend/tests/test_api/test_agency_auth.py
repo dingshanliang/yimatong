@@ -2,6 +2,8 @@
 
 import uuid
 from collections.abc import AsyncGenerator
+from datetime import UTC, datetime, timedelta
+from unittest.mock import patch
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -9,16 +11,24 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.main import app
+from app.models.campaign import Campaign
+from app.models.connector import Connector
 from app.models.tenant import (
     Account,
     AgencyAuthorization,
     AgencyAuthStatus,
     Organization,
+    Permission,
+    Role,
     Tenant,
     TenantStatus,
     TenantType,
+    account_roles,
+    role_permissions,
 )
-from app.utils.security import create_access_token
+from app.services.connectors.secrets import encrypt_secrets
+from app.utils.auth_rbac import WEB_ROLE_PERMISSIONS
+from app.utils.security import create_access_token, decode_token
 from tests.conftest import TestSessionLocal
 
 
@@ -117,7 +127,39 @@ def agency_headers(agency_tenant):
 BASE_URL = "/api/v1/ops/authorizations"
 
 
+async def _grant_fixed_role(
+    db_session: AsyncSession,
+    account: Account,
+    role_name: str,
+) -> None:
+    role = Role(tenant_id=account.tenant_id, name=role_name, description=f"test {role_name}")
+    permissions = [
+        Permission(tenant_id=account.tenant_id, code=code, description=f"test {code}")
+        for code in WEB_ROLE_PERMISSIONS[role_name]
+    ]
+    db_session.add_all([role, *permissions])
+    await db_session.flush()
+    await db_session.execute(account_roles.insert().values(account_id=account.id, role_id=role.id))
+    if permissions:
+        await db_session.execute(
+            role_permissions.insert(),
+            [{"role_id": role.id, "permission_id": permission.id} for permission in permissions],
+        )
+    await db_session.commit()
+
+
 class TestCreateAuthorization:
+    @pytest.mark.anyio
+    async def test_non_acting_agency_cannot_write_brand_resources(self, client: AsyncClient, agency_headers):
+        response = await client.post(
+            "/api/v1/products",
+            json={"name": "越权产品"},
+            headers=agency_headers,
+        )
+
+        assert response.status_code == 403
+        assert response.json()["detail"] == "代运营服务商必须先进入已授权的客户工作区才能修改品牌数据"
+
     @pytest.mark.anyio
     async def test_brand_authorize_agency(self, client: AsyncClient, brand_tenant, agency_tenant, brand_headers):
         """Brand 授权 agency 成功"""
@@ -153,7 +195,22 @@ class TestCreateAuthorization:
         )
         assert resp.status_code == 201
         data = resp.json()
-        assert data["scope"] == ["pages", "campaigns", "analytics"]
+        assert data["scope"] == ["products", "pages", "campaigns", "codes", "analytics"]
+
+    @pytest.mark.anyio
+    async def test_brand_can_authorize_by_business_workspace_slug(
+        self, client: AsyncClient, brand_tenant, agency_tenant, brand_headers
+    ):
+        agency, _ = agency_tenant
+
+        resp = await client.post(
+            BASE_URL,
+            json={"agency_slug": agency.slug, "scope": ["pages"]},
+            headers=brand_headers,
+        )
+
+        assert resp.status_code == 201
+        assert resp.json()["agency_tenant_id"] == str(agency.id)
 
     @pytest.mark.anyio
     async def test_agency_cannot_create_authorization(self, client: AsyncClient, brand_tenant, agency_headers):
@@ -201,6 +258,13 @@ class TestCreateAuthorization:
 
 
 class TestListAuthorizations:
+    @pytest.mark.anyio
+    async def test_viewer_cannot_list_authorizations(self, client: AsyncClient, brand_tenant):
+        tenant, account = brand_tenant
+        token = create_access_token(str(tenant.id), str(account.id), "viewer", "brand")
+        response = await client.get(BASE_URL, headers={"Authorization": f"Bearer {token}"})
+        assert response.status_code == 403
+
     @pytest.mark.anyio
     async def test_list_as_brand(self, client: AsyncClient, brand_tenant, agency_tenant, brand_headers):
         """Brand 查看授权列表"""
@@ -397,3 +461,441 @@ class TestGetAuthorizedClientIds:
         client_ids = await get_authorized_client_ids(db_session, agency.id)
         assert len(client_ids) == 1
         assert client_ids[0] == brand.id
+
+    @pytest.mark.anyio
+    async def test_excludes_expired_inactive_and_insufficient_scope(
+        self, db_session: AsyncSession, brand_tenant, agency_tenant
+    ):
+        from app.services.agency_auth import get_authorized_client_ids
+
+        brand, _ = brand_tenant
+        agency, _ = agency_tenant
+        auth = AgencyAuthorization(
+            agency_tenant_id=agency.id,
+            client_tenant_id=brand.id,
+            scope=["pages"],
+            status=AgencyAuthStatus.active,
+            expires_at=datetime.now(UTC) - timedelta(minutes=1),
+        )
+        db_session.add(auth)
+        await db_session.flush()
+        assert await get_authorized_client_ids(db_session, agency.id) == []
+
+        auth.expires_at = datetime.now(UTC) + timedelta(hours=1)
+        await db_session.flush()
+        assert await get_authorized_client_ids(db_session, agency.id, {"pages", "codes"}) == []
+
+        auth.scope = ["pages", "codes"]
+        brand.status = TenantStatus.suspended
+        await db_session.flush()
+        assert await get_authorized_client_ids(db_session, agency.id, {"pages", "codes"}) == []
+
+
+class TestAgencyContextTokenVersion:
+    @pytest.mark.anyio
+    async def test_campaign_scope_reads_wecom_state_without_decrypting_callback_credentials(
+        self, client: AsyncClient, db_session: AsyncSession, brand_tenant, agency_tenant
+    ):
+        brand, _ = brand_tenant
+        agency, agency_account = agency_tenant
+        db_session.add_all(
+            [
+                AgencyAuthorization(
+                    agency_tenant_id=agency.id,
+                    client_tenant_id=brand.id,
+                    scope=["campaigns"],
+                    status=AgencyAuthStatus.active,
+                ),
+                Connector(
+                    tenant_id=brand.id,
+                    name="客户企微",
+                    connector_type="wecom_customer_contact",
+                    config={
+                        "status": "connected",
+                        "corp_id": "ww-client",
+                        "customer_service_user_ids": ["member-safe"],
+                    },
+                    secrets_encrypted=encrypt_secrets(
+                        {
+                            "secret": "client-secret",
+                            "callback_token": "must-not-be-read",
+                            "encoding_aes_key": "must-not-be-read-either",
+                        }
+                    ),
+                ),
+            ]
+        )
+        await db_session.flush()
+        await _grant_fixed_role(db_session, agency_account, "admin")
+        token = create_access_token(str(agency.id), str(agency_account.id), "admin", "agency")
+        switched = await client.post(
+            "/api/v1/agency/switch-context",
+            json={"client_tenant_id": str(brand.id)},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        acting_headers = {"Authorization": f"Bearer {switched.json()['access_token']}"}
+
+        with (
+            patch("app.core.database.async_session_factory", TestSessionLocal),
+            patch(
+                "app.services.wecom_integration.decrypt_secrets",
+                side_effect=AssertionError("acting campaign scope must not decrypt connector secrets"),
+            ),
+        ):
+            status = await client.get("/api/v1/integrations/wecom", headers=acting_headers)
+            members = await client.get("/api/v1/integrations/wecom/members", headers=acting_headers)
+
+        assert switched.status_code == 200
+        assert status.status_code == 200
+        assert status.json()["connected"] is True
+        assert "secrets" not in status.json()
+        assert members.status_code == 200
+        assert members.json() == {"items": ["member-safe"]}
+
+    @pytest.mark.anyio
+    async def test_products_scope_reads_exact_category_dependency_without_tenant_write_access(
+        self, client: AsyncClient, db_session: AsyncSession, brand_tenant, agency_tenant
+    ):
+        brand, _ = brand_tenant
+        agency, agency_account = agency_tenant
+        brand.categories = ["粮油", "饮料"]
+        db_session.add(
+            AgencyAuthorization(
+                agency_tenant_id=agency.id,
+                client_tenant_id=brand.id,
+                scope=["products"],
+                status=AgencyAuthStatus.active,
+            )
+        )
+        await db_session.commit()
+        token = create_access_token(
+            str(agency.id),
+            str(agency_account.id),
+            "admin",
+            "agency",
+            extra={"auth_version": agency_account.auth_version},
+        )
+
+        switched = await client.post(
+            "/api/v1/agency/switch-context",
+            json={"client_tenant_id": str(brand.id)},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        acting_headers = {"Authorization": f"Bearer {switched.json()['access_token']}"}
+
+        with patch("app.core.database.async_session_factory", TestSessionLocal):
+            categories = await client.get("/api/v1/tenants/me/categories", headers=acting_headers)
+            tenant_write = await client.patch(
+                "/api/v1/tenants/me",
+                json={"categories": ["越权品类"]},
+                headers=acting_headers,
+            )
+            category_subpath = await client.get(
+                "/api/v1/tenants/me/categories/export",
+                headers=acting_headers,
+            )
+
+        assert switched.status_code == 200
+        assert categories.status_code == 200
+        assert categories.json() == {"categories": ["粮油", "饮料"]}
+        assert tenant_write.status_code == 403
+        assert category_subpath.status_code == 403
+
+    @pytest.mark.anyio
+    async def test_acting_workspace_reads_client_entitlement_without_exposing_tenant_profile(
+        self, client: AsyncClient, db_session: AsyncSession, brand_tenant, agency_tenant
+    ):
+        brand, _ = brand_tenant
+        agency, agency_account = agency_tenant
+        brand.plan = "pro"
+        brand.plan_expires_at = datetime.now(UTC) - timedelta(minutes=1)
+        db_session.add(
+            AgencyAuthorization(
+                agency_tenant_id=agency.id,
+                client_tenant_id=brand.id,
+                scope=["campaigns"],
+                status=AgencyAuthStatus.active,
+            )
+        )
+        await db_session.flush()
+        await _grant_fixed_role(db_session, agency_account, "admin")
+        token = create_access_token(str(agency.id), str(agency_account.id), "admin", "agency")
+        switched = await client.post(
+            "/api/v1/agency/switch-context",
+            json={"client_tenant_id": str(brand.id)},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        acting_headers = {"Authorization": f"Bearer {switched.json()['access_token']}"}
+
+        with patch("app.core.database.async_session_factory", TestSessionLocal):
+            entitlement = await client.get("/api/v1/tenants/me/entitlement", headers=acting_headers)
+            profile = await client.get("/api/v1/tenants/me", headers=acting_headers)
+
+        assert entitlement.status_code == 200
+        assert entitlement.json() == {
+            "tenant_id": str(brand.id),
+            "plan": "pro",
+            "plan_expires_at": brand.plan_expires_at.isoformat().replace("+00:00", "Z"),
+            "read_only": True,
+        }
+        assert profile.status_code == 403
+
+    @pytest.mark.anyio
+    async def test_switch_and_exit_preserve_validated_auth_version(
+        self, client: AsyncClient, db_session: AsyncSession, brand_tenant, agency_tenant
+    ):
+        brand, _ = brand_tenant
+        agency, agency_account = agency_tenant
+        agency_account.auth_version = 7
+        db_session.add(
+            AgencyAuthorization(
+                agency_tenant_id=agency.id,
+                client_tenant_id=brand.id,
+                scope=["pages"],
+                status=AgencyAuthStatus.active,
+            )
+        )
+        await db_session.commit()
+        token = create_access_token(
+            str(agency.id),
+            str(agency_account.id),
+            "admin",
+            "agency",
+            extra={"auth_version": agency_account.auth_version},
+        )
+
+        switched = await client.post(
+            "/api/v1/agency/switch-context",
+            json={"client_tenant_id": str(brand.id)},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert switched.status_code == 200
+        assert decode_token(switched.json()["access_token"])["auth_version"] == 7
+
+        with patch("app.core.database.async_session_factory", TestSessionLocal):
+            exited = await client.post(
+                "/api/v1/agency/exit-context",
+                headers={"Authorization": f"Bearer {switched.json()['access_token']}"},
+            )
+        assert exited.status_code == 200
+        assert decode_token(exited.json()["access_token"])["auth_version"] == 7
+
+    @pytest.mark.anyio
+    async def test_revoked_authorization_blocks_client_access_but_allows_strict_exit(
+        self, client: AsyncClient, db_session: AsyncSession, brand_tenant, agency_tenant
+    ):
+        brand, _ = brand_tenant
+        agency, agency_account = agency_tenant
+        authorization = AgencyAuthorization(
+            agency_tenant_id=agency.id,
+            client_tenant_id=brand.id,
+            scope=["pages"],
+            status=AgencyAuthStatus.active,
+        )
+        db_session.add(authorization)
+        await db_session.commit()
+        token = create_access_token(
+            str(agency.id),
+            str(agency_account.id),
+            "admin",
+            "agency",
+            extra={"auth_version": agency_account.auth_version},
+        )
+        switched = await client.post(
+            "/api/v1/agency/switch-context",
+            json={"client_tenant_id": str(brand.id)},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert switched.status_code == 200
+
+        authorization.status = AgencyAuthStatus.revoked
+        await db_session.commit()
+        acting_headers = {"Authorization": f"Bearer {switched.json()['access_token']}"}
+        with patch("app.core.database.async_session_factory", TestSessionLocal):
+            denied = await client.get("/api/v1/page-templates", headers=acting_headers)
+            exited = await client.post("/api/v1/agency/exit-context", headers=acting_headers)
+
+        assert denied.status_code == 403
+        assert exited.status_code == 200
+        payload = decode_token(exited.json()["access_token"])
+        assert payload["tenant_id"] == str(agency.id)
+        assert "acting_tenant_id" not in payload
+
+    @pytest.mark.anyio
+    async def test_exit_still_rejects_inactive_original_agency_account(
+        self, client: AsyncClient, db_session: AsyncSession, brand_tenant, agency_tenant
+    ):
+        brand, _ = brand_tenant
+        agency, agency_account = agency_tenant
+        db_session.add(
+            AgencyAuthorization(
+                agency_tenant_id=agency.id,
+                client_tenant_id=brand.id,
+                scope=["pages"],
+                status=AgencyAuthStatus.active,
+            )
+        )
+        await db_session.commit()
+        token = create_access_token(
+            str(agency.id),
+            str(agency_account.id),
+            "admin",
+            "agency",
+            extra={"auth_version": agency_account.auth_version},
+        )
+        switched = await client.post(
+            "/api/v1/agency/switch-context",
+            json={"client_tenant_id": str(brand.id)},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert switched.status_code == 200
+
+        agency_account.is_active = False
+        await db_session.commit()
+        with patch("app.core.database.async_session_factory", TestSessionLocal):
+            exited = await client.post(
+                "/api/v1/agency/exit-context",
+                headers={"Authorization": f"Bearer {switched.json()['access_token']}"},
+            )
+
+        assert exited.status_code == 401
+
+
+class TestViewerAndCampaignAuthorizationBoundary:
+    @pytest.mark.anyio
+    async def test_brand_viewer_cannot_create_campaign_even_if_account_has_admin_permissions(
+        self,
+        client: AsyncClient,
+        db_session: AsyncSession,
+        brand_tenant,
+    ):
+        brand, account = brand_tenant
+        await _grant_fixed_role(db_session, account, "admin")
+        viewer_token = create_access_token(str(brand.id), str(account.id), "viewer", "brand")
+
+        response = await client.post(
+            "/api/v1/campaigns",
+            json={
+                "name": "viewer 越权活动",
+                "campaign_type": "coupon",
+                "start_at": "2026-08-01T00:00:00",
+                "end_at": "2026-08-31T23:59:59",
+                "rules_json": {},
+            },
+            headers={"Authorization": f"Bearer {viewer_token}"},
+        )
+
+        assert response.status_code == 403
+        assert response.json()["detail"] == "Missing permission: campaign:create"
+
+    @pytest.mark.anyio
+    async def test_agency_viewer_cannot_switch_but_operator_can(
+        self,
+        client: AsyncClient,
+        db_session: AsyncSession,
+        brand_tenant,
+        agency_tenant,
+    ):
+        brand, _ = brand_tenant
+        agency, account = agency_tenant
+        db_session.add(
+            AgencyAuthorization(
+                agency_tenant_id=agency.id,
+                client_tenant_id=brand.id,
+                scope=["campaigns"],
+                status=AgencyAuthStatus.active,
+            )
+        )
+        await db_session.commit()
+
+        viewer_token = create_access_token(str(agency.id), str(account.id), "viewer", "agency")
+        operator_token = create_access_token(str(agency.id), str(account.id), "operator", "agency")
+        viewer_response = await client.post(
+            "/api/v1/agency/switch-context",
+            json={"client_tenant_id": str(brand.id)},
+            headers={"Authorization": f"Bearer {viewer_token}"},
+        )
+        operator_response = await client.post(
+            "/api/v1/agency/switch-context",
+            json={"client_tenant_id": str(brand.id)},
+            headers={"Authorization": f"Bearer {operator_token}"},
+        )
+
+        assert viewer_response.status_code == 403
+        assert operator_response.status_code == 200
+
+    @pytest.mark.anyio
+    async def test_acting_admin_can_create_for_client_but_cannot_patch_other_tenant_campaign(
+        self,
+        client: AsyncClient,
+        db_session: AsyncSession,
+        brand_tenant,
+        agency_tenant,
+    ):
+        brand, _ = brand_tenant
+        agency, agency_account = agency_tenant
+        other_tenant = Tenant(
+            name="其他品牌",
+            slug=f"other-brand-{uuid.uuid4().hex[:8]}",
+            status=TenantStatus.active,
+            tenant_type=TenantType.brand,
+        )
+        db_session.add(other_tenant)
+        await db_session.flush()
+        other_campaign = Campaign(
+            tenant_id=other_tenant.id,
+            name="其他租户活动",
+            campaign_type="coupon",
+            start_at="2026-08-01T00:00:00",
+            end_at="2026-08-31T23:59:59",
+            rules_json={},
+        )
+        db_session.add_all(
+            [
+                other_campaign,
+                AgencyAuthorization(
+                    agency_tenant_id=agency.id,
+                    client_tenant_id=brand.id,
+                    scope=["campaigns"],
+                    status=AgencyAuthStatus.active,
+                ),
+            ]
+        )
+        await db_session.flush()
+        await _grant_fixed_role(db_session, agency_account, "admin")
+
+        admin_token = create_access_token(str(agency.id), str(agency_account.id), "admin", "agency")
+        switched = await client.post(
+            "/api/v1/agency/switch-context",
+            json={"client_tenant_id": str(brand.id)},
+            headers={"Authorization": f"Bearer {admin_token}"},
+        )
+        acting_headers = {"Authorization": f"Bearer {switched.json()['access_token']}"}
+        with patch("app.core.database.async_session_factory", TestSessionLocal):
+            created = await client.post(
+                "/api/v1/campaigns",
+                json={
+                    "name": "合法代运营活动",
+                    "campaign_type": "coupon",
+                    "start_at": "2026-08-01T00:00:00",
+                    "end_at": "2026-08-31T23:59:59",
+                    "rules_json": {
+                        "participation_conditions": "扫码参与",
+                        "claim_limits": "每人限领1次",
+                        "validity_period": "7天",
+                        "disclaimer": "品牌方保留解释权",
+                        "minor_notice": "未成年人需监护人陪同",
+                        "customer_service_contact": "400-000-0000",
+                    },
+                },
+                headers=acting_headers,
+            )
+            cross_tenant = await client.patch(
+                f"/api/v1/campaigns/{other_campaign.id}",
+                json={"name": "越权修改"},
+                headers=acting_headers,
+            )
+
+        assert switched.status_code == 200
+        assert created.status_code == 201
+        assert cross_tenant.status_code == 404

@@ -1,6 +1,7 @@
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -8,8 +9,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
 from app.core.dependencies import get_current_account_id, get_current_role, get_current_tenant
 from app.models.tenant import Account
+from app.services.audit import write_audit_log
 from app.services.redis_cache import AsyncRedisCache
-from app.utils.security import hash_password, validate_password_strength, verify_password
+from app.utils.security import clear_auth_cookies, hash_password, validate_password_strength, verify_password
 
 router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
 
@@ -24,6 +26,7 @@ class ChangePasswordRequest(BaseModel):
 class ResetPasswordRequest(BaseModel):
     account_id: uuid.UUID
     new_password: str = Field(..., min_length=1)
+    reason: str = Field(..., min_length=2, max_length=200)
 
 
 def _validate_password(password: str) -> None:
@@ -49,8 +52,12 @@ async def change_password(
         raise HTTPException(status_code=401, detail="Old password is incorrect")
     _validate_password(body.new_password)
     account.hashed_password = hash_password(body.new_password)
+    account.must_change_password = False
+    account.auth_version += 1
     await db.commit()
-    return {"detail": "Password changed"}
+    response = JSONResponse(content={"detail": "Password changed"})
+    clear_auth_cookies(response)
+    return response
 
 
 @router.post("/reset-password")
@@ -59,6 +66,7 @@ async def reset_password(
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
     role: str = Depends(get_current_role),
+    actor_id: uuid.UUID = Depends(get_current_account_id),
 ):
     if role not in ADMIN_ROLES:
         raise HTTPException(status_code=403, detail="仅管理员可重置密码")
@@ -72,6 +80,19 @@ async def reset_password(
     if not account:
         raise HTTPException(status_code=404, detail="Account not found")
     _validate_password(body.new_password)
-    account.hashed_password = hash_password(body.new_password)
-    await db.commit()
+    try:
+        account.hashed_password = hash_password(body.new_password)
+        account.auth_version += 1
+        await write_audit_log(
+            db,
+            operator_id=str(actor_id),
+            target_tenant_id=str(tenant_id),
+            action="account_password_reset_by_admin",
+            resource=f"account:{account.id}",
+            details={"reason": body.reason},
+        )
+        await db.commit()
+    except Exception:
+        await db.rollback()
+        raise
     return {"detail": "Password reset"}

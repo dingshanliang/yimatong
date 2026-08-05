@@ -41,8 +41,6 @@ export function CreateTaskModal({
   const { message } = App.useApp();
   const [form] = Form.useForm();
   const [saving, setSaving] = useState(false);
-  const [allClients, setAllClients] = useState<Client[]>([]);
-  const [clientsLoading, setClientsLoading] = useState(false);
 
   useEffect(() => {
     if (!open) return;
@@ -51,21 +49,9 @@ export function CreateTaskModal({
       title: initialTitle,
       priority: "medium",
     });
-    setClientsLoading(true);
-    api
-      .get("/tenants", { params: { page: 1, page_size: 200 } })
-      .then(({ data }) => {
-        const items = data?.items ?? [];
-        setAllClients(Array.isArray(items) ? items : []);
-      })
-      .catch(() => setAllClients([]))
-      .finally(() => setClientsLoading(false));
   }, [form, initialTenantId, initialTitle, open]);
 
-  const clientOptions =
-    allClients.length > 0
-      ? allClients.map((c) => ({ value: c.id, label: c.name }))
-      : clients.map((c) => ({ value: c.id, label: c.name }));
+  const clientOptions = clients.map((c) => ({ value: c.id, label: c.name }));
 
   const handleCreate = async () => {
     setSaving(true);
@@ -115,7 +101,6 @@ export function CreateTaskModal({
         >
           <Select
             placeholder="选择客户"
-            loading={clientsLoading}
             showSearch
             optionFilterProp="label"
             options={clientOptions}

@@ -115,11 +115,11 @@ async def _handle_scan_created(event_type: str, data: dict, tenant_id: str) -> N
 
     async with async_session_factory() as db:
         try:
-            from sqlalchemy import text
-
-            await db.execute(text("SET LOCAL app.bypass_rls = 'true'"))
             tid = uuid.UUID(tenant_id)
             cid = uuid.UUID(consumer_id)
+            from app.core.database import set_session_tenant_context
+
+            await set_session_tenant_context(db, tid)
 
             # 查找该租户启用的扫码相关规则
             result = await db.execute(
@@ -171,11 +171,11 @@ async def _handle_consumer_created(event_type: str, data: dict, tenant_id: str) 
 
     async with async_session_factory() as db:
         try:
-            from sqlalchemy import text
-
-            await db.execute(text("SET LOCAL app.bypass_rls = 'true'"))
             tid = uuid.UUID(tenant_id)
             cid = uuid.UUID(consumer_id)
+            from app.core.database import set_session_tenant_context
+
+            await set_session_tenant_context(db, tid)
 
             result = await db.execute(
                 select(PointRule).where(

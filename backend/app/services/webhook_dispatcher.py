@@ -71,11 +71,16 @@ async def _dispatch_to_endpoints(
 
 async def _handle_event(event_type: str, data: dict, tenant_id: str) -> None:
     """事件总线处理器入口。"""
-    from app.core.database import async_session_factory
+    import uuid
+
+    from app.core.database import async_session_factory, set_session_tenant_context
+
+    tenant_uuid = uuid.UUID(tenant_id)
 
     async with async_session_factory() as db:
+        await set_session_tenant_context(db, tenant_uuid)
         try:
-            await _dispatch_to_endpoints(db, event_type, data, tenant_id)
+            await _dispatch_to_endpoints(db, event_type, data, str(tenant_uuid))
             await db.commit()
         except Exception:
             logger.exception("Webhook dispatcher error for %s", event_type)

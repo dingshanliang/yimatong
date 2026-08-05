@@ -2,7 +2,7 @@
 
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -22,9 +22,12 @@ from app.services.agency_auth import (
     authorize_agency,
     list_authorizations_for_agency,
     list_authorizations_for_brand,
+    resolve_active_agency_by_slug,
     revoke_authorization,
     verify_authorization,
 )
+from app.services.audit import write_audit_log
+from app.utils.auth_rbac import require_permission, require_role
 
 router = APIRouter(prefix="/api/v1/ops/authorizations", tags=["agency-auth"])
 
@@ -36,6 +39,7 @@ def _require_brand(tenant_type: str) -> None:
 
 @router.get("", response_model=AuthorizationListResponse)
 async def list_authorizations(
+    request: Request,
     page: int = Query(1, ge=1, description="页码"),
     page_size: int = Query(50, ge=1, le=200, description="每页数量"),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
@@ -43,6 +47,10 @@ async def list_authorizations(
     db: AsyncSession = Depends(get_db),
 ):
     """查看授权列表：agency 看自己的客户，brand 看哪些 agency 有权"""
+    if tenant_type == "brand" and "tenant:manage" not in getattr(request.state, "permissions", []):
+        raise HTTPException(status_code=403, detail="缺少权限: tenant:manage")
+    if tenant_type == "agency" and getattr(request.state, "role", None) not in {"admin", "operator"}:
+        raise HTTPException(status_code=403, detail="当前角色不能查看代运营授权")
     if tenant_type == "agency":
         items, total = await list_authorizations_for_agency(db, tenant_id, page, page_size)
     else:
@@ -61,19 +69,38 @@ async def create_authorization(
     tenant_type: str = Depends(get_current_tenant_type),
     account_id: uuid.UUID = Depends(get_current_account_id),
     db: AsyncSession = Depends(get_db),
+    _permission: None = Depends(require_permission("tenant:manage")),
 ):
     """Brand 授权 agency"""
     _require_brand(tenant_type)
 
-    auth = await authorize_agency(
-        db,
-        agency_tenant_id=body.agency_tenant_id,
-        client_tenant_id=tenant_id,
-        scope=body.scope,
-        granted_by=account_id,
-    )
+    try:
+        agency_tenant_id = body.agency_tenant_id
+        if agency_tenant_id is None and body.agency_slug:
+            agency = await resolve_active_agency_by_slug(db, body.agency_slug)
+            if agency is None:
+                raise ValueError("未找到可授权的代运营服务商")
+            agency_tenant_id = agency.id
+        assert agency_tenant_id is not None
+        auth = await authorize_agency(
+            db,
+            agency_tenant_id=agency_tenant_id,
+            client_tenant_id=tenant_id,
+            scope=body.scope,
+            granted_by=account_id,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
     await db.flush()
     await db.refresh(auth)
+    await write_audit_log(
+        db,
+        operator_id=str(account_id),
+        target_tenant_id=str(tenant_id),
+        action="agency_authorization_granted",
+        resource=f"agency_authorization:{auth.id}",
+        details={"agency_tenant_id": str(auth.agency_tenant_id), "scope": auth.scope},
+    )
     return AuthorizationResponse(
         id=auth.id,
         agency_tenant_id=auth.agency_tenant_id,
@@ -90,7 +117,9 @@ async def revoke_auth(
     auth_id: uuid.UUID,
     tenant_type: str = Depends(get_current_tenant_type),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
+    account_id: uuid.UUID = Depends(get_current_account_id),
     db: AsyncSession = Depends(get_db),
+    _permission: None = Depends(require_permission("tenant:manage")),
 ):
     """Brand 撤销 agency 授权"""
     _require_brand(tenant_type)
@@ -98,6 +127,14 @@ async def revoke_auth(
     auth = await revoke_authorization(db, auth_id, client_tenant_id=tenant_id)
     if not auth:
         raise HTTPException(status_code=404, detail="授权记录不存在")
+    await write_audit_log(
+        db,
+        operator_id=str(account_id),
+        target_tenant_id=str(tenant_id),
+        action="agency_authorization_revoked",
+        resource=f"agency_authorization:{auth.id}",
+        details={"agency_tenant_id": str(auth.agency_tenant_id), "scope": auth.scope},
+    )
     await db.flush()
 
 
@@ -131,10 +168,11 @@ class ExitContextResponse(BaseModel):
 @_switch_router.post("/switch-context", response_model=SwitchContextResponse)
 async def switch_context(
     body: SwitchContextRequest,
+    request: Request,
     tenant_id: uuid.UUID = Depends(get_current_tenant),
     tenant_type: str = Depends(get_current_tenant_type),
     account_id: uuid.UUID = Depends(get_current_account_id),
-    role: str = Depends(get_current_role),
+    role: str = Depends(require_role("admin", "operator")),
     db: AsyncSession = Depends(get_db),
 ):
     """Agency 切换到客户上下文，返回带 acting_tenant_id 的新 JWT"""
@@ -156,8 +194,22 @@ async def switch_context(
         extra={
             "acting_tenant_id": str(body.client_tenant_id),
             "scope": auth.scope,
+            "auth_version": request.state.auth_version,
         },
     )
+    await write_audit_log(
+        db,
+        operator_id=str(account_id),
+        target_tenant_id=str(body.client_tenant_id),
+        action="agency_context_entered",
+        resource=f"agency_authorization:{auth.id}",
+        details={
+            "agency_tenant_id": str(tenant_id),
+            "acting_tenant_id": str(body.client_tenant_id),
+            "scope": list(auth.scope),
+        },
+    )
+    await db.flush()
     return SwitchContextResponse(
         access_token=access_token,
         acting_tenant_id=str(body.client_tenant_id),
@@ -167,20 +219,39 @@ async def switch_context(
 
 @_switch_router.post("/exit-context", response_model=ExitContextResponse)
 async def exit_context(
+    request: Request,
     tenant_id: uuid.UUID = Depends(get_current_tenant),
     tenant_type: str = Depends(get_current_tenant_type),
     account_id: uuid.UUID = Depends(get_current_account_id),
     role: str = Depends(get_current_role),
+    db: AsyncSession = Depends(get_db),
 ):
     """Agency 退出客户上下文，返回原始 JWT"""
     _require_agency(tenant_type)
 
     from app.utils.security import create_access_token
 
+    original_tenant_id = getattr(request.state, "original_tenant_id", None)
+    if not original_tenant_id:
+        raise HTTPException(status_code=409, detail="当前未处于代运营客户上下文")
     access_token = create_access_token(
-        tenant_id=str(tenant_id),
+        tenant_id=str(original_tenant_id),
         account_id=str(account_id),
         role=role,
         tenant_type=tenant_type,
+        extra={"auth_version": request.state.auth_version},
     )
+    acting_tenant_id = getattr(request.state, "acting_tenant_id", None)
+    await write_audit_log(
+        db,
+        operator_id=str(account_id),
+        target_tenant_id=str(acting_tenant_id or original_tenant_id),
+        action="agency_context_exited",
+        resource=f"agency_context:{acting_tenant_id or original_tenant_id}",
+        details={
+            "agency_tenant_id": str(original_tenant_id),
+            "acting_tenant_id": str(acting_tenant_id) if acting_tenant_id else None,
+        },
+    )
+    await db.flush()
     return ExitContextResponse(access_token=access_token, acting_tenant_id=None)

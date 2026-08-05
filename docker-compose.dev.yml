@@ -103,6 +103,7 @@ services:
     command: ["uv", "run", "python", "-m", "app.cli", "all"]
     environment:
       database_url: postgresql+asyncpg://yimatong_app:yimatong_app@postgres:5432/yimatong_dev
+      control_database_url: postgresql+asyncpg://yimatong:yimatong@postgres:5432/yimatong_dev
       secret_key: dev-secret-key-change-in-production
       AES_MASTER_KEY_V1: f18d81c3b455f9a5a01db6a8546fc5acc242b51cbc4ae70ec99654e091f38a4b
       HMAC_PEPPER: 7c9cade78554566742f263539bd4ff404493e9b9ed6939168da7ad5ceb3813cd
@@ -121,6 +122,7 @@ services:
       - "8000:8000"
     environment:
       database_url: postgresql+asyncpg://yimatong_app:yimatong_app@postgres:5432/yimatong_dev
+      control_database_url: postgresql+asyncpg://yimatong:yimatong@postgres:5432/yimatong_dev
       redis_url: redis://redis:6379/0
       secret_key: dev-secret-key-change-in-production
       AES_MASTER_KEY_V1: f18d81c3b455f9a5a01db6a8546fc5acc242b51cbc4ae70ec99654e091f38a4b
@@ -173,6 +175,7 @@ services:
       ]
     environment:
       database_url: postgresql+asyncpg://yimatong_app:yimatong_app@postgres:5432/yimatong_dev
+      control_database_url: postgresql+asyncpg://yimatong:yimatong@postgres:5432/yimatong_dev
       redis_url: redis://redis:6379/0
       secret_key: dev-secret-key-change-in-production
       AES_MASTER_KEY_V1: f18d81c3b455f9a5a01db6a8546fc5acc242b51cbc4ae70ec99654e091f38a4b

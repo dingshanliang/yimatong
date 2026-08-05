@@ -76,4 +76,4 @@ class TestRoleAutoFilter:
         result = await db.execute(select(Role).where(Role.tenant_id == tenant_a.id))
         roles = list(result.scalars().all())
         assert all(r.tenant_id == tenant_a.id for r in roles)
-        assert {role.name for role in roles} == {"A管理员", "admin"}
+        assert {role.name for role in roles} == {"A管理员", "admin", "operator", "viewer"}

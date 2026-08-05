@@ -21,6 +21,7 @@ config.set_main_option("sqlalchemy.url", settings.migration_database_url or sett
 from app.models.base import Base  # noqa: E402
 from app.models.analytics import DailyScanStats  # noqa: F401
 from app.models.audit import PlatformAuditLog  # noqa: F401
+from app.models.auth_security import ConsumedRefreshToken  # noqa: F401
 from app.models.campaign import Benefit, BenefitClaim, Campaign  # noqa: F401
 from app.models.channel import AccountChannelScope, Distributor, Region, Store, DiversionClue  # noqa: F401
 from app.models.code import CodeBatch, CodeItem  # noqa: F401
@@ -36,10 +37,18 @@ from app.models.private_domain import PrivateDomainConfig  # noqa: F401
 from app.models.i18n import Translation  # noqa: F401
 from app.models.integration import SyncRecord  # noqa: F401
 from app.models.invite_code import TenantInviteCode  # noqa: F401
+from app.models.invite_registration import InviteRegistrationReceipt  # noqa: F401
 from app.models.launch import LaunchRelease  # noqa: F401
 from app.models.member import ConsumerProfile, PointProduct, PointRedemption, PointRule, PointTransaction  # noqa: F401
 from app.models.page import PageTemplate, PageVersion  # noqa: F401
 from app.models.plan import PlanDefinition  # noqa: F401
+from app.models.platform_opening import PlatformTenantOpening  # noqa: F401
+from app.models.role_template_backup import (  # noqa: F401
+    OperatorCampaignManageGrant,
+    OrganizationParentRepairBackup,
+    RoleTemplateBackup,
+    TenantPlatformRoleAssignmentBackup,
+)
 from app.models.product import Brand, Product, ProductionBatch, SKU  # noqa: F401
 from app.models.regional import (  # noqa: F401
     RegionalCodeRule,
@@ -127,10 +136,18 @@ LEGACY_TIMESTAMP_NULLABILITY = {
     ("tenants", "updated_at"),
 }
 
+MIGRATION_ONLY_TABLES = {
+    "alembic_version",
+    "rls_force_remediation_backups",
+    "runtime_privilege_remediation_backup",
+}
+
 
 def include_object(object, name: str | None, type_: str, reflected: bool, compare_to) -> bool:
     """Exclude PostgreSQL child partitions that are managed by migrations, not ORM models."""
     if type_ == "table" and reflected and name:
+        if name in MIGRATION_ONLY_TABLES:
+            return False
         if name == "scan_events_default" or SCAN_EVENT_PARTITION_NAME.fullmatch(name):
             return False
     return True
@@ -183,18 +200,25 @@ def run_migrations_offline() -> None:
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
         include_object=include_object,
+        version_table_schema="public",
     )
     with context.begin_transaction():
+        context.execute("SET search_path TO public, pg_catalog")
         context.run_migrations()
 
 
 def do_run_migrations(connection: Connection) -> None:
+    # Session scope is required because historical migrations use Alembic
+    # autocommit blocks; SET LOCAL would be cleared at the first such boundary.
+    connection.exec_driver_sql("SET SESSION search_path TO public, pg_catalog")
+    connection.commit()
     context.configure(
         connection=connection,
         target_metadata=target_metadata,
         compare_type=True,
         include_object=include_object,
         process_revision_directives=process_revision_directives,
+        version_table_schema="public",
     )
     with context.begin_transaction():
         context.run_migrations()

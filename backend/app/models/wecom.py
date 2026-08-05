@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from sqlalchemy import JSON, DateTime, ForeignKey, Index, String, UniqueConstraint, func
+from sqlalchemy import JSON, BigInteger, DateTime, ForeignKey, Index, String, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column
 from uuid6 import uuid7
 
@@ -91,6 +91,8 @@ class WeComExternalContact(Base):
     verification_source: Mapped[str | None] = mapped_column(String(30), nullable=True)
     change_type: Mapped[str | None] = mapped_column(String(50), nullable=True)
     event_fingerprint: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    event_time: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    event_sequence: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0, server_default="0")
     welcome_code_pending: Mapped[bool] = mapped_column(default=False, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(

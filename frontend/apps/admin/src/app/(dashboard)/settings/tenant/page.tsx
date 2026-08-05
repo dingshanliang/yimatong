@@ -1,9 +1,26 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
-import { App, Button, Descriptions, Divider, Form, Input, Space, Spin, Switch, Typography } from "antd";
-import { DeleteOutlined, EditOutlined, PlusOutlined, SaveOutlined, ArrowUpOutlined, ArrowDownOutlined } from "@ant-design/icons";
-import { useAuthStore } from "@/lib/auth";
+import {
+  App,
+  Button,
+  Descriptions,
+  Divider,
+  Form,
+  Input,
+  Space,
+  Spin,
+  Switch,
+  Typography,
+} from "antd";
+import {
+  DeleteOutlined,
+  EditOutlined,
+  PlusOutlined,
+  SaveOutlined,
+  ArrowUpOutlined,
+  ArrowDownOutlined,
+} from "@ant-design/icons";
 import api from "@/lib/api";
 import { useCategories } from "@/lib/use-categories";
 
@@ -51,18 +68,15 @@ const FEATURE_FLAGS = [
 
 export default function TenantSettingsPage() {
   const { message } = App.useApp();
-  const { user } = useAuthStore();
-  const tenantId = user?.tenant_id;
-
   const [tenant, setTenant] = useState<Tenant | null>(null);
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [togglingFeature, setTogglingFeature] = useState<string | null>(null);
   const [form] = Form.useForm();
 
   // 品类管理
-  const { categories: savedCategories, mutate: mutateCategories } = useCategories();
+  const { categories: savedCategories, mutate: mutateCategories } =
+    useCategories();
   const [localCategories, setLocalCategories] = useState<string[]>([]);
   const [newCategory, setNewCategory] = useState("");
   const [categoriesDirty, setCategoriesDirty] = useState(false);
@@ -79,7 +93,9 @@ export default function TenantSettingsPage() {
   const addCategory = () => {
     const trimmed = newCategory.trim();
     if (!trimmed) return;
-    if (localCategories.some((c) => c.toLowerCase() === trimmed.toLowerCase())) {
+    if (
+      localCategories.some((c) => c.toLowerCase() === trimmed.toLowerCase())
+    ) {
       message.warning("该品类已存在");
       return;
     }
@@ -109,10 +125,9 @@ export default function TenantSettingsPage() {
   };
 
   const saveCategories = async () => {
-    if (!tenantId) return;
     setSavingCategories(true);
     try {
-      await api.patch(`/tenants/${tenantId}`, { categories: localCategories });
+      await api.patch("/tenants/me", { categories: localCategories });
       mutateCategories();
       setCategoriesDirty(false);
       message.success("品类配置已保存");
@@ -124,16 +139,17 @@ export default function TenantSettingsPage() {
   };
 
   const fetchTenant = useCallback(async () => {
-    if (!tenantId) return;
     setLoading(true);
     try {
-      const { data } = await api.get<TenantApiResponse>(`/tenants/${tenantId}`);
+      const { data } = await api.get<TenantApiResponse>("/tenants/me");
       setTenant({
         id: data.id,
         name: data.name,
         slug: data.slug,
         plan: data.plan,
-        contact_email: (data.compliance_settings as Record<string, string>)?.contact_email ?? "",
+        contact_email:
+          (data.compliance_settings as Record<string, string>)?.contact_email ??
+          "",
         enabled_features: data.enabled_features ?? {},
         created_at: data.created_at ?? new Date().toISOString(),
       });
@@ -142,7 +158,7 @@ export default function TenantSettingsPage() {
     } finally {
       setLoading(false);
     }
-  }, [tenantId, message]);
+  }, [message]);
 
   useEffect(() => {
     fetchTenant();
@@ -161,19 +177,20 @@ export default function TenantSettingsPage() {
     name: string;
     contact_email: string;
   }) => {
-    if (!tenantId) return;
     setSaving(true);
     try {
-      const { data } = await api.patch<TenantApiResponse>(`/tenants/${tenantId}`, {
+      const { data } = await api.patch<TenantApiResponse>("/tenants/me", {
         name: values.name,
-        compliance_settings: { contact_email: values.contact_email },
+        contact_email: values.contact_email,
       });
       setTenant({
         id: data.id,
         name: data.name,
         slug: data.slug,
         plan: data.plan,
-        contact_email: (data.compliance_settings as Record<string, string>)?.contact_email ?? "",
+        contact_email:
+          (data.compliance_settings as Record<string, string>)?.contact_email ??
+          "",
         enabled_features: data.enabled_features ?? {},
         created_at: data.created_at ?? new Date().toISOString(),
       });
@@ -189,29 +206,6 @@ export default function TenantSettingsPage() {
   const handleCancel = () => {
     setEditing(false);
     form.resetFields();
-  };
-
-  /** 切换功能开关 */
-  const handleFeatureToggle = async (featureKey: string, enabled: boolean) => {
-    if (!tenantId || !tenant) return;
-    setTogglingFeature(featureKey);
-    const currentFeatures = tenant.enabled_features ?? {};
-    const newFeatures = { ...currentFeatures, [featureKey]: enabled };
-
-    try {
-      const { data } = await api.patch<TenantApiResponse>(`/tenants/${tenantId}`, {
-        enabled_features: newFeatures,
-      });
-      setTenant({
-        ...tenant,
-        enabled_features: data.enabled_features ?? {},
-      });
-      message.success(`${enabled ? "已启用" : "已关闭"} ${FEATURE_FLAGS.find((f) => f.key === featureKey)?.label ?? featureKey}`);
-    } catch {
-      message.error("更新功能开关失败");
-    } finally {
-      setTogglingFeature(null);
-    }
   };
 
   if (loading) {
@@ -238,11 +232,7 @@ export default function TenantSettingsPage() {
           租户设置
         </Title>
         {!editing && (
-          <Button
-            type="primary"
-            icon={<EditOutlined />}
-            onClick={startEditing}
-          >
+          <Button type="primary" icon={<EditOutlined />} onClick={startEditing}>
             编辑
           </Button>
         )}
@@ -288,9 +278,7 @@ export default function TenantSettingsPage() {
         </Form>
       ) : (
         <Descriptions bordered column={1} className="max-w-lg">
-          <Descriptions.Item label="租户名称">
-            {tenant.name}
-          </Descriptions.Item>
+          <Descriptions.Item label="租户名称">{tenant.name}</Descriptions.Item>
           <Descriptions.Item label="套餐">
             {PLAN_MAP[tenant.plan] || tenant.plan}
           </Descriptions.Item>
@@ -310,7 +298,7 @@ export default function TenantSettingsPage() {
           功能开关
         </Title>
         <Text type="secondary" className="block mb-4">
-          管理租户可使用的高级功能
+          高级功能由平台根据套餐统一开通
         </Text>
 
         <div className="space-y-4">
@@ -329,10 +317,9 @@ export default function TenantSettingsPage() {
                 </div>
                 <Switch
                   checked={enabled}
-                  onChange={(checked) => handleFeatureToggle(feature.key, checked)}
                   checkedChildren="开"
                   unCheckedChildren="关"
-                  loading={togglingFeature === feature.key}
+                  disabled
                 />
               </div>
             );
@@ -343,7 +330,9 @@ export default function TenantSettingsPage() {
       <Divider />
 
       <div className="max-w-lg">
-        <Title level={5} className="!mb-2">品类管理</Title>
+        <Title level={5} className="!mb-2">
+          品类管理
+        </Title>
         <Text type="secondary" className="block mb-4">
           管理产品品类选项，用于产品录入和 AI 助手中的品类下拉
         </Text>
@@ -357,13 +346,19 @@ export default function TenantSettingsPage() {
             maxLength={20}
             className="flex-1"
           />
-          <Button icon={<PlusOutlined />} onClick={addCategory} disabled={!newCategory.trim()}>
+          <Button
+            icon={<PlusOutlined />}
+            onClick={addCategory}
+            disabled={!newCategory.trim()}
+          >
             添加
           </Button>
         </div>
 
         {localCategories.length === 0 ? (
-          <div className="py-4 text-center text-text-muted">暂无品类，请添加</div>
+          <div className="py-4 text-center text-text-muted">
+            暂无品类，请添加
+          </div>
         ) : (
           <div className="space-y-1">
             {localCategories.map((cat, idx) => (
@@ -372,7 +367,9 @@ export default function TenantSettingsPage() {
                 className="flex items-center justify-between rounded border border-border-subtle px-3 py-2"
               >
                 <span className="flex-1">
-                  <Text type="secondary" className="mr-2 text-xs">{idx + 1}.</Text>
+                  <Text type="secondary" className="mr-2 text-xs">
+                    {idx + 1}.
+                  </Text>
                   {cat}
                 </span>
                 <Space size={4}>
@@ -405,7 +402,11 @@ export default function TenantSettingsPage() {
 
         {categoriesDirty && (
           <div className="mt-3">
-            <Button type="primary" onClick={saveCategories} loading={savingCategories}>
+            <Button
+              type="primary"
+              onClick={saveCategories}
+              loading={savingCategories}
+            >
               保存品类
             </Button>
           </div>

@@ -1,10 +1,51 @@
-from pydantic import Field, model_validator
+import math
+from collections import Counter
+from typing import Literal
+from urllib.parse import urlencode, urlsplit, urlunsplit
+
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings
+
+_KNOWN_SECRET_EXAMPLES = {
+    "changeme",
+    "change-me",
+    "dev-secret-key-change-in-production",
+    "replace-me",
+    "secret",
+    "test-secret-key",
+    "your-secret-key",
+    "yimatong-default-ip-hash-secret-change-in-production",
+}
+_KNOWN_SECRET_MARKERS = {
+    "dev-secret-key-change-in-production",
+    "test-secret-key",
+    "yimatong-default-ip-hash-secret-change-in-production",
+}
+
+
+def _has_production_secret_strength(value: str) -> bool:
+    """Reject short, sample, or clearly low-entropy application secrets."""
+
+    candidate = value.strip()
+    lowered = candidate.lower()
+    if (
+        len(candidate.encode("utf-8")) < 32
+        or lowered in _KNOWN_SECRET_EXAMPLES
+        or any(marker in lowered for marker in _KNOWN_SECRET_MARKERS)
+    ):
+        return False
+    counts = Counter(candidate)
+    if len(counts) < 12:
+        return False
+    estimated_bits = -sum(count * math.log2(count / len(candidate)) for count in counts.values())
+    return estimated_bits >= 192
 
 
 class Settings(BaseSettings):
+    environment: Literal["development", "test", "production"] = "development"
     database_url: str = "postgresql+asyncpg://yimatong:yimatong@localhost:5432/yimatong_dev?ssl=disable"
     migration_database_url: str | None = None
+    control_database_url: str | None = None
     redis_url: str = "redis://localhost:6379/0"
     secret_key: str = ""  # 必须通过环境变量 SECRET_KEY 设置
     access_token_expire_minutes: int = 15
@@ -22,6 +63,10 @@ class Settings(BaseSettings):
 
     # 后端对外地址（用于构建回调 URL 等）
     base_url: str = "http://localhost:8000"
+
+    # 品牌方 Admin 的唯一公网基址（注册链接、激活链接、密码重置链接）
+    admin_public_url: str = "http://localhost:3000"
+    platform_public_url: str = "http://localhost:3002"
 
     # 接管域名真实核验：默认使用系统 DNS 和公网 443；本地/受控验收可指定独立解析器。
     takeover_dns_nameserver: str = ""
@@ -63,13 +108,89 @@ class Settings(BaseSettings):
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 
+    @field_validator("admin_public_url")
+    @classmethod
+    def _validate_admin_public_url(cls, value: str) -> str:
+        candidate = value.strip()
+        parsed = urlsplit(candidate)
+        try:
+            parsed.port
+        except ValueError as exc:
+            raise ValueError("ADMIN_PUBLIC_URL 端口格式无效") from exc
+        if (
+            any(character.isspace() for character in candidate)
+            or parsed.scheme not in {"http", "https"}
+            or not parsed.hostname
+            or parsed.username is not None
+            or parsed.password is not None
+            or parsed.query
+            or parsed.fragment
+            or parsed.path not in {"", "/"}
+        ):
+            raise ValueError("ADMIN_PUBLIC_URL 必须是无路径、查询参数或凭据的完整 http(s) 基址")
+        return urlunsplit((parsed.scheme, parsed.netloc, "", "", ""))
+
+    @field_validator("platform_public_url")
+    @classmethod
+    def _validate_platform_public_url(cls, value: str) -> str:
+        candidate = value.strip()
+        parsed = urlsplit(candidate)
+        try:
+            parsed.port
+        except ValueError as exc:
+            raise ValueError("PLATFORM_PUBLIC_URL 端口格式无效") from exc
+        if (
+            any(character.isspace() for character in candidate)
+            or parsed.scheme not in {"http", "https"}
+            or not parsed.hostname
+            or parsed.username is not None
+            or parsed.password is not None
+            or parsed.query
+            or parsed.fragment
+            or parsed.path not in {"", "/"}
+        ):
+            raise ValueError("PLATFORM_PUBLIC_URL 必须是无路径、查询参数或凭据的完整 http(s) 基址")
+        return urlunsplit((parsed.scheme, parsed.netloc, "", "", ""))
+
     @model_validator(mode="after")
     def _validate_auth_config(self) -> "Settings":
         if not self.secret_key:
             raise ValueError(
                 "SECRET_KEY 环境变量未设置。生成方法: python -c 'import secrets; print(secrets.token_urlsafe(32))'"
             )
+        if self.environment == "production":
+            if not self.control_database_url:
+                raise ValueError("生产环境必须显式配置独立的 CONTROL_DATABASE_URL")
+            if self.control_database_url == self.database_url:
+                raise ValueError("生产环境 CONTROL_DATABASE_URL 必须与普通 DATABASE_URL 使用不同凭据")
+            if not _has_production_secret_strength(self.secret_key):
+                raise ValueError("生产环境 SECRET_KEY 必须使用至少 32 字节的高熵随机值，且不能使用示例或默认值")
+            if not _has_production_secret_strength(self.hmac_pepper):
+                raise ValueError("生产环境 HMAC_PEPPER 必须使用独立的高熵随机值，且不能使用示例或默认值")
+            if self.hmac_pepper.strip() == self.secret_key.strip():
+                raise ValueError("生产环境 HMAC_PEPPER 必须与其他应用密钥相互独立")
+            if not _has_production_secret_strength(self.ip_hash_secret):
+                raise ValueError("生产环境 IP_HASH_SECRET 必须使用独立的高熵随机值，且不能使用示例或默认值")
+            if self.ip_hash_secret.strip() in {self.secret_key.strip(), self.hmac_pepper.strip()}:
+                raise ValueError("生产环境 IP_HASH_SECRET 必须与其他应用密钥相互独立")
+            parsed = urlsplit(self.admin_public_url)
+            if parsed.scheme != "https" or parsed.hostname in {"localhost", "127.0.0.1", "::1"}:
+                raise ValueError("生产环境必须显式配置公网 HTTPS ADMIN_PUBLIC_URL")
+            platform = urlsplit(self.platform_public_url)
+            if platform.scheme != "https" or platform.hostname in {"localhost", "127.0.0.1", "::1"}:
+                raise ValueError("生产环境必须显式配置公网 HTTPS PLATFORM_PUBLIC_URL")
+            if not self.cookie_secure:
+                raise ValueError("生产环境平台认证 Cookie 必须启用 COOKIE_SECURE")
+            if self.cookie_samesite.lower() == "none":
+                raise ValueError("生产环境平台认证 Cookie 禁止 COOKIE_SAMESITE=None")
         return self
+
+    def build_admin_url(self, path: str, query: dict[str, str] | None = None) -> str:
+        """基于 canonical Admin 公网基址生成面向用户的完整链接。"""
+        if not path.startswith("/") or path.startswith("//"):
+            raise ValueError("Admin URL path 必须是以单个 / 开头的站内路径")
+        query_string = urlencode(query or {})
+        return f"{self.admin_public_url}{path}{f'?{query_string}' if query_string else ''}"
 
 
 settings = Settings()

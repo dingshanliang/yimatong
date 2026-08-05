@@ -20,6 +20,16 @@ async def protected(request: Request):
     return {"tenant_id": request.state.tenant_id}
 
 
+@app.post("/api/v1/test")
+async def protected_write(request: Request):
+    return {"tenant_id": request.state.tenant_id}
+
+
+@app.post("/api/v1/products")
+async def acting_write(request: Request):
+    return {"tenant_id": request.state.tenant_id}
+
+
 client = TestClient(app)
 
 
@@ -73,3 +83,48 @@ class TestProtectedRoutes:
 
         assert resp.status_code == 200
         assert resp.json()["tenant_id"] == "header-tenant"
+
+    def test_expired_plan_allows_read_but_blocks_write_with_stable_contract(self, monkeypatch):
+        async def blocks_write(_self, _tenant_id):
+            return True
+
+        monkeypatch.setattr(TenantScopeMiddleware, "_tenant_plan_blocks_write", blocks_write)
+        token = create_access_token("t-001", "a-001", "admin")
+        headers = {"Authorization": f"Bearer {token}"}
+
+        assert client.get("/api/v1/test", headers=headers).status_code == 200
+        response = client.post("/api/v1/test", headers=headers)
+
+        assert response.status_code == 403
+        assert response.json() == {
+            "code": "TENANT_PLAN_EXPIRED",
+            "detail": "租户套餐已过期，当前仅支持查看；请联系平台续期",
+        }
+
+    def test_agency_acting_write_uses_client_tenant_plan(self, monkeypatch):
+        checked_tenants: list[str | None] = []
+
+        async def live_authorization(_self, _agency_id, _client_id):
+            return ["products"]
+
+        async def blocks_write(_self, tenant_id):
+            checked_tenants.append(tenant_id)
+            return True
+
+        monkeypatch.setattr(TenantScopeMiddleware, "_load_acting_authorization", live_authorization)
+        monkeypatch.setattr(TenantScopeMiddleware, "_tenant_plan_blocks_write", blocks_write)
+        token = create_access_token(
+            "11111111-1111-1111-1111-111111111111",
+            "22222222-2222-2222-2222-222222222222",
+            "admin",
+            tenant_type="agency",
+            extra={"acting_tenant_id": "33333333-3333-3333-3333-333333333333"},
+        )
+
+        response = client.post(
+            "/api/v1/products",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+        assert response.status_code == 403
+        assert checked_tenants == ["33333333-3333-3333-3333-333333333333"]

@@ -17,7 +17,7 @@ from app.constants.campaign import (
 )
 from app.core.event_bus import event_bus
 from app.models.campaign import Benefit, BenefitClaim, Campaign
-from app.models.connector import BenefitDelivery
+from app.models.connector import BenefitDelivery, Connector
 from app.models.product import Product
 from app.utils import escape_like_pattern
 from app.utils.campaign_validation import validate_benefit_config_shape
@@ -313,6 +313,15 @@ async def create_benefit(
             raise ValueError("Campaign not found")
         if camp.status not in (CampaignStatus.DRAFT, CampaignStatus.PAUSED):
             raise ValueError("Cannot add benefits to an active or ended campaign")
+    if connector_id is not None:
+        connector_result = await db.execute(
+            select(Connector).where(
+                Connector.id == connector_id,
+                Connector.tenant_id == tenant_id,
+            )
+        )
+        if connector_result.scalar_one_or_none() is None:
+            raise ValueError("Connector not found")
 
     b = Benefit(
         tenant_id=tenant_id,
@@ -693,6 +702,7 @@ async def claim_benefit(
     # 幂等检查
     existing = await db.execute(
         select(BenefitClaim).where(
+            BenefitClaim.tenant_id == tenant_id,
             BenefitClaim.benefit_id == benefit_id,
             BenefitClaim.consumer_id == consumer_id,
             BenefitClaim.idempotency_key == idempotency_key,
@@ -748,6 +758,7 @@ async def claim_benefit(
         select(func.count())
         .select_from(BenefitClaim)
         .where(
+            BenefitClaim.tenant_id == tenant_id,
             BenefitClaim.benefit_id == benefit_id,
             BenefitClaim.consumer_id == consumer_id,
         )

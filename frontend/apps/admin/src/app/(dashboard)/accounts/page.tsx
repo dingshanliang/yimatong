@@ -29,6 +29,7 @@ import {
 } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
 import api from "@/lib/api";
+import { useAuthStore } from "@/lib/auth";
 import { useCrud } from "@/lib/hooks";
 import { STATUS_COLORS } from "@/lib/status-colors";
 
@@ -51,6 +52,7 @@ interface Account {
   tenant_id: string;
   initial_password?: string;
   is_active: boolean;
+  roles?: Role[];
 }
 
 interface Role {
@@ -60,6 +62,12 @@ interface Role {
   permissions?: string[];
   is_active?: boolean;
 }
+
+const ROLE_LABELS: Record<string, string> = {
+  admin: "租户管理员",
+  operator: "运营人员",
+  viewer: "受限成员（无业务权限）",
+};
 
 /** Build tree structure from flat organization list */
 function buildOrgTree(orgs: Organization[]): Organization[] {
@@ -123,6 +131,26 @@ function buildTreeSelectData(
 }
 
 export default function AccountsPage() {
+  const role = useAuthStore((state) => state.user?.role?.toLowerCase());
+
+  if (role === "viewer") {
+    return (
+      <div>
+        <Title level={4}>组织与账户</Title>
+        <Alert
+          type="info"
+          showIcon
+          message="当前角色不能查看账户目录"
+          description="如需查看或调整组织与账户，请联系租户管理员处理。"
+        />
+      </div>
+    );
+  }
+
+  return <AccountsWorkspace canManage={role === "admin"} />;
+}
+
+function AccountsWorkspace({ canManage }: { canManage: boolean }) {
   const { message, modal } = App.useApp();
   const [activeTab, setActiveTab] = useState("orgs");
   const [orgs, setOrgs] = useState<Organization[]>([]);
@@ -160,8 +188,8 @@ export default function AccountsPage() {
   const fetchOrgs = useCallback(async () => {
     setOrgsLoading(true);
     try {
-      const { data } = await api.get("/organizations");
-      setOrgs(Array.isArray(data) ? data : data.items || []);
+      const { data } = await api.get<Organization[]>("/organizations/tree");
+      setOrgs(data);
     } catch {
       message.error("加载组织列表失败");
     } finally {
@@ -367,20 +395,24 @@ export default function AccountsPage() {
         <Tag data-testid={`org-account-count-${record.id}`}>{v || 0}</Tag>
       ),
     },
-    {
-      title: "操作",
-      key: "action",
-      width: 80,
-      render: (_: unknown, record: Organization) => (
-        <Dropdown menu={{ items: getOrgMenuItems(record) }}>
-          <Button
-            type="text"
-            icon={<DownOutlined />}
-            aria-label={`操作菜单-${record.name}`}
-          />
-        </Dropdown>
-      ),
-    },
+    ...(canManage
+      ? [
+          {
+            title: "操作",
+            key: "action",
+            width: 80,
+            render: (_: unknown, record: Organization) => (
+              <Dropdown menu={{ items: getOrgMenuItems(record) }}>
+                <Button
+                  type="text"
+                  icon={<DownOutlined />}
+                  aria-label={`操作菜单-${record.name}`}
+                />
+              </Dropdown>
+            ),
+          } satisfies ColumnsType<Organization>[number],
+        ]
+      : []),
   ];
 
   const getAccountMenuItems = (record: Account): MenuProps["items"] => [
@@ -393,6 +425,7 @@ export default function AccountsPage() {
         editForm.setFieldsValue({
           name: record.name,
           organization_id: record.organization_id,
+          role_ids: record.roles?.map((role) => role.id) ?? [],
         });
         setEditModalOpen(true);
       },
@@ -430,6 +463,18 @@ export default function AccountsPage() {
     { title: "姓名", dataIndex: "name", key: "name" },
     { title: "邮箱", dataIndex: "email", key: "email" },
     {
+      title: "角色",
+      key: "roles",
+      render: (_: unknown, record) =>
+        record.roles?.length ? (
+          record.roles.map((role) => (
+            <Tag key={role.id}>{ROLE_LABELS[role.name] || role.name}</Tag>
+          ))
+        ) : (
+          <Text type="secondary">未分配</Text>
+        ),
+    },
+    {
       title: "所属组织",
       dataIndex: "organization_name",
       key: "organization_name",
@@ -455,20 +500,24 @@ export default function AccountsPage() {
         </Tag>
       ),
     },
-    {
-      title: "操作",
-      key: "action",
-      width: 100,
-      render: (_: unknown, record: Account) => (
-        <Dropdown menu={{ items: getAccountMenuItems(record) }}>
-          <Button
-            type="text"
-            icon={<DownOutlined />}
-            aria-label={`操作菜单-${record.name}`}
-          />
-        </Dropdown>
-      ),
-    },
+    ...(canManage
+      ? [
+          {
+            title: "操作",
+            key: "action",
+            width: 100,
+            render: (_: unknown, record: Account) => (
+              <Dropdown menu={{ items: getAccountMenuItems(record) }}>
+                <Button
+                  type="text"
+                  icon={<DownOutlined />}
+                  aria-label={`操作菜单-${record.name}`}
+                />
+              </Dropdown>
+            ),
+          } satisfies ColumnsType<Account>[number],
+        ]
+      : []),
   ];
 
   const openAccountModal = () => {
@@ -477,12 +526,17 @@ export default function AccountsPage() {
     setAccountModalOpen(true);
   };
 
-  const handleEditAccount = async (values: Record<string, string>) => {
+  const handleEditAccount = async (values: {
+    name: string;
+    organization_id: string;
+    role_ids?: string[];
+  }) => {
     if (!editingAccount) return;
     try {
       await api.patch(`/accounts/${editingAccount.id}`, {
         name: values.name,
         organization_id: values.organization_id,
+        role_ids: values.role_ids ?? [],
       });
       message.success("账户更新成功");
       setEditModalOpen(false);
@@ -511,18 +565,27 @@ export default function AccountsPage() {
             label: "组织管理",
             children: (
               <>
+                <Alert
+                  className="mb-4"
+                  type="info"
+                  showIcon
+                  message="组织用于账户归类和日常管理"
+                  description="组织本身不会自动限制数据范围；账号可查看和操作的内容由角色与权限决定。"
+                />
                 <div className="mb-4 flex items-center gap-4">
-                  <Button
-                    type="primary"
-                    icon={<PlusOutlined />}
-                    onClick={() => {
-                      setEditingOrg(null);
-                      orgForm.resetFields();
-                      setOrgModalOpen(true);
-                    }}
-                  >
-                    新建组织
-                  </Button>
+                  {canManage && (
+                    <Button
+                      type="primary"
+                      icon={<PlusOutlined />}
+                      onClick={() => {
+                        setEditingOrg(null);
+                        orgForm.resetFields();
+                        setOrgModalOpen(true);
+                      }}
+                    >
+                      新建组织
+                    </Button>
+                  )}
                   <Input.Search
                     placeholder="搜索组织名称"
                     allowClear
@@ -560,16 +623,27 @@ export default function AccountsPage() {
                   type="info"
                   showIcon
                   message="账户用于员工或渠道伙伴登录后台"
-                  description="所属组织决定账号可查看和操作的数据范围。创建账户后，系统会发放一次性临时密码给使用人登录。"
+                  description="所属组织用于归类和管理账号，不会自动限制数据范围；角色与权限决定账号可查看和操作的内容。管理员创建账户后，系统会发放一次性临时密码。"
                 />
+                {!canManage && (
+                  <Alert
+                    className="mb-4"
+                    type="warning"
+                    showIcon
+                    message="当前为只读模式"
+                    description="运营人员可以查看组织和账户信息；新建、编辑、重置密码及停用或启用账户由租户管理员处理。"
+                  />
+                )}
                 <div className="mb-4 flex items-center gap-4">
-                  <Button
-                    type="primary"
-                    icon={<PlusOutlined />}
-                    onClick={openAccountModal}
-                  >
-                    新建账户
-                  </Button>
+                  {canManage && (
+                    <Button
+                      type="primary"
+                      icon={<PlusOutlined />}
+                      onClick={openAccountModal}
+                    >
+                      新建账户
+                    </Button>
+                  )}
                   <Input.Search
                     placeholder="搜索姓名或邮箱"
                     allowClear
@@ -734,7 +808,7 @@ export default function AccountsPage() {
               placeholder="选择角色（可选）"
               options={availableRoles.map((r) => ({
                 value: r.id,
-                label: r.name,
+                label: ROLE_LABELS[r.name] || r.name,
               }))}
               allowClear
             />
@@ -814,7 +888,7 @@ export default function AccountsPage() {
               placeholder="选择角色（可选）"
               options={availableRoles.map((r) => ({
                 value: r.id,
-                label: r.name,
+                label: ROLE_LABELS[r.name] || r.name,
               }))}
               allowClear
             />

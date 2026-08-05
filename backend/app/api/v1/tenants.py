@@ -5,10 +5,19 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
-from app.core.dependencies import get_current_tenant
+from app.core.dependencies import get_current_account_id, get_current_tenant
 from app.models.tenant import Tenant
 from app.schemas.common import NOT_FOUND_EXAMPLE, ErrorDetail, PaginatedResponse
-from app.schemas.tenant import CategoriesResponse, TenantCreate, TenantRead, TenantUpdate, TenantUpdateSelf
+from app.schemas.tenant import (
+    CategoriesResponse,
+    TenantCreate,
+    TenantEntitlementRead,
+    TenantRead,
+    TenantUpdate,
+    TenantUpdateSelf,
+)
+from app.services.audit import write_audit_log
+from app.services.entitlement import is_plan_expired
 from app.services.tenant import (
     complete_onboarding_step,
     create_tenant,
@@ -18,7 +27,7 @@ from app.services.tenant import (
     update_tenant,
 )
 from app.utils import escape_like_pattern
-from app.utils.auth_rbac import require_role
+from app.utils.auth_rbac import require_permission, require_role
 
 TENANT_NOT_FOUND = {
     404: {
@@ -130,6 +139,27 @@ async def get_current_tenant_endpoint(
     return tenant
 
 
+@router.get(
+    "/me/entitlement",
+    response_model=TenantEntitlementRead,
+    summary="获取当前有效租户套餐状态",
+)
+async def get_current_tenant_entitlement(
+    db: AsyncSession = Depends(get_db),
+    tenant_id: uuid.UUID = Depends(get_current_tenant),
+):
+    """品牌返回自身；代运营客户工作区返回 acting tenant 的实时状态。"""
+    tenant = await get_tenant(db, tenant_id)
+    if not tenant:
+        raise HTTPException(status_code=404, detail="Tenant not found")
+    return TenantEntitlementRead(
+        tenant_id=tenant.id,
+        plan=tenant.plan,
+        plan_expires_at=tenant.plan_expires_at,
+        read_only=is_plan_expired(tenant.plan_expires_at),
+    )
+
+
 @router.get("/me/categories", response_model=CategoriesResponse, summary="获取当前租户品类列表")
 async def get_current_tenant_categories(
     db: AsyncSession = Depends(get_db),
@@ -146,6 +176,7 @@ async def update_current_tenant_endpoint(
     body: TenantUpdateSelf,
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
+    _permission: None = Depends(require_permission("tenant:manage")),
 ):
     tenant = await update_tenant(
         db,
@@ -154,7 +185,7 @@ async def update_current_tenant_endpoint(
         industry=body.industry,
         notes=body.notes,
         onboarding_progress=body.onboarding_progress,
-        enabled_features=body.enabled_features,
+        compliance_settings={"contact_email": str(body.contact_email)} if body.contact_email else None,
         categories=body.categories,
         brand_profile=body.brand_profile,
     )
@@ -184,6 +215,8 @@ async def complete_onboarding_step_endpoint(
     step: str,
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
+    account_id: uuid.UUID = Depends(get_current_account_id),
+    _permission: None = Depends(require_permission("tenant:manage")),
 ):
     try:
         tenant = await complete_onboarding_step(db, tenant_id, step)
@@ -191,6 +224,14 @@ async def complete_onboarding_step_endpoint(
         raise HTTPException(status_code=400, detail=str(e))
     if not tenant:
         raise HTTPException(status_code=404, detail="Tenant not found")
+    await write_audit_log(
+        db,
+        operator_id=str(account_id),
+        target_tenant_id=str(tenant_id),
+        action="tenant_onboarding_step_completed",
+        resource=f"tenant:{tenant_id}",
+        details={"step": step},
+    )
     return {"step": step, "completed": True}
 
 

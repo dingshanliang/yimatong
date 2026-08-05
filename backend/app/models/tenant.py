@@ -5,9 +5,11 @@ from enum import StrEnum
 from sqlalchemy import (
     JSON,
     Boolean,
+    CheckConstraint,
     Column,
     DateTime,
     ForeignKey,
+    ForeignKeyConstraint,
     Index,
     Integer,
     String,
@@ -17,16 +19,18 @@ from sqlalchemy import (
     text,
 )
 from sqlalchemy import Enum as SQLEnum
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.orm import Mapped, mapped_column, relationship, validates
 from uuid6 import uuid7
 
 from app.models.base import Base
+from app.utils.email import normalize_email
 
 account_roles = Table(
     "account_roles",
     Base.metadata,
     Column("account_id", ForeignKey("accounts.id"), primary_key=True),
     Column("role_id", ForeignKey("roles.id"), primary_key=True),
+    Index("ix_account_roles_role_id", "role_id"),
 )
 
 role_permissions = Table(
@@ -34,6 +38,7 @@ role_permissions = Table(
     Base.metadata,
     Column("role_id", ForeignKey("roles.id"), primary_key=True),
     Column("permission_id", ForeignKey("permissions.id"), primary_key=True),
+    Index("ix_role_permissions_permission_id", "permission_id"),
 )
 
 
@@ -94,11 +99,19 @@ class Tenant(Base):
 
 class Organization(Base):
     __tablename__ = "organizations"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "id", name="uq_organizations_tenant_id_id"),
+        ForeignKeyConstraint(
+            ["tenant_id", "parent_id"],
+            ["organizations.tenant_id", "organizations.id"],
+            name="fk_organizations_tenant_parent",
+        ),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid7)
     tenant_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("tenants.id"), nullable=False, index=True)
     name: Mapped[str] = mapped_column(String(100), nullable=False)
-    parent_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("organizations.id"), nullable=True)
+    parent_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
@@ -110,7 +123,6 @@ class Organization(Base):
 
 class Account(Base):
     __tablename__ = "accounts"
-    __table_args__ = (UniqueConstraint("tenant_id", "email", name="uq_account_tenant_email"),)
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid7)
     tenant_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("tenants.id"), nullable=False, index=True)
@@ -120,6 +132,7 @@ class Account(Base):
     name: Mapped[str] = mapped_column(String(100), nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true", nullable=False)
     auth_version: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
+    must_change_password: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false", nullable=False)
     failed_login_attempts: Mapped[int] = mapped_column(default=0, nullable=False)
     locked_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -127,6 +140,15 @@ class Account(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
+
+    __table_args__ = (
+        CheckConstraint("email = lower(trim(email))", name="ck_accounts_email_canonical"),
+        Index("uq_accounts_tenant_email_ci", tenant_id, func.lower(email), unique=True),
+    )
+
+    @validates("email")
+    def _normalize_email(self, _key: str, value: str) -> str:
+        return normalize_email(value)
 
     organization = relationship("Organization", back_populates="accounts")
     roles = relationship("Role", secondary="account_roles", back_populates="accounts", lazy="selectin")

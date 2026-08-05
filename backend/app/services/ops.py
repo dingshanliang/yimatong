@@ -11,7 +11,7 @@ from app.models.code import CodeBatch
 from app.models.page import PageVersion, PageVersionStatus
 from app.models.product import Brand, Product
 from app.models.tenant import OpsTask, OpsTaskPriority, OpsTaskStatus, Tenant, TenantStatus
-from app.services.agency_auth import get_authorized_client_ids
+from app.services.agency_auth import get_authorized_client_scopes
 from app.utils import escape_like_pattern
 
 READINESS_STEPS = [
@@ -51,6 +51,25 @@ def build_readiness_summary(status: dict) -> dict:
         "percent": round((passed_count / total_count) * 100) if total_count else 0,
         "missing_keys": [key for key, _, _ in missing],
         "missing_labels": [label for _, label, _ in missing],
+    }
+
+
+def _empty_workbench(page: int, page_size: int) -> dict:
+    return {
+        "summary": {
+            "total_clients": 0,
+            "active_clients": 0,
+            "ready_clients": 0,
+            "blocked_clients": 0,
+            "pending_tasks": 0,
+            "in_progress_tasks": 0,
+            "overdue_tasks": 0,
+        },
+        "clients": [],
+        "tasks": [],
+        "total": 0,
+        "page": page,
+        "page_size": page_size,
     }
 
 
@@ -208,31 +227,101 @@ async def get_ops_workbench(
     readiness: str = "all",
     task_status: str = "all",
     agency_tenant_id: uuid.UUID | None = None,
+    _authorized_client_ids: list[uuid.UUID] | None = None,
+    _authorized_client_scopes: dict[uuid.UUID, set[str]] | None = None,
+    _controlled: bool = False,
 ) -> dict:
+    if db.get_bind().dialect.name == "postgresql" and not _controlled:
+        visible_scopes = {"products", "pages", "campaigns", "codes", "analytics"}
+        authorized_client_scopes = (
+            await get_authorized_client_scopes(db, agency_tenant_id, visible_scopes)
+            if agency_tenant_id is not None
+            else None
+        )
+        authorized_client_ids = list(authorized_client_scopes) if authorized_client_scopes is not None else None
+        if agency_tenant_id is not None and not authorized_client_ids:
+            return _empty_workbench(page, page_size)
+        if agency_tenant_id is None:
+            # Platform is an explicit cross-tenant control-plane principal.
+            from sqlalchemy import text
+
+            from app.core.database import control_session_factory
+
+            async with control_session_factory() as control_db:
+                await control_db.execute(text("SET LOCAL app.bypass_rls = 'true'"))
+                return await get_ops_workbench(
+                    control_db,
+                    page=page,
+                    page_size=page_size,
+                    q=q,
+                    readiness=readiness,
+                    task_status=task_status,
+                    agency_tenant_id=None,
+                    _authorized_client_ids=None,
+                    _authorized_client_scopes=None,
+                    _controlled=True,
+                )
+
+        # An agency may use its own RLS view only to resolve the current live
+        # authorization keys.  Every customer record and task is then read in
+        # a fresh transaction scoped to that customer.  Never aggregate agency
+        # business data in a bypass/control session.
+        from app.core.database import async_session_factory, set_session_tenant_context
+
+        client_rows: list[dict] = []
+        task_rows: list[dict] = []
+        aggregate = _empty_workbench(1, page_size)["summary"]
+        for client_tenant_id in authorized_client_ids or []:
+            async with async_session_factory() as tenant_db:
+                await set_session_tenant_context(tenant_db, client_tenant_id)
+                result = await get_ops_workbench(
+                    tenant_db,
+                    page=1,
+                    page_size=1,
+                    q=q,
+                    readiness=readiness,
+                    task_status=task_status,
+                    agency_tenant_id=None,
+                    _authorized_client_ids=[client_tenant_id],
+                    _authorized_client_scopes=authorized_client_scopes,
+                    _controlled=True,
+                )
+            for key in aggregate:
+                aggregate[key] += result["summary"][key]
+            client_rows.extend(result["clients"])
+            task_rows.extend(result["tasks"])
+
+        client_rows.sort(key=lambda item: item["created_at"], reverse=True)
+        task_rows.sort(
+            key=lambda item: (
+                not item["overdue"],
+                item["priority"] != OpsTaskPriority.high.value,
+                _as_aware_utc(item["due_date"]) if item["due_date"] else datetime.max.replace(tzinfo=UTC),
+            )
+        )
+        start = (page - 1) * page_size
+        return {
+            "summary": aggregate,
+            "clients": client_rows[start : start + page_size],
+            "tasks": task_rows,
+            "total": len(client_rows),
+            "page": page,
+            "page_size": page_size,
+        }
+
     tenant_query = select(Tenant).where(Tenant.status != TenantStatus.terminated)
     count_query = select(func.count()).select_from(Tenant).where(Tenant.status != TenantStatus.terminated)
 
     # Filter by authorized clients if agency_tenant_id is provided
-    authorized_client_ids: list[uuid.UUID] | None = None
+    authorized_client_ids = _authorized_client_ids
+    authorized_client_scopes = _authorized_client_scopes
     if agency_tenant_id:
-        authorized_client_ids = await get_authorized_client_ids(db, agency_tenant_id)
+        visible_scopes = {"products", "pages", "campaigns", "codes", "analytics"}
+        authorized_client_scopes = await get_authorized_client_scopes(db, agency_tenant_id, visible_scopes)
+        authorized_client_ids = list(authorized_client_scopes)
         if not authorized_client_ids:
-            return {
-                "summary": {
-                    "total_clients": 0,
-                    "active_clients": 0,
-                    "ready_clients": 0,
-                    "blocked_clients": 0,
-                    "pending_tasks": 0,
-                    "in_progress_tasks": 0,
-                    "overdue_tasks": 0,
-                },
-                "clients": [],
-                "tasks": [],
-                "total": 0,
-                "page": page,
-                "page_size": page_size,
-            }
+            return _empty_workbench(page, page_size)
+    if authorized_client_ids is not None:
         tenant_query = tenant_query.where(Tenant.id.in_(authorized_client_ids))
         count_query = count_query.where(Tenant.id.in_(authorized_client_ids))
 
@@ -312,10 +401,16 @@ async def get_ops_workbench(
         ).all()
     )
 
+    full_scope = {"products", "pages", "campaigns", "codes", "analytics"}
+    full_access_ids = [
+        tenant_id
+        for tenant_id in tenant_ids
+        if authorized_client_scopes is None or full_scope.issubset(authorized_client_scopes.get(tenant_id, set()))
+    ]
     task_rows: list[OpsTask] = []
-    if tenant_ids:
+    if full_access_ids:
         task_result = await db.execute(
-            select(OpsTask).where(OpsTask.tenant_id.in_(tenant_ids)).order_by(OpsTask.created_at.desc())
+            select(OpsTask).where(OpsTask.tenant_id.in_(full_access_ids)).order_by(OpsTask.created_at.desc())
         )
         task_rows = list(task_result.scalars().all())
 
@@ -332,6 +427,10 @@ async def get_ops_workbench(
     overdue_tasks = 0
 
     for tenant in tenants:
+        tenant_scopes = (
+            authorized_client_scopes.get(tenant.id, set()) if authorized_client_scopes is not None else full_scope
+        )
+        has_full_access = full_scope.issubset(tenant_scopes)
         status = {
             "tenant_id": str(tenant.id),
             "brands": brand_counts.get(tenant.id, 0),
@@ -341,7 +440,18 @@ async def get_ops_workbench(
             "active_campaigns": active_campaign_counts.get(tenant.id, 0),
             "onboarding_progress": tenant.onboarding_progress,
         }
-        readiness_summary = build_readiness_summary(status)
+        readiness_summary = (
+            build_readiness_summary(status)
+            if has_full_access
+            else {
+                "ready": False,
+                "passed_count": 0,
+                "total_count": 0,
+                "percent": 0,
+                "missing_keys": ["authorization_scope"],
+                "missing_labels": ["当前授权仅允许进入指定业务模块"],
+            }
+        )
         tenant_tasks = tasks_by_tenant.get(tenant.id, [])
         task_summary = {
             "pending": 0,
@@ -364,11 +474,14 @@ async def get_ops_workbench(
             if task.priority == OpsTaskPriority.high and is_open:
                 task_summary["high_priority"] += 1
 
-        if readiness_summary["ready"]:
-            ready_clients += 1
-        else:
-            blocked_clients += 1
+        if has_full_access:
+            if readiness_summary["ready"]:
+                ready_clients += 1
+            else:
+                blocked_clients += 1
 
+        if readiness != "all" and not has_full_access:
+            continue
         if readiness == "ready" and not readiness_summary["ready"]:
             continue
         if readiness == "blocked" and readiness_summary["ready"]:
@@ -387,6 +500,8 @@ async def get_ops_workbench(
                 "readiness": readiness_summary,
                 "task_summary": task_summary,
                 "next_action": build_next_action(tenant.name, readiness_summary, task_summary),
+                "agency_scope": sorted(tenant_scopes),
+                "full_workbench_access": has_full_access,
             }
         )
 
