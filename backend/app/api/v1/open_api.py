@@ -5,15 +5,17 @@
 
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.core.dependencies import get_current_tenant
+from app.core.event_bus import event_bus
 from app.schemas.campaign import CampaignStatusRequest
 from app.schemas.common import PaginatedResponse
+from app.services.audit import write_audit_log
 from app.utils.auth_rbac import require_permission
 
 open_api_router = APIRouter(prefix="/open/v1", tags=["open-api"])
@@ -238,23 +240,48 @@ class CouponRedeemRequest(BaseModel):
 @open_api_router.post("/coupons/{coupon_id}/redeem")
 async def redeem_coupon(
     coupon_id: str,
+    request: Request,
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
     _: None = Depends(require_permission("coupon:redeem")),
 ):
-    # 标记为已使用
+    """核销一张券：把 BenefitClaim 标记为已使用，记审计并发 claim.used 事件。
+
+    之前这里是空操作（只返回 status=redeemed，不改任何状态），外部系统会误以为
+    已核销。改为真正写入 used 状态；重复核销同一张券返回 409。
+    """
     from app.models.campaign import BenefitClaim
 
-    result = await db.execute(
-        select(BenefitClaim).where(
-            BenefitClaim.id == uuid.UUID(coupon_id),
-            BenefitClaim.tenant_id == tenant_id,
+    claim = (
+        await db.execute(
+            select(BenefitClaim)
+            .where(BenefitClaim.id == uuid.UUID(coupon_id), BenefitClaim.tenant_id == tenant_id)
+            .with_for_update()
         )
-    )
-    claim = result.scalar_one_or_none()
+    ).scalar_one_or_none()
     if not claim:
         raise HTTPException(status_code=404, detail="Coupon claim not found")
-    return {"id": str(claim.id), "status": "redeemed"}
+    if claim.status == "used":
+        raise HTTPException(status_code=409, detail="Coupon already redeemed")
+
+    claim.status = "used"
+    # Open API 使用 API Key 鉴权，account_id 为 None；用 api_key_id 作为操作人追溯。
+    operator = getattr(request.state, "api_key_id", None) or "open_api"
+    await write_audit_log(
+        db,
+        operator_id=str(operator),
+        target_tenant_id=str(tenant_id),
+        action="coupon_redeemed",
+        resource=f"claim:{claim.id}",
+    )
+    await db.flush()
+    await event_bus.emit(
+        "claim.used",
+        {"claim_id": str(claim.id), "benefit_id": str(claim.benefit_id), "consumer_id": claim.consumer_id},
+        str(tenant_id),
+    )
+    await db.commit()
+    return {"id": str(claim.id), "status": "used"}
 
 
 # --- Full Access Operations ---
