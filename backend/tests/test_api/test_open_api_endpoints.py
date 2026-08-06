@@ -205,34 +205,70 @@ async def test_redeem_coupon_cross_tenant_returns_404(open_api_app):
 
 
 @pytest.mark.anyio
-async def test_open_api_product_endpoints_not_reachable_by_api_key_role(open_api_app):
-    """已知缺口（RU-12）：product:create/list/update 不在任何 API Key 角色契约里，
-    因此外部 ERP 用任何 API Key 都无法同步产品。data_reader 读产品也会被
-    require_permission 拒绝。记录现状，待补 product 权限到合适的 API Key 角色。
+async def test_open_api_product_endpoints_require_erp_sync_role(open_api_app):
+    """产品/SKU/批次端点（ERP 同步）现在由专用 erp_sync 角色打开。
+
+    防回归点：
+    1. erp_sync 精确覆盖 product:list/create/update（ERP 集成的最小权限集）。
+    2. 普通读类角色 data_reader 不含 product:* —— 外部分析系统拿不到产品目录，
+       避免 ERP 主数据扩散到非集成用途。
+    3. full_access 作为 API Key 权限超集，也覆盖 product:*（这是既有约定，见
+       test_full_access_has_all），用于运维 break-glass。
+    4. 持 erp_sync 角色的 ApiKey 可以真正读取 /open/v1/products。
     """
     from app.utils.auth_rbac import API_KEY_ROLE_PERMISSIONS
 
-    # 任何一个标准 API Key 角色都不含 product:list / product:create
-    all_perms = set()
-    for p in API_KEY_ROLE_PERMISSIONS.values():
-        all_perms.update(p)
-    assert "product:list" not in all_perms
-    assert "product:create" not in all_perms
+    product_perms = {"product:list", "product:create", "product:update"}
 
-    api_key = f"test-key-{uuid.uuid4()}"
-    perms = API_KEY_ROLE_PERMISSIONS["full_access"]
+    # 1. erp_sync 精确覆盖产品权限
+    assert set(API_KEY_ROLE_PERMISSIONS["erp_sync"]) == product_perms
+
+    # 2. data_reader 不能碰产品目录（最小权限）
+    assert not (product_perms & set(API_KEY_ROLE_PERMISSIONS["data_reader"]))
+
+    # 3. full_access 超集约定
+    assert product_perms.issubset(set(API_KEY_ROLE_PERMISSIONS["full_access"]))
+
+    # 4. erp_sync 的 key 能读取 /open/v1/products
+    api_key = f"erp-{uuid.uuid4()}"
+    perms = API_KEY_ROLE_PERMISSIONS["erp_sync"]
     async with TestSessionLocal() as db:
-        await _seed(api_key, "full_access", perms)(db)
+        await _seed(api_key, "erp_sync", perms)(db)
 
     transport = ASGITransport(app=open_api_app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
-        # 即便 full_access 的 ApiKey 直接把 product:list 塞进 permissions，双重检查里
-        # 的静态契约也不会通过 → 403。这就是当前外部系统调产品端点的真实结果。
-        perms_with_product = perms + ["product:list", "product:create"]
-        async with TestSessionLocal() as db:
-            from sqlalchemy import update
-
-            await db.execute(update(ApiKey).where(ApiKey.key == api_key).values(permissions=perms_with_product))
-            await db.commit()
         resp = await client.get("/open/v1/products", headers={"X-Api-Key": api_key})
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["total"] >= 1
+
+    # 5. data_reader 的 key 调产品端点仍被拒（最小权限）
+    reader_key = f"reader-{uuid.uuid4()}"
+    async with TestSessionLocal() as db:
+        await _seed(reader_key, "data_reader", API_KEY_ROLE_PERMISSIONS["data_reader"])(db)
+    async with AsyncClient(transport=ASGITransport(app=open_api_app), base_url="http://test") as client:
+        resp = await client.get("/open/v1/products", headers={"X-Api-Key": reader_key})
         assert resp.status_code == 403
+
+
+@pytest.mark.anyio
+async def test_open_api_erp_sync_can_create_product(open_api_app):
+    """erp_sync 角色可以 POST /open/v1/products 创建商品（含幂等 upsert）。"""
+    from app.utils.auth_rbac import API_KEY_ROLE_PERMISSIONS
+
+    api_key = f"erp-{uuid.uuid4()}"
+    perms = API_KEY_ROLE_PERMISSIONS["erp_sync"]
+    async with TestSessionLocal() as db:
+        await _seed(api_key, "erp_sync", perms)(db)
+
+    transport = ASGITransport(app=open_api_app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        # Product.brand_id 是 NOT NULL，必须带品牌名（_seed 里建了 "测试品牌"）
+        body = {"name": "ERP 同步商品", "brand_name": "测试品牌", "external_id": f"ext-{uuid.uuid4().hex[:8]}"}
+        resp = await client.post("/open/v1/products", json=body, headers={"X-Api-Key": api_key})
+        assert resp.status_code == 201, resp.text
+        assert resp.json()["action"] == "created"
+
+        # 同一 external_id 再调一次 → upsert，不报错
+        resp2 = await client.post("/open/v1/products", json=body, headers={"X-Api-Key": api_key})
+        assert resp2.status_code == 201, resp2.text
+        assert resp2.json()["action"] == "updated"

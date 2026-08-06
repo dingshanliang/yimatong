@@ -1,7 +1,7 @@
 """统一 RBAC 系统 — Web 用户 + API Key 共享权限命名空间。
 
 Web 用户角色（JWT）: admin, operator, platform_admin
-API Key 角色: data_reader, coupon_operator, webhook_admin, full_access
+API Key 角色: data_reader, coupon_operator, webhook_admin, erp_sync, full_access
 
 权限码统一使用 resource:action 格式。
 """
@@ -109,6 +109,12 @@ API_KEY_ROLE_PERMISSIONS: dict[str, list[str]] = {
         "api_key:list",
         "api_key:revoke",
     ],
+    # 外部 ERP / WMS 主数据同步：只给商品目录读写，不给营销、券、风控或 webhook。
+    "erp_sync": [
+        "product:list",
+        "product:create",
+        "product:update",
+    ],
     "full_access": [
         "scan:list",
         "scan:detail",
@@ -128,6 +134,10 @@ API_KEY_ROLE_PERMISSIONS: dict[str, list[str]] = {
         "campaign:status",
         "code:batch_create",
         "code:batch_update",
+        # 产品目录同步（ERP 集成）；full_access 保持所有 API Key 权限的超集约定。
+        "product:list",
+        "product:create",
+        "product:update",
         "webhook:endpoint_create",
         "webhook:endpoint_list",
         "webhook:endpoint_update",
