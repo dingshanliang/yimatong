@@ -48,6 +48,7 @@ from app.models.member import (  # noqa: E402, F401
     PointTransaction,
 )
 from app.models.page import PageTemplate, PageVersion, PageVersionStatus  # noqa: E402, F401
+from app.models.pilot_milestone import PilotMilestone  # noqa: E402, F401
 from app.models.plan import PlanDefinition  # noqa: E402
 from app.models.private_domain import PrivateDomainConfig  # noqa: E402, F401
 from app.models.product import SKU, Brand, Product, ProductionBatch  # noqa: E402, F401
@@ -269,3 +270,69 @@ async def launch_facts(db):
     )
     await db.flush()
     return tenant_id, account_id, version, campaign, batch
+
+
+# ── 试点里程碑测试事实种子（beads: yimatong-bgag.1）──────────────────
+# 模块级 async 函数（非 fixture），供 service/API 测试复用，避免在两个测试文件里复制。
+
+
+async def seed_pilot_tenant(db, *, created_at=None):
+    """创建一个 brand Tenant；返回 tenant_id。可选 created_at 用于里程碑派生测试。"""
+    from app.models.tenant import TenantStatus, TenantType
+
+    tenant_id = uuid.uuid4()
+    tenant = Tenant(
+        id=tenant_id,
+        name="测试客户",
+        slug=f"t-{tenant_id.hex[:8]}",
+        status=TenantStatus.active,
+        tenant_type=TenantType.brand,
+    )
+    if created_at is not None:
+        tenant.created_at = created_at
+    db.add(tenant)
+    await db.flush()
+    return tenant_id
+
+
+async def seed_pilot_launch_release(
+    db,
+    tenant_id,
+    *,
+    brand_confirmed_at=None,
+    launched_at=None,
+):
+    """创建一条 live LaunchRelease（可选 brand_confirmed_at / launched_at）。"""
+    from app.models.launch import LaunchReleaseStatus
+
+    release = LaunchRelease(
+        tenant_id=tenant_id,
+        page_template_id=uuid.uuid4(),
+        page_version_id=uuid.uuid4(),
+        campaign_id=uuid.uuid4(),
+        code_batch_id=uuid.uuid4(),
+        status=LaunchReleaseStatus.live,
+        readiness_snapshot={},
+        content_digest="d" * 64,
+        created_by=uuid.uuid4(),
+        brand_confirmed_at=brand_confirmed_at,
+        launched_at=launched_at,
+    )
+    db.add(release)
+    await db.flush()
+    return release
+
+
+async def seed_pilot_scan(db, tenant_id, *, scan_time, is_valid_visit=True, public_id="SCAN001"):
+    """创建一条 ScanEvent。"""
+    from app.models.scan import ScanEvent
+
+    event = ScanEvent(
+        tenant_id=tenant_id,
+        public_id=public_id,
+        scan_time=scan_time,
+        is_valid_visit=is_valid_visit,
+    )
+    db.add(event)
+    await db.flush()
+    return event
