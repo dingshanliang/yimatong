@@ -35,6 +35,7 @@ class RetrospectiveRead(BaseModel):
     completed_at: datetime | None = None
     completed_by: uuid.UUID | None = None
     supplementary_notes: str | None = None
+    ops_task_id: uuid.UUID | None = None
     created_at: datetime
     updated_at: datetime
 

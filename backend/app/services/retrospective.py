@@ -21,6 +21,7 @@ from app.constants.retrospective import (
 )
 from app.models.launch import LaunchRelease
 from app.models.retrospective import Retrospective
+from app.models.tenant import OpsTask, OpsTaskPriority, OpsTaskStatus
 from app.services.pilot_scorecard import build_scorecard
 
 logger = logging.getLogger(__name__)
@@ -91,22 +92,44 @@ async def _generate_one(
 
     try:
         async with db.begin_nested():
-            db.add(
-                Retrospective(
-                    tenant_id=tenant_id,
-                    period_day=period_day,
-                    window_start=window_start,
-                    window_end=window_end,
-                    next_review_date=next_review_date,
-                    status=RetrospectiveStatus.PENDING,
-                    scorecard_snapshot=scorecard,
-                )
+            retro = Retrospective(
+                tenant_id=tenant_id,
+                period_day=period_day,
+                window_start=window_start,
+                window_end=window_end,
+                next_review_date=next_review_date,
+                status=RetrospectiveStatus.PENDING,
+                scorecard_snapshot=scorecard,
             )
+            db.add(retro)
+            await db.flush()
+            # 同事务创建关联 OpsTask 提醒入口（PRD §4.2/§6.3）：
+            # OpsTask 仅作工作台待办提醒，不承载复盘数据。
+            task = _build_reminder_ops_task(tenant_id, period_day, next_review_date)
+            db.add(task)
+            await db.flush()
+            retro.ops_task_id = task.id
             await db.flush()
     except IntegrityError:
         # 并发对手已生成同期复盘，等价于 no-op
         return False
     return True
+
+
+def _build_reminder_ops_task(tenant_id: uuid.UUID, period_day: int, next_review_date: date) -> OpsTask:
+    """构造复盘提醒 OpsTask（镜像 ops.py 字段集）。
+
+    assigned_to 留空：当前无租户→代运营负责人的直接映射，待代运营认领
+    （负责人路由见后续票）。due_date 对齐 next_review_date（PRD §6.1 逾期口径）。
+    """
+    return OpsTask(
+        tenant_id=tenant_id,
+        title=f"试点复盘第{period_day}天待填写",
+        description=f"请完成上线后第 {period_day} 天的试点复盘（里程碑/漏斗数据已预填）。",
+        priority=OpsTaskPriority.medium,
+        due_date=datetime.combine(next_review_date, datetime.min.time(), tzinfo=UTC),
+        assigned_to=None,  # 待代运营认领（负责人路由见后续票）
+    )
 
 
 async def generate_for_tenant(db: AsyncSession, tenant_id: uuid.UUID, now: datetime | None = None) -> int:
@@ -209,8 +232,42 @@ async def complete_retrospective(
     retro.completed_by = actor_id
     if supplementary_notes is not None:
         retro.supplementary_notes = supplementary_notes
+    # 提醒闭环：关联 OpsTask 同步置 completed（仅当非终态，PRD §4.2）
+    await _complete_linked_ops_task(db, retro.ops_task_id, retro.tenant_id, actor_id)
     await db.flush()
     return retro
+
+
+async def _complete_linked_ops_task(
+    db: AsyncSession,
+    ops_task_id: uuid.UUID | None,
+    tenant_id: uuid.UUID,
+    actor_id: uuid.UUID | None,
+) -> None:
+    """把关联 OpsTask 置 completed（若存在且非终态）并留审计。
+
+    complete_retrospective 由人工触发（有 actor_id），故 OpsTask 状态变更需审计
+    （与 ops.py 的 ops_task_updated 审计对齐）。
+    """
+    if ops_task_id is None:
+        return
+    task = await db.get(OpsTask, ops_task_id)
+    if task is None or task.status in (OpsTaskStatus.completed, OpsTaskStatus.cancelled):
+        return
+    before = task.status
+    task.status = OpsTaskStatus.completed
+    # 审计：人工完成复盘时同步关闭提醒任务
+    if actor_id is not None:
+        from app.services.audit import write_audit_log
+
+        await write_audit_log(
+            db,
+            str(actor_id),
+            str(tenant_id),
+            "ops_task_updated",
+            f"ops_task:{task.id}",
+            {"before": {"status": before.value}, "after": {"status": "completed"}, "source": "retrospective_complete"},
+        )
 
 
 async def update_retrospective(

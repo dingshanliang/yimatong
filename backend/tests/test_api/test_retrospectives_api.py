@@ -71,6 +71,7 @@ async def test_list_200_with_retros(client, db):
     assert data[0]["status"] == "pending"
     assert "derived_status" in data[0]
     assert data[0]["scorecard_snapshot"] == {"window_days": 7}
+    assert "ops_task_id" in data[0]
 
 
 @pytest.mark.asyncio

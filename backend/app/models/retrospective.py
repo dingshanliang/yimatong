@@ -57,6 +57,8 @@ class Retrospective(Base):
     completed_by: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("accounts.id"), nullable=True)
     # 完成后追加的补充说明（快照冻结后唯一可写字段）
     supplementary_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # 关联的 OpsTask 提醒入口（PRD §4.2/§6.3：OpsTask 仅作提醒，不承载复盘数据）
+    ops_task_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("ops_tasks.id"), nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False

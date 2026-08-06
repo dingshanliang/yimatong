@@ -32,7 +32,7 @@ async def test_generate_skips_unlaunched_tenant(db):
 
 @pytest.mark.asyncio
 async def test_generate_creates_due_periods(db):
-    """上线后第 7/14/30 天到期即生成对应期次。"""
+    """上线后第 7/14/30 天到期即生成对应期次，每期关联 OpsTask。"""
     launched = datetime(2026, 7, 1, tzinfo=UTC)
     tenant_id = await seed_pilot_tenant(db)
     await seed_pilot_launch_release(db, tenant_id, launched_at=launched)
@@ -42,12 +42,55 @@ async def test_generate_creates_due_periods(db):
     assert count == 1
     retros = await list_retrospectives(db, tenant_id)
     assert [r.period_day for r in retros] == [7]
+    assert retros[0].ops_task_id is not None  # 关联 OpsTask 已创建
 
     # 上线后 20 天：第 14 天也到期（第 7 天已存在，幂等）
     count = await generate_for_tenant(db, tenant_id, now=launched + timedelta(days=20))
     assert count == 1  # 只新增第 14 天
     retros = await list_retrospectives(db, tenant_id)
     assert [r.period_day for r in retros] == [7, 14]
+    assert all(r.ops_task_id is not None for r in retros)
+
+
+@pytest.mark.asyncio
+async def test_generate_creates_linked_ops_task(db):
+    """生成的 OpsTask：due_date=next_review_date、status=pending、tenant 一致。"""
+    from app.models.tenant import OpsTask, OpsTaskStatus
+
+    launched = datetime(2026, 7, 1, tzinfo=UTC)
+    tenant_id = await seed_pilot_tenant(db)
+    await seed_pilot_launch_release(db, tenant_id, launched_at=launched)
+    await generate_for_tenant(db, tenant_id, now=launched + timedelta(days=10))
+
+    retro = (await list_retrospectives(db, tenant_id))[0]
+    assert retro.ops_task_id is not None
+    task = await db.get(OpsTask, retro.ops_task_id)
+    assert task is not None
+    assert task.tenant_id == tenant_id
+    assert task.status == OpsTaskStatus.pending
+    assert "第7天" in task.title
+    # due_date 对齐 next_review_date（第 7 天的 next_review = 第 14 天）
+    assert task.due_date is not None
+    assert task.due_date.date() == retro.next_review_date
+
+
+@pytest.mark.asyncio
+async def test_generate_idempotent_does_not_duplicate_ops_task(db):
+    """重复生成不重复创建 OpsTask（幂等）。"""
+    from sqlalchemy import select
+
+    from app.models.tenant import OpsTask
+
+    launched = datetime(2026, 7, 1, tzinfo=UTC)
+    tenant_id = await seed_pilot_tenant(db)
+    await seed_pilot_launch_release(db, tenant_id, launched_at=launched)
+    now = launched + timedelta(days=10)
+
+    await generate_for_tenant(db, tenant_id, now=now)
+    await generate_for_tenant(db, tenant_id, now=now)
+
+    tasks = (await db.execute(select(OpsTask).where(OpsTask.tenant_id == tenant_id))).scalars().all()
+    assert len(tasks) == 1
 
 
 @pytest.mark.asyncio
@@ -111,6 +154,12 @@ async def test_complete_retrospective_freezes_snapshot(db):
     assert updated.issues == "转化率偏低"
     # 快照未变（冻结）
     assert updated.scorecard_snapshot == snapshot_before
+    # 提醒闭环：关联 OpsTask 同步 completed（PRD §4.2）
+    from app.models.tenant import OpsTask, OpsTaskStatus
+
+    task = await db.get(OpsTask, updated.ops_task_id)
+    assert task is not None
+    assert task.status == OpsTaskStatus.completed
 
 
 @pytest.mark.asyncio

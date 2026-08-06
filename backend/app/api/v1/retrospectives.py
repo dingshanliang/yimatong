@@ -41,6 +41,7 @@ def _serialize(retro, now: datetime) -> RetrospectiveRead:
         completed_at=retro.completed_at,
         completed_by=retro.completed_by,
         supplementary_notes=retro.supplementary_notes,
+        ops_task_id=retro.ops_task_id,
         created_at=retro.created_at,
         updated_at=retro.updated_at,
     )
