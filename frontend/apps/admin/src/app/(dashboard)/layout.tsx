@@ -35,6 +35,7 @@ import {
   UserAddOutlined,
   ShopOutlined,
   CheckSquareOutlined,
+  RocketOutlined,
   RobotOutlined,
   GlobalOutlined,
   MoonOutlined,
@@ -94,7 +95,10 @@ const MENU_OPEN_KEY_RULES = [
     key: "integrations-group",
     prefixes: ["/connectors", "/integrations", "/imports", "/crm-sync"],
   },
-  { key: "governance-group", prefixes: ["/risk", "/launch-checklist"] },
+  {
+    key: "governance-group",
+    prefixes: ["/risk", "/launch-checklist", "/pilot"],
+  },
   { key: "settings-group", prefixes: ["/settings", "/i18n"] },
 ];
 
@@ -122,6 +126,7 @@ const MENU_PERMISSIONS: Record<TenantType, MenuPolicy> = {
       "/products",
       "/codes",
       "/launch-checklist",
+      "/pilot",
       "/analytics",
       "/exports",
       "settings-group",
@@ -346,6 +351,11 @@ function DashboardInner({ children }: { children: React.ReactNode }) {
           key: "/launch-checklist",
           icon: <CheckSquareOutlined />,
           label: t("menu.launch-checklist"),
+        },
+        {
+          key: "/pilot",
+          icon: <RocketOutlined />,
+          label: t("menu.pilot"),
         },
       ],
     },

@@ -42,6 +42,7 @@ const zhCN: Record<string, string> = {
   "menu.audit-logs": "操作日志",
   "menu.agency": "代运营",
   "menu.launch-checklist": "上线检查",
+  "menu.pilot": "试点复盘",
   "menu.i18n": "多语言管理",
 
   // 通用

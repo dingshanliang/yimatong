@@ -42,6 +42,7 @@ const enUS: Record<string, string> = {
   "menu.audit-logs": "Audit Logs",
   "menu.agency": "Agency",
   "menu.launch-checklist": "Launch Checklist",
+  "menu.pilot": "Pilot Review",
   "menu.i18n": "Translations",
 
   // Common
