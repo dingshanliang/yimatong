@@ -7,7 +7,14 @@ from httpx import ASGITransport, AsyncClient
 
 from app.core.database import get_db
 from app.main import app
-from app.models.tenant import AgencyAuthorization, AgencyAuthStatus
+from app.middleware.tenant import TenantScopeMiddleware
+from app.models.tenant import (
+    AgencyAuthorization,
+    AgencyAuthStatus,
+    Tenant,
+    TenantStatus,
+    TenantType,
+)
 from app.utils.security import create_access_token
 
 
@@ -26,6 +33,96 @@ async def client(db):
 def _headers(tenant_id, account_id, role="admin"):
     token = create_access_token(str(tenant_id), str(account_id), role, tenant_type="brand")
     return {"Authorization": f"Bearer {token}"}
+
+
+async def _seed_agency_world(db, agency_tenant_id, client_tenant_id, granted_by_account_id, scope):
+    """补齐 acting-context 校验所需的两条 active Tenant + 一条 active 授权。"""
+    db.add(
+        Tenant(
+            id=agency_tenant_id,
+            name="测试代运营",
+            slug=f"agency-{agency_tenant_id.hex[:8]}",
+            status=TenantStatus.active,
+            tenant_type=TenantType.agency,
+        )
+    )
+    # launch_facts 只造了 client 业务事实（PageTemplate/Campaign/...），没造 Tenant 行；
+    # 中间件的双租户 active 校验需要它存在。
+    existing_client = await db.get(Tenant, client_tenant_id)
+    if existing_client is None:
+        db.add(
+            Tenant(
+                id=client_tenant_id,
+                name="测试品牌客户",
+                slug=f"client-{client_tenant_id.hex[:8]}",
+                status=TenantStatus.active,
+                tenant_type=TenantType.brand,
+            )
+        )
+    await db.flush()
+    auth = AgencyAuthorization(
+        agency_tenant_id=agency_tenant_id,
+        client_tenant_id=client_tenant_id,
+        scope=list(scope),
+        status=AgencyAuthStatus.active,
+        granted_by=granted_by_account_id,
+    )
+    db.add(auth)
+    await db.flush()
+    return auth
+
+
+def _patch_acting_authorization(monkeypatch, db):
+    """复刻生产 _load_acting_authorization 的语义，但查测试 db（同引擎）。
+
+    生产逻辑（app/middleware/tenant.py:_load_acting_authorization）：授权存在 + 未过期 +
+    双租户 active → 返回 scope 列表；否则 None。这里查同一份测试数据。
+    """
+
+    async def _load(_self, agency_tenant_id, client_tenant_id):
+        from datetime import UTC, datetime
+
+        from sqlalchemy import select
+
+        authorization = (
+            await db.execute(
+                select(AgencyAuthorization).where(
+                    AgencyAuthorization.agency_tenant_id == uuid.UUID(str(agency_tenant_id)),
+                    AgencyAuthorization.client_tenant_id == uuid.UUID(str(client_tenant_id)),
+                    AgencyAuthorization.status == AgencyAuthStatus.active,
+                )
+            )
+        ).scalar_one_or_none()
+        if authorization is None:
+            return None
+        expires_at = authorization.expires_at
+        if expires_at is not None:
+            if expires_at.tzinfo is None:
+                expires_at = expires_at.replace(tzinfo=UTC)
+            if expires_at <= datetime.now(UTC):
+                return None
+        statuses = dict(
+            (
+                await db.execute(
+                    select(Tenant.id, Tenant.status).where(
+                        Tenant.id.in_(
+                            [
+                                uuid.UUID(str(agency_tenant_id)),
+                                uuid.UUID(str(client_tenant_id)),
+                            ]
+                        )
+                    )
+                )
+            ).all()
+        )
+        if (
+            statuses.get(uuid.UUID(str(agency_tenant_id))) != TenantStatus.active
+            or statuses.get(uuid.UUID(str(client_tenant_id))) != TenantStatus.active
+        ):
+            return None
+        return list(authorization.scope)
+
+    monkeypatch.setattr(TenantScopeMiddleware, "_load_acting_authorization", _load)
 
 
 @pytest.mark.anyio
@@ -124,23 +221,19 @@ async def test_pause_blocks_consumer_page_until_brand_resumes(client, launch_fac
 
 
 @pytest.mark.anyio
-async def test_agency_publish_requires_explicit_release_scope(client, db, launch_facts):
+async def test_agency_publish_requires_explicit_release_scope(client, db, launch_facts, monkeypatch):
     client_tenant_id, brand_account_id, version, campaign, batch = launch_facts
-    agency_tenant_id = uuid.UUID("00000000-0000-0000-0000-000000000777")
-    agency_account_id = uuid.UUID("00000000-0000-0000-0000-000000000778")
-    authorization = AgencyAuthorization(
-        agency_tenant_id=agency_tenant_id,
-        client_tenant_id=client_tenant_id,
-        scope=["pages"],
-        status=AgencyAuthStatus.active,
-        granted_by=brand_account_id,
-    )
-    db.add(authorization)
-    await db.flush()
+    agency_tenant_id = uuid.uuid4()
+    agency_account_id = uuid.uuid4()
+    # 补齐 acting-context 校验所需的两条 active Tenant + active 授权（生产逻辑要求双租户
+    # 都 active），并 monkeypatch middleware 改用同一测试 db 查（单连接 SQLite 测试里
+    # async_session_factory 是另一个引擎，看不到 fixture 数据）。
+    authorization = await _seed_agency_world(db, agency_tenant_id, client_tenant_id, brand_account_id, ["pages"])
+    _patch_acting_authorization(monkeypatch, db)
 
     agency_token = create_access_token(
-        agency_tenant_id,
-        agency_account_id,
+        str(agency_tenant_id),
+        str(agency_account_id),
         "operator",
         tenant_type="agency",
         extra={"acting_tenant_id": str(client_tenant_id), "scope": ["pages"]},

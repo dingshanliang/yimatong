@@ -58,10 +58,14 @@ async def setup_tenant(client: AsyncClient):
     tid = resp.json()["id"]
     token = create_access_token(tid, "00000000-0000-0000-0000-000000000001", "admin")
     headers = {"Authorization": f"Bearer {token}"}
+    # enabled_features 必须走平台 admin 的 /tenants/{id}：自助 /tenants/me 的
+    # TenantUpdateSelf schema 故意不含 enabled_features（品牌方不能自助开付费
+    # feature），用租户 Bearer 调 /me 会被 Pydantic 静默丢弃，导致 require_store_enabled
+    # 后续读到 False 返回 403。
     feature_resp = await client.patch(
-        "/api/v1/tenants/me",
+        f"/api/v1/tenants/{tid}",
         json={"enabled_features": {"channel_store": True}},
-        headers=headers,
+        headers=_platform_admin_headers(),
     )
     assert feature_resp.status_code == 200
 

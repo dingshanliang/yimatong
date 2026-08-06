@@ -56,14 +56,12 @@ async def setup_tenant(client: AsyncClient):
     tid = resp.json()["id"]
     # tenant token for brand/product creation
     tenant_token = create_access_token(tid, "00000000-0000-0000-0000-000000000001", "admin", tenant_type="brand")
-    # ops token for ops endpoints
-    ops_token = create_access_token(
-        "00000000-0000-0000-0000-000000000000",
-        "00000000-0000-0000-0000-000000000001",
-        "platform_admin",
-        tenant_type="platform",
-    )
-    return tid, {"Authorization": f"Bearer {tenant_token}"}, {"Authorization": f"Bearer {ops_token}"}
+    # ops endpoints 走平台后台，平台认证边界是 cookie-only（见 TenantScopeMiddleware：
+    # /api/v1/ops 路径只在带 platform_access_token cookie 时才走平台认证分支）。不能用
+    # Bearer 承载 platform_admin —— 会被当成租户账户找不到，返回 401。复用同文件
+    # _platform_admin_headers() 造的 cookie 形式（满足 get_ops_user 对平台 principal 的
+    # 四元组强校验：role/account_id/tenant_id/auth_method）。
+    return tid, {"Authorization": f"Bearer {tenant_token}"}, _platform_admin_headers()
 
 
 class TestLaunchChecklist:
