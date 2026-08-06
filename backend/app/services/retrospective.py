@@ -1,0 +1,319 @@
+"""试点复盘生成与状态机服务（beads: yimatong-bgag.2，PRD pilot-learning-retrospective §4.2/§4.3/§6.1/§7）。
+
+- poller 跨租户幂等生成到期复盘（7/14/30 天）。
+- 状态机：pending → completed；overdue 为计算态（不落库）。
+- 完成后快照冻结，只允许追加 supplementary_notes。
+"""
+
+import logging
+import uuid
+from datetime import UTC, date, datetime, timedelta
+
+from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.constants.retrospective import (
+    RETO_STATE_OVERDUE,
+    RETO_STATE_OVERDUE_COMPLETED,
+    RETRO_PERIOD_DAYS,
+    RetrospectiveStatus,
+)
+from app.models.launch import LaunchRelease
+from app.models.retrospective import Retrospective
+from app.services.pilot_scorecard import build_scorecard
+
+logger = logging.getLogger(__name__)
+
+
+def _ensure_aware(dt: datetime) -> datetime:
+    """SQLite 往返会把 tz-aware datetime 读回为 naive；统一补 UTC 再做比较/算术。"""
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=UTC)
+    return dt
+
+
+async def _first_launched_at(db: AsyncSession, tenant_id: uuid.UUID) -> datetime | None:
+    """取该租户最早的 launched_at（首次正式上线）。"""
+    result = await db.execute(
+        select(LaunchRelease.launched_at)
+        .where(
+            LaunchRelease.tenant_id == tenant_id,
+            LaunchRelease.launched_at.is_not(None),
+        )
+        .order_by(LaunchRelease.launched_at.asc())
+        .limit(1)
+    )
+    return result.scalar_one_or_none()
+
+
+def _due_periods(launched_at: datetime, now: datetime) -> list[tuple[int, datetime, datetime, date]]:
+    """计算已到期的期次：(period_day, window_start, window_end, next_review_date)。
+
+    window = [launched_at, launched_at + period_day]；到期即 now >= window_end。
+    next_review_date 默认下一期复盘日（或最后一期后 +30 天）。
+    """
+    due: list[tuple[int, datetime, datetime, date]] = []
+    for i, period in enumerate(RETRO_PERIOD_DAYS):
+        window_end = launched_at + timedelta(days=period)
+        if now < window_end:
+            continue
+        # 下一期复盘日
+        next_idx = i + 1
+        if next_idx < len(RETRO_PERIOD_DAYS):
+            next_review = (launched_at + timedelta(days=RETRO_PERIOD_DAYS[next_idx])).date()
+        else:
+            # 最后一期（30 天）后默认 +30 天
+            next_review = (window_end + timedelta(days=30)).date()
+        due.append((period, launched_at, window_end, next_review))
+    return due
+
+
+async def _generate_one(
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    period_day: int,
+    window_start: datetime,
+    window_end: datetime,
+    next_review_date: date,
+) -> bool:
+    """幂等生成单期复盘。已存在则 no-op。返回是否新建。"""
+    existing = await db.execute(
+        select(Retrospective.id).where(
+            Retrospective.tenant_id == tenant_id,
+            Retrospective.period_day == period_day,
+        )
+    )
+    if existing.scalar_one_or_none() is not None:
+        return False
+
+    scorecard = await build_scorecard(db, tenant_id, window_start, window_end)
+
+    try:
+        async with db.begin_nested():
+            db.add(
+                Retrospective(
+                    tenant_id=tenant_id,
+                    period_day=period_day,
+                    window_start=window_start,
+                    window_end=window_end,
+                    next_review_date=next_review_date,
+                    status=RetrospectiveStatus.PENDING,
+                    scorecard_snapshot=scorecard,
+                )
+            )
+            await db.flush()
+    except IntegrityError:
+        # 并发对手已生成同期复盘，等价于 no-op
+        return False
+    return True
+
+
+async def generate_for_tenant(db: AsyncSession, tenant_id: uuid.UUID, now: datetime | None = None) -> int:
+    """为单租户生成所有到期复盘。返回新生成数量。"""
+    now = now or datetime.now(UTC)
+    launched_at = await _first_launched_at(db, tenant_id)
+    if launched_at is None:
+        # 从未上线不生成（PRD §4.2 Failure）
+        return 0
+    launched_at = _ensure_aware(launched_at)
+
+    created = 0
+    for period, w_start, w_end, next_review in _due_periods(launched_at, now):
+        if await _generate_one(db, tenant_id, period, w_start, w_end, next_review):
+            created += 1
+    return created
+
+
+async def generate_due_retrospectives() -> int:
+    """Poller 入口：跨租户扫描已上线租户，生成到期复盘。
+
+    使用 bootstrap_tenant_keys（control session + bypass）取 (tenant_id,) 对，
+    每租户开 fresh session + set_session_tenant_context 后调用 generate_for_tenant。
+    """
+    from app.core.database import (
+        async_session_factory,
+        bootstrap_tenant_keys,
+        set_session_tenant_context,
+    )
+    from app.models.tenant import Tenant, TenantStatus
+
+    # 取所有 active 租户 id（跨租户 control session）。
+    # bootstrap_tenant_keys 要求 2 列 (object_id, tenant_id)；对 tenants 表二者同为 id。
+    async with async_session_factory() as bootstrap_db:
+        work_keys = await bootstrap_tenant_keys(
+            bootstrap_db,
+            select(Tenant.id, Tenant.id).where(Tenant.status == TenantStatus.active).order_by(Tenant.id).limit(1000),
+        )
+    tenant_ids = [tid for _, tid in work_keys]
+
+    total = 0
+    for tenant_id in tenant_ids:
+        try:
+            async with async_session_factory() as db:
+                await set_session_tenant_context(db, tenant_id)
+                # 仅处理已上线租户（generate_for_tenant 内部判断）
+                total += await generate_for_tenant(db, tenant_id)
+                await db.commit()
+        except Exception:
+            logger.exception("Failed to generate retrospectives for tenant %s", tenant_id)
+    logger.info("Retrospective generation completed: %s created", total)
+    return total
+
+
+async def complete_retrospective(
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    retro_id: uuid.UUID,
+    *,
+    issues: str | None = None,
+    actions: list[dict] | None = None,
+    next_review_date: date | None = None,
+    goal: str | None = None,
+    actor_id: uuid.UUID | None = None,
+    supplementary_notes: str | None = None,
+) -> Retrospective | None:
+    """状态机 pending → completed。
+
+    完成后快照冻结：scorecard_snapshot 不可改。允许写 issues/actions/goal/
+    next_review_date/supplementary_notes。
+    """
+    result = await db.execute(
+        select(Retrospective).where(
+            Retrospective.tenant_id == tenant_id,
+            Retrospective.id == retro_id,
+        )
+    )
+    retro = result.scalar_one_or_none()
+    if retro is None:
+        return None
+    if retro.status == RetrospectiveStatus.COMPLETED:
+        # 已完成：只允许追加 supplementary_notes（PRD §6.1）
+        if supplementary_notes is not None:
+            existing = retro.supplementary_notes or ""
+            joined = existing + "\n" + supplementary_notes if existing else supplementary_notes
+            retro.supplementary_notes = joined.strip()
+            await db.flush()
+        return retro
+
+    if issues is not None:
+        retro.issues = issues
+    if actions is not None:
+        retro.actions = actions
+    if next_review_date is not None:
+        retro.next_review_date = next_review_date
+    if goal is not None:
+        retro.goal = goal
+    retro.status = RetrospectiveStatus.COMPLETED
+    retro.completed_at = datetime.now(UTC)
+    retro.completed_by = actor_id
+    if supplementary_notes is not None:
+        retro.supplementary_notes = supplementary_notes
+    await db.flush()
+    return retro
+
+
+async def update_retrospective(
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    retro_id: uuid.UUID,
+    *,
+    goal: str | None = None,
+    issues: str | None = None,
+    actions: list[dict] | None = None,
+    next_review_date: date | None = None,
+    supplementary_notes: str | None = None,
+    mark_completed: bool = False,
+    actor_id: uuid.UUID | None = None,
+) -> Retrospective | None:
+    """更新复盘字段（状态感知，PRD §6.1）。
+
+    - mark_completed=True：走 complete_retrospective（pending→completed，快照冻结）。
+    - 已完成：仅允许追加 supplementary_notes（委托 complete_retrospective 的完成分支）。
+    - pending 编辑：可改 goal/issues/actions/next_review_date（不推进状态）。
+      用 begin_nested + 状态重检防止并发完成导致越过冻结边界。
+    """
+    if mark_completed:
+        return await complete_retrospective(
+            db,
+            tenant_id,
+            retro_id,
+            issues=issues,
+            actions=actions,
+            next_review_date=next_review_date,
+            goal=goal,
+            actor_id=actor_id,
+            supplementary_notes=supplementary_notes,
+        )
+
+    result = await db.execute(
+        select(Retrospective).where(
+            Retrospective.tenant_id == tenant_id,
+            Retrospective.id == retro_id,
+        )
+    )
+    retro = result.scalar_one_or_none()
+    if retro is None:
+        return None
+
+    if retro.status == RetrospectiveStatus.COMPLETED:
+        # 已完成：只允许追加 supplementary_notes
+        if supplementary_notes is not None:
+            return await complete_retrospective(db, tenant_id, retro_id, supplementary_notes=supplementary_notes)
+        return retro
+
+    # pending 编辑：begin_nested 内改字段，重检状态防并发完成越界
+    try:
+        async with db.begin_nested():
+            if goal is not None:
+                retro.goal = goal
+            if issues is not None:
+                retro.issues = issues
+            if actions is not None:
+                retro.actions = actions
+            if next_review_date is not None:
+                retro.next_review_date = next_review_date
+            await db.flush()
+            # 重检：并发对手若刚完成，则放弃本次编辑
+            await db.refresh(retro, attribute_names=["status"])
+            if retro.status == RetrospectiveStatus.COMPLETED:
+                raise IntegrityError("concurrent completion", params=None, orig=None)
+    except IntegrityError:
+        # 并发完成：编辑回退，按完成态只追加 supplementary_notes
+        if supplementary_notes is not None:
+            return await complete_retrospective(db, tenant_id, retro_id, supplementary_notes=supplementary_notes)
+    return retro
+
+
+def _derived_status(retro: Retrospective, now: datetime) -> str:
+    """根据 now vs next_review_date 派生展示状态（不落库）。"""
+    if retro.status == RetrospectiveStatus.COMPLETED:
+        # 完成时间晚于 next_review_date → 逾期完成
+        if retro.completed_at is not None and retro.completed_at.date() > retro.next_review_date:
+            return RETO_STATE_OVERDUE_COMPLETED
+        return RetrospectiveStatus.COMPLETED.value
+    # pending：超过 next_review_date → 逾期
+    if now.date() > retro.next_review_date:
+        return RETO_STATE_OVERDUE
+    return RetrospectiveStatus.PENDING.value
+
+
+async def list_retrospectives(
+    db: AsyncSession, tenant_id: uuid.UUID, now: datetime | None = None
+) -> list[Retrospective]:
+    """读取本租户所有复盘（按期次升序）。"""
+    now = now or datetime.now(UTC)
+    result = await db.execute(
+        select(Retrospective).where(Retrospective.tenant_id == tenant_id).order_by(Retrospective.period_day.asc())
+    )
+    return list(result.scalars().all())
+
+
+async def get_retrospective(db: AsyncSession, tenant_id: uuid.UUID, retro_id: uuid.UUID) -> Retrospective | None:
+    result = await db.execute(
+        select(Retrospective).where(
+            Retrospective.tenant_id == tenant_id,
+            Retrospective.id == retro_id,
+        )
+    )
+    return result.scalar_one_or_none()

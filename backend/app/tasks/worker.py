@@ -218,6 +218,21 @@ async def poll_benefit_delivery_retries() -> int:
     return count
 
 
+async def poll_retrospective_generation() -> int:
+    """周期性生成试点到期复盘（beads: yimatong-bgag.2，PRD §4.2）。
+
+    跨租户幂等扫描已上线租户的第 7/14/30 天到期复盘。详见
+    app.services.retrospective.generate_due_retrospectives。
+    """
+    from app.services.retrospective import generate_due_retrospectives
+
+    try:
+        return await generate_due_retrospectives()
+    except Exception:
+        logger.exception("Retrospective generation poll error")
+        return 0
+
+
 async def cleanup_old_deliveries() -> int:
     """Archive a bounded batch of still-terminal, still-expired deliveries."""
     from app.core.database import async_session_factory, bootstrap_tenant_keys, set_session_tenant_context
@@ -320,6 +335,11 @@ async def worker_loop() -> None:
                 await cleanup_old_deliveries()
             except Exception:
                 logger.exception("Cleanup error")
+            # 同时触发试点到期复盘生成（beads: yimatong-bgag.2）
+            try:
+                await poll_retrospective_generation()
+            except Exception:
+                logger.exception("Retrospective generation error")
 
 
 def run_worker() -> None:

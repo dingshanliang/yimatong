@@ -62,6 +62,7 @@ from app.models.regional import (  # noqa: E402, F401
     RegionalTemplate,
     WhitelabelConfig,
 )
+from app.models.retrospective import Retrospective  # noqa: E402, F401
 from app.models.risk import (  # noqa: E402, F401
     CampaignRiskRule,
     InterceptionRecord,

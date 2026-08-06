@@ -34,6 +34,9 @@ async def get_conversion_funnel(
     db: AsyncSession,
     tenant_id: uuid.UUID,
     days_back: int = 30,
+    *,
+    window_start: datetime | None = None,
+    window_end: datetime | None = None,
 ) -> dict:
     """yimatong-zgb1.14 AC1：7 层转化漏斗（有效访问/参与意图/权益确认/企微确认/订单/退款/净额）。
 
@@ -44,18 +47,26 @@ async def get_conversion_funnel(
     - 订单（order_amount）：external_orders.amount 求和（1.13 修复，引用 amount 而非 order_amount）
     - 退款（refund_amount）：external_orders.refund_amount 求和（1.13 引入）
     - 净额（net_amount）：order_amount - refund_amount（Decision 30）
-    """
-    today = date.today()
-    start_dt = datetime(today.year, today.month, today.day, tzinfo=UTC) - timedelta(days=days_back)
 
+    窗口：默认 days_back（相对今天）。复盘快照等需要绝对窗口的场景传
+    window_start/window_end，按 [start, end] 闭区间统计（beads: yimatong-bgag.3）。
+    """
+    if window_start is not None and window_end is not None:
+        start_dt = window_start
+        end_dt = window_end
+    else:
+        today = date.today()
+        start_dt = datetime(today.year, today.month, today.day, tzinfo=UTC) - timedelta(days=days_back)
+        end_dt = None
     # 1. 有效访问（is_valid_visit=true，排除 robot/失败）
-    valid_visit_result = await db.execute(
-        select(func.count()).where(
-            ScanEvent.tenant_id == tenant_id,
-            ScanEvent.scan_time >= start_dt,
-            ScanEvent.is_valid_visit.is_(True),
-        )
-    )
+    visit_filters = [
+        ScanEvent.tenant_id == tenant_id,
+        ScanEvent.scan_time >= start_dt,
+        ScanEvent.is_valid_visit.is_(True),
+    ]
+    if end_dt is not None:
+        visit_filters.append(ScanEvent.scan_time <= end_dt)
+    valid_visit_result = await db.execute(select(func.count()).where(*visit_filters))
     valid_visit_count = valid_visit_result.scalar() or 0
 
     # 2. 参与意图（intent_events）
@@ -63,24 +74,26 @@ async def get_conversion_funnel(
     try:
         from app.models.intent_event import IntentEvent
 
-        intent_result = await db.execute(
-            select(func.count()).where(
-                IntentEvent.tenant_id == tenant_id,
-                IntentEvent.occurred_at >= start_dt,
-            )
-        )
+        intent_filters = [
+            IntentEvent.tenant_id == tenant_id,
+            IntentEvent.occurred_at >= start_dt,
+        ]
+        if end_dt is not None:
+            intent_filters.append(IntentEvent.occurred_at <= end_dt)
+        intent_result = await db.execute(select(func.count()).where(*intent_filters))
         intent_count = intent_result.scalar() or 0
     except Exception:
         pass
 
     # 3. 权益确认（BenefitClaim.status=success）
-    claim_result = await db.execute(
-        select(func.count()).where(
-            BenefitClaim.tenant_id == tenant_id,
-            BenefitClaim.created_at >= start_dt,
-            BenefitClaim.status == "success",
-        )
-    )
+    claim_filters = [
+        BenefitClaim.tenant_id == tenant_id,
+        BenefitClaim.created_at >= start_dt,
+        BenefitClaim.status == "success",
+    ]
+    if end_dt is not None:
+        claim_filters.append(BenefitClaim.created_at <= end_dt)
+    claim_result = await db.execute(select(func.count()).where(*claim_filters))
     claim_count = claim_result.scalar() or 0
 
     # 4. 企微确认（WeComExternalContact active + 非 pending）
@@ -88,14 +101,15 @@ async def get_conversion_funnel(
     try:
         from app.models.wecom import WeComExternalContact, WeComExternalContactStatus
 
-        wecom_result = await db.execute(
-            select(func.count()).where(
-                WeComExternalContact.tenant_id == tenant_id,
-                WeComExternalContact.added_at >= start_dt,
-                WeComExternalContact.status == WeComExternalContactStatus.ACTIVE,
-                WeComExternalContact.welcome_code_pending.is_(False),
-            )
-        )
+        wecom_filters = [
+            WeComExternalContact.tenant_id == tenant_id,
+            WeComExternalContact.added_at >= start_dt,
+            WeComExternalContact.status == WeComExternalContactStatus.ACTIVE,
+            WeComExternalContact.welcome_code_pending.is_(False),
+        ]
+        if end_dt is not None:
+            wecom_filters.append(WeComExternalContact.added_at <= end_dt)
+        wecom_result = await db.execute(select(func.count()).where(*wecom_filters))
         wecom_count = wecom_result.scalar() or 0
     except Exception:
         pass
@@ -103,14 +117,17 @@ async def get_conversion_funnel(
     # 5/6/7. 订单/退款/净额（external_orders）
     from app.models.gmv import ExternalOrder
 
+    gmv_filters = [
+        ExternalOrder.tenant_id == tenant_id,
+        ExternalOrder.order_time >= start_dt,
+    ]
+    if end_dt is not None:
+        gmv_filters.append(ExternalOrder.order_time <= end_dt)
     gmv_result = await db.execute(
         select(
             func.coalesce(func.sum(ExternalOrder.amount), 0),
             func.coalesce(func.sum(ExternalOrder.refund_amount), 0),
-        ).where(
-            ExternalOrder.tenant_id == tenant_id,
-            ExternalOrder.order_time >= start_dt,
-        )
+        ).where(*gmv_filters)
     )
     gmv_row = gmv_result.one()
     order_amount = float(gmv_row[0] or 0)

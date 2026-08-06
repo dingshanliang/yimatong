@@ -46,6 +46,7 @@ from app.api.v1.products import asset_router, batch_router, brand_router, produc
 from app.api.v1.public_pages import public_page_router
 from app.api.v1.regional import regional_router
 from app.api.v1.resolver import resolver_router
+from app.api.v1.retrospectives import router as retrospectives_router
 from app.api.v1.risk import risk_router
 from app.api.v1.risk_dashboard import risk_dashboard_router
 from app.api.v1.risk_evaluate import risk_evaluate_router
@@ -335,6 +336,7 @@ app.include_router(agency_switch_router)
 app.include_router(ops_router)
 app.include_router(ops_launch_release_router)
 app.include_router(pilot_milestone_router)
+app.include_router(retrospectives_router)
 app.include_router(risk_router)
 app.include_router(risk_notification_router)
 app.include_router(channel_router)
