@@ -21,7 +21,13 @@ from app.constants.retrospective import (
 )
 from app.models.launch import LaunchRelease
 from app.models.retrospective import Retrospective
-from app.models.tenant import OpsTask, OpsTaskPriority, OpsTaskStatus
+from app.models.tenant import (
+    AgencyAuthorization,
+    AgencyAuthStatus,
+    OpsTask,
+    OpsTaskPriority,
+    OpsTaskStatus,
+)
 from app.schemas.retrospective import ACTION_DISPOSITIONS
 from app.services.pilot_scorecard import build_scorecard
 
@@ -97,6 +103,8 @@ async def _generate_one(
     scorecard = await build_scorecard(db, tenant_id, window_start, window_end)
     # 上期动作承接（PRD §8）：取上一期（period_day 更小的最近一期）未完成动作
     carried_actions = await _carryover_actions_from_previous(db, tenant_id, period_day)
+    # 提醒负责人（PRD §4.2：路由到该租户的代运营 owner）
+    owner_id = await _resolve_agency_owner(db, tenant_id)
 
     try:
         async with db.begin_nested():
@@ -114,7 +122,7 @@ async def _generate_one(
             await db.flush()
             # 同事务创建关联 OpsTask 提醒入口（PRD §4.2/§6.3）：
             # OpsTask 仅作工作台待办提醒，不承载复盘数据。
-            task = _build_reminder_ops_task(tenant_id, period_day, next_review_date)
+            task = _build_reminder_ops_task(tenant_id, period_day, next_review_date, assigned_to=owner_id)
             db.add(task)
             await db.flush()
             retro.ops_task_id = task.id
@@ -123,6 +131,52 @@ async def _generate_one(
         # 并发对手已生成同期复盘，等价于 no-op
         return False
     return True
+
+
+async def _resolve_agency_owner(db: AsyncSession, client_tenant_id: uuid.UUID) -> uuid.UUID | None:
+    """解析该客户租户的代运营负责人（PRD §4.2/§5：OpsTask 提醒负责人路由）。
+
+    PRD §5：代运营人员（agency 侧）生成提醒、填写复盘。AgencyAuthorization.granted_by
+    是授权该代运营的品牌方账号（_require_brand，见 agency_auth.create_authorization），
+    不能作为负责人。本函数取该客户最近一条 active 授权的 agency_tenant_id，再从该
+    代运营租户内找一个 active 的运营负责人（有 campaign:manage 权限的 admin/operator 账号，
+    对齐复盘 PATCH 的权限要求），优先最近登录者；无匹配时返回 None（任务进入待认领池）。
+    """
+    # 1. 取该客户最近一条 active 代运营授权的 agency_tenant_id
+    agency_tenant_id = (
+        await db.execute(
+            select(AgencyAuthorization.agency_tenant_id)
+            .where(
+                AgencyAuthorization.client_tenant_id == client_tenant_id,
+                AgencyAuthorization.status == AgencyAuthStatus.active,
+            )
+            .order_by(AgencyAuthorization.granted_at.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if agency_tenant_id is None:
+        return None
+
+    # 2. 在该代运营租户内找运营负责人（active 账号 + campaign:manage 权限，对齐复盘填写权限）
+    from app.models.tenant import Account, Permission, Role, account_roles, role_permissions
+
+    owner_id = (
+        await db.execute(
+            select(Account.id)
+            .join(account_roles, account_roles.c.account_id == Account.id)
+            .join(Role, Role.id == account_roles.c.role_id)
+            .join(role_permissions, role_permissions.c.role_id == Role.id)
+            .join(Permission, Permission.id == role_permissions.c.permission_id)
+            .where(
+                Account.tenant_id == agency_tenant_id,
+                Account.is_active.is_(True),
+                Permission.code == "campaign:manage",
+            )
+            .order_by(Account.last_login_at.desc().nulls_last(), Account.created_at.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    return owner_id
 
 
 async def _carryover_actions_from_previous(db: AsyncSession, tenant_id: uuid.UUID, period_day: int) -> list[dict]:
@@ -164,11 +218,13 @@ async def _carryover_actions_from_previous(db: AsyncSession, tenant_id: uuid.UUI
     return carried
 
 
-def _build_reminder_ops_task(tenant_id: uuid.UUID, period_day: int, next_review_date: date) -> OpsTask:
+def _build_reminder_ops_task(
+    tenant_id: uuid.UUID, period_day: int, next_review_date: date, *, assigned_to: uuid.UUID | None = None
+) -> OpsTask:
     """构造复盘提醒 OpsTask（镜像 ops.py 字段集）。
 
-    assigned_to 留空：当前无租户→代运营负责人的直接映射，待代运营认领
-    （负责人路由见后续票）。due_date 对齐 next_review_date（PRD §6.1 逾期口径）。
+    assigned_to 路由到该租户的代运营 owner（PRD §4.2，由 _resolve_agency_owner 解析）；
+    无明确 owner 时为 None（待代运营认领）。due_date 对齐 next_review_date（PRD §6.1 逾期口径）。
     """
     return OpsTask(
         tenant_id=tenant_id,
@@ -176,7 +232,7 @@ def _build_reminder_ops_task(tenant_id: uuid.UUID, period_day: int, next_review_
         description=f"请完成上线后第 {period_day} 天的试点复盘（里程碑/漏斗数据已预填）。",
         priority=OpsTaskPriority.medium,
         due_date=datetime.combine(next_review_date, datetime.min.time(), tzinfo=UTC),
-        assigned_to=None,  # 待代运营认领（负责人路由见后续票）
+        assigned_to=assigned_to,
     )
 
 
