@@ -1,4 +1,4 @@
-"""试点里程碑派生与读取服务（beads: yimatong-bgag.1）。
+"""试点里程碑派生与读取服务（beads: yimatong-bgag.1 / bgag.7）。
 
 PRD docs/prd/pilot-learning-retrospective.md §4.1 + §6.2。
 
@@ -11,9 +11,12 @@ uq_pilot_milestones_tenant_type 兜底（begin_nested + IntegrityError 回退为
 - 品牌确认      → LaunchRelease.brand_confirmed_at（取该租户最早的已确认值）
 - 正式上线      → LaunchRelease.launched_at（取该租户最早的已上线值）
 - 首次扫码      → scan_events 中 is_valid_visit=true 的最早 scan_time
-- 首个活动发布  → 当前事实源尚未捕获发布时间戳（change_campaign_status 仅发内存信号、
-                  不落审计，Campaign 无 published_at 列），本版不写入、读取层标记"未达成"。
-                  事实源捕获见后续票（beads follow-up）。
+- 首个活动发布  → Campaign.published_at（change_campaign_status 首次切到 ACTIVE 时写入，
+                  beads: yimatong-bgag.7；取该租户最早的 published_at）
+
+更正机制（PRD §6.2）：correct_milestone 追加一条 PilotMilestoneCorrection，
+不改写 PilotMilestone.achieved_at 原始事实；读取层在存在更正时以最新一条更正后的
+achieved_at 作为展示值并附更正链。
 """
 
 import logging
@@ -30,12 +33,14 @@ from app.constants.pilot import (
     PilotMilestoneStatus,
     PilotMilestoneType,
 )
+from app.models.campaign import Campaign
 from app.models.launch import LaunchRelease
-from app.models.pilot_milestone import PilotMilestone
+from app.models.pilot_milestone import PilotMilestone, PilotMilestoneCorrection
 from app.models.scan import ScanEvent
 from app.models.tenant import Tenant
 from app.schemas.pilot_milestone import (
     DerivedDuration,
+    MilestoneCorrectionItem,
     MilestoneItem,
     MilestoneTimelineResponse,
 )
@@ -147,7 +152,20 @@ async def _gather_derived_facts(
     if first_scan_at is not None:
         facts.append((PilotMilestoneType.FIRST_VALID_SCAN, first_scan_at, "scan_events.first_valid_visit"))
 
-    # 5. 首个活动发布：事实源尚未捕获发布时间戳（见模块 docstring），本版不写入。
+    # 5. 首个活动发布：最早的活动 published_at（beads: yimatong-bgag.7）
+    first_published_at = (
+        await db.execute(
+            select(Campaign.published_at)
+            .where(
+                Campaign.tenant_id == tenant_id,
+                Campaign.published_at.is_not(None),
+            )
+            .order_by(Campaign.published_at.asc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if first_published_at is not None:
+        facts.append((PilotMilestoneType.FIRST_CAMPAIGN_PUBLISHED, first_published_at, "campaigns.published_at"))
 
     return facts
 
@@ -161,27 +179,45 @@ async def list_milestones(db: AsyncSession, tenant_id: uuid.UUID) -> list[PilotM
 
 
 async def build_milestone_timeline(db: AsyncSession, tenant_id: uuid.UUID) -> MilestoneTimelineResponse:
-    """组装里程碑时间线响应：懒派生 + 5 个里程碑 + 派生时长。"""
+    """组装里程碑时间线响应：懒派生 + 5 个里程碑 + 派生时长 + 更正记录。"""
     await derive_and_persist_milestones(db, tenant_id)
 
     rows = await list_milestones(db, tenant_id)
     by_type: dict[PilotMilestoneType, PilotMilestone] = {r.milestone_type: r for r in rows}
 
+    # 更正记录：按 milestone_id 聚合，每里程碑取最新一条作为展示 achieved_at（PRD §6.2）。
+    corrections_by_milestone = await _load_corrections_by_milestone(db, tenant_id)
+    # 更正后的展示值（若有更正，用最新 corrected_at 替换）
+    effective_achieved_at: dict[PilotMilestoneType, datetime] = {
+        mtype: row.achieved_at for mtype, row in by_type.items() if row is not None
+    }
+    for row in by_type.values():
+        corrs = corrections_by_milestone.get(row.id, [])
+        if corrs:
+            # 最新一条（按 created_at 升序加载，最后一条为最新）
+            effective_achieved_at[row.milestone_type] = corrs[-1].corrected_at
+
     items: list[MilestoneItem] = []
     for mtype in PILOT_MILESTONE_ORDER:
         row = by_type.get(mtype)
         if row is not None:
+            corrs = corrections_by_milestone.get(row.id, [])
             items.append(
                 MilestoneItem(
                     type=mtype.value,
                     label=PILOT_MILESTONE_LABELS[mtype],
                     status=PilotMilestoneStatus.ACHIEVED.value,
-                    achieved_at=row.achieved_at,
-                    source=row.source,
+                    # 展示值：有更正取最新更正，否则原始事实（PRD §6.2）
+                    achieved_at=effective_achieved_at[mtype],
+                    source=(corrs[-1].source if corrs else row.source),
+                    # 原始事实始终暴露以供审计（PRD §6.2：原始记录只增不改）
+                    original_achieved_at=row.achieved_at,
+                    original_source=row.source,
+                    corrections=[_correction_to_item(c) for c in corrs],
                 )
             )
         else:
-            # 未达成：事件尚未发生，或事实源尚未捕获（首个活动发布见模块 docstring）
+            # 未达成：事件尚未发生，或事实源尚未捕获
             items.append(
                 MilestoneItem(
                     type=mtype.value,
@@ -192,7 +228,7 @@ async def build_milestone_timeline(db: AsyncSession, tenant_id: uuid.UUID) -> Mi
                 )
             )
 
-    durations = _compute_derived_durations(by_type)
+    durations = _compute_derived_durations(effective_achieved_at)
 
     return MilestoneTimelineResponse(
         tenant_id=tenant_id,
@@ -201,18 +237,85 @@ async def build_milestone_timeline(db: AsyncSession, tenant_id: uuid.UUID) -> Mi
     )
 
 
+async def _load_corrections_by_milestone(
+    db: AsyncSession, tenant_id: uuid.UUID
+) -> dict[uuid.UUID, list[PilotMilestoneCorrection]]:
+    """加载本租户所有里程碑的更正记录，按 (milestone_id → 升序 created_at 列表) 聚合。"""
+    result = await db.execute(
+        select(PilotMilestoneCorrection)
+        .where(PilotMilestoneCorrection.tenant_id == tenant_id)
+        .order_by(PilotMilestoneCorrection.milestone_id, PilotMilestoneCorrection.created_at.asc())
+    )
+    grouped: dict[uuid.UUID, list[PilotMilestoneCorrection]] = {}
+    for corr in result.scalars().all():
+        grouped.setdefault(corr.milestone_id, []).append(corr)
+    return grouped
+
+
+def _correction_to_item(corr: PilotMilestoneCorrection) -> MilestoneCorrectionItem:
+    return MilestoneCorrectionItem(
+        corrected_at=corr.corrected_at,
+        source=corr.source,
+        reason=corr.reason,
+        corrected_by=corr.corrected_by,
+        created_at=corr.created_at,
+    )
+
+
+async def correct_milestone(
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    milestone_type: PilotMilestoneType,
+    corrected_at: datetime,
+    *,
+    reason: str,
+    source: str,
+    corrected_by: uuid.UUID | None = None,
+) -> PilotMilestoneCorrection | None:
+    """追加一条里程碑更正记录（PRD §6.2）。
+
+    不改写 PilotMilestone.achieved_at 原始事实；只追加更正行。读取层在展示时
+    以最新更正为有效值。reason 必填。里程碑不存在则返回 None（无可更正对象）。
+    """
+    if not reason or not reason.strip():
+        raise ValueError("更正记录必须填写原因（PRD §6.2）")
+    row = (
+        await db.execute(
+            select(PilotMilestone.id).where(
+                PilotMilestone.tenant_id == tenant_id,
+                PilotMilestone.milestone_type == milestone_type,
+            )
+        )
+    ).scalar_one_or_none()
+    if row is None:
+        return None
+    correction = PilotMilestoneCorrection(
+        tenant_id=tenant_id,
+        milestone_id=row,
+        milestone_type=milestone_type,
+        corrected_at=corrected_at,
+        source=source,
+        reason=reason.strip(),
+        corrected_by=corrected_by,
+    )
+    db.add(correction)
+    await db.flush()
+    return correction
+
+
 def _compute_derived_durations(
-    by_type: dict[PilotMilestoneType, PilotMilestone],
+    effective_at: dict[PilotMilestoneType, datetime],
 ) -> list[DerivedDuration]:
     """计算派生时长（PRD §4.1：开通→上线、上线→首扫）。
 
-    缺失源数据时为 None 并标记"数据不足"（PRD §4.4 scorecard 口径仅用于派生指标）。
+    用更正后的有效达成时间计算（PRD §6.2），缺失源数据时为 None 并标记"数据不足"
+    （PRD §4.4 scorecard 口径仅用于派生指标）。
     """
 
     def _build(label: str, frm: PilotMilestoneType, to: PilotMilestoneType) -> DerivedDuration:
-        f = by_type.get(frm)
-        t = by_type.get(to)
-        if f is None or t is None or f.achieved_at is None or t.achieved_at is None:
+        f = effective_at.get(frm)
+        t = effective_at.get(to)
+        if f is None or t is None:
             return DerivedDuration(
                 label=label,
                 from_type=frm.value,
@@ -220,7 +323,7 @@ def _compute_derived_durations(
                 seconds=None,
                 status=PilotMilestoneStatus.INSUFFICIENT_DATA.value,
             )
-        delta = (t.achieved_at - f.achieved_at).total_seconds()
+        delta = (t - f).total_seconds()
         return DerivedDuration(
             label=label,
             from_type=frm.value,

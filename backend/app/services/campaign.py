@@ -2,7 +2,7 @@
 
 import logging
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 
 from sqlalchemy import and_, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -213,6 +213,10 @@ async def change_campaign_status(
 
     logger.info("Campaign status changed: campaign_id=%s, %s -> %s", campaign_id, current_status, new_status)
     c.status = new_status
+    # 首次切到 ACTIVE 记录发布时间（里程碑 5 事实源，beads: yimatong-bgag.7）。
+    # 已存在 published_at 不复写（DRAFT→ACTIVE→PAUSED→ACTIVE 只记首次）。
+    if new_status == CampaignStatus.ACTIVE and c.published_at is None:
+        c.published_at = datetime.now(UTC)
     await db.flush()
     await db.refresh(c)
     event_name = f"campaign.{new_status}"
@@ -1020,6 +1024,7 @@ def _campaign_to_dict(
         "end_at": c.end_at,
         "rules_json": c.rules_json,
         "description": c.description,
+        "published_at": c.published_at,
         "created_at": c.created_at,
         "updated_at": c.updated_at,
         "benefit_count": campaign_stats.get("benefit_count", 0),

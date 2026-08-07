@@ -1,6 +1,7 @@
 """活动与权益模型"""
 
 import uuid
+from datetime import datetime
 
 from sqlalchemy import (
     JSON,
@@ -32,6 +33,9 @@ class Campaign(Base):
     end_at: Mapped[str] = mapped_column(String(30), nullable=False)
     rules_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     description: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    # 首次发布时间戳：切到 ACTIVE 时写入一次，不复写（试点里程碑 5 事实源，
+    # beads: yimatong-bgag.7，PRD pilot-learning-retrospective §4.1）。
+    published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[DateTime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
@@ -40,6 +44,7 @@ class Campaign(Base):
     __table_args__ = (
         UniqueConstraint("tenant_id", "name", name="uq_campaign_tenant_name"),
         Index("ix_campaigns_tenant_status", "tenant_id", "status"),
+        Index("ix_campaigns_published_at", "tenant_id", "published_at"),
     )
 
 
