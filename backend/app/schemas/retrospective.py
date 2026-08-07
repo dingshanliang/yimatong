@@ -1,7 +1,8 @@
-"""试点复盘 API schema（beads: yimatong-bgag.2）。"""
+"""试点复盘 API schema（beads: yimatong-bgag.2 / bgag.8）。"""
 
 import uuid
 from datetime import date, datetime
+from typing import Literal
 
 from pydantic import BaseModel
 
@@ -12,11 +13,23 @@ class ScorecardMetric(BaseModel):
     unit: str | None = None
 
 
+# 动作承接处置（PRD §8：上期动作未完成 → 新一期必须显式选择继续/调整/放弃）
+ACTION_DISPOSITION_CONTINUE = "continue"
+ACTION_DISPOSITION_ADJUST = "adjust"
+ACTION_DISPOSITION_ABANDON = "abandon"
+ACTION_DISPOSITIONS = {ACTION_DISPOSITION_CONTINUE, ACTION_DISPOSITION_ADJUST, ACTION_DISPOSITION_ABANDON}
+ActionDisposition = Literal["continue", "adjust", "abandon"]
+
+
 class ActionItem(BaseModel):
     content: str
     owner_id: uuid.UUID | None = None
     due_date: date | None = None
     status: str = "pending"
+    # PRD §8：上期动作承接。carryover=True 表示从上一期复盘顺延而来；
+    # carryover_disposition 必须在完成本期复盘前显式填 continue/adjust/abandon。
+    carryover: bool = False
+    carryover_disposition: ActionDisposition | None = None
 
 
 class RetrospectiveRead(BaseModel):

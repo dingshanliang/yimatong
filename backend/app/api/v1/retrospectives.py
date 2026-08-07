@@ -92,18 +92,22 @@ async def update_retrospective_endpoint(
 
     actions_payload = [a.model_dump(mode="json") for a in body.actions] if body.actions is not None else None
 
-    updated = await update_retrospective(
-        db,
-        tenant_id,
-        retro_id,
-        goal=body.goal,
-        issues=body.issues,
-        actions=actions_payload,
-        next_review_date=body.next_review_date,
-        supplementary_notes=body.supplementary_notes,
-        mark_completed=body.mark_completed,
-        actor_id=account_id,
-    )
+    try:
+        updated = await update_retrospective(
+            db,
+            tenant_id,
+            retro_id,
+            goal=body.goal,
+            issues=body.issues,
+            actions=actions_payload,
+            next_review_date=body.next_review_date,
+            supplementary_notes=body.supplementary_notes,
+            mark_completed=body.mark_completed,
+            actor_id=account_id,
+        )
+    except ValueError as e:
+        # PRD §8：上期承接动作未显式处置 → 409（客户端可修正后重试），非 500
+        raise HTTPException(status_code=409, detail=str(e)) from e
 
     if updated is None:
         raise HTTPException(status_code=404, detail="Retrospective not found")

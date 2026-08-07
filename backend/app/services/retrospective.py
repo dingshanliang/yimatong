@@ -22,6 +22,7 @@ from app.constants.retrospective import (
 from app.models.launch import LaunchRelease
 from app.models.retrospective import Retrospective
 from app.models.tenant import OpsTask, OpsTaskPriority, OpsTaskStatus
+from app.schemas.retrospective import ACTION_DISPOSITIONS
 from app.services.pilot_scorecard import build_scorecard
 
 logger = logging.getLogger(__name__)
@@ -78,7 +79,12 @@ async def _generate_one(
     window_end: datetime,
     next_review_date: date,
 ) -> bool:
-    """幂等生成单期复盘。已存在则 no-op。返回是否新建。"""
+    """幂等生成单期复盘。已存在则 no-op。返回是否新建。
+
+    新一期复盘会承接上一期未完成的动作（PRD §8：上期动作未完成 → 新一期必须
+    显式选择继续/调整/放弃，不允许静默消失）。承接的动作以 carryover=True 标记，
+    carryover_disposition 留空，完成本期复盘前必须显式处置。
+    """
     existing = await db.execute(
         select(Retrospective.id).where(
             Retrospective.tenant_id == tenant_id,
@@ -89,6 +95,8 @@ async def _generate_one(
         return False
 
     scorecard = await build_scorecard(db, tenant_id, window_start, window_end)
+    # 上期动作承接（PRD §8）：取上一期（period_day 更小的最近一期）未完成动作
+    carried_actions = await _carryover_actions_from_previous(db, tenant_id, period_day)
 
     try:
         async with db.begin_nested():
@@ -100,6 +108,7 @@ async def _generate_one(
                 next_review_date=next_review_date,
                 status=RetrospectiveStatus.PENDING,
                 scorecard_snapshot=scorecard,
+                actions=carried_actions,
             )
             db.add(retro)
             await db.flush()
@@ -114,6 +123,45 @@ async def _generate_one(
         # 并发对手已生成同期复盘，等价于 no-op
         return False
     return True
+
+
+async def _carryover_actions_from_previous(db: AsyncSession, tenant_id: uuid.UUID, period_day: int) -> list[dict]:
+    """读取上一期复盘的未完成动作，构造为新一期承接动作（PRD §8）。
+
+    未完成 = status != "completed"。每个承接动作复制内容/owner/due_date，置
+    carryover=True、carryover_disposition=None、status="pending"，等待新一期显式处置。
+    无上一期或上期无未完成动作时返回 []。
+    """
+    prev = (
+        await db.execute(
+            select(Retrospective)
+            .where(
+                Retrospective.tenant_id == tenant_id,
+                Retrospective.period_day < period_day,
+            )
+            .order_by(Retrospective.period_day.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if prev is None:
+        return []
+    carried: list[dict] = []
+    for action in prev.actions or []:
+        if not isinstance(action, dict):
+            continue
+        if action.get("status") == "completed":
+            continue
+        carried.append(
+            {
+                "content": action.get("content", ""),
+                "owner_id": action.get("owner_id"),
+                "due_date": action.get("due_date"),
+                "status": "pending",
+                "carryover": True,
+                "carryover_disposition": None,
+            }
+        )
+    return carried
 
 
 def _build_reminder_ops_task(tenant_id: uuid.UUID, period_day: int, next_review_date: date) -> OpsTask:
@@ -222,11 +270,15 @@ async def complete_retrospective(
     if issues is not None:
         retro.issues = issues
     if actions is not None:
-        retro.actions = actions
+        # PRD §8：不允许承接动作静默消失。调用方若试图用新 actions 列表丢掉尚未处置的
+        # 承接动作，则把这些未处置的承接动作重新挂回，强制其显式处置（含 abandon）。
+        retro.actions = _merge_carryover_on_overwrite(retro.actions or [], actions)
     if next_review_date is not None:
         retro.next_review_date = next_review_date
     if goal is not None:
         retro.goal = goal
+    # PRD §8：上期承接动作必须显式处置（继续/调整/放弃），不允许静默消失。
+    _enforce_carryover_disposition(retro)
     retro.status = RetrospectiveStatus.COMPLETED
     retro.completed_at = datetime.now(UTC)
     retro.completed_by = actor_id
@@ -268,6 +320,47 @@ async def _complete_linked_ops_task(
             f"ops_task:{task.id}",
             {"before": {"status": before.value}, "after": {"status": "completed"}, "source": "retrospective_complete"},
         )
+
+
+def _enforce_carryover_disposition(retro: Retrospective) -> None:
+    """PRD §8：上期承接动作（carryover=True）必须在完成本期复盘前显式处置。
+
+    未处置（carryover_disposition 为空）的承接动作阻断完成，抛 ValueError。
+    合法处置值：continue/adjust/abandon（见 schemas.retrospective.ACTION_DISPOSITIONS）。
+    """
+    pending = []
+    for action in retro.actions or []:
+        if isinstance(action, dict) and action.get("carryover") is True:
+            disposition = action.get("carryover_disposition")
+            if disposition not in ACTION_DISPOSITIONS:
+                pending.append(action.get("content", "(无内容)"))
+    if pending:
+        raise ValueError("存在未显式处置的上期承接动作，必须逐项选择继续/调整/放弃：\n- " + "\n- ".join(pending))
+
+
+def _merge_carryover_on_overwrite(existing: list, incoming: list) -> list:
+    """PRD §8：覆盖 actions 时，未处置的承接动作必须保留，不允许静默丢弃。
+
+    以 (content, owner_id, due_date) 为业务键匹配：incoming 中若未出现某条未处置
+    承接动作（carryover=True 且 carryover_disposition 为空），则把它重新挂回 incoming，
+    强制调用方必须显式处置（含 abandon）才能完成复盘。
+    """
+    if not isinstance(incoming, list):
+        return existing
+
+    def _key(a: dict) -> tuple:
+        return (a.get("content"), str(a.get("owner_id") or ""), str(a.get("due_date") or ""))
+
+    incoming_keys = {_key(a) for a in incoming if isinstance(a, dict) and a.get("carryover") is True}
+    preserved: list = []
+    for a in existing:
+        if not isinstance(a, dict) or a.get("carryover") is not True:
+            continue
+        if a.get("carryover_disposition") in ACTION_DISPOSITIONS:
+            continue  # 已处置，允许 incoming 覆盖/丢弃
+        if _key(a) not in incoming_keys:
+            preserved.append(a)
+    return [*incoming, *preserved]
 
 
 async def update_retrospective(

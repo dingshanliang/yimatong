@@ -194,3 +194,33 @@ async def test_tenant_isolation(client, db):
     b_retro = (await db.execute(select(Retrospective).where(Retrospective.tenant_id == b_id))).scalar_one()
     resp2 = await client.get(f"/api/v1/retrospectives/{b_retro.id}", headers=_headers(a_id, uuid.uuid4()))
     assert resp2.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_patch_complete_returns_409_when_carryover_undisposed(client, db):
+    """§8：存在未处置的承接动作时，PATCH mark_completed 返回 409（非 500）。
+
+    承接动作未显式选择继续/调整/放弃，客户端可修正后重试。
+    """
+    tenant_id = await seed_pilot_tenant(db)
+    retro = await _seed_retro(db, tenant_id, period_day=14)
+    # 直接写入一条未处置的承接动作（模拟 poller 从上期承接）
+    retro.actions = [
+        {
+            "content": "上期遗留动作",
+            "owner_id": None,
+            "due_date": None,
+            "status": "pending",
+            "carryover": True,
+            "carryover_disposition": None,
+        }
+    ]
+    await db.flush()
+
+    resp = await client.patch(
+        f"/api/v1/retrospectives/{retro.id}",
+        headers=_headers(tenant_id, uuid.uuid4()),
+        json={"mark_completed": True},
+    )
+    assert resp.status_code == 409
+    assert "未显式处置" in resp.json()["detail"]
