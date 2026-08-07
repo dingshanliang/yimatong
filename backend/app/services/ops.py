@@ -551,3 +551,119 @@ async def get_ops_workbench(
         "page": page,
         "page_size": page_size,
     }
+
+
+async def get_pilot_aggregate(
+    db: AsyncSession, agency_tenant_id: uuid.UUID | None = None, *, _controlled: bool = False
+) -> dict:
+    """代运营/平台跨租户试点聚合（beads: yimatong-bgag.10，PRD §4.5）。
+
+    镜像 get_ops_workbench 的跨租户 RLS 纪律：agency 用自身 RLS session 仅解析授权 key，
+    每个客户的里程碑/复盘在 fresh per-client session（set_session_tenant_context）内读取，
+    绝不在 bypass/control session 聚合业务数据。platform 走 control-plane bypass
+    （_controlled sentinel 防递归，与 get_ops_workbench 一致）。
+    """
+    from app.services.agency_auth import _load_tenant_labels
+    from app.services.pilot_milestone import build_milestone_timeline
+    from app.services.retrospective import _derived_status, list_retrospectives
+
+    visible_scopes = {"products", "pages", "campaigns", "codes", "analytics"}
+    is_pg = db.get_bind().dialect.name == "postgresql"
+
+    if is_pg and agency_tenant_id is not None:
+        authorized_client_scopes = await get_authorized_client_scopes(db, agency_tenant_id, visible_scopes)
+        authorized_client_ids = list(authorized_client_scopes)
+        if not authorized_client_ids:
+            return {"summary": {"total_clients": 0, "clients_with_pending_retros": 0}, "clients": []}
+        from app.core.database import async_session_factory, set_session_tenant_context
+
+        now = datetime.now(UTC)
+        client_summaries: list[dict] = []
+        for client_tenant_id in authorized_client_ids:
+            async with async_session_factory() as tenant_db:
+                await set_session_tenant_context(tenant_db, client_tenant_id)
+                timeline = await build_milestone_timeline(tenant_db, client_tenant_id)
+                retros = await list_retrospectives(tenant_db, client_tenant_id, now)
+            achieved = sum(1 for m in timeline.milestones if m.status == "achieved")
+            pending = [
+                {
+                    "retro_id": r.id,
+                    "period_day": r.period_day,
+                    "next_review_date": _as_aware_utc(
+                        datetime.combine(r.next_review_date, datetime.min.time(), tzinfo=UTC)
+                    ),
+                    "derived_status": _derived_status(r, now),
+                }
+                for r in retros
+                if r.status != "completed"
+            ]
+            scopes = authorized_client_scopes.get(client_tenant_id, set())
+            client_summaries.append(
+                {
+                    "client_id": client_tenant_id,
+                    "milestone_summary": {"achieved_count": achieved, "total": len(timeline.milestones)},
+                    "pending_retrospectives": pending,
+                    "full_pilot_access": visible_scopes.issubset(scopes),
+                }
+            )
+        labels = await _load_tenant_labels(db, {c["client_id"] for c in client_summaries})
+        for c in client_summaries:
+            name, slug = labels.get(c["client_id"], (None, None))
+            c["client_name"] = name
+            c["client_slug"] = slug
+        with_pending = sum(1 for c in client_summaries if c["pending_retrospectives"])
+        return {
+            "summary": {"total_clients": len(client_summaries), "clients_with_pending_retros": with_pending},
+            "clients": client_summaries,
+        }
+
+    # 平台（agency_tenant_id is None）：control-plane bypass 读取全部 active 租户。
+    # _controlled sentinel 防递归（镜像 get_ops_workbench）：首次进入开 control session
+    # 并 bypass RLS，二次进入（_controlled=True）落到下面的全量读取分支。
+    if is_pg and agency_tenant_id is None and not _controlled:
+        from sqlalchemy import text
+
+        from app.core.database import control_session_factory
+
+        async with control_session_factory() as control_db:
+            await control_db.execute(text("SET LOCAL app.bypass_rls = 'true'"))
+            return await get_pilot_aggregate(control_db, agency_tenant_id=None, _controlled=True)
+
+    # 全量读取分支：覆盖 (a) SQLite 测试（单 session，RLS no-op，靠 tenant_id 过滤手工隔离）
+    # 与 (b) platform _controlled=True（control session 已 bypass RLS）。读全部 active 租户。
+    tenant_rows = (
+        await db.execute(select(Tenant.id, Tenant.name, Tenant.slug).where(Tenant.status == TenantStatus.active))
+    ).all()
+    now = datetime.now(UTC)
+    client_summaries = []
+    for tenant_id, name, slug in tenant_rows:
+        timeline = await build_milestone_timeline(db, tenant_id)
+        retros = await list_retrospectives(db, tenant_id, now)
+        achieved = sum(1 for m in timeline.milestones if m.status == "achieved")
+        pending = [
+            {
+                "retro_id": r.id,
+                "period_day": r.period_day,
+                "next_review_date": _as_aware_utc(
+                    datetime.combine(r.next_review_date, datetime.min.time(), tzinfo=UTC)
+                ),
+                "derived_status": _derived_status(r, now),
+            }
+            for r in retros
+            if r.status != "completed"
+        ]
+        client_summaries.append(
+            {
+                "client_id": tenant_id,
+                "client_name": name,
+                "client_slug": slug,
+                "milestone_summary": {"achieved_count": achieved, "total": len(timeline.milestones)},
+                "pending_retrospectives": pending,
+                "full_pilot_access": True,
+            }
+        )
+    with_pending = sum(1 for c in client_summaries if c["pending_retrospectives"])
+    return {
+        "summary": {"total_clients": len(client_summaries), "clients_with_pending_retros": with_pending},
+        "clients": client_summaries,
+    }

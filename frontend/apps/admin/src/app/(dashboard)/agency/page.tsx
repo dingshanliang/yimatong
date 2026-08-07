@@ -10,6 +10,7 @@ import { StatsCards } from "./_components/StatsCards";
 import { ClientTable } from "./_components/ClientTable";
 import { TaskTable } from "./_components/TaskTable";
 import { CreateTaskModal, ChecklistModal } from "./_components/TaskModals";
+import PilotAggregate from "./_components/PilotAggregate";
 import type {
   AgencyClientRow,
   AgencyWorkbenchResponse,
@@ -314,6 +315,14 @@ export default function AgencyPage() {
         onUpdateStatus={handleUpdateTaskStatus}
         onDelete={confirmDeleteTask}
       />
+
+      {/* 试点复盘跨租户聚合（beads: yimatong-bgag.10，PRD §4.5） */}
+      <div className="mb-4 mt-4">
+        <Title level={5} className="!mb-2">
+          试点复盘聚合
+        </Title>
+        <PilotAggregate />
+      </div>
 
       <CreateTaskModal
         open={taskModalOpen}

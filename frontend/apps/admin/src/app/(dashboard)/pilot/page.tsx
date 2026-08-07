@@ -7,6 +7,7 @@ import { useCallback, useEffect, useState } from "react";
 import api, { extractErrorMessage } from "@/lib/api";
 
 import MilestoneTimeline from "./_components/MilestoneTimeline";
+import PeriodComparison from "./_components/PeriodComparison";
 import RetrospectiveCard from "./_components/RetrospectiveCard";
 import type {
   MilestoneTimelineResponse,
@@ -99,6 +100,7 @@ export default function PilotPage() {
                 onChanged={() => void fetchData()}
               />
             ))}
+            <PeriodComparison retros={retros} />
           </Space>
         )}
       </div>

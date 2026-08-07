@@ -271,3 +271,47 @@ class OpsWorkbenchResponse(BaseModel):
     total: int
     page: int
     page_size: int
+
+
+# ── 试点聚合（beads: yimatong-bgag.10，PRD §4.5 ops 跨租户聚合板）─────
+
+
+class PilotMilestoneSummary(BaseModel):
+    """单客户的里程碑达成概要。"""
+
+    achieved_count: int
+    total: int
+
+
+class PendingRetrospectiveSummary(BaseModel):
+    """单客户的待办复盘概要。"""
+
+    retro_id: uuid.UUID
+    period_day: int
+    next_review_date: datetime | None = None
+    derived_status: str  # pending/completed/overdue/overdue_completed
+
+
+class PilotClientSummary(BaseModel):
+    """聚合板中单客户的试点概要。"""
+
+    client_id: uuid.UUID
+    client_name: str | None = None
+    client_slug: str | None = None
+    milestone_summary: PilotMilestoneSummary
+    pending_retrospectives: list[PendingRetrospectiveSummary]
+    full_pilot_access: bool = False
+
+
+class PilotAggregateSummary(BaseModel):
+    """聚合板汇总。"""
+
+    total_clients: int
+    clients_with_pending_retros: int
+
+
+class PilotAggregateResponse(BaseModel):
+    """代运营/平台的试点跨租户聚合响应。"""
+
+    summary: PilotAggregateSummary
+    clients: list[PilotClientSummary]

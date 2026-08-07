@@ -17,10 +17,21 @@ from app.core.database import (
 from app.core.dependencies import get_ops_user
 from app.models.tenant import OpsTask, OpsTaskPriority, OpsTaskStatus, Tenant
 from app.schemas.common import PaginatedResponse
-from app.schemas.tenant import OpsTaskCreate, OpsTaskRead, OpsTaskUpdate, OpsWorkbenchResponse
+from app.schemas.tenant import (
+    OpsTaskCreate,
+    OpsTaskRead,
+    OpsTaskUpdate,
+    OpsWorkbenchResponse,
+    PilotAggregateResponse,
+)
 from app.services.agency_auth import get_authorized_client_ids
 from app.services.audit import write_audit_log
-from app.services.ops import get_launch_checklist, get_ops_workbench, get_tenant_status
+from app.services.ops import (
+    get_launch_checklist,
+    get_ops_workbench,
+    get_pilot_aggregate,
+    get_tenant_status,
+)
 from app.utils.auth_rbac import require_tenant_type
 
 ops_router = APIRouter(
@@ -195,6 +206,21 @@ async def get_launch_checklist_endpoint(
 ):
     async with _client_business_session(db, _ops_user, tenant_id) as tenant_db:
         return await get_launch_checklist(tenant_db, tenant_id)
+
+
+@ops_router.get("/pilot-aggregate", response_model=PilotAggregateResponse, summary="代运营/平台试点跨租户聚合")
+async def get_pilot_aggregate_endpoint(
+    _ops_user: tuple = Depends(get_ops_user),
+    db: AsyncSession = Depends(get_db_for_ops),
+):
+    """各授权客户的里程碑达成 + 待办复盘聚合（PRD §4.5 ops 跨租户聚合板）。
+
+    agency 仅见授权客户（analytics scope）；platform 见全部。RLS 纪律同 workbench：
+    每个客户的里程碑/复盘在 fresh per-client session 内读取。
+    """
+    _, _, tenant_id, tenant_type = _ops_user
+    agency_tenant_id = tenant_id if tenant_type == "agency" else None
+    return await get_pilot_aggregate(db, agency_tenant_id=agency_tenant_id)
 
 
 @ops_router.post("/tasks", response_model=OpsTaskRead, status_code=201, summary="创建 任务")

@@ -64,12 +64,28 @@ export interface ScorecardSnapshot {
   [key: string]: unknown;
 }
 
+/** 动作承接处置（镜像后端 ACTION_DISPOSITIONS，PRD §8）。 */
+export type ActionDisposition = "continue" | "adjust" | "abandon";
+
 export interface ActionItem {
   content: string;
   owner_id?: string | null;
   due_date?: string | null;
   status?: string;
+  /** PRD §8：上期承接标记 + 处置（continue/adjust/abandon）。 */
+  carryover?: boolean;
+  carryover_disposition?: ActionDisposition | null;
 }
+
+/** 动作承接处置选项（镜像后端，供 Radio.Group 使用）。 */
+export const ACTION_DISPOSITION_OPTIONS: {
+  value: ActionDisposition;
+  label: string;
+}[] = [
+  { value: "continue", label: "继续" },
+  { value: "adjust", label: "调整" },
+  { value: "abandon", label: "放弃" },
+];
 
 export interface RetrospectiveRead {
   id: string;
@@ -123,4 +139,57 @@ export function formatDuration(seconds: number | null | undefined): string {
   const hours = seconds / 3600;
   if (hours >= 1) return `${hours.toFixed(1)} 小时`;
   return `${seconds.toFixed(0)} 秒`;
+}
+
+/** 相邻期对比：两期 scorecard 之间 6 指标的环比（PRD §4.5）。
+ * 返回每指标的 delta（后值 − 前值）；任一期数据不足则 delta=null。 */
+export interface MetricDelta {
+  key: string;
+  label: string;
+  delta: number | null; // 正=改善，负=恶化；null=数据不足
+}
+
+const COMPARISON_METRICS: { key: string; label: string }[] = [
+  { key: "valid_visits", label: "有效访问" },
+  { key: "claim_rate", label: "权益确认率" },
+  { key: "wecom_rate", label: "企微确认率" },
+  { key: "net_gmv", label: "净 GMV" },
+];
+
+/** 计算两期 scorecard 的指标环比（PRD §4.5）。 */
+export function computeMetricDeltas(
+  prev: ScorecardSnapshot,
+  curr: ScorecardSnapshot
+): MetricDelta[] {
+  return COMPARISON_METRICS.map(({ key, label }) => {
+    const p = prev[key] as ScorecardMetric | undefined;
+    const c = curr[key] as ScorecardMetric | undefined;
+    if (
+      !p ||
+      !c ||
+      p.status === "insufficient_data" ||
+      c.status === "insufficient_data" ||
+      p.value === null ||
+      p.value === undefined ||
+      c.value === null ||
+      c.value === undefined
+    ) {
+      return { key, label, delta: null };
+    }
+    return { key, label, delta: (c.value as number) - (p.value as number) };
+  });
+}
+
+/** 上期动作完成率（PRD §4.5）。无动作返回 null。 */
+export function actionCompletionRate(actions: ActionItem[]): number | null {
+  if (!actions || actions.length === 0) return null;
+  const completed = actions.filter((a) => a.status === "completed").length;
+  return (completed / actions.length) * 100;
+}
+
+/** delta → 可读文案（含正负号）。null → "数据不足"。 */
+export function formatDelta(delta: number | null): string {
+  if (delta === null) return "数据不足";
+  const sign = delta > 0 ? "+" : "";
+  return `${sign}${delta.toFixed(2)}`;
 }

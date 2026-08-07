@@ -131,4 +131,56 @@ describe("RetrospectiveCard", () => {
       expect(screen.getByText("下次验证日期")).toBeInTheDocument();
     });
   });
+
+  it("编辑模式含动作清单 Form.List（添加动作按钮）", async () => {
+    render(<RetrospectiveCard retro={retro()} onChanged={vi.fn()} />);
+    fireEvent.click(screen.getByText("填写"));
+    await waitFor(() => {
+      expect(screen.getByText("+ 添加动作")).toBeInTheDocument();
+    });
+  });
+
+  it("carryover 动作在只读视图显示'承接'徽标", () => {
+    render(
+      <RetrospectiveCard
+        retro={retro({
+          actions: [
+            {
+              content: "上期遗留",
+              status: "pending",
+              carryover: true,
+              carryover_disposition: null,
+            },
+          ],
+        })}
+        onChanged={vi.fn()}
+      />
+    );
+    expect(screen.getByText("上期遗留")).toBeInTheDocument();
+    expect(screen.getByText("承接·待处置")).toBeInTheDocument();
+  });
+
+  it("completed 态显示'追加补充说明'按钮（PRD §5）", () => {
+    render(
+      <RetrospectiveCard
+        retro={retro({ status: "completed", derived_status: "completed" })}
+        onChanged={vi.fn()}
+      />
+    );
+    expect(screen.getByText("追加补充说明")).toBeInTheDocument();
+  });
+
+  it("点击'追加补充说明'展开表单", async () => {
+    render(
+      <RetrospectiveCard
+        retro={retro({ status: "completed", derived_status: "completed" })}
+        onChanged={vi.fn()}
+      />
+    );
+    fireEvent.click(screen.getByText("追加补充说明"));
+    // 展开后表单出现：supplementary_notes 文本域（按 placeholder 断言，稳定）
+    await waitFor(() => {
+      expect(screen.getByPlaceholderText("追加的补充说明")).toBeInTheDocument();
+    });
+  });
 });
