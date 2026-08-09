@@ -15,13 +15,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.config import settings
-from app.models.auth_security import ConsumedRefreshToken
+from app.models.auth_security import AuthSession
 from app.models.tenant import Account, Tenant, TenantStatus
 from app.services.redis_cache import AsyncRedisCache, SharedSecurityCacheUnavailable
 from app.services.tenant import get_tenant
 from app.utils import utcnow
 from app.utils.email import normalize_email
 from app.utils.security import (
+    AUTH_SESSION_CACHE_PREFIX,
     create_access_token,
     create_refresh_token,
     decode_token,
@@ -71,11 +72,26 @@ async def _get_account_with_roles(db: AsyncSession, account_id: uuid.UUID) -> Ac
     return result.scalar_one_or_none()
 
 
-def _build_token_pair(account: Account, tenant_type: str) -> dict:
+async def _prune_expired_auth_sessions(db: AsyncSession, *, limit: int = 256) -> None:
+    """Bound control-table retention work to one small batch per login."""
+
+    expired_ids = (
+        select(AuthSession.id)
+        .where(AuthSession.expires_at <= datetime.now(UTC))
+        .order_by(AuthSession.expires_at)
+        .limit(limit)
+    )
+    await db.execute(delete(AuthSession).where(AuthSession.id.in_(expired_ids)))
+
+
+def _build_token_pair(account: Account, tenant_type: str, session_id: uuid.UUID | None = None) -> dict:
     """构建 access + refresh token 对。"""
+    session_id = session_id or uuid.uuid4()
     token_context = {
         "auth_version": account.auth_version,
         "must_change_password": account.must_change_password,
+        "sid": str(session_id),
+        "tenant_id": str(account.tenant_id),
     }
     access = create_access_token(
         str(account.tenant_id),
@@ -175,10 +191,22 @@ async def authenticate_login(
     account.failed_login_attempts = 0
     account.locked_until = None
     account.last_login_at = now
-    await db.commit()
-
     tenant_type = tenant.tenant_type.value
-    return _build_token_pair(account, tenant_type)
+    await _prune_expired_auth_sessions(db)
+    token_pair = _build_token_pair(account, tenant_type)
+    refresh_payload = decode_token(token_pair["refresh_token"])
+    db.add(
+        AuthSession(
+            id=uuid.UUID(refresh_payload["sid"]),
+            account_id=account.id,
+            tenant_id=account.tenant_id,
+            auth_version=account.auth_version,
+            current_refresh_jti=refresh_payload["jti"],
+            expires_at=datetime.fromtimestamp(refresh_payload["exp"], tz=UTC),
+        )
+    )
+    await db.commit()
+    return token_pair
 
 
 # ---------------------------------------------------------------------------
@@ -186,43 +214,83 @@ async def authenticate_login(
 # ---------------------------------------------------------------------------
 
 
-async def _consume_refresh_jti(db: AsyncSession, jti: str, expires_at: datetime) -> bool:
-    """Persist a global refresh-token consumption claim.
+def _refresh_expiry(payload: dict) -> datetime:
+    expires_at = payload.get("exp")
+    if expires_at:
+        return datetime.fromtimestamp(expires_at, tz=UTC)
+    return datetime.now(UTC) + timedelta(days=settings.refresh_token_expire_days)
 
-    Returns False when another refresh/logout request already consumed it.
-    """
-    await db.execute(delete(ConsumedRefreshToken).where(ConsumedRefreshToken.expires_at <= datetime.now(UTC)))
+
+def _refresh_session_id(payload: dict) -> uuid.UUID:
+    raw_session_id = payload.get("sid") or payload.get("jti")
+    try:
+        return uuid.UUID(str(raw_session_id))
+    except (TypeError, ValueError) as exc:
+        raise AuthError(401, "刷新会话无效") from exc
+
+
+async def _lock_or_adopt_auth_session(
+    db: AsyncSession,
+    *,
+    payload: dict,
+    account: Account,
+) -> AuthSession:
+    """Lock the family row, adopting one pre-session-family token on first use."""
+
+    session_id = _refresh_session_id(payload)
+    statement = select(AuthSession).where(AuthSession.id == session_id).with_for_update()
+    auth_session = (await db.execute(statement)).scalar_one_or_none()
+    if auth_session is not None:
+        return auth_session
+
     try:
         async with db.begin_nested():
-            db.add(ConsumedRefreshToken(jti=jti, expires_at=expires_at))
+            db.add(
+                AuthSession(
+                    id=session_id,
+                    account_id=account.id,
+                    tenant_id=account.tenant_id,
+                    auth_version=account.auth_version,
+                    current_refresh_jti=payload["jti"],
+                    expires_at=_refresh_expiry(payload),
+                )
+            )
             await db.flush()
     except IntegrityError:
-        return False
-    return True
+        # A concurrent request adopted the same legacy family. Lock and inspect
+        # its now-authoritative current JTI instead of accepting both requests.
+        pass
+    auth_session = (await db.execute(statement)).scalar_one_or_none()
+    if auth_session is None:
+        raise AuthError(401, "刷新会话无效")
+    return auth_session
 
 
-async def _persist_logout_refresh_revocation(db: AsyncSession, jti: str, expires_at: datetime) -> bool:
-    """Persist logout's global refresh claim outside the tenant transaction.
+async def _cache_revoke_auth_session(
+    cache: AsyncRedisCache,
+    session_id: uuid.UUID,
+    expires_at: datetime,
+) -> None:
+    # SQLite drops timezone information even for timezone-aware columns. Keep
+    # the security TTL calculation deterministic across SQLite and PostgreSQL.
+    if expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=UTC)
+    remaining = max(1, int((expires_at - datetime.now(UTC)).total_seconds()))
+    await cache.revoke_token(f"{AUTH_SESSION_CACHE_PREFIX}{session_id}", ttl=remaining)
 
-    PostgreSQL protects ``consumed_refresh_tokens`` as control-plane state, so
-    an authenticated tenant session must never write it directly.  SQLite unit
-    tests keep using the supplied transaction-scoped session.
-    """
-    if db.get_bind().dialect.name != "postgresql":
-        claimed = await _consume_refresh_jti(db, jti, expires_at)
-        await db.commit()
-        return claimed
 
-    from sqlalchemy import text
-
-    from app.core.database import control_session_factory
-
-    async with control_session_factory() as control_db:
-        await control_db.execute(text("SELECT set_config('app.tenant_id', '', true)"))
-        await control_db.execute(text("SELECT set_config('app.bypass_rls', 'true', true)"))
-        claimed = await _consume_refresh_jti(control_db, jti, expires_at)
-        await control_db.commit()
-        return claimed
+async def _reject_and_revoke_replayed_family(
+    db: AsyncSession,
+    auth_session: AuthSession,
+    cache: AsyncRedisCache,
+) -> None:
+    auth_session.revoked_at = datetime.now(UTC)
+    await db.commit()
+    try:
+        await _cache_revoke_auth_session(cache, auth_session.id, auth_session.expires_at)
+    except SharedSecurityCacheUnavailable as exc:
+        raise AuthError(503, "刷新服务暂时不可用，请稍后重试") from exc
+    raise AuthError(401, "刷新会话已撤销，请重新登录")
 
 
 async def refresh_access_token(
@@ -248,8 +316,10 @@ async def refresh_access_token(
     if not payload:
         raise AuthError(401, "刷新令牌无效")
 
-    # 先校验持久化账户和租户状态，再原子消费旧 refresh token。
+    # 先校验持久化账户和租户状态，再锁定并轮换 refresh family。
     old_jti = payload.get("jti")
+    if not old_jti:
+        raise AuthError(401, "刷新令牌无效")
 
     account_id = payload["sub"]
     account = await _get_account_with_roles(db, uuid.UUID(account_id))
@@ -263,17 +333,24 @@ async def refresh_access_token(
     tenant = await get_tenant(db, account.tenant_id)
     if tenant is None or tenant.status != TenantStatus.active:
         raise AuthError(401, "租户已停用，请重新联系管理员")
-    if old_jti:
-        old_exp = payload.get("exp")
-        expires_at = (
-            datetime.fromtimestamp(old_exp, tz=UTC)
-            if old_exp
-            else datetime.now(UTC) + timedelta(days=settings.refresh_token_expire_days)
-        )
-        if not await _consume_refresh_jti(db, old_jti, expires_at):
-            raise AuthError(401, "刷新令牌已使用")
+    auth_session = await _lock_or_adopt_auth_session(db, payload=payload, account=account)
+    if (
+        auth_session.account_id != account.id
+        or auth_session.tenant_id != account.tenant_id
+        or auth_session.auth_version != account.auth_version
+        or auth_session.revoked_at is not None
+    ):
+        await _reject_and_revoke_replayed_family(db, auth_session, cache)
+    if auth_session.current_refresh_jti != old_jti:
+        await _reject_and_revoke_replayed_family(db, auth_session, cache)
+
     tenant_type = tenant.tenant_type.value if tenant else "brand"
-    return _build_token_pair(account, tenant_type)
+    token_pair = _build_token_pair(account, tenant_type, auth_session.id)
+    new_refresh_payload = decode_token(token_pair["refresh_token"])
+    auth_session.current_refresh_jti = new_refresh_payload["jti"]
+    auth_session.expires_at = _refresh_expiry(new_refresh_payload)
+    await db.commit()
+    return token_pair
 
 
 # ---------------------------------------------------------------------------
@@ -286,22 +363,34 @@ async def logout_session(
     access_token: str | None,
     refresh_token_str: str | None,
     cache: AsyncRedisCache,
+    additional_refresh_token_str: str | None = None,
 ) -> None:
-    """Persist refresh revocation, then revoke access in the shared cache."""
-    if refresh_token_str:
+    """Revoke the refresh family, then revoke every presented access session."""
+    refresh_payloads: dict[uuid.UUID, dict] = {}
+    for candidate in (refresh_token_str, additional_refresh_token_str):
+        if not candidate:
+            continue
         try:
-            refresh_payload = decode_token(refresh_token_str)
+            refresh_payload = decode_token(candidate)
         except Exception:
-            refresh_payload = None
-        if refresh_payload and refresh_payload.get("type") == "refresh" and refresh_payload.get("jti"):
-            refresh_exp = refresh_payload.get("exp")
-            refresh_expires_at = (
-                datetime.fromtimestamp(refresh_exp, tz=UTC)
-                if refresh_exp
-                else datetime.now(UTC) + timedelta(days=settings.refresh_token_expire_days)
-            )
-            await _persist_logout_refresh_revocation(db, refresh_payload["jti"], refresh_expires_at)
+            continue
+        if not refresh_payload or refresh_payload.get("type") != "refresh" or not refresh_payload.get("jti"):
+            continue
+        refresh_payloads[_refresh_session_id(refresh_payload)] = refresh_payload
 
+    # Persist every presented family before touching the cache. Browser rollout
+    # can temporarily present a legacy body token and a different current
+    # HttpOnly cookie; logout must revoke both rather than guessing precedence.
+    for refresh_payload in refresh_payloads.values():
+        await _persist_logout_session_revocation(db, refresh_payload)
+    for session_id, refresh_payload in refresh_payloads.items():
+        await _cache_revoke_auth_session(
+            cache,
+            session_id,
+            _refresh_expiry(refresh_payload),
+        )
+
+    access_payload: dict | None = None
     if access_token:
         try:
             access_payload = decode_token(access_token)
@@ -315,6 +404,56 @@ async def logout_session(
                 else settings.access_token_expire_minutes * 60
             )
             await cache.revoke_token(access_payload["jti"], ttl=remaining)
+            access_session_id = access_payload.get("sid")
+            if access_session_id:
+                access_expiry = (
+                    datetime.fromtimestamp(access_exp, tz=UTC)
+                    if access_exp
+                    else datetime.now(UTC) + timedelta(minutes=settings.access_token_expire_minutes)
+                )
+                await _cache_revoke_auth_session(cache, uuid.UUID(str(access_session_id)), access_expiry)
+
+
+async def _persist_logout_session_revocation(db: AsyncSession, payload: dict) -> None:
+    """Persist one monotonic family revocation through the control boundary."""
+
+    async def _revoke(session: AsyncSession) -> None:
+        session_id = _refresh_session_id(payload)
+        auth_session = (
+            await session.execute(select(AuthSession).where(AuthSession.id == session_id).with_for_update())
+        ).scalar_one_or_none()
+        if auth_session is None:
+            try:
+                account_id = uuid.UUID(str(payload.get("sub")))
+            except (TypeError, ValueError):
+                return
+            account = await session.get(Account, account_id)
+            if account is None:
+                return
+            auth_session = AuthSession(
+                id=session_id,
+                account_id=account.id,
+                tenant_id=account.tenant_id,
+                auth_version=int(payload.get("auth_version", account.auth_version)),
+                current_refresh_jti=payload["jti"],
+                expires_at=_refresh_expiry(payload),
+            )
+            session.add(auth_session)
+        auth_session.revoked_at = datetime.now(UTC)
+        await session.commit()
+
+    if db.get_bind().dialect.name != "postgresql":
+        await _revoke(db)
+        return
+
+    from sqlalchemy import text
+
+    from app.core.database import control_session_factory
+
+    async with control_session_factory() as control_db:
+        await control_db.execute(text("SELECT set_config('app.tenant_id', '', true)"))
+        await control_db.execute(text("SELECT set_config('app.bypass_rls', 'true', true)"))
+        await _revoke(control_db)
 
 
 # ---------------------------------------------------------------------------

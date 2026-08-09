@@ -56,6 +56,22 @@ async def test_platform_role_only_bypasses_account_lookup_in_platform_boundary(m
     assert tenant_permissions == []
 
 
+@pytest.mark.anyio
+async def test_postgres_auth_session_loading_failure_is_fail_closed(monkeypatch):
+    monkeypatch.setattr("app.core.database._is_pg", True)
+    monkeypatch.setattr("app.core.database.control_session_factory", lambda: FailingSessionContext())
+    middleware = TenantScopeMiddleware(Starlette())
+
+    has_access = await middleware._load_auth_session_access(
+        session_id=str(uuid.uuid4()),
+        account_id=str(uuid.uuid4()),
+        tenant_id=str(uuid.uuid4()),
+        token_auth_version=0,
+    )
+
+    assert has_access is False
+
+
 def test_acting_context_routes_are_mapped_to_live_scope():
     middleware = TenantScopeMiddleware(Starlette())
 

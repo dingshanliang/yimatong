@@ -33,6 +33,7 @@ BUSINESS_GAP_TABLES = (
 )
 
 CONTROL_TABLES = (
+    "auth_sessions",
     "consumed_refresh_tokens",
     "invite_registration_receipts",
     "operator_campaign_manage_grants",
@@ -79,7 +80,7 @@ async def test_registry_catalog_acl_and_control_boundary(
             "AND c.relname NOT IN "
             "('alembic_version','rls_force_remediation_backups','runtime_privilege_remediation_backup')"
         )
-        assert orm_root_count == 93
+        assert orm_root_count == 94
     finally:
         await owner.close()
 

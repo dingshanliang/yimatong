@@ -28,7 +28,7 @@ from app.models.tenant import (
 )
 from app.services.connectors.secrets import encrypt_secrets
 from app.utils.auth_rbac import WEB_ROLE_PERMISSIONS
-from app.utils.security import create_access_token, decode_token
+from app.utils.security import AUTH_SESSION_CACHE_PREFIX, create_access_token, decode_token
 from tests.conftest import TestSessionLocal
 
 
@@ -642,7 +642,7 @@ class TestAgencyContextTokenVersion:
 
     @pytest.mark.anyio
     async def test_switch_and_exit_preserve_validated_auth_version(
-        self, client: AsyncClient, db_session: AsyncSession, brand_tenant, agency_tenant
+        self, client: AsyncClient, db_session: AsyncSession, brand_tenant, agency_tenant, shared_security_cache
     ):
         brand, _ = brand_tenant
         agency, agency_account = agency_tenant
@@ -656,12 +656,13 @@ class TestAgencyContextTokenVersion:
             )
         )
         await db_session.commit()
+        session_id = uuid.uuid4()
         token = create_access_token(
             str(agency.id),
             str(agency_account.id),
             "admin",
             "agency",
-            extra={"auth_version": agency_account.auth_version},
+            extra={"auth_version": agency_account.auth_version, "sid": str(session_id)},
         )
 
         switched = await client.post(
@@ -670,7 +671,9 @@ class TestAgencyContextTokenVersion:
             headers={"Authorization": f"Bearer {token}"},
         )
         assert switched.status_code == 200
-        assert decode_token(switched.json()["access_token"])["auth_version"] == 7
+        switched_payload = decode_token(switched.json()["access_token"])
+        assert switched_payload["auth_version"] == 7
+        assert switched_payload["sid"] == str(session_id)
 
         with patch("app.core.database.async_session_factory", TestSessionLocal):
             exited = await client.post(
@@ -678,7 +681,17 @@ class TestAgencyContextTokenVersion:
                 headers={"Authorization": f"Bearer {switched.json()['access_token']}"},
             )
         assert exited.status_code == 200
-        assert decode_token(exited.json()["access_token"])["auth_version"] == 7
+        exited_payload = decode_token(exited.json()["access_token"])
+        assert exited_payload["auth_version"] == 7
+        assert exited_payload["sid"] == str(session_id)
+
+        shared_security_cache.revoked_jtis.add(f"{AUTH_SESSION_CACHE_PREFIX}{session_id}")
+        rejected = await client.post(
+            "/api/v1/agency/exit-context",
+            headers={"Authorization": f"Bearer {switched.json()['access_token']}"},
+        )
+        assert rejected.status_code == 401
+        assert rejected.json() == {"detail": "Invalid or expired token"}
 
     @pytest.mark.anyio
     async def test_revoked_authorization_blocks_client_access_but_allows_strict_exit(

@@ -82,6 +82,10 @@ class TestChangePassword:
         set_cookies = resp.headers.get_list("set-cookie")
         assert any("access_token=" in cookie and "Max-Age=0" in cookie for cookie in set_cookies)
         assert any(
+            "refresh_token=" in cookie and "Max-Age=0" in cookie and "Path=/api/v1/auth" in cookie
+            for cookie in set_cookies
+        )
+        assert any(
             "refresh_token=" in cookie and "Max-Age=0" in cookie and "Path=/api/v1/auth/refresh" in cookie
             for cookie in set_cookies
         )

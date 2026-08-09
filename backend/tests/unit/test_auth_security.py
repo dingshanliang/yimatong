@@ -230,12 +230,39 @@ async def test_verify_refresh_token_accepts_valid():
 
 @pytest.mark.asyncio
 async def test_logout_persists_refresh_token_when_access_token_is_invalid(db):
-    from app.models.auth_security import ConsumedRefreshToken
-    from app.services.auth import logout_session
-    from app.utils.security import create_refresh_token, decode_token
+    import uuid
 
-    refresh_token = create_refresh_token("test-account-id")
-    refresh_jti = decode_token(refresh_token)["jti"]
+    from app.models.auth_security import AuthSession
+    from app.models.tenant import Account, Organization, Tenant
+    from app.services.auth import logout_session
+    from app.utils.security import create_refresh_token
+
+    tenant = Tenant(id=uuid.uuid4(), name="Logout test", slug=f"logout-{uuid.uuid4().hex[:8]}")
+    db.add(tenant)
+    await db.flush()
+    organization = Organization(id=uuid.uuid4(), tenant_id=tenant.id, name="Logout test")
+    db.add(organization)
+    await db.flush()
+    account = Account(
+        id=uuid.uuid4(),
+        tenant_id=tenant.id,
+        organization_id=organization.id,
+        email=f"logout-{uuid.uuid4().hex[:8]}@test.com",
+        hashed_password="unused",
+        name="Logout test",
+    )
+    db.add(account)
+    await db.commit()
+
+    session_id = uuid.uuid4()
+    refresh_token = create_refresh_token(
+        str(account.id),
+        extra={
+            "sid": str(session_id),
+            "tenant_id": str(tenant.id),
+            "auth_version": account.auth_version,
+        },
+    )
     cache = AsyncMock()
 
     await logout_session(
@@ -245,5 +272,7 @@ async def test_logout_persists_refresh_token_when_access_token_is_invalid(db):
         cache=cache,
     )
 
-    assert await db.get(ConsumedRefreshToken, refresh_jti) is not None
-    cache.revoke_token.assert_not_awaited()
+    auth_session = await db.get(AuthSession, session_id)
+    assert auth_session is not None
+    assert auth_session.revoked_at is not None
+    cache.revoke_token.assert_awaited_once()

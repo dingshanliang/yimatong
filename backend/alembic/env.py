@@ -21,7 +21,7 @@ config.set_main_option("sqlalchemy.url", settings.migration_database_url or sett
 from app.models.base import Base  # noqa: E402
 from app.models.analytics import DailyScanStats  # noqa: F401
 from app.models.audit import PlatformAuditLog  # noqa: F401
-from app.models.auth_security import ConsumedRefreshToken  # noqa: F401
+from app.models.auth_security import AuthSession, ConsumedRefreshToken  # noqa: F401
 from app.models.campaign import Benefit, BenefitClaim, Campaign  # noqa: F401
 from app.models.channel import AccountChannelScope, Distributor, Region, Store, DiversionClue  # noqa: F401
 from app.models.code import CodeBatch, CodeItem  # noqa: F401

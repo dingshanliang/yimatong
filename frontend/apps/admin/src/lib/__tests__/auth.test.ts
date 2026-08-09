@@ -72,7 +72,7 @@ describe("useAuthStore", () => {
     );
     mockPost
       .mockResolvedValueOnce({
-        data: { access_token: baseToken, refresh_token: "new-refresh-token" },
+        data: { access_token: baseToken },
       })
       .mockResolvedValueOnce({
         data: {
@@ -86,9 +86,15 @@ describe("useAuthStore", () => {
       actingToken
     );
 
-    expect(mockPost).toHaveBeenNthCalledWith(1, "/auth/refresh", {
-      refresh_token: "old-refresh-token",
-    });
+    expect(mockPost).toHaveBeenNthCalledWith(
+      1,
+      "/auth/refresh",
+      { refresh_token: "old-refresh-token" },
+      {
+        headers: { "X-Auth-Delivery": "cookie" },
+        skipAuthRefresh: true,
+      }
+    );
     expect(mockPost).toHaveBeenNthCalledWith(
       2,
       "/agency/switch-context",
@@ -137,7 +143,7 @@ describe("useAuthStore", () => {
     );
     mockPost
       .mockResolvedValueOnce({
-        data: { access_token: baseToken, refresh_token: "new-refresh-token" },
+        data: { access_token: baseToken },
       })
       .mockRejectedValueOnce(new Error("403"));
 
@@ -146,7 +152,7 @@ describe("useAuthStore", () => {
     ).rejects.toBeInstanceOf(AgencyContextRevalidationError);
 
     expect(localStorage.getItem("access_token")).toBe(baseToken);
-    expect(localStorage.getItem("refresh_token")).toBe("new-refresh-token");
+    expect(localStorage.getItem("refresh_token")).toBeNull();
     expect(useAuthStore.getState().user).toMatchObject({
       acting_tenant_id: null,
       agency_scope: null,
@@ -178,7 +184,6 @@ describe("useAuthStore", () => {
     mockPost.mockResolvedValue({
       data: {
         access_token: accessToken,
-        refresh_token: "new-refresh-token",
         expires_in: 900,
       },
     });
@@ -200,11 +205,48 @@ describe("useAuthStore", () => {
 
     await useAuthStore.getState().logout();
 
-    expect(mockPost).toHaveBeenCalledWith("/auth/logout", {
-      refresh_token: "refresh-token",
-    });
+    expect(mockPost).toHaveBeenCalledWith(
+      "/auth/logout",
+      { refresh_token: "refresh-token" },
+      { skipAuthRefresh: true }
+    );
     expect(localStorage.getItem("access_token")).toBeNull();
     expect(localStorage.getItem("refresh_token")).toBeNull();
     expect(useAuthStore.getState().user).toBeNull();
+  });
+
+  it("retains the local session when logout cannot reach the server", async () => {
+    localStorage.setItem("access_token", "access-token");
+    localStorage.setItem("auth_store", "{}");
+    useAuthStore.setState({ token: "access-token" });
+    mockPost.mockRejectedValue(new Error("network unavailable"));
+
+    await expect(useAuthStore.getState().logout()).rejects.toThrow(
+      "network unavailable"
+    );
+
+    expect(localStorage.getItem("access_token")).toBe("access-token");
+    expect(localStorage.getItem("auth_store")).toBe("{}");
+    expect(useAuthStore.getState().token).toBe("access-token");
+  });
+
+  it("clears the browser session after a server-side partial logout", async () => {
+    localStorage.setItem("access_token", "access-token");
+    localStorage.setItem("auth_store", "{}");
+    useAuthStore.setState({ token: "access-token" });
+    mockPost.mockRejectedValue(
+      Object.assign(new Error("partial logout"), {
+        isAxiosError: true,
+        response: { data: { code: "LOGOUT_PARTIAL" } },
+      })
+    );
+
+    await expect(useAuthStore.getState().logout()).rejects.toThrow(
+      "partial logout"
+    );
+
+    expect(localStorage.getItem("access_token")).toBeNull();
+    expect(localStorage.getItem("auth_store")).toBeNull();
+    expect(useAuthStore.getState().token).toBeNull();
   });
 });

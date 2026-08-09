@@ -57,7 +57,7 @@ class LoginRequest(BaseModel):
 
 class TokenResponse(BaseModel):
     access_token: str = Field(..., description="JWT 访问令牌")
-    refresh_token: str = Field(..., description="JWT 刷新令牌")
+    refresh_token: str | None = Field(None, description="JWT 刷新令牌；浏览器 cookie-only 模式不返回")
     token_type: str = Field("bearer", description="令牌类型")
     expires_in: int = Field(900, description="access_token 有效时间（秒）")
 
@@ -101,10 +101,17 @@ def _client_ip(request: Request) -> str:
     return request.client.host if request.client else "unknown"
 
 
-def _build_token_response(token_pair: dict) -> JSONResponse:
-    response = JSONResponse(content=token_pair)
+def _build_token_response(token_pair: dict, *, cookie_only: bool) -> JSONResponse:
+    content = dict(token_pair)
+    if cookie_only:
+        content.pop("refresh_token", None)
+    response = JSONResponse(content=content)
     set_auth_cookies(response, token_pair["access_token"], token_pair["refresh_token"])
     return response
+
+
+def _cookie_only_delivery(request: Request) -> bool:
+    return request.headers.get("X-Auth-Delivery", "").lower() == "cookie"
 
 
 # ---------------------------------------------------------------------------
@@ -135,7 +142,7 @@ async def login(
         )
     except AuthError as e:
         raise HTTPException(status_code=e.code, detail=e.detail, headers=e.headers) from e
-    return _build_token_response(token_pair)
+    return _build_token_response(token_pair, cookie_only=_cookie_only_delivery(request))
 
 
 @router.post(
@@ -150,13 +157,20 @@ async def refresh(
     db: AsyncSession = Depends(get_db_for_auth),
     cache: AsyncRedisCache = Depends(get_redis_cache),
 ):
-    refresh_token = body.refresh_token if body and body.refresh_token else request.cookies.get("refresh_token")
+    explicit_refresh_token = body.refresh_token if body and body.refresh_token else None
+    refresh_token = explicit_refresh_token or request.cookies.get("refresh_token")
 
     try:
         token_pair = await refresh_access_token(db=db, refresh_token=refresh_token, cache=cache)
     except AuthError as e:
         raise HTTPException(status_code=e.code, detail=e.detail) from e
-    return _build_token_response(token_pair)
+    # The server, not a caller-controlled header, determines whether this is a
+    # browser-cookie rotation. A same-origin script must never turn an HttpOnly
+    # refresh credential into a JSON-readable successor by omitting a header.
+    return _build_token_response(
+        token_pair,
+        cookie_only=explicit_refresh_token is None or _cookie_only_delivery(request),
+    )
 
 
 @router.get(
@@ -207,18 +221,27 @@ async def logout(
     auth_header = request.headers.get("Authorization", "")
     token = auth_header[7:] if auth_header.startswith("Bearer ") else request.cookies.get("access_token")
 
-    refresh_token_str = body.refresh_token if body and body.refresh_token else None
-    if not refresh_token_str:
-        refresh_token_str = request.cookies.get("refresh_token")
+    explicit_refresh_token = body.refresh_token if body and body.refresh_token else None
+    cookie_refresh_token = request.cookies.get("refresh_token")
     try:
         await logout_session(
             db=db,
             access_token=token,
-            refresh_token_str=refresh_token_str,
+            refresh_token_str=cookie_refresh_token or explicit_refresh_token,
+            additional_refresh_token_str=(
+                explicit_refresh_token
+                if cookie_refresh_token and explicit_refresh_token != cookie_refresh_token
+                else None
+            ),
             cache=cache,
         )
-    except SharedSecurityCacheUnavailable as exc:
-        raise HTTPException(status_code=503, detail="登出服务暂时不可用，请稍后重试") from exc
+    except SharedSecurityCacheUnavailable:
+        response = JSONResponse(
+            status_code=503,
+            content={"code": "LOGOUT_PARTIAL", "detail": "本机登录凭证已清除，但服务端会话撤销未完整，请重试"},
+        )
+        clear_auth_cookies(response)
+        return response
 
     response = JSONResponse(content={"status": "ok"})
     clear_auth_cookies(response)

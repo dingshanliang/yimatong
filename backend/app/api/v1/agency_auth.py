@@ -195,6 +195,7 @@ async def switch_context(
             "acting_tenant_id": str(body.client_tenant_id),
             "scope": auth.scope,
             "auth_version": request.state.auth_version,
+            "sid": request.state.session_id,
         },
     )
     await write_audit_log(
@@ -239,7 +240,7 @@ async def exit_context(
         account_id=str(account_id),
         role=role,
         tenant_type=tenant_type,
-        extra={"auth_version": request.state.auth_version},
+        extra={"auth_version": request.state.auth_version, "sid": request.state.session_id},
     )
     acting_tenant_id = getattr(request.state, "acting_tenant_id", None)
     await write_audit_log(

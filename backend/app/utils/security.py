@@ -9,6 +9,7 @@ from starlette.responses import Response
 from app.core.config import settings
 
 ALGORITHM = "HS256"
+AUTH_SESSION_CACHE_PREFIX = "auth-session:"
 
 
 def hash_password(password: str) -> str:
@@ -82,11 +83,14 @@ async def verify_access_token(token: str) -> dict | None:
         if payload.get("type") != "access":
             return None
         jti = payload.get("jti")
-        if jti:
+        session_id = payload.get("sid")
+        if jti or session_id:
             from app.services.redis_cache import AsyncRedisCache
 
             cache = AsyncRedisCache()
-            if await cache.is_token_revoked(jti):
+            if jti and await cache.is_token_revoked(jti):
+                return None
+            if session_id and await cache.is_token_revoked(f"{AUTH_SESSION_CACHE_PREFIX}{session_id}"):
                 return None
         return payload
     except JWTError:
@@ -100,11 +104,14 @@ async def verify_refresh_token(token: str) -> dict | None:
         if payload.get("type") != "refresh":
             return None
         jti = payload.get("jti")
-        if jti:
+        session_id = payload.get("sid")
+        if jti or session_id:
             from app.services.redis_cache import AsyncRedisCache
 
             cache = AsyncRedisCache()
-            if await cache.is_token_revoked(jti):
+            if jti and await cache.is_token_revoked(jti):
+                return None
+            if session_id and await cache.is_token_revoked(f"{AUTH_SESSION_CACHE_PREFIX}{session_id}"):
                 return None
         return payload
     except JWTError:
@@ -142,7 +149,7 @@ def set_auth_cookies(
             secure=secure,
             samesite=samesite,
             domain=domain,
-            path="/api/v1/auth/refresh",  # 只在刷新时发送
+            path="/api/v1/auth",
         )
 
 
@@ -150,4 +157,6 @@ def clear_auth_cookies(response: Response) -> None:
     """清除认证 cookie。"""
     domain = settings.cookie_domain or None
     response.delete_cookie("access_token", domain=domain, path="/")
+    response.delete_cookie("refresh_token", domain=domain, path="/api/v1/auth")
+    # Remove the legacy cookie path during the rollout to cookie-only sessions.
     response.delete_cookie("refresh_token", domain=domain, path="/api/v1/auth/refresh")

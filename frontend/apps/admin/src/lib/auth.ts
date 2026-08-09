@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import axios from "axios";
 import { parseJwtPayload } from "@yimatong/shared";
 import api, {
   AgencyContextRevalidationError,
@@ -68,13 +69,20 @@ export const useAuthStore = create<AuthState>((set) => ({
     lastLoginRef.current = now;
     set({ loading: true });
     try {
-      const { data } = await api.post("/auth/login", {
-        email,
-        password,
-        ...(options?.tenantSlug ? { tenant_slug: options.tenantSlug } : {}),
-      });
-      const { access_token, refresh_token } = data;
-      _persistTokens(access_token, refresh_token);
+      const { data } = await api.post(
+        "/auth/login",
+        {
+          email,
+          password,
+          ...(options?.tenantSlug ? { tenant_slug: options.tenantSlug } : {}),
+        },
+        {
+          headers: { "X-Auth-Delivery": "cookie" },
+          skipAuthRefresh: true,
+        }
+      );
+      const { access_token } = data;
+      _persistAccessToken(access_token);
 
       // Decode JWT to extract user info
       const payload = parseJwtPayload(access_token);
@@ -106,16 +114,24 @@ export const useAuthStore = create<AuthState>((set) => ({
   },
 
   logout: async () => {
-    const refreshToken = localStorage.getItem("refresh_token");
+    const legacyRefreshToken = localStorage.getItem("refresh_token");
     try {
-      await api.post("/auth/logout", {
-        ...(refreshToken ? { refresh_token: refreshToken } : {}),
-      });
-    } catch {
-      // 网络异常或服务端登录态已失效时，仍需保证本机退出完成。
-    } finally {
+      await api.post(
+        "/auth/logout",
+        legacyRefreshToken ? { refresh_token: legacyRefreshToken } : undefined,
+        { skipAuthRefresh: true }
+      );
       clearBrowserSession();
       set({ user: null, token: null });
+    } catch (error) {
+      if (
+        axios.isAxiosError(error) &&
+        error.response?.data?.code === "LOGOUT_PARTIAL"
+      ) {
+        clearBrowserSession();
+        set({ user: null, token: null });
+      }
+      throw error;
     }
   },
 
@@ -182,10 +198,10 @@ registerAuthInterceptorHandlers({
   logout: () => useAuthStore.getState().clearSession(),
 });
 
-/** 将 access_token 和 refresh_token 持久化到 localStorage + cookie */
-function _persistTokens(accessToken: string, refreshToken: string) {
+/** Persist only the short-lived access token; refresh stays HttpOnly. */
+function _persistAccessToken(accessToken: string) {
   localStorage.setItem("access_token", accessToken);
-  localStorage.setItem("refresh_token", refreshToken);
+  localStorage.removeItem("refresh_token");
   // cookie 供 Next.js middleware 读取，max-age 用 refresh token 的有效期（30天）
   const secure = window.location.protocol === "https:" ? "; Secure" : "";
   document.cookie = `access_token=${accessToken}; path=/; max-age=${30 * 24 * 3600}; SameSite=Lax${secure}`;
@@ -211,17 +227,23 @@ async function _doSilentRefresh(): Promise<string | null> {
         ? previousPayload.acting_tenant_id
         : null;
     const currentRefreshToken = localStorage.getItem("refresh_token");
-    const { data } = await api.post("/auth/refresh", {
-      ...(currentRefreshToken ? { refresh_token: currentRefreshToken } : {}),
-    });
-    const { access_token: baseAccessToken, refresh_token: newRefreshToken } =
-      data;
+    const { data } = await api.post(
+      "/auth/refresh",
+      {
+        ...(currentRefreshToken ? { refresh_token: currentRefreshToken } : {}),
+      },
+      {
+        headers: { "X-Auth-Delivery": "cookie" },
+        skipAuthRefresh: true,
+      }
+    );
+    const { access_token: baseAccessToken } = data;
     const basePayload = parseJwtPayload(baseAccessToken);
     if (!basePayload) throw new Error("刷新令牌响应无效");
     if (typeof basePayload.acting_tenant_id === "string") {
       throw new Error("刷新令牌未退出原代运营客户上下文");
     }
-    _persistTokens(baseAccessToken, newRefreshToken);
+    _persistAccessToken(baseAccessToken);
 
     // Refresh intentionally returns the base agency token. Apply that safe
     // context first so failed revalidation exits the client workspace without
@@ -276,7 +298,7 @@ async function _doSilentRefresh(): Promise<string | null> {
           agency_scope: liveScope,
         });
       } else {
-        _persistTokens(actingAccessToken, newRefreshToken);
+        _persistAccessToken(actingAccessToken);
         useAuthStore.setState({ token: actingAccessToken });
       }
       return actingAccessToken;

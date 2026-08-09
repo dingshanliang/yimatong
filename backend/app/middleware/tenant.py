@@ -25,6 +25,7 @@ class TenantScopeMiddleware(BaseHTTPMiddleware):
         public_auth_paths = {
             "/api/v1/auth/login",
             "/api/v1/auth/refresh",
+            "/api/v1/auth/logout",
             "/api/v1/auth/confirm-reset-password",
             "/api/v1/auth/reset-page",
             "/api/v1/consumers/lead-capture",
@@ -146,6 +147,13 @@ class TenantScopeMiddleware(BaseHTTPMiddleware):
 
         tenant_id = payload.get("tenant_id")
         acting_tenant_id = payload.get("acting_tenant_id")
+        if not await self._load_auth_session_access(
+            payload.get("sid"),
+            payload.get("sub"),
+            tenant_id,
+            payload.get("auth_version"),
+        ):
+            return JSONResponse(status_code=401, content={"detail": "登录会话已撤销或过期"})
         request.state.tenant_id = tenant_id
         request.state.account_id = payload.get("sub")
         request.state.tenant_type = payload.get("tenant_type", "brand")
@@ -162,6 +170,7 @@ class TenantScopeMiddleware(BaseHTTPMiddleware):
         request.state.permissions = permissions
         request.state.role = payload.get("role")
         request.state.auth_version = payload.get("auth_version", 0)
+        request.state.session_id = payload.get("sid")
 
         if payload.get("must_change_password") and request.url.path not in {
             "/api/v1/auth/change-password",
@@ -329,6 +338,51 @@ class TenantScopeMiddleware(BaseHTTPMiddleware):
         """从数据库加载账户权限；普通租户不得回退到代码模板。"""
         _, permissions = await self._load_account_access(account_id, role, None, None)
         return permissions
+
+    async def _load_auth_session_access(
+        self,
+        session_id: str | None,
+        account_id: str | None,
+        tenant_id: str | None,
+        token_auth_version: int | None,
+    ) -> bool:
+        """Use durable family state so a cache restart cannot revive access."""
+
+        # Access tokens issued before refresh families existed remain valid only
+        # for their original short JWT lifetime and keep the rollout compatible.
+        if not session_id:
+            return True
+        try:
+            import uuid
+
+            from sqlalchemy import func, select
+
+            from app.core.database import _is_pg, control_session_factory
+            from app.models.auth_security import AuthSession
+
+            if not account_id or not tenant_id:
+                return False
+            validated_session_id = uuid.UUID(session_id)
+            validated_account_id = uuid.UUID(account_id)
+            validated_tenant_id = uuid.UUID(tenant_id)
+            if not _is_pg:
+                # SQLite API tests exercise revocation through the shared cache;
+                # their independent control engine does not share fixture rows.
+                return True
+            async with control_session_factory() as db:
+                active_session_id = await db.scalar(
+                    select(AuthSession.id).where(
+                        AuthSession.id == validated_session_id,
+                        AuthSession.account_id == validated_account_id,
+                        AuthSession.tenant_id == validated_tenant_id,
+                        AuthSession.auth_version == (token_auth_version or 0),
+                        AuthSession.revoked_at.is_(None),
+                        AuthSession.expires_at > func.now(),
+                    )
+                )
+                return active_session_id is not None
+        except Exception:
+            return False
 
     async def _load_account_access(
         self,

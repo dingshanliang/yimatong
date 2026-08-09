@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
 from app.main import app
 from app.models.tenant import Account, Role, Tenant, TenantStatus
-from app.utils.security import decode_token, hash_password
+from app.utils.security import create_access_token, decode_token, hash_password
 from tests.conftest import TestSessionLocal
 
 
@@ -74,6 +74,23 @@ class TestLogin:
         assert "access_token" in data
         assert "refresh_token" in data
         assert data["token_type"] == "bearer"
+
+    @pytest.mark.anyio
+    async def test_browser_login_keeps_refresh_token_httponly_only(self, client: AsyncClient, seeded_account):
+        resp = await client.post(
+            "/api/v1/auth/login",
+            json={"email": "login@test.com", "password": "Password1"},
+            headers={"X-Auth-Delivery": "cookie"},
+        )
+
+        assert resp.status_code == 200
+        assert "refresh_token" not in resp.json()
+        refresh_cookies = [
+            cookie for cookie in resp.headers.get_list("set-cookie") if cookie.startswith("refresh_token=")
+        ]
+        assert len(refresh_cookies) == 1
+        assert "HttpOnly" in refresh_cookies[0]
+        assert "Path=/api/v1/auth" in refresh_cookies[0]
 
     @pytest.mark.anyio
     async def test_login_email_identity_is_case_and_whitespace_insensitive(self, client: AsyncClient, seeded_account):
@@ -354,6 +371,59 @@ class TestTokenRefresh:
         data = resp.json()
         assert "access_token" in data
         assert "refresh_token" in data
+
+    @pytest.mark.anyio
+    async def test_browser_refresh_rotates_httponly_cookie_without_json_token(
+        self, client: AsyncClient, seeded_account
+    ):
+        login_resp = await client.post(
+            "/api/v1/auth/login",
+            json={"email": "login@test.com", "password": "Password1"},
+            headers={"X-Auth-Delivery": "cookie"},
+        )
+        previous_refresh = client.cookies.get("refresh_token")
+
+        resp = await client.post(
+            "/api/v1/auth/refresh",
+            json={},
+        )
+
+        assert login_resp.status_code == 200
+        assert resp.status_code == 200
+        assert "refresh_token" not in resp.json()
+        assert client.cookies.get("refresh_token") != previous_refresh
+        assert any(
+            cookie.startswith("refresh_token=") and "HttpOnly" in cookie and "Path=/api/v1/auth" in cookie
+            for cookie in resp.headers.get_list("set-cookie")
+        )
+
+    @pytest.mark.anyio
+    async def test_logout_with_expired_access_still_revokes_cookie_session(self, client: AsyncClient, seeded_account):
+        login_resp = await client.post(
+            "/api/v1/auth/login",
+            json={"email": "login@test.com", "password": "Password1"},
+            headers={"X-Auth-Delivery": "cookie"},
+        )
+        refresh_token = client.cookies.get("refresh_token")
+        with patch("app.utils.security.settings.access_token_expire_minutes", -1):
+            expired_access = create_access_token(
+                str(seeded_account.tenant_id),
+                str(seeded_account.id),
+                "admin",
+            )
+
+        logout_resp = await client.post(
+            "/api/v1/auth/logout",
+            headers={"Authorization": f"Bearer {expired_access}"},
+        )
+        replay_resp = await client.post(
+            "/api/v1/auth/refresh",
+            json={"refresh_token": refresh_token},
+        )
+
+        assert login_resp.status_code == 200
+        assert logout_resp.status_code == 200
+        assert replay_resp.status_code == 401
 
     @pytest.mark.anyio
     async def test_refresh_body_takes_precedence_over_cookie(self, client: AsyncClient, seeded_account):

@@ -527,8 +527,17 @@ function DashboardInner({ children }: { children: React.ReactNode }) {
       icon: <LogoutOutlined />,
       label: t("common.logout"),
       onClick: async () => {
-        await logout();
-        router.replace("/login");
+        try {
+          await logout();
+          router.replace("/login");
+        } catch (error) {
+          message.error(
+            extractErrorMessage(error, "退出失败，请检查网络后重试")
+          );
+          if (!useAuthStore.getState().user) {
+            router.replace("/login");
+          }
+        }
       },
     },
   ];

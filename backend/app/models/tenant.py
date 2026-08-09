@@ -143,6 +143,7 @@ class Account(Base):
 
     __table_args__ = (
         CheckConstraint("email = lower(trim(email))", name="ck_accounts_email_canonical"),
+        UniqueConstraint("tenant_id", "id", name="uq_accounts_tenant_id_id"),
         Index("uq_accounts_tenant_email_ci", tenant_id, func.lower(email), unique=True),
     )
 

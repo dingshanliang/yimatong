@@ -1,5 +1,7 @@
 """Auth 安全边界测试 — IP 速率限制、JWT 黑名单、refresh 轮换、账户锁定。"""
 
+import uuid
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -9,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.main import app
-from app.models.auth_security import ConsumedRefreshToken
+from app.models.auth_security import AuthSession
 from app.models.tenant import Account
 from app.utils.security import decode_token, hash_password
 
@@ -121,6 +123,31 @@ class TestIPRateLimit:
 
 class TestJWTBlacklist:
     @pytest.mark.anyio
+    async def test_successful_login_prunes_a_bounded_expired_session(
+        self, client: AsyncClient, db: AsyncSession, seeded_account
+    ):
+        expired_session_id = uuid.uuid4()
+        db.add(
+            AuthSession(
+                id=expired_session_id,
+                account_id=seeded_account.id,
+                tenant_id=seeded_account.tenant_id,
+                auth_version=seeded_account.auth_version,
+                current_refresh_jti=str(uuid.uuid4()),
+                expires_at=datetime.now(UTC) - timedelta(days=1),
+            )
+        )
+        await db.commit()
+
+        response = await client.post(
+            "/api/v1/auth/login",
+            json={"email": "security@test.com", "password": "Password1"},
+        )
+
+        assert response.status_code == 200
+        assert await db.get(AuthSession, expired_session_id) is None
+
+    @pytest.mark.anyio
     async def test_logout_globally_revokes_access_and_refresh(
         self, client: AsyncClient, db: AsyncSession, seeded_account, shared_security_cache
     ):
@@ -132,7 +159,8 @@ class TestJWTBlacklist:
         assert login_resp.status_code == 200
         token = login_resp.json()["access_token"]
         refresh_token = login_resp.json()["refresh_token"]
-        refresh_jti = decode_token(refresh_token)["jti"]
+        refresh_payload = decode_token(refresh_token)
+        session_id = uuid.UUID(refresh_payload["sid"])
         access_jti = decode_token(token)["jti"]
 
         # 登出
@@ -142,7 +170,9 @@ class TestJWTBlacklist:
             headers={"Authorization": f"Bearer {token}"},
         )
         assert logout_resp.status_code == 200
-        assert await db.get(ConsumedRefreshToken, refresh_jti) is not None
+        auth_session = await db.get(AuthSession, session_id)
+        assert auth_session is not None
+        assert auth_session.revoked_at is not None
         assert access_jti in shared_security_cache.revoked_jtis
 
         # 用被黑名单的 token 访问 /me 应该失败
@@ -184,7 +214,7 @@ class TestJWTBlacklist:
             json={"email": "security@test.com", "password": "Password1"},
         )
         token_pair = login_resp.json()
-        refresh_jti = decode_token(token_pair["refresh_token"])["jti"]
+        session_id = uuid.UUID(decode_token(token_pair["refresh_token"])["sid"])
         shared_security_cache.fail_writes = True
 
         response = await client.post(
@@ -194,10 +224,22 @@ class TestJWTBlacklist:
         )
 
         assert response.status_code == 503
-        assert await db.get(ConsumedRefreshToken, refresh_jti) is not None
+        assert response.json()["code"] == "LOGOUT_PARTIAL"
+        set_cookies = response.headers.get_list("set-cookie")
+        assert any(
+            "refresh_token=" in cookie and "Max-Age=0" in cookie and "Path=/api/v1/auth" in cookie
+            for cookie in set_cookies
+        )
+        assert any(
+            "refresh_token=" in cookie and "Max-Age=0" in cookie and "Path=/api/v1/auth/refresh" in cookie
+            for cookie in set_cookies
+        )
+        auth_session = await db.get(AuthSession, session_id)
+        assert auth_session is not None
+        assert auth_session.revoked_at is not None
 
     @pytest.mark.anyio
-    async def test_logout_prefers_explicit_refresh_token_over_stale_cookie(self, client: AsyncClient, seeded_account):
+    async def test_logout_revokes_explicit_refresh_token_and_stale_cookie(self, client: AsyncClient, seeded_account):
         login_resp = await client.post(
             "/api/v1/auth/login",
             json={"email": "security@test.com", "password": "Password1"},
@@ -214,8 +256,68 @@ class TestJWTBlacklist:
             )
 
         assert response.status_code == 200
-        assert logout_session.await_args.kwargs["refresh_token_str"] == current_refresh
+        assert logout_session.await_args.kwargs["refresh_token_str"] == "stale-cookie-token"
+        assert logout_session.await_args.kwargs["additional_refresh_token_str"] == current_refresh
         assert logout_session.await_args.kwargs["db"] is not None
+
+    @pytest.mark.anyio
+    async def test_logout_revokes_mismatched_body_and_cookie_sessions(self, client: AsyncClient, seeded_account):
+        first_login = await client.post(
+            "/api/v1/auth/login",
+            json={"email": "security@test.com", "password": "Password1"},
+        )
+        first_refresh = first_login.json()["refresh_token"]
+        second_login = await client.post(
+            "/api/v1/auth/login",
+            json={"email": "security@test.com", "password": "Password1"},
+        )
+        second_pair = second_login.json()
+
+        logout = await client.post(
+            "/api/v1/auth/logout",
+            json={"refresh_token": first_refresh},
+            headers={"Authorization": f"Bearer {second_pair['access_token']}"},
+        )
+        first_replay = await client.post(
+            "/api/v1/auth/refresh",
+            json={"refresh_token": first_refresh},
+        )
+        second_replay = await client.post(
+            "/api/v1/auth/refresh",
+            json={"refresh_token": second_pair["refresh_token"]},
+        )
+
+        assert logout.status_code == 200
+        assert first_replay.status_code == 401
+        assert second_replay.status_code == 401
+
+    @pytest.mark.anyio
+    async def test_logout_with_legacy_old_body_revokes_the_rotated_cookie_family(
+        self, client: AsyncClient, seeded_account
+    ):
+        login = await client.post(
+            "/api/v1/auth/login",
+            json={"email": "security@test.com", "password": "Password1"},
+        )
+        old_refresh = login.json()["refresh_token"]
+        rotated = await client.post(
+            "/api/v1/auth/refresh",
+            json={"refresh_token": old_refresh},
+        )
+
+        logout = await client.post(
+            "/api/v1/auth/logout",
+            json={"refresh_token": old_refresh},
+            headers={"Authorization": f"Bearer {rotated.json()['access_token']}"},
+        )
+        descendant = await client.post(
+            "/api/v1/auth/refresh",
+            json={"refresh_token": rotated.json()["refresh_token"]},
+        )
+
+        assert rotated.status_code == 200
+        assert logout.status_code == 200
+        assert descendant.status_code == 401
 
 
 class TestRefreshTokenRotation:
@@ -264,6 +366,16 @@ class TestRefreshTokenRotation:
 
         assert first.status_code == 200
         assert replay.status_code == 401
+        descendant_refresh = await client.post(
+            "/api/v1/auth/refresh",
+            json={"refresh_token": first.json()["refresh_token"]},
+        )
+        descendant_access = await client.get(
+            "/api/v1/auth/me",
+            headers={"Authorization": f"Bearer {first.json()['access_token']}"},
+        )
+        assert descendant_refresh.status_code == 401
+        assert descendant_access.status_code == 401
 
 
 class TestAccountLockingExtended:
