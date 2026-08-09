@@ -66,6 +66,7 @@ SELECT unnest(ARRAY[
     'external_orders', 'gmv_attributions', 'gmv_daily_stats', 'intent_events',
     'interception_records', 'launch_releases', 'ops_tasks', 'organizations',
     'page_templates', 'page_versions', 'permissions', 'point_products',
+    'pilot_milestone_corrections', 'pilot_milestones',
     'point_redemptions', 'point_rules', 'point_transactions',
     'private_domain_configs', 'product_assets', 'production_batches',
     'products', 'regional_code_rules', 'regional_org_members', 'regional_orgs',
@@ -75,7 +76,7 @@ SELECT unnest(ARRAY[
     'takeover_aliases', 'takeover_cutover_events', 'takeover_domain_checks',
     'takeover_import_errors', 'takeover_import_jobs', 'takeover_observations',
     'takeover_projects', 'takeover_route_versions', 'tenant_domains',
-    'tenant_health_metrics', 'tenants', 'translations', 'webhook_deliveries',
+    'tenant_health_metrics', 'tenants', 'translations', 'retrospectives', 'webhook_deliveries',
     'webhook_endpoints', 'wecom_contact_ways', 'wecom_external_contacts',
     'whitelabel_configs'
 ]::name[]);
@@ -121,8 +122,8 @@ BEGIN
         UNION ALL SELECT table_name FROM runtime_control_relation_allowlist
         UNION ALL SELECT table_name FROM runtime_public_relation_allowlist
     ) AS orm_registry;
-    IF registry_count <> 90 THEN
-        RAISE EXCEPTION 'Runtime ORM registry must classify exactly 90 relations, got %', registry_count;
+    IF registry_count <> 93 THEN
+        RAISE EXCEPTION 'Runtime ORM registry must classify exactly 93 relations, got %', registry_count;
     END IF;
 
     SELECT string_agg(table_name::text, ', ' ORDER BY table_name) INTO missing

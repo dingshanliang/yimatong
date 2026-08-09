@@ -20,8 +20,11 @@ BUSINESS_GAP_TABLES = (
     "diversion_evidence",
     "diversion_investigation_history",
     "gmv_daily_stats",
+    "pilot_milestone_corrections",
+    "pilot_milestones",
     "regional_code_rules",
     "regional_templates",
+    "retrospectives",
     "risk_notifications",
     "role_permissions",
     "sync_mappings",
@@ -76,7 +79,7 @@ async def test_registry_catalog_acl_and_control_boundary(
             "AND c.relname NOT IN "
             "('alembic_version','rls_force_remediation_backups','runtime_privilege_remediation_backup')"
         )
-        assert orm_root_count == 90
+        assert orm_root_count == 93
     finally:
         await owner.close()
 
@@ -102,6 +105,151 @@ async def test_registry_catalog_acl_and_control_boundary(
         key,
     )
     assert await control_pg_conn.fetchval("SELECT count(*) FROM platform_configs WHERE key=$1", key) == 1
+
+
+async def test_pilot_relations_runtime_crud_and_isolation(
+    migrated_pg_url: str,
+    runtime_pg_conn: asyncpg.Connection,
+) -> None:
+    summary = await seed_baseline(migrated_pg_url)
+    tenant_a = uuid.UUID(summary["baseline_tenant"]["id"])
+    tenant_b = uuid.UUID(summary["control_tenant"]["id"])
+    owner = await asyncpg.connect(migrated_pg_url.replace("postgresql+asyncpg://", "postgresql://"))
+
+    foreign_milestone_id = uuid.uuid4()
+    foreign_retrospective_id = uuid.uuid4()
+    foreign_correction_id = uuid.uuid4()
+    try:
+        await owner.execute(
+            "INSERT INTO pilot_milestones "
+            "(id,tenant_id,milestone_type,achieved_at,source,created_at,updated_at) "
+            "VALUES ($1,$2,'acceptance-foreign',now(),'foreign',now(),now())",
+            foreign_milestone_id,
+            tenant_b,
+        )
+        await owner.execute(
+            "INSERT INTO retrospectives "
+            "(id,tenant_id,period_day,window_start,window_end,next_review_date,status,"
+            "scorecard_snapshot,actions,created_at,updated_at) "
+            "VALUES ($1,$2,7,now(),now(),current_date,'pending','{}'::json,'[]'::json,now(),now())",
+            foreign_retrospective_id,
+            tenant_b,
+        )
+        await owner.execute(
+            "INSERT INTO pilot_milestone_corrections "
+            "(id,tenant_id,milestone_id,milestone_type,corrected_at,source,reason,created_at) "
+            "VALUES ($1,$2,$3,'acceptance-foreign',now(),'foreign','foreign',now())",
+            foreign_correction_id,
+            tenant_b,
+            foreign_milestone_id,
+        )
+    finally:
+        await owner.close()
+
+    for bypass_value in ("false", "true"):
+        await runtime_pg_conn.execute("SELECT set_config('app.tenant_id', '', true)")
+        await runtime_pg_conn.execute("SELECT set_config('app.bypass_rls', $1, true)", bypass_value)
+        for table in ("pilot_milestones", "retrospectives", "pilot_milestone_corrections"):
+            assert await runtime_pg_conn.fetchval(f"SELECT count(*) FROM {table}") == 0
+
+    await runtime_pg_conn.execute("SELECT set_config('app.bypass_rls', 'false', true)")
+    await runtime_pg_conn.execute("SELECT set_config('app.tenant_id', $1, true)", str(tenant_a))
+
+    own_milestone_id = uuid.uuid4()
+    own_retrospective_id = uuid.uuid4()
+    own_correction_id = uuid.uuid4()
+    await runtime_pg_conn.execute(
+        "INSERT INTO pilot_milestones "
+        "(id,tenant_id,milestone_type,achieved_at,source,created_at,updated_at) "
+        "VALUES ($1,$2,'acceptance-own',now(),'own',now(),now())",
+        own_milestone_id,
+        tenant_a,
+    )
+    await runtime_pg_conn.execute(
+        "INSERT INTO retrospectives "
+        "(id,tenant_id,period_day,window_start,window_end,next_review_date,status,"
+        "scorecard_snapshot,actions,created_at,updated_at) "
+        "VALUES ($1,$2,7,now(),now(),current_date,'pending','{}'::json,'[]'::json,now(),now())",
+        own_retrospective_id,
+        tenant_a,
+    )
+    await runtime_pg_conn.execute(
+        "INSERT INTO pilot_milestone_corrections "
+        "(id,tenant_id,milestone_id,milestone_type,corrected_at,source,reason,created_at) "
+        "VALUES ($1,$2,$3,'acceptance-own',now(),'own','own',now())",
+        own_correction_id,
+        tenant_a,
+        own_milestone_id,
+    )
+
+    cross_parent_savepoint = runtime_pg_conn.transaction()
+    await cross_parent_savepoint.start()
+    with pytest.raises(
+        asyncpg.ForeignKeyViolationError,
+        match="fk_pilot_milestone_corrections_tenant_milestone",
+    ):
+        await runtime_pg_conn.execute(
+            "INSERT INTO pilot_milestone_corrections "
+            "(id,tenant_id,milestone_id,milestone_type,corrected_at,source,reason,created_at) "
+            "VALUES ($1,$2,$3,'acceptance-cross-parent',now(),'cross','cross-parent',now())",
+            uuid.uuid4(),
+            tenant_a,
+            foreign_milestone_id,
+        )
+    await cross_parent_savepoint.rollback()
+
+    await _assert_insert_denied(
+        runtime_pg_conn,
+        "INSERT INTO pilot_milestones "
+        "(id,tenant_id,milestone_type,achieved_at,source,created_at,updated_at) "
+        "VALUES ($1,$2,'acceptance-cross',now(),'cross',now(),now())",
+        uuid.uuid4(),
+        tenant_b,
+    )
+    await _assert_insert_denied(
+        runtime_pg_conn,
+        "INSERT INTO retrospectives "
+        "(id,tenant_id,period_day,window_start,window_end,next_review_date,status,"
+        "scorecard_snapshot,actions,created_at,updated_at) "
+        "VALUES ($1,$2,14,now(),now(),current_date,'pending','{}'::json,'[]'::json,now(),now())",
+        uuid.uuid4(),
+        tenant_b,
+    )
+    await _assert_insert_denied(
+        runtime_pg_conn,
+        "INSERT INTO pilot_milestone_corrections "
+        "(id,tenant_id,milestone_id,milestone_type,corrected_at,source,reason,created_at) "
+        "VALUES ($1,$2,$3,'acceptance-cross',now(),'cross','cross',now())",
+        uuid.uuid4(),
+        tenant_b,
+        foreign_milestone_id,
+    )
+
+    cases = (
+        ("pilot_milestones", own_milestone_id, foreign_milestone_id, "source='updated'"),
+        ("retrospectives", own_retrospective_id, foreign_retrospective_id, "issues='updated'"),
+        (
+            "pilot_milestone_corrections",
+            own_correction_id,
+            foreign_correction_id,
+            "reason='updated'",
+        ),
+    )
+    for table, own_id, foreign_id, update_clause in cases:
+        assert await runtime_pg_conn.fetchval(f"SELECT count(*) FROM {table} WHERE id=$1", own_id) == 1
+        assert await runtime_pg_conn.fetchval(f"SELECT count(*) FROM {table} WHERE id=$1", foreign_id) == 0
+        assert await runtime_pg_conn.execute(f"UPDATE {table} SET {update_clause} WHERE id=$1", own_id) == "UPDATE 1"
+        assert (
+            await runtime_pg_conn.execute(f"UPDATE {table} SET {update_clause} WHERE id=$1", foreign_id) == "UPDATE 0"
+        )
+        assert await runtime_pg_conn.execute(f"DELETE FROM {table} WHERE id=$1", foreign_id) == "DELETE 0"
+
+    assert (
+        await runtime_pg_conn.execute("DELETE FROM pilot_milestone_corrections WHERE id=$1", own_correction_id)
+        == "DELETE 1"
+    )
+    assert await runtime_pg_conn.execute("DELETE FROM retrospectives WHERE id=$1", own_retrospective_id) == "DELETE 1"
+    assert await runtime_pg_conn.execute("DELETE FROM pilot_milestones WHERE id=$1", own_milestone_id) == "DELETE 1"
 
 
 async def test_repaired_business_relations_runtime_crud_and_isolation(

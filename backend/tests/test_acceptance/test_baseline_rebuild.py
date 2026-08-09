@@ -77,12 +77,26 @@ class TestCleanEnvRebuild:
         try:
             row = await conn.fetchrow(
                 "SELECT count(*) AS c FROM information_schema.tables "
-                "WHERE table_name IN ('tenants','brands','products','code_items','scan_events')"
+                "WHERE table_name IN ('tenants','brands','products','code_items','scan_events',"
+                "'pilot_milestones','retrospectives','pilot_milestone_corrections')"
             )
-            assert row["c"] == 5, f"expected 5 core tables, got {row['c']}"
+            assert row["c"] == 8, f"expected 8 core tables, got {row['c']}"
             # RLS 已启用（PG 信息架构字段名为 row_security，类型 yes/no）
             rls = await conn.fetchval("SELECT relrowsecurity FROM pg_class WHERE relname = 'code_items'")
             assert rls is True, f"RLS not enabled on code_items (relrowsecurity={rls})"
+            pilot_states = await conn.fetch(
+                "SELECT cls.relname,cls.relrowsecurity,cls.relforcerowsecurity,"
+                "string_agg(COALESCE(pg_get_expr(pol.polqual,pol.polrelid),'') || ' ' || "
+                "COALESCE(pg_get_expr(pol.polwithcheck,pol.polrelid),''),' ') AS expressions "
+                "FROM pg_class cls JOIN pg_namespace ns ON ns.oid=cls.relnamespace "
+                "LEFT JOIN pg_policy pol ON pol.polrelid=cls.oid "
+                "WHERE ns.nspname='public' AND cls.relname=ANY($1::text[]) "
+                "GROUP BY cls.relname,cls.relrowsecurity,cls.relforcerowsecurity ORDER BY cls.relname",
+                ["pilot_milestones", "retrospectives", "pilot_milestone_corrections"],
+            )
+            assert len(pilot_states) == 3
+            assert all(row["relrowsecurity"] and row["relforcerowsecurity"] for row in pilot_states)
+            assert all("has_parameter_privilege" in row["expressions"] for row in pilot_states)
         finally:
             await conn.close()
 

@@ -9,7 +9,7 @@ PRD docs/prd/pilot-learning-retrospective.md §4.1 + §6.2：里程碑是事实�
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, Index, String, Text, UniqueConstraint, func
+from sqlalchemy import DateTime, ForeignKey, ForeignKeyConstraint, Index, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column
 from uuid6 import uuid7
 
@@ -40,6 +40,7 @@ class PilotMilestone(Base):
     )
 
     __table_args__ = (
+        UniqueConstraint("tenant_id", "id", name="uq_pilot_milestones_tenant_id_id"),
         UniqueConstraint("tenant_id", "milestone_type", name="uq_pilot_milestones_tenant_type"),
         Index("ix_pilot_milestones_tenant_type", "tenant_id", "milestone_type"),
     )
@@ -57,9 +58,7 @@ class PilotMilestoneCorrection(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid7)
     tenant_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("tenants.id"), nullable=False, index=True)
-    milestone_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("pilot_milestones.id", ondelete="CASCADE"), nullable=False
-    )
+    milestone_id: Mapped[uuid.UUID] = mapped_column(nullable=False)
     milestone_type: Mapped[PilotMilestoneType] = mapped_column(String(40), nullable=False)
     # 更正后的达成时间（PRD §6.2：这是"追加"的更正事实，不回写里程碑本体）
     corrected_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
@@ -72,6 +71,12 @@ class PilotMilestoneCorrection(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     __table_args__ = (
+        ForeignKeyConstraint(
+            ["tenant_id", "milestone_id"],
+            ["pilot_milestones.tenant_id", "pilot_milestones.id"],
+            name="fk_pilot_milestone_corrections_tenant_milestone",
+            ondelete="CASCADE",
+        ),
         Index(
             "ix_pilot_milestone_corrections_tenant_milestone",
             "tenant_id",

@@ -24,9 +24,10 @@ import re
 import secrets
 import subprocess
 import sys
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Generator
+from dataclasses import dataclass
 from pathlib import Path
-from urllib.parse import unquote, urlsplit
+from urllib.parse import unquote, urlsplit, urlunsplit
 
 import asyncpg
 import pytest
@@ -41,6 +42,9 @@ _DROP_TOTAL_TIMEOUT_SECONDS = 15.0
 _DROP_ATTEMPT_TIMEOUT_SECONDS = 3.0
 _DROP_RETRY_BACKOFF_SECONDS = 0.25
 _DROP_MAX_ATTEMPTS = 4
+_ALLOWED_ACCEPTANCE_HOSTS = {"localhost", "127.0.0.1", "::1"}
+_ACCEPTANCE_PORT = 5433
+_OWNER_MARKER_PREFIX = "yimatong-acceptance-owner:"
 
 
 def _database_name_from_dsn(dsn: str) -> str:
@@ -57,6 +61,50 @@ def _validate_acceptance_database_name(database_name: str) -> None:
             "acceptance database must be a unique dedicated name matching "
             "yimatong_acceptance_<run_id> (26-63 lowercase letters, digits, or underscores)"
         )
+
+
+def _validate_local_acceptance_endpoints(admin_dsn: str, target_dsn: str, database_name: str) -> None:
+    """Reject any destructive target outside the approved local Docker PostgreSQL."""
+
+    for label, dsn in (("ACCEPTANCE_PG_ADMIN_URL", admin_dsn), ("ACCEPTANCE_PG_DSN", target_dsn)):
+        parsed = urlsplit(dsn)
+        if parsed.scheme not in {"postgresql", "postgresql+asyncpg"}:
+            raise RuntimeError(f"{label} must use postgresql or postgresql+asyncpg")
+        if parsed.hostname not in _ALLOWED_ACCEPTANCE_HOSTS or parsed.port != _ACCEPTANCE_PORT:
+            raise RuntimeError(f"{label} must target local Docker PostgreSQL on port {_ACCEPTANCE_PORT}")
+        if parsed.query:
+            raise RuntimeError(f"{label} must not override host, port or database through query parameters")
+
+    if _database_name_from_dsn(admin_dsn) == database_name:
+        raise RuntimeError("ACCEPTANCE_PG_ADMIN_URL must target a maintenance database, not the acceptance database")
+    if _database_name_from_dsn(target_dsn) != database_name:
+        raise RuntimeError("ACCEPTANCE_PG_DSN database must match the dedicated acceptance database name")
+
+
+def _target_maintenance_dsn(target_dsn: str, admin_dsn: str) -> str:
+    """Build a target-endpoint probe DSN against the configured maintenance DB."""
+
+    target = urlsplit(target_dsn.replace("postgresql+asyncpg://", "postgresql://", 1))
+    maintenance_database = _database_name_from_dsn(admin_dsn)
+    return urlunsplit(("postgresql", target.netloc, f"/{maintenance_database}", "", ""))
+
+
+class AcceptanceDatabaseOwnershipError(RuntimeError):
+    """Raised before destructive SQL when the run cannot prove database ownership."""
+
+
+@dataclass
+class AcceptanceDatabaseLease:
+    database_name: str
+    database_dsn: str
+    owner_token: str
+    created: bool = False
+    marker_written: bool = False
+    admin_system_identifier: str | None = None
+
+    @property
+    def owner_marker(self) -> str:
+        return f"{_OWNER_MARKER_PREFIX}{self.owner_token}"
 
 
 def _resolve_acceptance_database() -> tuple[str, str]:
@@ -104,34 +152,104 @@ def _pg_available() -> bool:
     return asyncio.get_event_loop().run_until_complete(_probe()) if False else asyncio.run(_probe())
 
 
-def _run_admin(sql: str) -> None:
-    """在 admin 库上执行一条无事务语句（CREATE/DROP DATABASE）。"""
-
-    async def _go():
-        conn = await asyncpg.connect(ADMIN_DSN)
-        try:
-            await conn.execute(sql)
-        finally:
-            await conn.close()
-
-    asyncio.run(_go())
-
-
 class AcceptanceDatabaseCleanupError(RuntimeError):
     """Raised when the dedicated acceptance database cannot be proven absent."""
+
+
+async def _cluster_system_identifier(conn) -> str:
+    return str(await conn.fetchval("SELECT system_identifier::text FROM pg_control_system()"))
+
+
+async def _assert_same_local_cluster(
+    admin_dsn: str,
+    target_dsn: str,
+    database_name: str,
+    *,
+    connect=asyncpg.connect,
+) -> str:
+    _validate_local_acceptance_endpoints(admin_dsn, target_dsn, database_name)
+    target_probe_dsn = _target_maintenance_dsn(target_dsn, admin_dsn)
+    admin_conn = await connect(admin_dsn)
+    target_conn = None
+    try:
+        admin_identifier = await _cluster_system_identifier(admin_conn)
+        target_conn = await connect(target_probe_dsn)
+        target_identifier = await _cluster_system_identifier(target_conn)
+        if target_identifier != admin_identifier:
+            raise AcceptanceDatabaseOwnershipError(
+                "ACCEPTANCE_PG_ADMIN_URL and ACCEPTANCE_PG_DSN target different PostgreSQL clusters"
+            )
+        return admin_identifier
+    finally:
+        if target_conn is not None:
+            await target_conn.close()
+        await admin_conn.close()
+
+
+async def _database_owner_marker(conn, database_name: str) -> str | None:
+    row = await conn.fetchrow(
+        "SELECT shobj_description(oid, 'pg_database') AS marker FROM pg_database WHERE datname = $1",
+        database_name,
+    )
+    return None if row is None else row["marker"]
+
+
+async def _create_owned_database(
+    lease: AcceptanceDatabaseLease,
+    admin_dsn: str,
+    *,
+    connect=asyncpg.connect,
+) -> None:
+    """Atomically create one run-owned database without deleting pre-existing state."""
+
+    lease.admin_system_identifier = await _assert_same_local_cluster(
+        admin_dsn,
+        lease.database_dsn,
+        lease.database_name,
+        connect=connect,
+    )
+    admin_conn = await connect(admin_dsn)
+    try:
+        if await _database_owner_marker(admin_conn, lease.database_name) is not None:
+            raise AcceptanceDatabaseOwnershipError(
+                f"dedicated acceptance database {lease.database_name} already exists; refusing to replace it"
+            )
+        try:
+            await admin_conn.execute(f'CREATE DATABASE "{lease.database_name}" OWNER yimatong')
+        except asyncpg.DuplicateDatabaseError as exc:
+            raise AcceptanceDatabaseOwnershipError(
+                f"dedicated acceptance database {lease.database_name} was concurrently claimed"
+            ) from exc
+        lease.created = True
+        marker = lease.owner_marker.replace("'", "''")
+        await admin_conn.execute(f"COMMENT ON DATABASE \"{lease.database_name}\" IS '{marker}'")
+        lease.marker_written = True
+    finally:
+        await admin_conn.close()
+
+    target_conn = await connect(lease.database_dsn.replace("postgresql+asyncpg://", "postgresql://", 1))
+    try:
+        actual_database = await target_conn.fetchval("SELECT current_database()")
+        target_identifier = await _cluster_system_identifier(target_conn)
+        if actual_database != lease.database_name or target_identifier != lease.admin_system_identifier:
+            raise AcceptanceDatabaseOwnershipError("created acceptance database identity does not match its lease")
+    finally:
+        await target_conn.close()
 
 
 async def _drop_database_with_retry(
     database_name: str,
     admin_dsn: str,
     *,
+    expected_owner_marker: str,
+    allow_unmarked_created: bool = False,
     total_timeout: float = _DROP_TOTAL_TIMEOUT_SECONDS,
     attempt_timeout: float = _DROP_ATTEMPT_TIMEOUT_SECONDS,
     retry_backoff: float = _DROP_RETRY_BACKOFF_SECONDS,
     max_attempts: int = _DROP_MAX_ATTEMPTS,
     connect=asyncpg.connect,
 ) -> None:
-    """Drop one dedicated database and verify its absence through ``pg_database``."""
+    """Drop one proven-owned database and verify its absence through ``pg_database``."""
     _validate_acceptance_database_name(database_name)
     if _database_name_from_dsn(admin_dsn) == database_name:
         raise RuntimeError("ACCEPTANCE_PG_ADMIN_URL must target a maintenance database, not the acceptance database")
@@ -151,6 +269,25 @@ async def _drop_database_with_retry(
         try:
             conn = await asyncio.wait_for(connect(admin_dsn), timeout=min(attempt_timeout, remaining))
             operation_timeout = min(attempt_timeout, max(deadline - loop.time(), 0.001))
+            marker = await asyncio.wait_for(
+                _database_owner_marker(conn, database_name),
+                timeout=operation_timeout,
+            )
+            if marker is None:
+                exists = await asyncio.wait_for(
+                    conn.fetchval("SELECT EXISTS (SELECT 1 FROM pg_database WHERE datname = $1)", database_name),
+                    timeout=operation_timeout,
+                )
+                if not exists:
+                    return
+                if not allow_unmarked_created:
+                    raise AcceptanceDatabaseOwnershipError(
+                        f"database {database_name} has no matching run owner marker; refusing to drop it"
+                    )
+            elif marker != expected_owner_marker:
+                raise AcceptanceDatabaseOwnershipError(
+                    f"database {database_name} is owned by another run; refusing to drop it"
+                )
             await asyncio.wait_for(
                 conn.execute(f'DROP DATABASE IF EXISTS "{database_name}" WITH (FORCE)'),
                 timeout=operation_timeout,
@@ -163,6 +300,8 @@ async def _drop_database_with_retry(
             if not still_exists:
                 return
             last_error = RuntimeError(f"database {database_name} still exists after DROP DATABASE")
+        except AcceptanceDatabaseOwnershipError:
+            raise
         except Exception as exc:
             last_error = exc
         finally:
@@ -184,15 +323,15 @@ async def _drop_database_with_retry(
     ) from last_error
 
 
-def _drop_and_create_db() -> None:
-    """在 infra PG 上（重）建一个干净的 acceptance 库。"""
-    _drop_db()
-    _run_admin(f'CREATE DATABASE "{ACCEPTANCE_DB}" OWNER yimatong')
-    _prepare_runtime_role()
-
-
-def _drop_db() -> None:
-    asyncio.run(_drop_database_with_retry(ACCEPTANCE_DB, ADMIN_DSN))
+def _drop_owned_database(lease: AcceptanceDatabaseLease) -> None:
+    asyncio.run(
+        _drop_database_with_retry(
+            lease.database_name,
+            ADMIN_DSN,
+            expected_owner_marker=lease.owner_marker,
+            allow_unmarked_created=lease.created and not lease.marker_written,
+        )
+    )
 
 
 def _prepare_runtime_role() -> None:
@@ -243,13 +382,7 @@ def _prepare_runtime_role() -> None:
 # ── 会话级：干净 PG + 迁移 ────────────────────────────────────────────────
 
 
-@pytest.fixture(scope="session")
-def migrated_pg_url() -> str:
-    """创建干净 acceptance 库并跑 alembic upgrade head，返回 asyncpg DSN。"""
-    if not _pg_available():
-        pytest.skip("infra PostgreSQL not available on localhost:5433; run `pnpm dev:stack`")
-    _drop_and_create_db()
-
+def _run_migrations() -> None:
     env = os.environ.copy()
     env["database_url"] = ACCEPTANCE_DSN
     env["migration_database_url"] = ACCEPTANCE_DSN
@@ -263,10 +396,11 @@ def migrated_pg_url() -> str:
         timeout=180,
     )
     if result.returncode != 0:
-        _drop_db()
         pytest.fail(f"alembic upgrade head failed on clean PG:\nSTDOUT:\n{result.stdout}\nSTDERR:\n{result.stderr}")
 
-    async def _provision_test_principals() -> None:
+
+def _provision_test_principals() -> None:
+    async def _go() -> None:
         conn = await asyncpg.connect(ACCEPTANCE_DSN.replace("postgresql+asyncpg://", "postgresql://"))
         try:
             # Provision the actual runtime role from the reviewed allowlist
@@ -288,26 +422,55 @@ def migrated_pg_url() -> str:
         finally:
             await conn.close()
 
-    asyncio.run(_provision_test_principals())
+    asyncio.run(_go())
 
-    async def _assert_target_database() -> None:
+
+def _assert_target_database(lease: AcceptanceDatabaseLease) -> None:
+    async def _go() -> None:
         conn = await asyncpg.connect(ACCEPTANCE_DSN.replace("postgresql+asyncpg://", "postgresql://"))
         try:
             actual = await conn.fetchval("SELECT current_database()")
-            assert actual == ACCEPTANCE_DB, f"migrations ran against unexpected database: {actual}"
+            system_identifier = await _cluster_system_identifier(conn)
+            if actual != lease.database_name or system_identifier != lease.admin_system_identifier:
+                raise AcceptanceDatabaseOwnershipError(f"migrations ran against unexpected database identity: {actual}")
         finally:
             await conn.close()
 
-    asyncio.run(_assert_target_database())
-
-    return ACCEPTANCE_DSN
+    asyncio.run(_go())
 
 
-@pytest.fixture(scope="session", autouse=True)
-def _cleanup_db(migrated_pg_url):
-    """会话结束后清理 acceptance 库。"""
-    yield
-    _drop_db()
+@pytest.fixture(scope="session")
+def migrated_pg_url() -> Generator[str, None, None]:
+    """Own the complete acceptance database lifecycle, including setup failures."""
+
+    _validate_local_acceptance_endpoints(ADMIN_DSN, ACCEPTANCE_DSN, ACCEPTANCE_DB)
+    if not _pg_available():
+        pytest.skip("infra PostgreSQL not available on localhost:5433; run `pnpm dev:stack`")
+
+    lease = AcceptanceDatabaseLease(
+        database_name=ACCEPTANCE_DB,
+        database_dsn=ACCEPTANCE_DSN,
+        owner_token=secrets.token_hex(16),
+    )
+    primary_error: BaseException | None = None
+    try:
+        asyncio.run(_create_owned_database(lease, ADMIN_DSN))
+        _prepare_runtime_role()
+        _run_migrations()
+        _provision_test_principals()
+        _assert_target_database(lease)
+        yield ACCEPTANCE_DSN
+    except BaseException as exc:
+        primary_error = exc
+        raise
+    finally:
+        if lease.created:
+            try:
+                _drop_owned_database(lease)
+            except BaseException as cleanup_error:
+                if primary_error is None:
+                    raise
+                primary_error.add_note(f"acceptance database cleanup also failed: {cleanup_error!r}")
 
 
 # ── 函数级：绕过 RLS 的 AsyncSession（平台视角，跨租户只读核对）────────────

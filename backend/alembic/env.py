@@ -42,6 +42,7 @@ from app.models.launch import LaunchRelease  # noqa: F401
 from app.models.member import ConsumerProfile, PointProduct, PointRedemption, PointRule, PointTransaction  # noqa: F401
 from app.models.page import PageTemplate, PageVersion  # noqa: F401
 from app.models.plan import PlanDefinition  # noqa: F401
+from app.models.pilot_milestone import PilotMilestone, PilotMilestoneCorrection  # noqa: F401
 from app.models.platform_opening import PlatformTenantOpening  # noqa: F401
 from app.models.role_template_backup import (  # noqa: F401
     OperatorCampaignManageGrant,
@@ -50,6 +51,7 @@ from app.models.role_template_backup import (  # noqa: F401
     TenantPlatformRoleAssignmentBackup,
 )
 from app.models.product import Brand, Product, ProductionBatch, SKU  # noqa: F401
+from app.models.retrospective import Retrospective  # noqa: F401
 from app.models.regional import (  # noqa: F401
     RegionalCodeRule,
     RegionalOrg,

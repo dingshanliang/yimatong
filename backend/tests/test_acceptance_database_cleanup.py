@@ -2,35 +2,84 @@ from __future__ import annotations
 
 import asyncio
 
+import asyncpg
 import pytest
 
 from tests.test_acceptance import conftest as acceptance_conftest
 from tests.test_acceptance.conftest import (
     AcceptanceDatabaseCleanupError,
+    AcceptanceDatabaseLease,
+    AcceptanceDatabaseOwnershipError,
+    _assert_same_local_cluster,
+    _create_owned_database,
     _drop_database_with_retry,
     _resolve_acceptance_database,
+    _validate_local_acceptance_endpoints,
 )
 
 TEST_DATABASE = "yimatong_acceptance_cleanup_test"
-TEST_ADMIN_DSN = "postgresql://admin:test@localhost/postgres"
+TEST_ADMIN_DSN = "postgresql://admin:test@localhost:5433/postgres"
+TEST_TARGET_DSN = f"postgresql+asyncpg://admin:test@localhost:5433/{TEST_DATABASE}"
+TEST_MARKER = "yimatong-acceptance-owner:test-token"
 
 
 class _FakeConnection:
-    def __init__(self, *, drop_error: Exception | None = None, still_exists: bool = False) -> None:
+    def __init__(
+        self,
+        *,
+        exists: bool = True,
+        marker: str | None = TEST_MARKER,
+        drop_error: Exception | None = None,
+        still_exists: bool = False,
+        system_identifier: str = "cluster-a",
+        current_database: str = TEST_DATABASE,
+        create_error: Exception | None = None,
+        comment_error: Exception | None = None,
+    ) -> None:
+        self.exists = exists
+        self.marker = marker
         self.drop_error = drop_error
         self.still_exists = still_exists
+        self.system_identifier = system_identifier
+        self.current_database = current_database
+        self.create_error = create_error
+        self.comment_error = comment_error
         self.closed = False
         self.terminated = False
+        self.executed: list[str] = []
 
     async def execute(self, sql: str) -> None:
-        assert sql == f'DROP DATABASE IF EXISTS "{TEST_DATABASE}" WITH (FORCE)'
-        if self.drop_error is not None:
-            raise self.drop_error
+        self.executed.append(sql)
+        if sql == f'DROP DATABASE IF EXISTS "{TEST_DATABASE}" WITH (FORCE)':
+            if self.drop_error is not None:
+                raise self.drop_error
+            if not self.still_exists:
+                self.exists = False
+            return
+        if sql == f'CREATE DATABASE "{TEST_DATABASE}" OWNER yimatong':
+            if self.create_error is not None:
+                raise self.create_error
+            self.exists = True
+            return
+        if sql.startswith(f'COMMENT ON DATABASE "{TEST_DATABASE}" IS '):
+            if self.comment_error is not None:
+                raise self.comment_error
+            self.marker = TEST_MARKER
 
-    async def fetchval(self, sql: str, database_name: str) -> bool:
-        assert sql == "SELECT EXISTS (SELECT 1 FROM pg_database WHERE datname = $1)"
+    async def fetchrow(self, sql: str, database_name: str):
+        assert sql == "SELECT shobj_description(oid, 'pg_database') AS marker FROM pg_database WHERE datname = $1"
         assert database_name == TEST_DATABASE
-        return self.still_exists
+        return {"marker": self.marker} if self.exists else None
+
+    async def fetchval(self, sql: str, *args: object):
+        if sql == "SELECT system_identifier::text FROM pg_control_system()":
+            return self.system_identifier
+        if sql == "SELECT current_database()":
+            return self.current_database
+        if sql == "SELECT EXISTS (SELECT 1 FROM pg_database WHERE datname = $1)":
+            assert args == (TEST_DATABASE,)
+            return self.exists
+        raise AssertionError(f"unexpected SQL: {sql}")
 
     async def close(self) -> None:
         self.closed = True
@@ -39,27 +88,43 @@ class _FakeConnection:
         self.terminated = True
 
 
-def _connection_factory(connections: list[_FakeConnection]):
+def _connection_factory(connections: list[_FakeConnection], seen_dsns: list[str] | None = None):
     remaining = iter(connections)
 
     async def _connect(dsn: str) -> _FakeConnection:
-        assert dsn == TEST_ADMIN_DSN
+        if seen_dsns is not None:
+            seen_dsns.append(dsn)
         return next(remaining)
 
     return _connect
 
 
-def _run_cleanup(connections: list[_FakeConnection]) -> None:
+def _run_cleanup(
+    connections: list[_FakeConnection],
+    *,
+    marker: str = TEST_MARKER,
+    allow_unmarked_created: bool = False,
+) -> None:
     asyncio.run(
         _drop_database_with_retry(
             TEST_DATABASE,
             TEST_ADMIN_DSN,
+            expected_owner_marker=marker,
+            allow_unmarked_created=allow_unmarked_created,
             total_timeout=1.0,
             attempt_timeout=0.2,
             retry_backoff=0.0,
             max_attempts=len(connections),
             connect=_connection_factory(connections),
         )
+    )
+
+
+def _lease() -> AcceptanceDatabaseLease:
+    return AcceptanceDatabaseLease(
+        database_name=TEST_DATABASE,
+        database_dsn=TEST_TARGET_DSN,
+        owner_token="test-token",
     )
 
 
@@ -101,6 +166,32 @@ def test_cleanup_retries_until_pg_database_confirms_final_absence() -> None:
     assert all(connection.closed for connection in connections)
 
 
+def test_cleanup_refuses_foreign_owner_marker_without_drop() -> None:
+    connection = _FakeConnection(marker="yimatong-acceptance-owner:foreign")
+
+    with pytest.raises(AcceptanceDatabaseOwnershipError, match="owned by another run"):
+        _run_cleanup([connection])
+
+    assert not any(sql.startswith("DROP DATABASE") for sql in connection.executed)
+
+
+def test_cleanup_refuses_missing_owner_marker_without_drop() -> None:
+    connection = _FakeConnection(marker=None)
+
+    with pytest.raises(AcceptanceDatabaseOwnershipError, match="no matching run owner marker"):
+        _run_cleanup([connection])
+
+    assert not any(sql.startswith("DROP DATABASE") for sql in connection.executed)
+
+
+def test_cleanup_allows_unmarked_database_created_by_current_run() -> None:
+    connection = _FakeConnection(marker=None)
+
+    _run_cleanup([connection], allow_unmarked_created=True)
+
+    assert any(sql.startswith("DROP DATABASE") for sql in connection.executed)
+
+
 def test_cleanup_rejects_non_dedicated_database_before_connecting() -> None:
     connect_called = False
 
@@ -114,6 +205,7 @@ def test_cleanup_rejects_non_dedicated_database_before_connecting() -> None:
             _drop_database_with_retry(
                 "yimatong",
                 TEST_ADMIN_DSN,
+                expected_owner_marker=TEST_MARKER,
                 total_timeout=1.0,
                 attempt_timeout=0.2,
                 retry_backoff=0.0,
@@ -123,6 +215,111 @@ def test_cleanup_rejects_non_dedicated_database_before_connecting() -> None:
         )
 
     assert not connect_called
+
+
+@pytest.mark.parametrize(
+    ("admin_dsn", "target_dsn"),
+    [
+        ("postgresql://admin:test@example.com:5433/postgres", TEST_TARGET_DSN),
+        ("postgresql://admin:test@localhost:5432/postgres", TEST_TARGET_DSN),
+        (TEST_ADMIN_DSN, f"postgresql+asyncpg://admin:test@localhost:5432/{TEST_DATABASE}"),
+        (f"postgresql://admin:test@localhost:5433/{TEST_DATABASE}", TEST_TARGET_DSN),
+        (TEST_ADMIN_DSN + "?host=example.com", TEST_TARGET_DSN),
+    ],
+)
+def test_rejects_unapproved_acceptance_endpoints(admin_dsn: str, target_dsn: str) -> None:
+    with pytest.raises(RuntimeError):
+        _validate_local_acceptance_endpoints(admin_dsn, target_dsn, TEST_DATABASE)
+
+
+def test_same_local_cluster_identity_is_required() -> None:
+    connections = [
+        _FakeConnection(system_identifier="cluster-a"),
+        _FakeConnection(system_identifier="cluster-b"),
+    ]
+
+    with pytest.raises(AcceptanceDatabaseOwnershipError, match="different PostgreSQL clusters"):
+        asyncio.run(
+            _assert_same_local_cluster(
+                TEST_ADMIN_DSN,
+                TEST_TARGET_DSN,
+                TEST_DATABASE,
+                connect=_connection_factory(connections),
+            )
+        )
+
+    assert all(connection.closed for connection in connections)
+
+
+def test_create_refuses_preexisting_database_without_drop() -> None:
+    lease = _lease()
+    connections = [
+        _FakeConnection(system_identifier="cluster-a"),
+        _FakeConnection(system_identifier="cluster-a"),
+        _FakeConnection(exists=True, marker="foreign"),
+    ]
+
+    with pytest.raises(AcceptanceDatabaseOwnershipError, match="already exists"):
+        asyncio.run(
+            _create_owned_database(
+                lease,
+                TEST_ADMIN_DSN,
+                connect=_connection_factory(connections),
+            )
+        )
+
+    assert not lease.created
+    assert not any(sql.startswith("DROP DATABASE") for connection in connections for sql in connection.executed)
+
+
+def test_concurrent_create_loser_never_claims_or_drops_winner() -> None:
+    lease = _lease()
+    connections = [
+        _FakeConnection(system_identifier="cluster-a"),
+        _FakeConnection(system_identifier="cluster-a"),
+        _FakeConnection(
+            exists=False,
+            marker=None,
+            create_error=asyncpg.DuplicateDatabaseError("duplicate database"),
+        ),
+    ]
+
+    with pytest.raises(AcceptanceDatabaseOwnershipError, match="concurrently claimed"):
+        asyncio.run(
+            _create_owned_database(
+                lease,
+                TEST_ADMIN_DSN,
+                connect=_connection_factory(connections),
+            )
+        )
+
+    assert not lease.created
+    assert not any(sql.startswith("DROP DATABASE") for connection in connections for sql in connection.executed)
+
+
+def test_create_records_marker_and_verifies_target_identity() -> None:
+    lease = _lease()
+    seen_dsns: list[str] = []
+    connections = [
+        _FakeConnection(system_identifier="cluster-a"),
+        _FakeConnection(system_identifier="cluster-a"),
+        _FakeConnection(exists=False, marker=None),
+        _FakeConnection(system_identifier="cluster-a", current_database=TEST_DATABASE),
+    ]
+
+    asyncio.run(
+        _create_owned_database(
+            lease,
+            TEST_ADMIN_DSN,
+            connect=_connection_factory(connections, seen_dsns),
+        )
+    )
+
+    assert lease.created and lease.marker_written
+    assert lease.admin_system_identifier == "cluster-a"
+    assert seen_dsns[0] == TEST_ADMIN_DSN
+    assert seen_dsns[1] == TEST_ADMIN_DSN
+    assert seen_dsns[-1] == TEST_TARGET_DSN.replace("postgresql+asyncpg://", "postgresql://")
 
 
 def test_local_defaults_generate_a_unique_database_and_matching_dsn(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -139,12 +336,111 @@ def test_local_defaults_generate_a_unique_database_and_matching_dsn(monkeypatch:
     assert second_dsn.endswith(f"/{second_name}")
 
 
-def test_session_teardown_propagates_cleanup_failure(monkeypatch: pytest.MonkeyPatch) -> None:
-    def _fail_cleanup() -> None:
-        raise AcceptanceDatabaseCleanupError("database remains")
+def _patch_successful_lifecycle(monkeypatch: pytest.MonkeyPatch) -> list[AcceptanceDatabaseLease]:
+    leases: list[AcceptanceDatabaseLease] = []
+    monkeypatch.setattr(acceptance_conftest, "_validate_local_acceptance_endpoints", lambda *_args: None)
+    monkeypatch.setattr(acceptance_conftest, "_pg_available", lambda: True)
 
-    monkeypatch.setattr(acceptance_conftest, "_drop_db", _fail_cleanup)
-    fixture_generator = acceptance_conftest._cleanup_db.__wrapped__("unused-dsn")
+    async def _create(lease: AcceptanceDatabaseLease, _admin_dsn: str) -> None:
+        lease.created = True
+        lease.marker_written = True
+        leases.append(lease)
+
+    monkeypatch.setattr(acceptance_conftest, "_create_owned_database", _create)
+    monkeypatch.setattr(acceptance_conftest, "_prepare_runtime_role", lambda: None)
+    monkeypatch.setattr(acceptance_conftest, "_run_migrations", lambda: None)
+    monkeypatch.setattr(acceptance_conftest, "_provision_test_principals", lambda: None)
+    monkeypatch.setattr(acceptance_conftest, "_assert_target_database", lambda _lease: None)
+    return leases
+
+
+@pytest.mark.parametrize(
+    "failure_point",
+    ["_prepare_runtime_role", "_run_migrations", "_provision_test_principals", "_assert_target_database"],
+)
+def test_every_post_create_setup_failure_triggers_cleanup(
+    monkeypatch: pytest.MonkeyPatch,
+    failure_point: str,
+) -> None:
+    _patch_successful_lifecycle(monkeypatch)
+    cleanup_calls: list[AcceptanceDatabaseLease] = []
+
+    def _fail(*_args) -> None:
+        raise RuntimeError(f"{failure_point} failed")
+
+    monkeypatch.setattr(acceptance_conftest, failure_point, _fail)
+    monkeypatch.setattr(acceptance_conftest, "_drop_owned_database", cleanup_calls.append)
+    fixture_generator = acceptance_conftest.migrated_pg_url.__wrapped__()
+
+    with pytest.raises(RuntimeError, match=failure_point):
+        next(fixture_generator)
+
+    assert len(cleanup_calls) == 1
+
+
+def test_marker_write_failure_after_create_still_triggers_owner_cleanup(monkeypatch: pytest.MonkeyPatch) -> None:
+    _patch_successful_lifecycle(monkeypatch)
+    cleanup_calls: list[AcceptanceDatabaseLease] = []
+
+    async def _fail_after_create(lease: AcceptanceDatabaseLease, _admin_dsn: str) -> None:
+        lease.created = True
+        raise RuntimeError("marker write failed")
+
+    monkeypatch.setattr(acceptance_conftest, "_create_owned_database", _fail_after_create)
+    monkeypatch.setattr(acceptance_conftest, "_drop_owned_database", cleanup_calls.append)
+    fixture_generator = acceptance_conftest.migrated_pg_url.__wrapped__()
+
+    with pytest.raises(RuntimeError, match="marker write failed"):
+        next(fixture_generator)
+
+    assert len(cleanup_calls) == 1
+    assert cleanup_calls[0].created and not cleanup_calls[0].marker_written
+
+
+def test_setup_failure_remains_primary_when_cleanup_also_fails(monkeypatch: pytest.MonkeyPatch) -> None:
+    _patch_successful_lifecycle(monkeypatch)
+    monkeypatch.setattr(
+        acceptance_conftest,
+        "_prepare_runtime_role",
+        lambda: (_ for _ in ()).throw(ValueError("primary setup failure")),
+    )
+    monkeypatch.setattr(
+        acceptance_conftest,
+        "_drop_owned_database",
+        lambda _lease: (_ for _ in ()).throw(AcceptanceDatabaseCleanupError("cleanup failure")),
+    )
+    fixture_generator = acceptance_conftest.migrated_pg_url.__wrapped__()
+
+    with pytest.raises(ValueError, match="primary setup failure") as exc_info:
+        next(fixture_generator)
+
+    assert any("cleanup failure" in note for note in exc_info.value.__notes__)
+
+
+def test_thrown_test_failure_remains_primary_when_cleanup_also_fails(monkeypatch: pytest.MonkeyPatch) -> None:
+    _patch_successful_lifecycle(monkeypatch)
+    monkeypatch.setattr(
+        acceptance_conftest,
+        "_drop_owned_database",
+        lambda _lease: (_ for _ in ()).throw(AcceptanceDatabaseCleanupError("cleanup failure")),
+    )
+    fixture_generator = acceptance_conftest.migrated_pg_url.__wrapped__()
+    next(fixture_generator)
+
+    with pytest.raises(AssertionError, match="test failure") as exc_info:
+        fixture_generator.throw(AssertionError("test failure"))
+
+    assert any("cleanup failure" in note for note in exc_info.value.__notes__)
+
+
+def test_normal_teardown_propagates_cleanup_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+    _patch_successful_lifecycle(monkeypatch)
+    monkeypatch.setattr(
+        acceptance_conftest,
+        "_drop_owned_database",
+        lambda _lease: (_ for _ in ()).throw(AcceptanceDatabaseCleanupError("database remains")),
+    )
+    fixture_generator = acceptance_conftest.migrated_pg_url.__wrapped__()
     next(fixture_generator)
 
     with pytest.raises(AcceptanceDatabaseCleanupError, match="database remains"):
