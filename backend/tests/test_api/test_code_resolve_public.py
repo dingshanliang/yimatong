@@ -11,8 +11,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.main import app
+from app.models.plan import TenantQuotaUsage
 from app.models.scan import ScanEvent
 from app.models.tenant import Tenant
+from app.services.quota import QUOTA_RECONCILIATION_SOURCE_REVISION
 from app.utils.security import create_access_token
 from tests.conftest import TestSessionLocal
 
@@ -228,6 +230,12 @@ class TestPublicResolve:
         tenant_uuid = uuid.UUID(tenant_id)
         tenant = await db_session.get(Tenant, tenant_uuid)
         tenant.quota = {**(tenant.quota or {}), "max_scans": 1}
+        usage = await db_session.get(TenantQuotaUsage, tenant_uuid)
+        assert usage is not None
+        assert usage.enforcement_ready is True
+        usage.scans = 0
+        usage.reconciled_at = datetime.now(UTC)
+        usage.source_revision = QUOTA_RECONCILIATION_SOURCE_REVISION
         await db_session.flush()
 
         first = await client.get(f"/c/{public_id}", headers={"Accept": "application/json"})
@@ -257,8 +265,15 @@ class TestPublicResolve:
         setup_activated_code,
     ):
         tenant_id, _, _, _, public_id = setup_activated_code
-        tenant = await db_session.get(Tenant, uuid.UUID(tenant_id))
+        tenant_uuid = uuid.UUID(tenant_id)
+        tenant = await db_session.get(Tenant, tenant_uuid)
         tenant.quota = {**(tenant.quota or {}), "max_scans": 0}
+        usage = await db_session.get(TenantQuotaUsage, tenant_uuid)
+        assert usage is not None
+        assert usage.enforcement_ready is True
+        usage.scans = 0
+        usage.reconciled_at = datetime.now(UTC)
+        usage.source_revision = QUOTA_RECONCILIATION_SOURCE_REVISION
         await db_session.flush()
 
         response = await client.get(f"/c/{public_id}", headers={"Accept": "text/html"})

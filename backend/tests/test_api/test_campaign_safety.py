@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.main import app
+from app.models.tenant import Tenant
 from app.utils.client_ip import compute_ip_hash
 from app.utils.security import create_access_token
 from tests.conftest import TestSessionLocal
@@ -33,6 +34,11 @@ RULES_JSON = {
     "minor_notice": "未成年人请在监护人陪同下参与",
     "customer_service_contact": "400-123-4567",
 }
+
+
+async def _seed_tenant(db: AsyncSession, tenant_id: uuid.UUID, label: str) -> None:
+    db.add(Tenant(id=tenant_id, name=label, slug=f"campaign-{label}-{tenant_id.hex[:8]}"))
+    await db.flush()
 
 
 async def create_product(client: AsyncClient, headers: dict[str, str], name: str = "安全测试产品") -> str:
@@ -572,6 +578,7 @@ class TestExpiredCampaignClaim:
         from app.services.campaign import claim_benefit, create_benefit, create_campaign
 
         tenant_id = uuid.uuid4()
+        await _seed_tenant(db_session, tenant_id, "expired")
         now = datetime.now(UTC)
         two_days_ago = (now - timedelta(days=2)).isoformat()
         yesterday = (now - timedelta(days=1)).isoformat()
@@ -632,6 +639,8 @@ class TestCrossTenantIsolation:
 
         tenant_a = uuid.uuid4()
         tenant_b = uuid.uuid4()
+        await _seed_tenant(db_session, tenant_a, "tenant-a")
+        await _seed_tenant(db_session, tenant_b, "tenant-b")
         rules = {
             "participation_conditions": "any_scan",
             "claim_limits": "1",
@@ -717,6 +726,41 @@ class TestCrossTenantIsolation:
         assert result is False
 
     @pytest.mark.anyio
+    async def test_delete_draft_campaign_releases_current_usage(self, db_session):
+        from app.models.campaign import Campaign
+        from app.models.plan import TenantQuotaUsage
+        from app.models.tenant import Tenant
+        from app.services.campaign import delete_campaign
+
+        tenant_id = uuid.uuid4()
+        campaign_id = uuid.uuid4()
+        db_session.add(
+            Tenant(
+                id=tenant_id,
+                name="活动删除配额租户",
+                slug=f"campaign-delete-quota-{tenant_id.hex[:8]}",
+            )
+        )
+        db_session.add(
+            Campaign(
+                id=campaign_id,
+                tenant_id=tenant_id,
+                name="待删除草稿",
+                campaign_type="coupon",
+                status="draft",
+                start_at="2026-01-01",
+                end_at="2027-01-01",
+                rules_json={},
+            )
+        )
+        usage = TenantQuotaUsage(tenant_id=tenant_id, campaigns=1)
+        db_session.add(usage)
+        await db_session.flush()
+
+        assert await delete_campaign(db_session, tenant_id, campaign_id) is True
+        assert usage.campaigns == 0
+
+    @pytest.mark.anyio
     async def test_tenant_a_cannot_claim_tenant_b_benefit(self, db_session, two_tenants):
         from app.services.campaign import claim_benefit
 
@@ -744,6 +788,7 @@ class TestConcurrentClaims:
         from app.services.campaign import claim_benefit, create_benefit, create_campaign
 
         tenant_id = uuid.uuid4()
+        await _seed_tenant(db_session, tenant_id, "concurrent-stock")
         rules = {
             "participation_conditions": "any_scan",
             "claim_limits": "1",
@@ -806,6 +851,7 @@ class TestConcurrentClaims:
         from app.services.campaign import claim_benefit, create_benefit, create_campaign
 
         tenant_id = uuid.uuid4()
+        await _seed_tenant(db_session, tenant_id, "concurrent-person")
         rules = {
             "participation_conditions": "any_scan",
             "claim_limits": "1",

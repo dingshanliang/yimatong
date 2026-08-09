@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
-from app.core.dependencies import get_current_tenant
+from app.core.dependencies import get_current_tenant, require_tenant_feature
 from app.schemas.common import PaginatedResponse
 from app.services.channel_analytics import (
     get_channel_health_scores,
@@ -14,7 +14,11 @@ from app.services.channel_analytics import (
     get_scan_by_channel,
 )
 
-channel_analytics_router = APIRouter(prefix="/api/v1/channel-analytics", tags=["channel-analytics"])
+channel_analytics_router = APIRouter(
+    prefix="/api/v1/channel-analytics",
+    tags=["channel-analytics"],
+    dependencies=[Depends(require_tenant_feature("channel_portal"))],
+)
 
 
 @channel_analytics_router.get("/scan-by-channel")

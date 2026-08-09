@@ -15,11 +15,12 @@ from app.core.database import get_db, get_db_with_bypass
 from app.core.dependencies import get_redis_cache
 from app.main import app
 from app.models.auth_security import PlatformAuthSession
-from app.models.plan import PlanDefinition
+from app.models.plan import PlanDefinition, QuotaRolloutState, TenantQuotaUsage
 from app.models.platform_opening import PlatformTenantOpening
 from app.models.scan import ScanEvent
 from app.models.tenant import Account, Organization, Role, Tenant, TenantPlan, TenantStatus, account_roles
 from app.services.platform_auth import PlatformSessionUnavailable
+from app.services.quota import QUOTA_RECONCILIATION_SOURCE_REVISION
 from app.services.redis_cache import SharedSecurityCacheUnavailable
 from app.utils.security import create_access_token, decode_token, hash_password
 from tests.conftest import TestSessionLocal
@@ -612,13 +613,96 @@ class TestPlatformTenantUpdate:
         assert response.status_code == 422
 
     @pytest.mark.anyio
-    async def test_quota_usage_counts_authoritative_scan_events_per_tenant(
+    async def test_plan_create_rejects_unknown_quota_key(self, client: AsyncClient):
+        response = await client.post(
+            "/api/v1/platform/plans",
+            json={"name": "starter", "display_name": "无效额度", "quota_defaults": {"unknown": 1}},
+            headers=_platform_headers(),
+        )
+        assert response.status_code == 422
+
+    @pytest.mark.anyio
+    async def test_plan_update_rejects_boolean_quota(self, client: AsyncClient):
+        response = await client.patch(
+            "/api/v1/platform/plans/test-plan-starter",
+            json={"quota_defaults": {"max_codes": True}},
+            headers=_platform_headers(),
+        )
+        assert response.status_code == 422
+
+    @pytest.mark.anyio
+    async def test_assign_plan_rejects_quota_below_unlimited_sentinel(
+        self, client: AsyncClient, db_session: AsyncSession
+    ):
+        tenant = Tenant(name="无效覆盖额度", slug="invalid-override-quota", status=TenantStatus.active)
+        db_session.add(tenant)
+        await db_session.flush()
+        response = await client.post(
+            f"/api/v1/platform/tenants/{tenant.id}/assign-plan",
+            json={"plan_id": "test-plan-starter", "override_quota": {"max_codes": -2}},
+            headers=_platform_headers(),
+        )
+        assert response.status_code == 422
+
+    @pytest.mark.anyio
+    async def test_assign_plan_distinguishes_missing_and_inactive_definitions(
+        self, client: AsyncClient, db_session: AsyncSession
+    ):
+        tenant = Tenant(name="套餐状态边界", slug="plan-state-boundary", status=TenantStatus.active)
+        inactive = await db_session.scalar(select(PlanDefinition).where(PlanDefinition.id == "test-plan-starter"))
+        assert inactive is not None
+        inactive.is_active = False
+        db_session.add(tenant)
+        await db_session.flush()
+
+        missing = await client.post(
+            f"/api/v1/platform/tenants/{tenant.id}/assign-plan",
+            json={"plan_id": "missing-plan"},
+            headers=_platform_headers(),
+        )
+        disabled = await client.post(
+            f"/api/v1/platform/tenants/{tenant.id}/assign-plan",
+            json={"plan_id": inactive.id},
+            headers=_platform_headers(),
+        )
+        assert missing.status_code == 404
+        assert disabled.status_code == 409
+
+    @pytest.mark.anyio
+    async def test_assign_plan_rejects_dirty_stored_plan_without_tenant_drift(
+        self, client: AsyncClient, db_session: AsyncSession
+    ):
+        tenant = Tenant(
+            name="脏套餐边界",
+            slug="dirty-plan-boundary",
+            status=TenantStatus.active,
+            plan=TenantPlan.free,
+            quota={"max_codes": 5},
+        )
+        plan = await db_session.scalar(select(PlanDefinition).where(PlanDefinition.id == "test-plan-starter"))
+        assert plan is not None
+        plan.quota_defaults = {"unknown": 1}
+        db_session.add(tenant)
+        await db_session.flush()
+
+        response = await client.post(
+            f"/api/v1/platform/tenants/{tenant.id}/assign-plan",
+            json={"plan_id": plan.id},
+            headers=_platform_headers(),
+        )
+        assert response.status_code == 409
+        assert tenant.plan == TenantPlan.free
+        assert tenant.quota == {"max_codes": 5}
+
+    @pytest.mark.anyio
+    async def test_quota_usage_reads_reserved_usage_without_rescanning_facts(
         self, client: AsyncClient, db_session: AsyncSession
     ):
         tenant = Tenant(name="扫码额度测试", slug="scan-quota-usage", status=TenantStatus.active)
         other = Tenant(name="其他租户", slug="scan-quota-other", status=TenantStatus.active)
         db_session.add_all([tenant, other])
         await db_session.flush()
+        db_session.add(TenantQuotaUsage(tenant_id=tenant.id, scans=2))
         db_session.add_all(
             [
                 ScanEvent(
@@ -645,6 +729,39 @@ class TestPlatformTenantUpdate:
         assert response.status_code == 200
         item = next(row for row in response.json() if row["tenant_id"] == str(tenant.id))
         assert item["usage"]["scans"] == 2
+        assert item["quota_enforcement_state"] == "reconciliation_pending"
+        assert item["enforcement_ready"] is False
+
+    @pytest.mark.anyio
+    async def test_quota_usage_never_reports_ready_for_a_stale_global_epoch(
+        self, client: AsyncClient, db_session: AsyncSession
+    ):
+        tenant = Tenant(name="旧 epoch 租户", slug="stale-quota-epoch", status=TenantStatus.active)
+        db_session.add(tenant)
+        await db_session.flush()
+        db_session.add(
+            TenantQuotaUsage(
+                tenant_id=tenant.id,
+                scans=3,
+                reconciled_at=datetime.now(UTC),
+                source_revision=QUOTA_RECONCILIATION_SOURCE_REVISION,
+                enforcement_ready=True,
+            )
+        )
+        rollout = await db_session.get(QuotaRolloutState, 1)
+        assert rollout is not None
+        rollout.source_revision = "stale-revision"
+        await db_session.flush()
+
+        response = await client.get("/api/v1/platform/quota-usage", headers=_platform_headers())
+
+        assert response.status_code == 200
+        item = next(row for row in response.json() if row["tenant_id"] == str(tenant.id))
+        assert item["usage"]["scans"] == 3
+        assert item["quota_enforcement_state"] == "reconciliation_pending"
+        assert item["enforcement_ready"] is False
+        assert item["source_revision"] == QUOTA_RECONCILIATION_SOURCE_REVISION
+        assert item["rollout_source_revision"] == "stale-revision"
 
 
 class TestPlatformAuditLogs:

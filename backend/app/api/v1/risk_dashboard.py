@@ -12,7 +12,7 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
-from app.core.dependencies import get_current_account_id, get_current_tenant
+from app.core.dependencies import get_current_account_id, get_current_tenant, require_tenant_feature
 from app.schemas.common import PaginatedResponse
 from app.services.risk_dashboard import (
     export_risk_data,
@@ -23,7 +23,11 @@ from app.services.risk_dashboard import (
     resolve_diversion_clue,
 )
 
-risk_dashboard_router = APIRouter(prefix="/api/v1/risk-dashboard", tags=["risk-dashboard"])
+risk_dashboard_router = APIRouter(
+    prefix="/api/v1/risk-dashboard",
+    tags=["risk-dashboard"],
+)
+_require_risk_feature = require_tenant_feature("risk_module")
 
 
 class ResolveDiversionRequest(BaseModel):
@@ -37,7 +41,7 @@ def require_admin(request: Request) -> None:
         raise HTTPException(status_code=403, detail="Admin permission required")
 
 
-@risk_dashboard_router.get("/repeat-scans")
+@risk_dashboard_router.get("/repeat-scans", dependencies=[Depends(_require_risk_feature)])
 async def repeat_scans_endpoint(
     min_count: int = Query(2, ge=2),
     page: int = Query(1, ge=1),
@@ -49,7 +53,7 @@ async def repeat_scans_endpoint(
     return PaginatedResponse(items=items, total=total, page=page, page_size=page_size)
 
 
-@risk_dashboard_router.get("/cross-region")
+@risk_dashboard_router.get("/cross-region", dependencies=[Depends(_require_risk_feature)])
 async def cross_region_endpoint(
     days_back: int = Query(30, ge=1, le=365),
     db: AsyncSession = Depends(get_db),
@@ -59,7 +63,7 @@ async def cross_region_endpoint(
     return stats
 
 
-@risk_dashboard_router.get("/cross-region-trend")
+@risk_dashboard_router.get("/cross-region-trend", dependencies=[Depends(_require_risk_feature)])
 async def cross_region_trend_endpoint(
     days_back: int = Query(30, ge=1, le=365),
     db: AsyncSession = Depends(get_db),
@@ -69,7 +73,7 @@ async def cross_region_trend_endpoint(
     return {"trend": trend}
 
 
-@risk_dashboard_router.get("/diversion-summary")
+@risk_dashboard_router.get("/diversion-summary", dependencies=[Depends(_require_risk_feature)])
 async def diversion_summary_endpoint(
     resolved: bool | None = Query(None),
     page: int = Query(1, ge=1),
@@ -80,7 +84,10 @@ async def diversion_summary_endpoint(
     return await get_diversion_summary(db, tenant_id, resolved=resolved, page=page, page_size=page_size)
 
 
-@risk_dashboard_router.put("/diversion-clues/{clue_id}/resolve")
+@risk_dashboard_router.put(
+    "/diversion-clues/{clue_id}/resolve",
+    dependencies=[Depends(_require_risk_feature)],
+)
 async def resolve_diversion_endpoint(
     clue_id: uuid.UUID,
     body: ResolveDiversionRequest | None = None,
@@ -108,7 +115,11 @@ async def resolve_diversion_endpoint(
     }
 
 
-@risk_dashboard_router.get("/export", response_class=PlainTextResponse)
+@risk_dashboard_router.get(
+    "/export",
+    response_class=PlainTextResponse,
+    dependencies=[Depends(_require_risk_feature)],
+)
 async def export_endpoint(
     data_type: str = Query("alerts", pattern="^(alerts|diversions)$"),
     db: AsyncSession = Depends(get_db),
@@ -157,7 +168,7 @@ def _broadcast_alert(tenant_id: str, alert_data: dict) -> None:
             pass  # 丢弃过旧消息
 
 
-@risk_dashboard_router.post("/alerts/ticket")
+@risk_dashboard_router.post("/alerts/ticket", dependencies=[Depends(_require_risk_feature)])
 async def create_sse_ticket(
     tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
@@ -174,6 +185,7 @@ async def create_sse_ticket(
 async def alert_stream(
     request: Request,
     ticket: str = Query(..., description="SSE ticket obtained from POST /alerts/ticket"),
+    db: AsyncSession = Depends(get_db),
 ):
     """SSE 实时告警流。使用短期 ticket 认证，避免 JWT 暴露在 URL 中。"""
     from starlette.responses import JSONResponse
@@ -184,6 +196,25 @@ async def alert_stream(
         return JSONResponse(status_code=401, content={"detail": "Invalid or expired SSE ticket"})
 
     tid = ticket_data["tenant_id"]
+
+    from app.core.database import set_session_tenant_context
+    from app.services.entitlement import TenantFeatureDisabledError
+    from app.services.entitlement import require_tenant_feature as require_feature
+
+    tenant_uuid = await set_session_tenant_context(db, tid)
+    try:
+        await require_feature(db, tenant_uuid, "risk_module")
+    except TenantFeatureDisabledError:
+        return JSONResponse(
+            status_code=403,
+            content={
+                "detail": {
+                    "code": "TENANT_FEATURE_DISABLED",
+                    "feature": "risk_module",
+                    "message": "当前套餐未开通此功能",
+                }
+            },
+        )
 
     queue: asyncio.Queue = asyncio.Queue(maxsize=50)
 

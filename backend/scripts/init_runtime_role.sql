@@ -76,10 +76,16 @@ SELECT unnest(ARRAY[
     'takeover_aliases', 'takeover_cutover_events', 'takeover_domain_checks',
     'takeover_import_errors', 'takeover_import_jobs', 'takeover_observations',
     'takeover_projects', 'takeover_route_versions', 'tenant_domains',
-    'tenant_health_metrics', 'tenants', 'translations', 'retrospectives', 'webhook_deliveries',
+    'tenant_health_metrics', 'tenant_quota_usage', 'tenants', 'translations', 'retrospectives', 'webhook_deliveries',
     'webhook_endpoints', 'wecom_contact_ways', 'wecom_external_contacts',
     'whitelabel_configs'
 ]::name[]);
+
+CREATE TEMP TABLE runtime_append_only_relation_allowlist (
+    table_name name PRIMARY KEY
+) ON COMMIT DROP;
+INSERT INTO runtime_append_only_relation_allowlist (table_name)
+VALUES ('platform_audit_log');
 
 CREATE TEMP TABLE runtime_control_relation_allowlist (
     table_name name PRIMARY KEY
@@ -88,7 +94,7 @@ INSERT INTO runtime_control_relation_allowlist (table_name)
 SELECT unnest(ARRAY[
     'auth_sessions', 'consumed_refresh_tokens', 'invite_registration_receipts',
     'operator_campaign_manage_grants', 'organization_parent_repair_backups',
-    'platform_audit_log', 'platform_auth_sessions', 'platform_configs', 'platform_tenant_openings',
+    'platform_auth_sessions', 'platform_configs', 'platform_tenant_openings',
     'role_template_backups', 'tenant_invite_codes',
     'tenant_platform_role_assignment_backups'
 ]::name[]);
@@ -97,6 +103,14 @@ CREATE TEMP TABLE runtime_public_relation_allowlist (
     table_name name PRIMARY KEY
 ) ON COMMIT DROP;
 INSERT INTO runtime_public_relation_allowlist (table_name) VALUES ('plan_definitions');
+
+-- Global deployment state needed by ordinary quota writes. The runtime role
+-- may lock/read the singleton but never mutate rollout control state.
+CREATE TEMP TABLE runtime_read_only_global_relation_allowlist (
+    table_name name PRIMARY KEY
+) ON COMMIT DROP;
+INSERT INTO runtime_read_only_global_relation_allowlist (table_name)
+VALUES ('quota_rollout_state');
 
 CREATE TEMP TABLE runtime_migration_relation_allowlist (
     table_name name PRIMARY KEY
@@ -119,18 +133,22 @@ BEGIN
     SELECT count(*) INTO registry_count
     FROM (
         SELECT table_name FROM runtime_business_relation_allowlist
+        UNION ALL SELECT table_name FROM runtime_append_only_relation_allowlist
         UNION ALL SELECT table_name FROM runtime_control_relation_allowlist
         UNION ALL SELECT table_name FROM runtime_public_relation_allowlist
+        UNION ALL SELECT table_name FROM runtime_read_only_global_relation_allowlist
     ) AS orm_registry;
-    IF registry_count <> 95 THEN
-        RAISE EXCEPTION 'Runtime ORM registry must classify exactly 95 relations, got %', registry_count;
+    IF registry_count <> 97 THEN
+        RAISE EXCEPTION 'Runtime ORM registry must classify exactly 97 relations, got %', registry_count;
     END IF;
 
     SELECT string_agg(table_name::text, ', ' ORDER BY table_name) INTO missing
     FROM (
         SELECT table_name FROM runtime_business_relation_allowlist
+        UNION ALL SELECT table_name FROM runtime_append_only_relation_allowlist
         UNION ALL SELECT table_name FROM runtime_control_relation_allowlist
         UNION ALL SELECT table_name FROM runtime_public_relation_allowlist
+        UNION ALL SELECT table_name FROM runtime_read_only_global_relation_allowlist
         UNION ALL SELECT table_name FROM runtime_migration_relation_allowlist
     ) AS registry
     WHERE to_regclass(format('public.%I', table_name)) IS NULL;
@@ -148,8 +166,10 @@ BEGIN
           SELECT 1
           FROM (
               SELECT table_name FROM runtime_business_relation_allowlist
+              UNION ALL SELECT table_name FROM runtime_append_only_relation_allowlist
               UNION ALL SELECT table_name FROM runtime_control_relation_allowlist
               UNION ALL SELECT table_name FROM runtime_public_relation_allowlist
+              UNION ALL SELECT table_name FROM runtime_read_only_global_relation_allowlist
               UNION ALL SELECT table_name FROM runtime_migration_relation_allowlist
           ) AS registry
           WHERE registry.table_name = cls.relname
@@ -157,6 +177,80 @@ BEGIN
     IF unclassified IS NOT NULL THEN
         RAISE EXCEPTION 'Unclassified public relations: %', unclassified;
     END IF;
+END
+$$;
+
+-- The audit ledger is tenant-readable and append-only for the runtime role.
+-- It deliberately has a separate registry class so replay can never grant
+-- UPDATE or DELETE merely because it is tenant-visible.
+DO $$
+DECLARE
+    relation_row record;
+    unsafe_policy text;
+    has_select boolean;
+    has_insert boolean;
+    has_update boolean;
+    has_delete boolean;
+BEGIN
+    FOR relation_row IN
+        SELECT cls.oid, ns.nspname AS schema_name, cls.relname AS table_name,
+               cls.relrowsecurity, cls.relforcerowsecurity
+        FROM runtime_append_only_relation_allowlist AS allowlist
+        JOIN pg_class AS cls ON cls.relname = allowlist.table_name
+        JOIN pg_namespace AS ns ON ns.oid = cls.relnamespace
+        WHERE ns.nspname = 'public' AND cls.relkind = 'r'
+    LOOP
+        IF NOT relation_row.relrowsecurity OR NOT relation_row.relforcerowsecurity THEN
+            RAISE EXCEPTION 'Append-only relation %.% lacks ENABLE+FORCE RLS',
+                relation_row.schema_name, relation_row.table_name;
+        END IF;
+
+        SELECT string_agg(policy.polname, ', ' ORDER BY policy.polname)
+        INTO unsafe_policy
+        FROM pg_policy AS policy
+        WHERE policy.polrelid = relation_row.oid
+          AND (
+              (policy.polqual IS NOT NULL
+               AND pg_get_expr(policy.polqual, policy.polrelid) LIKE '%app.bypass_rls%'
+               AND pg_get_expr(policy.polqual, policy.polrelid) NOT LIKE '%has_parameter_privilege%')
+              OR
+              (policy.polwithcheck IS NOT NULL
+               AND pg_get_expr(policy.polwithcheck, policy.polrelid) LIKE '%app.bypass_rls%'
+               AND pg_get_expr(policy.polwithcheck, policy.polrelid) NOT LIKE '%has_parameter_privilege%')
+          );
+        IF unsafe_policy IS NOT NULL THEN
+            RAISE EXCEPTION 'Append-only relation % has unguarded bypass policies: %',
+                relation_row.table_name, unsafe_policy;
+        END IF;
+
+        SELECT
+            bool_or(polcmd IN ('*', 'r') AND polqual IS NOT NULL),
+            bool_or(polcmd IN ('*', 'a') AND COALESCE(polwithcheck, polqual) IS NOT NULL),
+            bool_or(polcmd IN ('*', 'w')),
+            bool_or(polcmd IN ('*', 'd'))
+        INTO has_select, has_insert, has_update, has_delete
+        FROM pg_policy
+        WHERE polrelid = relation_row.oid;
+        IF NOT COALESCE(has_select, false)
+           OR NOT COALESCE(has_insert, false)
+           OR COALESCE(has_update, false)
+           OR COALESCE(has_delete, false) THEN
+            RAISE EXCEPTION
+                'Append-only relation % policy coverage invalid (select %, insert %, update %, delete %)',
+                relation_row.table_name, has_select, has_insert, has_update, has_delete;
+        END IF;
+
+        EXECUTE format(
+            'GRANT SELECT, INSERT ON TABLE %I.%I TO yimatong_app',
+            relation_row.schema_name,
+            relation_row.table_name
+        );
+        EXECUTE format(
+            'REVOKE UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON TABLE %I.%I FROM yimatong_app',
+            relation_row.schema_name,
+            relation_row.table_name
+        );
+    END LOOP;
 END
 $$;
 
@@ -233,6 +327,9 @@ $$;
 
 -- Deliberately public catalog data used by tenant requests is read-only.
 GRANT SELECT ON TABLE public.plan_definitions TO yimatong_app;
+GRANT SELECT ON TABLE public.quota_rollout_state TO yimatong_app;
+REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER
+    ON TABLE public.quota_rollout_state FROM yimatong_app;
 
 -- Cross-tenant control state and migration evidence never belong to the
 -- ordinary application role. Keep new tables deny-by-default; migrations must
@@ -249,7 +346,6 @@ BEGIN
         'role_template_backups',
         'organization_parent_repair_backups',
         'tenant_platform_role_assignment_backups',
-        'platform_audit_log',
         'platform_auth_sessions',
         'platform_configs',
         'tenant_invite_codes',

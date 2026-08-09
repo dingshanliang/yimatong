@@ -181,6 +181,19 @@ async def _handle_scan_created(event_type: str, data: dict, tenant_id: str) -> N
     async with async_session_factory() as db:
         await set_session_tenant_context(db, tenant_uuid)
         try:
+            from app.services.entitlement import (
+                TenantFeatureDisabledError,
+                TenantPlanExpiredError,
+                require_active_plan,
+                require_tenant_feature,
+            )
+
+            try:
+                await require_active_plan(db, tenant_uuid)
+                await require_tenant_feature(db, tenant_uuid, "risk_module")
+            except (TenantFeatureDisabledError, TenantPlanExpiredError):
+                return
+
             # 检查码是否已冻结，冻结码跳过评估
             item_result = await db.execute(
                 select(CodeItem).where(

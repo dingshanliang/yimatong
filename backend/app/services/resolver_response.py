@@ -158,8 +158,16 @@ async def build_json_response(
     # hide_yimatong_brand/logo_url）。
     # 合并顺序：租户 brand_profile 优先于产品品牌 brand_data（ADR-0001 决策意图：
     # 品牌方在 Admin 自助设置的 Logo 必须生效，不被产品品牌 logo 覆盖）。
-    tenant_result = await db.execute(select(Tenant.brand_profile).where(Tenant.id == tenant_uuid))
-    brand_profile = tenant_result.scalar_one_or_none() or {}
+    tenant_result = await db.execute(
+        select(Tenant.brand_profile, Tenant.enabled_features).where(Tenant.id == tenant_uuid)
+    )
+    tenant_brand_row = tenant_result.one_or_none()
+    brand_profile = dict(tenant_brand_row.brand_profile or {}) if tenant_brand_row else {}
+    if brand_profile.get("hide_yimatong_brand"):
+        from app.services.entitlement import is_feature_enabled
+
+        if not is_feature_enabled(tenant_brand_row.enabled_features, "white_label"):
+            brand_profile["hide_yimatong_brand"] = False
     if brand_profile:
         existing = result.get("tenant_branding") or {}
         # logo_url：租户配了就用租户的；没配才回退到产品品牌 logo

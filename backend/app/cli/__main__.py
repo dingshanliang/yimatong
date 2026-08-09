@@ -15,8 +15,10 @@ app = seed_module.app
 
 # 挂载基准数据子命令组：`python -m app.cli baseline build|verify`
 from app.cli import baseline as baseline_module  # noqa: E402
+from app.cli import quota as quota_module  # noqa: E402
 
 app.add_typer(baseline_module.app, name="baseline", help="基准验收数据（yimatong-zgb1.1）")
+app.add_typer(quota_module.app, name="quota", help="配额计数桥接、对账与执行门禁")
 
 
 if __name__ == "__main__":

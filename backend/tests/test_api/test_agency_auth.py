@@ -637,6 +637,13 @@ class TestAgencyContextTokenVersion:
             "plan": "pro",
             "plan_expires_at": brand.plan_expires_at.isoformat().replace("+00:00", "Z"),
             "read_only": True,
+            "enabled_features": {
+                "ai_assistant": False,
+                "risk_module": False,
+                "channel_portal": False,
+                "white_label": False,
+                "cash_red_packet": False,
+            },
         }
         assert profile.status_code == 403
 
@@ -671,6 +678,10 @@ class TestAgencyContextTokenVersion:
             headers={"Authorization": f"Bearer {token}"},
         )
         assert switched.status_code == 200
+        assert any(
+            "access_token=" in cookie and "httponly" in cookie.lower()
+            for cookie in switched.headers.get_list("set-cookie")
+        )
         switched_payload = decode_token(switched.json()["access_token"])
         assert switched_payload["auth_version"] == 7
         assert switched_payload["sid"] == str(session_id)
@@ -681,6 +692,10 @@ class TestAgencyContextTokenVersion:
                 headers={"Authorization": f"Bearer {switched.json()['access_token']}"},
             )
         assert exited.status_code == 200
+        assert any(
+            "access_token=" in cookie and "httponly" in cookie.lower()
+            for cookie in exited.headers.get_list("set-cookie")
+        )
         exited_payload = decode_token(exited.json()["access_token"])
         assert exited_payload["auth_version"] == 7
         assert exited_payload["sid"] == str(session_id)

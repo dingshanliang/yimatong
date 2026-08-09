@@ -59,6 +59,12 @@ async def setup_tenant(client: AsyncClient):
         headers=_platform_admin_headers(),
     )
     tid = resp.json()["id"]
+    feature_resp = await client.patch(
+        f"/api/v1/tenants/{tid}",
+        json={"enabled_features": {"risk_module": True}},
+        headers=_platform_admin_headers(),
+    )
+    assert feature_resp.status_code == 200
     token = create_access_token(tid, "00000000-0000-0000-0000-000000000001", "admin")
     headers = {"Authorization": f"Bearer {token}"}
     return tid, headers

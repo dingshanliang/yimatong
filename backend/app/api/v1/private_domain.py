@@ -62,8 +62,7 @@ async def create_config(
         config=body.config,
     )
     db.add(config)
-    await db.commit()
-    await db.refresh(config)
+    await db.flush()
     return {
         "id": str(config.id),
         "config_type": config.config_type,
@@ -92,7 +91,7 @@ async def update_config(
         config.name = body.name
     if body.config is not None:
         config.config = body.config
-    await db.commit()
+    await db.flush()
     return {
         "id": str(config.id),
         "config_type": config.config_type,

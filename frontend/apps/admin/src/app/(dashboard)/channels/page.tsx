@@ -33,6 +33,7 @@ import {
 } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
 import api, { extractErrorMessage } from "@/lib/api";
+import { tenantFeatureEnabled } from "@/lib/plan-entitlement";
 import { STATUS_COLORS } from "@/lib/status-colors";
 
 const { Title, Text } = Typography;
@@ -1822,7 +1823,9 @@ export default function ChannelsPage() {
             ),
           },
         ].filter(
-          (item) => item.key !== "stores" || tenantFeatures.channel_store
+          (item) =>
+            item.key !== "stores" ||
+            tenantFeatureEnabled(tenantFeatures, "channel_portal")
         )}
       />
 

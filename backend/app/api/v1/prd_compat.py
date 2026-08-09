@@ -65,7 +65,7 @@ import uuid
 
 from pydantic import BaseModel
 
-from app.core.dependencies import get_current_tenant
+from app.core.dependencies import get_current_tenant, require_tenant_feature
 from app.services.risk_rule import (
     create_risk_rule as _create_rule,
 )
@@ -90,10 +90,14 @@ class RiskRuleUpdateCompat(BaseModel):
     config: dict | None = None
 
 
+_require_risk_feature = require_tenant_feature("risk_module")
+
+
 @prd_compat_router.get("/api/v1/risk/rules")
 async def list_risk_rules_compat(
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
+    _feature: None = Depends(_require_risk_feature),
 ):
     """PRD 兼容路径：GET /api/v1/risk/rules"""
     return await _list_rules(db, tenant_id)
@@ -104,6 +108,7 @@ async def create_risk_rule_compat(
     body: RiskRuleCreateCompat,
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
+    _feature: None = Depends(_require_risk_feature),
 ):
     """PRD 兼容路径：POST /api/v1/risk/rules"""
     return await _create_rule(db, tenant_id, body.name, body.rule_type, body.action, body.config)
@@ -115,6 +120,7 @@ async def update_risk_rule_compat(
     body: RiskRuleUpdateCompat,
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
+    _feature: None = Depends(_require_risk_feature),
 ):
     """PRD 兼容路径：PATCH /api/v1/risk/rules/{rule_id}"""
     return await _update_rule(db, tenant_id, rule_id, **body.model_dump(exclude_none=True))

@@ -2,6 +2,8 @@
 
 import uuid
 from collections.abc import AsyncGenerator
+from datetime import UTC, datetime, timedelta
+from unittest.mock import patch
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -10,7 +12,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db, get_db_for_consumer, get_db_with_bypass
 from app.main import app
 from app.models.code import CodeBatch, CodeItem, CodeItemStatus
+from app.models.tenant import Tenant
 from app.services.scan_token import create_scan_token
+from app.utils.client_ip import compute_ip_hash
 from app.utils.security import create_access_token
 from tests.conftest import TestSessionLocal
 
@@ -462,6 +466,70 @@ class TestPointProducts:
             headers={"Authorization": f"Bearer {token}"},
         )
         assert blocked.status_code == 400
+
+    @pytest.mark.anyio
+    async def test_expired_plan_blocks_h5_exchange_but_keeps_points_readable(
+        self,
+        client: AsyncClient,
+        setup_tenant,
+        db_session: AsyncSession,
+    ):
+        tid, headers = setup_tenant
+        consumer = await client.post("/api/v1/members/consumers", json={}, headers=headers)
+        cid = consumer.json()["id"]
+        await client.post(
+            "/api/v1/members/points/award",
+            json={"consumer_id": cid, "points": 80, "reason": "到期前积分"},
+            headers=headers,
+        )
+        product = await client.post(
+            "/api/v1/members/point-products",
+            json={"name": "到期保护券", "points_cost": 50, "stock": 1},
+            headers=headers,
+        )
+        token = await create_scan_context(db_session, tid, consumer_id=cid)
+        tenant = await db_session.get(Tenant, uuid.UUID(tid))
+        assert tenant is not None
+        tenant.plan_expires_at = datetime.now(UTC) - timedelta(seconds=1)
+        await db_session.commit()
+
+        exchange = await client.post(
+            "/api/v1/consumers/points/exchanges",
+            json={"consumer_id": cid, "product_id": product.json()["id"]},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        points = await client.get(
+            "/api/v1/consumers/points/me",
+            params={"consumer_id": cid},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+        assert exchange.status_code == 403
+        assert exchange.json()["code"] == "TENANT_PLAN_EXPIRED"
+        assert points.status_code == 200
+        assert points.json()["total_points"] == 80
+
+
+@pytest.mark.anyio
+async def test_expired_plan_blocks_consumer_lead_capture(client: AsyncClient, setup_tenant, db_session: AsyncSession):
+    tid, _headers = setup_tenant
+    tenant = await db_session.get(Tenant, uuid.UUID(tid))
+    assert tenant is not None
+    tenant.plan_expires_at = datetime.now(UTC) - timedelta(seconds=1)
+    await db_session.commit()
+    public_id = f"EXPIRED{uuid.uuid4().hex[:8]}"
+    ip_address = "203.0.113.9"
+    token = create_scan_token(public_id, compute_ip_hash(ip_address), tenant_id=tid)
+
+    with patch("app.api.v1.consumers.get_client_ip", return_value=ip_address):
+        response = await client.post(
+            "/api/v1/consumers/lead-capture",
+            json={"public_id": public_id, "region": "华东"},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+    assert response.status_code == 403
+    assert response.json()["code"] == "TENANT_PLAN_EXPIRED"
 
 
 class TestPointsValidation:

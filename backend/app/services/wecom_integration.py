@@ -14,12 +14,14 @@ from urllib.parse import quote
 
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from uuid6 import uuid7
 
 from app.core.config import settings
 from app.models.campaign import Benefit
 from app.models.connector import Connector
+from app.models.tenant import Tenant
 from app.models.wecom import (
     WeComConnectorType,
     WeComContactWay,
@@ -72,11 +74,14 @@ def is_wecom_enabled_for_campaign(rules_json: dict | None) -> bool:
 
 async def get_active_wecom_connector(db: AsyncSession, tenant_id: uuid.UUID) -> Connector | None:
     result = await db.execute(
-        select(Connector).where(
+        select(Connector)
+        .where(
             Connector.tenant_id == tenant_id,
             Connector.connector_type == WeComConnectorType.CUSTOMER_CONTACT,
             Connector.enabled.is_(True),
         )
+        .order_by(Connector.updated_at.desc(), Connector.id.desc())
+        .limit(1)
     )
     return result.scalar_one_or_none()
 
@@ -141,42 +146,78 @@ async def upsert_wecom_connector(
 ) -> dict:
     if settings.environment == "production" and mock_mode:
         raise WeComIntegrationError("生产环境不允许启用企业微信模拟模式")
+
+    # Serialize configuration writers on the tenant identity row. The partial
+    # unique index remains the durable bridge for old binaries that do not take
+    # this lock; the savepoint retry below adopts their winning row.
+    tenant = await db.scalar(select(Tenant).where(Tenant.id == tenant_id).with_for_update())
+    if tenant is None:
+        raise WeComIntegrationError("租户不存在")
+
     result = await db.execute(
-        select(Connector).where(
+        select(Connector)
+        .where(
             Connector.tenant_id == tenant_id,
             Connector.connector_type == WeComConnectorType.CUSTOMER_CONTACT,
         )
+        .order_by(Connector.enabled.desc(), Connector.updated_at.desc(), Connector.id.desc())
+        .limit(1)
+        .with_for_update()
     )
     connector = result.scalar_one_or_none()
-    existing_secrets = decrypt_secrets(connector.secrets_encrypted or b"") if connector else {}
-    secrets_data = {
-        "secret": secret or existing_secrets.get("secret", ""),
-        "callback_token": existing_secrets.get("callback_token") or generate_callback_token(),
-        "encoding_aes_key": existing_secrets.get("encoding_aes_key") or generate_encoding_aes_key(),
-    }
-    config = {
-        "corp_id": corp_id,
-        "customer_service_user_ids": customer_service_user_ids or [],
-        "mock_mode": mock_mode,
-        "status": "configured",
-        "last_error": None,
-    }
-    if connector:
-        connector.name = "企业微信客户联系"
-        connector.config = {**connector.config, **config}
-        connector.secrets_encrypted = encrypt_secrets(secrets_data)
-        connector.enabled = True
-    else:
-        connector = Connector(
-            tenant_id=tenant_id,
-            name="企业微信客户联系",
-            connector_type=WeComConnectorType.CUSTOMER_CONTACT,
-            config=config,
-            secrets_encrypted=encrypt_secrets(secrets_data),
-            enabled=True,
+
+    def apply_config(target: Connector) -> None:
+        existing_secrets = decrypt_secrets(target.secrets_encrypted or b"")
+        secrets_data = {
+            "secret": secret or existing_secrets.get("secret", ""),
+            "callback_token": existing_secrets.get("callback_token") or generate_callback_token(),
+            "encoding_aes_key": existing_secrets.get("encoding_aes_key") or generate_encoding_aes_key(),
+        }
+        config = {
+            "corp_id": corp_id,
+            "customer_service_user_ids": customer_service_user_ids or [],
+            "mock_mode": mock_mode,
+            "status": "configured",
+            "last_error": None,
+        }
+        target.name = "企业微信客户联系"
+        target.config = {**target.config, **config}
+        target.secrets_encrypted = encrypt_secrets(secrets_data)
+        target.enabled = True
+
+    try:
+        async with db.begin_nested():
+            if connector is None:
+                connector = Connector(
+                    tenant_id=tenant_id,
+                    name="企业微信客户联系",
+                    connector_type=WeComConnectorType.CUSTOMER_CONTACT,
+                    config={},
+                    enabled=True,
+                )
+                db.add(connector)
+            apply_config(connector)
+            await db.flush()
+    except IntegrityError:
+        # A pre-migration writer may have inserted the active connector after
+        # our lookup without taking the Tenant lock. Adopt that unique winner
+        # and apply this request instead of surfacing a transient 500.
+        connector = await db.scalar(
+            select(Connector)
+            .where(
+                Connector.tenant_id == tenant_id,
+                Connector.connector_type == WeComConnectorType.CUSTOMER_CONTACT,
+                Connector.enabled.is_(True),
+            )
+            .order_by(Connector.updated_at.desc(), Connector.id.desc())
+            .limit(1)
+            .with_for_update()
         )
-        db.add(connector)
-    await db.flush()
+        if connector is None:
+            raise WeComIntegrationError("企业微信配置并发保存失败，请重试")
+        apply_config(connector)
+        await db.flush()
+
     await db.refresh(connector)
     return await get_wecom_status(db, tenant_id)
 

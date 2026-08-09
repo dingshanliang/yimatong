@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
-from app.core.dependencies import get_current_tenant
+from app.core.dependencies import get_current_tenant, require_tenant_feature
 from app.services.ai import (
     AIRateLimitError,
     AIServiceError,
@@ -21,7 +21,11 @@ from app.services.ai import (
     suggest_page_structure,
 )
 
-ai_router = APIRouter(prefix="/api/v1/ai", tags=["ai"])
+ai_router = APIRouter(
+    prefix="/api/v1/ai",
+    tags=["ai"],
+    dependencies=[Depends(require_tenant_feature("ai_assistant"))],
+)
 
 
 # ──────────────────── Request Schemas ────────────────────

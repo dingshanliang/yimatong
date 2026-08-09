@@ -6,7 +6,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.v1.code_batches import CodeBatchRead
 from app.core.database import get_db
 from app.core.dependencies import get_current_account_id, get_current_tenant
-from app.models.product import Product
 from app.schemas.product import (
     BrandCreate,
     BrandDetailRead,
@@ -59,7 +58,6 @@ from app.services.product import (
     update_production_batch,
     update_sku,
 )
-from app.services.quota import QuotaExceededError, check_quota_for_tenant
 from app.utils.auth_rbac import require_role
 
 brand_router = APIRouter(prefix="/api/v1/brands", tags=["brands"])
@@ -238,12 +236,6 @@ async def create_product_endpoint(
     actor_id: uuid.UUID = Depends(get_current_account_id),
     _role: str = Depends(require_role("admin", "operator")),
 ):
-    # Quota check
-    try:
-        await check_quota_for_tenant(db, tenant_id, "max_products", Product)
-    except QuotaExceededError as e:
-        raise HTTPException(status_code=429, detail=str(e))
-
     product = await create_product(
         db,
         tenant_id,

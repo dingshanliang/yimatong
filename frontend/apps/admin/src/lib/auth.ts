@@ -202,17 +202,13 @@ registerAuthInterceptorHandlers({
 function _persistAccessToken(accessToken: string) {
   localStorage.setItem("access_token", accessToken);
   localStorage.removeItem("refresh_token");
-  // cookie 供 Next.js middleware 读取，max-age 用 refresh token 的有效期（30天）
-  const secure = window.location.protocol === "https:" ? "; Secure" : "";
-  document.cookie = `access_token=${accessToken}; path=/; max-age=${30 * 24 * 3600}; SameSite=Lax${secure}`;
+  // The backend owns the matching HttpOnly cookie used by Next middleware.
 }
 
 /** 切换 agency 上下文时更新 token 和用户状态 */
 function _applyTokenUpdate(accessToken: string, updatedUser: AuthUser) {
   localStorage.setItem("auth_store", JSON.stringify(updatedUser));
   localStorage.setItem("access_token", accessToken);
-  const secure = window.location.protocol === "https:" ? "; Secure" : "";
-  document.cookie = `access_token=${accessToken}; path=/; max-age=${30 * 24 * 3600}; SameSite=Lax${secure}`;
   useAuthStore.setState({ user: updatedUser, token: accessToken });
 }
 

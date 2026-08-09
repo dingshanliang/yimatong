@@ -3,7 +3,18 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import JSON, DateTime, ForeignKeyConstraint, Index, Integer, LargeBinary, String, UniqueConstraint, func
+from sqlalchemy import (
+    JSON,
+    DateTime,
+    ForeignKeyConstraint,
+    Index,
+    Integer,
+    LargeBinary,
+    String,
+    UniqueConstraint,
+    func,
+    text,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 from uuid6 import uuid7
 
@@ -28,6 +39,13 @@ class Connector(Base):
     __table_args__ = (
         UniqueConstraint("tenant_id", "id", name="uq_connectors_tenant_id_id"),
         Index("ix_connectors_tenant_type", "tenant_id", "connector_type"),
+        Index(
+            "uq_connectors_active_wecom_tenant",
+            "tenant_id",
+            unique=True,
+            postgresql_where=text("connector_type = 'wecom_customer_contact' AND enabled IS TRUE"),
+            sqlite_where=text("connector_type = 'wecom_customer_contact' AND enabled = 1"),
+        ),
     )
 
 

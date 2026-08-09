@@ -23,6 +23,7 @@ from app.api.v1.open_api import open_api_router
 from app.middleware.tenant import TenantScopeMiddleware
 from app.models.campaign import Benefit, BenefitClaim, Campaign
 from app.models.member import ConsumerProfile
+from app.models.plan import TenantQuotaUsage
 from app.models.product import Brand, Product
 from app.models.scan import ScanEvent
 from app.models.tenant import Tenant
@@ -258,7 +259,7 @@ async def test_open_api_erp_sync_can_create_product(open_api_app):
     api_key = f"erp-{uuid.uuid4()}"
     perms = API_KEY_ROLE_PERMISSIONS["erp_sync"]
     async with TestSessionLocal() as db:
-        await _seed(api_key, "erp_sync", perms)(db)
+        ids = await _seed(api_key, "erp_sync", perms)(db)
 
     transport = ASGITransport(app=open_api_app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
@@ -272,3 +273,8 @@ async def test_open_api_erp_sync_can_create_product(open_api_app):
         resp2 = await client.post("/open/v1/products", json=body, headers={"X-Api-Key": api_key})
         assert resp2.status_code == 201, resp2.text
         assert resp2.json()["action"] == "updated"
+
+    async with TestSessionLocal() as db:
+        usage = await db.get(TenantQuotaUsage, ids["tenant_id"])
+        assert usage is not None
+        assert usage.products == 1

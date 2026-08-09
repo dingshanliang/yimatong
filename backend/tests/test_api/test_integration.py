@@ -1,13 +1,17 @@
 """W20: CRM/ERP/商城集成测试"""
 
+import uuid
 from collections.abc import AsyncGenerator
 
 import pytest
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.main import app
+from app.models.plan import TenantQuotaUsage
+from app.models.tenant import Tenant
 from app.utils.security import create_access_token
 from tests.conftest import TestSessionLocal
 
@@ -63,7 +67,7 @@ class TestBatchImport:
     """W20-001: 批量导入增强"""
 
     @pytest.mark.anyio
-    async def test_batch_import_products(self, client: AsyncClient, setup_tenant):
+    async def test_batch_import_products(self, client: AsyncClient, setup_tenant, db_session: AsyncSession):
         tid, headers = setup_tenant
         # 创建品牌
         brand_resp = await client.post(
@@ -86,6 +90,38 @@ class TestBatchImport:
         )
         assert resp.status_code == 200
         assert resp.json()["imported"] == 2
+        tenant_id = uuid.UUID(tid)
+        usage = await db_session.scalar(select(TenantQuotaUsage).where(TenantQuotaUsage.tenant_id == tenant_id))
+        assert usage is not None
+        assert usage.products == 2
+
+    @pytest.mark.anyio
+    async def test_batch_import_reserves_all_products_atomically(
+        self, client: AsyncClient, setup_tenant, db_session: AsyncSession
+    ):
+        tid, headers = setup_tenant
+        tenant_id = uuid.UUID(tid)
+        tenant = await db_session.scalar(select(Tenant).where(Tenant.id == tenant_id))
+        tenant.quota = {"max_products": 1}
+        brand_resp = await client.post("/api/v1/brands", json={"name": "限额品牌"}, headers=headers)
+        brand_id = brand_resp.json()["id"]
+
+        response = await client.post(
+            "/api/v1/integration/batch-import",
+            json={
+                "type": "products",
+                "items": [
+                    {"brand_id": brand_id, "name": "产品1"},
+                    {"brand_id": brand_id, "name": "产品2"},
+                ],
+            },
+            headers=headers,
+        )
+        assert response.status_code == 429
+        assert response.json()["error_code"] == "QUOTA_EXCEEDED"
+        usage = await db_session.scalar(select(TenantQuotaUsage).where(TenantQuotaUsage.tenant_id == tenant_id))
+        assert usage is not None
+        assert usage.products == 0
 
 
 class TestErpSync:

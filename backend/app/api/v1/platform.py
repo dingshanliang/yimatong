@@ -3,11 +3,12 @@ import json
 import secrets
 import uuid
 from datetime import UTC, date, datetime, time, timedelta
+from typing import Literal
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, field_validator
 from sqlalchemy import case, func, select, text
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -16,9 +17,8 @@ from app.core.config import settings
 from app.core.database import _is_pg, get_db_with_bypass
 from app.core.dependencies import get_redis_cache
 from app.models.auth_security import PlatformAuthSession
-from app.models.plan import PlanDefinition
+from app.models.plan import PlanDefinition, QuotaRolloutState, TenantQuotaUsage
 from app.models.platform_opening import PlatformTenantOpening
-from app.models.scan import ScanEvent
 from app.models.tenant import Account, Organization, Tenant, TenantPlan, TenantStatus, TenantType
 from app.models.tenant_health import TenantHealthMetrics
 from app.modules.brand_tenant_initialization import (
@@ -32,7 +32,9 @@ from app.modules.initial_admin_activation import InitialAdminActivation, Initial
 from app.schemas.common import PaginatedResponse
 from app.services.audit import query_audit_logs, write_audit_log
 from app.services.auth import logout_session
+from app.services.entitlement import is_plan_expired, validate_feature_flags
 from app.services.platform_auth import PlatformSessionUnavailable, revoke_platform_session
+from app.services.quota import is_quota_usage_effectively_ready, validate_quota_config
 from app.services.redis_cache import AsyncRedisCache, SharedSecurityCacheUnavailable
 from app.services.tenant_health import refresh_all_health_metrics
 from app.services.tenant_lifecycle import TenantStatusTransitionError, terminate_tenant, transition_tenant_status
@@ -87,6 +89,16 @@ class TenantUpdate(BaseModel):
     enabled_features: dict | None = None
 
     model_config = {"extra": "forbid"}
+
+    @field_validator("quota")
+    @classmethod
+    def validate_quota(cls, value: dict | None) -> dict | None:
+        return validate_quota_config(value) if value is not None else None
+
+    @field_validator("enabled_features")
+    @classmethod
+    def validate_features(cls, value: dict | None) -> dict | None:
+        return validate_feature_flags(value) if value is not None else None
 
 
 class TenantStatusUpdate(BaseModel):
@@ -648,6 +660,16 @@ class PlanCreate(BaseModel):
     is_active: bool = True
     sort_order: int = 0
 
+    @field_validator("feature_flags")
+    @classmethod
+    def validate_features(cls, value: dict | None) -> dict | None:
+        return validate_feature_flags(value) if value is not None else None
+
+    @field_validator("quota_defaults")
+    @classmethod
+    def validate_quota(cls, value: dict | None) -> dict | None:
+        return validate_quota_config(value) if value is not None else None
+
 
 class PlanUpdate(BaseModel):
     display_name: str | None = None
@@ -657,6 +679,16 @@ class PlanUpdate(BaseModel):
     feature_flags: dict | None = None
     is_active: bool | None = None
     sort_order: int | None = None
+
+    @field_validator("feature_flags")
+    @classmethod
+    def validate_features(cls, value: dict | None) -> dict | None:
+        return validate_feature_flags(value) if value is not None else None
+
+    @field_validator("quota_defaults")
+    @classmethod
+    def validate_quota(cls, value: dict | None) -> dict | None:
+        return validate_quota_config(value) if value is not None else None
 
 
 class PlanRead(BaseModel):
@@ -679,6 +711,11 @@ class AssignPlanRequest(BaseModel):
     expires_on: date | None = None
     override_quota: dict | None = None
 
+    @field_validator("override_quota")
+    @classmethod
+    def validate_quota(cls, value: dict | None) -> dict | None:
+        return validate_quota_config(value) if value is not None else None
+
 
 BUSINESS_TIMEZONE = ZoneInfo("Asia/Shanghai")
 
@@ -694,6 +731,14 @@ class QuotaUsageItem(BaseModel):
     plan: str
     quota: dict | None
     status: str
+    plan_expires_at: datetime | None = None
+    read_only: bool
+    quota_enforcement_state: Literal["ready", "reconciliation_pending"]
+    enforcement_ready: bool
+    reconciled_at: datetime | None = None
+    source_revision: str | None = None
+    rollout_phase: str | None = None
+    rollout_source_revision: str | None = None
     usage: dict = {}
 
 
@@ -774,13 +819,20 @@ async def assign_plan_to_tenant(
     plan = (await db.execute(select(PlanDefinition).where(PlanDefinition.id == body.plan_id))).scalar_one_or_none()
     if not plan:
         raise HTTPException(status_code=404, detail="Plan definition not found")
+    if not plan.is_active:
+        raise HTTPException(status_code=409, detail="Plan definition is inactive")
+    try:
+        plan_quota = validate_quota_config(plan.quota_defaults)
+        plan_features = validate_feature_flags(plan.feature_flags)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail="Plan definition configuration is invalid") from exc
 
     try:
         tenant.plan = TenantPlan(plan.name)
     except ValueError as exc:
         raise HTTPException(status_code=409, detail="Unsupported plan definition name") from exc
-    tenant.quota = body.override_quota or plan.quota_defaults or {}
-    tenant.enabled_features = plan.feature_flags or {}
+    tenant.quota = body.override_quota if body.override_quota is not None else plan_quota
+    tenant.enabled_features = plan_features
     if "expires_on" in body.model_fields_set:
         tenant.plan_expires_at = plan_expiry_for_business_date(body.expires_on) if body.expires_on else None
     await db.flush()
@@ -800,26 +852,18 @@ async def list_quota_usage(
     db: AsyncSession = Depends(get_db_with_bypass),
     _role: str = Depends(require_role("platform_admin")),
 ):
-    """全租户额度使用汇总（含实际用量）"""
-    from sqlalchemy import func, select
-
-    from app.models.campaign import Campaign
-    from app.models.code import CodeItem
-    from app.models.product import Product
-    from app.models.tenant import Account
-
-    result = await db.execute(select(Tenant).where(Tenant.status != TenantStatus.terminated).order_by(Tenant.name))
-    tenants = list(result.scalars().all())
+    """全租户额度使用汇总（读取事务化累计状态，不扫描业务事实表）。"""
+    result = await db.execute(
+        select(Tenant, TenantQuotaUsage, QuotaRolloutState)
+        .outerjoin(TenantQuotaUsage, TenantQuotaUsage.tenant_id == Tenant.id)
+        .outerjoin(QuotaRolloutState, QuotaRolloutState.id == 1)
+        .where(Tenant.status != TenantStatus.terminated)
+        .order_by(Tenant.name)
+    )
 
     items = []
-    for t in tenants:
-        tid = t.id
-        campaigns = (await db.execute(select(func.count(Campaign.id)).where(Campaign.tenant_id == tid))).scalar() or 0
-        products = (await db.execute(select(func.count(Product.id)).where(Product.tenant_id == tid))).scalar() or 0
-        accounts = (await db.execute(select(func.count(Account.id)).where(Account.tenant_id == tid))).scalar() or 0
-        codes = (await db.execute(select(func.count(CodeItem.id)).where(CodeItem.tenant_id == tid))).scalar() or 0
-        scans = (await db.execute(select(func.count(ScanEvent.id)).where(ScanEvent.tenant_id == tid))).scalar() or 0
-
+    for t, usage, rollout_state in result.all():
+        enforcement_ready = is_quota_usage_effectively_ready(usage, rollout_state)
         items.append(
             QuotaUsageItem(
                 tenant_id=str(t.id),
@@ -827,12 +871,20 @@ async def list_quota_usage(
                 plan=t.plan.value,
                 quota=t.quota,
                 status=t.status.value,
+                plan_expires_at=t.plan_expires_at,
+                read_only=is_plan_expired(t.plan_expires_at),
+                quota_enforcement_state="ready" if enforcement_ready else "reconciliation_pending",
+                enforcement_ready=enforcement_ready,
+                reconciled_at=usage.reconciled_at if usage else None,
+                source_revision=usage.source_revision if usage else None,
+                rollout_phase=rollout_state.phase.value if rollout_state else None,
+                rollout_source_revision=rollout_state.source_revision if rollout_state else None,
                 usage={
-                    "campaigns": campaigns,
-                    "products": products,
-                    "accounts": accounts,
-                    "codes": codes,
-                    "scans": scans,
+                    "campaigns": usage.campaigns if usage else 0,
+                    "products": usage.products if usage else 0,
+                    "accounts": usage.accounts if usage else 0,
+                    "codes": usage.codes if usage else 0,
+                    "scans": usage.scans if usage else 0,
                 },
             )
         )

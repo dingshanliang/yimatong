@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.integration import SyncRecord
 from app.models.product import Product
+from app.services.quota import CumulativeQuotaKey, reserve_quota
 
 
 async def batch_import_products(
@@ -13,18 +14,20 @@ async def batch_import_products(
     tenant_id: uuid.UUID,
     items: list[dict],
 ) -> int:
-    count = 0
+    products: list[Product] = []
     for item in items:
-        product = Product(
-            tenant_id=tenant_id,
-            brand_id=uuid.UUID(item["brand_id"]),
-            name=item["name"],
-            category=item.get("category", ""),
+        products.append(
+            Product(
+                tenant_id=tenant_id,
+                brand_id=uuid.UUID(item["brand_id"]),
+                name=item["name"],
+                category=item.get("category", ""),
+            )
         )
-        db.add(product)
-        count += 1
+    await reserve_quota(db, tenant_id, CumulativeQuotaKey.MAX_PRODUCTS, len(products))
+    db.add_all(products)
     await db.flush()
-    return count
+    return len(products)
 
 
 async def sync_inventory(

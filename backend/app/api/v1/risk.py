@@ -8,13 +8,17 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
-from app.core.dependencies import get_current_tenant
+from app.core.dependencies import get_current_tenant, require_tenant_feature
 from app.models.risk import RiskAlert
 from app.schemas.common import PaginatedResponse
 from app.services.risk import freeze_code_item, list_risk_alerts, unfreeze_code_item
 from app.utils.auth_rbac import require_permission
 
-risk_router = APIRouter(prefix="/api/v1/risk-alerts", tags=["risk-alerts"])
+risk_router = APIRouter(
+    prefix="/api/v1/risk-alerts",
+    tags=["risk-alerts"],
+    dependencies=[Depends(require_tenant_feature("risk_module"))],
+)
 
 
 class RiskAlertRead(BaseModel):

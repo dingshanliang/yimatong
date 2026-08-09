@@ -56,6 +56,12 @@ async def setup_tenant(client: AsyncClient):
         headers=_platform_admin_headers(),
     )
     tid = resp.json()["id"]
+    feature_resp = await client.patch(
+        f"/api/v1/tenants/{tid}",
+        json={"enabled_features": {"ai_assistant": True}},
+        headers=_platform_admin_headers(),
+    )
+    assert feature_resp.status_code == 200
     token = create_access_token(tid, "00000000-0000-0000-0000-000000000001", "admin")
     headers = {"Authorization": f"Bearer {token}"}
     return tid, headers
@@ -114,6 +120,33 @@ class TestCopywriting:
         assert resp.status_code == 200
         data = resp.json()
         assert "content" in data
+
+
+@pytest.mark.anyio
+async def test_ai_api_rejects_a_tenant_without_the_paid_feature(client: AsyncClient, _mock_llm):
+    response = await client.post(
+        "/api/v1/tenants",
+        json={
+            "name": "未购 AI 租户",
+            "admin_email": "no-ai@example.com",
+            "admin_name": "Admin",
+            "admin_password": "Pass1234",
+        },
+        headers=_platform_admin_headers(),
+    )
+    tenant_id = response.json()["id"]
+    token = create_access_token(tenant_id, "00000000-0000-0000-0000-000000000001", "admin")
+
+    blocked = await client.post(
+        "/api/v1/ai/extract",
+        json={"text": "不会发送给外部模型"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert blocked.status_code == 403
+    assert blocked.json()["detail"]["code"] == "TENANT_FEATURE_DISABLED"
+    assert blocked.json()["detail"]["feature"] == "ai_assistant"
+    _mock_llm.assert_not_called()
 
 
 class TestFieldExtraction:

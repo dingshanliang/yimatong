@@ -3,6 +3,7 @@
 import { useState } from "react";
 import {
   App,
+  Alert,
   Button,
   Card,
   Descriptions,
@@ -32,6 +33,13 @@ import { STATUS_MAP, PLAN_MAP } from "@/lib/constants";
 import { STATUS_COLORS } from "@/lib/status-colors";
 import { canRetryInitialAdminActivation } from "../activation";
 import { planExpiryLabel, toChinaBusinessDate } from "../plan-date";
+import {
+  ACTIVE_PLAN_SOURCE,
+  activePlanOptions,
+  buildPlanAssignmentState,
+  findActivePlan,
+  type ActivePlanDefinition,
+} from "./plan-assignment";
 
 const { Title, Text } = Typography;
 
@@ -53,13 +61,6 @@ interface TenantDetail {
   activation_retryable: boolean;
 }
 
-interface PlanDefinition {
-  id: string;
-  name: TenantDetail["plan"];
-  display_name: string;
-  is_active: boolean;
-}
-
 export default function TenantDetailPage() {
   const router = useRouter();
   const params = useParams();
@@ -74,7 +75,8 @@ export default function TenantDetailPage() {
   const { data, mutate, isLoading } = useSWR<TenantDetail>(
     `/platform/tenants/${tenantId}`
   );
-  const { data: planDefinitions } = useSWR<PlanDefinition[]>("/platform/plans");
+  const { data: planDefinitions } =
+    useSWR<ActivePlanDefinition[]>(ACTIVE_PLAN_SOURCE);
   const [basicForm] = Form.useForm();
   const [planForm] = Form.useForm();
 
@@ -145,9 +147,7 @@ export default function TenantDetailPage() {
   }) => {
     setSavingPlan(true);
     try {
-      const selectedPlan = planDefinitions?.find(
-        (plan) => plan.name === values.plan
-      );
+      const selectedPlan = findActivePlan(planDefinitions, values.plan);
       if (!selectedPlan) {
         throw new Error("套餐配置尚未加载，请稍后重试");
       }
@@ -194,6 +194,10 @@ export default function TenantDetailPage() {
     color: STATUS_COLORS.neutral,
     label: data.plan,
   };
+  const planAssignmentState = buildPlanAssignmentState(
+    planDefinitions,
+    data.plan
+  );
 
   return (
     <div>
@@ -258,7 +262,7 @@ export default function TenantDetailPage() {
           <Button
             onClick={() => {
               planForm.setFieldsValue({
-                plan: data.plan,
+                plan: planAssignmentState.initialPlanName,
                 plan_expires_at: data.plan_expires_at
                   ? dayjs(toChinaBusinessDate(data.plan_expires_at))
                   : undefined,
@@ -396,19 +400,22 @@ export default function TenantDetailPage() {
         width={520}
       >
         <Form form={planForm} layout="vertical" onFinish={handlePlanEdit}>
+          {planAssignmentState.showInactiveCurrentPlan && (
+            <Alert
+              type="warning"
+              showIcon
+              style={{ marginBottom: 16 }}
+              message={`当前套餐「${planInfo.label}」已停用`}
+              description="当前配置仅供查看；如需保存，请选择一个有效套餐。"
+            />
+          )}
           <Form.Item name="plan" label="套餐" rules={[{ required: true }]}>
             <Select
               loading={!planDefinitions}
-              options={planDefinitions
-                ?.filter(
-                  (plan) =>
-                    plan.name in PLAN_MAP &&
-                    (plan.is_active || plan.name === data.plan)
-                )
-                .map((plan) => ({
-                  value: plan.name,
-                  label: plan.display_name,
-                }))}
+              options={activePlanOptions(
+                planDefinitions,
+                new Set(Object.keys(PLAN_MAP))
+              )}
             />
           </Form.Item>
           <Form.Item name="plan_expires_at" label="有效期至（北京时间）">

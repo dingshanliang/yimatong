@@ -3,11 +3,12 @@
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import JSONResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.context import set_consumer_tenant_id
-from app.core.database import get_db_for_consumer, set_session_tenant_context
+from app.core.database import get_db_for_consumer, lock_active_tenant_context, set_session_tenant_context
 from app.models.member import ConsumerProfile
 from app.schemas.common import PaginatedResponse
 from app.schemas.member import ExchangeRequest as PointsExchangeRequest
@@ -18,6 +19,24 @@ from app.services.resolver import resolve_public_code
 from app.services.scan_token import create_scan_token, verify_scan_token
 from app.utils.client_ip import compute_ip_hash, get_client_ip
 from app.utils.crypto import encrypt_phone, hash_phone
+
+
+async def _require_consumer_business_plan(db: AsyncSession, tenant_id: uuid.UUID) -> JSONResponse | None:
+    from app.services.entitlement import (
+        PLAN_EXPIRED_CODE,
+        PLAN_EXPIRED_DETAIL,
+        TenantPlanExpiredError,
+    )
+
+    try:
+        await lock_active_tenant_context(db, tenant_id)
+    except TenantPlanExpiredError:
+        return JSONResponse(
+            status_code=403,
+            content={"code": PLAN_EXPIRED_CODE, "detail": PLAN_EXPIRED_DETAIL},
+        )
+    return None
+
 
 consumer_router = APIRouter(prefix="/api/v1/consumers", tags=["consumers"])
 
@@ -96,6 +115,8 @@ async def lead_capture(
             raise HTTPException(status_code=404, detail="code not found")
         tenant_id = uuid.UUID(code_data["tenant_id"])
     set_consumer_tenant_id(str(tenant_id))
+    if expired_response := await _require_consumer_business_plan(db, tenant_id):
+        return expired_response
     token_consumer_id = payload.get("consumer_id")
     try:
         bound_consumer_id = uuid.UUID(token_consumer_id) if token_consumer_id else None
@@ -301,6 +322,8 @@ async def create_consumer_points_exchange(
 ):
     tenant_id, bound_cid = await _resolve_scan_context(request, db)
     _verify_consumer_ownership(bound_cid, body.consumer_id)
+    if expired_response := await _require_consumer_business_plan(db, tenant_id):
+        return expired_response
 
     try:
         return await exchange_product(db, tenant_id, bound_cid, body.product_id)

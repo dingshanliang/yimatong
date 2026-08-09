@@ -2,7 +2,7 @@ import uuid
 from collections.abc import AsyncGenerator
 from typing import Any
 
-from fastapi import Depends
+from fastapi import Depends, Request
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.sql import Executable
@@ -54,6 +54,26 @@ async def set_session_tenant_context(session: AsyncSession, tenant_id: uuid.UUID
 
     validated_tenant_id = uuid.UUID(str(tenant_id))
     await _apply_tenant_context(session, validated_tenant_id)
+    return validated_tenant_id
+
+
+async def lock_active_tenant_context(session: AsyncSession, tenant_id: uuid.UUID | str) -> uuid.UUID:
+    """Scope a trusted public request and linearize its business transaction.
+
+    Public credentials resolve their tenant inside the route, after dependency
+    setup. Business writes and external delivery preparation must pass through
+    this seam once the trusted tenant is known. The tenant row lock is held by
+    the caller's transaction through its commit, so a platform expiry update
+    and the public business action have one deterministic order.
+
+    Consent grant/withdrawal, read-only access, and recovery callbacks do not
+    use this seam because they must remain available after plan expiry.
+    """
+
+    validated_tenant_id = await set_session_tenant_context(session, tenant_id)
+    from app.services.entitlement import require_active_plan
+
+    await require_active_plan(session, validated_tenant_id, lock_tenant=True)
     return validated_tenant_id
 
 
@@ -148,7 +168,16 @@ async def bootstrap_tenant_keys(
     return [(row[0], uuid.UUID(str(row[1]))) for row in rows]
 
 
-async def get_db() -> AsyncGenerator[AsyncSession, None]:
+_PLAN_RECOVERY_WRITE_PATHS = frozenset(
+    {
+        "/api/v1/auth/change-password",
+        "/api/v1/auth/logout",
+        "/api/v1/agency/exit-context",
+    }
+)
+
+
+async def get_db(request: Request) -> AsyncGenerator[AsyncSession, None]:
     async with async_session_factory() as session:
         from app.core.context import get_request_tenant_id
 
@@ -176,6 +205,19 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
             else:
                 await _apply_tenant_context(session, uuid.UUID(validated_id))
         try:
+            # Hold the authoritative tenant row through commit for every
+            # authenticated business mutation. This closes the middleware
+            # check/write race without blocking read-only access or the exact
+            # authentication recovery operations an expired tenant needs.
+            if (
+                tenant_id
+                and str(tenant_id) != "platform"
+                and request.method not in {"GET", "HEAD", "OPTIONS"}
+                and request.url.path not in _PLAN_RECOVERY_WRITE_PATHS
+            ):
+                from app.services.entitlement import require_active_plan
+
+                await require_active_plan(session, uuid.UUID(str(tenant_id)), lock_tenant=True)
             yield session
             await session.commit()
         except Exception:

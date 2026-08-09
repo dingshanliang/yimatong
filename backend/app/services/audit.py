@@ -1,8 +1,9 @@
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, insert, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from uuid6 import uuid7
 
 from app.models.audit import PlatformAuditLog
 from app.models.tenant import Account
@@ -17,16 +18,38 @@ async def write_audit_log(
     resource: str,
     details: dict | None = None,
 ) -> PlatformAuditLog:
+    # ``inline()`` disables PostgreSQL's implicit RETURNING. Append permission
+    # is intentionally broader than read permission for an agency recording
+    # entry to a client, and RETURNING would incorrectly require SELECT access
+    # to that client's audit row. The statement still runs in the caller's
+    # transaction, preserving business-write/audit atomicity.
+    recorded_at = datetime.now(UTC)
     log = PlatformAuditLog(
+        id=uuid7(),
         operator_id=operator_id,
         target_tenant_id=target_tenant_id,
         action=action,
         resource=resource,
         details=details,
+        timestamp=recorded_at,
+        created_at=recorded_at,
+        updated_at=recorded_at,
     )
-    db.add(log)
-    await db.flush()
-    await db.refresh(log)
+    await db.execute(
+        insert(PlatformAuditLog)
+        .inline()
+        .values(
+            id=log.id,
+            operator_id=log.operator_id,
+            target_tenant_id=log.target_tenant_id,
+            action=log.action,
+            resource=log.resource,
+            details=log.details,
+            timestamp=log.timestamp,
+            created_at=log.created_at,
+            updated_at=log.updated_at,
+        )
+    )
     return log
 
 

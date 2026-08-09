@@ -7,7 +7,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.core.dependencies import get_current_tenant
-from app.models.campaign import Campaign
 from app.schemas.campaign import (
     BenefitCreateRequest,
     CampaignCreateRequest,
@@ -32,7 +31,6 @@ from app.services.campaign import (
     update_campaign,
 )
 from app.services.campaign_analytics import get_campaign_comparison, get_campaign_funnel
-from app.services.quota import QuotaExceededError, check_quota_for_tenant
 from app.utils.auth_rbac import require_permission
 
 campaign_router = APIRouter(prefix="/api/v1/campaigns", tags=["campaigns"])
@@ -57,12 +55,6 @@ async def create_campaign_endpoint(
     tenant_id: uuid.UUID = Depends(get_current_tenant),
     _permission: None = Depends(require_permission("campaign:create")),
 ):
-    # Quota check
-    try:
-        await check_quota_for_tenant(db, tenant_id, "max_campaigns", Campaign)
-    except QuotaExceededError as e:
-        raise HTTPException(status_code=429, detail=str(e))
-
     product_id = _request_product_id(body.product_id, body.rules_json)
     if product_id and not await campaign_product_exists(db, tenant_id, product_id):
         raise HTTPException(status_code=400, detail="Product not found")

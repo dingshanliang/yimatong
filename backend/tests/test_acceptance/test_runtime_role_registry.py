@@ -7,7 +7,10 @@ from pathlib import Path
 
 import asyncpg
 import pytest
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
+from app.services.audit import write_audit_log
 from tests.test_acceptance.conftest import seed_baseline
 
 pytestmark = [pytest.mark.acceptance, pytest.mark.asyncio]
@@ -29,6 +32,7 @@ BUSINESS_GAP_TABLES = (
     "role_permissions",
     "sync_mappings",
     "tenant_domains",
+    "tenant_quota_usage",
     "whitelabel_configs",
 )
 
@@ -38,7 +42,6 @@ CONTROL_TABLES = (
     "invite_registration_receipts",
     "operator_campaign_manage_grants",
     "organization_parent_repair_backups",
-    "platform_audit_log",
     "platform_auth_sessions",
     "platform_configs",
     "platform_tenant_openings",
@@ -47,12 +50,23 @@ CONTROL_TABLES = (
     "tenant_platform_role_assignment_backups",
 )
 
+APPEND_ONLY_RUNTIME_TABLES = ("platform_audit_log",)
+READ_ONLY_GLOBAL_TABLES = ("quota_rollout_state",)
+
 
 async def _assert_insert_denied(conn: asyncpg.Connection, query: str, *args: object) -> None:
     savepoint = conn.transaction()
     await savepoint.start()
     with pytest.raises(asyncpg.InsufficientPrivilegeError, match="row-level security"):
         await conn.execute(query, *args)
+    await savepoint.rollback()
+
+
+async def _assert_statement_privilege_denied(conn: asyncpg.Connection, query: str) -> None:
+    savepoint = conn.transaction()
+    await savepoint.start()
+    with pytest.raises(asyncpg.InsufficientPrivilegeError):
+        await conn.execute(query)
     await savepoint.rollback()
 
 
@@ -69,9 +83,9 @@ async def test_registry_catalog_acl_and_control_boundary(
             "LEFT JOIN pg_policy p ON p.polrelid=c.oid "
             "WHERE n.nspname='public' AND c.relname=ANY($1::text[]) "
             "GROUP BY c.relname,c.relrowsecurity,c.relforcerowsecurity ORDER BY c.relname",
-            list(BUSINESS_GAP_TABLES),
+            list((*BUSINESS_GAP_TABLES, *APPEND_ONLY_RUNTIME_TABLES)),
         )
-        assert len(states) == len(BUSINESS_GAP_TABLES)
+        assert len(states) == len(BUSINESS_GAP_TABLES) + len(APPEND_ONLY_RUNTIME_TABLES)
         assert all(row["relrowsecurity"] and row["relforcerowsecurity"] and row["policies"] for row in states)
 
         orm_root_count = await owner.fetchval(
@@ -81,7 +95,7 @@ async def test_registry_catalog_acl_and_control_boundary(
             "AND c.relname NOT IN "
             "('alembic_version','rls_force_remediation_backups','runtime_privilege_remediation_backup')"
         )
-        assert orm_root_count == 95
+        assert orm_root_count == 97
     finally:
         await owner.close()
 
@@ -94,6 +108,23 @@ async def test_registry_catalog_acl_and_control_boundary(
         assert not await runtime_pg_conn.fetchval(
             "SELECT has_table_privilege('yimatong_app', $1, 'SELECT')", f"public.{table}"
         )
+    for table in APPEND_ONLY_RUNTIME_TABLES:
+        for privilege in ("SELECT", "INSERT"):
+            assert await runtime_pg_conn.fetchval(
+                "SELECT has_table_privilege('yimatong_app', $1, $2)", f"public.{table}", privilege
+            )
+        for privilege in ("UPDATE", "DELETE"):
+            assert not await runtime_pg_conn.fetchval(
+                "SELECT has_table_privilege('yimatong_app', $1, $2)", f"public.{table}", privilege
+            )
+    for table in READ_ONLY_GLOBAL_TABLES:
+        assert await runtime_pg_conn.fetchval(
+            "SELECT has_table_privilege('yimatong_app', $1, 'SELECT')", f"public.{table}"
+        )
+        for privilege in ("INSERT", "UPDATE", "DELETE", "TRUNCATE", "REFERENCES", "TRIGGER"):
+            assert not await runtime_pg_conn.fetchval(
+                "SELECT has_table_privilege('yimatong_app', $1, $2)", f"public.{table}", privilege
+            )
 
     await runtime_pg_conn.execute("SELECT set_config('app.tenant_id', '', true)")
     await runtime_pg_conn.execute("SELECT set_config('app.bypass_rls', 'true', true)")
@@ -107,6 +138,164 @@ async def test_registry_catalog_acl_and_control_boundary(
         key,
     )
     assert await control_pg_conn.fetchval("SELECT count(*) FROM platform_configs WHERE key=$1", key) == 1
+
+
+async def test_audit_ledger_runtime_read_append_and_agency_boundary(
+    migrated_pg_url: str,
+    runtime_pg_conn: asyncpg.Connection,
+    control_pg_conn: asyncpg.Connection,
+) -> None:
+    summary = await seed_baseline(migrated_pg_url)
+    agency_id = uuid.UUID(summary["baseline_tenant"]["id"])
+    client_id = uuid.UUID(summary["control_tenant"]["id"])
+    owner = await asyncpg.connect(migrated_pg_url.replace("postgresql+asyncpg://", "postgresql://"))
+    try:
+        await owner.execute(
+            "INSERT INTO agency_authorizations "
+            "(id,agency_tenant_id,client_tenant_id,scope,status,granted_at,expires_at,created_at,updated_at) "
+            "VALUES ($1,$2,$3,'[]'::json,'active',now(),now()+interval '1 hour',now(),now())",
+            uuid.uuid4(),
+            agency_id,
+            client_id,
+        )
+        await owner.executemany(
+            "INSERT INTO platform_audit_log "
+            "(id,operator_id,target_tenant_id,action,resource,timestamp,created_at,updated_at) "
+            "VALUES ($1,'owner',$2,$3,'acceptance',now(),now(),now())",
+            [
+                (uuid.uuid4(), str(agency_id), "agency-existing"),
+                (uuid.uuid4(), str(client_id), "client-existing"),
+            ],
+        )
+    finally:
+        await owner.close()
+
+    await runtime_pg_conn.execute("SELECT set_config('app.bypass_rls', 'false', true)")
+    await runtime_pg_conn.execute("SELECT set_config('app.tenant_id', $1, true)", str(agency_id))
+    assert await runtime_pg_conn.fetchval("SELECT count(*) FROM platform_audit_log WHERE action='agency-existing'") == 1
+    assert await runtime_pg_conn.fetchval("SELECT count(*) FROM platform_audit_log WHERE action='client-existing'") == 0
+
+    await runtime_pg_conn.execute(
+        "INSERT INTO platform_audit_log "
+        "(id,operator_id,target_tenant_id,action,resource,timestamp,created_at,updated_at) "
+        "VALUES ($1,'agency',$2,'agency-own','acceptance',now(),now(),now())",
+        uuid.uuid4(),
+        str(agency_id),
+    )
+    await runtime_pg_conn.execute(
+        "INSERT INTO platform_audit_log "
+        "(id,operator_id,target_tenant_id,action,resource,timestamp,created_at,updated_at) "
+        "VALUES ($1,'agency',$2,'agency-client','acceptance',now(),now(),now())",
+        uuid.uuid4(),
+        str(client_id),
+    )
+    runtime_url = migrated_pg_url.replace("yimatong:yimatong@", "yimatong_app:yimatong_app@")
+    runtime_engine = create_async_engine(runtime_url)
+    runtime_session = async_sessionmaker(runtime_engine, expire_on_commit=False)
+    try:
+        async with runtime_session.begin() as db:
+            await db.execute(text("SELECT set_config('app.bypass_rls', 'false', true)"))
+            await db.execute(
+                text("SELECT set_config('app.tenant_id', :tenant_id, true)"),
+                {"tenant_id": str(agency_id)},
+            )
+            await write_audit_log(
+                db,
+                operator_id="agency-orm",
+                target_tenant_id=str(client_id),
+                action="agency-client-orm",
+                resource="acceptance",
+            )
+    finally:
+        await runtime_engine.dispose()
+    assert await runtime_pg_conn.fetchval("SELECT count(*) FROM platform_audit_log WHERE action='agency-client'") == 0
+    assert (
+        await runtime_pg_conn.fetchval("SELECT count(*) FROM platform_audit_log WHERE action='agency-client-orm'") == 0
+    )
+    await _assert_insert_denied(
+        runtime_pg_conn,
+        "INSERT INTO platform_audit_log "
+        "(id,operator_id,target_tenant_id,action,resource,timestamp,created_at,updated_at) "
+        "VALUES ($1,'agency',$2,'unauthorized','acceptance',now(),now(),now())",
+        uuid.uuid4(),
+        str(uuid.uuid4()),
+    )
+    await _assert_statement_privilege_denied(runtime_pg_conn, "UPDATE platform_audit_log SET resource='tampered'")
+    await _assert_statement_privilege_denied(runtime_pg_conn, "DELETE FROM platform_audit_log")
+    await _assert_statement_privilege_denied(runtime_pg_conn, "TRUNCATE platform_audit_log")
+
+    owner = await asyncpg.connect(migrated_pg_url.replace("postgresql+asyncpg://", "postgresql://"))
+    try:
+        await owner.execute(
+            "UPDATE agency_authorizations SET expires_at=now()-interval '1 minute' "
+            "WHERE agency_tenant_id=$1 AND client_tenant_id=$2",
+            agency_id,
+            client_id,
+        )
+    finally:
+        await owner.close()
+    await _assert_insert_denied(
+        runtime_pg_conn,
+        "INSERT INTO platform_audit_log "
+        "(id,operator_id,target_tenant_id,action,resource,timestamp,created_at,updated_at) "
+        "VALUES ($1,'agency',$2,'expired-auth','acceptance',now(),now(),now())",
+        uuid.uuid4(),
+        str(client_id),
+    )
+    owner = await asyncpg.connect(migrated_pg_url.replace("postgresql+asyncpg://", "postgresql://"))
+    try:
+        await owner.execute(
+            "UPDATE agency_authorizations SET status='revoked', expires_at=now()+interval '1 hour' "
+            "WHERE agency_tenant_id=$1 AND client_tenant_id=$2",
+            agency_id,
+            client_id,
+        )
+    finally:
+        await owner.close()
+    await _assert_insert_denied(
+        runtime_pg_conn,
+        "INSERT INTO platform_audit_log "
+        "(id,operator_id,target_tenant_id,action,resource,timestamp,created_at,updated_at) "
+        "VALUES ($1,'agency',$2,'revoked-auth','acceptance',now(),now(),now())",
+        uuid.uuid4(),
+        str(client_id),
+    )
+
+    await runtime_pg_conn.execute("SELECT set_config('app.tenant_id', $1, true)", str(client_id))
+    assert (
+        await runtime_pg_conn.fetchval(
+            "SELECT count(*) FROM platform_audit_log WHERE action IN ('client-existing','agency-client')"
+        )
+        == 2
+    )
+    assert (
+        await runtime_pg_conn.fetchval("SELECT count(*) FROM platform_audit_log WHERE action='agency-client-orm'") == 1
+    )
+    control_log_id = uuid.uuid4()
+    await control_pg_conn.execute(
+        "INSERT INTO platform_audit_log "
+        "(id,operator_id,target_tenant_id,action,resource,timestamp,created_at,updated_at) "
+        "VALUES ($1,'platform-admin','platform','control-write','acceptance',now(),now(),now())",
+        control_log_id,
+    )
+    assert await control_pg_conn.fetchval("SELECT count(*) FROM platform_audit_log WHERE id=$1", control_log_id) == 1
+    assert (
+        await control_pg_conn.fetchval(
+            "SELECT count(*) FROM platform_audit_log WHERE action IN ('agency-existing','client-existing')"
+        )
+        == 2
+    )
+
+    await runtime_pg_conn.execute("SELECT set_config('app.tenant_id', '', true)")
+    await runtime_pg_conn.execute("SELECT set_config('app.bypass_rls', 'true', true)")
+    assert await runtime_pg_conn.fetchval("SELECT count(*) FROM platform_audit_log") == 0
+    await _assert_insert_denied(
+        runtime_pg_conn,
+        "INSERT INTO platform_audit_log "
+        "(id,operator_id,target_tenant_id,action,resource,timestamp,created_at,updated_at) "
+        "VALUES ($1,'runtime','platform','forged-bypass','acceptance',now(),now(),now())",
+        uuid.uuid4(),
+    )
 
 
 async def test_pilot_relations_runtime_crud_and_isolation(

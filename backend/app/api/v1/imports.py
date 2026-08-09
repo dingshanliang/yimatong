@@ -7,13 +7,16 @@ import uuid
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.core.dependencies import get_current_account_id, get_current_tenant
+from app.core.exceptions import AppException
 from app.models.code import CodeItem, CodeItemStatus
 from app.models.product import SKU, Brand, Product
 from app.services.import_service import ExcelImportService
+from app.services.quota import CumulativeQuotaKey, reserve_quota
 
 logger = logging.getLogger(__name__)
 
@@ -148,41 +151,46 @@ async def import_products(
             if not product_name:
                 continue
 
-            # 查找或创建品牌
-            from sqlalchemy import select
+            async with db.begin_nested():
+                # 查找或创建品牌
+                from sqlalchemy import select
 
-            result = await db.execute(
-                select(Brand).where(
-                    Brand.tenant_id == tenant_id,
-                    Brand.name == brand_name,
+                result = await db.execute(
+                    select(Brand).where(
+                        Brand.tenant_id == tenant_id,
+                        Brand.name == brand_name,
+                    )
                 )
-            )
-            brand = result.scalar_one_or_none()
-            if not brand and brand_name:
-                brand = Brand(tenant_id=tenant_id, name=brand_name)
-                db.add(brand)
+                brand = result.scalar_one_or_none()
+                if not brand and brand_name:
+                    brand = Brand(tenant_id=tenant_id, name=brand_name)
+                    db.add(brand)
+                    await db.flush()
+
+                await reserve_quota(db, tenant_id, CumulativeQuotaKey.MAX_PRODUCTS)
+                product = Product(
+                    tenant_id=tenant_id,
+                    brand_id=brand.id if brand else None,
+                    name=product_name,
+                    category=row.get("category", ""),
+                    description=row.get("description", ""),
+                )
+                db.add(product)
                 await db.flush()
 
-            product = Product(
-                tenant_id=tenant_id,
-                brand_id=brand.id if brand else None,
-                name=product_name,
-                category=row.get("category", ""),
-                description=row.get("description", ""),
-            )
-            db.add(product)
-            await db.flush()
-
-            # 创建 SKU
-            sku_code = row.get("sku_code", f"SKU-{product.id.hex[:8]}")
-            sku = SKU(
-                tenant_id=tenant_id,
-                product_id=product.id,
-                code=sku_code,
-                name=row.get("sku_name", "默认规格"),
-            )
-            db.add(sku)
+                # 创建 SKU
+                sku_code = row.get("sku_code", f"SKU-{product.id.hex[:8]}")
+                sku = SKU(
+                    tenant_id=tenant_id,
+                    product_id=product.id,
+                    code=sku_code,
+                    name=row.get("sku_name", "默认规格"),
+                )
+                db.add(sku)
+                await db.flush()
             imported += 1
+        except AppException:
+            raise
         except Exception as e:
             errors.append({"row": row, "error": str(e)})
 
@@ -246,15 +254,24 @@ async def import_existing_codes(
                 skipped += 1
                 continue
 
-            item = CodeItem(
-                tenant_id=tenant_id,
-                code_batch_id=code_batch_id,
-                public_id=public_id,
-                status=CodeItemStatus.activated,
-                code_type=batch.code_type,
-            )
-            db.add(item)
+            async with db.begin_nested():
+                await reserve_quota(db, tenant_id, CumulativeQuotaKey.MAX_CODES)
+                item = CodeItem(
+                    tenant_id=tenant_id,
+                    code_batch_id=code_batch_id,
+                    public_id=public_id,
+                    status=CodeItemStatus.activated,
+                    code_type=batch.code_type,
+                )
+                db.add(item)
+                await db.flush()
             imported += 1
+        except IntegrityError:
+            # A concurrent import may win the globally unique public_id race.
+            # The nested rollback also releases this row's reservation.
+            skipped += 1
+        except AppException:
+            raise
         except Exception as e:
             failed += 1
             errors.append({"row": row_num, "public_id": public_id, "message": str(e)})

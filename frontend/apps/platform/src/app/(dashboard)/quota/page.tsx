@@ -8,6 +8,8 @@ import { STATUS_MAP, PLAN_MAP } from "@/lib/constants";
 import { STATUS_COLORS } from "@/lib/status-colors";
 import {
   buildQuotaDisplay,
+  buildQuotaEnforcementDisplay,
+  buildPlanStatusDisplay,
   quotaDisplayLabels,
   type QuotaKey,
   type QuotaUsageItem,
@@ -38,6 +40,23 @@ export default function QuotaPage() {
       render: (plan: string) => <Tag>{PLAN_MAP[plan]?.label ?? plan}</Tag>,
     },
     {
+      title: "额度执行",
+      key: "quota_enforcement",
+      width: 120,
+      render: (_: unknown, record: QuotaUsageItem) => {
+        const enforcement = buildQuotaEnforcementDisplay(record);
+        return (
+          <Tag
+            color={
+              enforcement.ready ? STATUS_COLORS.success : STATUS_COLORS.warning
+            }
+          >
+            {enforcement.label}
+          </Tag>
+        );
+      },
+    },
+    {
       title: "码量额度",
       key: "codes",
       width: 200,
@@ -59,6 +78,13 @@ export default function QuotaPage() {
         renderQuotaBar(record, "max_scans"),
     },
     {
+      title: "产品额度",
+      key: "products",
+      width: 200,
+      render: (_: unknown, record: QuotaUsageItem) =>
+        renderQuotaBar(record, "max_products"),
+    },
+    {
       title: "账号额度",
       key: "accounts",
       width: 200,
@@ -66,7 +92,22 @@ export default function QuotaPage() {
         renderQuotaBar(record, "max_accounts"),
     },
     {
-      title: "状态",
+      title: "套餐状态",
+      key: "plan_status",
+      width: 150,
+      render: (_: unknown, record: QuotaUsageItem) => {
+        const planStatus = buildPlanStatusDisplay(record);
+        const color =
+          planStatus.state === "expired"
+            ? STATUS_COLORS.warning
+            : planStatus.state === "unknown"
+              ? STATUS_COLORS.neutral
+              : STATUS_COLORS.success;
+        return <Tag color={color}>{planStatus.label}</Tag>;
+      },
+    },
+    {
+      title: "租户状态",
       dataIndex: "status",
       key: "status",
       width: 80,
@@ -89,6 +130,7 @@ export default function QuotaPage() {
           dataSource={data ?? []}
           loading={isLoading}
           pagination={{ pageSize: 20, showTotal: (t) => `共 ${t} 个租户` }}
+          scroll={{ x: "max-content" }}
           size="middle"
         />
       </Card>
@@ -104,9 +146,11 @@ export function renderQuotaBar(record: QuotaUsageItem, key: QuotaKey) {
       ? STATUS_COLORS.error
       : display.state === "已用尽" || display.state === "接近限额"
         ? STATUS_COLORS.warning
-        : display.state === "正常" || display.state === "无限制"
-          ? STATUS_COLORS.success
-          : STATUS_COLORS.neutral;
+        : display.state === "待校准"
+          ? STATUS_COLORS.warning
+          : display.state === "正常" || display.state === "无限制"
+            ? STATUS_COLORS.success
+            : STATUS_COLORS.neutral;
 
   return (
     <div style={{ minWidth: 190 }}>

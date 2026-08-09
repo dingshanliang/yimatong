@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 
 import {
   buildQuotaDisplay,
+  buildQuotaEnforcementDisplay,
+  buildPlanStatusDisplay,
   quotaDisplayLabels,
   type QuotaUsageItem,
 } from "../quota-display";
@@ -16,6 +18,10 @@ function quotaItem(
     plan: "growth",
     quota,
     status: "active",
+    quota_enforcement_state: "ready",
+    enforcement_ready: true,
+    reconciled_at: "2026-08-09T06:00:00Z",
+    source_revision: "quota-v1",
     usage,
   };
 }
@@ -43,6 +49,62 @@ describe("quota usage presentation", () => {
 
     expect(display.used).toBe(820);
     expect(display.state).toBe("接近限额");
+  });
+
+  it("maps authoritative product usage to the max_products quota", () => {
+    const display = buildQuotaDisplay(
+      quotaItem({ max_products: 30 }, { products: 12 }),
+      "max_products"
+    );
+
+    expect(display.used).toBe(12);
+    expect(display.remainingLabel).toBe("18");
+  });
+
+  it("does not present quota limits or health as enforceable while reconciliation is pending", () => {
+    const tenant = quotaItem({ max_codes: 100 }, { codes: 20 });
+    tenant.quota_enforcement_state = "reconciliation_pending";
+    tenant.enforcement_ready = false;
+    tenant.reconciled_at = null;
+    tenant.source_revision = null;
+
+    expect(buildQuotaEnforcementDisplay(tenant)).toEqual({
+      ready: false,
+      state: "reconciliation_pending",
+      label: "额度校准中",
+    });
+    const display = buildQuotaDisplay(tenant, "max_codes");
+    expect(display).toMatchObject({
+      used: 20,
+      limitLabel: "待校准",
+      remainingLabel: "—",
+      percentLabel: "—",
+      progressPercent: null,
+      state: "待校准",
+    });
+    expect(quotaDisplayLabels(display).used).toBe("已记录 20");
+  });
+
+  it("fails closed when backend readiness fields disagree", () => {
+    const tenant = quotaItem({ max_codes: 100 }, { codes: 20 });
+    tenant.quota_enforcement_state = "ready";
+    tenant.enforcement_ready = false;
+
+    expect(buildQuotaEnforcementDisplay(tenant).ready).toBe(false);
+    expect(buildQuotaDisplay(tenant, "max_codes").state).toBe("待校准");
+  });
+
+  it("keeps plan access state separate from tenant lifecycle status", () => {
+    const tenant = quotaItem({}, {});
+    tenant.status = "active";
+    tenant.plan_expires_at = "2027-07-01T15:59:59.999999Z";
+    tenant.read_only = true;
+
+    expect(buildPlanStatusDisplay(tenant)).toMatchObject({ state: "expired" });
+    expect(tenant.status).toBe("active");
+    expect(
+      buildPlanStatusDisplay({ plan_expires_at: null, read_only: false })
+    ).toMatchObject({ state: "perpetual" });
   });
 
   it("shows exceeded usage without reporting a negative remainder", () => {

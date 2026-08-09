@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import useSWR from "swr";
 import { useRouter, usePathname } from "next/navigation";
 import {
@@ -52,6 +52,7 @@ import zhCN from "antd/locale/zh_CN";
 import enUS from "antd/locale/en_US";
 import OnboardingWizard from "./_components/OnboardingWizard";
 import TenantPlanReadOnly from "./_components/TenantPlanReadOnly";
+import { filterMenuItemsByFeatures } from "./_components/menu-entitlement";
 import {
   TENANT_PLAN_EXPIRED_EVENT,
   isTenantPlanExpired,
@@ -113,7 +114,7 @@ interface MenuPolicy {
 const MENU_PERMISSIONS: Record<TenantType, MenuPolicy> = {
   brand: {
     mode: "blocklist",
-    items: ["/agency"],
+    items: ["/agency", "/channel-portal", "/store-portal"],
   },
   agency: {
     mode: "allowlist",
@@ -154,6 +155,8 @@ const MENU_PERMISSIONS: Record<TenantType, MenuPolicy> = {
       "/risk",
       "/crm-sync",
       "/imports",
+      "/channel-portal",
+      "/store-portal",
     ],
   },
 };
@@ -183,6 +186,7 @@ function DashboardInner({ children }: { children: React.ReactNode }) {
     plan: string;
     plan_expires_at: string | null;
     read_only: boolean;
+    enabled_features?: Record<string, boolean> | null;
   }>(user ? tenantEntitlementKey(user.acting_tenant_id) : null, {
     refreshInterval: 60_000,
     revalidateOnFocus: true,
@@ -242,6 +246,16 @@ function DashboardInner({ children }: { children: React.ReactNode }) {
     { key: "/channels", icon: <ShopOutlined />, label: t("menu.channels") },
     { key: "/regional", icon: <TeamOutlined />, label: t("menu.regional") },
     { key: "/accounts", icon: <TeamOutlined />, label: t("menu.accounts") },
+    {
+      key: "/channel-portal",
+      icon: <ShopOutlined />,
+      label: t("menu.channel-portal"),
+    },
+    {
+      key: "/store-portal",
+      icon: <ShopOutlined />,
+      label: t("menu.store-portal"),
+    },
   ];
 
   const menuItems: MenuProps["items"] = [
@@ -408,16 +422,25 @@ function DashboardInner({ children }: { children: React.ReactNode }) {
   const policy = MENU_PERMISSIONS[tenantType] || MENU_PERMISSIONS.brand;
   const portalOverride = ROLE_PORTAL_MAP[user?.role?.toLowerCase() || ""];
 
-  const filteredMenuItems = useMemo(() => {
+  const permissionFilteredMenuItems = (() => {
     if (!menuItems) return menuItems;
 
     // Portal users (distributor/store_guide) see only their portal
     if (portalOverride) {
-      return menuItems.filter(
-        (item): item is NonNullable<typeof item> =>
-          item != null &&
-          "key" in item &&
-          (item.key === "/" || item.key === portalOverride)
+      const dashboardItem = menuItems.find(
+        (item) => item != null && "key" in item && item.key === "/"
+      );
+      const portalItem = menuItems
+        .flatMap((item) =>
+          item && "children" in item && Array.isArray(item.children)
+            ? item.children
+            : []
+        )
+        .find(
+          (item) => item != null && "key" in item && item.key === portalOverride
+        );
+      return [dashboardItem, portalItem].filter(
+        (item): item is NonNullable<typeof item> => item != null
       );
     }
 
@@ -504,14 +527,12 @@ function DashboardInner({ children }: { children: React.ReactNode }) {
     }
 
     return filterItems(menuItems);
-  }, [
-    menuItems,
-    policy,
-    portalOverride,
-    tenantType,
-    user?.acting_tenant_id,
-    user?.agency_scope,
-  ]);
+  })();
+
+  const filteredMenuItems = filterMenuItemsByFeatures(
+    permissionFilteredMenuItems,
+    currentTenant?.enabled_features
+  );
 
   if (!user) {
     return (

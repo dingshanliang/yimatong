@@ -7,7 +7,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.database import get_db, set_session_tenant_context
+from app.core.database import get_db, lock_active_tenant_context
 from app.middleware.rate_limit import rate_limiter
 from app.schemas.benefit_claim import BenefitClaimRequest
 from app.services.redis_cache import AsyncRedisCache
@@ -65,20 +65,15 @@ async def claim_benefit_h5(
         raise HTTPException(status_code=401, detail="invalid token: corrupt tenant_id")
 
     # scan_token 是该公开端点的可信租户来源。业务查询前在同一事务中建立
-    # PostgreSQL RLS 上下文。该路由使用 get_db 打开全新运行时会话，没有遗留
-    # bypass 设置；set_session_tenant_context 只设置 app.tenant_id，使严格 RLS
-    # 策略的 bypass 分支（NULL AND bypass）不可达。不要在此处复用会话。
-    tid = await set_session_tenant_context(db, tid)
-
+    # PostgreSQL RLS 上下文并锁定租户套餐行，锁保持到领取/外部发放 commit。
     from app.services.entitlement import (
         PLAN_EXPIRED_CODE,
         PLAN_EXPIRED_DETAIL,
         TenantPlanExpiredError,
-        require_active_plan,
     )
 
     try:
-        await require_active_plan(db, tid)
+        tid = await lock_active_tenant_context(db, tid)
     except TenantPlanExpiredError:
         return JSONResponse(
             status_code=403,
@@ -199,12 +194,13 @@ async def _handle_cash_red_packet_claim(
     """
     tenant_id = benefit.tenant_id
 
-    # 检查租户是否开通了红包功能
+    # 检查租户是否开通了红包功能；使用统一权益词表并对历史脏值 fail closed。
     from app.models.tenant import Tenant
+    from app.services.entitlement import is_feature_enabled
 
     tenant_result = await db.execute(select(Tenant).where(Tenant.id == tenant_id))
     tenant = tenant_result.scalar_one_or_none()
-    if not tenant or not (tenant.enabled_features or {}).get("cash_red_packet"):
+    if not tenant or not is_feature_enabled(tenant.enabled_features, "cash_red_packet"):
         raise HTTPException(status_code=403, detail="cash_red_packet not enabled for this tenant")
 
     # 检查租户是否配置了微信支付 connector

@@ -17,7 +17,7 @@ from uuid6 import uuid7
 
 from app.constants.categories import get_default_categories
 from app.models.invite_code import InviteCodeStatus, TenantInviteCode
-from app.models.plan import PlanDefinition
+from app.models.plan import PlanDefinition, TenantQuotaUsage
 from app.models.tenant import (
     Account,
     Organization,
@@ -44,6 +44,13 @@ from app.modules.brand_tenant_initialization.interface import (
     TrustedAutomationOpening,
 )
 from app.services.audit import write_audit_log
+from app.services.entitlement import validate_feature_flags
+from app.services.quota import (
+    QUOTA_RECONCILIATION_SOURCE_REVISION,
+    is_current_quota_epoch_active,
+    lock_quota_rollout_state,
+    validate_quota_config,
+)
 from app.utils.auth_rbac import WEB_ROLE_PERMISSIONS
 from app.utils.email import normalize_email
 from app.utils.security import hash_password, validate_password_strength
@@ -96,6 +103,11 @@ class BrandTenantInitialization:
         plan = await self._load_plan(plan_name)
         tenant_key = stable_key or await self._generate_available_key(command.name)
         await self._assert_tenant_key_available(tenant_key)
+        # Shared epoch lock linearizes tenant birth against the final activation
+        # transaction. Activation-first creates a current-ready tenant; tenant-
+        # first leaves a pending marker which blocks activation until reconciled.
+        rollout_state = await lock_quota_rollout_state(self._db)
+        quota_epoch_active = is_current_quota_epoch_active(rollout_state)
 
         role_templates = {name: tuple(WEB_ROLE_PERMISSIONS.get(name, ())) for name in ("admin", "operator", "viewer")}
         permission_codes = tuple(dict.fromkeys(code for codes in role_templates.values() for code in codes))
@@ -131,7 +143,19 @@ class BrandTenantInitialization:
             name=command.admin_name.strip(),
             is_active=admin_state is InitialAdminState.active,
         )
-        self._db.add_all([tenant, organization, account])
+        # This tenant and its initial account are born inside the canonical
+        # transaction, so their complete authoritative state is proven without
+        # a legacy backfill window.
+        quota_usage = TenantQuotaUsage(
+            tenant_id=tenant_id,
+            accounts=1,
+            reconciled_at=datetime.now(UTC) if quota_epoch_active else None,
+            source_revision=QUOTA_RECONCILIATION_SOURCE_REVISION if quota_epoch_active else None,
+            enforcement_ready=quota_epoch_active,
+        )
+        self._db.add(tenant)
+        await self._db.flush()
+        self._db.add_all([organization, account, quota_usage])
         await self._db.flush()
 
         role_descriptions = {"admin": "品牌管理员", "operator": "运营人员", "viewer": "无业务操作权限成员"}
@@ -210,6 +234,11 @@ class BrandTenantInitialization:
             raise PlanDefinitionUnavailable(f"套餐不可用：{plan_name}")
         if plan.name not in {item.value for item in TenantPlan}:
             raise PlanDefinitionUnavailable(f"套餐未映射到租户权益：{plan.name}")
+        try:
+            validate_quota_config(plan.quota_defaults)
+            validate_feature_flags(plan.feature_flags)
+        except ValueError as exc:
+            raise PlanDefinitionUnavailable(f"套餐配置不可用：{plan.name}") from exc
         return plan
 
     async def _lock_valid_brand_invite(self, code: str) -> TenantInviteCode:

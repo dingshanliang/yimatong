@@ -8,6 +8,7 @@ from sqlalchemy.orm import selectinload
 
 from app.models.tenant import Account, Organization, Role, account_roles
 from app.services.audit import write_audit_log
+from app.services.quota import CumulativeQuotaKey, check_quota_for_tenant
 from app.utils import escape_like_pattern
 from app.utils.email import normalize_email
 from app.utils.security import hash_password
@@ -106,6 +107,8 @@ async def create_account(
     existing = await db.execute(select(Account).where(Account.tenant_id == tenant_id, Account.email == email))
     if existing.scalar_one_or_none():
         raise ValueError("An account with this email already exists in this tenant")
+
+    await check_quota_for_tenant(db, tenant_id, CumulativeQuotaKey.MAX_ACCOUNTS, Account)
 
     hashed = hash_password(password)
     account = Account(

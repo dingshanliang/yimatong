@@ -8,9 +8,14 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
+from app.models.plan import QuotaRolloutPhase, QuotaRolloutState, TenantQuotaUsage
 from app.models.scan import ScanEvent
 from app.models.tenant import Tenant
-from app.services.quota import QuotaExceededError, check_quota_incremental_locked
+from app.services.quota import (
+    QUOTA_RECONCILIATION_SOURCE_REVISION,
+    QuotaExceededError,
+    check_quota_incremental_locked,
+)
 
 
 @pytest.mark.acceptance
@@ -21,12 +26,30 @@ async def test_max_scans_concurrent_requests_cannot_both_cross_limit(migrated_pg
     tenant_id = uuid.uuid4()
     async with factory() as db:
         await db.execute(text("SET LOCAL app.bypass_rls = 'true'"))
+        state = await db.get(QuotaRolloutState, 1, with_for_update=True)
+        assert state is not None
+        now = datetime.now(UTC)
+        state.source_revision = QUOTA_RECONCILIATION_SOURCE_REVISION
+        state.phase = QuotaRolloutPhase.active
+        state.drained_at = now
+        state.drained_by = "acceptance"
+        state.activated_at = now
+        state.activated_by = "acceptance"
         db.add(
             Tenant(
                 id=tenant_id,
                 name="并发扫码配额租户",
                 slug=f"scan-concurrency-{tenant_id.hex[:8]}",
                 quota={"max_scans": 1},
+            )
+        )
+        await db.flush()
+        db.add(
+            TenantQuotaUsage(
+                tenant_id=tenant_id,
+                reconciled_at=datetime.now(UTC),
+                source_revision=QUOTA_RECONCILIATION_SOURCE_REVISION,
+                enforcement_ready=True,
             )
         )
         await db.commit()

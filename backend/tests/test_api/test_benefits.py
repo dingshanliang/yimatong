@@ -531,13 +531,32 @@ class TestBenefitTypeValidation:
             json={
                 "name": "红包测试",
                 "benefit_type": "cash_red_packet",
-                "config_json": {"amount_type": "fixed", "fixed_amount": 100},
+                "config_json": {"amount_type": "fixed", "fixed_amount": 100, "budget": 1000},
                 "stock_total": 100,
                 "per_person_limit": 1,
             },
             headers=headers,
         )
         assert resp.status_code == 422
+
+    @pytest.mark.anyio
+    async def test_cash_red_packet_requires_the_paid_feature(self, client: AsyncClient, auth_setup):
+        _, headers = auth_setup
+        response = await client.post(
+            "/api/v1/benefits",
+            json={
+                "name": "未购能力红包",
+                "benefit_type": "cash_red_packet",
+                "config_json": {"amount_type": "fixed", "fixed_amount": 100, "budget": 1000},
+                "stock_total": 100,
+                "per_person_limit": 1,
+                "connector_id": str(uuid.uuid4()),
+            },
+            headers=headers,
+        )
+
+        assert response.status_code == 403
+        assert response.json()["error_code"] == "TENANT_FEATURE_DISABLED"
 
     @pytest.mark.anyio
     async def test_private_domain_requires_qr_image(self, client: AsyncClient, auth_setup):

@@ -1,11 +1,14 @@
 """验证 resolver JSON 响应结构完整性"""
 
+import uuid
+
 import pytest
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.main import app
+from app.models.tenant import Tenant
 from app.utils.security import create_access_token
 from tests.conftest import TestSessionLocal
 
@@ -194,3 +197,22 @@ class TestResolverJsonResponse:
         assert branding.get("logo_url") == "https://cdn.example.com/tenant-logo.png", (
             "租户 brand_profile.logo_url 必须注入 tenant_branding"
         )
+
+    @pytest.mark.anyio
+    async def test_public_response_does_not_honor_unentitled_historical_white_label(
+        self, client, traceability_setup, db_session
+    ):
+        tenant_resp = await client.get("/api/v1/tenants", headers=_platform_admin_headers())
+        tenant = await db_session.get(Tenant, uuid.UUID(tenant_resp.json()["items"][0]["id"]))
+        assert tenant is not None
+        tenant.brand_profile = {"hide_yimatong_brand": True}
+        tenant.enabled_features = {}
+        await db_session.flush()
+
+        response = await client.get(
+            f"/c/{traceability_setup}",
+            headers={"Accept": "application/json"},
+        )
+
+        assert response.status_code == 200
+        assert response.json()["tenant_branding"]["hide_yimatong_brand"] is False

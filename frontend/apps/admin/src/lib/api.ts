@@ -3,7 +3,7 @@ import { parseJwtPayload } from "@yimatong/shared";
 import {
   TenantPlanReadOnlyError,
   reportTenantPlanExpired,
-  tenantPlanBlocksMethod,
+  tenantPlanBlocksRequest,
 } from "./plan-entitlement";
 
 declare module "axios" {
@@ -56,7 +56,7 @@ export function registerAuthInterceptorHandlers(
 }
 
 api.interceptors.request.use((config) => {
-  if (tenantPlanBlocksMethod(config.method)) {
+  if (tenantPlanBlocksRequest(config.method, config.url)) {
     return Promise.reject(new TenantPlanReadOnlyError());
   }
   if (typeof window !== "undefined") {

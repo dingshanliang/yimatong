@@ -49,7 +49,7 @@ from app.models.member import (  # noqa: E402, F401
 )
 from app.models.page import PageTemplate, PageVersion, PageVersionStatus  # noqa: E402, F401
 from app.models.pilot_milestone import PilotMilestone  # noqa: E402, F401
-from app.models.plan import PlanDefinition  # noqa: E402
+from app.models.plan import PlanDefinition, QuotaRolloutPhase, QuotaRolloutState  # noqa: E402
 from app.models.private_domain import PrivateDomainConfig  # noqa: E402, F401
 from app.models.product import SKU, Brand, Product, ProductionBatch  # noqa: E402, F401
 
@@ -94,6 +94,7 @@ from app.models.tenant import (  # noqa: E402, F401
 from app.models.visitor import AnonymousVisitor  # noqa: E402, F401
 from app.models.webhook import ApiKey, WebhookDelivery, WebhookEndpoint  # noqa: E402, F401
 from app.models.wecom import WeComContactWay, WeComExternalContact  # noqa: E402, F401
+from app.services.quota import QUOTA_RECONCILIATION_SOURCE_REVISION  # noqa: E402
 from app.services.redis_cache import AsyncRedisCache, SharedSecurityCacheUnavailable  # noqa: E402
 from app.utils.crypto import EnvKeyProvider, init_crypto  # noqa: E402
 
@@ -158,8 +159,19 @@ async def setup_database():
     async with test_engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     async with TestSessionLocal() as session:
+        rollout_now = datetime.now(UTC)
         session.add_all(
             [
+                QuotaRolloutState(
+                    id=1,
+                    source_revision=QUOTA_RECONCILIATION_SOURCE_REVISION,
+                    phase=QuotaRolloutPhase.active,
+                    started_at=rollout_now,
+                    drained_at=rollout_now,
+                    activated_at=rollout_now,
+                    drained_by="test-fixture",
+                    activated_by="test-fixture",
+                ),
                 PlanDefinition(
                     id="test-plan-free",
                     name="free",

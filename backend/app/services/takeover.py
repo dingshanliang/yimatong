@@ -20,7 +20,7 @@ from email.utils import parsedate_to_datetime
 from urllib.parse import parse_qs, unquote, urlparse
 
 from fastapi import HTTPException, status
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.code import CodeBatch, CodeItem
@@ -42,11 +42,13 @@ from app.models.takeover import (
     TakeoverRouteVersion,
 )
 from app.services.audit import write_audit_log
+from app.services.entitlement import PLAN_EXPIRED_CODE, PLAN_EXPIRED_DETAIL, TenantPlanExpiredError
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_CNAME_TARGET = "cname.yimatong.cn"
 TAKEOVER_IMPORT_QUEUE_KEY = "ymt:takeover_import:queue"
+TAKEOVER_IMPORT_PLAN_EXPIRED_ERROR = f"{PLAN_EXPIRED_CODE}: {PLAN_EXPIRED_DETAIL}"
 MAX_IMPORT_ROWS = 100_000
 MAX_IMPORT_BYTES = 10 * 1024 * 1024
 SUPPORTED_IMPORT_COLUMNS = {
@@ -551,6 +553,7 @@ def serialize_import(job: TakeoverImportJob, errors: list[TakeoverImportError] |
         "file_name": job.file_name,
         "file_sha256": job.file_sha256,
         "counts": job.counts,
+        "error_detail": job.error_detail,
         "errors": serialized_errors,
         "created_at": job.created_at,
         "completed_at": job.completed_at,
@@ -639,17 +642,25 @@ async def queue_import(
         raise HTTPException(status_code=404, detail="导入任务不存在")
     if job.status in {TakeoverImportStatus.completed, TakeoverImportStatus.partial_failed}:
         return job
-    if job.status not in {TakeoverImportStatus.dry_run, TakeoverImportStatus.pending, TakeoverImportStatus.processing}:
+    retrying_after_renewal = (
+        job.status == TakeoverImportStatus.failed and job.error_detail == TAKEOVER_IMPORT_PLAN_EXPIRED_ERROR
+    )
+    if job.status not in {
+        TakeoverImportStatus.dry_run,
+        TakeoverImportStatus.pending,
+        TakeoverImportStatus.processing,
+    } and not (retrying_after_renewal):
         raise HTTPException(status_code=409, detail="当前导入任务不能提交")
     if job.status == TakeoverImportStatus.dry_run and job.counts.get("failed", 0):
         raise HTTPException(status_code=409, detail="Dry-run 仍有失败项，请修复后重试")
 
+    job.status = TakeoverImportStatus.pending
+    job.error_detail = None
+    job.submitted_at = _now() if retrying_after_renewal else job.submitted_at or _now()
     bind = db.get_bind()
     if bind.dialect.name == "sqlite":
         return await submit_import(db, project, job, account_id)
 
-    job.status = TakeoverImportStatus.pending
-    job.submitted_at = job.submitted_at or _now()
     await db.flush()
     try:
         import redis.asyncio as aioredis
@@ -755,7 +766,13 @@ async def submit_import(
 
 async def process_import_job(job_id: uuid.UUID | str) -> None:
     """Worker 入口：领取一个待处理任务，并将最终状态持久化。"""
-    from app.core.database import async_session_factory, bootstrap_tenant_keys, set_session_tenant_context
+    from app.core.database import (
+        async_session_factory,
+        bootstrap_tenant_keys,
+        control_session_factory,
+        lock_active_tenant_context,
+        set_session_tenant_context,
+    )
 
     parsed_job_id = uuid.UUID(str(job_id))
     async with async_session_factory() as bootstrap_db:
@@ -770,7 +787,38 @@ async def process_import_job(job_id: uuid.UUID | str) -> None:
     _, tenant_id = work_keys[0]
 
     async with async_session_factory() as db:
-        await set_session_tenant_context(db, tenant_id)
+        try:
+            # The tenant lock linearizes the complete import transaction with a
+            # platform plan-expiry update.  It must be acquired before reading
+            # the job, project, errors, or aliases and held through commit.
+            await lock_active_tenant_context(db, tenant_id)
+        except TenantPlanExpiredError:
+            # Expiry is a control-plane lifecycle outcome, not a tenant
+            # business write.  Persist it through the trusted bootstrap pair so
+            # the job has a stable, recoverable state before releasing the
+            # tenant lock to a concurrent renewal.  The exact bootstrap pair
+            # prevents opening RLS to a caller-supplied tenant id.
+            try:
+                async with control_session_factory() as status_db:
+                    if status_db.get_bind().dialect.name == "postgresql":
+                        await status_db.execute(text("SET LOCAL app.bypass_rls = 'true'"))
+                    await status_db.execute(
+                        update(TakeoverImportJob)
+                        .where(
+                            TakeoverImportJob.id == parsed_job_id,
+                            TakeoverImportJob.tenant_id == tenant_id,
+                            TakeoverImportJob.status.in_({TakeoverImportStatus.dry_run, TakeoverImportStatus.pending}),
+                        )
+                        .values(
+                            status=TakeoverImportStatus.failed,
+                            error_detail=TAKEOVER_IMPORT_PLAN_EXPIRED_ERROR,
+                            completed_at=None,
+                        )
+                    )
+                    await status_db.commit()
+            finally:
+                await db.rollback()
+            return
         job = await db.scalar(
             select(TakeoverImportJob)
             .where(TakeoverImportJob.id == parsed_job_id, TakeoverImportJob.tenant_id == tenant_id)
@@ -800,10 +848,6 @@ async def process_import_job(job_id: uuid.UUID | str) -> None:
                 "details": {"project_id": str(project.id), "counts": job.counts},
             }
             await db.commit()
-            from sqlalchemy import text
-
-            from app.core.database import control_session_factory
-
             try:
                 async with control_session_factory() as audit_db:
                     await audit_db.execute(text("SET LOCAL app.bypass_rls = 'true'"))

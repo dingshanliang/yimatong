@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.core.dependencies import get_current_account_id, get_current_tenant
-from app.models.tenant import Account, Organization
+from app.models.tenant import Organization
 from app.schemas.account import (
     AccountCreate,
     AccountCreateResponse,
@@ -32,7 +32,6 @@ from app.services.organization import (
     update_account,
     update_organization,
 )
-from app.services.quota import QuotaExceededError, check_quota_for_tenant
 from app.utils.auth_rbac import require_role
 
 router = APIRouter(prefix="/api/v1", tags=["organizations", "accounts"])
@@ -209,12 +208,6 @@ async def create_account_endpoint(
     actor_id: uuid.UUID = Depends(get_current_account_id),
     _role: str = Depends(require_role("admin")),
 ):
-    # Quota check
-    try:
-        await check_quota_for_tenant(db, tenant_id, "max_accounts", Account)
-    except QuotaExceededError as e:
-        raise HTTPException(status_code=429, detail=str(e))
-
     initial_password = generate_initial_password() if not body.password else None
     try:
         account = await create_account(

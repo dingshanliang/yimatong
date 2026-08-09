@@ -8,7 +8,7 @@
 """
 
 import uuid
-from datetime import date
+from datetime import UTC, date, datetime
 
 import pytest
 from sqlalchemy import select
@@ -23,6 +23,7 @@ from app.models.code import (
     CodeItemStatus,
     CodeType,
 )
+from app.models.plan import QuotaRolloutPhase, QuotaRolloutState, TenantQuotaUsage
 from app.models.product import SKU, BatchStatus, Brand, Product, ProductionBatch
 from app.models.tenant import Tenant
 from app.services.code import (
@@ -34,7 +35,7 @@ from app.services.code import (
     void_batch,
 )
 from app.services.code_state import InvalidStateTransitionError
-from app.services.quota import QuotaExceededError
+from app.services.quota import QUOTA_RECONCILIATION_SOURCE_REVISION, QuotaExceededError
 
 engine = create_async_engine("sqlite+aiosqlite://")
 TestSession = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
@@ -55,9 +56,38 @@ def _uuid() -> uuid.UUID:
     return uuid7()
 
 
+async def _activate_current_quota_epoch(db: AsyncSession) -> None:
+    """Opt an enforcement-specific test into the current rollout epoch."""
+
+    now = datetime.now(UTC)
+    db.add(
+        QuotaRolloutState(
+            id=1,
+            source_revision=QUOTA_RECONCILIATION_SOURCE_REVISION,
+            phase=QuotaRolloutPhase.active,
+            started_at=now,
+            drained_at=now,
+            drained_by="code-service-test",
+            activated_at=now,
+            activated_by="code-service-test",
+        )
+    )
+    await db.flush()
+
+
 async def _create_prerequisites(db: AsyncSession) -> tuple[uuid.UUID, uuid.UUID, uuid.UUID, uuid.UUID, uuid.UUID]:
     """创建租户、品牌、产品、SKU、生产批次并返回所有 ID"""
     tenant_id = _uuid()
+    db.add(Tenant(id=tenant_id, name="测试租户", slug=f"test-{tenant_id.hex}"))
+    await db.flush()
+    db.add(
+        TenantQuotaUsage(
+            tenant_id=tenant_id,
+            reconciled_at=datetime.now(UTC),
+            source_revision=QUOTA_RECONCILIATION_SOURCE_REVISION,
+            enforcement_ready=True,
+        )
+    )
     brand = Brand(tenant_id=tenant_id, name="测试品牌")
     db.add(brand)
     await db.flush()
@@ -147,15 +177,11 @@ class TestCreateCodeBatch:
     @pytest.mark.anyio
     async def test_create_batch_enforces_cumulative_max_codes(self):
         async with TestSession() as db:
+            await _activate_current_quota_epoch(db)
             tenant_id, _, product_id, sku_id, production_batch_id = await _create_prerequisites(db)
-            db.add(
-                Tenant(
-                    id=tenant_id,
-                    name="累计码量租户",
-                    slug=f"code-limit-{tenant_id.hex[:8]}",
-                    quota={"max_codes": 1, "max_codes_per_batch": 100},
-                )
-            )
+            tenant = await db.get(Tenant, tenant_id)
+            assert tenant is not None
+            tenant.quota = {"max_codes": 1, "max_codes_per_batch": 100}
             await db.flush()
 
             with pytest.raises(QuotaExceededError, match="max_codes"):
@@ -172,15 +198,11 @@ class TestCreateCodeBatch:
     @pytest.mark.anyio
     async def test_paired_codes_charge_each_generated_code_item(self):
         async with TestSession() as db:
+            await _activate_current_quota_epoch(db)
             tenant_id, _, product_id, sku_id, production_batch_id = await _create_prerequisites(db)
-            db.add(
-                Tenant(
-                    id=tenant_id,
-                    name="双码配额租户",
-                    slug=f"paired-limit-{tenant_id.hex[:8]}",
-                    quota={"max_codes": 3, "max_codes_per_batch": 100},
-                )
-            )
+            tenant = await db.get(Tenant, tenant_id)
+            assert tenant is not None
+            tenant.quota = {"max_codes": 3, "max_codes_per_batch": 100}
             await db.flush()
 
             with pytest.raises(QuotaExceededError, match="max_codes"):

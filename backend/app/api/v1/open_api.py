@@ -16,6 +16,7 @@ from app.core.event_bus import event_bus
 from app.schemas.campaign import CampaignStatusRequest
 from app.schemas.common import PaginatedResponse
 from app.services.audit import write_audit_log
+from app.services.quota import CumulativeQuotaKey, reserve_quota
 from app.utils.auth_rbac import require_permission
 
 open_api_router = APIRouter(prefix="/open/v1", tags=["open-api"])
@@ -418,7 +419,7 @@ async def open_create_product(
             existing.category = body.category
         if body.description is not None:
             existing.description = body.description
-        await db.commit()
+        await db.flush()
         return {
             "id": str(existing.id),
             "name": existing.name,
@@ -435,9 +436,9 @@ async def open_create_product(
         external_id=body.external_id,
         source_system="open_api" if body.external_id else None,
     )
+    await reserve_quota(db, tenant_id, CumulativeQuotaKey.MAX_PRODUCTS)
     db.add(product)
-    await db.commit()
-    await db.refresh(product)
+    await db.flush()
     return {
         "id": str(product.id),
         "name": product.name,
@@ -467,7 +468,7 @@ async def open_update_product(
         product.category = body.category
     if body.description is not None:
         product.description = body.description
-    await db.commit()
+    await db.flush()
     return {"id": str(product.id), "name": product.name}
 
 
@@ -536,7 +537,7 @@ async def open_create_sku(
             existing.name = body.name
         if body.specifications is not None:
             existing.specifications = body.specifications
-        await db.commit()
+        await db.flush()
         return {
             "id": str(existing.id),
             "code": existing.code,
@@ -554,8 +555,7 @@ async def open_create_sku(
         source_system="open_api" if body.external_id else None,
     )
     db.add(sku)
-    await db.commit()
-    await db.refresh(sku)
+    await db.flush()
     return {
         "id": str(sku.id),
         "code": sku.code,
@@ -583,7 +583,7 @@ async def open_update_sku(
         sku.name = body.name
     if body.specifications is not None:
         sku.specifications = body.specifications
-    await db.commit()
+    await db.flush()
     return {"id": str(sku.id), "code": sku.code}
 
 
@@ -656,7 +656,7 @@ async def open_create_batch(
         existing.batch_code = body.batch_code
         existing.production_date = date_type.fromisoformat(body.production_date)
         existing.expiry_date = date_type.fromisoformat(body.expiry_date)
-        await db.commit()
+        await db.flush()
         return {
             "id": str(existing.id),
             "batch_code": existing.batch_code,
@@ -675,8 +675,7 @@ async def open_create_batch(
         source_system="open_api" if body.external_id else None,
     )
     db.add(batch)
-    await db.commit()
-    await db.refresh(batch)
+    await db.flush()
     return {
         "id": str(batch.id),
         "batch_code": batch.batch_code,

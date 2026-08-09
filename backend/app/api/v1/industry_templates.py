@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
-from app.core.dependencies import get_current_tenant
+from app.core.dependencies import get_current_account_id, get_current_tenant
 from app.services.industry_templates import ALL_TEMPLATES
 from app.utils.auth_rbac import require_role
 
@@ -38,6 +38,7 @@ async def apply_industry_template(
     body: dict | None = None,
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
+    account_id: uuid.UUID = Depends(get_current_account_id),
     _role: str = Depends(require_role("admin")),
 ):
     """将行业模板应用到租户，创建 page_template"""
@@ -57,8 +58,7 @@ async def apply_industry_template(
         status="draft",
     )
     db.add(tmpl)
-    await db.commit()
-    await db.refresh(tmpl)
+    await db.flush()
 
     # 创建初始版本
     from app.models.page import PageVersion, PageVersionStatus
@@ -69,10 +69,10 @@ async def apply_industry_template(
         version=1,
         config_json=template_def["config_json"],
         status=PageVersionStatus.draft,
+        created_by=account_id,
     )
     db.add(version)
-    await db.commit()
-    await db.refresh(version)
+    await db.flush()
 
     return {
         "template_id": str(tmpl.id),

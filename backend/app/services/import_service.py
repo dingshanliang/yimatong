@@ -17,8 +17,10 @@ from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.exceptions import AppException
 from app.models.integration import SyncRecord
 from app.models.product import SKU, Brand, Product, ProductionBatch
+from app.services.quota import CumulativeQuotaKey, reserve_quota
 
 logger = logging.getLogger(__name__)
 
@@ -539,13 +541,8 @@ class ExcelImportService:
                     brand_id = brand.id
                     brand_name_to_id[item.brand_name] = brand_id
 
-                product = await self._upsert_product(db, tenant_id, brand_id, item)
-                if product is not None:
-                    product_name_to_id[item.product_name] = product.id
-                    if product.external_id and product.external_id == item.external_id:
-                        report.products.updated += 1
-                    else:
-                        report.products.created += 1
+                async with db.begin_nested():
+                    product, created = await self._upsert_product(db, tenant_id, brand_id, item)
                     await self._write_sync_record(
                         db,
                         tenant_id,
@@ -559,8 +556,14 @@ class ExcelImportService:
                             "row": item.row_num,
                         },
                     )
+                    await db.flush()
+                product_name_to_id[item.product_name] = product.id
+                if created:
+                    report.products.created += 1
                 else:
-                    report.products.skipped += 1
+                    report.products.updated += 1
+            except AppException:
+                raise
             except Exception as exc:
                 report.products.errors.append(RowError(sheet="产品", row=item.row_num, message=str(exc)))
                 logger.warning("产品导入第 %d 行失败: %s", item.row_num, exc)
@@ -698,7 +701,7 @@ class ExcelImportService:
 
     async def _upsert_product(
         self, db: AsyncSession, tenant_id: uuid.UUID, brand_id: uuid.UUID, item: ParsedProduct
-    ) -> Product | None:
+    ) -> tuple[Product, bool]:
         """产品 upsert"""
         existing = None
         if item.external_id:
@@ -718,8 +721,9 @@ class ExcelImportService:
                 existing.category = item.category
             if item.description is not None:
                 existing.description = item.description
-            return existing
+            return existing, False
 
+        await reserve_quota(db, tenant_id, CumulativeQuotaKey.MAX_PRODUCTS)
         product = Product(
             tenant_id=tenant_id,
             brand_id=brand_id,
@@ -731,7 +735,7 @@ class ExcelImportService:
         )
         db.add(product)
         await db.flush()
-        return product
+        return product, True
 
     async def _upsert_sku(
         self, db: AsyncSession, tenant_id: uuid.UUID, product_id: uuid.UUID, item: ParsedSKU

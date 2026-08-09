@@ -58,13 +58,10 @@ async def setup_tenant(client: AsyncClient):
     tid = resp.json()["id"]
     token = create_access_token(tid, "00000000-0000-0000-0000-000000000001", "admin")
     headers = {"Authorization": f"Bearer {token}"}
-    # enabled_features 必须走平台 admin 的 /tenants/{id}：自助 /tenants/me 的
-    # TenantUpdateSelf schema 故意不含 enabled_features（品牌方不能自助开付费
-    # feature），用租户 Bearer 调 /me 会被 Pydantic 静默丢弃，导致 require_store_enabled
-    # 后续读到 False 返回 403。
+    # enabled_features 必须走平台 control API；品牌方不能自助开付费 feature。
     feature_resp = await client.patch(
         f"/api/v1/tenants/{tid}",
-        json={"enabled_features": {"channel_store": True}},
+        json={"enabled_features": {"channel_portal": True}},
         headers=_platform_admin_headers(),
     )
     assert feature_resp.status_code == 200
@@ -97,6 +94,31 @@ async def setup_tenant(client: AsyncClient):
         headers=headers,
     )
     return tid, headers, product.json()["id"], sku.json()["id"], production_batch.json()["id"]
+
+
+@pytest.mark.anyio
+async def test_channel_management_and_analytics_require_the_paid_feature(client: AsyncClient):
+    created = await client.post(
+        "/api/v1/tenants",
+        json={
+            "name": "未购渠道能力租户",
+            "admin_email": "no-channel@test.com",
+            "admin_name": "Admin",
+            "admin_password": "Pass1234",
+        },
+        headers=_platform_admin_headers(),
+    )
+    tid = created.json()["id"]
+    token = create_access_token(tid, "00000000-0000-0000-0000-000000000001", "admin")
+    headers = {"Authorization": f"Bearer {token}"}
+
+    management = await client.get("/api/v1/channels/distributors", headers=headers)
+    analytics = await client.get("/api/v1/channel-analytics/health-scores", headers=headers)
+
+    for response in (management, analytics):
+        assert response.status_code == 403
+        assert response.json()["detail"]["code"] == "TENANT_FEATURE_DISABLED"
+        assert response.json()["detail"]["feature"] == "channel_portal"
 
 
 class TestDistributorCRUD:

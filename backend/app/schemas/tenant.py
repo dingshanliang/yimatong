@@ -54,6 +54,24 @@ class TenantUpdate(BaseModel):
     enabled_features: dict | None = None
     categories: list[str] | None = None
 
+    @field_validator("enabled_features")
+    @classmethod
+    def validate_enabled_features(cls, value: dict | None) -> dict | None:
+        if value is None:
+            return None
+        from app.services.entitlement import validate_feature_flags
+
+        return validate_feature_flags(value)
+
+    @field_validator("quota")
+    @classmethod
+    def validate_quota(cls, value: dict | None) -> dict | None:
+        if value is None:
+            return None
+        from app.services.quota import validate_quota_config
+
+        return validate_quota_config(value)
+
     @field_validator("categories")
     @classmethod
     def validate_categories(cls, v: list[str] | None) -> list[str] | None:
@@ -151,6 +169,7 @@ class TenantEntitlementRead(BaseModel):
     plan: str
     plan_expires_at: datetime | None = None
     read_only: bool
+    enabled_features: dict[str, bool] = Field(default_factory=dict)
 
 
 class TenantListItem(BaseModel):

@@ -1,5 +1,6 @@
 """A3-002: Product 数据模型与 CRUD API 验收测试"""
 
+import uuid
 from collections.abc import AsyncGenerator
 
 import pytest
@@ -8,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.main import app
+from app.models.plan import TenantQuotaUsage
 from app.utils.security import create_access_token
 from tests.conftest import TestSessionLocal
 
@@ -231,8 +233,10 @@ class TestProductCRUD:
         assert clear_resp.json()["image_url"] == "https://example.com/origin.png"
 
     @pytest.mark.anyio
-    async def test_delete_product_success(self, client: AsyncClient, tenant_with_auth, brand_id):
-        _, headers = tenant_with_auth
+    async def test_delete_product_success(
+        self, client: AsyncClient, tenant_with_auth, brand_id, db_session: AsyncSession
+    ):
+        tenant_id, headers = tenant_with_auth
         resp = await client.post(
             "/api/v1/products",
             json={"brand_id": brand_id, "name": "待删产品"},
@@ -245,6 +249,9 @@ class TestProductCRUD:
 
         get_resp = await client.get(f"/api/v1/products/{product_id}", headers=headers)
         assert get_resp.status_code == 404
+        usage = await db_session.get(TenantQuotaUsage, uuid.UUID(tenant_id))
+        assert usage is not None
+        assert usage.products == 0
 
     @pytest.mark.anyio
     async def test_delete_product_with_skus_blocked(self, client: AsyncClient, tenant_with_auth, brand_id):

@@ -50,17 +50,6 @@ async def create_code_batch(
     else:
         raise ValueError("Invalid generation mode")
 
-    await check_quota_incremental_locked(
-        db,
-        tenant_id,
-        "max_codes",
-        CodeItem,
-        generated_code_count,
-    )
-    tenant = await db.get(Tenant, tenant_id)
-    if tenant and tenant.quota:
-        check_quota(tenant.quota, "max_codes_per_batch", generated_code_count)
-
     product = await db.get(Product, product_id)
     if not product or product.tenant_id != tenant_id:
         raise ValueError("Product not found")
@@ -76,6 +65,20 @@ async def create_code_batch(
         raise ValueError("Production batch not found")
     if production_batch.product_id != product_id or production_batch.sku_id != sku_id:
         raise ValueError("Production batch does not belong to selected product and SKU")
+
+    # Validate all referenced resources before reserving. A service caller may
+    # deliberately catch a validation error and keep using its transaction;
+    # invalid input must therefore never leave a quota reservation behind.
+    await check_quota_incremental_locked(
+        db,
+        tenant_id,
+        "max_codes",
+        CodeItem,
+        generated_code_count,
+    )
+    tenant = await db.get(Tenant, tenant_id)
+    if tenant and tenant.quota:
+        check_quota(tenant.quota, "max_codes_per_batch", generated_code_count)
 
     if generation_mode == CodeGenerationMode.batch_level:
         quantity = 1

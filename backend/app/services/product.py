@@ -19,6 +19,7 @@ from app.models.product import (
     ProductStatus,
     SKUStatus,
 )
+from app.services.quota import CumulativeQuotaKey, check_quota_for_tenant, release_quota
 from app.utils import escape_like_pattern
 
 
@@ -177,6 +178,7 @@ async def create_product(
 ) -> Product:
     brand_result = await db.execute(select(Brand).where(Brand.id == brand_id, Brand.tenant_id == tenant_id))
     brand = brand_result.scalar_one_or_none()
+    await check_quota_for_tenant(db, tenant_id, CumulativeQuotaKey.MAX_PRODUCTS, Product)
     product = Product(
         tenant_id=tenant_id,
         brand_id=brand_id,
@@ -252,7 +254,9 @@ async def update_product(
     story_content: str | None = None,
     status: ProductStatus | None = None,
 ) -> Product | None:
-    result = await db.execute(select(Product).where(Product.id == product_id, Product.tenant_id == tenant_id))
+    result = await db.execute(
+        select(Product).where(Product.id == product_id, Product.tenant_id == tenant_id).with_for_update()
+    )
     product = result.scalar_one_or_none()
     if not product:
         return None
@@ -759,7 +763,9 @@ async def delete_brand(db: AsyncSession, tenant_id: uuid.UUID, brand_id: uuid.UU
 
 async def delete_product(db: AsyncSession, tenant_id: uuid.UUID, product_id: uuid.UUID) -> tuple[bool, str | None]:
     """删除产品。返回 (是否成功, 冲突原因)。"""
-    result = await db.execute(select(Product).where(Product.id == product_id, Product.tenant_id == tenant_id))
+    result = await db.execute(
+        select(Product).where(Product.id == product_id, Product.tenant_id == tenant_id).with_for_update()
+    )
     product = result.scalar_one_or_none()
     if not product:
         return False, None
@@ -787,6 +793,7 @@ async def delete_product(db: AsyncSession, tenant_id: uuid.UUID, product_id: uui
         return False, "Product has associated assets"
 
     await db.delete(product)
+    await release_quota(db, tenant_id, CumulativeQuotaKey.MAX_PRODUCTS)
     await db.flush()
     return True, None
 

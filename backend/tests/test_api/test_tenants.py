@@ -240,6 +240,12 @@ class TestTenantSelfBrandProfile:
     async def test_update_brand_profile_with_logo_url(self, client: AsyncClient, sample_tenant):
         """PATCH /me 写入完整五槽位（含 logo_url），GET /me 读回一致"""
         tid = sample_tenant["id"]
+        feature_resp = await client.patch(
+            f"/api/v1/tenants/{tid}",
+            json={"enabled_features": {"white_label": True}},
+            headers=_platform_admin_headers(),
+        )
+        assert feature_resp.status_code == 200
         profile = {
             "primary_color": "#1F7A4D",
             "radius_preset": "md",
@@ -258,6 +264,20 @@ class TestTenantSelfBrandProfile:
         # 读回一致
         resp = await client.get("/api/v1/tenants/me", headers=_auth_headers(tid))
         assert resp.json()["brand_profile"] == profile
+
+    async def test_unentitled_tenant_cannot_hide_yimatong_brand(self, client: AsyncClient, sample_tenant):
+        response = await client.patch(
+            "/api/v1/tenants/me",
+            json={"brand_profile": {"hide_yimatong_brand": True}},
+            headers=_auth_headers(sample_tenant["id"]),
+        )
+
+        assert response.status_code == 403
+        assert response.json()["detail"] == {
+            "code": "TENANT_FEATURE_DISABLED",
+            "feature": "white_label",
+            "message": "当前套餐未开通白标功能",
+        }
 
     async def test_update_brand_profile_rejects_bad_logo_url(self, client: AsyncClient, sample_tenant):
         """非法 logo_url 被 422 拒绝"""

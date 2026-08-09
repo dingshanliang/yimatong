@@ -11,7 +11,7 @@ from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.core.database import get_db, set_session_tenant_context
+from app.core.database import get_db, lock_active_tenant_context
 from app.services.intent_event import insert_intent_event_idempotent
 from app.services.redis_cache import AsyncRedisCache, SharedSecurityCacheUnavailable
 from app.services.scan_token import verify_scan_token
@@ -122,15 +122,12 @@ async def report_scan_event(
         PLAN_EXPIRED_CODE,
         PLAN_EXPIRED_DETAIL,
         TenantPlanExpiredError,
-        require_active_plan,
     )
 
     try:
-        tenant_uuid = await set_session_tenant_context(db, tenant_id)
+        tenant_uuid = await lock_active_tenant_context(db, tenant_id)
     except ValueError:
         return {"status": "ignored", "reason": "invalid_tenant_context"}
-    try:
-        await require_active_plan(db, tenant_uuid)
     except TenantPlanExpiredError:
         return JSONResponse(
             status_code=403,

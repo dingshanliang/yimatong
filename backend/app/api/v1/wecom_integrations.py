@@ -11,7 +11,7 @@ from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.core.database import _session_uses_postgresql, get_db, set_session_tenant_context
+from app.core.database import _session_uses_postgresql, get_db, lock_active_tenant_context, set_session_tenant_context
 from app.core.dependencies import get_current_tenant
 from app.models.campaign import Benefit
 from app.models.connector import Connector
@@ -20,7 +20,6 @@ from app.services.entitlement import (
     PLAN_EXPIRED_CODE,
     PLAN_EXPIRED_DETAIL,
     TenantPlanExpiredError,
-    require_active_plan,
 )
 from app.services.wecom_integration import (
     WeComIntegrationError,
@@ -149,9 +148,8 @@ async def get_contact_way_endpoint(
         parsed_tenant_id = uuid.UUID(token_tenant_id)
     except (TypeError, ValueError):
         raise HTTPException(status_code=401, detail="invalid scan token tenant")
-    await set_session_tenant_context(db, parsed_tenant_id)
     try:
-        await require_active_plan(db, parsed_tenant_id)
+        parsed_tenant_id = await lock_active_tenant_context(db, parsed_tenant_id)
     except TenantPlanExpiredError:
         return JSONResponse(
             status_code=403,

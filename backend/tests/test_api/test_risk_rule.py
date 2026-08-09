@@ -54,9 +54,43 @@ async def setup_tenant(client: AsyncClient):
         headers=_platform_admin_headers(),
     )
     tid = resp.json()["id"]
+    feature_resp = await client.patch(
+        f"/api/v1/tenants/{tid}",
+        json={"enabled_features": {"risk_module": True}},
+        headers=_platform_admin_headers(),
+    )
+    assert feature_resp.status_code == 200
     token = create_access_token(tid, "00000000-0000-0000-0000-000000000001", "admin")
     headers = {"Authorization": f"Bearer {token}"}
     return tid, headers
+
+
+@pytest.mark.anyio
+async def test_risk_api_requires_the_paid_feature(client: AsyncClient):
+    created = await client.post(
+        "/api/v1/tenants",
+        json={
+            "name": "未购风控能力租户",
+            "admin_email": "no-risk@test.com",
+            "admin_name": "Admin",
+            "admin_password": "Pass1234",
+        },
+        headers=_platform_admin_headers(),
+    )
+    tid = created.json()["id"]
+    token = create_access_token(tid, "00000000-0000-0000-0000-000000000001", "admin")
+
+    response = await client.get(
+        "/api/v1/risk-rules",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 403
+    assert response.json()["detail"] == {
+        "code": "TENANT_FEATURE_DISABLED",
+        "feature": "risk_module",
+        "message": "当前套餐未开通此功能",
+    }
 
 
 class TestRiskRuleCRUD:

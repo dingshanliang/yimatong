@@ -18,6 +18,13 @@ import { PlusOutlined, EditOutlined, CrownOutlined } from "@ant-design/icons";
 import useSWR from "swr";
 import api from "@/lib/api";
 import { extractErrorMessage } from "@/lib/api";
+import {
+  buildPlanConfiguration,
+  FEATURE_FIELDS,
+  isValidQuotaValue,
+  quotaLabel,
+  QUOTA_FIELDS,
+} from "./plan-config";
 
 const { Title, Text } = Typography;
 
@@ -32,20 +39,6 @@ interface PlanDef {
   is_active: boolean;
   sort_order: number;
 }
-
-const QUOTA_FIELDS = [
-  { key: "max_codes", label: "最大码量" },
-  { key: "max_scans", label: "最大扫码量" },
-  { key: "max_campaigns", label: "最大活动数" },
-  { key: "max_accounts", label: "最大账号数" },
-];
-
-const FEATURE_FIELDS = [
-  { key: "ai_assistant", label: "AI 助手" },
-  { key: "risk_module", label: "风控模块" },
-  { key: "channel_portal", label: "渠道门户" },
-  { key: "white_label", label: "白标" },
-];
 
 const PLAN_COLORS: Record<string, string> = {
   free: "var(--ymt-color-text-tertiary)",
@@ -70,27 +63,21 @@ export default function PlansPage() {
       max_codes: plan.quota_defaults?.max_codes,
       max_scans: plan.quota_defaults?.max_scans,
       max_campaigns: plan.quota_defaults?.max_campaigns,
+      max_products: plan.quota_defaults?.max_products,
       max_accounts: plan.quota_defaults?.max_accounts,
+      max_codes_per_batch: plan.quota_defaults?.max_codes_per_batch,
       ai_assistant: plan.feature_flags?.ai_assistant ?? false,
       risk_module: plan.feature_flags?.risk_module ?? false,
       channel_portal: plan.feature_flags?.channel_portal ?? false,
       white_label: plan.feature_flags?.white_label ?? false,
+      cash_red_packet: plan.feature_flags?.cash_red_packet ?? false,
     });
   };
 
   const handleSubmit = async (values: Record<string, unknown>) => {
     setSaving(true);
     try {
-      const quota_defaults: Record<string, number> = {};
-      QUOTA_FIELDS.forEach(({ key }) => {
-        const v = values[key];
-        if (v !== undefined && v !== null) quota_defaults[key] = Number(v);
-      });
-
-      const feature_flags: Record<string, boolean> = {};
-      FEATURE_FIELDS.forEach(({ key }) => {
-        feature_flags[key] = !!values[key];
-      });
+      const { quota_defaults, feature_flags } = buildPlanConfiguration(values);
 
       const payload = {
         display_name: values.display_name,
@@ -210,14 +197,8 @@ export default function PlansPage() {
                         marginBottom: 2,
                       }}
                     >
-                      {key === "max_codes"
-                        ? "码量"
-                        : key === "max_scans"
-                          ? "扫码量"
-                          : key === "max_campaigns"
-                            ? "活动数"
-                            : "账号数"}
-                      ：{value === -1 ? "无限制" : value?.toLocaleString()}
+                      {quotaLabel(key)}：
+                      {value === -1 ? "无限制" : value?.toLocaleString()}
                     </div>
                   ))}
               </div>
@@ -288,9 +269,21 @@ export default function PlansPage() {
           <Row gutter={12}>
             {QUOTA_FIELDS.map(({ key, label }) => (
               <Col span={12} key={key}>
-                <Form.Item name={key} label={label}>
+                <Form.Item
+                  name={key}
+                  label={label}
+                  rules={[
+                    {
+                      validator: (_, value) =>
+                        isValidQuotaValue(value)
+                          ? Promise.resolve()
+                          : Promise.reject(new Error("请输入 -1 或非负整数")),
+                    },
+                  ]}
+                >
                   <InputNumber
                     min={-1}
+                    precision={0}
                     style={{ width: "100%" }}
                     placeholder="-1 表示无限制"
                   />

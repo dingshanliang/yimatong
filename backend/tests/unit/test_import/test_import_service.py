@@ -2,11 +2,16 @@
 
 import io
 import uuid
+from datetime import UTC, datetime
 
 import pytest
 from openpyxl import Workbook
 
-from app.services.import_service import ExcelImportService
+from app.core.exceptions import QuotaExceededError
+from app.models.plan import TenantQuotaUsage
+from app.models.tenant import Tenant
+from app.services.import_service import ExcelImportService, ImportResult, ParsedBrand, ParsedProduct
+from app.services.quota import QUOTA_RECONCILIATION_SOURCE_REVISION
 
 
 @pytest.fixture
@@ -138,3 +143,61 @@ class TestExcelParsing:
 
         result = await service.parse_and_validate(content, tenant_id)
         assert len(result.brands) == 2
+
+
+class TestExcelExecutionQuota:
+    async def test_created_product_is_reserved_once_and_upsert_update_is_not_recounted(self, service, db, tenant_id):
+        db.add(
+            Tenant(
+                id=tenant_id,
+                name="Excel 配额租户",
+                slug=f"excel-quota-{tenant_id.hex[:8]}",
+                quota={"max_products": 1},
+            )
+        )
+        db.add(
+            TenantQuotaUsage(
+                tenant_id=tenant_id,
+                reconciled_at=datetime.now(UTC),
+                source_revision=QUOTA_RECONCILIATION_SOURCE_REVISION,
+                enforcement_ready=True,
+            )
+        )
+        parsed = ImportResult(
+            brands=[ParsedBrand(2, "导入品牌", None, None, "brand-1")],
+            products=[ParsedProduct(2, "导入品牌", "导入产品", None, None, "product-1")],
+        )
+
+        first = await service.execute_import(parsed, tenant_id, db)
+        second = await service.execute_import(parsed, tenant_id, db)
+
+        usage = await db.get(TenantQuotaUsage, tenant_id)
+        assert usage is not None
+        assert usage.products == 1
+        assert first.products.created == 1
+        assert second.products.updated == 1
+
+    async def test_quota_error_aborts_excel_import_instead_of_becoming_row_error(self, service, db, tenant_id):
+        db.add(
+            Tenant(
+                id=tenant_id,
+                name="Excel 超额租户",
+                slug=f"excel-overage-{tenant_id.hex[:8]}",
+                quota={"max_products": 0},
+            )
+        )
+        db.add(
+            TenantQuotaUsage(
+                tenant_id=tenant_id,
+                reconciled_at=datetime.now(UTC),
+                source_revision=QUOTA_RECONCILIATION_SOURCE_REVISION,
+                enforcement_ready=True,
+            )
+        )
+        parsed = ImportResult(
+            brands=[ParsedBrand(2, "导入品牌", None, None, "brand-2")],
+            products=[ParsedProduct(2, "导入品牌", "超额产品", None, None, "product-2")],
+        )
+
+        with pytest.raises(QuotaExceededError):
+            await service.execute_import(parsed, tenant_id, db)

@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
-from app.core.dependencies import get_current_account_id, get_current_tenant
+from app.core.dependencies import get_current_account_id, get_current_tenant, require_tenant_feature
 from app.schemas.common import PaginatedResponse
 from app.services.channel import (
     allocate_codes_to_store,
@@ -40,20 +40,11 @@ from app.services.channel import (
 )
 from app.utils.crypto import CryptoError, decrypt_phone, mask_phone
 
-channel_router = APIRouter(prefix="/api/v1/channels", tags=["channels"])
-
-
-async def require_store_enabled(
-    tenant_id: uuid.UUID = Depends(get_current_tenant),
-    db: AsyncSession = Depends(get_db),
-) -> None:
-    """检查租户是否启用了门店模块"""
-    from app.services.tenant import get_tenant
-
-    tenant = await get_tenant(db, tenant_id)
-    enabled = tenant.enabled_features or {}
-    if not enabled.get("channel_store", False):
-        raise HTTPException(status_code=403, detail="门店模块未启用")
+channel_router = APIRouter(
+    prefix="/api/v1/channels",
+    tags=["channels"],
+    dependencies=[Depends(require_tenant_feature("channel_portal"))],
+)
 
 
 class DistributorCreate(BaseModel):
@@ -375,7 +366,6 @@ async def create_store_endpoint(
     body: StoreCreate,
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
-    _store_check: None = Depends(require_store_enabled),
 ):
     try:
         store = await create_store(
@@ -403,7 +393,6 @@ async def list_stores_endpoint(
     page_size: int = Query(20, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
-    _store_check: None = Depends(require_store_enabled),
 ):
     stores, total = await list_stores(
         db,
@@ -431,7 +420,6 @@ async def update_store_endpoint(
     body: StoreUpdate,
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
-    _store_check: None = Depends(require_store_enabled),
 ):
     try:
         store = await update_store(
@@ -457,7 +445,6 @@ async def delete_store_endpoint(
     store_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
-    _store_check: None = Depends(require_store_enabled),
 ):
     ok = await delete_store(db, tenant_id, store_id)
     return {"success": ok}
@@ -608,7 +595,6 @@ async def store_portal_summary_endpoint(
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
     account_id: uuid.UUID = Depends(get_current_account_id),
-    _store_check: None = Depends(require_store_enabled),
 ):
     summary = await get_store_portal_summary(db, tenant_id, account_id)
     if not summary:

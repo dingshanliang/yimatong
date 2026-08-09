@@ -23,6 +23,7 @@ from app.services.analytics import aggregate_daily_stats
 from app.services.channel import create_account_scope
 from app.services.code import activate_batch, create_code_batch
 from app.services.public_id import generate_public_id
+from app.services.quota import lock_quota_rollout_state, refresh_quota_usage_from_authoritative_rows
 from app.services.tenant import create_tenant
 from app.utils import utcnow
 from app.utils.auth_rbac import WEB_ROLE_PERMISSIONS
@@ -72,7 +73,7 @@ DEMO_ACCOUNTS = [
     },
 ]
 
-DEMO_ENABLED_FEATURES = {"channel_store": True}
+DEMO_ENABLED_FEATURES = {"channel_portal": True}
 
 
 async def _get_tenant_by_slug(db: AsyncSession, slug: str) -> Tenant | None:
@@ -747,6 +748,7 @@ def all(
             # Tenant creation/discovery above is the only control-plane stage.
             # All demo business rows are written through a restricted runtime
             # transaction scoped to exactly that tenant.
+            await lock_quota_rollout_state(db)
             t = await _open_tenant_scope(db, tenant_id)
             _enable_demo_features(t)
 
@@ -778,6 +780,7 @@ def all(
             )
             await _ensure_scan_events(db, t.id, code_items)
             await _ensure_demo_channels(db, t.id, accounts, code_items)
+            await refresh_quota_usage_from_authoritative_rows(db, t.id)
             await db.commit()
 
         typer.echo("\nDemo seed complete. Quick login accounts:")

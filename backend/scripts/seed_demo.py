@@ -55,6 +55,7 @@ from app.services.analytics import aggregate_daily_stats
 from app.services.channel import create_account_scope
 from app.services.code import activate_batch, create_code_batch
 from app.services.product import create_brand, create_product, create_sku
+from app.services.quota import refresh_quota_usage_from_authoritative_rows
 from app.services.tenant import create_tenant
 from app.utils import utcnow
 from app.utils.security import hash_password
@@ -71,7 +72,7 @@ control_session = async_sessionmaker(control_engine, class_=AsyncSession, expire
 TENANT_SLUG = "demo"
 TENANT_NAME = "青岭良仓演示租户"
 TOTAL_DAYS = 60
-DEMO_ENABLED_FEATURES = {"channel_store": True}
+DEMO_ENABLED_FEATURES = {"channel_portal": True}
 
 
 # ─── 进度报告器 ──────────────────────────────────────────
@@ -1927,6 +1928,11 @@ def generate():
             days = await _aggregate_stats(db, tenant_id)
             p.step("统计聚合", f"({days} 天)")
 
+            # Several high-volume demo builders intentionally use bulk ORM
+            # writes. Reconcile once from authoritative facts so subsequent
+            # production-like requests start from exact cumulative usage.
+            await refresh_quota_usage_from_authoritative_rows(db, tenant_id)
+
             await db.commit()
 
         elapsed = time.time() - start
@@ -1960,6 +1966,7 @@ def clean():
         async with async_session() as db:
             await set_session_tenant_context(db, tenant_id)
             await _clean_demo_data(db, tenant_id)
+            await refresh_quota_usage_from_authoritative_rows(db, tenant_id)
             await db.commit()
 
     asyncio.run(_run())
@@ -1980,6 +1987,7 @@ def reset():
             async with async_session() as db:
                 await set_session_tenant_context(db, tenant_id)
                 await _clean_demo_data(db, tenant_id)
+                await refresh_quota_usage_from_authoritative_rows(db, tenant_id)
                 await db.commit()
 
     asyncio.run(_run())

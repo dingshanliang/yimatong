@@ -17,7 +17,13 @@ from app.schemas.tenant import (
     TenantUpdateSelf,
 )
 from app.services.audit import write_audit_log
-from app.services.entitlement import is_plan_expired
+from app.services.entitlement import (
+    FEATURE_DISABLED_CODE,
+    TenantFeatureDisabledError,
+    enabled_feature_flags,
+    is_plan_expired,
+    require_tenant_feature,
+)
 from app.services.tenant import (
     complete_onboarding_step,
     create_tenant,
@@ -157,6 +163,7 @@ async def get_current_tenant_entitlement(
         plan=tenant.plan,
         plan_expires_at=tenant.plan_expires_at,
         read_only=is_plan_expired(tenant.plan_expires_at),
+        enabled_features=enabled_feature_flags(tenant.enabled_features),
     )
 
 
@@ -178,6 +185,18 @@ async def update_current_tenant_endpoint(
     tenant_id: uuid.UUID = Depends(get_current_tenant),
     _permission: None = Depends(require_permission("tenant:manage")),
 ):
+    if body.brand_profile and body.brand_profile.get("hide_yimatong_brand") is True:
+        try:
+            await require_tenant_feature(db, tenant_id, "white_label")
+        except TenantFeatureDisabledError as exc:
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "code": FEATURE_DISABLED_CODE,
+                    "feature": exc.feature_key,
+                    "message": "当前套餐未开通白标功能",
+                },
+            ) from exc
     tenant = await update_tenant(
         db,
         tenant_id,

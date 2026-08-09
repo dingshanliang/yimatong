@@ -2,7 +2,7 @@
 
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -28,6 +28,7 @@ from app.services.agency_auth import (
 )
 from app.services.audit import write_audit_log
 from app.utils.auth_rbac import require_permission, require_role
+from app.utils.security import set_auth_cookies
 
 router = APIRouter(prefix="/api/v1/ops/authorizations", tags=["agency-auth"])
 
@@ -169,6 +170,7 @@ class ExitContextResponse(BaseModel):
 async def switch_context(
     body: SwitchContextRequest,
     request: Request,
+    response: Response,
     tenant_id: uuid.UUID = Depends(get_current_tenant),
     tenant_type: str = Depends(get_current_tenant_type),
     account_id: uuid.UUID = Depends(get_current_account_id),
@@ -211,6 +213,9 @@ async def switch_context(
         },
     )
     await db.flush()
+    # Keep the server-rendered navigation identity aligned with the Bearer
+    # token used by API requests. JavaScript cannot replace an HttpOnly cookie.
+    set_auth_cookies(response, access_token)
     return SwitchContextResponse(
         access_token=access_token,
         acting_tenant_id=str(body.client_tenant_id),
@@ -221,6 +226,7 @@ async def switch_context(
 @_switch_router.post("/exit-context", response_model=ExitContextResponse)
 async def exit_context(
     request: Request,
+    response: Response,
     tenant_id: uuid.UUID = Depends(get_current_tenant),
     tenant_type: str = Depends(get_current_tenant_type),
     account_id: uuid.UUID = Depends(get_current_account_id),
@@ -246,7 +252,9 @@ async def exit_context(
     await write_audit_log(
         db,
         operator_id=str(account_id),
-        target_tenant_id=str(acting_tenant_id or original_tenant_id),
+        # Exit remains available after the client authorization is revoked or
+        # expires, so record it in the original agency's own audit stream.
+        target_tenant_id=str(original_tenant_id),
         action="agency_context_exited",
         resource=f"agency_context:{acting_tenant_id or original_tenant_id}",
         details={
@@ -255,4 +263,5 @@ async def exit_context(
         },
     )
     await db.flush()
+    set_auth_cookies(response, access_token)
     return ExitContextResponse(access_token=access_token, acting_tenant_id=None)

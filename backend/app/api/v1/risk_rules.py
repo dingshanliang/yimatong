@@ -7,7 +7,7 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
-from app.core.dependencies import get_current_tenant
+from app.core.dependencies import get_current_tenant, require_tenant_feature
 from app.schemas.common import PaginatedResponse
 from app.services.risk_rule import (
     attach_rule_to_campaign,
@@ -21,7 +21,11 @@ from app.services.risk_rule import (
     update_risk_rule,
 )
 
-risk_rule_router = APIRouter(prefix="/api/v1/risk-rules", tags=["risk-rules"])
+risk_rule_router = APIRouter(
+    prefix="/api/v1/risk-rules",
+    tags=["risk-rules"],
+    dependencies=[Depends(require_tenant_feature("risk_module"))],
+)
 
 
 class RiskRuleCreate(BaseModel):

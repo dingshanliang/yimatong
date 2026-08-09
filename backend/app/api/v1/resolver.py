@@ -8,7 +8,7 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.database import _session_uses_postgresql, get_db, set_session_tenant_context
+from app.core.database import _session_uses_postgresql, get_db, lock_active_tenant_context, set_session_tenant_context
 from app.middleware.rate_limit import rate_limiter
 from app.models.code import CodeItem, CodeItemStatus, CodeType, to_lifecycle
 from app.models.scan import ScanEvent
@@ -23,7 +23,7 @@ from app.services.page_templates import (
     build_code_page,
 )
 from app.services.public_id import validate_public_id
-from app.services.quota import QuotaExceededError, check_quota_incremental_locked
+from app.services.quota import QuotaExceededError
 from app.services.resolve_cache import resolve_cache
 from app.services.resolver import resolve_public_code
 from app.services.resolver_response import build_json_response
@@ -86,10 +86,10 @@ async def resolve_code_endpoint(
     if not data or data.get("tenant_id") != str(tenant_uuid):
         return _not_found(want_json)
 
-    from app.services.entitlement import TenantPlanExpiredError, require_active_plan
+    from app.services.entitlement import TenantPlanExpiredError
 
     try:
-        await require_active_plan(db, tenant_uuid)
+        await lock_active_tenant_context(db, tenant_uuid)
     except TenantPlanExpiredError:
         return _plan_expired(want_json)
 
@@ -105,10 +105,6 @@ async def resolve_code_endpoint(
     # 6. 记录扫码事件（frozen 也记录查验，但不颁发 scan_token → 权益自然暂停）
     user_agent = request.headers.get("user-agent", "")
     is_frozen = status == CodeItemStatus.frozen
-    try:
-        await check_quota_incremental_locked(db, tenant_uuid, "max_scans", ScanEvent)
-    except QuotaExceededError:
-        return _quota_exceeded(want_json)
     # yimatong-zgb1.10：读取 visitor_id（H5 localStorage 携带，X-Visitor-ID 头）
     request_visitor_id = request.headers.get("X-Visitor-ID") or None
     # yimatong-zgb1.10 Decision 22：解析或签发匿名访客（first-party 稳定 ID）

@@ -8,10 +8,14 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
-from app.core.dependencies import get_current_tenant
+from app.core.dependencies import get_current_tenant, require_tenant_feature
 from app.models.scan import ScanEvent
 
-risk_evaluate_router = APIRouter(prefix="/api/v1/risk", tags=["risk-evaluate"])
+risk_evaluate_router = APIRouter(
+    prefix="/api/v1/risk",
+    tags=["risk-evaluate"],
+    dependencies=[Depends(require_tenant_feature("risk_module"))],
+)
 
 
 class RiskEvaluateRequest(BaseModel):

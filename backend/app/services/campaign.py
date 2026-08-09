@@ -19,6 +19,7 @@ from app.core.event_bus import event_bus
 from app.models.campaign import Benefit, BenefitClaim, Campaign
 from app.models.connector import BenefitDelivery, Connector
 from app.models.product import Product
+from app.services.quota import CumulativeQuotaKey, check_quota_for_tenant, release_quota
 from app.utils import escape_like_pattern
 from app.utils.campaign_validation import validate_benefit_config_shape
 
@@ -37,6 +38,9 @@ async def create_campaign(
     product_id: uuid.UUID | None = None,
 ) -> dict:
     product_id = product_id or _product_id_from_rules(rules_json)
+    if product_id and not await campaign_product_exists(db, tenant_id, product_id):
+        raise ValueError("Product not found")
+    await check_quota_for_tenant(db, tenant_id, CumulativeQuotaKey.MAX_CAMPAIGNS, Campaign)
     rules_json = _rules_with_product_id(rules_json, product_id)
     c = Campaign(
         tenant_id=tenant_id,
@@ -274,16 +278,19 @@ async def delete_campaign(
     campaign_id: uuid.UUID,
 ) -> bool:
     result = await db.execute(
-        select(Campaign).where(
+        select(Campaign)
+        .where(
             Campaign.id == campaign_id,
             Campaign.tenant_id == tenant_id,
             Campaign.status == CampaignStatus.DRAFT,
-        ),
+        )
+        .with_for_update(),
     )
     c = result.scalar_one_or_none()
     if not c:
         return False
     await db.delete(c)
+    await release_quota(db, tenant_id, CumulativeQuotaKey.MAX_CAMPAIGNS)
     await db.flush()
     return True
 
@@ -305,6 +312,10 @@ async def create_benefit(
     # 验证 benefit_type
     if benefit_type not in BENEFIT_TYPES:
         raise ValueError(f"benefit_type must be one of: {', '.join(sorted(BENEFIT_TYPES))}")
+    if benefit_type == "cash_red_packet":
+        from app.services.entitlement import require_tenant_feature
+
+        await require_tenant_feature(db, tenant_id, "cash_red_packet")
     # 验证 config_json 与 benefit_type 匹配
     validate_benefit_config_shape(config_json, benefit_type)
     # 验证 campaign_id 存在且属于当前租户
@@ -361,6 +372,10 @@ async def attach_benefit_to_campaign(
     benefit = result.scalar_one_or_none()
     if not benefit:
         return None
+    if benefit.benefit_type == "cash_red_packet":
+        from app.services.entitlement import require_tenant_feature
+
+        await require_tenant_feature(db, tenant_id, "cash_red_packet")
     if benefit.campaign_id and benefit.campaign_id != campaign_id:
         raise ValueError("Benefit already used by another campaign")
 
@@ -517,6 +532,10 @@ async def update_benefit(
         return None
     next_type = fields.get("benefit_type", b.benefit_type)
     next_config = fields.get("config_json", b.config_json)
+    if next_type == "cash_red_packet":
+        from app.services.entitlement import require_tenant_feature
+
+        await require_tenant_feature(db, tenant_id, "cash_red_packet")
     validate_benefit_config_shape(next_config, next_type)
     if fields.get("status") is not None and fields["status"] not in BENEFIT_STATUSES:
         raise ValueError(f"status must be one of: {', '.join(sorted(BENEFIT_STATUSES))}")
@@ -725,7 +744,7 @@ async def claim_benefit(
         select(Benefit)
         .where(Benefit.id == benefit_id, Benefit.tenant_id == tenant_id)
         .join(Campaign, Campaign.id == Benefit.campaign_id, isouter=True)
-        .with_for_update(),
+        .with_for_update(of=Benefit),
     )
     benefit = benefit_result.scalar_one_or_none()
     if not benefit:

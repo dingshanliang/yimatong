@@ -7,7 +7,7 @@ from sqlalchemy import func, select
 
 from app.models.audit import PlatformAuditLog
 from app.models.invite_code import InviteCodeStatus, TenantInviteCode
-from app.models.plan import PlanDefinition
+from app.models.plan import PlanDefinition, QuotaRolloutPhase, QuotaRolloutState, TenantQuotaUsage
 from app.models.platform_opening import PlatformTenantOpening
 from app.models.tenant import Account, Organization, Permission, Role, Tenant, TenantStatus, account_roles
 from app.modules.brand_tenant_initialization import (
@@ -15,6 +15,7 @@ from app.modules.brand_tenant_initialization import (
     ControlledInviteOpening,
     InitialAdminState,
     InitializeBrandTenant,
+    PlanDefinitionUnavailable,
     PlatformOpening,
     TrustedAutomationOpening,
 )
@@ -83,6 +84,7 @@ async def test_platform_initialization_materializes_complete_database_state(db):
 
     tenant = await db.get(Tenant, receipt.tenant_id)
     account = await db.get(Account, receipt.initial_admin_id)
+    usage = await db.get(TenantQuotaUsage, receipt.tenant_id)
     role = (
         await db.execute(select(Role).where(Role.tenant_id == receipt.tenant_id, Role.name == "admin"))
     ).scalar_one()
@@ -94,6 +96,11 @@ async def test_platform_initialization_materializes_complete_database_state(db):
     assert tenant is not None
     assert tenant.plan.value == "starter"
     assert tenant.quota == {"max_codes": 10000, "max_campaigns": 10, "max_accounts": 5}
+    assert usage is not None
+    assert usage.accounts == 1
+    assert usage.enforcement_ready is True
+    assert usage.reconciled_at is not None
+    assert usage.source_revision
     assert tenant.enabled_features == {"ai_assistant": True}
     assert tenant.categories
     assert {permission.code for permission in role.permissions} == set(WEB_ROLE_PERMISSIONS["admin"])
@@ -109,6 +116,34 @@ async def test_platform_initialization_materializes_complete_database_state(db):
         )
         == 1
     )
+
+
+@pytest.mark.anyio
+async def test_initialization_is_born_pending_before_global_epoch_activation(db):
+    rollout = await db.get(QuotaRolloutState, 1)
+    rollout.phase = QuotaRolloutPhase.drained
+    rollout.drained_at = datetime.now(UTC)
+    rollout.drained_by = "deployment"
+    rollout.activated_at = None
+    rollout.activated_by = None
+    await db.flush()
+
+    receipt = await BrandTenantInitialization(db).initialize(
+        _command(
+            TrustedAutomationOpening(
+                actor="test",
+                chosen_password="StrongPass123",
+                stable_tenant_key="pending-rollout-tenant",
+            )
+        )
+    )
+
+    usage = await db.get(TenantQuotaUsage, receipt.tenant_id)
+    assert usage is not None
+    assert usage.accounts == 1
+    assert usage.enforcement_ready is False
+    assert usage.reconciled_at is None
+    assert usage.source_revision is None
 
 
 @pytest.mark.anyio
@@ -133,6 +168,20 @@ async def test_plan_and_industry_values_are_copied_as_tenant_snapshot(db):
 
     assert tenant.quota == original_quota
     assert tenant.categories == original_categories
+
+
+@pytest.mark.anyio
+async def test_dirty_plan_definition_fails_closed_before_tenant_creation(db):
+    plan = (await db.execute(select(PlanDefinition).where(PlanDefinition.name == "starter"))).scalar_one()
+    plan.quota_defaults = {"unknown": 1}
+    await db.flush()
+
+    with pytest.raises(PlanDefinitionUnavailable, match="套餐配置不可用"):
+        await BrandTenantInitialization(db).initialize(
+            _command(PlatformOpening(operator_id="platform-admin", plan_name="starter"))
+        )
+
+    assert await db.scalar(select(func.count()).select_from(Tenant).where(Tenant.name == "青岭良仓")) == 0
 
 
 @pytest.mark.anyio

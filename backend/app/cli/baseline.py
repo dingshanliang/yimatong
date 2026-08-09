@@ -13,17 +13,21 @@ from __future__ import annotations
 import asyncio
 import json
 import uuid
+from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
 import typer
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy import select, text
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
 
+from app.constants.categories import get_default_categories
 from app.core.config import settings
+from app.core.database import set_session_tenant_context
 from app.models.campaign import Benefit, Campaign
 from app.models.code import CodeBatch, CodeItem, CodeItemStatus
 from app.models.page import PageTemplate, PageTemplateStatus, PageVersion, PageVersionStatus, TemplateType
+from app.models.plan import PlanDefinition
 from app.models.product import (
     SKU,
     Brand,
@@ -33,9 +37,23 @@ from app.models.product import (
     ProductAssetType,
     ProductionBatch,
 )
-from app.models.tenant import Account, Organization, Role, Tenant, account_roles
+from app.models.tenant import (
+    Account,
+    Organization,
+    Role,
+    Tenant,
+    TenantPlan,
+    TenantStatus,
+    TenantType,
+    account_roles,
+)
 from app.services.code import activate_batch, create_code_batch
-from app.services.tenant import create_tenant
+from app.services.entitlement import TenantPlanExpiredError, require_active_plan, validate_feature_flags
+from app.services.quota import (
+    lock_quota_rollout_state,
+    refresh_quota_usage_from_authoritative_rows,
+    validate_quota_config,
+)
 from app.utils import utcnow
 from app.utils.security import hash_password
 
@@ -74,57 +92,147 @@ CONTROL_CODE_QUANTITY = 3
 app = typer.Typer(help="Baseline dataset for product acceptance (yimatong-zgb1.1)")
 
 
-def _resolve_database_url(override: str | None = None) -> str:
-    """解析本次执行使用的数据库 URL。
+class BaselineRecoveryRequired(RuntimeError):
+    """A committed earlier stage is safe to retain and an idempotent rerun is required."""
 
-    优先级：显式 override > 当前 settings.database_url。
-    baseline 不缓存 engine —— 测试可在调用前重设 `database_url` 环境变量并
-    `importlib.reload(app.core.config)`，或直接传入 override。
-    """
+
+@dataclass(frozen=True, slots=True)
+class _TenantSeedRef:
+    tenant_id: uuid.UUID
+    tenant_slug: str
+    admin_email: str
+    admin_name: str
+    admin_password: str
+
+
+@dataclass(frozen=True, slots=True)
+class _BaselineFacts:
+    brand_id: uuid.UUID
+    product_id: uuid.UUID
+    sku_id: uuid.UUID
+    production_batch_id: uuid.UUID
+    code_batch_id: uuid.UUID
+    code_quantity: int
+    first_public_id: str | None
+    page_template_id: uuid.UUID
+    page_version_id: uuid.UUID
+    page_version_status: str
+    campaign_id: uuid.UUID
+    benefit_id: uuid.UUID
+    report_id: uuid.UUID
+    certificate_id: uuid.UUID
+
+
+@dataclass(frozen=True, slots=True)
+class _ControlFacts:
+    brand_id: uuid.UUID
+    first_public_id: str | None
+
+
+def _resolve_runtime_database_url(override: str | None = None) -> str:
+    """Resolve the tenant-runtime connection URL."""
+
     return override or str(settings.database_url)
 
 
-def _session_factory(database_url: str | None = None) -> async_sessionmaker[AsyncSession]:
-    url = _resolve_database_url(database_url)
+def _resolve_control_database_url(
+    runtime_override: str | None = None,
+    control_override: str | None = None,
+) -> str:
+    """Resolve the privileged control URL without granting runtime bypass.
+
+    A legacy one-URL override remains self-contained for existing acceptance
+    callers. The CLI path uses the configured control/migration URL and never
+    substitutes the restricted runtime URL when an explicit control URL exists.
+    """
+
+    if control_override is not None:
+        return control_override
+    if runtime_override is not None:
+        return runtime_override
+    return str(settings.control_database_url or settings.migration_database_url or settings.database_url)
+
+
+def _session_factory(url: str) -> tuple[async_sessionmaker[AsyncSession], AsyncEngine]:
     engine = create_async_engine(url)
-    return async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    return async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False), engine
 
 
-# ── 平台级租户创建（绕过 RLS，与 platform.py 建租户端点同一受支持路径）────────
+async def _prepare_control_session(db: AsyncSession) -> None:
+    if db.get_bind().dialect.name == "postgresql":
+        await db.execute(text("SELECT set_config('app.tenant_id', '', true)"))
+        await db.execute(text("SELECT set_config('app.bypass_rls', 'true', true)"))
 
 
-async def _get_or_create_tenant(
+# ── 平台级 identity bootstrap（业务修复必须留在 tenant runtime transaction）──
+
+
+async def _get_or_create_tenant_identity(
     db: AsyncSession,
     slug: str,
     name: str,
-    admin_email: str,
-    admin_name: str,
-    admin_password: str,
     industry: str | None = None,
-) -> tuple[Tenant, Account]:
-    """幂等获取或创建租户 + 默认组织 + admin 账号 + admin 角色。
+) -> Tenant:
+    """Discover an existing identity or create only the Tenant control row.
 
-    复刻 platform.py POST /tenants 的语义：在 bypass 会话内创建 Tenant、Organization、
-    Account、Role(name='admin') 并关联。Role 不绑定 Permission 行 —— 中间件
-    `_load_permissions` 兜底回落到 `get_permissions_for_role('admin')`，因此品牌管理员
-    经 API 即具备 code:generate 等默认权限（这是受支持的产品路径，而非隐藏手工补丁）。
+    Existing tenants are strictly read-only in this stage. All tenant-owned
+    account, organization, RBAC, credential, usage, and business repair is
+    deferred until the runtime transaction has locked and validated the plan.
     """
     result = await db.execute(select(Tenant).where(Tenant.slug == slug))
     tenant = result.scalar_one_or_none()
-    if tenant is None:
-        tenant = await create_tenant(
-            db,
-            name=name,
-            slug=slug,
-            plan="free",
-            admin_email=admin_email,
-            admin_name=admin_name,
-            admin_password=admin_password,
-            industry=industry,
-        )
-        await db.flush()
+    if tenant is not None:
+        return tenant
 
-    # 确保默认组织存在
+    # Tenant birth must participate in the rollout activation mutex. Lock the
+    # global epoch before the slug namespace, then recheck after both locks.
+    await lock_quota_rollout_state(db)
+    if db.get_bind().dialect.name == "postgresql":
+        await db.execute(
+            text("SELECT pg_advisory_xact_lock(hashtextextended(:tenant_key, 0))"),
+            {"tenant_key": f"baseline-identity:{slug}"},
+        )
+    tenant = await db.scalar(select(Tenant).where(Tenant.slug == slug))
+    if tenant is not None:
+        return tenant
+
+    plan = await db.scalar(
+        select(PlanDefinition).where(
+            PlanDefinition.name == TenantPlan.free.value,
+            PlanDefinition.is_active.is_(True),
+        )
+    )
+    if plan is None:
+        raise BaselineRecoveryRequired("Baseline tenant identity requires an active free plan definition")
+    try:
+        quota = validate_quota_config(plan.quota_defaults)
+        features = validate_feature_flags(plan.feature_flags)
+    except ValueError as exc:
+        raise BaselineRecoveryRequired("Baseline tenant identity cannot use the configured free plan") from exc
+
+    tenant = Tenant(
+        name=name,
+        slug=slug,
+        status=TenantStatus.active,
+        plan=TenantPlan.free,
+        tenant_type=TenantType.brand,
+        industry=industry,
+        quota=quota,
+        enabled_features=features,
+        categories=list(get_default_categories(industry)),
+    )
+    db.add(tenant)
+    await db.flush()
+    return tenant
+
+
+async def _ensure_runtime_admin(
+    db: AsyncSession,
+    tenant: Tenant,
+    tenant_ref: _TenantSeedRef,
+) -> Account:
+    """Repair the baseline admin graph after the active-plan gate."""
+
     result = await db.execute(select(Organization).where(Organization.tenant_id == tenant.id).limit(1))
     org = result.scalar_one_or_none()
     if org is None:
@@ -133,21 +241,23 @@ async def _get_or_create_tenant(
         await db.flush()
 
     # 确保账号存在
-    result = await db.execute(select(Account).where(Account.tenant_id == tenant.id, Account.email == admin_email))
+    result = await db.execute(
+        select(Account).where(Account.tenant_id == tenant.id, Account.email == tenant_ref.admin_email)
+    )
     account = result.scalar_one_or_none()
     if account is None:
         account = Account(
             tenant_id=tenant.id,
             organization_id=org.id,
-            email=admin_email,
-            hashed_password=hash_password(admin_password),
-            name=admin_name,
+            email=tenant_ref.admin_email,
+            hashed_password=hash_password(tenant_ref.admin_password),
+            name=tenant_ref.admin_name,
         )
         db.add(account)
         await db.flush()
     else:
         # 保持密码与组织可预期（二次运行不漂移）
-        account.hashed_password = hash_password(admin_password)
+        account.hashed_password = hash_password(tenant_ref.admin_password)
         account.organization_id = org.id
 
     # 确保 admin 角色存在并关联
@@ -165,9 +275,8 @@ async def _get_or_create_tenant(
         await db.execute(account_roles.insert().values(account_id=account.id, role_id=role.id))
 
     await db.flush()
-    await db.refresh(tenant)
     await db.refresh(account)
-    return tenant, account
+    return account
 
 
 # ── 租户作用域的幂等业务实体创建（模拟品牌管理员经 API 的真实路径）───────────
@@ -493,129 +602,276 @@ async def _ensure_assets(
     return report, certificate
 
 
-# ── 主流程 ────────────────────────────────────────────────────────────────
+async def _ensure_control_plane(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> tuple[_TenantSeedRef, _TenantSeedRef]:
+    """Atomically ensure both tenant identities through the privileged adapter."""
 
-
-async def _build_baseline_dataset(database_url: str | None = None) -> dict[str, Any]:
-    """构建完整基准数据集，返回稳定标识 → 关键字段映射（用于证据与摘要）。
-
-    Args:
-        database_url: 可选 DB URL 覆盖（测试用 testcontainer 时传入）；默认使用
-            当前 `settings.database_url`。
-    """
-    session_factory = _session_factory(database_url)
-    async with session_factory() as db:
-        # 平台级：在 bypass 会话内建两个隔离租户。create_tenant service 自身会写
-        # Tenant/Organization/Account；这里在同一 bypass 会话里补 Role + 关联。
-        base_tenant, base_admin = await _get_or_create_tenant(
+    async with session_factory() as db, db.begin():
+        await _prepare_control_session(db)
+        base_tenant = await _get_or_create_tenant_identity(
             db,
             slug=BASELINE_TENANT_SLUG,
             name="基准租户",
-            admin_email=BASELINE_ADMIN_EMAIL,
-            admin_name="基准品牌管理员",
-            admin_password=BASELINE_ADMIN_PASSWORD,
             industry="食品",
         )
-        control_tenant, control_admin = await _get_or_create_tenant(
+        control_tenant = await _get_or_create_tenant_identity(
             db,
             slug=CONTROL_TENANT_SLUG,
             name="隔离对照租户",
-            admin_email=CONTROL_ADMIN_EMAIL,
-            admin_name="对照租户管理员",
-            admin_password=CONTROL_ADMIN_PASSWORD,
         )
-        await db.flush()
-
-        # ── 基准租户业务链 ──
-        brand = await _ensure_brand(db, base_tenant.id, BRAND_NAME, "基准品牌：食品/农产品品牌方。")
-        product = await _ensure_product(db, base_tenant.id, brand.id, PRODUCT_NAME, category="食品", origin="基准产地")
-        sku = await _ensure_sku(db, base_tenant.id, product.id, SKU_CODE, f"{PRODUCT_NAME}-{SKU_CODE}")
-        pb = await _ensure_production_batch(
-            db, base_tenant.id, product.id, sku.id, PRODUCTION_BATCH_CODE, PRODUCTION_BATCH_CODE
-        )
-        code_batch, code_items = await _ensure_code_batch(
-            db,
-            base_tenant.id,
-            product.id,
-            sku.id,
-            pb.id,
-            CODE_BATCH_CODE,
-            BASELINE_CODE_QUANTITY,
-            base_admin.id,
-        )
-        template, version = await _ensure_page(
-            db, base_tenant.id, product.id, PAGE_TEMPLATE_NAME, base_admin.id, BENEFIT_NAME
-        )
-        campaign, benefit = await _ensure_campaign_and_benefit(db, base_tenant.id, CAMPAIGN_NAME, BENEFIT_NAME)
-        report, certificate = await _ensure_assets(db, base_tenant.id, product.id, REPORT_NAME, CERTIFICATE_NAME)
-
-        # ── 对照租户：仅建立证明隔离所需的最少同名数据 ──
-        c_brand = await _ensure_brand(db, control_tenant.id, CONTROL_BRAND_NAME, "对照品牌")
-        c_product = await _ensure_product(
-            db, control_tenant.id, c_brand.id, CONTROL_PRODUCT_NAME, category="食品", origin="对照产地"
-        )
-        c_sku = await _ensure_sku(
-            db, control_tenant.id, c_product.id, CONTROL_SKU_CODE, f"{CONTROL_PRODUCT_NAME}-{CONTROL_SKU_CODE}"
-        )
-        c_pb = await _ensure_production_batch(
-            db,
-            control_tenant.id,
-            c_product.id,
-            c_sku.id,
-            "PB-CTRL-001",
-            "PB-CTRL-001",
-        )
-        c_batch, c_items = await _ensure_code_batch(
-            db,
-            control_tenant.id,
-            c_product.id,
-            c_sku.id,
-            c_pb.id,
-            CONTROL_CODE_BATCH_CODE,
-            CONTROL_CODE_QUANTITY,
-            control_admin.id,
+        return (
+            _TenantSeedRef(
+                base_tenant.id,
+                base_tenant.slug,
+                BASELINE_ADMIN_EMAIL,
+                "基准品牌管理员",
+                BASELINE_ADMIN_PASSWORD,
+            ),
+            _TenantSeedRef(
+                control_tenant.id,
+                control_tenant.slug,
+                CONTROL_ADMIN_EMAIL,
+                "对照租户管理员",
+                CONTROL_ADMIN_PASSWORD,
+            ),
         )
 
-        await db.commit()
 
-        first_active = next(
-            (it for it in code_items if it.status == CodeItemStatus.activated), code_items[0] if code_items else None
+async def _open_runtime_tenant(db: AsyncSession, tenant_ref: _TenantSeedRef) -> Tenant:
+    """Enter one RLS scope, then take global shared -> Tenant locks."""
+
+    await set_session_tenant_context(db, tenant_ref.tenant_id)
+    await lock_quota_rollout_state(db)
+    try:
+        tenant = await require_active_plan(db, tenant_ref.tenant_id, lock_tenant=True)
+    except TenantPlanExpiredError as exc:
+        raise BaselineRecoveryRequired(
+            f"Baseline tenant '{tenant_ref.tenant_slug}' plan is expired; renew it and rerun baseline build"
+        ) from exc
+    if tenant is None or tenant.slug != tenant_ref.tenant_slug:
+        raise BaselineRecoveryRequired(
+            f"Baseline tenant '{tenant_ref.tenant_slug}' disappeared after control-plane setup; rerun baseline build"
         )
+    return tenant
+
+
+async def _build_baseline_tenant(
+    session_factory: async_sessionmaker[AsyncSession],
+    tenant_ref: _TenantSeedRef,
+) -> _BaselineFacts:
+    try:
+        async with session_factory() as db, db.begin():
+            tenant = await _open_runtime_tenant(db, tenant_ref)
+            admin = await _ensure_runtime_admin(db, tenant, tenant_ref)
+            brand = await _ensure_brand(db, tenant.id, BRAND_NAME, "基准品牌：食品/农产品品牌方。")
+            product = await _ensure_product(
+                db,
+                tenant.id,
+                brand.id,
+                PRODUCT_NAME,
+                category="食品",
+                origin="基准产地",
+            )
+            sku = await _ensure_sku(db, tenant.id, product.id, SKU_CODE, f"{PRODUCT_NAME}-{SKU_CODE}")
+            production_batch = await _ensure_production_batch(
+                db,
+                tenant.id,
+                product.id,
+                sku.id,
+                PRODUCTION_BATCH_CODE,
+                PRODUCTION_BATCH_CODE,
+            )
+            code_batch, code_items = await _ensure_code_batch(
+                db,
+                tenant.id,
+                product.id,
+                sku.id,
+                production_batch.id,
+                CODE_BATCH_CODE,
+                BASELINE_CODE_QUANTITY,
+                admin.id,
+            )
+            template, version = await _ensure_page(
+                db,
+                tenant.id,
+                product.id,
+                PAGE_TEMPLATE_NAME,
+                admin.id,
+                BENEFIT_NAME,
+            )
+            campaign, benefit = await _ensure_campaign_and_benefit(
+                db,
+                tenant.id,
+                CAMPAIGN_NAME,
+                BENEFIT_NAME,
+            )
+            report, certificate = await _ensure_assets(
+                db,
+                tenant.id,
+                product.id,
+                REPORT_NAME,
+                CERTIFICATE_NAME,
+            )
+            await refresh_quota_usage_from_authoritative_rows(db, tenant.id)
+            first_active = next(
+                (item for item in code_items if item.status == CodeItemStatus.activated),
+                code_items[0] if code_items else None,
+            )
+            return _BaselineFacts(
+                brand_id=brand.id,
+                product_id=product.id,
+                sku_id=sku.id,
+                production_batch_id=production_batch.id,
+                code_batch_id=code_batch.id,
+                code_quantity=len(code_items),
+                first_public_id=first_active.public_id if first_active else None,
+                page_template_id=template.id,
+                page_version_id=version.id,
+                page_version_status=(version.status.value if hasattr(version.status, "value") else str(version.status)),
+                campaign_id=campaign.id,
+                benefit_id=benefit.id,
+                report_id=report.id,
+                certificate_id=certificate.id,
+            )
+    except BaselineRecoveryRequired:
+        raise
+    except Exception as exc:
+        raise BaselineRecoveryRequired(
+            f"Baseline business stage for '{tenant_ref.tenant_slug}' rolled back; "
+            "control-plane tenant state is retained, fix the cause and rerun baseline build"
+        ) from exc
+
+
+async def _build_control_tenant(
+    session_factory: async_sessionmaker[AsyncSession],
+    tenant_ref: _TenantSeedRef,
+) -> _ControlFacts:
+    try:
+        async with session_factory() as db, db.begin():
+            tenant = await _open_runtime_tenant(db, tenant_ref)
+            admin = await _ensure_runtime_admin(db, tenant, tenant_ref)
+            brand = await _ensure_brand(db, tenant.id, CONTROL_BRAND_NAME, "对照品牌")
+            product = await _ensure_product(
+                db,
+                tenant.id,
+                brand.id,
+                CONTROL_PRODUCT_NAME,
+                category="食品",
+                origin="对照产地",
+            )
+            sku = await _ensure_sku(
+                db,
+                tenant.id,
+                product.id,
+                CONTROL_SKU_CODE,
+                f"{CONTROL_PRODUCT_NAME}-{CONTROL_SKU_CODE}",
+            )
+            production_batch = await _ensure_production_batch(
+                db,
+                tenant.id,
+                product.id,
+                sku.id,
+                "PB-CTRL-001",
+                "PB-CTRL-001",
+            )
+            _, code_items = await _ensure_code_batch(
+                db,
+                tenant.id,
+                product.id,
+                sku.id,
+                production_batch.id,
+                CONTROL_CODE_BATCH_CODE,
+                CONTROL_CODE_QUANTITY,
+                admin.id,
+            )
+            await refresh_quota_usage_from_authoritative_rows(db, tenant.id)
+            return _ControlFacts(
+                brand_id=brand.id,
+                first_public_id=code_items[0].public_id if code_items else None,
+            )
+    except BaselineRecoveryRequired:
+        raise
+    except Exception as exc:
+        raise BaselineRecoveryRequired(
+            f"Baseline business stage for '{tenant_ref.tenant_slug}' rolled back; "
+            "control-plane tenants and any completed tenant stage are retained, fix the cause and rerun baseline build"
+        ) from exc
+
+
+# ── 主流程 ────────────────────────────────────────────────────────────────
+
+
+async def _build_baseline_dataset(
+    database_url: str | None = None,
+    control_database_url: str | None = None,
+) -> dict[str, Any]:
+    """构建完整基准数据集，返回稳定标识 → 关键字段映射（用于证据与摘要）。
+
+    Args:
+        database_url: tenant-runtime URL override. Defaults to
+            ``settings.database_url``.
+        control_database_url: privileged control URL override. When omitted
+            alongside an explicit runtime override, the same URL is retained
+            for backwards-compatible self-contained tests. The CLI path uses
+            ``control_database_url``/``migration_database_url`` from settings.
+
+    Control-plane tenant identities commit first as one transaction. Each
+    tenant business graph then commits in its own RLS-scoped runtime
+    transaction together with authoritative quota refresh. Cross-database-role
+    atomicity is impossible; failures are classified as
+    :class:`BaselineRecoveryRequired`, retain stable tenant identities and any
+    completed tenant stage, and are recovered by an idempotent rerun.
+    """
+    runtime_url = _resolve_runtime_database_url(database_url)
+    control_url = _resolve_control_database_url(database_url, control_database_url)
+    runtime_factory, runtime_engine = _session_factory(runtime_url)
+    control_factory, control_engine = _session_factory(control_url)
+    try:
+        base_ref, control_ref = await _ensure_control_plane(control_factory)
+        base_facts = await _build_baseline_tenant(runtime_factory, base_ref)
+        control_facts = await _build_control_tenant(runtime_factory, control_ref)
         return {
             "baseline_tenant": {
-                "id": str(base_tenant.id),
-                "slug": base_tenant.slug,
+                "id": str(base_ref.tenant_id),
+                "slug": base_ref.tenant_slug,
                 "admin_email": BASELINE_ADMIN_EMAIL,
                 "admin_password": BASELINE_ADMIN_PASSWORD,
             },
             "control_tenant": {
-                "id": str(control_tenant.id),
-                "slug": control_tenant.slug,
+                "id": str(control_ref.tenant_id),
+                "slug": control_ref.tenant_slug,
                 "admin_email": CONTROL_ADMIN_EMAIL,
                 "admin_password": CONTROL_ADMIN_PASSWORD,
             },
-            "brand": {"id": str(brand.id), "name": brand.name},
-            "product": {"id": str(product.id), "name": product.name},
-            "sku": {"id": str(sku.id), "code": sku.code},
-            "production_batch": {"id": str(pb.id), "batch_code": pb.batch_code},
+            "brand": {"id": str(base_facts.brand_id), "name": BRAND_NAME},
+            "product": {"id": str(base_facts.product_id), "name": PRODUCT_NAME},
+            "sku": {"id": str(base_facts.sku_id), "code": SKU_CODE},
+            "production_batch": {
+                "id": str(base_facts.production_batch_id),
+                "batch_code": PRODUCTION_BATCH_CODE,
+            },
             "code_batch": {
-                "id": str(code_batch.id),
-                "batch_code": code_batch.batch_code,
-                "quantity": len(code_items),
+                "id": str(base_facts.code_batch_id),
+                "batch_code": CODE_BATCH_CODE,
+                "quantity": base_facts.code_quantity,
             },
-            "first_public_id": first_active.public_id if first_active else None,
-            "page_template": {"id": str(template.id), "name": template.name},
+            "first_public_id": base_facts.first_public_id,
+            "page_template": {"id": str(base_facts.page_template_id), "name": PAGE_TEMPLATE_NAME},
             "page_version": {
-                "id": str(version.id),
-                "status": version.status.value if hasattr(version.status, "value") else str(version.status),
+                "id": str(base_facts.page_version_id),
+                "status": base_facts.page_version_status,
             },
-            "campaign": {"id": str(campaign.id), "name": campaign.name},
-            "benefit": {"id": str(benefit.id), "name": benefit.name},
-            "report": {"id": str(report.id), "name": report.name},
-            "certificate": {"id": str(certificate.id), "name": certificate.name},
-            "control_brand": {"id": str(c_brand.id), "name": c_brand.name},
-            "control_first_public_id": c_items[0].public_id if c_items else None,
+            "campaign": {"id": str(base_facts.campaign_id), "name": CAMPAIGN_NAME},
+            "benefit": {"id": str(base_facts.benefit_id), "name": BENEFIT_NAME},
+            "report": {"id": str(base_facts.report_id), "name": REPORT_NAME},
+            "certificate": {"id": str(base_facts.certificate_id), "name": CERTIFICATE_NAME},
+            "control_brand": {"id": str(control_facts.brand_id), "name": CONTROL_BRAND_NAME},
+            "control_first_public_id": control_facts.first_public_id,
         }
+    finally:
+        await runtime_engine.dispose()
+        await control_engine.dispose()
 
 
 def _format_summary(result: dict[str, Any]) -> str:
@@ -666,13 +922,15 @@ def verify(
     from tests.test_acceptance.verifier import verify_baseline_presence
 
     async def _run() -> dict[str, Any]:
-        from sqlalchemy import text
-
-        session_factory = _session_factory()
-        async with session_factory() as db:
-            # 验证器从平台视角跨租户只读核对（与 platform_admin 同一 RLS bypass 语义）
-            await db.execute(text("SET LOCAL app.bypass_rls = 'true'"))
-            return await verify_baseline_presence(db)
+        control_url = _resolve_control_database_url()
+        session_factory, engine = _session_factory(control_url)
+        try:
+            async with session_factory() as db, db.begin():
+                # 验证器从平台视角跨租户只读核对（与 platform_admin 同一 RLS bypass 语义）
+                await _prepare_control_session(db)
+                return await verify_baseline_presence(db)
+        finally:
+            await engine.dispose()
 
     evidence = asyncio.run(_run())
     if json_out:
