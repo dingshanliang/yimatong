@@ -9,6 +9,8 @@ from pydantic import ValidationError
 
 _PRODUCTION_SETTINGS = {
     "environment": "production",
+    "database_url": "postgresql+asyncpg://yimatong_app:runtime-only@db:5432/yimatong",
+    "control_database_url": "postgresql+asyncpg://yimatong_control:control-only@db:5432/yimatong",
     "admin_public_url": "https://admin.example.com",
     "platform_public_url": "https://platform.example.com",
     "cookie_secure": True,

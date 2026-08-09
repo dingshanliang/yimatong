@@ -250,6 +250,12 @@ importers:
       "@tailwindcss/postcss":
         specifier: ^4
         version: 4.3.0
+      "@testing-library/jest-dom":
+        specifier: ^6.9.1
+        version: 6.9.1
+      "@testing-library/react":
+        specifier: ^16.3.2
+        version: 16.3.2(@testing-library/dom@10.4.1)(@types/react-dom@19.2.3(@types/react@19.2.15))(@types/react@19.2.15)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
       "@types/node":
         specifier: ^20
         version: 20.19.41
@@ -259,12 +265,18 @@ importers:
       "@types/react-dom":
         specifier: ^19
         version: 19.2.3(@types/react@19.2.15)
+      "@vitejs/plugin-react":
+        specifier: ^6.0.2
+        version: 6.0.2(vite@8.0.14(@types/node@20.19.41)(jiti@2.7.0)(yaml@2.9.0))
       eslint:
         specifier: ^9
         version: 9.39.4(jiti@2.7.0)
       eslint-config-next:
         specifier: 16.2.6
         version: 16.2.6(@typescript-eslint/parser@8.60.0(eslint@9.39.4(jiti@2.7.0))(typescript@5.9.3))(eslint@9.39.4(jiti@2.7.0))(typescript@5.9.3)
+      jsdom:
+        specifier: ^29.1.1
+        version: 29.1.1
       postcss-styled-syntax:
         specifier: ^0.7
         version: 0.7.2(postcss@8.5.15)
@@ -280,6 +292,9 @@ importers:
       typescript:
         specifier: ^5
         version: 5.9.3
+      vitest:
+        specifier: ^4.1.8
+        version: 4.1.8(@types/node@20.19.41)(jsdom@29.1.1)(vite@8.0.14(@types/node@20.19.41)(jiti@2.7.0)(yaml@2.9.0))
 
   packages/design-tokens:
     devDependencies:

@@ -39,6 +39,7 @@ CONTROL_TABLES = (
     "operator_campaign_manage_grants",
     "organization_parent_repair_backups",
     "platform_audit_log",
+    "platform_auth_sessions",
     "platform_configs",
     "platform_tenant_openings",
     "role_template_backups",
@@ -80,7 +81,7 @@ async def test_registry_catalog_acl_and_control_boundary(
             "AND c.relname NOT IN "
             "('alembic_version','rls_force_remediation_backups','runtime_privilege_remediation_backup')"
         )
-        assert orm_root_count == 94
+        assert orm_root_count == 95
     finally:
         await owner.close()
 

@@ -9,12 +9,13 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, EmailStr
 from sqlalchemy import case, func, select, text, update
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.database import _is_pg, get_db_with_bypass
 from app.core.dependencies import get_redis_cache
+from app.models.auth_security import PlatformAuthSession
 from app.models.plan import PlanDefinition
 from app.models.platform_opening import PlatformTenantOpening
 from app.models.scan import ScanEvent
@@ -31,10 +32,11 @@ from app.modules.initial_admin_activation import InitialAdminActivation, Initial
 from app.schemas.common import PaginatedResponse
 from app.services.audit import query_audit_logs, write_audit_log
 from app.services.auth import logout_session
+from app.services.platform_auth import PlatformSessionUnavailable, revoke_platform_session
 from app.services.redis_cache import AsyncRedisCache, SharedSecurityCacheUnavailable
 from app.services.tenant_health import refresh_all_health_metrics
 from app.utils.auth_rbac import require_role
-from app.utils.security import create_access_token, verify_password
+from app.utils.security import create_access_token, decode_token, verify_password
 
 router = APIRouter(prefix="/api/v1/platform", tags=["platform"])
 
@@ -176,16 +178,26 @@ async def platform_login(
     ):
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
-    # 登录审计与凭证签发采用 fail-closed 边界。
-    await write_audit_log(db, "platform-admin", "platform", "platform_login", f"ip:{client_ip}")
-    await db.commit()
-
+    session_id = uuid.uuid4()
     token = create_access_token(
         tenant_id="platform",
         account_id="platform-admin",
         role="platform_admin",
         tenant_type="platform",
+        extra={"sid": str(session_id)},
     )
+    session_expires_at = datetime.fromtimestamp(decode_token(token)["exp"], tz=UTC)
+    db.add(
+        PlatformAuthSession(
+            id=session_id,
+            principal="platform-admin",
+            expires_at=session_expires_at,
+        )
+    )
+
+    # 登录审计、持久会话与凭证签发采用 fail-closed 边界。
+    await write_audit_log(db, "platform-admin", "platform", "platform_login", f"ip:{client_ip}")
+    await db.commit()
 
     response = JSONResponse(content={"authenticated": True, "principal": "platform_admin"})
     csrf_token = secrets.token_urlsafe(32)
@@ -222,10 +234,20 @@ async def platform_logout(
 ):
     """撤销平台 access token，并清除独立的 HttpOnly cookie。"""
     token = request.cookies.get("platform_access_token")
+    session_id = getattr(request.state, "session_id", None)
+    try:
+        await revoke_platform_session(db, session_id)
+    except (PlatformSessionUnavailable, SQLAlchemyError) as exc:
+        await db.rollback()
+        raise HTTPException(status_code=503, detail="登出服务暂时不可用，请稍后重试") from exc
+
     try:
         await logout_session(db=db, access_token=token, refresh_token_str=None, cache=cache)
-    except SharedSecurityCacheUnavailable as exc:
-        raise HTTPException(status_code=503, detail="登出服务暂时不可用，请稍后重试") from exc
+    except SharedSecurityCacheUnavailable:
+        # The control database is authoritative. A failed cache hint cannot
+        # revive the durably revoked session and must not strand the browser
+        # with a cookie that every subsequent request will reject.
+        pass
     response = JSONResponse(content={"status": "ok"})
     response.delete_cookie(
         "platform_access_token",

@@ -14,21 +14,25 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db, get_db_with_bypass
 from app.core.dependencies import get_redis_cache
 from app.main import app
+from app.models.auth_security import PlatformAuthSession
 from app.models.plan import PlanDefinition
 from app.models.platform_opening import PlatformTenantOpening
 from app.models.scan import ScanEvent
 from app.models.tenant import Account, Organization, Role, Tenant, TenantPlan, TenantStatus, account_roles
+from app.services.platform_auth import PlatformSessionUnavailable
 from app.services.redis_cache import SharedSecurityCacheUnavailable
-from app.utils.security import create_access_token, hash_password
+from app.utils.security import create_access_token, decode_token, hash_password
 from tests.conftest import TestSessionLocal
 
 
 class FakePlatformLoginCache:
-    def __init__(self) -> None:
+    def __init__(self, shared_state) -> None:
+        self.shared_state = shared_state
         self.calls: list[str] = []
         self.block_ip = False
         self.block_account = False
         self.fail_rate_limits = False
+        self.fail_revoke = False
         self.revoked_tokens: list[tuple[str, int]] = []
 
     async def rate_limit_check_shared(self, key: str, max_attempts: int, window_seconds: int) -> tuple[bool, int]:
@@ -41,12 +45,15 @@ class FakePlatformLoginCache:
         return (False, 0) if blocked else (True, 9)
 
     async def revoke_token(self, jti: str, ttl: int) -> None:
+        if self.fail_revoke:
+            raise SharedSecurityCacheUnavailable("test shared cache write failure")
         self.revoked_tokens.append((jti, ttl))
+        self.shared_state.revoked_jtis.add(jti)
 
 
 @pytest.fixture
-def platform_login_cache() -> FakePlatformLoginCache:
-    return FakePlatformLoginCache()
+def platform_login_cache(shared_security_cache) -> FakePlatformLoginCache:
+    return FakePlatformLoginCache(shared_security_cache)
 
 
 @pytest.fixture
@@ -56,7 +63,12 @@ async def db_session() -> AsyncGenerator[AsyncSession, None]:
 
 
 @pytest.fixture
-async def client(db_session: AsyncSession, platform_login_cache: FakePlatformLoginCache, shared_security_cache):
+async def client(
+    db_session: AsyncSession,
+    platform_login_cache: FakePlatformLoginCache,
+    shared_security_cache,
+    monkeypatch: pytest.MonkeyPatch,
+):
     async def override_get_db():
         yield db_session
 
@@ -66,6 +78,7 @@ async def client(db_session: AsyncSession, platform_login_cache: FakePlatformLog
     app.dependency_overrides[get_db] = override_get_db
     app.dependency_overrides[get_db_with_bypass] = override_get_db
     app.dependency_overrides[get_redis_cache] = override_get_redis_cache
+    monkeypatch.setattr("app.core.database.control_session_factory", TestSessionLocal)
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as c:
         yield c
@@ -97,7 +110,7 @@ class TestPlatformAdminAuth:
         assert [(item["name"], item["display_name"]) for item in response.json()] == [("starter", "入门版")]
 
     @pytest.mark.anyio
-    async def test_platform_login_success(self, client: AsyncClient):
+    async def test_platform_login_success(self, client: AsyncClient, db_session: AsyncSession):
         resp = await client.post(
             "/api/v1/platform/auth/login",
             json={"email": "platform@yimatong.cn", "password": "platform_admin_2026"},
@@ -112,6 +125,16 @@ class TestPlatformAdminAuth:
         ]
         assert platform_cookies
         assert "HttpOnly" in platform_cookies[0]
+        token = client.cookies.get("platform_access_token")
+        assert token
+        payload = decode_token(token)
+        session = (
+            await db_session.execute(
+                select(PlatformAuthSession).where(PlatformAuthSession.id == uuid.UUID(payload["sid"]))
+            )
+        ).scalar_one()
+        stored_expiry = session.expires_at if session.expires_at.tzinfo else session.expires_at.replace(tzinfo=UTC)
+        assert int(stored_expiry.timestamp()) == payload["exp"]
 
     @pytest.mark.anyio
     async def test_platform_logout_revokes_token_and_clears_cookie(
@@ -124,6 +147,8 @@ class TestPlatformAdminAuth:
             json={"email": "platform@yimatong.cn", "password": "platform_admin_2026"},
         )
         assert login.status_code == 200
+        old_token = client.cookies.get("platform_access_token")
+        assert old_token
         csrf_token = client.cookies.get("platform_csrf_token")
         assert csrf_token
 
@@ -138,6 +163,90 @@ class TestPlatformAdminAuth:
             "platform_access_token=" in cookie and "Max-Age=0" in cookie
             for cookie in response.headers.get_list("set-cookie")
         )
+        # Redis is a cache hint only. Losing its revocation key must not revive
+        # an old control-plane session.
+        platform_login_cache.shared_state.revoked_jtis.clear()
+        replay = await client.get(
+            "/api/v1/platform/dashboard",
+            headers={"Cookie": f"platform_access_token={old_token}"},
+        )
+        assert replay.status_code == 401
+
+        fresh_login = await client.post(
+            "/api/v1/platform/auth/login",
+            json={"email": "platform@yimatong.cn", "password": "platform_admin_2026"},
+        )
+        assert fresh_login.status_code == 200
+        assert (await client.get("/api/v1/platform/dashboard")).status_code == 200
+
+    @pytest.mark.anyio
+    async def test_platform_logout_failure_keeps_session_retryable_until_server_confirms_revocation(
+        self,
+        client: AsyncClient,
+        platform_login_cache: FakePlatformLoginCache,
+    ):
+        login = await client.post(
+            "/api/v1/platform/auth/login",
+            json={"email": "platform@yimatong.cn", "password": "platform_admin_2026"},
+        )
+        assert login.status_code == 200
+        old_token = client.cookies.get("platform_access_token")
+        csrf_token = client.cookies.get("platform_csrf_token")
+        assert old_token and csrf_token
+
+        with patch(
+            "app.api.v1.platform.revoke_platform_session",
+            side_effect=PlatformSessionUnavailable("test durable revoke failure"),
+        ):
+            failed = await client.post(
+                "/api/v1/platform/auth/logout",
+                headers={"Origin": "http://localhost:3002", "X-Platform-CSRF": csrf_token},
+            )
+        assert failed.status_code == 503
+        assert client.cookies.get("platform_access_token") == old_token
+        still_authenticated = await client.get("/api/v1/platform/dashboard")
+        assert still_authenticated.status_code == 200
+
+        retried = await client.post(
+            "/api/v1/platform/auth/logout",
+            headers={"Origin": "http://localhost:3002", "X-Platform-CSRF": csrf_token},
+        )
+        assert retried.status_code == 200
+        replay = await client.get(
+            "/api/v1/platform/dashboard",
+            headers={"Cookie": f"platform_access_token={old_token}"},
+        )
+        assert replay.status_code == 401
+
+    @pytest.mark.anyio
+    async def test_platform_logout_cache_failure_cannot_strand_or_revive_durable_session(
+        self,
+        client: AsyncClient,
+        platform_login_cache: FakePlatformLoginCache,
+    ):
+        login = await client.post(
+            "/api/v1/platform/auth/login",
+            json={"email": "platform@yimatong.cn", "password": "platform_admin_2026"},
+        )
+        assert login.status_code == 200
+        old_token = client.cookies.get("platform_access_token")
+        csrf_token = client.cookies.get("platform_csrf_token")
+        assert old_token and csrf_token
+
+        platform_login_cache.fail_revoke = True
+        logged_out = await client.post(
+            "/api/v1/platform/auth/logout",
+            headers={"Origin": "http://localhost:3002", "X-Platform-CSRF": csrf_token},
+        )
+
+        assert logged_out.status_code == 200
+        assert client.cookies.get("platform_access_token") is None
+        platform_login_cache.shared_state.revoked_jtis.clear()
+        replay = await client.get(
+            "/api/v1/platform/dashboard",
+            headers={"Cookie": f"platform_access_token={old_token}"},
+        )
+        assert replay.status_code == 401
 
     @pytest.mark.anyio
     async def test_platform_write_rejects_missing_and_foreign_origin(self, client: AsyncClient):

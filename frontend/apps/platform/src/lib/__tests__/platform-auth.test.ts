@@ -41,4 +41,14 @@ describe("usePlatformAuth", () => {
     expect(localStorage.length).toBe(0);
     expect(sessionStorage.length).toBe(0);
   });
+
+  it("propagates logout failure so the UI can keep the session visibly retryable", async () => {
+    const failure = new Error("network unavailable");
+    mockPost.mockRejectedValue(failure);
+
+    await expect(usePlatformAuth.getState().logout()).rejects.toBe(failure);
+
+    expect(mockPost).toHaveBeenCalledWith("/platform/auth/logout");
+    expect(usePlatformAuth.getState().loading).toBe(false);
+  });
 });

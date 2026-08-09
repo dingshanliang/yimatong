@@ -23,6 +23,7 @@
     "typecheck": "pnpm --filter @yimatong/shared typecheck && pnpm --filter @yimatong/design-tokens typecheck && pnpm --filter @yimatong/admin exec tsc --noEmit && pnpm --filter @yimatong/h5 exec tsc --noEmit && pnpm --filter @yimatong/platform exec tsc --noEmit",
     "check": "pnpm --filter @yimatong/design-tokens check && pnpm typecheck && pnpm lint:boundaries",
     "test:admin": "pnpm --filter @yimatong/admin exec vitest run",
+    "test:e2e:platform": "playwright test --config playwright.platform.config.ts",
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui",
     "test:e2e:debug": "playwright test --debug"

@@ -23,10 +23,9 @@ export const usePlatformAuth = create<PlatformAuthState>((set) => ({
   },
 
   logout: async () => {
+    set({ loading: true });
     try {
       await api.post("/platform/auth/logout");
-    } catch {
-      // 服务端已失效或网络不可用时，本机仍应退出。
     } finally {
       set({ loading: false });
     }

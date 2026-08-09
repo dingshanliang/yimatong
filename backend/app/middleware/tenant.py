@@ -104,6 +104,8 @@ class TenantScopeMiddleware(BaseHTTPMiddleware):
             or payload.get("tenant_type") != "platform"
         ):
             return JSONResponse(status_code=403, content={"detail": "Invalid platform principal"})
+        if not await self._load_platform_session_access(payload.get("sid")):
+            return JSONResponse(status_code=401, content={"detail": "Platform session has been revoked or expired"})
         if request.method not in {"GET", "HEAD", "OPTIONS"}:
             if request.headers.get("Origin") != settings.platform_public_url:
                 return JSONResponse(status_code=403, content={"detail": "Invalid platform request origin"})
@@ -118,7 +120,40 @@ class TenantScopeMiddleware(BaseHTTPMiddleware):
         request.state.role = "platform_admin"
         request.state.permissions = []
         request.state.auth_method = "platform_cookie"
+        request.state.session_id = payload.get("sid")
         return await call_next(request)
+
+    async def _load_platform_session_access(self, session_id: str | None) -> bool:
+        """Validate the durable control-plane session after cache checks."""
+
+        from app.core.database import _is_pg
+
+        # Existing SQLite API tests use synthetic platform JWTs to exercise
+        # authorization paths. Production PostgreSQL rejects every legacy
+        # platform token that predates authoritative session IDs.
+        if not session_id:
+            return not _is_pg
+        try:
+            import uuid
+
+            from sqlalchemy import func, select
+
+            from app.core.database import control_session_factory
+            from app.models.auth_security import PlatformAuthSession
+
+            validated_session_id = uuid.UUID(session_id)
+            async with control_session_factory() as db:
+                active_session_id = await db.scalar(
+                    select(PlatformAuthSession.id).where(
+                        PlatformAuthSession.id == validated_session_id,
+                        PlatformAuthSession.principal == "platform-admin",
+                        PlatformAuthSession.revoked_at.is_(None),
+                        PlatformAuthSession.expires_at > func.now(),
+                    )
+                )
+                return active_session_id is not None
+        except Exception:
+            return False
 
     async def _authenticate_jwt(self, request: Request, call_next):
         from starlette.responses import JSONResponse

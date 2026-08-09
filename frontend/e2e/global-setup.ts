@@ -15,6 +15,8 @@ import { mkdir, writeFile } from "fs/promises";
 import path from "path";
 
 const API_BASE = process.env.API_BASE_URL || "http://localhost:8000";
+const PLATFORM_ORIGIN =
+  process.env.PLATFORM_BASE_URL || "http://localhost:3002";
 const TEST_PASSWORD = "E2ETest1234";
 
 function generateUniqueEmail(): string {
@@ -36,7 +38,92 @@ interface TestContext {
   benefitId: string;
 }
 
-async function apiPost(
+interface PlatformSession {
+  cookieHeader: string;
+  csrfToken: string;
+}
+
+function responseSetCookies(response: Response): string[] {
+  const headers = response.headers as Headers & {
+    getSetCookie?: () => string[];
+  };
+  if (headers.getSetCookie) return headers.getSetCookie();
+  const combined = headers.get("set-cookie");
+  return combined ? combined.split(/,(?=[^;,]+=)/) : [];
+}
+
+function platformSessionFrom(response: Response): PlatformSession {
+  const cookies = new Map<string, string>();
+  for (const setCookie of responseSetCookies(response)) {
+    const [pair] = setCookie.split(";", 1);
+    const separator = pair.indexOf("=");
+    if (separator > 0) {
+      cookies.set(pair.slice(0, separator), pair.slice(separator + 1));
+    }
+  }
+  const accessToken = cookies.get("platform_access_token");
+  const csrfToken = cookies.get("platform_csrf_token");
+  if (!accessToken || !csrfToken) {
+    throw new Error(
+      "Platform login did not return the required session cookies"
+    );
+  }
+  return {
+    cookieHeader: `platform_access_token=${accessToken}; platform_csrf_token=${csrfToken}`,
+    csrfToken,
+  };
+}
+
+export async function platformLogin(): Promise<PlatformSession> {
+  const response = await fetch(`${API_BASE}/api/v1/platform/auth/login`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Accept: "application/json",
+    },
+    body: JSON.stringify({
+      email: "platform@yimatong.cn",
+      password: "platform_admin_2026",
+    }),
+  });
+  const text = await response.text();
+  if (!response.ok) {
+    throw new Error(
+      `POST /api/v1/platform/auth/login failed: ${response.status} ${response.statusText} — ${text.slice(0, 200)}`
+    );
+  }
+  return platformSessionFrom(response);
+}
+
+export async function platformPost(
+  endpoint: string,
+  body: unknown,
+  session: PlatformSession,
+  additionalHeaders: Record<string, string> = {}
+): Promise<Record<string, unknown>> {
+  const response = await fetch(`${API_BASE}${endpoint}`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Accept: "application/json",
+      Cookie: session.cookieHeader,
+      Origin: PLATFORM_ORIGIN,
+      "X-Platform-CSRF": session.csrfToken,
+      ...additionalHeaders,
+    },
+    body: JSON.stringify(body),
+  });
+  const text = await response.text();
+  const json = text ? JSON.parse(text) : {};
+  if (!response.ok) {
+    throw new Error(
+      `POST ${endpoint} failed: ${response.status} ${response.statusText} — ${text.slice(0, 200)}`
+    );
+  }
+  return json;
+}
+
+export async function apiPost(
   endpoint: string,
   body: unknown,
   token?: string
@@ -107,7 +194,10 @@ async function apiPatch(
   return json;
 }
 
-async function waitForBackend(maxRetries = 30, delayMs = 1000): Promise<void> {
+export async function waitForBackend(
+  maxRetries = 30,
+  delayMs = 1000
+): Promise<void> {
   for (let i = 0; i < maxRetries; i++) {
     try {
       const res = await fetch(`${API_BASE}/health`);
@@ -131,15 +221,11 @@ export default async function globalSetup() {
   const TEST_EMAIL = generateUniqueEmail();
 
   // 1. Platform admin login
-  const platformLoginRes = await apiPost("/api/v1/platform/auth/login", {
-    email: "platform@yimatong.cn",
-    password: "platform_admin_2026",
-  });
-  const platformToken = platformLoginRes.access_token as string;
+  const platformSession = await platformLogin();
   console.log("[global-setup] Platform admin logged in");
 
   // 2. Create tenant via platform endpoint
-  const tenantRes = await apiPost(
+  const tenantRes = await platformPost(
     "/api/v1/platform/tenants",
     {
       name: "E2E Test Tenant",
@@ -147,7 +233,8 @@ export default async function globalSetup() {
       admin_email: TEST_EMAIL,
       admin_name: "E2E Admin",
     },
-    platformToken
+    platformSession,
+    { "Idempotency-Key": `e2e-platform-opening-${Date.now()}` }
   );
   const tenantId = tenantRes.id as string;
   const slug = tenantRes.slug as string;

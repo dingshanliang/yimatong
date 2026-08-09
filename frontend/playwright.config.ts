@@ -11,6 +11,9 @@ import { defineConfig, devices } from "@playwright/test";
 
 export default defineConfig({
   testDir: "./e2e",
+  // The Platform control plane has its own bootstrap, server lifecycle, and
+  // cookie boundary. It is executed through playwright.platform.config.ts.
+  testIgnore: "platform-auth.spec.ts",
   fullyParallel: false, // core flow tests must run serially
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,

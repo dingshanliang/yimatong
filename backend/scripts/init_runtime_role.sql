@@ -88,7 +88,7 @@ INSERT INTO runtime_control_relation_allowlist (table_name)
 SELECT unnest(ARRAY[
     'auth_sessions', 'consumed_refresh_tokens', 'invite_registration_receipts',
     'operator_campaign_manage_grants', 'organization_parent_repair_backups',
-    'platform_audit_log', 'platform_configs', 'platform_tenant_openings',
+    'platform_audit_log', 'platform_auth_sessions', 'platform_configs', 'platform_tenant_openings',
     'role_template_backups', 'tenant_invite_codes',
     'tenant_platform_role_assignment_backups'
 ]::name[]);
@@ -122,8 +122,8 @@ BEGIN
         UNION ALL SELECT table_name FROM runtime_control_relation_allowlist
         UNION ALL SELECT table_name FROM runtime_public_relation_allowlist
     ) AS orm_registry;
-    IF registry_count <> 94 THEN
-        RAISE EXCEPTION 'Runtime ORM registry must classify exactly 94 relations, got %', registry_count;
+    IF registry_count <> 95 THEN
+        RAISE EXCEPTION 'Runtime ORM registry must classify exactly 95 relations, got %', registry_count;
     END IF;
 
     SELECT string_agg(table_name::text, ', ' ORDER BY table_name) INTO missing
@@ -250,6 +250,7 @@ BEGIN
         'organization_parent_repair_backups',
         'tenant_platform_role_assignment_backups',
         'platform_audit_log',
+        'platform_auth_sessions',
         'platform_configs',
         'tenant_invite_codes',
         'operator_campaign_manage_grants',

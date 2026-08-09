@@ -23,7 +23,7 @@ os.environ.setdefault("platform_admin_password_hash", "$2b$12$SerdnBjOttEIIry290
 # 必须在设置环境变量后导入
 from app.models.analytics import DailyScanStats  # noqa: E402, F401
 from app.models.audit import PlatformAuditLog  # noqa: E402, F401
-from app.models.auth_security import ConsumedRefreshToken  # noqa: E402, F401
+from app.models.auth_security import ConsumedRefreshToken, PlatformAuthSession  # noqa: E402, F401
 from app.models.base import Base  # noqa: E402
 from app.models.campaign import Benefit, BenefitClaim, Campaign, CampaignStatus  # noqa: E402, F401
 from app.models.channel import AccountChannelScope, Distributor, DiversionClue, Region, Store  # noqa: E402, F401

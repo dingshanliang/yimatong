@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useRouter, usePathname } from "next/navigation";
-import { Layout, Menu, Button, Dropdown, Typography } from "antd";
+import { App, Layout, Menu, Button, Dropdown, Typography } from "antd";
 import {
   DashboardOutlined,
   TeamOutlined,
@@ -22,6 +22,7 @@ import {
 } from "@ant-design/icons";
 import type { MenuProps } from "antd";
 import { usePlatformAuth } from "@/lib/platform-auth";
+import { extractErrorMessage } from "@/lib/api";
 import { usePlatformTheme } from "@/lib/theme-provider";
 
 const { Header, Sider, Content } = Layout;
@@ -49,15 +50,21 @@ export default function DashboardLayout({
   const router = useRouter();
   const pathname = usePathname();
   const logout = usePlatformAuth((s) => s.logout);
+  const logoutLoading = usePlatformAuth((s) => s.loading);
   const { isDark, toggleMode } = usePlatformTheme();
+  const { message } = App.useApp();
 
   const handleMenuClick: MenuProps["onClick"] = ({ key }) => {
     router.push(key);
   };
 
   const handleLogout = async () => {
-    await logout();
-    router.replace("/login");
+    try {
+      await logout();
+      router.replace("/login");
+    } catch (error) {
+      message.error(extractErrorMessage(error, "退出登录失败，请重试"));
+    }
   };
 
   const userMenuItems: MenuProps["items"] = [
@@ -73,6 +80,7 @@ export default function DashboardLayout({
       icon: <LogoutOutlined />,
       label: "退出登录",
       danger: true,
+      disabled: logoutLoading,
       onClick: handleLogout,
     },
   ];
