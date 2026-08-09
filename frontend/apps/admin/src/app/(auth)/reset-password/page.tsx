@@ -22,11 +22,13 @@ function ResetPasswordForm() {
   const [pageState, setPageState] = useState<PageState>("loading");
   const [submitting, setSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
+  const [hydrated, setHydrated] = useState(false);
 
   const token = searchParams.get("token");
   const accountId = searchParams.get("account_id");
 
   useEffect(() => {
+    setHydrated(true);
     if (!token || !accountId) {
       setErrorMsg("重置链接无效，缺少必要参数。请联系管理员重新生成。");
       setPageState("error");
@@ -130,7 +132,14 @@ function ResetPasswordForm() {
           </Title>
           <Text type="secondary">请输入您的新密码</Text>
         </div>
-        <Form form={form} layout="vertical" onFinish={onFinish} size="large">
+        <Form
+          data-testid="admin-reset-password-form"
+          data-hydrated={hydrated}
+          form={form}
+          layout="vertical"
+          onFinish={onFinish}
+          size="large"
+        >
           <Form.Item
             name="new_password"
             label="新密码"

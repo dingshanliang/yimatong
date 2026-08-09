@@ -2,6 +2,7 @@
 
 import os
 import sys
+import uuid
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -22,14 +23,16 @@ class TestSeedProduct:
     @patch("app.cli.seed.create_sku_if_needed", new_callable=AsyncMock)
     @patch("app.cli.seed.create_product_if_needed", new_callable=AsyncMock)
     @patch("app.cli.seed.create_brand_if_needed", new_callable=AsyncMock)
-    @patch("app.cli.seed._get_tenant_by_slug", new_callable=AsyncMock)
+    @patch("app.cli.seed._open_tenant_scope", new_callable=AsyncMock)
+    @patch("app.cli.seed._find_tenant_id", new_callable=AsyncMock)
     @patch("app.cli.seed.async_session")
-    def test_seed_product_chain(self, mock_session, mock_get_tenant, mock_brand, mock_product, mock_sku):
+    def test_seed_product_chain(self, mock_session, mock_find_tenant, mock_scope, mock_brand, mock_product, mock_sku):
         mock_db = AsyncMock()
         mock_session.return_value.__aenter__ = AsyncMock(return_value=mock_db)
         mock_session.return_value.__aexit__ = AsyncMock(return_value=None)
 
-        mock_get_tenant.return_value = MagicMock(id="t1", slug="test")
+        mock_find_tenant.return_value = uuid.uuid4()
+        mock_scope.return_value = MagicMock()
         mock_brand.return_value = MagicMock(id="b1", name="测试品牌")
         mock_product.return_value = MagicMock(id="p1", name="测试产品")
         mock_sku.return_value = MagicMock(id="s1", code="SKU001")

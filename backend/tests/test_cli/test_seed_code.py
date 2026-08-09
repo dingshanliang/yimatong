@@ -2,6 +2,7 @@
 
 import os
 import sys
+import uuid
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -20,14 +21,16 @@ runner = CliRunner()
 
 class TestSeedCode:
     @patch("app.cli.seed._generate_codes", new_callable=AsyncMock)
-    @patch("app.cli.seed._get_tenant_by_slug", new_callable=AsyncMock)
+    @patch("app.cli.seed._open_tenant_scope", new_callable=AsyncMock)
+    @patch("app.cli.seed._find_tenant_id", new_callable=AsyncMock)
     @patch("app.cli.seed.async_session")
-    def test_seed_code_generates_count(self, mock_session, mock_get_tenant, mock_gen):
+    def test_seed_code_generates_count(self, mock_session, mock_find_tenant, mock_scope, mock_gen):
         mock_db = AsyncMock()
         mock_session.return_value.__aenter__ = AsyncMock(return_value=mock_db)
         mock_session.return_value.__aexit__ = AsyncMock(return_value=None)
 
-        mock_get_tenant.return_value = MagicMock(id="t1", slug="test")
+        mock_find_tenant.return_value = uuid.uuid4()
+        mock_scope.return_value = MagicMock()
         mock_gen.return_value = 100
 
         result = runner.invoke(

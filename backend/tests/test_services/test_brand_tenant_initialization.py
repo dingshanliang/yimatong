@@ -158,11 +158,21 @@ async def test_controlled_invite_is_consumed_and_admin_is_active(db):
         )
     )
     account = await db.get(Account, receipt.initial_admin_id)
+    audit = (
+        await db.execute(
+            select(PlatformAuditLog).where(
+                PlatformAuditLog.target_tenant_id == str(receipt.tenant_id),
+                PlatformAuditLog.action == "brand_tenant_initialized",
+            )
+        )
+    ).scalar_one()
 
     assert receipt.initial_admin_state is InitialAdminState.active
     assert account is not None and account.is_active is True
     assert invite.used_count == 1
     assert invite.status is InviteCodeStatus.depleted
+    assert audit.operator_id == str(invite.id)
+    assert len(audit.operator_id) <= 36
 
 
 @pytest.mark.anyio

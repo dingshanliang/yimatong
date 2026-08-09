@@ -8,7 +8,7 @@ from zoneinfo import ZoneInfo
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, EmailStr
-from sqlalchemy import case, func, select, text, update
+from sqlalchemy import case, func, select, text
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -35,6 +35,7 @@ from app.services.auth import logout_session
 from app.services.platform_auth import PlatformSessionUnavailable, revoke_platform_session
 from app.services.redis_cache import AsyncRedisCache, SharedSecurityCacheUnavailable
 from app.services.tenant_health import refresh_all_health_metrics
+from app.services.tenant_lifecycle import TenantStatusTransitionError, terminate_tenant, transition_tenant_status
 from app.utils.auth_rbac import require_role
 from app.utils.security import create_access_token, decode_token, verify_password
 
@@ -589,38 +590,17 @@ async def update_tenant_status(
     _role: str = Depends(require_role("platform_admin")),
 ):
     """租户状态变更（暂停/恢复/终止）"""
-    tenant = (await db.execute(select(Tenant).where(Tenant.id == tenant_id))).scalar_one_or_none()
-    if not tenant:
-        raise HTTPException(status_code=404, detail="Tenant not found")
-
-    old_status = tenant.status
-    if old_status == TenantStatus.terminated and body.status != TenantStatus.terminated:
-        raise HTTPException(status_code=409, detail="已终止租户不能恢复")
-    if old_status == body.status:
-        if body.status == TenantStatus.terminated:
-            await InitialAdminActivation(db, AsyncRedisCache()).cancel_pending(tenant_id=tenant_id)
-        return tenant
-    tenant.status = body.status
-    if body.status == TenantStatus.terminated:
-        await InitialAdminActivation(db, AsyncRedisCache()).cancel_pending(tenant_id=tenant_id)
-    should_revoke_sessions = (
-        old_status == TenantStatus.active and body.status != TenantStatus.active
-    ) or body.status == TenantStatus.terminated
-    if should_revoke_sessions:
-        await db.execute(
-            update(Account).where(Account.tenant_id == tenant_id).values(auth_version=Account.auth_version + 1)
+    try:
+        tenant = await transition_tenant_status(
+            db,
+            tenant_id=tenant_id,
+            target_status=body.status,
+            operator_id="platform-admin",
         )
-    await db.flush()
-
-    await write_audit_log(
-        db,
-        operator_id="platform-admin",
-        target_tenant_id=str(tenant_id),
-        action=f"status_change:{old_status.value}->{body.status.value}",
-        resource=f"tenant:{tenant.slug}",
-    )
-
-    await db.flush()
+    except TenantStatusTransitionError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if tenant is None:
+        raise HTTPException(status_code=404, detail="Tenant not found")
     return tenant
 
 
@@ -631,26 +611,9 @@ async def delete_tenant(
     _role: str = Depends(require_role("platform_admin")),
 ):
     """软删除租户（设为 terminated）"""
-    tenant = (await db.execute(select(Tenant).where(Tenant.id == tenant_id))).scalar_one_or_none()
-    if not tenant:
+    tenant = await terminate_tenant(db, tenant_id=tenant_id, operator_id="platform-admin")
+    if tenant is None:
         raise HTTPException(status_code=404, detail="Tenant not found")
-
-    await InitialAdminActivation(db, AsyncRedisCache()).cancel_pending(tenant_id=tenant_id)
-    if tenant.status != TenantStatus.terminated:
-        tenant.status = TenantStatus.terminated
-        await db.execute(
-            update(Account).where(Account.tenant_id == tenant_id).values(auth_version=Account.auth_version + 1)
-        )
-
-    await write_audit_log(
-        db,
-        operator_id="platform-admin",
-        target_tenant_id=str(tenant_id),
-        action="delete_tenant",
-        resource=f"tenant:{tenant.slug}",
-    )
-
-    await db.flush()
 
 
 # ---------------------------------------------------------------------------

@@ -45,6 +45,7 @@ function RegisterForm() {
   const searchParams = useSearchParams();
   const [form] = Form.useForm<RegisterValues>();
   const [submitting, setSubmitting] = useState(false);
+  const [hydrated, setHydrated] = useState(false);
   const [registered, setRegistered] = useState<{
     email: string;
     tenantSlug: string;
@@ -53,6 +54,7 @@ function RegisterForm() {
   const idempotencyKeyRef = useRef<string | null>(null);
 
   useEffect(() => {
+    setHydrated(true);
     const inviteCode = searchParams.get("invite_code")?.trim();
     if (inviteCode) form.setFieldValue("invite_code", inviteCode);
   }, [form, searchParams]);
@@ -153,6 +155,8 @@ function RegisterForm() {
       )}
 
       <Form<RegisterValues>
+        data-testid="admin-registration-form"
+        data-hydrated={hydrated}
         form={form}
         layout="vertical"
         size="large"

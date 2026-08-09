@@ -1,5 +1,6 @@
 """A2-001: 租户 CRUD API 验收测试"""
 
+import uuid
 from collections.abc import AsyncGenerator
 
 import pytest
@@ -10,6 +11,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
 from app.main import app
 from app.models.audit import PlatformAuditLog
+from app.models.platform_opening import PlatformTenantOpening
+from app.models.tenant import Account
 from app.utils.security import create_access_token
 from tests.conftest import TestSessionLocal
 
@@ -197,18 +200,38 @@ class TestTenantOnboarding:
 
 class TestDeleteTenant:
     @pytest.mark.anyio
-    async def test_soft_delete_tenant(self, client: AsyncClient, sample_tenant):
+    async def test_soft_delete_tenant_runs_canonical_security_side_effects(
+        self, client: AsyncClient, db_session: AsyncSession, sample_tenant
+    ):
+        tenant_id = uuid.UUID(sample_tenant["id"])
+        account = (await db_session.execute(select(Account).where(Account.tenant_id == tenant_id))).scalars().first()
+        assert account is not None
+        previous_auth_version = account.auth_version
+        opening = PlatformTenantOpening(
+            idempotency_key=f"legacy-delete-{tenant_id}",
+            request_hash="d" * 64,
+            tenant_id=account.tenant_id,
+            initial_admin_id=account.id,
+            initial_admin_state="pending_activation",
+        )
+        db_session.add(opening)
+        await db_session.commit()
+
         resp = await client.delete(
-            f"/api/v1/tenants/{sample_tenant['id']}",
+            f"/api/v1/tenants/{tenant_id}",
             headers=_platform_admin_headers(),
         )
         assert resp.status_code == 204
 
         resp = await client.get(
-            f"/api/v1/tenants/{sample_tenant['id']}",
+            f"/api/v1/tenants/{tenant_id}",
             headers=_platform_admin_headers(),
         )
         assert resp.json()["status"] == "terminated"
+        await db_session.refresh(account)
+        await db_session.refresh(opening)
+        assert account.auth_version == previous_auth_version + 1
+        assert opening.initial_admin_state == "cancelled"
 
 
 class TestTenantSelfBrandProfile:

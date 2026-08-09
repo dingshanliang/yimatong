@@ -484,11 +484,16 @@ async def generate_password_reset(
     except ValueError:
         raise AuthError(400, "账户 ID 格式无效")
 
-    result = await db.execute(select(Account).where(Account.id == account_uuid, Account.tenant_id == tenant_id))
+    result = await db.execute(
+        select(Account).where(Account.id == account_uuid, Account.tenant_id == tenant_id).with_for_update()
+    )
     if not result.scalar_one_or_none():
         raise AuthError(404, "账户不存在")
 
-    # 先持久化签发请求审计；审计失败时不得返回敏感凭证。
+    # 签发审计与令牌发布共享同一个事务边界。账户行锁（以及初始管理员
+    # 激活调用方持有的 opening 行锁）必须在发布缓存记录之后才释放，才能保证
+    # 并发重签严格按数据库锁顺序覆盖，而不会出现“先返回的新链接被旧请求
+    # 最后写回 Redis”这一倒序窗口。
     from app.services.audit import write_audit_log
 
     await write_audit_log(
@@ -498,25 +503,32 @@ async def generate_password_reset(
         action="generate_reset_token_requested",
         resource=f"account:{account_uuid}",
     )
-    await db.commit()
-
     token = secrets.token_urlsafe(32)
     expires_at = datetime.now(UTC) + timedelta(seconds=RESET_TOKEN_TTL)
+    cache_key = f"{RESET_TOKEN_KEY_PREFIX}:{account_uuid}"
+    record = {
+        "token_hash": hash_reset_token(token),
+        "account_id": str(account_uuid),
+        "tenant_id": str(tenant_id),
+        "expires_at": expires_at.isoformat(),
+        "activate_account": activate_account,
+        "activation_opening_id": str(activation_opening_id) if activation_opening_id else None,
+    }
     try:
-        await cache.set_shared(
-            f"{RESET_TOKEN_KEY_PREFIX}:{account_uuid}",
-            {
-                "token_hash": hash_reset_token(token),
-                "account_id": str(account_uuid),
-                "tenant_id": str(tenant_id),
-                "expires_at": expires_at.isoformat(),
-                "activate_account": activate_account,
-                "activation_opening_id": str(activation_opening_id) if activation_opening_id else None,
-            },
-            ttl=RESET_TOKEN_TTL,
-        )
+        await cache.set_shared(cache_key, record, ttl=RESET_TOKEN_TTL)
     except SharedSecurityCacheUnavailable as exc:
         raise AuthError(503, "密码重置服务暂时不可用，请稍后重试") from exc
+    try:
+        await db.commit()
+    except Exception:
+        await db.rollback()
+        # 只删除本次刚写入且仍匹配的记录；若另一个请求已经写入更新的
+        # token，consume_shared 的比较删除会保留那个更新值。
+        try:
+            await cache.consume_shared(cache_key, record)
+        except Exception:
+            pass
+        raise
     reset_url = settings.build_admin_url(
         "/reset-password",
         {"token": token, "account_id": str(account_uuid)},

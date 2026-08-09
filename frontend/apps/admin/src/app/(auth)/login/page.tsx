@@ -100,8 +100,10 @@ export default function LoginPage() {
   }>();
   const [loading, setLoading] = useState(false);
   const [loadingAccount, setLoadingAccount] = useState<string | null>(null);
+  const [hydrated, setHydrated] = useState(false);
 
   useEffect(() => {
+    setHydrated(true);
     let email: string | undefined;
     let tenantSlug: string | undefined;
     try {
@@ -263,7 +265,14 @@ export default function LoginPage() {
             ))}
           </Space>
         </div>
-        <Form form={form} layout="vertical" onFinish={onFinish} size="large">
+        <Form
+          data-testid="admin-login-form"
+          data-hydrated={hydrated}
+          form={form}
+          layout="vertical"
+          onFinish={onFinish}
+          size="large"
+        >
           <Form.Item
             name="email"
             rules={[

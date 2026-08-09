@@ -594,13 +594,17 @@ async def _audit_code_op(
     try:
         from app.services.audit import write_audit_log
 
-        await write_audit_log(
-            db,
-            operator_id=actor_id or "system",
-            target_tenant_id=target_tenant_id,
-            action=action,
-            resource=resource,
-        )
+        # Runtime roles intentionally cannot write the global control-plane
+        # audit table. Isolate the best-effort write in a savepoint so an ACL
+        # denial does not poison the surrounding tenant transaction.
+        async with db.begin_nested():
+            await write_audit_log(
+                db,
+                operator_id=actor_id or "system",
+                target_tenant_id=target_tenant_id,
+                action=action,
+                resource=resource,
+            )
     except Exception:
         # 审计失败不影响状态变更本身（已 flush）；与 tenant 服务一致兜底
         pass

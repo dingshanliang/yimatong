@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.database import get_db
+from app.core.database import get_db, get_db_with_bypass
 from app.core.dependencies import get_current_account_id, get_current_tenant
 from app.models.tenant import Tenant
 from app.schemas.common import NOT_FOUND_EXAMPLE, ErrorDetail, PaginatedResponse
@@ -23,9 +23,9 @@ from app.services.tenant import (
     create_tenant,
     get_onboarding_progress_data,
     get_tenant,
-    soft_delete_tenant,
     update_tenant,
 )
+from app.services.tenant_lifecycle import terminate_tenant
 from app.utils import escape_like_pattern
 from app.utils.auth_rbac import require_permission, require_role
 
@@ -54,7 +54,7 @@ router = APIRouter(prefix="/api/v1/tenants", tags=["tenants"])
 )
 async def create_tenant_endpoint(
     body: TenantCreate,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db_with_bypass),
     _role: str = Depends(require_role("platform_admin")),
 ):
     try:
@@ -89,7 +89,7 @@ async def list_tenants_endpoint(
     plan: str | None = Query(None, description="按订阅计划过滤"),
     tenant_type: str | None = Query(None, description="按租户类型过滤"),
     status: str | None = Query(None, description="按状态过滤"),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db_with_bypass),
     _role: str = Depends(require_role("platform_admin")),
 ):
     """租户列表（支持分页、搜索和多维过滤）"""
@@ -243,7 +243,7 @@ async def complete_onboarding_step_endpoint(
 @router.get("/{tenant_id}", response_model=TenantRead, summary="获取指定租户")
 async def get_tenant_endpoint(
     tenant_id: uuid.UUID,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db_with_bypass),
     _role: str = Depends(require_role("platform_admin")),
 ):
     tenant = await get_tenant(db, tenant_id)
@@ -256,7 +256,7 @@ async def get_tenant_endpoint(
 async def update_tenant_endpoint(
     tenant_id: uuid.UUID,
     body: TenantUpdate,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db_with_bypass),
     _role: str = Depends(require_role("platform_admin")),
 ):
     tenant = await update_tenant(
@@ -281,9 +281,9 @@ async def update_tenant_endpoint(
 @router.delete("/{tenant_id}", status_code=204, summary="删除租户")
 async def delete_tenant_endpoint(
     tenant_id: uuid.UUID,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db_with_bypass),
     _role: str = Depends(require_role("platform_admin")),
 ):
-    deleted = await soft_delete_tenant(db, tenant_id)
-    if not deleted:
+    tenant = await terminate_tenant(db, tenant_id=tenant_id, operator_id="platform-admin")
+    if tenant is None:
         raise HTTPException(status_code=404, detail="Tenant not found")

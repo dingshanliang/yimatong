@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Button, Card, Form, Input, message, Typography } from "antd";
 import { LockOutlined, MailOutlined } from "@ant-design/icons";
 import { useRouter } from "next/navigation";
@@ -11,8 +11,11 @@ const { Title, Text } = Typography;
 
 export default function PlatformLoginPage() {
   const [loading, setLoading] = useState(false);
+  const [hydrated, setHydrated] = useState(false);
   const router = useRouter();
   const login = usePlatformAuth((s) => s.login);
+
+  useEffect(() => setHydrated(true), []);
 
   const onFinish = async (values: { email: string; password: string }) => {
     setLoading(true);
@@ -57,6 +60,8 @@ export default function PlatformLoginPage() {
         </div>
 
         <Form
+          data-testid="platform-login-form"
+          data-hydrated={hydrated}
           layout="vertical"
           onFinish={onFinish}
           size="large"

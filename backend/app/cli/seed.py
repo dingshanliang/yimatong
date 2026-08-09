@@ -5,11 +5,12 @@ import uuid
 from datetime import date, timedelta
 
 import typer
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.constants.campaign import BenefitType
 from app.core.config import settings
+from app.core.database import control_session_factory, set_session_tenant_context
 from app.models.campaign import Benefit, Campaign, CampaignStatus
 from app.models.channel import CodeAllocation, Distributor, DiversionClue, Region, Store
 from app.models.code import CodeItem, CodeItemStatus
@@ -31,6 +32,7 @@ app = typer.Typer(help="Seed data for development")
 
 engine = create_async_engine(str(settings.database_url))
 async_session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+control_session = control_session_factory
 
 DEMO_ACCOUNTS = [
     {
@@ -76,6 +78,58 @@ DEMO_ENABLED_FEATURES = {"channel_store": True}
 async def _get_tenant_by_slug(db: AsyncSession, slug: str) -> Tenant | None:
     result = await db.execute(select(Tenant).where(Tenant.slug == slug))
     return result.scalar_one_or_none()
+
+
+async def _prepare_control_session(db: AsyncSession) -> None:
+    """Enable the explicit control-plane bootstrap scope for tenant discovery/creation."""
+    if db.get_bind().dialect.name == "postgresql":
+        await db.execute(text("SELECT set_config('app.tenant_id', '', true)"))
+        await db.execute(text("SELECT set_config('app.bypass_rls', 'true', true)"))
+
+
+async def _find_tenant_id(slug: str) -> uuid.UUID | None:
+    """Resolve one tenant key through the bounded control-plane index."""
+    async with control_session() as db:
+        await _prepare_control_session(db)
+        tenant = await _get_tenant_by_slug(db, slug)
+        return tenant.id if tenant else None
+
+
+async def _ensure_tenant(
+    *,
+    name: str,
+    slug: str,
+    admin_email: str,
+    admin_name: str,
+    admin_password: str,
+) -> tuple[uuid.UUID, bool]:
+    """Create the tenant atomically through control DB, without seeding its business rows there."""
+    async with control_session() as db:
+        await _prepare_control_session(db)
+        existing = await _get_tenant_by_slug(db, slug)
+        if existing:
+            return existing.id, False
+        tenant = await create_tenant(
+            db,
+            name=name,
+            slug=slug,
+            admin_email=admin_email,
+            admin_name=admin_name,
+            admin_password=admin_password,
+            plan="free",
+        )
+        tenant_id = tenant.id
+        await db.commit()
+        return tenant_id, True
+
+
+async def _open_tenant_scope(db: AsyncSession, tenant_id: uuid.UUID) -> Tenant:
+    """Switch a fresh runtime session to exactly one tenant before business writes."""
+    await set_session_tenant_context(db, tenant_id)
+    tenant = await db.get(Tenant, tenant_id)
+    if tenant is None:  # pragma: no cover - control lookup/create is the precondition
+        raise RuntimeError("Tenant disappeared before scoped seed")
+    return tenant
 
 
 def _enable_demo_features(tenant: Tenant) -> None:
@@ -330,6 +384,7 @@ async def _ensure_demo_codes(
     tenant_id: uuid.UUID,
     product_id: uuid.UUID,
     sku_id: uuid.UUID,
+    production_batch_id: uuid.UUID,
     created_by: uuid.UUID,
 ) -> list[CodeItem]:
     from app.models.code import CodeBatch
@@ -344,9 +399,10 @@ async def _ensure_demo_codes(
             tenant_id,
             product_id,
             sku_id,
-            "DEMO-CODE-202605",
+            production_batch_id,
             12,
             created_by,
+            batch_code="DEMO-CODE-202605",
         )
         await activate_batch(db, tenant_id, uuid.UUID(data["id"]))
         result = await db.execute(select(CodeBatch).where(CodeBatch.id == uuid.UUID(data["id"])))
@@ -596,23 +652,17 @@ def tenant(
     """创建租户及默认组织和 admin 账号"""
 
     async def _run():
-        async with async_session() as db:
-            existing = await _get_tenant_by_slug(db, slug)
-            if existing:
-                typer.echo(f"Tenant '{slug}' already exists (id={existing.id})")
-                return
-
-            t = await create_tenant(
-                db,
-                name=name,
-                slug=slug,
-                admin_email=admin_email,
-                admin_name=admin_name,
-                admin_password=admin_password,
-                plan="free",
-            )
-            await db.commit()
-            typer.echo(f"Created tenant: {t.name} (id={t.id}, slug={slug})")
+        tenant_id, created = await _ensure_tenant(
+            name=name,
+            slug=slug,
+            admin_email=admin_email,
+            admin_name=admin_name,
+            admin_password=admin_password,
+        )
+        if not created:
+            typer.echo(f"Tenant '{slug}' already exists (id={tenant_id})")
+            return
+        typer.echo(f"Created tenant: {name} (id={tenant_id}, slug={slug})")
 
     asyncio.run(_run())
 
@@ -627,15 +677,15 @@ def product(
     """创建完整产品链（品牌 → 产品 → SKU）"""
 
     async def _run():
+        tenant_id = await _find_tenant_id(tenant)
+        if tenant_id is None:
+            typer.echo(f"Tenant '{tenant}' not found", err=True)
+            raise typer.Exit(code=1)
         async with async_session() as db:
-            t = await _get_tenant_by_slug(db, tenant)
-            if not t:
-                typer.echo(f"Tenant '{tenant}' not found", err=True)
-                raise typer.Exit(code=1)
-
-            b = await create_brand_if_needed(db, t.id, brand)
-            p = await create_product_if_needed(db, t.id, b.id, product_name)
-            s = await create_sku_if_needed(db, t.id, p.id, sku, f"{product_name}-{sku}")
+            await _open_tenant_scope(db, tenant_id)
+            b = await create_brand_if_needed(db, tenant_id, brand)
+            p = await create_product_if_needed(db, tenant_id, b.id, product_name)
+            s = await create_sku_if_needed(db, tenant_id, p.id, sku, f"{product_name}-{sku}")
             await db.commit()
 
             typer.echo(f"Brand: {b.name} (id={b.id})")
@@ -654,13 +704,13 @@ def code(
     """生成码批次"""
 
     async def _run():
+        tenant_id = await _find_tenant_id(tenant)
+        if tenant_id is None:
+            typer.echo(f"Tenant '{tenant}' not found", err=True)
+            raise typer.Exit(code=1)
         async with async_session() as db:
-            t = await _get_tenant_by_slug(db, tenant)
-            if not t:
-                typer.echo(f"Tenant '{tenant}' not found", err=True)
-                raise typer.Exit(code=1)
-
-            generated = await _generate_codes(db, t.id, batch_code, count)
+            await _open_tenant_scope(db, tenant_id)
+            generated = await _generate_codes(db, tenant_id, batch_code, count)
             await db.commit()
             typer.echo(f"Generated {generated} codes for batch '{batch_code}'")
 
@@ -681,23 +731,23 @@ def all(
     """一键创建全部演示数据（租户 + 角色账号 + 产品 + 码 + 页面 + 活动 + 扫码数据）"""
 
     async def _run():
+        tenant_id, created = await _ensure_tenant(
+            name=name,
+            slug=slug,
+            admin_email=admin_email,
+            admin_name=admin_name,
+            admin_password=admin_password,
+        )
+        if created:
+            typer.echo(f"Created tenant: {name} (id={tenant_id})")
+        else:
+            typer.echo(f"Tenant '{slug}' already exists (id={tenant_id})")
+
         async with async_session() as db:
-            # 1. 创建租户
-            existing = await _get_tenant_by_slug(db, slug)
-            if existing:
-                typer.echo(f"Tenant '{slug}' already exists (id={existing.id})")
-                t = existing
-            else:
-                t = await create_tenant(
-                    db,
-                    name=name,
-                    slug=slug,
-                    admin_email=admin_email,
-                    admin_name=admin_name,
-                    admin_password=admin_password,
-                    plan="free",
-                )
-                typer.echo(f"Created tenant: {t.name} (id={t.id})")
+            # Tenant creation/discovery above is the only control-plane stage.
+            # All demo business rows are written through a restricted runtime
+            # transaction scoped to exactly that tenant.
+            t = await _open_tenant_scope(db, tenant_id)
             _enable_demo_features(t)
 
             # 2. 创建品牌 + 产品 + SKU
@@ -715,10 +765,17 @@ def all(
             org = await _get_default_org(db, t.id)
             accounts = await _ensure_demo_accounts(db, t.id, org.id)
             admin_account = next((account for account in accounts if account.email == admin_email), accounts[0])
-            await _ensure_production_batch(db, t.id, p.id, s.id)
+            production_batch = await _ensure_production_batch(db, t.id, p.id, s.id)
             await _ensure_page(db, t.id, p.id, admin_account.id)
             await _ensure_campaign(db, t.id)
-            code_items = await _ensure_demo_codes(db, t.id, p.id, s.id, admin_account.id)
+            code_items = await _ensure_demo_codes(
+                db,
+                t.id,
+                p.id,
+                s.id,
+                production_batch.id,
+                admin_account.id,
+            )
             await _ensure_scan_events(db, t.id, code_items)
             await _ensure_demo_channels(db, t.id, accounts, code_items)
             await db.commit()

@@ -11,7 +11,7 @@ import secrets
 import uuid
 from datetime import UTC, datetime
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from uuid6 import uuid7
 
@@ -73,7 +73,10 @@ class BrandTenantInitialization:
             validate_password_strength(opening.chosen_password)
             invite = await self._lock_valid_brand_invite(opening.invite_code)
             plan_name = "free"
-            actor_id = f"invite:{invite.id}"
+            # PlatformAuditLog.operator_id is VARCHAR(36); the action/resource
+            # already identify this as an invite opening, so persist the UUID
+            # itself instead of an over-length ``invite:<uuid>`` label.
+            actor_id = str(invite.id)
             password_hash = hash_password(opening.chosen_password)
             admin_state = InitialAdminState.active
             stable_key = None
@@ -230,6 +233,7 @@ class BrandTenantInitialization:
     async def _generate_available_key(self, name: str) -> str:
         base = re.sub(r"-+", "-", re.sub(r"[^a-z0-9-]+", "-", name.lower().strip())).strip("-")
         base = (base or f"tenant-{uuid.uuid4().hex[:8]}")[:50]
+        await self._lock_tenant_key_namespace(base)
         if not await self._tenant_key_exists(base):
             return base
         for _ in range(10):
@@ -242,8 +246,22 @@ class BrandTenantInitialization:
     async def _assert_tenant_key_available(self, tenant_key: str) -> None:
         if not re.fullmatch(r"[a-z0-9-]{1,50}", tenant_key):
             raise InvalidInitializationInput("稳定租户标识只能包含小写字母、数字和连字符")
+        await self._lock_tenant_key_namespace(tenant_key)
         if await self._tenant_key_exists(tenant_key):
             raise BrandTenantAlreadyExists(f"租户标识已存在：{tenant_key}")
+
+    async def _lock_tenant_key_namespace(self, tenant_key: str) -> None:
+        """Serialize allocation of one slug namespace for the transaction.
+
+        A unique index alone turns concurrent same-name openings into a 500 for
+        the loser. The transaction advisory lock makes the second request see
+        the committed base slug and choose a suffix instead.
+        """
+        if self._db.get_bind().dialect.name == "postgresql":
+            await self._db.execute(
+                text("SELECT pg_advisory_xact_lock(hashtextextended(:tenant_key, 0))"),
+                {"tenant_key": tenant_key},
+            )
 
     async def _tenant_key_exists(self, tenant_key: str) -> bool:
         return (

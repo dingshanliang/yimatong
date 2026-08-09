@@ -23,13 +23,14 @@ async def _audit(
     try:
         from app.services.audit import write_audit_log
 
-        await write_audit_log(
-            db,
-            operator_id=operator_id,
-            target_tenant_id=tenant_id,
-            action=action,
-            resource=resource,
-        )
+        async with db.begin_nested():
+            await write_audit_log(
+                db,
+                operator_id=operator_id,
+                target_tenant_id=tenant_id,
+                action=action,
+                resource=resource,
+            )
     except Exception:
         pass
 

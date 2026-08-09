@@ -3,6 +3,7 @@
 import asyncio
 import hashlib
 import random
+import subprocess
 import sys
 import time
 import uuid
@@ -625,7 +626,6 @@ async def _ensure_tenant(db: AsyncSession) -> Tenant:
     result = await db.execute(select(Tenant).where(Tenant.slug == TENANT_SLUG))
     tenant = result.scalar_one_or_none()
     if tenant:
-        tenant.enabled_features = {**(tenant.enabled_features or {}), **DEMO_ENABLED_FEATURES}
         return tenant
     tenant = await create_tenant(
         db,
@@ -637,7 +637,6 @@ async def _ensure_tenant(db: AsyncSession) -> Tenant:
         admin_password=DEMO_ACCOUNTS[0]["password"],
         tenant_type="brand",
     )
-    tenant.enabled_features = {**(tenant.enabled_features or {}), **DEMO_ENABLED_FEATURES}
     return tenant
 
 
@@ -1852,11 +1851,23 @@ def generate():
             await set_session_tenant_context(db, tenant_id)
             p = Progress(10)
 
+            scoped_tenant = await db.get(Tenant, tenant_id)
+            if scoped_tenant is None:  # pragma: no cover - control bootstrap is the precondition
+                raise RuntimeError("Demo tenant disappeared before scoped seed")
+            scoped_tenant.enabled_features = {
+                **(scoped_tenant.enabled_features or {}),
+                **DEMO_ENABLED_FEATURES,
+            }
+            required_codes = sum(CODE_QUANTITIES.values())
+            scoped_tenant.quota = {
+                **(scoped_tenant.quota or {}),
+                "max_codes": max(int((scoped_tenant.quota or {}).get("max_codes", 0)), required_codes),
+            }
+
             # 1. 租户与账号
-            org = await _ensure_org(db, tenant.id)
-            accounts = await _ensure_accounts(db, tenant.id, org.id)
+            org = await _ensure_org(db, tenant_id)
+            accounts = await _ensure_accounts(db, tenant_id, org.id)
             admin_account = next((a for a in accounts if a.email == "admin@demo.com"), accounts[0])
-            tenant_id = tenant.id
             admin_id = admin_account.id
             p.step("租户与账号", f"({len(accounts)} 个账号)")
 
@@ -1972,8 +1983,12 @@ def reset():
                 await db.commit()
 
     asyncio.run(_run())
-    # 重新生成
-    generate()
+    # SQLAlchemy async engines are bound to the event loop that first used
+    # them. Run generation in a fresh process rather than reusing the module's
+    # global pools after asyncio.run(_run()) has closed its loop.
+    result = subprocess.run([sys.executable, str(Path(__file__).resolve()), "generate"])
+    if result.returncode != 0:
+        raise typer.Exit(code=result.returncode)
 
     # 保持 typer 正常退出
 
