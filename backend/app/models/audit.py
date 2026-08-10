@@ -12,7 +12,7 @@ class PlatformAuditLog(Base):
     __tablename__ = "platform_audit_log"
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid7)
-    operator_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    operator_id: Mapped[str] = mapped_column(String(64), nullable=False)
     target_tenant_id: Mapped[str] = mapped_column(String(36), nullable=False)
     action: Mapped[str] = mapped_column(String(100), nullable=False)
     resource: Mapped[str] = mapped_column(String(255), nullable=False)

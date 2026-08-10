@@ -75,11 +75,21 @@ asset_router = APIRouter(prefix="/api/v1/product-assets", tags=["product-assets"
 @brand_router.post("", response_model=BrandRead, status_code=201, summary="创建 品牌")
 async def create_brand_endpoint(
     body: BrandCreate,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
+    actor_id: uuid.UUID = Depends(get_current_account_id),
     _role: str = Depends(require_role("admin", "operator")),
 ):
-    return await create_brand(db, tenant_id, body.name, body.logo_url, body.description)
+    brand = await create_brand(db, tenant_id, body.name, body.logo_url, body.description)
+    await write_audit_log(
+        db,
+        str(actor_id),
+        str(tenant_id),
+        "brand_created",
+        f"brand:{brand.id}",
+        {"resource_name": brand.name, "result": "success"},
+    )
+    return brand
 
 
 @brand_router.get("", summary="品牌 列表")
@@ -104,8 +114,9 @@ async def list_brands_endpoint(
 async def update_brand_endpoint(
     brand_id: uuid.UUID,
     body: BrandUpdate,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
+    actor_id: uuid.UUID = Depends(get_current_account_id),
     _role: str = Depends(require_role("admin", "operator")),
 ):
     brand = await update_brand(
@@ -116,9 +127,18 @@ async def update_brand_endpoint(
         logo_url=body.logo_url,
         description=body.description,
         status=body.status,
+        fields_to_update=body.model_fields_set,
     )
     if not brand:
         raise HTTPException(status_code=404, detail="Brand not found")
+    await write_audit_log(
+        db,
+        str(actor_id),
+        str(tenant_id),
+        "brand_updated",
+        f"brand:{brand.id}",
+        {"resource_name": brand.name, "changed_fields": sorted(body.model_fields_set), "result": "success"},
+    )
     return brand
 
 
@@ -214,8 +234,9 @@ async def list_brand_production_batches_endpoint(
 @brand_router.delete("/{brand_id}", status_code=204, summary="删除 品牌")
 async def delete_brand_endpoint(
     brand_id: uuid.UUID,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
+    actor_id: uuid.UUID = Depends(get_current_account_id),
     _role: str = Depends(require_role("admin")),
 ):
     deleted, conflict = await delete_brand(db, tenant_id, brand_id)
@@ -223,6 +244,9 @@ async def delete_brand_endpoint(
         raise HTTPException(status_code=409, detail=conflict)
     if not deleted:
         raise HTTPException(status_code=404, detail="Brand not found")
+    await write_audit_log(
+        db, str(actor_id), str(tenant_id), "brand_deleted", f"brand:{brand_id}", {"result": "success"}
+    )
 
 
 # --- Product endpoints ---
@@ -231,7 +255,7 @@ async def delete_brand_endpoint(
 @product_router.post("", response_model=ProductRead, status_code=201, summary="创建 产品")
 async def create_product_endpoint(
     body: ProductCreate,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
     actor_id: uuid.UUID = Depends(get_current_account_id),
     _role: str = Depends(require_role("admin", "operator")),
@@ -304,7 +328,7 @@ async def get_product_endpoint(
 async def update_product_endpoint(
     product_id: uuid.UUID,
     body: ProductUpdate,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
     actor_id: uuid.UUID = Depends(get_current_account_id),
     _role: str = Depends(require_role("admin", "operator")),
@@ -322,6 +346,7 @@ async def update_product_endpoint(
         story_content=body.story_content,
         description=body.description,
         status=body.status,
+        fields_to_update=body.model_fields_set,
     )
     if not product:
         raise HTTPException(status_code=404, detail="Product not found")
@@ -372,8 +397,9 @@ async def list_product_assets_endpoint(
 async def create_product_asset_endpoint(
     product_id: uuid.UUID,
     body: ProductAssetCreate,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
+    actor_id: uuid.UUID = Depends(get_current_account_id),
     _role: str = Depends(require_role("admin", "operator")),
 ):
     asset = await create_product_asset(
@@ -392,6 +418,14 @@ async def create_product_asset_endpoint(
     )
     if not asset:
         raise HTTPException(status_code=404, detail="Product not found")
+    await write_audit_log(
+        db,
+        str(actor_id),
+        str(tenant_id),
+        "product_asset_created",
+        f"product_asset:{asset.id}",
+        {"resource_name": asset.name, "product_id": str(product_id), "result": "success"},
+    )
     return asset
 
 
@@ -446,8 +480,9 @@ async def list_product_batches(
 @product_router.delete("/{product_id}", status_code=204, summary="删除 产品")
 async def delete_product_endpoint(
     product_id: uuid.UUID,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
+    actor_id: uuid.UUID = Depends(get_current_account_id),
     _role: str = Depends(require_role("admin")),
 ):
     deleted, conflict = await delete_product(db, tenant_id, product_id)
@@ -455,6 +490,9 @@ async def delete_product_endpoint(
         raise HTTPException(status_code=409, detail=conflict)
     if not deleted:
         raise HTTPException(status_code=404, detail="Product not found")
+    await write_audit_log(
+        db, str(actor_id), str(tenant_id), "product_deleted", f"product:{product_id}", {"result": "success"}
+    )
 
 
 # --- SKU endpoints ---
@@ -463,11 +501,12 @@ async def delete_product_endpoint(
 @sku_router.post("", response_model=SKURead, status_code=201, summary="创建 SKU")
 async def create_sku_endpoint(
     body: SKUCreate,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
+    actor_id: uuid.UUID = Depends(get_current_account_id),
     _role: str = Depends(require_role("admin", "operator")),
 ):
-    return await create_sku(
+    sku = await create_sku(
         db,
         tenant_id,
         body.product_id,
@@ -478,6 +517,15 @@ async def create_sku_endpoint(
         barcode=body.barcode,
         image_url=body.image_url,
     )
+    await write_audit_log(
+        db,
+        str(actor_id),
+        str(tenant_id),
+        "sku_created",
+        f"sku:{sku.id}",
+        {"resource_name": sku.name, "product_id": str(sku.product_id), "result": "success"},
+    )
+    return sku
 
 
 @sku_router.get("", summary="SKU 列表")
@@ -521,8 +569,9 @@ async def get_sku_endpoint(
 async def update_sku_endpoint(
     sku_id: uuid.UUID,
     body: SKUUpdate,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
+    actor_id: uuid.UUID = Depends(get_current_account_id),
     _role: str = Depends(require_role("admin", "operator")),
 ):
     sku = await update_sku(
@@ -540,14 +589,23 @@ async def update_sku_endpoint(
     )
     if not sku:
         raise HTTPException(status_code=404, detail="SKU not found")
+    await write_audit_log(
+        db,
+        str(actor_id),
+        str(tenant_id),
+        "sku_updated",
+        f"sku:{sku.id}",
+        {"resource_name": sku.name, "changed_fields": sorted(body.model_fields_set), "result": "success"},
+    )
     return sku
 
 
 @sku_router.delete("/{sku_id}", status_code=204, summary="删除 SKU")
 async def delete_sku_endpoint(
     sku_id: uuid.UUID,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
+    actor_id: uuid.UUID = Depends(get_current_account_id),
     _role: str = Depends(require_role("admin")),
 ):
     deleted, conflict = await delete_sku(db, tenant_id, sku_id)
@@ -555,6 +613,7 @@ async def delete_sku_endpoint(
         raise HTTPException(status_code=409, detail=conflict)
     if not deleted:
         raise HTTPException(status_code=404, detail="SKU not found")
+    await write_audit_log(db, str(actor_id), str(tenant_id), "sku_deleted", f"sku:{sku_id}", {"result": "success"})
 
 
 # --- ProductionBatch endpoints ---
@@ -563,11 +622,12 @@ async def delete_sku_endpoint(
 @batch_router.post("", response_model=ProductionBatchRead, status_code=201, summary="创建 批次")
 async def create_batch_endpoint(
     body: ProductionBatchCreate,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
+    actor_id: uuid.UUID = Depends(get_current_account_id),
     _role: str = Depends(require_role("admin", "operator")),
 ):
-    return await create_production_batch(
+    batch = await create_production_batch(
         db,
         tenant_id,
         body.product_id,
@@ -577,6 +637,15 @@ async def create_batch_endpoint(
         body.expiry_date,
         origin=body.origin,
     )
+    await write_audit_log(
+        db,
+        str(actor_id),
+        str(tenant_id),
+        "production_batch_created",
+        f"production_batch:{batch.id}",
+        {"resource_name": batch.batch_code, "product_id": str(batch.product_id), "result": "success"},
+    )
+    return batch
 
 
 @batch_router.get("", summary="批次 列表")
@@ -609,8 +678,9 @@ async def list_batches_endpoint(
 async def update_batch_endpoint(
     batch_id: uuid.UUID,
     body: ProductionBatchUpdate,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
+    actor_id: uuid.UUID = Depends(get_current_account_id),
     _role: str = Depends(require_role("admin", "operator")),
 ):
     batch = await update_production_batch(
@@ -626,6 +696,14 @@ async def update_batch_endpoint(
     )
     if not batch:
         raise HTTPException(status_code=404, detail="Batch not found")
+    await write_audit_log(
+        db,
+        str(actor_id),
+        str(tenant_id),
+        "production_batch_updated",
+        f"production_batch:{batch.id}",
+        {"resource_name": batch.batch_code, "changed_fields": sorted(body.model_fields_set), "result": "success"},
+    )
     return batch
 
 
@@ -634,8 +712,9 @@ async def import_csv_endpoint(
     product_id: str = Form(...),
     sku_id: str = Form(...),
     file: UploadFile = File(...),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
+    actor_id: uuid.UUID = Depends(get_current_account_id),
     _role: str = Depends(require_role("admin", "operator")),
 ):
     content = (await file.read()).decode("utf-8")
@@ -646,14 +725,24 @@ async def import_csv_endpoint(
         uuid.UUID(sku_id),
         content,
     )
+    if imported:
+        await write_audit_log(
+            db,
+            str(actor_id),
+            str(tenant_id),
+            "production_batch_imported",
+            f"product:{product_id}",
+            {"product_id": product_id, "sku_id": sku_id, "imported": imported, "errors": len(errors)},
+        )
     return CSVImportResult(imported=imported, errors=errors)
 
 
 @batch_router.delete("/{batch_id}", status_code=204, summary="删除 批次")
 async def delete_batch_endpoint(
     batch_id: uuid.UUID,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
+    actor_id: uuid.UUID = Depends(get_current_account_id),
     _role: str = Depends(require_role("admin")),
 ):
     deleted, conflict = await delete_production_batch(db, tenant_id, batch_id)
@@ -661,14 +750,23 @@ async def delete_batch_endpoint(
         raise HTTPException(status_code=409, detail=conflict)
     if not deleted:
         raise HTTPException(status_code=404, detail="Batch not found")
+    await write_audit_log(
+        db,
+        str(actor_id),
+        str(tenant_id),
+        "production_batch_deleted",
+        f"production_batch:{batch_id}",
+        {"result": "success"},
+    )
 
 
 @asset_router.patch("/{asset_id}", response_model=ProductAssetRead, summary="更新 产品资料")
 async def update_product_asset_endpoint(
     asset_id: uuid.UUID,
     body: ProductAssetUpdate,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
+    actor_id: uuid.UUID = Depends(get_current_account_id),
     _role: str = Depends(require_role("admin", "operator")),
 ):
     asset = await update_product_asset(
@@ -689,16 +787,33 @@ async def update_product_asset_endpoint(
     )
     if not asset:
         raise HTTPException(status_code=404, detail="Product asset not found")
+    await write_audit_log(
+        db,
+        str(actor_id),
+        str(tenant_id),
+        "product_asset_updated",
+        f"product_asset:{asset.id}",
+        {"resource_name": asset.name, "changed_fields": sorted(body.model_fields_set), "result": "success"},
+    )
     return asset
 
 
 @asset_router.delete("/{asset_id}", status_code=204, summary="删除 产品资料")
 async def delete_product_asset_endpoint(
     asset_id: uuid.UUID,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
+    actor_id: uuid.UUID = Depends(get_current_account_id),
     _role: str = Depends(require_role("admin")),
 ):
     deleted = await delete_product_asset(db, tenant_id, asset_id)
     if not deleted:
         raise HTTPException(status_code=404, detail="Product asset not found")
+    await write_audit_log(
+        db,
+        str(actor_id),
+        str(tenant_id),
+        "product_asset_deleted",
+        f"product_asset:{asset_id}",
+        {"result": "success"},
+    )

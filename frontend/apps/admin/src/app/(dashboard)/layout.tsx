@@ -46,6 +46,7 @@ import {
 import type { MenuProps } from "antd";
 import { useAuthStore } from "@/lib/auth";
 import { canViewRoleDirectory } from "@/lib/account-access";
+import { catalogAccessForPrincipal } from "@/lib/catalog-access";
 import {
   agencyScopeMenuRoutes,
   canManageAgencyAuthorizations,
@@ -246,6 +247,7 @@ function DashboardInner({ children }: { children: React.ReactNode }) {
       (prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`)
     )
   ).map(({ key }) => key);
+  const catalogAccess = catalogAccessForPrincipal(user);
 
   const channelMenuChildren: MenuProps["items"] = [
     { key: "/channels", icon: <ShopOutlined />, label: t("menu.channels") },
@@ -275,13 +277,25 @@ function DashboardInner({ children }: { children: React.ReactNode }) {
       icon: <AppstoreOutlined />,
       label: t("menu.group.catalog"),
       children: [
-        { key: "/brands", icon: <TagOutlined />, label: t("menu.brands") },
-        {
-          key: "/products",
-          icon: <AppstoreOutlined />,
-          label: t("menu.products"),
-        },
-        { key: "/skus", icon: <ProfileOutlined />, label: t("menu.skus") },
+        ...(catalogAccess.canRead
+          ? [
+              {
+                key: "/brands",
+                icon: <TagOutlined />,
+                label: t("menu.brands"),
+              },
+              {
+                key: "/products",
+                icon: <AppstoreOutlined />,
+                label: t("menu.products"),
+              },
+              {
+                key: "/skus",
+                icon: <ProfileOutlined />,
+                label: t("menu.skus"),
+              },
+            ]
+          : []),
         {
           key: "/batches",
           icon: <DatabaseOutlined />,

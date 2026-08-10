@@ -4,8 +4,10 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   App,
+  Alert,
   Button,
   Divider,
+  Empty,
   Form,
   Input,
   Modal,
@@ -34,6 +36,10 @@ import { formatDate } from "@/lib/format";
 import { STATUS_COLORS } from "@/lib/status-colors";
 import { AIDrawer } from "./_components/AIDrawer";
 import type { Product, Brand } from "./_components/types";
+import { useAuthStore } from "@/lib/auth";
+import { catalogAccessForPrincipal } from "@/lib/catalog-access";
+import { useTenantPlanReadOnly } from "../_components/TenantPlanReadOnly";
+import { validateCatalogPublicUrl } from "@/lib/catalog-public-url";
 
 const { Title } = Typography;
 
@@ -46,9 +52,31 @@ type ProductFormValues = {
 };
 
 export default function ProductsPage() {
+  const user = useAuthStore((state) => state.user);
+  const access = catalogAccessForPrincipal(user);
+
+  if (!access.canRead) {
+    return <Alert type="warning" showIcon title="当前账号无权访问产品目录" />;
+  }
+
+  return (
+    <ProductsCatalog canWrite={access.canWrite} canDelete={access.canDelete} />
+  );
+}
+
+function ProductsCatalog({
+  canWrite,
+  canDelete,
+}: {
+  canWrite: boolean;
+  canDelete: boolean;
+}) {
   const router = useRouter();
   const { message } = App.useApp();
+  const planReadOnly = useTenantPlanReadOnly();
   const [brands, setBrands] = useState<Brand[]>([]);
+  const [brandsLoading, setBrandsLoading] = useState(true);
+  const [brandLoadError, setBrandLoadError] = useState(false);
   const [search, setSearch] = useState("");
   const [modalOpen, setModalOpen] = useState(false);
   const [editItem, setEditItem] = useState<Product | null>(null);
@@ -65,25 +93,33 @@ export default function ProductsPage() {
     total,
     page,
     loading,
+    error,
     setPage,
     setFilter,
     update,
     remove,
+    retry,
   } = useCrud<Product>("/products");
   const { categories: tenantCategories } = useCategories();
 
   const fetchBrands = useCallback(async () => {
+    setBrandsLoading(true);
+    setBrandLoadError(false);
     try {
       const { data } = await api.get("/brands", { params: { page_size: 100 } });
       setBrands(data.items || []);
     } catch {
-      // Brand loading failure is surfaced when the user tries to submit.
+      setBrandLoadError(true);
+    } finally {
+      setBrandsLoading(false);
     }
   }, []);
 
   useEffect(() => {
     void fetchBrands();
   }, [fetchBrands]);
+  const writesDisabled = planReadOnly || !canWrite;
+  const createDisabled = writesDisabled || brandsLoading || brandLoadError;
 
   const categoryOptions = useMemo(() => {
     const base = tenantCategories.slice();
@@ -123,6 +159,7 @@ export default function ProductsPage() {
   };
 
   const handleSubmit = async (values: ProductFormValues) => {
+    if (writesDisabled) return;
     const payload = {
       name: values.name,
       brand_id: values.brand_id,
@@ -157,6 +194,7 @@ export default function ProductsPage() {
   };
 
   const handleQuickBrandCreate = async (values: { name: string }) => {
+    if (writesDisabled) return;
     setBrandCreating(true);
     try {
       const { data } = await api.post<Brand>("/brands", { name: values.name });
@@ -236,6 +274,7 @@ export default function ProductsPage() {
         return (
           <Switch
             checked={status === "active"}
+            disabled={writesDisabled}
             checkedChildren="启用"
             unCheckedChildren="禁用"
             onChange={async (checked) => {
@@ -263,7 +302,12 @@ export default function ProductsPage() {
       key: "actions",
       render: (_: unknown, record: Product) => (
         <Space>
-          <Button type="link" size="small" onClick={() => openEdit(record)}>
+          <Button
+            type="link"
+            size="small"
+            disabled={writesDisabled}
+            onClick={() => openEdit(record)}
+          >
             基础信息
           </Button>
           <Button
@@ -274,26 +318,34 @@ export default function ProductsPage() {
           >
             工作台
           </Button>
-          <Popconfirm
-            title="确认删除"
-            description={`删除产品「${record.name}」？有关联资源时将被阻止。`}
-            onConfirm={async () => {
-              try {
-                await remove(record.id);
-                message.success("产品已删除");
-              } catch (err) {
-                message.error(
-                  extractErrorMessage(err, "删除失败，请检查是否有关联资源")
-                );
-              }
-            }}
-            okText="删除"
-            okButtonProps={{ danger: true }}
-          >
-            <Button type="link" size="small" danger icon={<DeleteOutlined />}>
-              删除
-            </Button>
-          </Popconfirm>
+          {canDelete && (
+            <Popconfirm
+              title="确认删除"
+              description={`删除产品「${record.name}」？有关联资源时将被阻止。`}
+              onConfirm={async () => {
+                try {
+                  await remove(record.id);
+                  message.success("产品已删除");
+                } catch (err) {
+                  message.error(
+                    extractErrorMessage(err, "删除失败，请检查是否有关联资源")
+                  );
+                }
+              }}
+              okText="删除"
+              okButtonProps={{ danger: true }}
+            >
+              <Button
+                type="link"
+                size="small"
+                danger
+                disabled={writesDisabled}
+                icon={<DeleteOutlined />}
+              >
+                删除
+              </Button>
+            </Popconfirm>
+          )}
         </Space>
       ),
     },
@@ -319,28 +371,55 @@ export default function ProductsPage() {
           />
           <Button
             icon={<RobotOutlined />}
+            disabled={writesDisabled}
             onClick={() => setAiDrawerOpen(true)}
           >
             AI 智能识别
           </Button>
-          <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
+          <Button
+            type="primary"
+            icon={<PlusOutlined />}
+            disabled={createDisabled}
+            onClick={openCreate}
+          >
             新建产品
           </Button>
         </Space>
       </div>
-      <Table
-        columns={columns}
-        dataSource={products}
-        rowKey="id"
-        loading={loading}
-        pagination={{
-          current: page,
-          total,
-          pageSize: 20,
-          onChange: setPage,
-          showTotal: (t) => `共 ${t} 条`,
-        }}
-      />
+      {brandLoadError && (
+        <Alert
+          className="mb-4"
+          type="error"
+          showIcon
+          title="品牌选项加载失败，新建产品暂不可用"
+          action={<Button onClick={() => void fetchBrands()}>重试</Button>}
+        />
+      )}
+      {Boolean(error) && (
+        <Alert
+          className="mb-4"
+          type="error"
+          showIcon
+          title="产品列表加载失败"
+          action={<Button onClick={() => void retry()}>重试</Button>}
+        />
+      )}
+      {!error && (
+        <Table
+          columns={columns}
+          dataSource={products}
+          rowKey="id"
+          loading={loading}
+          locale={{ emptyText: <Empty description="暂无产品" /> }}
+          pagination={{
+            current: page,
+            total,
+            pageSize: 20,
+            onChange: setPage,
+            showTotal: (t) => `共 ${t} 条`,
+          }}
+        />
+      )}
       <Modal
         title={editItem ? "编辑产品基础信息" : "新建产品档案"}
         open={modalOpen}
@@ -348,10 +427,16 @@ export default function ProductsPage() {
         onOk={() => form.submit()}
         okText={editItem ? "保存基础信息" : "创建并进入工作台"}
         confirmLoading={saving}
+        okButtonProps={{ disabled: writesDisabled || brandLoadError }}
         width={560}
         forceRender
       >
-        <Form form={form} layout="vertical" onFinish={handleSubmit}>
+        <Form
+          form={form}
+          layout="vertical"
+          disabled={writesDisabled}
+          onFinish={handleSubmit}
+        >
           <Form.Item
             name="name"
             label="产品名称"
@@ -365,6 +450,8 @@ export default function ProductsPage() {
             rules={[{ required: true, message: "请选择品牌" }]}
           >
             <Select
+              loading={brandsLoading}
+              disabled={brandLoadError}
               placeholder="选择品牌"
               showSearch
               optionFilterProp="label"
@@ -374,6 +461,7 @@ export default function ProductsPage() {
                 <Button
                   type="link"
                   className="!px-0"
+                  disabled={writesDisabled}
                   onClick={openQuickBrandCreate}
                 >
                   新建品牌
@@ -386,6 +474,7 @@ export default function ProductsPage() {
                   <Button
                     type="link"
                     className="!px-0"
+                    disabled={writesDisabled}
                     icon={<PlusOutlined />}
                     onMouseDown={(event) => event.preventDefault()}
                     onClick={openQuickBrandCreate}
@@ -424,12 +513,7 @@ export default function ProductsPage() {
           <Form.Item
             name="image_url"
             label="产品主图"
-            rules={[
-              {
-                type: "url",
-                message: "请输入以 http:// 或 https:// 开头的图片链接",
-              },
-            ]}
+            rules={[{ validator: validateCatalogPublicUrl }]}
           >
             <ImageUploadInput
               module="product-image"
@@ -446,12 +530,14 @@ export default function ProductsPage() {
         onCancel={() => setBrandModalOpen(false)}
         onOk={() => brandForm.submit()}
         confirmLoading={brandCreating}
+        okButtonProps={{ disabled: writesDisabled }}
         okText="创建品牌"
         forceRender
       >
         <Form
           form={brandForm}
           layout="vertical"
+          disabled={writesDisabled}
           onFinish={handleQuickBrandCreate}
         >
           <Form.Item

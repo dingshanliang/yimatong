@@ -2,7 +2,19 @@ import uuid
 from datetime import date
 from enum import StrEnum
 
-from sqlalchemy import JSON, Date, DateTime, ForeignKey, String, Text, UniqueConstraint, func
+from sqlalchemy import (
+    JSON,
+    CheckConstraint,
+    Date,
+    DateTime,
+    ForeignKey,
+    ForeignKeyConstraint,
+    Index,
+    String,
+    Text,
+    UniqueConstraint,
+    func,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from uuid6 import uuid7
 
@@ -54,7 +66,11 @@ class ProductAssetStatus(StrEnum):
 
 class Brand(Base, ExternalRefMixin):
     __tablename__ = "brands"
-    __table_args__ = (UniqueConstraint("tenant_id", "name", name="uq_brands_tenant_name"),)
+    __table_args__ = (
+        ForeignKeyConstraint(["tenant_id"], ["tenants.id"], name="fk_brands_tenant"),
+        UniqueConstraint("tenant_id", "id", name="uq_brands_tenant_id_id"),
+        UniqueConstraint("tenant_id", "name", name="uq_brands_tenant_name"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid7)
     tenant_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
@@ -67,11 +83,27 @@ class Brand(Base, ExternalRefMixin):
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
 
-    products = relationship("Product", back_populates="brand", lazy="selectin")
+    products = relationship(
+        "Product",
+        back_populates="brand",
+        lazy="selectin",
+        primaryjoin="and_(Brand.tenant_id == Product.tenant_id, Brand.id == Product.brand_id)",
+        foreign_keys="[Product.tenant_id, Product.brand_id]",
+    )
 
 
 class Product(Base, ExternalRefMixin):
     __tablename__ = "products"
+    __table_args__ = (
+        ForeignKeyConstraint(["tenant_id"], ["tenants.id"], name="fk_products_tenant"),
+        ForeignKeyConstraint(
+            ["tenant_id", "brand_id"],
+            ["brands.tenant_id", "brands.id"],
+            name="fk_products_tenant_brand",
+        ),
+        UniqueConstraint("tenant_id", "id", name="uq_products_tenant_id_id"),
+        Index("ix_products_tenant_brand", "tenant_id", "brand_id"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid7)
     tenant_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
@@ -89,10 +121,35 @@ class Product(Base, ExternalRefMixin):
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
 
-    brand = relationship("Brand", back_populates="products")
-    skus = relationship("SKU", back_populates="product", lazy="selectin")
-    batches = relationship("ProductionBatch", back_populates="product", lazy="selectin")
-    assets = relationship("ProductAsset", back_populates="product", lazy="selectin", cascade="all, delete-orphan")
+    brand = relationship(
+        "Brand",
+        back_populates="products",
+        primaryjoin="and_(Product.tenant_id == Brand.tenant_id, Product.brand_id == Brand.id)",
+        foreign_keys="[Product.tenant_id, Product.brand_id]",
+    )
+    skus = relationship(
+        "SKU",
+        back_populates="product",
+        lazy="selectin",
+        primaryjoin="and_(Product.tenant_id == SKU.tenant_id, Product.id == SKU.product_id)",
+        foreign_keys="[SKU.tenant_id, SKU.product_id]",
+    )
+    batches = relationship(
+        "ProductionBatch",
+        back_populates="product",
+        lazy="selectin",
+        primaryjoin=("and_(Product.tenant_id == ProductionBatch.tenant_id, Product.id == ProductionBatch.product_id)"),
+        foreign_keys="[ProductionBatch.tenant_id, ProductionBatch.product_id]",
+        overlaps="batches,sku",
+    )
+    assets = relationship(
+        "ProductAsset",
+        back_populates="product",
+        lazy="selectin",
+        cascade="all, delete-orphan",
+        primaryjoin=("and_(Product.tenant_id == ProductAsset.tenant_id, Product.id == ProductAsset.product_id)"),
+        foreign_keys="[ProductAsset.tenant_id, ProductAsset.product_id]",
+    )
 
     @property
     def brand_name(self) -> str | None:
@@ -102,7 +159,17 @@ class Product(Base, ExternalRefMixin):
 
 class SKU(Base, ExternalRefMixin):
     __tablename__ = "skus"
-    __table_args__ = (UniqueConstraint("tenant_id", "product_id", "code", name="uq_skus_tenant_product_code"),)
+    __table_args__ = (
+        ForeignKeyConstraint(["tenant_id"], ["tenants.id"], name="fk_skus_tenant"),
+        ForeignKeyConstraint(
+            ["tenant_id", "product_id"],
+            ["products.tenant_id", "products.id"],
+            name="fk_skus_tenant_product",
+        ),
+        UniqueConstraint("tenant_id", "id", name="uq_skus_tenant_id_id"),
+        UniqueConstraint("tenant_id", "product_id", "id", name="uq_skus_tenant_product_id_id"),
+        UniqueConstraint("tenant_id", "product_id", "code", name="uq_skus_tenant_product_code"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid7)
     tenant_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
@@ -119,8 +186,23 @@ class SKU(Base, ExternalRefMixin):
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
 
-    product = relationship("Product", back_populates="skus")
-    batches = relationship("ProductionBatch", back_populates="sku", lazy="selectin")
+    product = relationship(
+        "Product",
+        back_populates="skus",
+        primaryjoin="and_(SKU.tenant_id == Product.tenant_id, SKU.product_id == Product.id)",
+        foreign_keys="[SKU.tenant_id, SKU.product_id]",
+    )
+    batches = relationship(
+        "ProductionBatch",
+        back_populates="sku",
+        lazy="selectin",
+        primaryjoin=(
+            "and_(SKU.tenant_id == ProductionBatch.tenant_id, "
+            "SKU.product_id == ProductionBatch.product_id, SKU.id == ProductionBatch.sku_id)"
+        ),
+        foreign_keys=("[ProductionBatch.tenant_id, ProductionBatch.product_id, ProductionBatch.sku_id]"),
+        overlaps="batches",
+    )
 
     @property
     def product_name(self) -> str | None:
@@ -130,7 +212,26 @@ class SKU(Base, ExternalRefMixin):
 
 class ProductionBatch(Base, ExternalRefMixin):
     __tablename__ = "production_batches"
-    __table_args__ = (UniqueConstraint("tenant_id", "batch_code", name="uq_production_batches_tenant_batch_code"),)
+    __table_args__ = (
+        ForeignKeyConstraint(["tenant_id"], ["tenants.id"], name="fk_production_batches_tenant"),
+        ForeignKeyConstraint(
+            ["tenant_id", "product_id"],
+            ["products.tenant_id", "products.id"],
+            name="fk_production_batches_tenant_product",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "product_id", "sku_id"],
+            ["skus.tenant_id", "skus.product_id", "skus.id"],
+            name="fk_production_batches_tenant_product_sku",
+        ),
+        CheckConstraint(
+            "expiry_date >= production_date",
+            name="ck_production_batches_expiry_not_before_production",
+        ),
+        UniqueConstraint("tenant_id", "batch_code", name="uq_production_batches_tenant_batch_code"),
+        Index("ix_production_batches_tenant_product", "tenant_id", "product_id"),
+        Index("ix_production_batches_tenant_product_sku", "tenant_id", "product_id", "sku_id"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid7)
     tenant_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
@@ -146,8 +247,23 @@ class ProductionBatch(Base, ExternalRefMixin):
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
 
-    product = relationship("Product", back_populates="batches")
-    sku = relationship("SKU", back_populates="batches")
+    product = relationship(
+        "Product",
+        back_populates="batches",
+        primaryjoin=("and_(ProductionBatch.tenant_id == Product.tenant_id, ProductionBatch.product_id == Product.id)"),
+        foreign_keys="[ProductionBatch.tenant_id, ProductionBatch.product_id]",
+        overlaps="batches",
+    )
+    sku = relationship(
+        "SKU",
+        back_populates="batches",
+        primaryjoin=(
+            "and_(ProductionBatch.tenant_id == SKU.tenant_id, "
+            "ProductionBatch.product_id == SKU.product_id, ProductionBatch.sku_id == SKU.id)"
+        ),
+        foreign_keys="[ProductionBatch.tenant_id, ProductionBatch.product_id, ProductionBatch.sku_id]",
+        overlaps="batches,product",
+    )
 
     @property
     def product_name(self) -> str | None:
@@ -167,6 +283,33 @@ class ProductionBatch(Base, ExternalRefMixin):
 
 class ProductAsset(Base, ExternalRefMixin):
     __tablename__ = "product_assets"
+    __table_args__ = (
+        ForeignKeyConstraint(["tenant_id"], ["tenants.id"], name="fk_product_assets_tenant"),
+        ForeignKeyConstraint(
+            ["tenant_id", "product_id"],
+            ["products.tenant_id", "products.id"],
+            name="fk_product_assets_tenant_product",
+        ),
+        CheckConstraint(
+            "status <> 'active' OR asset_type NOT IN ('test_report', 'certificate') OR "
+            "(NULLIF(trim(issuer), '') IS NOT NULL AND "
+            "(COALESCE(trim(file_url), '') LIKE 'https://%' OR "
+            "(COALESCE(trim(file_url), '') LIKE '/api/v1/files/public/%' AND "
+            "COALESCE(trim(file_url), '') NOT LIKE '%/../%' AND "
+            "COALESCE(trim(file_url), '') NOT LIKE '%/./%' AND "
+            "COALESCE(trim(file_url), '') NOT LIKE '%\\%' AND "
+            "instr(COALESCE(trim(file_url), ''), '%') = 0) OR "
+            "COALESCE(trim(image_url), '') LIKE 'https://%' OR "
+            "(COALESCE(trim(image_url), '') LIKE '/api/v1/files/public/%' AND "
+            "COALESCE(trim(image_url), '') NOT LIKE '%/../%' AND "
+            "COALESCE(trim(image_url), '') NOT LIKE '%/./%' AND "
+            "COALESCE(trim(image_url), '') NOT LIKE '%\\%' AND "
+            "instr(COALESCE(trim(image_url), ''), '%') = 0)) AND "
+            "(valid_until IS NULL OR valid_until >= CAST(created_at AS DATE)))",
+            name="ck_product_assets_active_trust_evidence",
+        ),
+        Index("ix_product_assets_tenant_product", "tenant_id", "product_id"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid7)
     tenant_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
@@ -186,4 +329,9 @@ class ProductAsset(Base, ExternalRefMixin):
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
 
-    product = relationship("Product", back_populates="assets")
+    product = relationship(
+        "Product",
+        back_populates="assets",
+        primaryjoin=("and_(ProductAsset.tenant_id == Product.tenant_id, ProductAsset.product_id == Product.id)"),
+        foreign_keys="[ProductAsset.tenant_id, ProductAsset.product_id]",
+    )

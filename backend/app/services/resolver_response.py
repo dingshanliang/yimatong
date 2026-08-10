@@ -1,8 +1,9 @@
 """构建 H5 前端所需的 JSON 响应（从 resolver 模块提取）"""
 
 import uuid
+from datetime import date
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.campaign import Benefit, Campaign, CampaignStatus
@@ -19,9 +20,19 @@ from app.models.product import (
 from app.models.risk import RiskAlert
 from app.models.tenant import Tenant
 from app.services.redis_cache import AsyncRedisCache
+from app.utils.public_url import normalize_public_url
 
 _product_cache = AsyncRedisCache(prefix="product", default_ttl=600)
 _page_config_cache = AsyncRedisCache(prefix="pagecfg", default_ttl=600)
+
+
+def _safe_public_url(value: str | None) -> str:
+    if not value:
+        return ""
+    try:
+        return normalize_public_url(value)
+    except ValueError:
+        return ""
 
 
 async def invalidate_product_cache(product_id: uuid.UUID | str) -> None:
@@ -52,19 +63,30 @@ async def _fetch_public_assets(
             ProductAsset.product_id == product_id,
             ProductAsset.status == ProductAssetStatus.active,
             ProductAsset.asset_type.in_((ProductAssetType.test_report, ProductAssetType.certificate)),
+            or_(ProductAsset.valid_until.is_(None), ProductAsset.valid_until >= date.today()),
         )
         .order_by(ProductAsset.created_at.desc())
     )
     reports: list[dict] = []
     certificates: list[dict] = []
     for asset in asset_result.scalars():
+        evidence_urls: dict[str, str] = {}
+        try:
+            if asset.file_url:
+                evidence_urls["file_url"] = normalize_public_url(asset.file_url)
+            if asset.image_url:
+                evidence_urls["image_url"] = normalize_public_url(asset.image_url)
+        except ValueError:
+            continue
+        if not asset.issuer or not asset.issuer.strip() or not evidence_urls:
+            continue
         item = {
             "id": str(asset.id),
             "name": asset.name,
-            "issuer": asset.issuer or "",
+            "issuer": asset.issuer,
             "valid_until": str(asset.valid_until) if asset.valid_until else "",
-            "file_url": asset.file_url or "",
-            "image_url": asset.image_url or "",
+            "file_url": evidence_urls.get("file_url", ""),
+            "image_url": evidence_urls.get("image_url", ""),
             "summary": asset.description or "",
         }
         if asset.asset_type == ProductAssetType.test_report:
@@ -123,7 +145,7 @@ async def build_json_response(
             # 防御性 tenant 过滤：即使 product_id 来自上游 CodeItem，也在此校验归属
             prod_result = await db.execute(
                 select(Product, Brand)
-                .join(Brand, Product.brand_id == Brand.id)
+                .join(Brand, (Product.brand_id == Brand.id) & (Product.tenant_id == Brand.tenant_id))
                 .where(Product.id == uuid.UUID(product_id), Product.tenant_id == tenant_uuid)
             )
             row = prod_result.one_or_none()
@@ -132,10 +154,10 @@ async def build_json_response(
                 product_data = {
                     "name": product.name,
                     "description": product.description,
-                    "image_url": product.image_url or "",
+                    "image_url": _safe_public_url(product.image_url),
                     "origin": product.origin or "",
                 }
-                brand_data = {"name": brand.name, "logo_url": brand.logo_url or ""}
+                brand_data = {"name": brand.name, "logo_url": _safe_public_url(brand.logo_url)}
                 test_reports, certificates = await _fetch_public_assets(db, tenant_uuid, product.id)
                 await _product_cache.set(
                     f"pb:{product_id}",
@@ -163,6 +185,12 @@ async def build_json_response(
     )
     tenant_brand_row = tenant_result.one_or_none()
     brand_profile = dict(tenant_brand_row.brand_profile or {}) if tenant_brand_row else {}
+    if "logo_url" in brand_profile:
+        safe_profile_logo = _safe_public_url(brand_profile.get("logo_url"))
+        if safe_profile_logo:
+            brand_profile["logo_url"] = safe_profile_logo
+        else:
+            brand_profile.pop("logo_url", None)
     if brand_profile.get("hide_yimatong_brand"):
         from app.services.entitlement import is_feature_enabled
 

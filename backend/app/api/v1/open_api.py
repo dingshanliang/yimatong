@@ -4,9 +4,10 @@
 """
 
 import uuid
+from datetime import date
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -314,39 +315,84 @@ async def update_campaign_status(
 # --- Products / SKU / Batch CRUD (ERP integration) ---
 
 
-class ProductCreateRequest(BaseModel):
-    name: str
-    brand_name: str | None = None
-    category: str | None = None
-    description: str | None = None
-    external_id: str | None = None
+class CatalogRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
 
-class ProductUpdateRequest(BaseModel):
-    name: str | None = None
-    category: str | None = None
-    description: str | None = None
+def _normalize_open_specifications(value: dict[str, str] | None) -> dict[str, str] | None:
+    if value is None:
+        return None
+    if len(value) > 50:
+        raise ValueError("Specifications may contain at most 50 entries")
+    normalized: dict[str, str] = {}
+    for raw_key, raw_value in value.items():
+        key, item = raw_key.strip(), raw_value.strip()
+        if not key or not item or len(key) > 100 or len(item) > 500:
+            raise ValueError("Specification keys and values must be nonblank and bounded")
+        normalized[key] = item
+    return normalized
 
 
-class SkuCreateRequest(BaseModel):
-    product_name: str
-    code: str
-    name: str
-    specifications: dict | None = None
-    external_id: str | None = None
+class ProductCreateRequest(CatalogRequest):
+    name: str = Field(min_length=1, max_length=200)
+    brand_id: uuid.UUID | None = None
+    brand_name: str | None = Field(None, min_length=1, max_length=100)
+    category: str | None = Field(None, max_length=100)
+    description: str | None = Field(None, max_length=1000)
+    external_id: str | None = Field(None, max_length=100)
+
+    @model_validator(mode="after")
+    def require_one_brand_reference(self):
+        if (self.brand_id is None) == (self.brand_name is None):
+            raise ValueError("Exactly one of brand_id or brand_name is required")
+        return self
 
 
-class SkuUpdateRequest(BaseModel):
-    name: str | None = None
-    specifications: dict | None = None
+class ProductUpdateRequest(CatalogRequest):
+    name: str | None = Field(None, min_length=1, max_length=200)
+    category: str | None = Field(None, max_length=100)
+    description: str | None = Field(None, max_length=1000)
 
 
-class BatchCreateRequest(BaseModel):
-    sku_code: str
-    batch_code: str
-    production_date: str
-    expiry_date: str
-    external_id: str | None = None
+class SkuCreateRequest(CatalogRequest):
+    product_id: uuid.UUID | None = None
+    product_name: str | None = Field(None, min_length=1, max_length=200)
+    code: str = Field(min_length=1, max_length=100)
+    name: str = Field(min_length=1, max_length=200)
+    specifications: dict[str, str] | None = None
+    external_id: str | None = Field(None, max_length=100)
+
+    _normalize_specifications = field_validator("specifications")(_normalize_open_specifications)
+
+    @model_validator(mode="after")
+    def require_one_product_reference(self):
+        if (self.product_id is None) == (self.product_name is None):
+            raise ValueError("Exactly one of product_id or product_name is required")
+        return self
+
+
+class SkuUpdateRequest(CatalogRequest):
+    name: str | None = Field(None, min_length=1, max_length=200)
+    specifications: dict[str, str] | None = None
+
+    _normalize_specifications = field_validator("specifications")(_normalize_open_specifications)
+
+
+class BatchCreateRequest(CatalogRequest):
+    sku_id: uuid.UUID | None = None
+    sku_code: str | None = Field(None, min_length=1, max_length=100)
+    batch_code: str = Field(min_length=1, max_length=100)
+    production_date: date
+    expiry_date: date
+    external_id: str | None = Field(None, max_length=100)
+
+    @model_validator(mode="after")
+    def validate_batch(self):
+        if (self.sku_id is None) == (self.sku_code is None):
+            raise ValueError("Exactly one of sku_id or sku_code is required")
+        if self.expiry_date < self.production_date:
+            raise ValueError("expiry_date cannot be earlier than production_date")
+        return self
 
 
 @open_api_router.get("/products")
@@ -387,19 +433,20 @@ async def open_list_products(
 @open_api_router.post("/products", status_code=201)
 async def open_create_product(
     body: ProductCreateRequest,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
     _: None = Depends(require_permission("product:create")),
 ):
     from app.models.product import Brand, Product
 
-    brand_id = None
-    if body.brand_name:
-        bresult = await db.execute(select(Brand).where(Brand.tenant_id == tenant_id, Brand.name == body.brand_name))
-        brand = bresult.scalar_one_or_none()
-        if not brand:
-            raise HTTPException(status_code=400, detail=f"品牌 '{body.brand_name}' 不存在")
-        brand_id = brand.id
+    brand_query = select(Brand).where(Brand.tenant_id == tenant_id)
+    if body.brand_id is not None:
+        brand_query = brand_query.where(Brand.id == body.brand_id)
+    else:
+        brand_query = brand_query.where(Brand.name == body.brand_name)
+    brand = (await db.execute(brand_query)).scalar_one_or_none()
+    if not brand:
+        raise HTTPException(status_code=404, detail="品牌不存在")
 
     existing = None
     if body.external_id:
@@ -415,11 +462,19 @@ async def open_create_product(
     if existing:
         if body.name is not None:
             existing.name = body.name
-        if body.category is not None:
+        if "category" in body.model_fields_set:
             existing.category = body.category
-        if body.description is not None:
+        if "description" in body.model_fields_set:
             existing.description = body.description
         await db.flush()
+        await write_audit_log(
+            db,
+            "open_api",
+            str(tenant_id),
+            "product_updated",
+            f"product:{existing.id}",
+            {"resource_name": existing.name, "source": "open_api", "result": "success"},
+        )
         return {
             "id": str(existing.id),
             "name": existing.name,
@@ -429,7 +484,7 @@ async def open_create_product(
 
     product = Product(
         tenant_id=tenant_id,
-        brand_id=brand_id,
+        brand_id=brand.id,
         name=body.name,
         category=body.category,
         description=body.description,
@@ -439,6 +494,14 @@ async def open_create_product(
     await reserve_quota(db, tenant_id, CumulativeQuotaKey.MAX_PRODUCTS)
     db.add(product)
     await db.flush()
+    await write_audit_log(
+        db,
+        "open_api",
+        str(tenant_id),
+        "product_created",
+        f"product:{product.id}",
+        {"resource_name": product.name, "source": "open_api", "result": "success"},
+    )
     return {
         "id": str(product.id),
         "name": product.name,
@@ -451,7 +514,7 @@ async def open_create_product(
 async def open_update_product(
     product_id: uuid.UUID,
     body: ProductUpdateRequest,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
     _: None = Depends(require_permission("product:update")),
 ):
@@ -464,11 +527,19 @@ async def open_update_product(
 
     if body.name is not None:
         product.name = body.name
-    if body.category is not None:
+    if "category" in body.model_fields_set:
         product.category = body.category
-    if body.description is not None:
+    if "description" in body.model_fields_set:
         product.description = body.description
     await db.flush()
+    await write_audit_log(
+        db,
+        "open_api",
+        str(tenant_id),
+        "product_updated",
+        f"product:{product.id}",
+        {"resource_name": product.name, "source": "open_api", "result": "success"},
+    )
     return {"id": str(product.id), "name": product.name}
 
 
@@ -510,16 +581,23 @@ async def open_list_skus(
 @open_api_router.post("/skus", status_code=201)
 async def open_create_sku(
     body: SkuCreateRequest,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
     _: None = Depends(require_permission("product:create")),
 ):
     from app.models.product import SKU, Product
 
-    presult = await db.execute(select(Product).where(Product.tenant_id == tenant_id, Product.name == body.product_name))
-    product = presult.scalar_one_or_none()
-    if not product:
-        raise HTTPException(status_code=400, detail=f"产品 '{body.product_name}' 不存在")
+    product_query = select(Product).where(Product.tenant_id == tenant_id)
+    if body.product_id is not None:
+        product_query = product_query.where(Product.id == body.product_id)
+    else:
+        product_query = product_query.where(Product.name == body.product_name).limit(2)
+    products = list((await db.execute(product_query)).scalars().all())
+    if not products:
+        raise HTTPException(status_code=404, detail="产品不存在")
+    if len(products) > 1:
+        raise HTTPException(status_code=409, detail="产品名称不唯一，请改用 product_id")
+    product = products[0]
 
     existing = None
     if body.external_id:
@@ -535,9 +613,17 @@ async def open_create_sku(
     if existing:
         if body.name is not None:
             existing.name = body.name
-        if body.specifications is not None:
+        if "specifications" in body.model_fields_set:
             existing.specifications = body.specifications
         await db.flush()
+        await write_audit_log(
+            db,
+            "open_api",
+            str(tenant_id),
+            "sku_updated",
+            f"sku:{existing.id}",
+            {"resource_name": existing.name, "source": "open_api", "result": "success"},
+        )
         return {
             "id": str(existing.id),
             "code": existing.code,
@@ -556,6 +642,14 @@ async def open_create_sku(
     )
     db.add(sku)
     await db.flush()
+    await write_audit_log(
+        db,
+        "open_api",
+        str(tenant_id),
+        "sku_created",
+        f"sku:{sku.id}",
+        {"resource_name": sku.name, "product_id": str(sku.product_id), "source": "open_api", "result": "success"},
+    )
     return {
         "id": str(sku.id),
         "code": sku.code,
@@ -568,7 +662,7 @@ async def open_create_sku(
 async def open_update_sku(
     sku_id: uuid.UUID,
     body: SkuUpdateRequest,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
     _: None = Depends(require_permission("product:update")),
 ):
@@ -581,9 +675,17 @@ async def open_update_sku(
 
     if body.name is not None:
         sku.name = body.name
-    if body.specifications is not None:
+    if "specifications" in body.model_fields_set:
         sku.specifications = body.specifications
     await db.flush()
+    await write_audit_log(
+        db,
+        "open_api",
+        str(tenant_id),
+        "sku_updated",
+        f"sku:{sku.id}",
+        {"resource_name": sku.name, "source": "open_api", "result": "success"},
+    )
     return {"id": str(sku.id), "code": sku.code}
 
 
@@ -628,18 +730,23 @@ async def open_list_batches(
 @open_api_router.post("/batches", status_code=201)
 async def open_create_batch(
     body: BatchCreateRequest,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
     _: None = Depends(require_permission("product:create")),
 ):
-    from datetime import date as date_type
-
     from app.models.product import SKU, ProductionBatch
 
-    sresult = await db.execute(select(SKU).where(SKU.tenant_id == tenant_id, SKU.code == body.sku_code))
-    sku = sresult.scalar_one_or_none()
-    if not sku:
-        raise HTTPException(status_code=400, detail=f"SKU 编码 '{body.sku_code}' 不存在")
+    sku_query = select(SKU).where(SKU.tenant_id == tenant_id)
+    if body.sku_id is not None:
+        sku_query = sku_query.where(SKU.id == body.sku_id)
+    else:
+        sku_query = sku_query.where(SKU.code == body.sku_code).limit(2)
+    skus = list((await db.execute(sku_query)).scalars().all())
+    if not skus:
+        raise HTTPException(status_code=404, detail="SKU 不存在")
+    if len(skus) > 1:
+        raise HTTPException(status_code=409, detail="SKU 编码不唯一，请改用 sku_id")
+    sku = skus[0]
 
     existing = None
     if body.external_id:
@@ -654,9 +761,17 @@ async def open_create_batch(
 
     if existing:
         existing.batch_code = body.batch_code
-        existing.production_date = date_type.fromisoformat(body.production_date)
-        existing.expiry_date = date_type.fromisoformat(body.expiry_date)
+        existing.production_date = body.production_date
+        existing.expiry_date = body.expiry_date
         await db.flush()
+        await write_audit_log(
+            db,
+            "open_api",
+            str(tenant_id),
+            "production_batch_updated",
+            f"production_batch:{existing.id}",
+            {"resource_name": existing.batch_code, "source": "open_api", "result": "success"},
+        )
         return {
             "id": str(existing.id),
             "batch_code": existing.batch_code,
@@ -669,13 +784,21 @@ async def open_create_batch(
         product_id=sku.product_id,
         sku_id=sku.id,
         batch_code=body.batch_code,
-        production_date=date_type.fromisoformat(body.production_date),
-        expiry_date=date_type.fromisoformat(body.expiry_date),
+        production_date=body.production_date,
+        expiry_date=body.expiry_date,
         external_id=body.external_id,
         source_system="open_api" if body.external_id else None,
     )
     db.add(batch)
     await db.flush()
+    await write_audit_log(
+        db,
+        "open_api",
+        str(tenant_id),
+        "production_batch_created",
+        f"production_batch:{batch.id}",
+        {"resource_name": batch.batch_code, "sku_id": str(batch.sku_id), "source": "open_api", "result": "success"},
+    )
     return {
         "id": str(batch.id),
         "batch_code": batch.batch_code,

@@ -27,6 +27,54 @@ async def write_audit_log(
     # transaction, preserving business-write/audit atomicity.
     recorded_at = datetime.now(UTC)
     credential = get_request_security_credential()
+    catalog_actions = {
+        "product_created",
+        "product_updated",
+        "sku_created",
+        "sku_updated",
+        "production_batch_created",
+        "production_batch_updated",
+    }
+    if (
+        db.get_bind().dialect.name == "postgresql"
+        and credential is not None
+        and credential[0] == "api_key"
+        and action in catalog_actions
+    ):
+        try:
+            resource_id = uuid.UUID(resource.rsplit(":", 1)[-1])
+        except (ValueError, AttributeError) as exc:
+            raise ValueError("Catalog audit resource must end with a UUID") from exc
+        audit_id = uuid7()
+        statement = text(
+            "SELECT audit_id, resolved_operator_id, recorded_at "
+            "FROM public.append_api_key_catalog_audit_event("
+            ":audit_id, :api_key_id, :target_tenant_id, :action, :resource_id, :details)"
+        ).bindparams(bindparam("details", type_=JSONB))
+        row = (
+            await db.execute(
+                statement,
+                {
+                    "audit_id": audit_id,
+                    "api_key_id": uuid.UUID(credential[1]),
+                    "target_tenant_id": uuid.UUID(target_tenant_id),
+                    "action": action,
+                    "resource_id": resource_id,
+                    "details": details,
+                },
+            )
+        ).one()
+        return PlatformAuditLog(
+            id=row.audit_id,
+            operator_id=row.resolved_operator_id,
+            target_tenant_id=target_tenant_id,
+            action=action,
+            resource=resource,
+            details=details,
+            timestamp=row.recorded_at,
+            created_at=row.recorded_at,
+            updated_at=row.recorded_at,
+        )
     if db.get_bind().dialect.name == "postgresql" and credential is not None and credential[0] == "auth_session":
         audit_id = uuid7()
         statement = text(

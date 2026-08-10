@@ -1,4 +1,5 @@
 import uuid
+from datetime import date
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -21,6 +22,27 @@ from app.models.product import (
 )
 from app.services.quota import CumulativeQuotaKey, check_quota_for_tenant, release_quota
 from app.utils import escape_like_pattern
+from app.utils.public_url import normalize_public_url
+
+
+def _validate_active_trust_asset(asset: ProductAsset) -> None:
+    if asset.status != ProductAssetStatus.active or asset.asset_type not in {
+        ProductAssetType.test_report,
+        ProductAssetType.certificate,
+    }:
+        return
+    if not asset.issuer or not asset.issuer.strip():
+        raise BadRequestError("Active trust evidence requires an issuer")
+    if asset.valid_until is not None and asset.valid_until < date.today():
+        raise BadRequestError("Active trust evidence is expired")
+    evidence_urls = [value for value in (asset.file_url, asset.image_url) if value]
+    if not evidence_urls:
+        raise BadRequestError("Active trust evidence requires a public evidence URL")
+    for value in evidence_urls:
+        try:
+            normalize_public_url(value)
+        except ValueError as exc:
+            raise BadRequestError(str(exc)) from exc
 
 
 async def create_brand(
@@ -78,8 +100,10 @@ async def update_brand(
     logo_url: str | None = None,
     description: str | None = None,
     status: BrandStatus | None = None,
+    fields_to_update: set[str] | None = None,
 ) -> Brand | None:
-    result = await db.execute(select(Brand).where(Brand.id == brand_id, Brand.tenant_id == tenant_id))
+    fields_to_update = fields_to_update or set()
+    result = await db.execute(select(Brand).where(Brand.id == brand_id, Brand.tenant_id == tenant_id).with_for_update())
     brand = result.scalar_one_or_none()
     if not brand:
         return None
@@ -92,15 +116,27 @@ async def update_brand(
         if existing.scalar_one_or_none():
             raise ConflictError("Brand name already exists in this tenant")
         brand.name = name
-    if logo_url is not None:
+    public_identity_changed = False
+    if logo_url is not None or "logo_url" in fields_to_update:
         brand.logo_url = logo_url
-    if description is not None:
+        public_identity_changed = True
+    if description is not None or "description" in fields_to_update:
         brand.description = description
     if status is not None:
         brand.status = status
+    if name is not None:
+        public_identity_changed = True
 
     await db.flush()
     await db.refresh(brand)
+    if public_identity_changed:
+        product_ids = (
+            await db.execute(select(Product.id).where(Product.tenant_id == tenant_id, Product.brand_id == brand_id))
+        ).scalars()
+        from app.services.resolver_response import invalidate_product_cache
+
+        for product_id in product_ids:
+            await invalidate_product_cache(product_id)
     return brand
 
 
@@ -178,6 +214,8 @@ async def create_product(
 ) -> Product:
     brand_result = await db.execute(select(Brand).where(Brand.id == brand_id, Brand.tenant_id == tenant_id))
     brand = brand_result.scalar_one_or_none()
+    if not brand:
+        raise NotFoundError("Brand not found")
     await check_quota_for_tenant(db, tenant_id, CumulativeQuotaKey.MAX_PRODUCTS, Product)
     product = Product(
         tenant_id=tenant_id,
@@ -190,8 +228,7 @@ async def create_product(
         story_content=story_content,
         description=description,
     )
-    if brand:
-        product.brand = brand
+    product.brand = brand
     db.add(product)
     await db.flush()
     await db.refresh(product)
@@ -253,7 +290,9 @@ async def update_product(
     story_title: str | None = None,
     story_content: str | None = None,
     status: ProductStatus | None = None,
+    fields_to_update: set[str] | None = None,
 ) -> Product | None:
+    fields_to_update = fields_to_update or set()
     result = await db.execute(
         select(Product).where(Product.id == product_id, Product.tenant_id == tenant_id).with_for_update()
     )
@@ -268,17 +307,17 @@ async def update_product(
         product.brand_id = brand_id
     if name is not None:
         product.name = name
-    if category is not None:
+    if category is not None or "category" in fields_to_update:
         product.category = category
-    if origin is not None:
+    if origin is not None or "origin" in fields_to_update:
         product.origin = origin
-    if image_url is not None:
+    if image_url is not None or "image_url" in fields_to_update:
         product.image_url = image_url
-    if story_title is not None:
+    if story_title is not None or "story_title" in fields_to_update:
         product.story_title = story_title
-    if story_content is not None:
+    if story_content is not None or "story_content" in fields_to_update:
         product.story_content = story_content
-    if description is not None:
+    if description is not None or "description" in fields_to_update:
         product.description = description
     if status is not None:
         product.status = status
@@ -306,6 +345,8 @@ async def create_sku(
 ) -> SKU:
     product_result = await db.execute(select(Product).where(Product.id == product_id, Product.tenant_id == tenant_id))
     product = product_result.scalar_one_or_none()
+    if not product:
+        raise NotFoundError("Product not found")
     existing = await db.execute(
         select(SKU).where(SKU.tenant_id == tenant_id, SKU.product_id == product_id, SKU.code == code)
     )
@@ -322,8 +363,7 @@ async def create_sku(
         barcode=barcode,
         image_url=image_url,
     )
-    if product:
-        sku.product = product
+    sku.product = product
     db.add(sku)
     await db.flush()
     await db.refresh(sku)
@@ -577,6 +617,7 @@ async def create_product_asset(
         content_text=content_text,
         metadata_json=metadata_json,
     )
+    _validate_active_trust_asset(asset)
     db.add(asset)
     await db.flush()
     await db.refresh(asset)
@@ -659,6 +700,8 @@ async def update_product_asset(
     if status is not None:
         asset.status = status
 
+    _validate_active_trust_asset(asset)
+
     await db.flush()
     await db.refresh(asset)
     # 失效公共解析缓存：编辑资产影响消费者页 test_reports/certificates（yimatong-zgb1.2）
@@ -700,6 +743,17 @@ async def import_batches_csv(
     imported = 0
     errors = []
 
+    product = (
+        await db.execute(select(Product).where(Product.id == product_id, Product.tenant_id == tenant_id))
+    ).scalar_one_or_none()
+    if not product:
+        raise NotFoundError("Product not found")
+    sku = (await db.execute(select(SKU).where(SKU.id == sku_id, SKU.tenant_id == tenant_id))).scalar_one_or_none()
+    if not sku:
+        raise NotFoundError("SKU not found")
+    if sku.product_id != product_id:
+        raise BadRequestError("SKU does not belong to selected product")
+
     for row_num, row in enumerate(reader, start=2):
         try:
             batch_code = row["batch_code"].strip()
@@ -707,6 +761,8 @@ async def import_batches_csv(
             expiry_date_str = row["expiry_date"].strip()
             production_date = date_type.fromisoformat(production_date_str)
             expiry_date = date_type.fromisoformat(expiry_date_str)
+            if expiry_date < production_date:
+                raise ValueError("expiry_date cannot be earlier than production_date")
 
             existing = await db.execute(
                 select(ProductionBatch).where(

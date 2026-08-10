@@ -3,10 +3,12 @@
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import {
+  Alert,
   App,
   Button,
   Card,
   Descriptions,
+  Empty,
   Space,
   Statistic,
   Table,
@@ -19,6 +21,8 @@ import type { ColumnsType } from "antd/es/table";
 import api from "@/lib/api";
 import { formatDate } from "@/lib/format";
 import { STATUS_COLORS } from "@/lib/status-colors";
+import { useAuthStore } from "@/lib/auth";
+import { catalogAccessForPrincipal } from "@/lib/catalog-access";
 
 const { Title, Text } = Typography;
 
@@ -68,10 +72,16 @@ interface TabState<T> {
   total: number;
   page: number;
   loading: boolean;
+  error?: boolean;
 }
 
 function createTabState<T>(): TabState<T> {
   return { items: [], total: 0, page: 1, loading: false };
+}
+
+function getErrorStatus(error: unknown): number | undefined {
+  return (error as { response?: { status?: number } } | null | undefined)
+    ?.response?.status;
 }
 
 const SKU_STATUS_MAP: Record<string, { label: string; color: string }> = {
@@ -106,6 +116,17 @@ const GEN_MODE_LABELS: Record<string, string> = {
 };
 
 export default function SKUDetailPage() {
+  const user = useAuthStore((state) => state.user);
+  const access = catalogAccessForPrincipal(user);
+
+  if (!access.canRead) {
+    return <Alert type="warning" showIcon title="当前账号无权访问 SKU 目录" />;
+  }
+
+  return <SKUDetail />;
+}
+
+function SKUDetail() {
   const router = useRouter();
   const params = useParams<{ id: string }>();
   const skuId = params.id;
@@ -113,6 +134,7 @@ export default function SKUDetailPage() {
 
   const [sku, setSku] = useState<SKUDetail | null>(null);
   const [skuLoading, setSkuLoading] = useState(false);
+  const [skuLoadError, setSkuLoadError] = useState(false);
   const [activeTab, setActiveTab] = useState<TabKey>("profile");
 
   const [batches, setBatches] =
@@ -123,10 +145,13 @@ export default function SKUDetailPage() {
   const fetchSKU = async () => {
     try {
       setSkuLoading(true);
+      setSkuLoadError(false);
       const { data } = await api.get<SKUDetail>(`/skus/${skuId}`);
       setSku(data);
-    } catch {
-      message.error("获取 SKU 详情失败");
+    } catch (error) {
+      const failed = getErrorStatus(error) !== 404;
+      setSkuLoadError(failed);
+      if (failed) message.error("获取 SKU 详情失败");
     } finally {
       setSkuLoading(false);
     }
@@ -155,7 +180,7 @@ export default function SKUDetailPage() {
       "code-batches": codeBatches,
     }[tab];
 
-    setters[tab]({ ...prev, loading: true });
+    setters[tab]({ ...prev, loading: true, error: false });
 
     try {
       const { data } = await api.get(endpointMap[tab], {
@@ -169,7 +194,7 @@ export default function SKUDetailPage() {
       });
     } catch {
       message.error("获取数据失败");
-      setters[tab]({ ...prev, loading: false });
+      setters[tab]({ ...prev, loading: false, error: true });
     }
   };
 
@@ -286,23 +311,50 @@ export default function SKUDetailPage() {
     state: TabState<T>,
     onPageChange: (page: number) => void
   ) => (
-    <Table
-      columns={columns}
-      dataSource={state.items}
-      rowKey="id"
-      loading={state.loading}
-      pagination={{
-        current: state.page,
-        total: state.total,
-        pageSize: 20,
-        onChange: onPageChange,
-        showTotal: (t) => `共 ${t} 条`,
-      }}
-    />
+    <>
+      {state.error && (
+        <Alert
+          className="mb-3"
+          type="error"
+          showIcon
+          title="关联数据加载失败"
+          action={
+            <Button onClick={onPageChange.bind(null, state.page)}>重试</Button>
+          }
+        />
+      )}
+      {!state.error && (
+        <Table
+          columns={columns}
+          dataSource={state.items}
+          rowKey="id"
+          loading={state.loading}
+          locale={{ emptyText: <Empty description="暂无关联数据" /> }}
+          pagination={{
+            current: state.page,
+            total: state.total,
+            pageSize: 20,
+            onChange: onPageChange,
+            showTotal: (t) => `共 ${t} 条`,
+          }}
+        />
+      )}
+    </>
   );
 
   if (!sku && skuLoading) {
     return <div className="py-20 text-center text-text-muted">加载中...</div>;
+  }
+
+  if (!sku && skuLoadError) {
+    return (
+      <Alert
+        type="error"
+        showIcon
+        title="SKU 详情加载失败"
+        action={<Button onClick={() => void fetchSKU()}>重试</Button>}
+      />
+    );
   }
 
   if (!sku) {

@@ -125,6 +125,33 @@ async def traceability_setup(client: AsyncClient):
 
 class TestResolverJsonResponse:
     @pytest.mark.anyio
+    async def test_brand_identity_update_invalidates_warm_public_product_cache(self, client, traceability_setup):
+        first = await client.get(f"/c/{traceability_setup}", headers={"Accept": "application/json"})
+        assert first.status_code == 200
+        assert first.json()["brand"]["name"] == "溯源品牌"
+
+        tenant_resp = await client.get("/api/v1/tenants", headers=_platform_admin_headers())
+        tenant_id = tenant_resp.json()["items"][0]["id"]
+        headers = {
+            "Authorization": f"Bearer {create_access_token(tenant_id, '00000000-0000-0000-0000-000000000001', 'admin')}"
+        }
+        brands = await client.get("/api/v1/brands", headers=headers)
+        brand_id = brands.json()["items"][0]["id"]
+        updated = await client.patch(
+            f"/api/v1/brands/{brand_id}",
+            json={"name": "即时更新品牌", "logo_url": "https://assets.example.com/brand.png"},
+            headers=headers,
+        )
+        assert updated.status_code == 200
+
+        second = await client.get(f"/c/{traceability_setup}", headers={"Accept": "application/json"})
+        assert second.status_code == 200
+        assert second.json()["brand"] == {
+            "name": "即时更新品牌",
+            "logo_url": "https://assets.example.com/brand.png",
+        }
+
+    @pytest.mark.anyio
     async def test_json_has_product_image_url(self, client, traceability_setup):
         """产品图片应该用 image_url 而非空 images 数组"""
         resp = await client.get(
@@ -197,6 +224,30 @@ class TestResolverJsonResponse:
         assert branding.get("logo_url") == "https://cdn.example.com/tenant-logo.png", (
             "租户 brand_profile.logo_url 必须注入 tenant_branding"
         )
+
+    @pytest.mark.anyio
+    @pytest.mark.parametrize(
+        "historical_logo",
+        [
+            "https://127.0.0.1/internal.png",
+            "/api/v1/files/public/a/../../../auth/logout",
+            "/api/v1/files/public/a/%2e%2e/%2e%2e/auth/logout",
+            42,
+        ],
+    )
+    async def test_historical_unsafe_tenant_logo_is_not_published(
+        self, client, traceability_setup, db_session, historical_logo
+    ):
+        tenant_resp = await client.get("/api/v1/tenants", headers=_platform_admin_headers())
+        tenant = await db_session.get(Tenant, uuid.UUID(tenant_resp.json()["items"][0]["id"]))
+        assert tenant is not None
+        tenant.brand_profile = {"logo_url": historical_logo}
+        await db_session.flush()
+
+        response = await client.get(f"/c/{traceability_setup}", headers={"Accept": "application/json"})
+
+        assert response.status_code == 200
+        assert (response.json().get("tenant_branding") or {}).get("logo_url") in (None, "")
 
     @pytest.mark.anyio
     async def test_public_response_does_not_honor_unentitled_historical_white_label(

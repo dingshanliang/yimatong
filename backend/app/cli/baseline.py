@@ -649,7 +649,13 @@ async def _ensure_assets(
     对照租户不建资产，保持最小隔离数据。
     """
 
-    async def _ensure_one(name: str, asset_type: ProductAssetType, issuer: str, description: str) -> ProductAsset:
+    async def _ensure_one(
+        name: str,
+        asset_type: ProductAssetType,
+        issuer: str,
+        description: str,
+        file_url: str,
+    ) -> ProductAsset:
         result = await db.execute(
             select(ProductAsset).where(
                 ProductAsset.tenant_id == tenant_id,
@@ -666,6 +672,7 @@ async def _ensure_assets(
                 name=name,
                 description=description,
                 issuer=issuer,
+                file_url=file_url,
                 status=ProductAssetStatus.active,
             )
             db.add(asset)
@@ -678,12 +685,14 @@ async def _ensure_assets(
         ProductAssetType.test_report,
         "基准检测机构",
         "基准验收用检测报告。",
+        "https://assets.example.com/yimatong/baseline-test-report.pdf",
     )
     certificate = await _ensure_one(
         certificate_name,
         ProductAssetType.certificate,
         "基准发证机关",
         "基准验收用资质证书。",
+        "https://assets.example.com/yimatong/baseline-certificate.pdf",
     )
     return report, certificate
 

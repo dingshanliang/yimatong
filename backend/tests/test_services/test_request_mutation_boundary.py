@@ -509,7 +509,7 @@ def test_only_exact_agency_authorization_transitions_commit_before_response():
     }
 
 
-def test_only_api_key_lifecycle_mutations_use_function_scoped_get_db():
+def test_only_expected_business_mutations_use_function_scoped_get_db():
     registered_scopes = set()
     for route in app.routes:
         for dependency in getattr(route, "dependant", SimpleNamespace(dependencies=())).dependencies:
@@ -519,9 +519,30 @@ def test_only_api_key_lifecycle_mutations_use_function_scoped_get_db():
                 registered_scopes.add((method, route.path, dependency.scope))
 
     assert registered_scopes == {
+        ("POST", "/api/v1/brands", "function"),
+        ("PATCH", "/api/v1/brands/{brand_id}", "function"),
+        ("DELETE", "/api/v1/brands/{brand_id}", "function"),
+        ("POST", "/api/v1/products", "function"),
+        ("PATCH", "/api/v1/products/{product_id}", "function"),
+        ("POST", "/api/v1/products/{product_id}/assets", "function"),
+        ("DELETE", "/api/v1/products/{product_id}", "function"),
+        ("POST", "/api/v1/skus", "function"),
+        ("PATCH", "/api/v1/skus/{sku_id}", "function"),
+        ("DELETE", "/api/v1/skus/{sku_id}", "function"),
+        ("POST", "/api/v1/production-batches", "function"),
+        ("PATCH", "/api/v1/production-batches/{batch_id}", "function"),
+        ("POST", "/api/v1/production-batches/import-csv", "function"),
+        ("DELETE", "/api/v1/production-batches/{batch_id}", "function"),
+        ("PATCH", "/api/v1/product-assets/{asset_id}", "function"),
+        ("DELETE", "/api/v1/product-assets/{asset_id}", "function"),
         ("POST", "/api/v1/webhooks/api-keys", "function"),
         ("POST", "/api/v1/webhooks/api-keys/{key_id}/rotate", "function"),
         ("DELETE", "/api/v1/webhooks/api-keys/{key_id}", "function"),
+        ("POST", "/open/v1/products", "function"),
+        ("PATCH", "/open/v1/products/{product_id}", "function"),
+        ("POST", "/open/v1/skus", "function"),
+        ("PATCH", "/open/v1/skus/{sku_id}", "function"),
+        ("POST", "/open/v1/batches", "function"),
     }
 
 

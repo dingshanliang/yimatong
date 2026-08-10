@@ -2,12 +2,25 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { App, Button, Input, Space, Switch, Table, Tag, Typography } from "antd";
+import {
+  Alert,
+  App,
+  Button,
+  Empty,
+  Input,
+  Space,
+  Switch,
+  Table,
+  Typography,
+} from "antd";
 import { PlusOutlined, SearchOutlined } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
 import BrandFormModal from "./_components/BrandFormModal";
 import { useCrud } from "@/lib/hooks";
 import { formatDate } from "@/lib/format";
+import { useAuthStore } from "@/lib/auth";
+import { catalogAccessForPrincipal } from "@/lib/catalog-access";
+import { useTenantPlanReadOnly } from "../_components/TenantPlanReadOnly";
 
 const { Title } = Typography;
 
@@ -21,8 +34,20 @@ interface Brand {
 }
 
 export default function BrandsPage() {
+  const user = useAuthStore((state) => state.user);
+  const access = catalogAccessForPrincipal(user);
+
+  if (!access.canRead) {
+    return <Alert type="warning" showIcon title="当前账号无权访问品牌目录" />;
+  }
+
+  return <BrandsCatalog canWrite={access.canWrite} />;
+}
+
+function BrandsCatalog({ canWrite }: { canWrite: boolean }) {
   const router = useRouter();
   const { message } = App.useApp();
+  const planReadOnly = useTenantPlanReadOnly();
   const [search, setSearch] = useState("");
   const [modalOpen, setModalOpen] = useState(false);
   const [editItem, setEditItem] = useState<Brand | null>(null);
@@ -38,9 +63,18 @@ export default function BrandsPage() {
   };
 
   const {
-    items: brands, total, page, loading, setPage,
-    setFilter, update, mutate,
+    items: brands,
+    total,
+    page,
+    loading,
+    error,
+    setPage,
+    setFilter,
+    update,
+    mutate,
+    retry,
   } = useCrud<Brand>("/brands");
+  const writesDisabled = planReadOnly || !canWrite;
 
   const handleSearch = (value: string) => {
     setSearch(value);
@@ -58,12 +92,21 @@ export default function BrandsPage() {
       dataIndex: "name",
       key: "name",
       render: (v: string, record: Brand) => (
-        <Button type="link" className="!px-0" onClick={() => router.push(`/brands/${record.id}`)}>
+        <Button
+          type="link"
+          className="!px-0"
+          onClick={() => router.push(`/brands/${record.id}`)}
+        >
           {v}
         </Button>
       ),
     },
-    { title: "描述", dataIndex: "description", key: "description", ellipsis: true },
+    {
+      title: "描述",
+      dataIndex: "description",
+      key: "description",
+      ellipsis: true,
+    },
     {
       title: "状态",
       dataIndex: "status",
@@ -71,11 +114,14 @@ export default function BrandsPage() {
       render: (s: string, record: Brand) => (
         <Switch
           checked={s === "active"}
+          disabled={writesDisabled}
           checkedChildren="启用"
           unCheckedChildren="停用"
           onChange={async (checked) => {
             try {
-              await update(record.id, { status: checked ? "active" : "inactive" });
+              await update(record.id, {
+                status: checked ? "active" : "inactive",
+              });
               message.success(checked ? "已启用" : "已停用");
             } catch {
               message.error("状态更新失败");
@@ -95,10 +141,21 @@ export default function BrandsPage() {
       key: "actions",
       render: (_: unknown, record: Brand) => (
         <Space>
-          <Button type="link" size="small" onClick={() => router.push(`/brands/${record.id}`)}>
+          <Button
+            type="link"
+            size="small"
+            onClick={() => router.push(`/brands/${record.id}`)}
+          >
             查看
           </Button>
-          <Button type="link" size="small" onClick={() => openEdit(record)}>编辑</Button>
+          <Button
+            type="link"
+            size="small"
+            disabled={writesDisabled}
+            onClick={() => openEdit(record)}
+          >
+            编辑
+          </Button>
         </Space>
       ),
     },
@@ -107,7 +164,9 @@ export default function BrandsPage() {
   return (
     <div>
       <div className="mb-4 flex items-center justify-between">
-        <Title level={4} className="!mb-0">品牌管理</Title>
+        <Title level={4} className="!mb-0">
+          品牌管理
+        </Title>
         <Space>
           <Input
             placeholder="搜索品牌名称"
@@ -116,25 +175,46 @@ export default function BrandsPage() {
             onChange={(e) => handleSearch(e.target.value)}
             allowClear
           />
-          <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
+          <Button
+            type="primary"
+            icon={<PlusOutlined />}
+            disabled={writesDisabled}
+            onClick={openCreate}
+          >
             新建品牌
           </Button>
         </Space>
       </div>
-      <Table
-        columns={columns}
-        dataSource={brands}
-        rowKey="id"
-        loading={loading}
-        pagination={{
-          current: page, total, pageSize: 20, onChange: setPage,
-          showTotal: (t) => `共 ${t} 条`,
-        }}
-      />
+      {Boolean(error) && (
+        <Alert
+          className="mb-4"
+          type="error"
+          showIcon
+          title="品牌列表加载失败"
+          action={<Button onClick={() => void retry()}>重试</Button>}
+        />
+      )}
+      {!error && (
+        <Table
+          columns={columns}
+          dataSource={brands}
+          rowKey="id"
+          loading={loading}
+          locale={{ emptyText: <Empty description="暂无品牌" /> }}
+          pagination={{
+            current: page,
+            total,
+            pageSize: 20,
+            onChange: setPage,
+            showTotal: (t) => `共 ${t} 条`,
+          }}
+        />
+      )}
       <BrandFormModal
         open={modalOpen}
         initialValues={editItem || undefined}
         mode={editItem ? "edit" : "create"}
+        readOnly={writesDisabled}
         onSuccess={handleSuccess}
         onCancel={() => setModalOpen(false)}
       />

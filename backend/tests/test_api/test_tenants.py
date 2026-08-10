@@ -378,6 +378,26 @@ class TestTenantSelfBrandProfile:
         )
         assert resp.status_code == 422
 
+    @pytest.mark.parametrize(
+        "unsafe_url",
+        [
+            "http://cdn.example.com/logo.png",
+            "https://127.0.0.1/logo.png",
+            "//evil.example/logo.png",
+            "/api/v1/files/public/a/../../../auth/logout",
+            "/api/v1/files/public/a/%2e%2e/%2e%2e/auth/logout",
+        ],
+    )
+    async def test_update_brand_profile_rejects_non_public_logo_url(
+        self, client: AsyncClient, sample_tenant, unsafe_url: str
+    ):
+        resp = await client.patch(
+            "/api/v1/tenants/me",
+            json={"brand_profile": {"logo_url": unsafe_url}},
+            headers=_auth_headers(sample_tenant["id"]),
+        )
+        assert resp.status_code == 422
+
     async def test_update_brand_profile_rejects_unknown_slot(self, client: AsyncClient, sample_tenant):
         """未知槽位（如 custom_css）被拒绝，保护受控槽位边界"""
         tid = sample_tenant["id"]

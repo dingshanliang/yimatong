@@ -9,7 +9,8 @@
 from __future__ import annotations
 
 import colorsys
-from urllib.parse import urlparse
+
+from app.utils.public_url import normalize_public_url
 
 _HEX_LENGTH = 7  # #rrggbb
 
@@ -104,21 +105,6 @@ def pick_on_primary(background: str, minimum: float = 4.5) -> str:
     return "#000000" if black_ratio >= white_ratio else "#ffffff"
 
 
-def _validate_logo_url(value: str) -> None:
-    """校验 logo_url：必须是 http(s) 绝对 URL 或 / 开头的站内路径，拒绝危险 scheme"""
-    if not isinstance(value, str) or not value:
-        raise BrandColorError("logo_url 必须是非空字符串")
-    parsed = urlparse(value)
-    if parsed.scheme in ("http", "https"):
-        if not parsed.netloc:
-            raise BrandColorError("logo_url 缺少域名")
-        return
-    # 站内相对路径：/files/public/...（/files/upload 返回的相对路径）
-    if parsed.scheme == "" and value.startswith("/"):
-        return
-    raise BrandColorError(f"logo_url 必须是 https:// 开头的图片链接或 / 开头的站内路径：{value!r}")
-
-
 def validate_brand_profile(profile: dict) -> dict:
     """校验租户级 brand_profile（写入路径调用），只保留白名单槽位
 
@@ -142,8 +128,11 @@ def validate_brand_profile(profile: dict) -> dict:
         raise BrandColorError("radius_preset 必须是预设档：sm / md / lg")
     if "background_preset" in profile and profile["background_preset"] not in ("canvas", "muted", "tinted"):
         raise BrandColorError("background_preset 必须是预设组：canvas / muted / tinted")
-    if profile.get("logo_url"):
-        _validate_logo_url(profile["logo_url"])
+    if "logo_url" in profile and profile["logo_url"] is not None:
+        try:
+            profile["logo_url"] = normalize_public_url(profile["logo_url"])
+        except (TypeError, ValueError) as exc:
+            raise BrandColorError(f"logo_url 不是安全的公开图片地址：{profile['logo_url']!r}") from exc
     return profile
 
 

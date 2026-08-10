@@ -149,6 +149,16 @@ BEGIN
             uuid, uuid, text, text, text, jsonb
         ) TO yimatong_app;
     END IF;
+    IF to_regprocedure(
+        'public.append_api_key_catalog_audit_event(uuid,uuid,uuid,text,uuid,jsonb)'
+    ) IS NOT NULL THEN
+        REVOKE ALL ON FUNCTION public.append_api_key_catalog_audit_event(
+            uuid, uuid, uuid, text, uuid, jsonb
+        ) FROM PUBLIC;
+        GRANT EXECUTE ON FUNCTION public.append_api_key_catalog_audit_event(
+            uuid, uuid, uuid, text, uuid, jsonb
+        ) TO yimatong_app;
+    END IF;
     IF to_regprocedure('public.resolve_active_api_key(text)') IS NOT NULL THEN
         REVOKE ALL ON FUNCTION public.resolve_active_api_key(text) FROM PUBLIC;
         GRANT EXECUTE ON FUNCTION public.resolve_active_api_key(text) TO yimatong_app;
@@ -230,6 +240,7 @@ CREATE TEMP TABLE runtime_migration_relation_allowlist (
 INSERT INTO runtime_migration_relation_allowlist (table_name)
 VALUES ('alembic_version'),
        ('agency_authorization_integrity_backups'),
+       ('api_key_catalog_audit_context_secrets'),
        ('api_key_legacy_secret_backups'),
        ('rls_force_remediation_backups'),
        ('runtime_privilege_remediation_backup');
@@ -494,6 +505,7 @@ REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER
 -- ordinary application role. Keep new tables deny-by-default; migrations must
 -- explicitly grant runtime DML for tenant business tables.
 REVOKE SET ON PARAMETER "app.bypass_rls" FROM PUBLIC;
+REVOKE SET ON PARAMETER "app.api_key_id" FROM PUBLIC;
 DO $$
 DECLARE
     protected_table text;
@@ -510,6 +522,7 @@ BEGIN
         'tenant_invite_codes',
         'operator_campaign_manage_grants',
         'agency_authorization_integrity_backups',
+        'api_key_catalog_audit_context_secrets',
         'api_key_legacy_secret_backups',
         'rls_force_remediation_backups',
         'runtime_privilege_remediation_backup',

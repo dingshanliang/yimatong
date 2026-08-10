@@ -5,11 +5,13 @@ import {
   firstAgencyScopedRoute,
   isAgencyScopedRouteAllowed,
 } from "@/lib/agency-access";
+import { catalogAccessForPrincipal } from "@/lib/catalog-access";
 
 const PUBLIC_PATHS = ["/login", "/register", "/reset-password"];
 
 // Route access rules by tenant_type
 const AGENCY_ONLY_ROUTES = ["/agency"];
+const CATALOG_ROUTES = ["/brands", "/products", "/skus"];
 const BRAND_ONLY_ROUTES = [
   "/brands",
   "/products",
@@ -118,6 +120,25 @@ export function middleware(request: NextRequest) {
           new URL(firstAgencyScopedRoute(scopes), request.url)
         );
       }
+    }
+
+    if (
+      matchesRoute(pathname, CATALOG_ROUTES) &&
+      !catalogAccessForPrincipal({
+        tenant_type: tenantType,
+        role,
+        acting_tenant_id:
+          typeof payload.acting_tenant_id === "string"
+            ? payload.acting_tenant_id
+            : null,
+        agency_scope: Array.isArray(payload.scope)
+          ? payload.scope.filter(
+              (scope): scope is string => typeof scope === "string"
+            )
+          : [],
+      }).canRead
+    ) {
+      return NextResponse.redirect(new URL("/", request.url));
     }
   } catch {
     // Invalid token, redirect to login

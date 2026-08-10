@@ -4,6 +4,7 @@ import { Button, Form, Input, Select, Space, Typography } from "antd";
 import type { FormInstance } from "antd";
 import { ThunderboltOutlined } from "@ant-design/icons";
 import ImageUploadInput from "@/components/ImageUploadInput";
+import { validateCatalogPublicUrl } from "@/lib/catalog-public-url";
 
 const { Text } = Typography;
 
@@ -19,12 +20,27 @@ export interface SKUFormValues {
 
 export type SpecEntry = { key?: string; value?: string };
 
-export const PACKAGE_TYPE_OPTIONS = ["袋装", "盒装", "瓶装", "罐装", "礼盒装", "箱装", "散装"].map((value) => ({
+export const PACKAGE_TYPE_OPTIONS = [
+  "袋装",
+  "盒装",
+  "瓶装",
+  "罐装",
+  "礼盒装",
+  "箱装",
+  "散装",
+].map((value) => ({
   value,
   label: value,
 }));
 
-export const SPEC_QUICK_KEYS = ["净含量", "规格", "包装", "等级", "口味", "箱规"];
+export const SPEC_QUICK_KEYS = [
+  "净含量",
+  "规格",
+  "包装",
+  "等级",
+  "口味",
+  "箱规",
+];
 
 const PACKAGE_CODE_MAP: Record<string, string> = {
   袋装: "BAG",
@@ -38,10 +54,12 @@ const PACKAGE_CODE_MAP: Record<string, string> = {
 
 function extractCodeTokens(value?: string): string[] {
   if (!value) return [];
-  return value
-    .toUpperCase()
-    .match(/[A-Z0-9]+/g)
-    ?.filter((token) => token.length > 0) || [];
+  return (
+    value
+      .toUpperCase()
+      .match(/[A-Z0-9]+/g)
+      ?.filter((token) => token.length > 0) || []
+  );
 }
 
 function compactUniqueTokens(tokens: string[]): string[] {
@@ -53,7 +71,9 @@ function compactUniqueTokens(tokens: string[]): string[] {
   });
 }
 
-export function normalizeSkuSpecifications(specEntries?: SpecEntry[]): Record<string, string> {
+export function normalizeSkuSpecifications(
+  specEntries?: SpecEntry[]
+): Record<string, string> {
   return (specEntries || []).reduce<Record<string, string>>((acc, entry) => {
     const key = entry.key?.trim();
     const value = entry.value?.trim();
@@ -62,9 +82,14 @@ export function normalizeSkuSpecifications(specEntries?: SpecEntry[]): Record<st
   }, {});
 }
 
-export function buildSkuPayload(values: SKUFormValues, productId?: string): Record<string, unknown> {
+export function buildSkuPayload(
+  values: SKUFormValues,
+  productId?: string
+): Record<string, unknown> {
   const specifications = normalizeSkuSpecifications(values.spec_entries);
-  const packageType = Array.isArray(values.package_type) ? values.package_type[0] : values.package_type;
+  const packageType = Array.isArray(values.package_type)
+    ? values.package_type[0]
+    : values.package_type;
   return {
     product_id: productId || values.product_id,
     code: values.code,
@@ -79,7 +104,9 @@ export function buildSkuPayload(values: SKUFormValues, productId?: string): Reco
 export function generateSkuCode(values: SKUFormValues): string {
   const specifications = normalizeSkuSpecifications(values.spec_entries);
   const specTokens = Object.values(specifications).flatMap(extractCodeTokens);
-  const packageType = Array.isArray(values.package_type) ? values.package_type[0] : values.package_type;
+  const packageType = Array.isArray(values.package_type)
+    ? values.package_type[0]
+    : values.package_type;
   const packageToken = packageType ? PACKAGE_CODE_MAP[packageType] : undefined;
   const tokens = compactUniqueTokens([
     ...extractCodeTokens(values.name),
@@ -106,23 +133,37 @@ export default function SKUFormFields({
   showProductSelect = false,
 }: SKUFormFieldsProps) {
   const fillGeneratedCode = () => {
-    form.setFieldValue("code", generateSkuCode(form.getFieldsValue(true) as SKUFormValues));
+    form.setFieldValue(
+      "code",
+      generateSkuCode(form.getFieldsValue(true) as SKUFormValues)
+    );
   };
 
   return (
     <>
       {showProductSelect && (
-        <Form.Item name="product_id" label="关联产品" rules={[{ required: true, message: "请选择产品" }]}>
+        <Form.Item
+          name="product_id"
+          label="关联产品"
+          rules={[{ required: true, message: "请选择产品" }]}
+        >
           <Select
             placeholder="选择产品"
-            options={products.map((product) => ({ value: product.id, label: product.name }))}
+            options={products.map((product) => ({
+              value: product.id,
+              label: product.name,
+            }))}
             showSearch
             optionFilterProp="label"
           />
         </Form.Item>
       )}
 
-      <Form.Item name="name" label="SKU 名称" rules={[{ required: true, message: "请输入 SKU 名称" }]}>
+      <Form.Item
+        name="name"
+        label="SKU 名称"
+        rules={[{ required: true, message: "请输入 SKU 名称" }]}
+      >
         <Input placeholder="例如 5kg 袋装" />
       </Form.Item>
 
@@ -133,11 +174,20 @@ export default function SKUFormFields({
               <span>规格属性</span>
               <Space wrap size={6}>
                 {SPEC_QUICK_KEYS.map((key) => (
-                  <Button key={key} size="small" onClick={() => add({ key, value: "" })}>
+                  <Button
+                    key={key}
+                    size="small"
+                    onClick={() => add({ key, value: "" })}
+                  >
                     {key}
                   </Button>
                 ))}
-                <Button size="small" type="primary" ghost onClick={() => add({ key: "", value: "" })}>
+                <Button
+                  size="small"
+                  type="primary"
+                  ghost
+                  onClick={() => add({ key: "", value: "" })}
+                >
                   添加规格
                 </Button>
               </Space>
@@ -149,10 +199,20 @@ export default function SKUFormFields({
             )}
             {fields.map((field) => (
               <Space key={field.key} className="mb-2 flex" align="baseline">
-                <Form.Item {...field} name={[field.name, "key"]} className="!mb-0" rules={[{ required: true, message: "请输入规格名" }]}>
+                <Form.Item
+                  {...field}
+                  name={[field.name, "key"]}
+                  className="!mb-0"
+                  rules={[{ required: true, message: "请输入规格名" }]}
+                >
                   <Input placeholder="规格名，如 净含量" />
                 </Form.Item>
-                <Form.Item {...field} name={[field.name, "value"]} className="!mb-0" rules={[{ required: true, message: "请输入规格值" }]}>
+                <Form.Item
+                  {...field}
+                  name={[field.name, "value"]}
+                  className="!mb-0"
+                  rules={[{ required: true, message: "请输入规格值" }]}
+                >
                   <Input placeholder="规格值，如 5kg" />
                 </Form.Item>
                 <Button danger type="link" onClick={() => remove(field.name)}>
@@ -176,9 +236,17 @@ export default function SKUFormFields({
         />
       </Form.Item>
 
-      <Form.Item label="SKU 编码" extra="用于后台识别、批次和码绑定；可自动生成后再修改。" required>
+      <Form.Item
+        label="SKU 编码"
+        extra="用于后台识别、批次和码绑定；可自动生成后再修改。"
+        required
+      >
         <Space.Compact className="w-full">
-          <Form.Item name="code" noStyle rules={[{ required: true, message: "请输入 SKU 编码" }]}>
+          <Form.Item
+            name="code"
+            noStyle
+            rules={[{ required: true, message: "请输入 SKU 编码" }]}
+          >
             <Input placeholder="例如 RICE-5KG-GIFT" />
           </Form.Item>
           <Button icon={<ThunderboltOutlined />} onClick={fillGeneratedCode}>
@@ -187,14 +255,18 @@ export default function SKUFormFields({
         </Space.Compact>
       </Form.Item>
 
-      <Form.Item name="barcode" label="条码/GTIN" extra="包装上的商品条码，没有可不填。">
+      <Form.Item
+        name="barcode"
+        label="条码/GTIN"
+        extra="包装上的商品条码，没有可不填。"
+      >
         <Input placeholder="例如 6901234567890" />
       </Form.Item>
 
       <Form.Item
         name="image_url"
         label="SKU 图片（可选）"
-        rules={[{ type: "url", message: "请输入以 http:// 或 https:// 开头的图片链接" }]}
+        rules={[{ validator: validateCatalogPublicUrl }]}
       >
         <ImageUploadInput
           module="sku-image"

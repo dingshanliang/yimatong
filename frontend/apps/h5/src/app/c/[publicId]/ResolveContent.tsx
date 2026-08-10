@@ -14,6 +14,7 @@ import { MemberCard } from "@/components/MemberCard";
 import { PointsBalance } from "@/components/PointsBalance";
 import { PointsExchange } from "@/components/PointsExchange";
 import { PointsShop } from "@/components/PointsShop";
+import { safePublicUrl } from "@/lib/public-url";
 import { OuterCodeGuide } from "@/components/OuterCodeGuide";
 import { RiskAlert } from "@/components/RiskAlert";
 import { DualCodeVerify } from "@/components/DualCodeVerify";
@@ -42,6 +43,10 @@ type ModuleConfig = {
   enabled?: boolean;
   config?: Record<string, unknown>;
 };
+
+function safeLogoUrl(value: unknown): string {
+  return typeof value === "string" ? safePublicUrl(value) || "" : "";
+}
 
 export function ResolveContent({
   mode,
@@ -119,6 +124,8 @@ export function ResolveContent({
   const scanInfo = jsonPayload.scan_info as Record<string, unknown> | undefined;
 
   const brandName = (brand?.name as string) || tenantBranding?.name || "";
+  const tenantBrandLogo = safeLogoUrl(tenantBranding?.logo_url);
+  const resolvedBrandLogo = tenantBrandLogo || safeLogoUrl(brand?.logo_url);
   const productName = (product?.name as string) || "";
   const productDesc = (product?.description as string) || "";
   const productImages = product?.images as string[] | undefined;
@@ -130,9 +137,7 @@ export function ResolveContent({
           publicId={publicId}
           scanToken={scanToken}
           brandName={brandName}
-          brandLogo={
-            tenantBranding?.logo_url || (brand?.logo_url as string) || ""
-          }
+          brandLogo={resolvedBrandLogo}
           primaryColor={brandSlots.primaryColor}
           productName={productName}
           productDesc={productDesc}
@@ -148,7 +153,7 @@ export function ResolveContent({
       <div className="mx-auto max-w-md min-h-screen">
         <BrandHeader
           name={brandName || tenantBranding?.name || ""}
-          logoUrl={tenantBranding?.logo_url || ""}
+          logoUrl={tenantBrandLogo}
           primaryColor={brandSlots.primaryColor}
         />
 
@@ -215,7 +220,11 @@ export function ResolveContent({
         ))}
 
         <FooterSection
-          branding={tenantBranding}
+          branding={
+            tenantBranding
+              ? { ...tenantBranding, logo_url: tenantBrandLogo }
+              : undefined
+          }
           hideEndorsement={brandSlots.hideYimatongBrand}
         />
       </div>
@@ -559,43 +568,49 @@ function CertificateRenderer({
     <div className="mx-4 mt-3 rounded-2xl bg-surface p-4 shadow-sm">
       <h2 className="text-base font-semibold text-foreground">资质证书</h2>
       <div className="mt-3 space-y-3">
-        {certs.map((cert, i) => (
-          <div
-            key={i}
-            className="flex items-start gap-3 rounded-xl border border-base p-3"
-          >
-            {cert.image_url && (
-              <img
-                src={cert.image_url}
-                alt={cert.name}
-                className="h-16 w-16 rounded-lg object-cover shrink-0"
-              />
-            )}
-            <div className="min-w-0">
-              <p className="text-sm font-medium text-foreground">{cert.name}</p>
-              {cert.issuer && (
-                <p className="text-xs text-foreground-secondary">
-                  颁发机构：{cert.issuer}
+        {certs.map((cert, i) => {
+          const imageUrl = safePublicUrl(cert.image_url);
+          const fileUrl = safePublicUrl(cert.file_url);
+          return (
+            <div
+              key={i}
+              className="flex items-start gap-3 rounded-xl border border-base p-3"
+            >
+              {imageUrl && (
+                <img
+                  src={imageUrl}
+                  alt={cert.name}
+                  className="h-16 w-16 rounded-lg object-cover shrink-0"
+                />
+              )}
+              <div className="min-w-0">
+                <p className="text-sm font-medium text-foreground">
+                  {cert.name}
                 </p>
-              )}
-              {cert.valid_until && (
-                <p className="text-xs text-foreground-secondary">
-                  有效期至：{cert.valid_until}
-                </p>
-              )}
-              {cert.file_url && (
-                <a
-                  href={cert.file_url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="mt-1 inline-block text-xs text-link hover:underline"
-                >
-                  查看详情
-                </a>
-              )}
+                {cert.issuer && (
+                  <p className="text-xs text-foreground-secondary">
+                    颁发机构：{cert.issuer}
+                  </p>
+                )}
+                {cert.valid_until && (
+                  <p className="text-xs text-foreground-secondary">
+                    有效期至：{cert.valid_until}
+                  </p>
+                )}
+                {fileUrl && (
+                  <a
+                    href={fileUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="mt-1 inline-block text-xs text-link hover:underline"
+                  >
+                    查看详情
+                  </a>
+                )}
+              </div>
             </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );

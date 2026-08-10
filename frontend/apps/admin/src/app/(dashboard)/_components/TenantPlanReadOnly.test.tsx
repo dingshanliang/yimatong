@@ -2,7 +2,14 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import Link from "next/link";
 import { describe, expect, it, vi } from "vitest";
 
-import TenantPlanReadOnly from "./TenantPlanReadOnly";
+import TenantPlanReadOnly, {
+  useTenantPlanReadOnly,
+} from "./TenantPlanReadOnly";
+
+function CatalogMutationState() {
+  const readOnly = useTenantPlanReadOnly();
+  return <button disabled={readOnly}>保存产品</button>;
+}
 
 describe("TenantPlanReadOnly", () => {
   it("keeps read navigation visible while explaining that writes are centrally blocked", () => {
@@ -37,5 +44,15 @@ describe("TenantPlanReadOnly", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "刷新套餐状态" }));
     expect(onRefresh).toHaveBeenCalledOnce();
+  });
+
+  it("exposes the plan state so catalog forms can disable writes without losing state", () => {
+    render(
+      <TenantPlanReadOnly active refreshing={false} onRefresh={vi.fn()}>
+        <CatalogMutationState />
+      </TenantPlanReadOnly>
+    );
+
+    expect(screen.getByRole("button", { name: "保存产品" })).toBeDisabled();
   });
 });

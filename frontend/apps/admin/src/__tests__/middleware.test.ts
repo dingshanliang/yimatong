@@ -96,3 +96,35 @@ describe("admin middleware agency scope gate", () => {
     expect(response.headers.get("location")).toBe("http://localhost/agency");
   });
 });
+
+describe("admin middleware catalog role gate", () => {
+  it("redirects a viewer before a catalog page can mount", () => {
+    const response = middleware(
+      request("/products", {
+        sub: "viewer-1",
+        tenant_id: "tenant-1",
+        tenant_type: "brand",
+        role: "viewer",
+      })
+    );
+
+    expect(response.status).toBe(307);
+    expect(response.headers.get("location")).toBe("http://localhost/");
+  });
+
+  it.each(["admin", "operator"])(
+    "allows a brand %s to open catalog routes",
+    (role) => {
+      const response = middleware(
+        request("/skus/sku-1", {
+          sub: `${role}-1`,
+          tenant_id: "tenant-1",
+          tenant_type: "brand",
+          role,
+        })
+      );
+
+      expect(response.status).toBe(200);
+    }
+  );
+});

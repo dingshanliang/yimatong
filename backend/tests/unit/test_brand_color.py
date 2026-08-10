@@ -146,8 +146,8 @@ class TestValidateBrandProfile:
         assert validate_brand_profile(profile) is profile
 
     def test_accepts_logo_url_relative_internal(self):
-        """内部 /files/public 路径也允许（/files/upload 返回的相对路径）"""
-        profile = {"logo_url": "/files/public/demo/brand-logo/abc.png"}
+        """受控公开文件路径允许写入。"""
+        profile = {"logo_url": "/api/v1/files/public/demo/brand-logo/abc.png"}
         assert validate_brand_profile(profile) is profile
 
     def test_rejects_logo_url_non_url(self):
@@ -157,6 +157,14 @@ class TestValidateBrandProfile:
     def test_rejects_logo_url_javascript_scheme(self):
         with pytest.raises(BrandColorError, match="logo_url"):
             validate_brand_profile({"logo_url": "javascript:alert(1)"})
+
+    @pytest.mark.parametrize(
+        "unsafe_url",
+        ["http://cdn.example.com/logo.png", "https://127.0.0.1/logo.png", "//evil.example/logo.png"],
+    )
+    def test_rejects_non_public_logo_url(self, unsafe_url):
+        with pytest.raises(BrandColorError, match="logo_url"):
+            validate_brand_profile({"logo_url": unsafe_url})
 
     def test_logo_url_optional(self):
         """未提供 logo_url 时仍合法"""

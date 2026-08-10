@@ -8,8 +8,7 @@ TenantScopeMiddleware + open_api_router，覆盖：鉴权缺失/错误、租户�
 request.state.permissions 里。因此每个测试用对应角色的 ApiKey：
 - 读端点：data_reader（含 scan/consumer/claim/event 的 list/detail）
 - 券操作：coupon_operator（含 coupon:issue/redeem）
-- 产品端点：见 test_open_api_product_endpoints_not_reachable_by_api_key_role
-  ——product:create/list/update 不在任何 API Key 角色契约里，这是已知缺口。
+- 产品端点：erp_sync（精确 product:list/create/update），full_access 为运维超集。
 """
 
 import hashlib
@@ -19,13 +18,14 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy import select
 
 from app.api.v1.open_api import open_api_router
 from app.middleware.tenant import TenantScopeMiddleware
 from app.models.campaign import Benefit, BenefitClaim, Campaign
 from app.models.member import ConsumerProfile
 from app.models.plan import TenantQuotaUsage
-from app.models.product import Brand, Product
+from app.models.product import SKU, Brand, Product
 from app.models.scan import ScanEvent
 from app.models.tenant import Tenant, TenantStatus, TenantType
 from app.models.webhook import ApiKey
@@ -120,7 +120,12 @@ def _seed(
         )
         db.add(claim)
         await db.commit()
-        return {"tenant_id": tenant_id, "claim_id": claim.id}
+        return {
+            "tenant_id": tenant_id,
+            "claim_id": claim.id,
+            "brand_id": brand.id,
+            "product_id": product.id,
+        }
 
     return _run
 
@@ -463,3 +468,98 @@ async def test_open_api_erp_sync_can_create_product(open_api_app):
         usage = await db.get(TenantQuotaUsage, ids["tenant_id"])
         assert usage is not None
         assert usage.products == 1
+
+
+@pytest.mark.anyio
+async def test_open_api_compatibility_names_fail_closed_when_ambiguous(open_api_app):
+    from app.utils.auth_rbac import API_KEY_ROLE_PERMISSIONS
+
+    api_key = f"erp-{uuid.uuid4()}"
+    async with TestSessionLocal() as db:
+        ids = await _seed(api_key, "erp_sync", API_KEY_ROLE_PERMISSIONS["erp_sync"])(db)
+        duplicate_product = Product(
+            tenant_id=ids["tenant_id"],
+            brand_id=ids["brand_id"],
+            name="测试产品",
+        )
+        db.add(duplicate_product)
+        await db.flush()
+        first_sku = SKU(tenant_id=ids["tenant_id"], product_id=ids["product_id"], code="SHARED-CODE", name="规格一")
+        second_sku = SKU(tenant_id=ids["tenant_id"], product_id=duplicate_product.id, code="SHARED-CODE", name="规格二")
+        db.add_all([first_sku, second_sku])
+        await db.commit()
+
+    headers = {"X-Api-Key": api_key}
+    async with AsyncClient(transport=ASGITransport(app=open_api_app), base_url="http://test") as client:
+        ambiguous_product = await client.post(
+            "/open/v1/skus",
+            json={"product_name": "测试产品", "code": "NEW-SKU", "name": "新规格"},
+            headers=headers,
+        )
+        assert ambiguous_product.status_code == 409
+
+        exact_product = await client.post(
+            "/open/v1/skus",
+            json={"product_id": str(ids["product_id"]), "code": "NEW-SKU", "name": "新规格"},
+            headers=headers,
+        )
+        assert exact_product.status_code == 201
+
+        ambiguous_sku = await client.post(
+            "/open/v1/batches",
+            json={
+                "sku_code": "SHARED-CODE",
+                "batch_code": "AMBIGUOUS-BATCH",
+                "production_date": "2026-08-10",
+                "expiry_date": "2027-08-10",
+            },
+            headers=headers,
+        )
+        assert ambiguous_sku.status_code == 409
+
+        exact_sku = await client.post(
+            "/open/v1/batches",
+            json={
+                "sku_id": str(first_sku.id),
+                "batch_code": "EXACT-BATCH",
+                "production_date": "2026-08-10",
+                "expiry_date": "2027-08-10",
+            },
+            headers=headers,
+        )
+        assert exact_sku.status_code == 201
+
+
+@pytest.mark.anyio
+async def test_open_api_catalog_write_rolls_back_when_authenticated_audit_fails(open_api_app, monkeypatch):
+    from app.utils.auth_rbac import API_KEY_ROLE_PERMISSIONS
+
+    api_key = f"erp-{uuid.uuid4()}"
+    async with TestSessionLocal() as db:
+        ids = await _seed(api_key, "erp_sync", API_KEY_ROLE_PERMISSIONS["erp_sync"])(db)
+
+    async def fail_audit(*_args, **_kwargs):
+        raise RuntimeError("audit unavailable")
+
+    monkeypatch.setattr("app.api.v1.open_api.write_audit_log", fail_audit)
+    external_id = f"rollback-{uuid.uuid4().hex[:8]}"
+    async with AsyncClient(
+        transport=ASGITransport(app=open_api_app, raise_app_exceptions=False),
+        base_url="http://test",
+    ) as client:
+        response = await client.post(
+            "/open/v1/products",
+            json={
+                "name": "必须回滚的产品",
+                "brand_id": str(ids["brand_id"]),
+                "external_id": external_id,
+            },
+            headers={"X-Api-Key": api_key},
+        )
+    assert response.status_code == 500
+
+    async with TestSessionLocal() as db:
+        persisted = await db.execute(
+            select(Product.id).where(Product.tenant_id == ids["tenant_id"], Product.external_id == external_id)
+        )
+        assert persisted.scalar_one_or_none() is None

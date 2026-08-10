@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import dayjs from "dayjs";
 import {
+  Alert,
   App,
   Button,
   DatePicker,
@@ -43,6 +44,10 @@ import api, { extractErrorMessage } from "@/lib/api";
 import { useCategories } from "@/lib/use-categories";
 import { createDefaultModules, createEmptyDSL } from "@/lib/page-dsl";
 import { STATUS_COLORS } from "@/lib/status-colors";
+import { useAuthStore } from "@/lib/auth";
+import { catalogAccessForPrincipal } from "@/lib/catalog-access";
+import { useTenantPlanReadOnly } from "../../_components/TenantPlanReadOnly";
+import { validateCatalogPublicUrl } from "@/lib/catalog-public-url";
 import type {
   Brand,
   Product,
@@ -266,18 +271,35 @@ async function fetchProductDetail(productId: string): Promise<Product> {
 async function fetchOptionalItems<T>(
   request: Promise<{ data: PaginatedItems<T> }>
 ): Promise<T[]> {
-  try {
-    const { data } = await request;
-    return data.items || [];
-  } catch {
-    return [];
-  }
+  const { data } = await request;
+  return data.items || [];
 }
 
 export default function ProductWorkbenchPage() {
+  const user = useAuthStore((state) => state.user);
+  const access = catalogAccessForPrincipal(user);
+
+  if (!access.canRead) {
+    return <Alert type="warning" showIcon title="当前账号无权访问产品目录" />;
+  }
+
+  return (
+    <ProductWorkbench canWrite={access.canWrite} canDelete={access.canDelete} />
+  );
+}
+
+function ProductWorkbench({
+  canWrite,
+  canDelete,
+}: {
+  canWrite: boolean;
+  canDelete: boolean;
+}) {
   const params = useParams<{ id: string }>();
   const router = useRouter();
   const { message } = App.useApp();
+  const planReadOnly = useTenantPlanReadOnly();
+  const writesDisabled = planReadOnly || !canWrite;
   const productId = params.id;
 
   const [product, setProduct] = useState<Product | null>(null);
@@ -287,6 +309,7 @@ export default function ProductWorkbenchPage() {
   const [pages, setPages] = useState<PageTemplate[]>([]);
   const [brands, setBrands] = useState<Brand[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
   const { categories: tenantCategories } = useCategories();
 
   const [productForm] = Form.useForm();
@@ -321,8 +344,11 @@ export default function ProductWorkbenchPage() {
 
   const load = useCallback(async () => {
     setLoading(true);
+    setLoadError(false);
+    let productFound = false;
     try {
       const productResp = await fetchProductDetail(productId);
+      productFound = true;
       const [assetItems, skuItems, batchItems, pageItems, brandItems] =
         await Promise.all([
           fetchOptionalItems<ProductAsset>(
@@ -357,13 +383,17 @@ export default function ProductWorkbenchPage() {
       setBrands(brandItems);
       productForm.setFieldsValue(productResp);
     } catch (err) {
+      const failed = productFound || getErrorStatus(err) !== 404;
+      setLoadError(failed);
       setProduct(null);
       setAssets([]);
       setSkus([]);
       setBatches([]);
       setPages([]);
       setBrands([]);
-      message.error(extractErrorMessage(err, "加载产品工作台失败"));
+      if (failed) {
+        message.error(extractErrorMessage(err, "加载产品工作台失败"));
+      }
     } finally {
       setLoading(false);
     }
@@ -472,6 +502,7 @@ export default function ProductWorkbenchPage() {
   ]);
 
   const handleProductSave = async (values: Record<string, unknown>) => {
+    if (writesDisabled) return;
     try {
       await api.patch(`/products/${productId}`, values);
       message.success("产品资料已保存");
@@ -512,6 +543,7 @@ export default function ProductWorkbenchPage() {
   };
 
   const handleAssetSubmit = async (values: Record<string, unknown>) => {
+    if (writesDisabled) return;
     try {
       const assetType = values.asset_type as ProductAssetType;
       const config = ASSET_FORM_CONFIGS[assetType];
@@ -559,6 +591,7 @@ export default function ProductWorkbenchPage() {
   };
 
   const handleSkuSubmit = async (values: SKUFormValues) => {
+    if (writesDisabled) return;
     try {
       const payload = buildSkuPayload(values, productId);
       if (editingSku) await api.patch(`/skus/${editingSku.id}`, payload);
@@ -592,6 +625,7 @@ export default function ProductWorkbenchPage() {
   };
 
   const handleBatchSubmit = async (values: ProductionBatchFormValues) => {
+    if (writesDisabled) return;
     try {
       const payload = buildBatchPayload(values, productId);
       if (editingBatch) {
@@ -618,6 +652,7 @@ export default function ProductWorkbenchPage() {
   };
 
   const handleImportCsv = async (values: { sku_id: string; file: File }) => {
+    if (writesDisabled) return;
     setImporting(true);
     try {
       const formData = new FormData();
@@ -641,6 +676,7 @@ export default function ProductWorkbenchPage() {
   };
 
   const handlePageCreate = async (values: Record<string, string>) => {
+    if (writesDisabled) return;
     try {
       const { data: tpl } = await api.post("/page-templates", {
         ...values,
@@ -714,27 +750,36 @@ export default function ProductWorkbenchPage() {
           <Button
             type="link"
             size="small"
+            disabled={writesDisabled}
             onClick={() => openAssetModal(record)}
           >
             编辑
           </Button>
-          <Popconfirm
-            title="确认删除资料"
-            description={`删除「${record.name}」？`}
-            onConfirm={async () => {
-              try {
-                await api.delete(`/product-assets/${record.id}`);
-                message.success("资料已删除");
-                load();
-              } catch (err) {
-                message.error(extractErrorMessage(err, "删除失败"));
-              }
-            }}
-            okText="删除"
-            okButtonProps={{ danger: true }}
-          >
-            <Button type="link" size="small" danger icon={<DeleteOutlined />} />
-          </Popconfirm>
+          {canDelete && (
+            <Popconfirm
+              title="确认删除资料"
+              description={`删除「${record.name}」？`}
+              onConfirm={async () => {
+                try {
+                  await api.delete(`/product-assets/${record.id}`);
+                  message.success("资料已删除");
+                  load();
+                } catch (err) {
+                  message.error(extractErrorMessage(err, "删除失败"));
+                }
+              }}
+              okText="删除"
+              okButtonProps={{ danger: true }}
+            >
+              <Button
+                type="link"
+                size="small"
+                danger
+                disabled={writesDisabled}
+                icon={<DeleteOutlined />}
+              />
+            </Popconfirm>
+          )}
         </Space>
       ),
     },
@@ -771,28 +816,41 @@ export default function ProductWorkbenchPage() {
       key: "actions",
       render: (_: unknown, record: SKU) => (
         <Space>
-          <Button type="link" size="small" onClick={() => openSkuModal(record)}>
+          <Button
+            type="link"
+            size="small"
+            disabled={writesDisabled}
+            onClick={() => openSkuModal(record)}
+          >
             编辑
           </Button>
-          <Popconfirm
-            title="确认删除 SKU"
-            description={`删除「${record.name}」？有关联批次时将被阻止。`}
-            onConfirm={async () => {
-              try {
-                await api.delete(`/skus/${record.id}`);
-                message.success("SKU 已删除");
-                load();
-              } catch (err) {
-                message.error(
-                  extractErrorMessage(err, "删除失败，请检查是否有关联批次")
-                );
-              }
-            }}
-            okText="删除"
-            okButtonProps={{ danger: true }}
-          >
-            <Button type="link" size="small" danger icon={<DeleteOutlined />} />
-          </Popconfirm>
+          {canDelete && (
+            <Popconfirm
+              title="确认删除 SKU"
+              description={`删除「${record.name}」？有关联批次时将被阻止。`}
+              onConfirm={async () => {
+                try {
+                  await api.delete(`/skus/${record.id}`);
+                  message.success("SKU 已删除");
+                  load();
+                } catch (err) {
+                  message.error(
+                    extractErrorMessage(err, "删除失败，请检查是否有关联批次")
+                  );
+                }
+              }}
+              okText="删除"
+              okButtonProps={{ danger: true }}
+            >
+              <Button
+                type="link"
+                size="small"
+                danger
+                disabled={writesDisabled}
+                icon={<DeleteOutlined />}
+              />
+            </Popconfirm>
+          )}
         </Space>
       ),
     },
@@ -835,29 +893,38 @@ export default function ProductWorkbenchPage() {
           <Button
             type="link"
             size="small"
+            disabled={writesDisabled}
             onClick={() => openBatchModal(record)}
           >
             编辑
           </Button>
-          <Popconfirm
-            title="确认删除批次"
-            description={`删除批次「${record.batch_code}」？有关联码批次时将被阻止。`}
-            onConfirm={async () => {
-              try {
-                await api.delete(`/production-batches/${record.id}`);
-                message.success("批次已删除");
-                load();
-              } catch (err) {
-                message.error(
-                  extractErrorMessage(err, "删除失败，请检查是否有关联码批次")
-                );
-              }
-            }}
-            okText="删除"
-            okButtonProps={{ danger: true }}
-          >
-            <Button type="link" size="small" danger icon={<DeleteOutlined />} />
-          </Popconfirm>
+          {canDelete && (
+            <Popconfirm
+              title="确认删除批次"
+              description={`删除批次「${record.batch_code}」？有关联码批次时将被阻止。`}
+              onConfirm={async () => {
+                try {
+                  await api.delete(`/production-batches/${record.id}`);
+                  message.success("批次已删除");
+                  load();
+                } catch (err) {
+                  message.error(
+                    extractErrorMessage(err, "删除失败，请检查是否有关联码批次")
+                  );
+                }
+              }}
+              okText="删除"
+              okButtonProps={{ danger: true }}
+            >
+              <Button
+                type="link"
+                size="small"
+                danger
+                disabled={writesDisabled}
+                icon={<DeleteOutlined />}
+              />
+            </Popconfirm>
+          )}
         </Space>
       ),
     },
@@ -885,6 +952,7 @@ export default function ProductWorkbenchPage() {
         <Space>
           <Button
             size="small"
+            disabled={writesDisabled}
             onClick={() => router.push(`/pages/${record.id}/edit`)}
           >
             编辑
@@ -899,6 +967,17 @@ export default function ProductWorkbenchPage() {
       ),
     },
   ];
+
+  if (!product && loadError) {
+    return (
+      <Alert
+        type="error"
+        showIcon
+        title="产品工作台加载失败"
+        action={<Button onClick={() => void load()}>重试</Button>}
+      />
+    );
+  }
 
   if (!product) {
     return (
@@ -950,6 +1029,7 @@ export default function ProductWorkbenchPage() {
                 <Form
                   form={productForm}
                   layout="vertical"
+                  disabled={writesDisabled}
                   onFinish={handleProductSave}
                 >
                   <div className="grid grid-cols-1 gap-x-4 md:grid-cols-2">
@@ -993,13 +1073,7 @@ export default function ProductWorkbenchPage() {
                     <Form.Item
                       name="image_url"
                       label="产品主图"
-                      rules={[
-                        {
-                          type: "url",
-                          message:
-                            "请输入以 http:// 或 https:// 开头的图片链接",
-                        },
-                      ]}
+                      rules={[{ validator: validateCatalogPublicUrl }]}
                     >
                       <ImageUploadInput
                         module="product-image"
@@ -1027,6 +1101,7 @@ export default function ProductWorkbenchPage() {
                   <Button
                     type="primary"
                     htmlType="submit"
+                    disabled={writesDisabled}
                     icon={<EditOutlined />}
                   >
                     保存基础资料
@@ -1091,6 +1166,7 @@ export default function ProductWorkbenchPage() {
                   <Button
                     type="primary"
                     icon={<PlusOutlined />}
+                    disabled={writesDisabled}
                     onClick={() => openAssetModal()}
                   >
                     新增资料
@@ -1119,6 +1195,7 @@ export default function ProductWorkbenchPage() {
                   <Button
                     type="primary"
                     icon={<PlusOutlined />}
+                    disabled={writesDisabled}
                     onClick={() => openSkuModal()}
                   >
                     新增 SKU
@@ -1161,14 +1238,14 @@ export default function ProductWorkbenchPage() {
                       type="primary"
                       icon={<PlusOutlined />}
                       onClick={() => openBatchModal()}
-                      disabled={skus.length === 0}
+                      disabled={writesDisabled || skus.length === 0}
                     >
                       新增批次
                     </Button>
                     <Button
                       icon={<FileTextOutlined />}
                       onClick={() => setImportModalOpen(true)}
-                      disabled={skus.length === 0}
+                      disabled={writesDisabled || skus.length === 0}
                     >
                       批量导入
                     </Button>
@@ -1197,6 +1274,7 @@ export default function ProductWorkbenchPage() {
                   <Button
                     type="primary"
                     icon={<FileTextOutlined />}
+                    disabled={writesDisabled}
                     onClick={() => setPageModalOpen(true)}
                   >
                     新建扫码页
@@ -1225,10 +1303,16 @@ export default function ProductWorkbenchPage() {
         onCancel={() => setAssetModalOpen(false)}
         onOk={() => assetForm.submit()}
         okText={editingAsset ? "更新资料" : "保存资料"}
+        okButtonProps={{ disabled: writesDisabled }}
         width={640}
         forceRender
       >
-        <Form form={assetForm} layout="vertical" onFinish={handleAssetSubmit}>
+        <Form
+          form={assetForm}
+          layout="vertical"
+          disabled={writesDisabled}
+          onFinish={handleAssetSubmit}
+        >
           <Form.Item
             name="asset_type"
             label="资料类型"
@@ -1279,10 +1363,7 @@ export default function ProductWorkbenchPage() {
                       },
                     ]
                   : []),
-                {
-                  type: "url",
-                  message: "请输入以 http:// 或 https:// 开头的链接",
-                },
+                { validator: validateCatalogPublicUrl },
               ]}
             >
               {assetFormType === "video" ? (
@@ -1314,10 +1395,7 @@ export default function ProductWorkbenchPage() {
                       },
                     ]
                   : []),
-                {
-                  type: "url",
-                  message: "请输入以 http:// 或 https:// 开头的图片链接",
-                },
+                { validator: validateCatalogPublicUrl },
               ]}
             >
               <ImageUploadInput
@@ -1374,6 +1452,7 @@ export default function ProductWorkbenchPage() {
           skuForm.submit();
         }}
         okText={editingSku ? "更新 SKU" : "保存 SKU"}
+        okButtonProps={{ disabled: writesDisabled }}
         width={640}
         forceRender
         footer={(_, { OkBtn, CancelBtn }) => (
@@ -1381,6 +1460,7 @@ export default function ProductWorkbenchPage() {
             <CancelBtn />
             {!editingSku && (
               <Button
+                disabled={writesDisabled}
                 onClick={() => {
                   skuSubmitModeRef.current = "continue";
                   skuForm.submit();
@@ -1393,7 +1473,12 @@ export default function ProductWorkbenchPage() {
           </>
         )}
       >
-        <Form form={skuForm} layout="vertical" onFinish={handleSkuSubmit}>
+        <Form
+          form={skuForm}
+          layout="vertical"
+          disabled={writesDisabled}
+          onFinish={handleSkuSubmit}
+        >
           <SKUFormFields form={skuForm} />
         </Form>
       </Modal>
@@ -1404,12 +1489,14 @@ export default function ProductWorkbenchPage() {
         onCancel={() => setBatchModalOpen(false)}
         onOk={() => batchForm.submit()}
         okText={editingBatch ? "更新批次" : "创建批次"}
+        okButtonProps={{ disabled: writesDisabled }}
         width={560}
         forceRender
       >
         <Form<ProductionBatchFormValues>
           form={batchForm}
           layout="vertical"
+          disabled={writesDisabled}
           onFinish={handleBatchSubmit}
         >
           <ProductionBatchFormFields
@@ -1435,11 +1522,13 @@ export default function ProductWorkbenchPage() {
         open={pageModalOpen}
         onCancel={() => setPageModalOpen(false)}
         onOk={() => pageForm.submit()}
+        okButtonProps={{ disabled: writesDisabled }}
         forceRender
       >
         <Form
           form={pageForm}
           layout="vertical"
+          disabled={writesDisabled}
           onFinish={handlePageCreate}
           initialValues={{ template_type: "traceability" }}
         >
@@ -1507,7 +1596,11 @@ export default function ProductWorkbenchPage() {
             </div>
           </div>
         ) : (
-          <Form layout="vertical" onFinish={handleImportCsv}>
+          <Form
+            layout="vertical"
+            disabled={writesDisabled}
+            onFinish={handleImportCsv}
+          >
             <Form.Item
               name="sku_id"
               label="选择 SKU"
@@ -1530,6 +1623,7 @@ export default function ProductWorkbenchPage() {
             >
               <input
                 type="file"
+                disabled={writesDisabled}
                 accept=".csv"
                 onChange={(e) => {
                   const file = e.target.files?.[0];
@@ -1554,6 +1648,7 @@ export default function ProductWorkbenchPage() {
               <Button
                 type="primary"
                 htmlType="submit"
+                disabled={writesDisabled}
                 loading={importing}
                 className="ml-2"
               >

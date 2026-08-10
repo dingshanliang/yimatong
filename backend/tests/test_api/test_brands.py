@@ -114,6 +114,15 @@ class TestBrandCRUD:
         assert resp.json()["name"] == "新品牌"
         assert resp.json()["description"] == "更新后"
 
+        cleared = await client.patch(
+            f"/api/v1/brands/{brand_id}",
+            json={"description": None, "logo_url": None},
+            headers=headers,
+        )
+        assert cleared.status_code == 200
+        assert cleared.json()["description"] is None
+        assert cleared.json()["logo_url"] is None
+
     @pytest.mark.anyio
     async def test_brand_name_unique_per_tenant(self, client: AsyncClient, tenant_with_auth):
         _, headers = tenant_with_auth

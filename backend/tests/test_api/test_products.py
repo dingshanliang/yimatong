@@ -5,11 +5,14 @@ from collections.abc import AsyncGenerator
 
 import pytest
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.main import app
 from app.models.plan import TenantQuotaUsage
+from app.models.product import SKU, Product
+from app.models.tenant import Account
 from app.utils.security import create_access_token
 from tests.conftest import TestSessionLocal
 
@@ -68,6 +71,62 @@ async def brand_id(client: AsyncClient, tenant_with_auth):
 
 
 class TestProductCRUD:
+    @pytest.mark.anyio
+    async def test_cross_tenant_parent_ids_fail_before_child_or_quota_write(
+        self, client: AsyncClient, db_session: AsyncSession, tenant_with_auth, brand_id
+    ):
+        tenant_id, headers = tenant_with_auth
+        other_response = await client.post(
+            "/api/v1/tenants",
+            json={
+                "name": "其他产品租户",
+                "admin_email": "other-product@test.com",
+                "admin_name": "Other Admin",
+                "admin_password": "Pass1234",
+            },
+            headers=_platform_admin_headers(),
+        )
+        assert other_response.status_code == 201
+        other_tenant_id = other_response.json()["id"]
+        other_account_id = (
+            await db_session.execute(select(Account.id).where(Account.tenant_id == uuid.UUID(other_tenant_id)))
+        ).scalar_one()
+        other_headers = {
+            "Authorization": f"Bearer {create_access_token(other_tenant_id, str(other_account_id), 'admin')}"
+        }
+        other_brand = await client.post("/api/v1/brands", json={"name": "其他品牌"}, headers=other_headers)
+        assert other_brand.status_code == 201
+
+        product_response = await client.post(
+            "/api/v1/products",
+            json={"brand_id": other_brand.json()["id"], "name": "非法跨租户产品"},
+            headers=headers,
+        )
+        assert product_response.status_code == 404
+        own_product_count = (
+            await db_session.execute(
+                select(func.count()).select_from(Product).where(Product.tenant_id == uuid.UUID(tenant_id))
+            )
+        ).scalar_one()
+        assert own_product_count == 0
+
+        own_product = await client.post(
+            "/api/v1/products", json={"brand_id": brand_id, "name": "本租户产品"}, headers=headers
+        )
+        assert own_product.status_code == 201
+        sku_response = await client.post(
+            "/api/v1/skus",
+            json={"product_id": own_product.json()["id"], "code": "CROSS-1", "name": "非法 SKU"},
+            headers=other_headers,
+        )
+        assert sku_response.status_code == 404
+        other_sku_count = (
+            await db_session.execute(
+                select(func.count()).select_from(SKU).where(SKU.tenant_id == uuid.UUID(other_tenant_id))
+            )
+        ).scalar_one()
+        assert other_sku_count == 0
+
     @pytest.mark.anyio
     async def test_create_product(self, client: AsyncClient, tenant_with_auth, brand_id):
         tid, headers = tenant_with_auth
@@ -144,6 +203,16 @@ class TestProductCRUD:
         assert resp.json()["category"] == "新分类"
         assert resp.json()["brand_id"] == new_brand_id
         assert resp.json()["brand_name"] == "新品牌"
+
+        cleared = await client.patch(
+            f"/api/v1/products/{pid}",
+            json={"category": None, "description": None, "image_url": None},
+            headers=headers,
+        )
+        assert cleared.status_code == 200
+        assert cleared.json()["category"] is None
+        assert cleared.json()["description"] is None
+        assert cleared.json()["image_url"] is None
 
     @pytest.mark.anyio
     async def test_list_products_filter_by_category(self, client: AsyncClient, tenant_with_auth, brand_id):

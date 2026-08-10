@@ -3,10 +3,12 @@
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import {
+  Alert,
   App,
   Button,
   Card,
   Descriptions,
+  Empty,
   Space,
   Statistic,
   Table,
@@ -20,6 +22,9 @@ import api from "@/lib/api";
 import { formatDate } from "@/lib/format";
 import { STATUS_COLORS } from "@/lib/status-colors";
 import BrandFormModal from "../_components/BrandFormModal";
+import { useAuthStore } from "@/lib/auth";
+import { catalogAccessForPrincipal } from "@/lib/catalog-access";
+import { useTenantPlanReadOnly } from "../../_components/TenantPlanReadOnly";
 
 const { Title } = Typography;
 
@@ -114,20 +119,40 @@ interface TabState<T> {
   total: number;
   page: number;
   loading: boolean;
+  error?: boolean;
 }
 
 function createTabState<T>(): TabState<T> {
   return { items: [], total: 0, page: 1, loading: false };
 }
 
+function getErrorStatus(error: unknown): number | undefined {
+  return (error as { response?: { status?: number } } | null | undefined)
+    ?.response?.status;
+}
+
 export default function BrandDetailPage() {
+  const user = useAuthStore((state) => state.user);
+  const access = catalogAccessForPrincipal(user);
+
+  if (!access.canRead) {
+    return <Alert type="warning" showIcon title="当前账号无权访问品牌目录" />;
+  }
+
+  return <BrandDetail canWrite={access.canWrite} />;
+}
+
+function BrandDetail({ canWrite }: { canWrite: boolean }) {
   const router = useRouter();
   const params = useParams<{ id: string }>();
   const brandId = params.id;
   const { message } = App.useApp();
+  const planReadOnly = useTenantPlanReadOnly();
+  const writesDisabled = planReadOnly || !canWrite;
 
   const [brand, setBrand] = useState<BrandDetail | null>(null);
   const [brandLoading, setBrandLoading] = useState(false);
+  const [brandLoadError, setBrandLoadError] = useState(false);
   const [editModalOpen, setEditModalOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<TabKey>("products");
 
@@ -142,10 +167,13 @@ export default function BrandDetailPage() {
   const fetchBrand = async () => {
     try {
       setBrandLoading(true);
+      setBrandLoadError(false);
       const { data } = await api.get<BrandDetail>(`/brands/${brandId}`);
       setBrand(data);
-    } catch {
-      message.error("获取品牌详情失败");
+    } catch (error) {
+      const failed = getErrorStatus(error) !== 404;
+      setBrandLoadError(failed);
+      if (failed) message.error("获取品牌详情失败");
     } finally {
       setBrandLoading(false);
     }
@@ -175,7 +203,7 @@ export default function BrandDetailPage() {
       batches,
     }[tab];
 
-    setters[tab]({ ...prev, loading: true });
+    setters[tab]({ ...prev, loading: true, error: false });
 
     try {
       const { data } = await api.get(endpointMap[tab], {
@@ -189,7 +217,7 @@ export default function BrandDetailPage() {
       });
     } catch {
       message.error("获取数据失败");
-      setters[tab]({ ...prev, loading: false });
+      setters[tab]({ ...prev, loading: false, error: true });
     }
   };
 
@@ -198,6 +226,7 @@ export default function BrandDetailPage() {
       fetchBrand();
       fetchTabData("products", 1);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [brandId]);
 
   useEffect(() => {
@@ -211,6 +240,7 @@ export default function BrandDetailPage() {
     if (activeTab !== "products" && stateMap[activeTab].items.length === 0) {
       fetchTabData(activeTab, 1);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab, brandId]);
 
   const productColumns: ColumnsType<ProductItem> = [
@@ -379,20 +409,49 @@ export default function BrandDetailPage() {
     state: TabState<T>,
     tab: TabKey
   ) => (
-    <Table
-      columns={columns}
-      dataSource={state.items}
-      rowKey="id"
-      loading={state.loading}
-      pagination={{
-        current: state.page,
-        total: state.total,
-        pageSize: 20,
-        onChange: (p) => fetchTabData(tab, p),
-        showTotal: (t) => `共 ${t} 条`,
-      }}
-    />
+    <>
+      {state.error && (
+        <Alert
+          className="mb-3"
+          type="error"
+          showIcon
+          title="关联数据加载失败"
+          action={
+            <Button onClick={() => void fetchTabData(tab, state.page)}>
+              重试
+            </Button>
+          }
+        />
+      )}
+      {!state.error && (
+        <Table
+          columns={columns}
+          dataSource={state.items}
+          rowKey="id"
+          loading={state.loading}
+          locale={{ emptyText: <Empty description="暂无关联数据" /> }}
+          pagination={{
+            current: state.page,
+            total: state.total,
+            pageSize: 20,
+            onChange: (p) => fetchTabData(tab, p),
+            showTotal: (t) => `共 ${t} 条`,
+          }}
+        />
+      )}
+    </>
   );
+
+  if (!brand && brandLoadError) {
+    return (
+      <Alert
+        type="error"
+        showIcon
+        title="品牌详情加载失败"
+        action={<Button onClick={() => void fetchBrand()}>重试</Button>}
+      />
+    );
+  }
 
   if (!brand && !brandLoading) {
     return (
@@ -456,6 +515,7 @@ export default function BrandDetailPage() {
           <Button
             type="primary"
             icon={<EditOutlined />}
+            disabled={writesDisabled}
             onClick={() => setEditModalOpen(true)}
           >
             编辑基础信息
@@ -519,6 +579,7 @@ export default function BrandDetailPage() {
         <BrandFormModal
           open={editModalOpen}
           mode="edit"
+          readOnly={writesDisabled}
           initialValues={brand}
           onSuccess={() => {
             setEditModalOpen(false);

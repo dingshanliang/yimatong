@@ -1,7 +1,13 @@
 "use client";
 
 import { Alert, Button } from "antd";
-import type { ReactNode } from "react";
+import { createContext, useContext, type ReactNode } from "react";
+
+const TenantPlanReadOnlyContext = createContext(false);
+
+export function useTenantPlanReadOnly(): boolean {
+  return useContext(TenantPlanReadOnlyContext);
+}
 
 interface TenantPlanReadOnlyProps {
   active: boolean;
@@ -17,7 +23,7 @@ export default function TenantPlanReadOnly({
   children,
 }: TenantPlanReadOnlyProps) {
   return (
-    <>
+    <TenantPlanReadOnlyContext.Provider value={active}>
       {active && (
         <Alert
           type="warning"
@@ -36,6 +42,6 @@ export default function TenantPlanReadOnly({
       <div data-tenant-plan-read-only={active ? "true" : "false"}>
         {children}
       </div>
-    </>
+    </TenantPlanReadOnlyContext.Provider>
   );
 }

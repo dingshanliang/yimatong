@@ -249,8 +249,7 @@ class TestProductionBatchCRUD:
             },
             headers=headers,
         )
-        assert invalid_resp.status_code == 400
-        assert "earlier than production date" in invalid_resp.json()["detail"]
+        assert invalid_resp.status_code == 422
 
         create_resp = await client.post(
             "/api/v1/production-batches",
