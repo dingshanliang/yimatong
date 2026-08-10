@@ -8,11 +8,21 @@ from typer.testing import CliRunner
 
 from app.models.audit import PlatformAuditLog
 from app.models.plan import TenantQuotaUsage
-from app.models.tenant import Account, Role, Tenant, TenantType, account_roles
+from app.models.tenant import (
+    Account,
+    AgencyAuthorization,
+    AgencyAuthStatus,
+    Role,
+    Tenant,
+    TenantType,
+    account_roles,
+)
 from app.utils.security import verify_password
 from scripts.seed_demo import (
     DEMO_AGENCY_EMAIL,
     DEMO_AGENCY_PASSWORD,
+    DEMO_AGENCY_SCOPES,
+    _ensure_demo_agency_authorization,
     _ensure_demo_agency_identity,
     app,
     settings,
@@ -88,6 +98,90 @@ async def test_demo_agency_replaces_identity_only_residual(db: AsyncSession):
         select(Account).where(Account.tenant_id == repaired_id, Account.email == DEMO_AGENCY_EMAIL)
     )
     assert account is not None and account.is_active is True
+
+
+@pytest.mark.anyio
+async def test_demo_agency_authorization_is_exact_and_idempotent(db: AsyncSession):
+    agency = Tenant(
+        name="Seed agency",
+        slug=f"unit-seed-agency-{uuid.uuid4().hex[:8]}",
+        tenant_type=TenantType.agency,
+        plan="pro",
+    )
+    client = Tenant(
+        name="Seed client",
+        slug=f"unit-seed-client-{uuid.uuid4().hex[:8]}",
+        tenant_type=TenantType.brand,
+        plan="free",
+    )
+    db.add_all((agency, client))
+    await db.commit()
+
+    first_id = await _ensure_demo_agency_authorization(
+        db,
+        agency_tenant_id=agency.id,
+        client_tenant_id=client.id,
+    )
+    await db.commit()
+    second_id = await _ensure_demo_agency_authorization(
+        db,
+        agency_tenant_id=agency.id,
+        client_tenant_id=client.id,
+    )
+    await db.commit()
+
+    authorization = await db.get(AgencyAuthorization, first_id)
+    assert first_id == second_id
+    assert authorization is not None
+    assert authorization.scope == DEMO_AGENCY_SCOPES
+    assert authorization.expires_at is None
+    assert (
+        await db.scalar(
+            select(func.count())
+            .select_from(AgencyAuthorization)
+            .where(
+                AgencyAuthorization.agency_tenant_id == agency.id,
+                AgencyAuthorization.client_tenant_id == client.id,
+                AgencyAuthorization.status == AgencyAuthStatus.active,
+            )
+        )
+        == 1
+    )
+
+
+@pytest.mark.anyio
+async def test_demo_agency_authorization_fails_closed_on_conflicting_active_grant(db: AsyncSession):
+    agency = Tenant(
+        name="Conflicting seed agency",
+        slug=f"unit-conflict-agency-{uuid.uuid4().hex[:8]}",
+        tenant_type=TenantType.agency,
+        plan="pro",
+    )
+    client = Tenant(
+        name="Conflicting seed client",
+        slug=f"unit-conflict-client-{uuid.uuid4().hex[:8]}",
+        tenant_type=TenantType.brand,
+        plan="free",
+    )
+    db.add_all((agency, client))
+    await db.flush()
+    conflicting = AgencyAuthorization(
+        agency_tenant_id=agency.id,
+        client_tenant_id=client.id,
+        scope=["pages"],
+        status=AgencyAuthStatus.active,
+    )
+    db.add(conflicting)
+    await db.commit()
+
+    with pytest.raises(RuntimeError, match="conflicts with the expected"):
+        await _ensure_demo_agency_authorization(
+            db,
+            agency_tenant_id=agency.id,
+            client_tenant_id=client.id,
+        )
+
+    assert await db.get(AgencyAuthorization, conflicting.id) is not None
 
 
 @pytest.mark.parametrize("command", ["generate", "clean", "reset"])

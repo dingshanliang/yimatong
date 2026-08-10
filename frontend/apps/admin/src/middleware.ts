@@ -1,6 +1,10 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 import { parseJwtPayload } from "@yimatong/shared";
+import {
+  firstAgencyScopedRoute,
+  isAgencyScopedRouteAllowed,
+} from "@/lib/agency-access";
 
 const PUBLIC_PATHS = ["/login", "/register", "/reset-password"];
 
@@ -100,6 +104,19 @@ export function middleware(request: NextRequest) {
     if (tenantType === "agency" && !payload.acting_tenant_id) {
       if (matchesRoute(pathname, BRAND_ONLY_ROUTES)) {
         return NextResponse.redirect(new URL("/agency", request.url));
+      }
+    }
+
+    if (tenantType === "agency" && payload.acting_tenant_id) {
+      const scopes = Array.isArray(payload.scope)
+        ? payload.scope.filter(
+            (scope): scope is string => typeof scope === "string"
+          )
+        : [];
+      if (!isAgencyScopedRouteAllowed(pathname, scopes)) {
+        return NextResponse.redirect(
+          new URL(firstAgencyScopedRoute(scopes), request.url)
+        );
       }
     }
   } catch {

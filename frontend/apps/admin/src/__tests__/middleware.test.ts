@@ -65,3 +65,34 @@ describe("admin middleware password-change gate", () => {
     expect(response.headers.get("location")).toBe("http://localhost/");
   });
 });
+
+describe("admin middleware agency scope gate", () => {
+  const actingPayload = {
+    sub: "agency-account",
+    tenant_id: "agency-tenant",
+    tenant_type: "agency",
+    role: "operator",
+    acting_tenant_id: "client-tenant",
+    scope: ["products", "pages"],
+  };
+
+  it("allows a route covered by the acting scope", () => {
+    expect(middleware(request("/products/p1", actingPayload)).status).toBe(200);
+  });
+
+  it("redirects an out-of-scope route before the page can issue API requests", () => {
+    const response = middleware(request("/campaigns", actingPayload));
+
+    expect(response.status).toBe(307);
+    expect(response.headers.get("location")).toBe("http://localhost/products");
+  });
+
+  it("fails closed when an acting token has no usable scope", () => {
+    const response = middleware(
+      request("/products", { ...actingPayload, scope: [] })
+    );
+
+    expect(response.status).toBe(307);
+    expect(response.headers.get("location")).toBe("http://localhost/agency");
+  });
+});

@@ -25,6 +25,7 @@ from app.services.entitlement import (
     require_tenant_feature,
 )
 from app.services.tenant import (
+    TenantTypeTransitionConflict,
     complete_onboarding_step,
     create_tenant,
     get_onboarding_progress_data,
@@ -278,20 +279,24 @@ async def update_tenant_endpoint(
     db: AsyncSession = Depends(get_db_with_bypass),
     _role: str = Depends(require_role("platform_admin")),
 ):
-    tenant = await update_tenant(
-        db,
-        tenant_id,
-        name=body.name,
-        industry=body.industry,
-        notes=body.notes,
-        quota=body.quota,
-        compliance_settings=body.compliance_settings,
-        plan_expires_at=body.plan_expires_at,
-        onboarding_progress=body.onboarding_progress,
-        enabled_features=body.enabled_features,
-        tenant_type=body.tenant_type,
-        categories=body.categories,
-    )
+    try:
+        tenant = await update_tenant(
+            db,
+            tenant_id,
+            name=body.name,
+            industry=body.industry,
+            notes=body.notes,
+            quota=body.quota,
+            compliance_settings=body.compliance_settings,
+            plan_expires_at=body.plan_expires_at,
+            onboarding_progress=body.onboarding_progress,
+            enabled_features=body.enabled_features,
+            tenant_type=body.tenant_type,
+            categories=body.categories,
+            actor_id="platform-admin",
+        )
+    except TenantTypeTransitionConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     if not tenant:
         raise HTTPException(status_code=404, detail="Tenant not found")
     return tenant

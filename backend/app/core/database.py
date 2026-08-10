@@ -1,5 +1,6 @@
 import uuid
 from collections.abc import AsyncGenerator
+from contextvars import ContextVar, Token
 from datetime import UTC, datetime
 from typing import Any
 
@@ -178,22 +179,95 @@ _PLAN_RECOVERY_WRITE_PATHS = frozenset(
     }
 )
 
+_request_security_credential: ContextVar[tuple[str, str] | None] = ContextVar(
+    "request_security_credential",
+    default=None,
+)
+
+
+def set_request_security_credential(kind: str, identifier: str) -> Token[tuple[str, str] | None]:
+    """Expose one middleware-validated credential to trusted audit plumbing."""
+
+    if kind not in {"auth_session", "api_key", "platform_session"} or not identifier:
+        raise ValueError("Invalid request security credential")
+    return _request_security_credential.set((kind, identifier))
+
+
+def get_request_security_credential() -> tuple[str, str] | None:
+    return _request_security_credential.get()
+
+
+def reset_request_security_credential(token: Token[tuple[str, str] | None]) -> None:
+    _request_security_credential.reset(token)
+
 
 async def _lock_request_tenants(session: AsyncSession, request: Request, tenant_id: uuid.UUID) -> None:
     """Lock the acting and business tenants in one stable order."""
 
-    from app.models.tenant import Tenant, TenantStatus
+    from app.models.tenant import Tenant, TenantStatus, TenantType
 
     original_tenant_id = getattr(request.state, "original_tenant_id", None)
     tenant_ids = {tenant_id}
     if original_tenant_id:
         tenant_ids.add(uuid.UUID(str(original_tenant_id)))
+    locked_tenants: dict[uuid.UUID, Tenant] = {}
     for locked_tenant_id in sorted(tenant_ids, key=str):
         await _apply_tenant_context(session, locked_tenant_id)
         locked_tenant = await session.scalar(select(Tenant).where(Tenant.id == locked_tenant_id).with_for_update())
         if locked_tenant is None or locked_tenant.status != TenantStatus.active:
             raise HTTPException(status_code=401, detail="Tenant context is no longer valid")
+        locked_tenants[locked_tenant_id] = locked_tenant
+
+    claimed_tenant_type = getattr(request.state, "tenant_type", None)
+    principal_tenant_id = uuid.UUID(str(original_tenant_id or tenant_id))
+    principal = locked_tenants.get(principal_tenant_id)
+    if principal is not None and claimed_tenant_type and principal.tenant_type.value != claimed_tenant_type:
+        raise HTTPException(status_code=401, detail="Tenant identity has changed")
+
+    acting_tenant_id = getattr(request.state, "acting_tenant_id", None)
+    if acting_tenant_id and original_tenant_id and request.url.path != "/api/v1/agency/exit-context":
+        client_tenant_id = uuid.UUID(str(acting_tenant_id))
+        agency = locked_tenants.get(principal_tenant_id)
+        client = locked_tenants.get(client_tenant_id)
+        if (
+            agency is None
+            or agency.tenant_type != TenantType.agency
+            or client is None
+            or client.tenant_type != TenantType.brand
+        ):
+            raise HTTPException(status_code=401, detail="Tenant identity has changed")
     await _apply_tenant_context(session, tenant_id)
+
+
+async def lock_auth_session_serialization(
+    session: AsyncSession,
+    session_id: uuid.UUID | str | None,
+) -> uuid.UUID | None:
+    """Serialize one durable auth family across business and auth transactions."""
+
+    if not session_id:
+        return None
+    try:
+        validated_session_id = uuid.UUID(str(session_id))
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=401, detail="Invalid login session") from exc
+    if _session_uses_postgresql(session):
+        await session.execute(
+            select(func.pg_advisory_xact_lock(func.hashtextextended(f"auth-session:{validated_session_id}", 0)))
+        )
+    return validated_session_id
+
+
+async def _lock_agency_authorization_pair(
+    session: AsyncSession,
+    agency_tenant_id: uuid.UUID,
+    client_tenant_id: uuid.UUID,
+) -> None:
+    """Use the same pair key as authorization create/update transitions."""
+
+    if _session_uses_postgresql(session):
+        pair_key = f"{agency_tenant_id}:{client_tenant_id}"
+        await session.execute(select(func.pg_advisory_xact_lock(func.hashtextextended(pair_key, 0))))
 
 
 async def _revalidate_durable_session(request: Request, principal_tenant_id: uuid.UUID) -> None:
@@ -226,7 +300,7 @@ async def _revalidate_durable_session(request: Request, principal_tenant_id: uui
         raise HTTPException(status_code=401, detail="登录会话已撤销或过期")
 
 
-async def _revalidate_acting_authorization(request: Request) -> None:
+async def _revalidate_acting_authorization(session: AsyncSession, request: Request) -> None:
     """Recheck a live agency grant after both tenant rows are locked."""
 
     acting_tenant_id = getattr(request.state, "acting_tenant_id", None)
@@ -238,16 +312,15 @@ async def _revalidate_acting_authorization(request: Request) -> None:
 
     agency_id = uuid.UUID(str(original_tenant_id))
     client_id = uuid.UUID(str(acting_tenant_id))
-    async with control_session_factory() as control_db:
-        await control_db.execute(text("SELECT set_config('app.tenant_id', '', true)"))
-        await control_db.execute(text("SELECT set_config('app.bypass_rls', 'true', true)"))
-        authorization = await control_db.scalar(
-            select(AgencyAuthorization).where(
-                AgencyAuthorization.agency_tenant_id == agency_id,
-                AgencyAuthorization.client_tenant_id == client_id,
-                AgencyAuthorization.status == AgencyAuthStatus.active,
-            )
+    await _apply_tenant_context(session, client_id)
+    await _lock_agency_authorization_pair(session, agency_id, client_id)
+    authorization = await session.scalar(
+        select(AgencyAuthorization).where(
+            AgencyAuthorization.agency_tenant_id == agency_id,
+            AgencyAuthorization.client_tenant_id == client_id,
+            AgencyAuthorization.status == AgencyAuthStatus.active,
         )
+    )
     if authorization is None:
         raise HTTPException(status_code=403, detail="代运营授权已失效")
     expires_at = authorization.expires_at
@@ -267,11 +340,11 @@ async def _revalidate_acting_authorization(request: Request) -> None:
 
 
 async def _revalidate_mutating_principal(session: AsyncSession, request: Request, tenant_id: uuid.UUID) -> None:
-    """Revalidate the JWT principal at the serialized mutation boundary."""
+    """Revalidate the JWT principal at a serialized mutation or acting-read boundary."""
 
     if getattr(request.state, "auth_method", None) != "jwt":
         return
-    from app.models.tenant import Account
+    from app.models.tenant import Account, Role
     from app.services.auth import resolve_account_role
 
     principal_tenant_id = uuid.UUID(str(getattr(request.state, "original_tenant_id", None) or tenant_id))
@@ -279,24 +352,36 @@ async def _revalidate_mutating_principal(session: AsyncSession, request: Request
         account_id = uuid.UUID(str(request.state.account_id))
     except (AttributeError, ValueError) as exc:
         raise HTTPException(status_code=401, detail="Invalid account context") from exc
-    # Keep the same lock order as refresh/logout: durable family first, then
-    # the tenant account row. This avoids AuthSession <-> Account deadlocks.
+    # The request dependency already holds the tenant row and durable-session
+    # advisory key. Refresh/logout take only the session key before touching
+    # AuthSession, so neither path reverses the tenant -> session order here.
     await _revalidate_durable_session(request, principal_tenant_id)
     await _apply_tenant_context(session, principal_tenant_id)
     account = await session.scalar(
         select(Account)
-        .options(selectinload(Account.roles))
+        .options(selectinload(Account.roles).selectinload(Role.permissions))
         .where(Account.id == account_id, Account.tenant_id == principal_tenant_id)
         .with_for_update()
     )
+    live_permissions = (
+        {
+            permission.code
+            for role in account.roles
+            if role.name in {"admin", "operator", "viewer"}
+            for permission in role.permissions
+        }
+        if account is not None
+        else set()
+    )
+    claimed_permissions = set(getattr(request.state, "permissions", []) or [])
     if (
         account is None
         or account.is_active is False
         or account.auth_version != int(getattr(request.state, "auth_version", 0))
         or resolve_account_role(account) != getattr(request.state, "role", None)
+        or not claimed_permissions.issubset(live_permissions)
     ):
         raise HTTPException(status_code=401, detail="账户已停用或登录状态已失效")
-    await _revalidate_acting_authorization(request)
     await _apply_tenant_context(session, tenant_id)
 
 
@@ -329,10 +414,16 @@ async def get_db(request: Request) -> AsyncGenerator[AsyncSession, None]:
                 await _apply_tenant_context(session, uuid.UUID(validated_id))
         try:
             # Hold the authoritative tenant row through commit for every
-            # authenticated business mutation. This closes the middleware
-            # check/write race without blocking read-only access or the exact
-            # authentication recovery operations an expired tenant needs.
-            if tenant_id and str(tenant_id) != "platform" and request.method not in {"GET", "HEAD", "OPTIONS"}:
+            # business mutation and every acting read. Ordinary non-acting
+            # reads rely on middleware's per-request live identity reload so
+            # they do not serialize all read traffic for one tenant.
+            is_mutation = request.method not in {"GET", "HEAD", "OPTIONS"}
+            is_live_acting_request = bool(
+                getattr(request.state, "acting_tenant_id", None)
+                and getattr(request.state, "original_tenant_id", None)
+                and request.url.path != "/api/v1/agency/exit-context"
+            )
+            if tenant_id and str(tenant_id) != "platform" and (is_mutation or is_live_acting_request):
                 validated_tenant_id = uuid.UUID(str(tenant_id))
                 if _session_uses_postgresql(session):
                     # Global quota epoch is always first; only then may this
@@ -341,11 +432,56 @@ async def get_db(request: Request) -> AsyncGenerator[AsyncSession, None]:
 
                     await lock_quota_rollout_state(session)
                     await _lock_request_tenants(session, request, validated_tenant_id)
+                    await lock_auth_session_serialization(session, getattr(request.state, "session_id", None))
                     await _revalidate_mutating_principal(session, request, validated_tenant_id)
-                if request.url.path not in _PLAN_RECOVERY_WRITE_PATHS:
+                    await _revalidate_acting_authorization(session, request)
+                if is_mutation and request.url.path not in _PLAN_RECOVERY_WRITE_PATHS:
                     from app.services.entitlement import require_active_plan
 
                     await require_active_plan(session, validated_tenant_id, lock_tenant=True)
+            yield session
+            await session.commit()
+        except Exception:
+            await session.rollback()
+            raise
+
+
+_AGENCY_AUTHORIZATION_TRANSITION_ROUTES = frozenset(
+    {
+        ("POST", "/api/v1/ops/authorizations"),
+        ("DELETE", "/api/v1/ops/authorizations/{auth_id}"),
+        ("POST", "/api/v1/agency/switch-context"),
+    }
+)
+
+
+async def get_db_for_agency_authorization_transition(request: Request) -> AsyncGenerator[AsyncSession, None]:
+    """Open the three agency-context transitions without a generic tenant pre-lock.
+
+    Their constrained database functions own the complete global -> sorted
+    tenant pair -> durable session/account -> authorization pair lock order.
+    Registering this dependency on any other route is a programming error.
+    """
+
+    route = request.scope.get("route")
+    route_path = getattr(route, "path", None)
+    if (request.method, route_path) not in _AGENCY_AUTHORIZATION_TRANSITION_ROUTES:
+        raise RuntimeError("Agency authorization transition dependency used outside its three approved routes")
+
+    from app.core.context import get_request_tenant_id
+
+    tenant_id = get_request_tenant_id()
+    if not tenant_id or str(tenant_id) == "platform":
+        raise HTTPException(status_code=401, detail="Invalid tenant context")
+    try:
+        validated_tenant_id = uuid.UUID(str(tenant_id))
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=401, detail="Invalid tenant context") from exc
+
+    async with async_session_factory() as session:
+        if _is_pg:
+            await _apply_tenant_context(session, validated_tenant_id)
+        try:
             yield session
             await session.commit()
         except Exception:

@@ -2,6 +2,7 @@
 
 import uuid
 from collections.abc import AsyncGenerator
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -11,8 +12,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
 from app.main import app
 from app.models.audit import PlatformAuditLog
+from app.models.auth_security import AuthSession
 from app.models.platform_opening import PlatformTenantOpening
-from app.models.tenant import Account
+from app.models.tenant import Account, AgencyAuthorization, AgencyAuthStatus, Tenant, TenantType
 from app.utils.security import create_access_token
 from tests.conftest import TestSessionLocal
 
@@ -159,6 +161,93 @@ class TestUpdateTenant:
             headers=_platform_admin_headers(),
         )
         assert resp.status_code == 404
+
+    @pytest.mark.anyio
+    async def test_type_change_invalidates_existing_login_family(
+        self,
+        client: AsyncClient,
+        db_session: AsyncSession,
+        sample_tenant,
+    ):
+        tenant_id = uuid.UUID(sample_tenant["id"])
+        account = await db_session.scalar(select(Account).where(Account.tenant_id == tenant_id))
+        assert account is not None
+        account.auth_version = 4
+        auth_session = AuthSession(
+            id=uuid.uuid4(),
+            account_id=account.id,
+            tenant_id=tenant_id,
+            auth_version=account.auth_version,
+            current_refresh_jti=str(uuid.uuid4()),
+            expires_at=datetime.now(UTC) + timedelta(hours=1),
+        )
+        db_session.add(auth_session)
+        await db_session.flush()
+
+        response = await client.patch(
+            f"/api/v1/tenants/{tenant_id}",
+            json={"tenant_type": TenantType.agency.value},
+            headers=_platform_admin_headers(),
+        )
+
+        assert response.status_code == 200
+        assert response.json()["tenant_type"] == TenantType.agency.value
+        await db_session.refresh(account)
+        await db_session.refresh(auth_session)
+        assert account.auth_version == 5
+        assert auth_session.revoked_at is not None
+        audit = await db_session.scalar(
+            select(PlatformAuditLog).where(
+                PlatformAuditLog.target_tenant_id == str(tenant_id),
+                PlatformAuditLog.action == "tenant_type_changed",
+            )
+        )
+        assert audit is not None
+        assert audit.operator_id == "platform-admin"
+
+    @pytest.mark.anyio
+    async def test_type_change_with_active_agency_relationship_returns_conflict_without_mutation(
+        self,
+        client: AsyncClient,
+        db_session: AsyncSession,
+        sample_tenant,
+    ):
+        tenant_id = uuid.UUID(sample_tenant["id"])
+        agency = Tenant(
+            name="代运营方",
+            slug=f"api-transition-agency-{uuid.uuid4().hex[:8]}",
+            tenant_type=TenantType.agency,
+        )
+        db_session.add(agency)
+        await db_session.flush()
+        authorization = AgencyAuthorization(
+            agency_tenant_id=agency.id,
+            client_tenant_id=tenant_id,
+            scope=["products"],
+            status=AgencyAuthStatus.active,
+        )
+        db_session.add(authorization)
+        await db_session.flush()
+
+        response = await client.patch(
+            f"/api/v1/tenants/{tenant_id}",
+            json={"name": "不得部分更新", "tenant_type": TenantType.agency.value},
+            headers=_platform_admin_headers(),
+        )
+
+        assert response.status_code == 409
+        assert response.json()["detail"] == "租户存在生效中的代运营授权，请先撤销授权后再变更租户类型"
+        tenant = await db_session.get(Tenant, tenant_id)
+        assert tenant is not None
+        assert tenant.name == "测试租户"
+        assert tenant.tenant_type == TenantType.brand
+        audit = await db_session.scalar(
+            select(PlatformAuditLog).where(
+                PlatformAuditLog.target_tenant_id == str(tenant_id),
+                PlatformAuditLog.action == "tenant_type_changed",
+            )
+        )
+        assert audit is None
 
 
 class TestTenantOnboarding:

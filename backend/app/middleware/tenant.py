@@ -1,4 +1,5 @@
 import hmac
+import re
 
 from fastapi import Request
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -9,6 +10,11 @@ from app.utils.security import verify_access_token
 
 # Open API 路径前缀，使用 API Key 认证
 OPEN_API_PREFIX = "/open/v1/"
+
+_AGENCY_AUTHORIZATION_DETAIL_PATH = re.compile(
+    r"/api/v1/ops/authorizations/"
+    r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
+)
 
 
 class TenantScopeMiddleware(BaseHTTPMiddleware):
@@ -121,7 +127,12 @@ class TenantScopeMiddleware(BaseHTTPMiddleware):
         request.state.permissions = []
         request.state.auth_method = "platform_cookie"
         request.state.session_id = payload.get("sid")
-        return await call_next(request)
+        return await self._call_with_security_credential(
+            request,
+            call_next,
+            "platform_session",
+            payload.get("sid"),
+        )
 
     async def _load_platform_session_access(self, session_id: str | None) -> bool:
         """Validate the durable control-plane session after cache checks."""
@@ -199,6 +210,7 @@ class TenantScopeMiddleware(BaseHTTPMiddleware):
             payload.get("role"),
             payload.get("auth_version"),
             tenant_id,
+            payload.get("tenant_type"),
         )
         if not has_access:
             return JSONResponse(status_code=401, content={"detail": "账户已停用或登录状态已失效"})
@@ -252,9 +264,18 @@ class TenantScopeMiddleware(BaseHTTPMiddleware):
         from app.core.context import reset_request_tenant_id, set_request_tenant_id
 
         context_token = set_request_tenant_id(rls_tenant_id)
+        credential_token = None
+        if request.state.session_id:
+            from app.core.database import set_request_security_credential
+
+            credential_token = set_request_security_credential("auth_session", str(request.state.session_id))
         try:
             return await call_next(request)
         finally:
+            if credential_token is not None:
+                from app.core.database import reset_request_security_credential
+
+                reset_request_security_credential(credential_token)
             reset_request_tenant_id(context_token)
 
     async def _authenticate_api_key(self, request: Request, call_next):
@@ -309,14 +330,43 @@ class TenantScopeMiddleware(BaseHTTPMiddleware):
         from app.core.context import reset_request_tenant_id, set_request_tenant_id
 
         context_token = set_request_tenant_id(tenant_id)
+        from app.core.database import set_request_security_credential
+
+        credential_token = set_request_security_credential("api_key", str(request.state.api_key_id))
         try:
             return await call_next(request)
         finally:
+            from app.core.database import reset_request_security_credential
+
+            reset_request_security_credential(credential_token)
             reset_request_tenant_id(context_token)
+
+    @staticmethod
+    async def _call_with_security_credential(
+        request: Request,
+        call_next,
+        kind: str,
+        identifier: str | None,
+    ):
+        if not identifier:
+            return await call_next(request)
+        from app.core.database import reset_request_security_credential, set_request_security_credential
+
+        credential_token = set_request_security_credential(kind, str(identifier))
+        try:
+            return await call_next(request)
+        finally:
+            reset_request_security_credential(credential_token)
 
     @staticmethod
     def _requires_active_plan(request: Request) -> bool:
         if request.method in {"GET", "HEAD"}:
+            return False
+        # Revocation is a security recovery action: an expired brand must still
+        # be able to remove an agency's access. Keep the exception bound to the
+        # canonical DELETE detail route; creation/renewal and neighboring paths
+        # continue through the active-plan gate.
+        if request.method == "DELETE" and _AGENCY_AUTHORIZATION_DETAIL_PATH.fullmatch(request.url.path):
             return False
         return request.url.path not in {
             "/api/v1/auth/change-password",
@@ -425,6 +475,7 @@ class TenantScopeMiddleware(BaseHTTPMiddleware):
         role: str | None,
         token_auth_version: int | None,
         tenant_id: str | None,
+        expected_tenant_type: str | None = None,
     ) -> tuple[bool, list[str]]:
         """加载权限并判断持久化账户是否仍允许当前 token 访问。"""
         # Platform 使用独立认证边界，没有租户 Account 行；只对这一明确边界保留
@@ -461,7 +512,7 @@ class TenantScopeMiddleware(BaseHTTPMiddleware):
 
                     await set_session_tenant_context(db, validated_tenant_id)
                 result = await db.execute(
-                    select(Account, Tenant.status)
+                    select(Account, Tenant.status, Tenant.tenant_type)
                     .options(selectinload(Account.roles).selectinload(Role.permissions))
                     .join(Tenant, Tenant.id == Account.tenant_id)
                     .where(
@@ -472,13 +523,14 @@ class TenantScopeMiddleware(BaseHTTPMiddleware):
                 row = result.one_or_none()
                 if not row:
                     return False, []
-                account, tenant_status = row
+                account, tenant_status, live_tenant_type = row
                 account_auth_version = getattr(account, "auth_version", 0)
                 if not isinstance(account_auth_version, int):
                     account_auth_version = 0
                 if (
                     account.is_active is False
                     or tenant_status != TenantStatus.active
+                    or (expected_tenant_type is not None and live_tenant_type.value != expected_tenant_type)
                     or (token_auth_version or 0) != account_auth_version
                 ):
                     return False, []
@@ -595,7 +647,7 @@ class TenantScopeMiddleware(BaseHTTPMiddleware):
             from sqlalchemy import select, text
 
             from app.core.database import _is_pg, async_session_factory, control_session_factory
-            from app.models.tenant import AgencyAuthorization, AgencyAuthStatus, Tenant, TenantStatus
+            from app.models.tenant import AgencyAuthorization, AgencyAuthStatus, Tenant, TenantStatus, TenantType
 
             agency_id = uuid.UUID(agency_tenant_id)
             client_id = uuid.UUID(client_tenant_id)
@@ -621,12 +673,26 @@ class TenantScopeMiddleware(BaseHTTPMiddleware):
                         expires_at = expires_at.replace(tzinfo=UTC)
                     if expires_at <= datetime.now(UTC):
                         return None
-                statuses = dict(
-                    (
-                        await db.execute(select(Tenant.id, Tenant.status).where(Tenant.id.in_([agency_id, client_id])))
+                tenant_rows = {
+                    tenant_id: (status, tenant_type)
+                    for tenant_id, status, tenant_type in (
+                        await db.execute(
+                            select(Tenant.id, Tenant.status, Tenant.tenant_type).where(
+                                Tenant.id.in_([agency_id, client_id])
+                            )
+                        )
                     ).all()
-                )
-                if statuses.get(agency_id) != TenantStatus.active or statuses.get(client_id) != TenantStatus.active:
+                }
+                agency_row = tenant_rows.get(agency_id)
+                client_row = tenant_rows.get(client_id)
+                if (
+                    agency_row is None
+                    or agency_row[0] != TenantStatus.active
+                    or agency_row[1] != TenantType.agency
+                    or client_row is None
+                    or client_row[0] != TenantStatus.active
+                    or client_row[1] != TenantType.brand
+                ):
                     return None
                 return list(authorization.scope)
         except Exception:

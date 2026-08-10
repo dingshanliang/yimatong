@@ -3,9 +3,12 @@
 import uuid
 from datetime import UTC, datetime
 
-from sqlalchemy import select, text
+from sqlalchemy import bindparam, select, text
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
+from uuid6 import uuid7
 
 from app.core.database import _is_pg
 from app.models.tenant import (
@@ -130,22 +133,40 @@ async def authorize_agency(
     client_tenant_id: uuid.UUID,
     scope: list[str],
     granted_by: uuid.UUID,
+    auth_session_id: uuid.UUID | None = None,
 ) -> AgencyAuthorization:
     """Brand 授权 agency 访问"""
     valid_scopes = {item.value for item in AgencyAuthScope}
     normalized_scope = list(dict.fromkeys(scope))
     if not normalized_scope or any(item not in valid_scopes for item in normalized_scope):
         raise ValueError("授权范围无效")
-    if _is_pg:
-        from app.core.database import control_session_factory
+    if db.get_bind().dialect.name == "postgresql":
+        if auth_session_id is None:
+            raise ValueError("登录会话已失效")
+        statement = text(
+            "SELECT public.renew_agency_authorization("
+            ":authorization_id, :agency_id, :client_id, :scope, :grantor_id, :session_id, NULL)"
+        ).bindparams(bindparam("scope", type_=JSONB))
+        try:
+            created_id = await db.scalar(
+                statement,
+                {
+                    "authorization_id": uuid7(),
+                    "agency_id": agency_tenant_id,
+                    "client_id": client_tenant_id,
+                    "scope": normalized_scope,
+                    "grantor_id": granted_by,
+                    "session_id": auth_session_id,
+                },
+            )
+        except DBAPIError as exc:
+            raise ValueError("授权条件已变化，请刷新后重试") from exc
+        auth = await db.scalar(select(AgencyAuthorization).where(AgencyAuthorization.id == created_id))
+        if auth is None:
+            raise ValueError("授权结果不可读取")
+        return auth
 
-        async with control_session_factory() as control_db:
-            await control_db.execute(text("SET LOCAL app.bypass_rls = 'true'"))
-            agency = (
-                await control_db.execute(select(Tenant).where(Tenant.id == agency_tenant_id))
-            ).scalar_one_or_none()
-    else:
-        agency = (await db.execute(select(Tenant).where(Tenant.id == agency_tenant_id))).scalar_one_or_none()
+    agency = (await db.execute(select(Tenant).where(Tenant.id == agency_tenant_id))).scalar_one_or_none()
     if (
         agency is None
         or agency.tenant_type != TenantType.agency
@@ -153,17 +174,6 @@ async def authorize_agency(
         or agency.id == client_tenant_id
     ):
         raise ValueError("代运营租户无效或不可授权")
-    bind = db.get_bind()
-    if bind.dialect.name == "postgresql":
-        # Serialize one logical agency/client authorization pair inside the
-        # caller's transaction. The partial unique index remains the final
-        # integrity guard, while this lock makes concurrent retries return the
-        # same active authorization instead of surfacing an IntegrityError.
-        pair_key = f"{agency_tenant_id}:{client_tenant_id}"
-        await db.execute(
-            text("SELECT pg_advisory_xact_lock(hashtextextended(:pair_key, 0))"),
-            {"pair_key": pair_key},
-        )
     # Check for existing active authorization
     existing = await db.execute(
         select(AgencyAuthorization).where(
@@ -207,24 +217,52 @@ async def resolve_active_agency_by_slug(db: AsyncSession, slug: str) -> Tenant |
 
 
 async def revoke_authorization(
-    db: AsyncSession, auth_id: uuid.UUID, client_tenant_id: uuid.UUID | None = None
+    db: AsyncSession,
+    auth_id: uuid.UUID,
+    client_tenant_id: uuid.UUID | None = None,
+    actor_id: uuid.UUID | None = None,
+    auth_session_id: uuid.UUID | None = None,
 ) -> AgencyAuthorization | None:
     """撤销授权。若提供 client_tenant_id，则同时验证归属。"""
+    if db.get_bind().dialect.name == "postgresql":
+        if client_tenant_id is None or actor_id is None or auth_session_id is None:
+            raise ValueError("登录会话已失效")
+        try:
+            revoked_id = await db.scalar(
+                text(
+                    "SELECT public.revoke_agency_authorization(:authorization_id, :client_id, :actor_id, :session_id)"
+                ),
+                {
+                    "authorization_id": auth_id,
+                    "client_id": client_tenant_id,
+                    "actor_id": actor_id,
+                    "session_id": auth_session_id,
+                },
+            )
+        except DBAPIError as exc:
+            raise ValueError("撤销条件已变化，请刷新后重试") from exc
+        if revoked_id is None:
+            return None
+        return await db.scalar(select(AgencyAuthorization).where(AgencyAuthorization.id == revoked_id))
+
     result = await db.execute(select(AgencyAuthorization).where(AgencyAuthorization.id == auth_id))
     auth = result.scalar_one_or_none()
     if not auth:
+        return None
+    if auth.status != AgencyAuthStatus.active:
+        return None
+    # 归属校验：确保只能撤销属于自己的授权
+    if client_tenant_id and auth.client_tenant_id != client_tenant_id:
         return None
     expires_at = auth.expires_at
     if expires_at is not None:
         if expires_at.tzinfo is None:
             expires_at = expires_at.replace(tzinfo=UTC)
         if expires_at <= datetime.now(UTC):
-            return None
-    if auth.status != AgencyAuthStatus.active:
-        return None
-    # 归属校验：确保只能撤销属于自己的授权
-    if client_tenant_id and auth.client_tenant_id != client_tenant_id:
-        return None
+            auth.status = AgencyAuthStatus.expired
+            auth.revoked_at = None
+            await db.flush()
+            return auth
     auth.status = AgencyAuthStatus.revoked
     auth.revoked_at = datetime.now(UTC)
     await db.flush()

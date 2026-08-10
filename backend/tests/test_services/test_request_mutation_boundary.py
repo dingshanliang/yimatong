@@ -3,12 +3,17 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from fastapi import HTTPException
+from fastapi import Depends, FastAPI, HTTPException
+from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.requests import Request
+from starlette.responses import JSONResponse
 
 from app.core import database
-from app.models.tenant import Account, Organization, Role, Tenant, TenantStatus, account_roles
+from app.core.context import reset_request_tenant_id, set_request_tenant_id
+from app.main import app
+from app.models.tenant import Account, Organization, Role, Tenant, TenantStatus, TenantType, account_roles
+from app.services import auth as auth_service
 from app.utils.security import hash_password
 
 
@@ -154,17 +159,18 @@ async def test_locked_mutation_rejects_revoked_or_narrowed_acting_authorization(
     request.state.acting_tenant_id = str(uuid.uuid4())
     request.state.original_tenant_id = str(uuid.uuid4())
 
-    control_db = AsyncMock()
-    control_db.scalar.return_value = authorization
-    control_context = AsyncMock()
-    control_context.__aenter__.return_value = control_db
-    monkeypatch.setattr(database, "control_session_factory", MagicMock(return_value=control_context))
+    session = AsyncMock()
+    session.scalar.return_value = authorization
+    monkeypatch.setattr(database, "_apply_tenant_context", AsyncMock())
+    monkeypatch.setattr(database, "_lock_agency_authorization_pair", AsyncMock())
 
     with pytest.raises(HTTPException) as exc_info:
-        await database._revalidate_acting_authorization(request)
+        await database._revalidate_acting_authorization(session, request)
 
     assert exc_info.value.status_code == 403
     assert exc_info.value.detail == expected_detail
+    statement = session.scalar.await_args.args[0]
+    assert statement._for_update_arg is None
 
 
 @pytest.mark.anyio
@@ -173,15 +179,339 @@ async def test_acting_tenant_rows_use_stable_order_then_restore_target(monkeypat
     client_id = uuid.UUID("00000000-0000-0000-0000-000000000001")
     request = _request()
     request.state.original_tenant_id = str(agency_id)
+    request.state.acting_tenant_id = str(client_id)
+    request.state.tenant_type = "agency"
     applied: list[uuid.UUID] = []
 
     async def record_context(_session, tenant_id):
         applied.append(tenant_id)
 
     session = AsyncMock()
-    session.scalar.return_value = SimpleNamespace(status=TenantStatus.active)
+    session.scalar.side_effect = [
+        SimpleNamespace(status=TenantStatus.active, tenant_type=TenantType.brand),
+        SimpleNamespace(status=TenantStatus.active, tenant_type=TenantType.agency),
+    ]
     monkeypatch.setattr(database, "_apply_tenant_context", record_context)
 
     await database._lock_request_tenants(session, request, client_id)
 
     assert applied == [client_id, agency_id, client_id]
+
+
+@pytest.mark.anyio
+async def test_refresh_takes_session_serialization_key_before_auth_session_row(monkeypatch):
+    session_id = uuid.uuid4()
+    account = SimpleNamespace(id=uuid.uuid4(), tenant_id=uuid.uuid4(), auth_version=0)
+    existing_session = SimpleNamespace(id=session_id)
+    events: list[str] = []
+
+    async def lock_session(_db, locked_session_id):
+        assert locked_session_id == session_id
+        events.append("session-key")
+
+    result = MagicMock()
+    result.scalar_one_or_none.return_value = existing_session
+
+    async def execute(_statement):
+        events.append("auth-session-row")
+        return result
+
+    db = AsyncMock()
+    db.execute.side_effect = execute
+    monkeypatch.setattr(database, "lock_auth_session_serialization", lock_session)
+
+    resolved = await auth_service._lock_or_adopt_auth_session(
+        db,
+        payload={"sid": str(session_id), "jti": str(uuid.uuid4())},
+        account=account,
+    )
+
+    assert resolved is existing_session
+    assert events == ["session-key", "auth-session-row"]
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("method", ["GET", "HEAD"])
+async def test_acting_read_holds_live_principal_and_authorization_boundary_before_yield(monkeypatch, method):
+    agency_id = uuid.uuid4()
+    client_id = uuid.uuid4()
+    session_id = uuid.uuid4()
+    request = _request("/api/v1/products")
+    request.scope["method"] = method
+    request.state.original_tenant_id = str(agency_id)
+    request.state.acting_tenant_id = str(client_id)
+    request.state.session_id = str(session_id)
+    request.state.tenant_type = "agency"
+    events: list[str] = []
+
+    session = AsyncMock()
+    context = AsyncMock()
+    context.__aenter__.return_value = session
+    monkeypatch.setattr(database, "async_session_factory", MagicMock(return_value=context))
+    monkeypatch.setattr(database, "_is_pg", False)
+    monkeypatch.setattr(database, "_session_uses_postgresql", lambda _session: True)
+
+    async def quota_lock(_session):
+        events.append("quota")
+
+    async def tenant_locks(_session, _request, locked_tenant_id):
+        assert locked_tenant_id == client_id
+        events.append("tenants")
+
+    async def session_lock(_session, locked_session_id):
+        assert locked_session_id == str(session_id)
+        events.append("session")
+
+    async def grant_lock(_session, _request):
+        events.append("authorization")
+
+    async def principal_lock(_session, _request, locked_tenant_id):
+        assert locked_tenant_id == client_id
+        events.append("principal")
+
+    monkeypatch.setattr("app.services.quota.lock_quota_rollout_state", quota_lock)
+    monkeypatch.setattr(database, "_lock_request_tenants", tenant_locks)
+    monkeypatch.setattr(database, "lock_auth_session_serialization", session_lock)
+    monkeypatch.setattr(database, "_revalidate_mutating_principal", principal_lock)
+    monkeypatch.setattr(database, "_revalidate_acting_authorization", grant_lock)
+
+    context_token = set_request_tenant_id(str(client_id))
+    dependency = database.get_db(request)
+    try:
+        yielded = await anext(dependency)
+        assert yielded is session
+        assert events == ["quota", "tenants", "session", "principal", "authorization"]
+        with pytest.raises(StopAsyncIteration):
+            await anext(dependency)
+        session.commit.assert_awaited_once()
+    finally:
+        await dependency.aclose()
+        reset_request_tenant_id(context_token)
+
+
+@pytest.mark.anyio
+async def test_locked_acting_read_rejects_removed_live_permission(monkeypatch):
+    agency_id = uuid.uuid4()
+    client_id = uuid.uuid4()
+    account_id = uuid.uuid4()
+    request = _request("/api/v1/products")
+    request.scope["method"] = "GET"
+    request.state.auth_method = "jwt"
+    request.state.account_id = str(account_id)
+    request.state.auth_version = 3
+    request.state.role = "admin"
+    request.state.permissions = ["product:read"]
+    request.state.original_tenant_id = str(agency_id)
+
+    live_account = SimpleNamespace(
+        id=account_id,
+        tenant_id=agency_id,
+        auth_version=3,
+        is_active=True,
+        roles=[SimpleNamespace(name="admin", permissions=[])],
+    )
+    session = AsyncMock()
+    session.scalar.return_value = live_account
+    monkeypatch.setattr(database, "_revalidate_durable_session", AsyncMock())
+    monkeypatch.setattr(database, "_apply_tenant_context", AsyncMock())
+
+    with pytest.raises(HTTPException) as exc_info:
+        await database._revalidate_mutating_principal(session, request, client_id)
+
+    assert exc_info.value.status_code == 401
+    assert exc_info.value.detail == "账户已停用或登录状态已失效"
+
+
+@pytest.mark.anyio
+async def test_ordinary_read_uses_middleware_reload_without_serializing_tenant(monkeypatch):
+    tenant_id = uuid.uuid4()
+    request = _request("/api/v1/products")
+    request.scope["method"] = "GET"
+    request.state.tenant_type = "brand"
+
+    session = AsyncMock()
+    context = AsyncMock()
+    context.__aenter__.return_value = session
+    monkeypatch.setattr(database, "async_session_factory", MagicMock(return_value=context))
+    monkeypatch.setattr(database, "_is_pg", False)
+    tenant_locks = AsyncMock()
+    monkeypatch.setattr(database, "_lock_request_tenants", tenant_locks)
+
+    context_token = set_request_tenant_id(str(tenant_id))
+    dependency = database.get_db(request)
+    try:
+        assert await anext(dependency) is session
+        with pytest.raises(StopAsyncIteration):
+            await anext(dependency)
+        tenant_locks.assert_not_awaited()
+    finally:
+        await dependency.aclose()
+        reset_request_tenant_id(context_token)
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("method", "route_path"),
+    [
+        ("POST", "/api/v1/ops/authorizations"),
+        ("DELETE", "/api/v1/ops/authorizations/{auth_id}"),
+        ("POST", "/api/v1/agency/switch-context"),
+    ],
+)
+async def test_agency_authorization_transition_dependency_defers_all_business_locks(
+    monkeypatch,
+    method: str,
+    route_path: str,
+):
+    tenant_id = uuid.uuid4()
+    request = _request("/api/v1/ops/authorizations")
+    request.scope["method"] = method
+    request.scope["route"] = SimpleNamespace(path=route_path)
+
+    session = AsyncMock()
+    context = AsyncMock()
+    context.__aenter__.return_value = session
+    monkeypatch.setattr(database, "async_session_factory", MagicMock(return_value=context))
+    monkeypatch.setattr(database, "_is_pg", True)
+    apply_context = AsyncMock()
+    tenant_locks = AsyncMock()
+    session_lock = AsyncMock()
+    monkeypatch.setattr(database, "_apply_tenant_context", apply_context)
+    monkeypatch.setattr(database, "_lock_request_tenants", tenant_locks)
+    monkeypatch.setattr(database, "lock_auth_session_serialization", session_lock)
+
+    context_token = set_request_tenant_id(str(tenant_id))
+    dependency = database.get_db_for_agency_authorization_transition(request)
+    try:
+        assert await anext(dependency) is session
+        with pytest.raises(StopAsyncIteration):
+            await anext(dependency)
+        apply_context.assert_awaited_once_with(session, tenant_id)
+        tenant_locks.assert_not_awaited()
+        session_lock.assert_not_awaited()
+        session.commit.assert_awaited_once()
+    finally:
+        await dependency.aclose()
+        reset_request_tenant_id(context_token)
+
+
+@pytest.mark.anyio
+async def test_agency_authorization_transition_dependency_rejects_other_routes(monkeypatch):
+    request = _request("/api/v1/products")
+    request.scope["route"] = SimpleNamespace(path="/api/v1/products")
+    session_factory = MagicMock()
+    monkeypatch.setattr(database, "async_session_factory", session_factory)
+
+    dependency = database.get_db_for_agency_authorization_transition(request)
+    with pytest.raises(RuntimeError, match="outside its three approved routes"):
+        await anext(dependency)
+    session_factory.assert_not_called()
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("method", "route_path"),
+    [
+        ("GET", "/api/v1/ops/authorizations"),
+        ("POST", "/api/v1/ops/authorizations/{auth_id}"),
+        ("DELETE", "/api/v1/agency/switch-context"),
+    ],
+)
+async def test_agency_authorization_transition_dependency_rejects_wrong_method(
+    method: str,
+    route_path: str,
+):
+    request = _request(route_path)
+    request.scope["method"] = method
+    request.scope["route"] = SimpleNamespace(path=route_path)
+
+    dependency = database.get_db_for_agency_authorization_transition(request)
+    with pytest.raises(RuntimeError, match="outside its three approved routes"):
+        await anext(dependency)
+
+
+@pytest.mark.anyio
+async def test_agency_authorization_transition_dependency_rolls_back_handler_failure(monkeypatch):
+    tenant_id = uuid.uuid4()
+    request = _request("/api/v1/ops/authorizations")
+    request.scope["route"] = SimpleNamespace(path="/api/v1/ops/authorizations")
+    session = AsyncMock()
+    context = AsyncMock()
+    context.__aenter__.return_value = session
+    monkeypatch.setattr(database, "async_session_factory", MagicMock(return_value=context))
+    monkeypatch.setattr(database, "_is_pg", False)
+
+    context_token = set_request_tenant_id(str(tenant_id))
+    dependency = database.get_db_for_agency_authorization_transition(request)
+    try:
+        assert await anext(dependency) is session
+        with pytest.raises(ValueError, match="handler failed"):
+            await dependency.athrow(ValueError("handler failed"))
+        session.rollback.assert_awaited_once()
+        session.commit.assert_not_awaited()
+    finally:
+        await dependency.aclose()
+        reset_request_tenant_id(context_token)
+
+
+def test_only_exact_agency_authorization_transitions_commit_before_response():
+    registered_scopes = set()
+    for route in app.routes:
+        for dependency in getattr(route, "dependant", SimpleNamespace(dependencies=())).dependencies:
+            if dependency.call is not database.get_db_for_agency_authorization_transition:
+                continue
+            for method in route.methods:
+                registered_scopes.add((method, route.path, dependency.scope))
+
+    assert registered_scopes == {
+        ("POST", "/api/v1/ops/authorizations", "function"),
+        ("DELETE", "/api/v1/ops/authorizations/{auth_id}", "function"),
+        ("POST", "/api/v1/agency/switch-context", "function"),
+    }
+
+
+@pytest.mark.anyio
+async def test_transition_commit_failure_replaces_success_before_asgi_response(monkeypatch):
+    tenant_id = uuid.uuid4()
+    events: list[str] = []
+
+    class FailingCommitSession:
+        async def commit(self) -> None:
+            events.append("commit")
+            raise RuntimeError("commit failed")
+
+        async def rollback(self) -> None:
+            events.append("rollback")
+
+    class SessionContext:
+        async def __aenter__(self):
+            return FailingCommitSession()
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            return False
+
+    monkeypatch.setattr(database, "async_session_factory", lambda: SessionContext())
+    monkeypatch.setattr(database, "_is_pg", False)
+
+    probe = FastAPI()
+
+    @probe.post("/api/v1/ops/authorizations")
+    async def transition_probe(
+        _db=Depends(database.get_db_for_agency_authorization_transition, scope="function"),
+    ):
+        events.append("handler")
+        return JSONResponse(status_code=201, content={"status": "success"})
+
+    context_token = set_request_tenant_id(str(tenant_id))
+    try:
+        async with AsyncClient(
+            transport=ASGITransport(app=probe, raise_app_exceptions=False),
+            base_url="http://test",
+        ) as client:
+            response = await client.post("/api/v1/ops/authorizations")
+    finally:
+        reset_request_tenant_id(context_token)
+
+    assert response.status_code == 500
+    assert response.text == "Internal Server Error"
+    assert events == ["handler", "commit", "rollback"]

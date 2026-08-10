@@ -247,6 +247,9 @@ async def _lock_or_adopt_auth_session(
     """Lock the family row, adopting one pre-session-family token on first use."""
 
     session_id = _refresh_session_id(payload)
+    from app.core.database import lock_auth_session_serialization
+
+    await lock_auth_session_serialization(db, session_id)
     statement = select(AuthSession).where(AuthSession.id == session_id).with_for_update()
     auth_session = (await db.execute(statement)).scalar_one_or_none()
     if auth_session is not None:
@@ -428,6 +431,9 @@ async def _persist_logout_session_revocation(db: AsyncSession, payload: dict) ->
 
     async def _revoke(session: AsyncSession) -> None:
         session_id = _refresh_session_id(payload)
+        from app.core.database import lock_auth_session_serialization
+
+        await lock_auth_session_serialization(session, session_id)
         auth_session = (
             await session.execute(select(AuthSession).where(AuthSession.id == session_id).with_for_update())
         ).scalar_one_or_none()

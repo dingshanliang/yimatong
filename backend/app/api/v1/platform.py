@@ -36,6 +36,12 @@ from app.services.entitlement import is_plan_expired, validate_feature_flags
 from app.services.platform_auth import PlatformSessionUnavailable, revoke_platform_session
 from app.services.quota import is_quota_usage_effectively_ready, validate_quota_config
 from app.services.redis_cache import AsyncRedisCache, SharedSecurityCacheUnavailable
+from app.services.tenant import (
+    TenantTypeTransitionConflict,
+)
+from app.services.tenant import (
+    update_tenant as update_tenant_service,
+)
 from app.services.tenant_health import refresh_all_health_metrics
 from app.services.tenant_lifecycle import TenantStatusTransitionError, terminate_tenant, transition_tenant_status
 from app.utils.auth_rbac import require_role
@@ -572,25 +578,21 @@ async def update_tenant(
     _role: str = Depends(require_role("platform_admin")),
 ):
     """更新租户信息"""
-    tenant = (await db.execute(select(Tenant).where(Tenant.id == tenant_id))).scalar_one_or_none()
+    try:
+        tenant = await update_tenant_service(
+            db,
+            tenant_id,
+            name=body.name,
+            industry=body.industry,
+            notes=body.notes,
+            quota=body.quota,
+            enabled_features=body.enabled_features,
+            actor_id="platform-admin",
+        )
+    except TenantTypeTransitionConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     if not tenant:
         raise HTTPException(status_code=404, detail="Tenant not found")
-
-    update_data = body.model_dump(exclude_unset=True)
-    for key, value in update_data.items():
-        setattr(tenant, key, value)
-
-    await db.flush()
-
-    await write_audit_log(
-        db,
-        operator_id="platform-admin",
-        target_tenant_id=str(tenant_id),
-        action="update_tenant",
-        resource=f"tenant:{tenant.slug}",
-    )
-
-    await db.flush()
     return tenant
 
 

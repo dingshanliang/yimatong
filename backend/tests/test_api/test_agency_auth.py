@@ -9,8 +9,9 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.database import get_db
+from app.core.database import get_db, get_db_for_agency_authorization_transition
 from app.main import app
+from app.models.auth_security import AuthSession
 from app.models.campaign import Campaign
 from app.models.connector import Connector
 from app.models.tenant import (
@@ -44,6 +45,7 @@ async def client(db_session: AsyncSession):
         yield db_session
 
     app.dependency_overrides[get_db] = override_get_db
+    app.dependency_overrides[get_db_for_agency_authorization_transition] = override_get_db
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as c:
         yield c
@@ -109,18 +111,54 @@ async def agency_tenant(db_session: AsyncSession):
 
 
 @pytest.fixture
-def brand_headers(brand_tenant):
+async def brand_headers(brand_tenant, db_session: AsyncSession):
     """品牌租户认证头"""
     tenant, account = brand_tenant
-    token = create_access_token(str(tenant.id), str(account.id), "admin", "brand")
+    session_id = uuid.uuid4()
+    db_session.add(
+        AuthSession(
+            id=session_id,
+            account_id=account.id,
+            tenant_id=tenant.id,
+            auth_version=account.auth_version,
+            current_refresh_jti=uuid.uuid4().hex,
+            expires_at=datetime.now(UTC) + timedelta(hours=1),
+        )
+    )
+    await db_session.flush()
+    token = create_access_token(
+        str(tenant.id),
+        str(account.id),
+        "admin",
+        "brand",
+        extra={"sid": str(session_id), "auth_version": account.auth_version},
+    )
     return {"Authorization": f"Bearer {token}"}
 
 
 @pytest.fixture
-def agency_headers(agency_tenant):
+async def agency_headers(agency_tenant, db_session: AsyncSession):
     """代运营租户认证头"""
     tenant, account = agency_tenant
-    token = create_access_token(str(tenant.id), str(account.id), "admin", "agency")
+    session_id = uuid.uuid4()
+    db_session.add(
+        AuthSession(
+            id=session_id,
+            account_id=account.id,
+            tenant_id=tenant.id,
+            auth_version=account.auth_version,
+            current_refresh_jti=uuid.uuid4().hex,
+            expires_at=datetime.now(UTC) + timedelta(hours=1),
+        )
+    )
+    await db_session.flush()
+    token = create_access_token(
+        str(tenant.id),
+        str(account.id),
+        "admin",
+        "agency",
+        extra={"sid": str(session_id), "auth_version": account.auth_version},
+    )
     return {"Authorization": f"Bearer {token}"}
 
 
@@ -148,7 +186,56 @@ async def _grant_fixed_role(
     await db_session.commit()
 
 
+async def _durable_access_token(
+    db_session: AsyncSession,
+    tenant: Tenant,
+    account: Account,
+    role: str,
+    *,
+    session_id: uuid.UUID | None = None,
+) -> str:
+    durable_session_id = session_id or uuid.uuid4()
+    db_session.add(
+        AuthSession(
+            id=durable_session_id,
+            account_id=account.id,
+            tenant_id=tenant.id,
+            auth_version=account.auth_version,
+            current_refresh_jti=uuid.uuid4().hex,
+            expires_at=datetime.now(UTC) + timedelta(hours=1),
+        )
+    )
+    await db_session.flush()
+    return create_access_token(
+        str(tenant.id),
+        str(account.id),
+        role,
+        tenant.tenant_type.value,
+        extra={"auth_version": account.auth_version, "sid": str(durable_session_id)},
+    )
+
+
 class TestCreateAuthorization:
+    @pytest.mark.anyio
+    async def test_authorization_transition_rejects_legacy_token_without_session(
+        self,
+        client: AsyncClient,
+        brand_tenant,
+        agency_tenant,
+    ):
+        brand, account = brand_tenant
+        agency, _ = agency_tenant
+        legacy_token = create_access_token(str(brand.id), str(account.id), "admin", "brand")
+
+        response = await client.post(
+            BASE_URL,
+            json={"agency_tenant_id": str(agency.id), "scope": ["pages"]},
+            headers={"Authorization": f"Bearer {legacy_token}"},
+        )
+
+        assert response.status_code == 401
+        assert response.json()["detail"] == "登录会话已失效，请重新登录"
+
     @pytest.mark.anyio
     async def test_non_acting_agency_cannot_write_brand_resources(self, client: AsyncClient, agency_headers):
         response = await client.post(
@@ -475,6 +562,7 @@ class TestGetAuthorizedClientIds:
             client_tenant_id=brand.id,
             scope=["pages"],
             status=AgencyAuthStatus.active,
+            granted_at=datetime.now(UTC) - timedelta(minutes=2),
             expires_at=datetime.now(UTC) - timedelta(minutes=1),
         )
         db_session.add(auth)
@@ -527,7 +615,7 @@ class TestAgencyContextTokenVersion:
         )
         await db_session.flush()
         await _grant_fixed_role(db_session, agency_account, "admin")
-        token = create_access_token(str(agency.id), str(agency_account.id), "admin", "agency")
+        token = await _durable_access_token(db_session, agency, agency_account, "admin")
         switched = await client.post(
             "/api/v1/agency/switch-context",
             json={"client_tenant_id": str(brand.id)},
@@ -568,13 +656,7 @@ class TestAgencyContextTokenVersion:
             )
         )
         await db_session.commit()
-        token = create_access_token(
-            str(agency.id),
-            str(agency_account.id),
-            "admin",
-            "agency",
-            extra={"auth_version": agency_account.auth_version},
-        )
+        token = await _durable_access_token(db_session, agency, agency_account, "admin")
 
         switched = await client.post(
             "/api/v1/agency/switch-context",
@@ -619,7 +701,7 @@ class TestAgencyContextTokenVersion:
         )
         await db_session.flush()
         await _grant_fixed_role(db_session, agency_account, "admin")
-        token = create_access_token(str(agency.id), str(agency_account.id), "admin", "agency")
+        token = await _durable_access_token(db_session, agency, agency_account, "admin")
         switched = await client.post(
             "/api/v1/agency/switch-context",
             json={"client_tenant_id": str(brand.id)},
@@ -664,12 +746,12 @@ class TestAgencyContextTokenVersion:
         )
         await db_session.commit()
         session_id = uuid.uuid4()
-        token = create_access_token(
-            str(agency.id),
-            str(agency_account.id),
+        token = await _durable_access_token(
+            db_session,
+            agency,
+            agency_account,
             "admin",
-            "agency",
-            extra={"auth_version": agency_account.auth_version, "sid": str(session_id)},
+            session_id=session_id,
         )
 
         switched = await client.post(
@@ -722,13 +804,7 @@ class TestAgencyContextTokenVersion:
         )
         db_session.add(authorization)
         await db_session.commit()
-        token = create_access_token(
-            str(agency.id),
-            str(agency_account.id),
-            "admin",
-            "agency",
-            extra={"auth_version": agency_account.auth_version},
-        )
+        token = await _durable_access_token(db_session, agency, agency_account, "admin")
         switched = await client.post(
             "/api/v1/agency/switch-context",
             json={"client_tenant_id": str(brand.id)},
@@ -737,6 +813,7 @@ class TestAgencyContextTokenVersion:
         assert switched.status_code == 200
 
         authorization.status = AgencyAuthStatus.revoked
+        authorization.revoked_at = datetime.now(UTC)
         await db_session.commit()
         acting_headers = {"Authorization": f"Bearer {switched.json()['access_token']}"}
         with patch("app.core.database.async_session_factory", TestSessionLocal):
@@ -764,13 +841,7 @@ class TestAgencyContextTokenVersion:
             )
         )
         await db_session.commit()
-        token = create_access_token(
-            str(agency.id),
-            str(agency_account.id),
-            "admin",
-            "agency",
-            extra={"auth_version": agency_account.auth_version},
-        )
+        token = await _durable_access_token(db_session, agency, agency_account, "admin")
         switched = await client.post(
             "/api/v1/agency/switch-context",
             json={"client_tenant_id": str(brand.id)},
@@ -837,7 +908,7 @@ class TestViewerAndCampaignAuthorizationBoundary:
         await db_session.commit()
 
         viewer_token = create_access_token(str(agency.id), str(account.id), "viewer", "agency")
-        operator_token = create_access_token(str(agency.id), str(account.id), "operator", "agency")
+        operator_token = await _durable_access_token(db_session, agency, account, "operator")
         viewer_response = await client.post(
             "/api/v1/agency/switch-context",
             json={"client_tenant_id": str(brand.id)},
@@ -892,7 +963,7 @@ class TestViewerAndCampaignAuthorizationBoundary:
         await db_session.flush()
         await _grant_fixed_role(db_session, agency_account, "admin")
 
-        admin_token = create_access_token(str(agency.id), str(agency_account.id), "admin", "agency")
+        admin_token = await _durable_access_token(db_session, agency, agency_account, "admin")
         switched = await client.post(
             "/api/v1/agency/switch-context",
             json={"client_tenant_id": str(brand.id)},

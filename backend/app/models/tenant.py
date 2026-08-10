@@ -380,6 +380,25 @@ class AgencyAuthorization(Base):
     )
 
     __table_args__ = (
+        ForeignKeyConstraint(
+            ["client_tenant_id", "granted_by"],
+            ["accounts.tenant_id", "accounts.id"],
+            name="fk_agency_authorizations_client_grantor",
+        ),
+        CheckConstraint(
+            "agency_tenant_id <> client_tenant_id",
+            name="ck_agency_authorizations_distinct_tenants",
+        ),
+        CheckConstraint(
+            "expires_at IS NULL OR expires_at >= granted_at",
+            name="ck_agency_authorizations_expiry_after_grant",
+        ),
+        CheckConstraint(
+            "(status = 'active' AND revoked_at IS NULL) "
+            "OR (status = 'revoked' AND revoked_at IS NOT NULL AND revoked_at >= granted_at) "
+            "OR (status = 'expired' AND revoked_at IS NULL AND expires_at IS NOT NULL AND expires_at >= granted_at)",
+            name="ck_agency_authorizations_lifecycle",
+        ),
         Index("ix_agency_auth_agency_client", "agency_tenant_id", "client_tenant_id"),
         Index(
             "uq_agency_auth_active",

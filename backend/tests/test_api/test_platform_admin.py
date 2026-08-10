@@ -18,7 +18,7 @@ from app.models.auth_security import PlatformAuthSession
 from app.models.plan import PlanDefinition, QuotaRolloutState, TenantQuotaUsage
 from app.models.platform_opening import PlatformTenantOpening
 from app.models.scan import ScanEvent
-from app.models.tenant import Account, Organization, Role, Tenant, TenantPlan, TenantStatus, account_roles
+from app.models.tenant import Account, Organization, Role, Tenant, TenantPlan, TenantStatus, TenantType, account_roles
 from app.services.platform_auth import PlatformSessionUnavailable
 from app.services.quota import QUOTA_RECONCILIATION_SOURCE_REVISION
 from app.services.redis_cache import SharedSecurityCacheUnavailable
@@ -440,6 +440,31 @@ class TestPlatformTenantUpdate:
         assert response.status_code == 422
         assert tenant.plan == TenantPlan.starter
         assert tenant.quota == {"max_accounts": 5}
+
+    @pytest.mark.anyio
+    async def test_generic_patch_rejects_tenant_type_changes(
+        self,
+        client: AsyncClient,
+        db_session: AsyncSession,
+    ):
+        tenant = Tenant(
+            name="身份边界测试",
+            slug="tenant-type-boundary-test",
+            status=TenantStatus.active,
+            tenant_type=TenantType.brand,
+        )
+        db_session.add(tenant)
+        await db_session.flush()
+
+        response = await client.patch(
+            f"/api/v1/platform/tenants/{tenant.id}",
+            json={"tenant_type": TenantType.agency.value},
+            headers=_platform_headers(),
+        )
+
+        assert response.status_code == 422
+        await db_session.refresh(tenant)
+        assert tenant.tenant_type == TenantType.brand
 
     @pytest.mark.anyio
     async def test_termination_cancels_pending_activation_revokes_sessions_and_cannot_be_reversed(

@@ -46,6 +46,10 @@ import {
 import type { MenuProps } from "antd";
 import { useAuthStore } from "@/lib/auth";
 import { canViewRoleDirectory } from "@/lib/account-access";
+import {
+  agencyScopeMenuRoutes,
+  canManageAgencyAuthorizations,
+} from "@/lib/agency-access";
 import { extractErrorMessage } from "@/lib/api";
 import { I18nProvider, useI18n } from "@/lib/i18n";
 import { useAdminTheme } from "@/lib/theme-provider";
@@ -379,11 +383,15 @@ function DashboardInner({ children }: { children: React.ReactNode }) {
       icon: <SettingOutlined />,
       label: t("menu.settings"),
       children: [
-        {
-          key: "/settings/agency-authorizations",
-          icon: <TeamOutlined />,
-          label: "代运营授权",
-        },
+        ...(canManageAgencyAuthorizations(user)
+          ? [
+              {
+                key: "/settings/agency-authorizations",
+                icon: <TeamOutlined />,
+                label: "代运营授权",
+              },
+            ]
+          : []),
         {
           key: "/settings/brand-profile",
           icon: <BgColorsOutlined />,
@@ -452,15 +460,8 @@ function DashboardInner({ children }: { children: React.ReactNode }) {
     // Agency in client context: show brand-like menu filtered by agency_scope
     if (tenantType === "agency" && user?.acting_tenant_id) {
       const scope = user.agency_scope || [];
-      const scopeMenuItems: Record<string, string[]> = {
-        products: ["/brands", "/products", "/skus", "/batches"],
-        pages: ["/pages"],
-        campaigns: ["/campaigns", "/benefits"],
-        codes: ["/codes"],
-        analytics: ["/", "/analytics"],
-      };
       const scopeAllowlist = new Set(
-        scope.flatMap((item) => scopeMenuItems[item] || [])
+        scope.flatMap((item) => agencyScopeMenuRoutes(item))
       );
 
       function isScopeAllowed(key: string): boolean {

@@ -56,7 +56,7 @@ CREATE TEMP TABLE runtime_business_relation_allowlist (
 
 INSERT INTO runtime_business_relation_allowlist (table_name)
 SELECT unnest(ARRAY[
-    'account_channel_scopes', 'account_roles', 'accounts', 'agency_authorizations',
+    'account_channel_scopes', 'account_roles', 'accounts',
     'ai_generations', 'anonymous_visitors', 'api_keys', 'benefit_claims',
     'benefit_deliveries', 'benefits', 'brands', 'campaign_risk_rules',
     'campaigns', 'code_allocations', 'code_batches', 'code_items',
@@ -81,6 +81,14 @@ SELECT unnest(ARRAY[
     'whitelabel_configs'
 ]::name[]);
 
+-- Authorization grants are tenant-visible, while every create/renew/revoke
+-- transition is available only through reviewed SECURITY DEFINER functions.
+CREATE TEMP TABLE runtime_agency_authorization_relation_allowlist (
+    table_name name PRIMARY KEY
+) ON COMMIT DROP;
+INSERT INTO runtime_agency_authorization_relation_allowlist (table_name)
+VALUES ('agency_authorizations');
+
 CREATE TEMP TABLE runtime_append_only_relation_allowlist (
     table_name name PRIMARY KEY
 ) ON COMMIT DROP;
@@ -95,6 +103,35 @@ BEGIN
     IF to_regprocedure('public.revoke_current_tenant_account_sessions(uuid)') IS NOT NULL THEN
         REVOKE ALL ON FUNCTION public.revoke_current_tenant_account_sessions(uuid) FROM PUBLIC;
         GRANT EXECUTE ON FUNCTION public.revoke_current_tenant_account_sessions(uuid) TO yimatong_app;
+    END IF;
+END
+$$;
+
+DO $$
+BEGIN
+    IF to_regprocedure(
+        'public.renew_agency_authorization(uuid,uuid,uuid,jsonb,uuid,uuid,timestamp with time zone)'
+    ) IS NOT NULL THEN
+        REVOKE ALL ON FUNCTION public.renew_agency_authorization(
+            uuid, uuid, uuid, jsonb, uuid, uuid, timestamptz
+        ) FROM PUBLIC;
+        GRANT EXECUTE ON FUNCTION public.renew_agency_authorization(
+            uuid, uuid, uuid, jsonb, uuid, uuid, timestamptz
+        ) TO yimatong_app;
+    END IF;
+    IF to_regprocedure('public.revoke_agency_authorization(uuid,uuid,uuid,uuid)') IS NOT NULL THEN
+        REVOKE ALL ON FUNCTION public.revoke_agency_authorization(uuid, uuid, uuid, uuid) FROM PUBLIC;
+        GRANT EXECUTE ON FUNCTION public.revoke_agency_authorization(uuid, uuid, uuid, uuid) TO yimatong_app;
+    END IF;
+    IF to_regprocedure(
+        'public.append_authenticated_audit_event(uuid,uuid,text,text,text,jsonb)'
+    ) IS NOT NULL THEN
+        REVOKE ALL ON FUNCTION public.append_authenticated_audit_event(
+            uuid, uuid, text, text, text, jsonb
+        ) FROM PUBLIC;
+        GRANT EXECUTE ON FUNCTION public.append_authenticated_audit_event(
+            uuid, uuid, text, text, text, jsonb
+        ) TO yimatong_app;
     END IF;
 END
 $$;
@@ -129,6 +166,7 @@ CREATE TEMP TABLE runtime_migration_relation_allowlist (
 ) ON COMMIT DROP;
 INSERT INTO runtime_migration_relation_allowlist (table_name)
 VALUES ('alembic_version'),
+       ('agency_authorization_integrity_backups'),
        ('rls_force_remediation_backups'),
        ('runtime_privilege_remediation_backup');
 
@@ -145,6 +183,7 @@ BEGIN
     SELECT count(*) INTO registry_count
     FROM (
         SELECT table_name FROM runtime_business_relation_allowlist
+        UNION ALL SELECT table_name FROM runtime_agency_authorization_relation_allowlist
         UNION ALL SELECT table_name FROM runtime_append_only_relation_allowlist
         UNION ALL SELECT table_name FROM runtime_control_relation_allowlist
         UNION ALL SELECT table_name FROM runtime_public_relation_allowlist
@@ -157,6 +196,7 @@ BEGIN
     SELECT string_agg(table_name::text, ', ' ORDER BY table_name) INTO missing
     FROM (
         SELECT table_name FROM runtime_business_relation_allowlist
+        UNION ALL SELECT table_name FROM runtime_agency_authorization_relation_allowlist
         UNION ALL SELECT table_name FROM runtime_append_only_relation_allowlist
         UNION ALL SELECT table_name FROM runtime_control_relation_allowlist
         UNION ALL SELECT table_name FROM runtime_public_relation_allowlist
@@ -178,6 +218,7 @@ BEGIN
           SELECT 1
           FROM (
               SELECT table_name FROM runtime_business_relation_allowlist
+              UNION ALL SELECT table_name FROM runtime_agency_authorization_relation_allowlist
               UNION ALL SELECT table_name FROM runtime_append_only_relation_allowlist
               UNION ALL SELECT table_name FROM runtime_control_relation_allowlist
               UNION ALL SELECT table_name FROM runtime_public_relation_allowlist
@@ -189,6 +230,48 @@ BEGIN
     IF unclassified IS NOT NULL THEN
         RAISE EXCEPTION 'Unclassified public relations: %', unclassified;
     END IF;
+END
+$$;
+
+-- Agency authorization history is SELECT-only for runtime. Every transition
+-- is performed by the reviewed functions after revalidating the durable login
+-- session and the actor's live tenant-management permission.
+DO $$
+DECLARE
+    relation_row record;
+    has_select boolean;
+BEGIN
+    FOR relation_row IN
+        SELECT cls.oid, ns.nspname AS schema_name, cls.relname AS table_name,
+               cls.relrowsecurity, cls.relforcerowsecurity
+        FROM runtime_agency_authorization_relation_allowlist AS allowlist
+        JOIN pg_class AS cls ON cls.relname = allowlist.table_name
+        JOIN pg_namespace AS ns ON ns.oid = cls.relnamespace
+        WHERE ns.nspname = 'public' AND cls.relkind = 'r'
+    LOOP
+        IF NOT relation_row.relrowsecurity OR NOT relation_row.relforcerowsecurity THEN
+            RAISE EXCEPTION 'Agency authorization relation %.% lacks ENABLE+FORCE RLS',
+                relation_row.schema_name, relation_row.table_name;
+        END IF;
+        SELECT bool_or(polcmd IN ('*', 'r') AND polqual IS NOT NULL)
+        INTO has_select
+        FROM pg_policy
+        WHERE polrelid = relation_row.oid;
+        IF NOT COALESCE(has_select, false) THEN
+            RAISE EXCEPTION 'Agency authorization relation lacks a tenant read policy';
+        END IF;
+        EXECUTE format(
+            'GRANT SELECT ON TABLE %I.%I TO yimatong_app',
+            relation_row.schema_name,
+            relation_row.table_name
+        );
+        EXECUTE format(
+            'REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER '
+            'ON TABLE %I.%I FROM yimatong_app',
+            relation_row.schema_name,
+            relation_row.table_name
+        );
+    END LOOP;
 END
 $$;
 
@@ -362,6 +445,7 @@ BEGIN
         'platform_configs',
         'tenant_invite_codes',
         'operator_campaign_manage_grants',
+        'agency_authorization_integrity_backups',
         'rls_force_remediation_backups',
         'runtime_privilege_remediation_backup',
         'alembic_version'

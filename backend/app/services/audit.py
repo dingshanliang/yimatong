@@ -1,10 +1,12 @@
 import uuid
 from datetime import UTC, datetime
 
-from sqlalchemy import func, insert, or_, select
+from sqlalchemy import bindparam, func, insert, or_, select, text
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.asyncio import AsyncSession
 from uuid6 import uuid7
 
+from app.core.database import get_request_security_credential
 from app.models.audit import PlatformAuditLog
 from app.models.tenant import Account
 from app.utils import escape_like_pattern
@@ -24,6 +26,39 @@ async def write_audit_log(
     # to that client's audit row. The statement still runs in the caller's
     # transaction, preserving business-write/audit atomicity.
     recorded_at = datetime.now(UTC)
+    credential = get_request_security_credential()
+    if db.get_bind().dialect.name == "postgresql" and credential is not None and credential[0] == "auth_session":
+        audit_id = uuid7()
+        statement = text(
+            "SELECT audit_id, resolved_operator_id, recorded_at "
+            "FROM public.append_authenticated_audit_event("
+            ":audit_id, :session_id, :target_tenant_id, :action, :resource, :details)"
+        ).bindparams(bindparam("details", type_=JSONB))
+        row = (
+            await db.execute(
+                statement,
+                {
+                    "audit_id": audit_id,
+                    "session_id": uuid.UUID(credential[1]),
+                    "target_tenant_id": target_tenant_id,
+                    "action": action,
+                    "resource": resource,
+                    "details": details,
+                },
+            )
+        ).one()
+        return PlatformAuditLog(
+            id=row.audit_id,
+            operator_id=row.resolved_operator_id,
+            target_tenant_id=target_tenant_id,
+            action=action,
+            resource=resource,
+            details=details,
+            timestamp=row.recorded_at,
+            created_at=row.recorded_at,
+            updated_at=row.recorded_at,
+        )
+
     log = PlatformAuditLog(
         id=uuid7(),
         operator_id=operator_id,

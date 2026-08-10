@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import {
+  Alert,
   App,
   Button,
   Card,
@@ -15,6 +16,8 @@ import {
   Typography,
 } from "antd";
 import api, { extractErrorMessage } from "@/lib/api";
+import { canManageAgencyAuthorizations } from "@/lib/agency-access";
+import { useAuthStore } from "@/lib/auth";
 
 const { Title, Text } = Typography;
 const SCOPES = [
@@ -36,6 +39,9 @@ interface AuthorizationItem {
 
 export default function AgencyAuthorizationsPage() {
   const { message } = App.useApp();
+  const canManage = useAuthStore((state) =>
+    canManageAgencyAuthorizations(state.user)
+  );
   const [items, setItems] = useState<AuthorizationItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [open, setOpen] = useState(false);
@@ -43,6 +49,10 @@ export default function AgencyAuthorizationsPage() {
   const [form] = Form.useForm<{ agency_slug: string; scope: string[] }>();
 
   const load = useCallback(async () => {
+    if (!canManage) {
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     try {
       const { data } = await api.get<{ items: AuthorizationItem[] }>(
@@ -54,11 +64,15 @@ export default function AgencyAuthorizationsPage() {
     } finally {
       setLoading(false);
     }
-  }, [message]);
+  }, [canManage, message]);
 
   useEffect(() => {
     void load();
   }, [load]);
+
+  if (!canManage) {
+    return <Alert type="info" showIcon title="当前账户不能管理代运营授权" />;
+  }
 
   const submit = async (values: { agency_slug: string; scope: string[] }) => {
     setSaving(true);

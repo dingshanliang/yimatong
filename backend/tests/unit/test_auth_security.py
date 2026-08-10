@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from pydantic import ValidationError
+from starlette.requests import Request
 
 _PRODUCTION_SETTINGS = {
     "environment": "production",
@@ -18,6 +19,44 @@ _PRODUCTION_SETTINGS = {
     "hmac_pepper": "prod-hmac-pepper-1Kx9Qm4Vt7Za2Nc8Wd5Yp3Rf6Bs0Gj",
     "ip_hash_secret": "prod-ip-hash-secret-6Tp2Mz8Qa4Wn9Yc1Rk7Vf5Bj3Hs0Ld",
 }
+
+
+def _middleware_request(method: str, path: str) -> Request:
+    return Request(
+        {
+            "type": "http",
+            "method": method,
+            "path": path,
+            "headers": [],
+            "query_string": b"",
+            "scheme": "http",
+            "server": ("test", 80),
+            "client": ("127.0.0.1", 1),
+        }
+    )
+
+
+@pytest.mark.parametrize(
+    ("method", "path", "expected"),
+    [
+        ("DELETE", "/api/v1/ops/authorizations/00000000-0000-4000-8000-000000000001", False),
+        ("POST", "/api/v1/ops/authorizations/00000000-0000-4000-8000-000000000001", True),
+        ("PATCH", "/api/v1/ops/authorizations/00000000-0000-4000-8000-000000000001", True),
+        ("DELETE", "/api/v1/ops/authorizations", True),
+        ("DELETE", "/api/v1/ops/authorizations/not-a-uuid", True),
+        ("DELETE", "/api/v1/ops/authorizations/00000000-0000-4000-8000-000000000001/", True),
+        ("DELETE", "/api/v1/ops/authorizations/00000000-0000-4000-8000-000000000001/audit", True),
+        ("DELETE", "/api/v1/ops/authorizations-extra/00000000-0000-4000-8000-000000000001", True),
+    ],
+)
+def test_plan_gate_only_exempts_exact_agency_authorization_revoke_route(
+    method: str,
+    path: str,
+    expected: bool,
+) -> None:
+    from app.middleware.tenant import TenantScopeMiddleware
+
+    assert TenantScopeMiddleware._requires_active_plan(_middleware_request(method, path)) is expected
 
 
 def test_config_rejects_empty_secret_key():
@@ -119,9 +158,9 @@ async def test_jwt_auth_loads_permissions_to_request_state():
     mock_account.auth_version = 0
 
     mock_result = MagicMock()
-    from app.models.tenant import TenantStatus
+    from app.models.tenant import TenantStatus, TenantType
 
-    mock_result.one_or_none.return_value = (mock_account, TenantStatus.active)
+    mock_result.one_or_none.return_value = (mock_account, TenantStatus.active, TenantType.brand)
 
     mock_db = AsyncMock()
     # _load_account_access 现在用 set_session_tenant_context（一条 set_config 执行）
@@ -139,10 +178,44 @@ async def test_jwt_auth_loads_permissions_to_request_state():
         patch("app.core.database._session_uses_postgresql", return_value=True),
         patch("app.core.database.async_session_factory", return_value=mock_session),
     ):
-        has_access, permissions = await middleware._load_account_access(str(uuid.uuid4()), "admin", 0, tenant_id)
+        has_access, permissions = await middleware._load_account_access(
+            str(uuid.uuid4()), "admin", 0, tenant_id, "brand"
+        )
 
     assert has_access is True
     assert "product:create" in permissions
+
+
+@pytest.mark.asyncio
+async def test_load_account_access_rejects_stale_tenant_type_claim():
+    from app.middleware.tenant import TenantScopeMiddleware
+    from app.models.tenant import TenantStatus, TenantType
+
+    middleware = TenantScopeMiddleware(app=MagicMock())
+    account = MagicMock(is_active=True, auth_version=0, roles=[])
+    result = MagicMock()
+    result.one_or_none.return_value = (account, TenantStatus.active, TenantType.brand)
+    db = AsyncMock()
+    db.execute.side_effect = [MagicMock(), result]
+    session = AsyncMock()
+    session.__aenter__ = AsyncMock(return_value=db)
+    session.__aexit__ = AsyncMock(return_value=False)
+
+    with (
+        patch("app.core.database._is_pg", True),
+        patch("app.core.database._session_uses_postgresql", return_value=True),
+        patch("app.core.database.async_session_factory", return_value=session),
+    ):
+        has_access, permissions = await middleware._load_account_access(
+            str(uuid.uuid4()),
+            "admin",
+            0,
+            str(uuid.uuid4()),
+            "agency",
+        )
+
+    assert has_access is False
+    assert permissions == []
 
 
 @pytest.mark.asyncio
@@ -183,6 +256,7 @@ async def test_load_permissions_fails_closed_for_missing_account():
 
     with (
         patch("app.core.database._is_pg", True),
+        patch("app.core.database._session_uses_postgresql", return_value=True),
         patch("app.core.database.async_session_factory", return_value=mock_session),
     ):
         has_access, permissions = await middleware._load_account_access(

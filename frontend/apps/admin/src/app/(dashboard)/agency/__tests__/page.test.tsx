@@ -6,7 +6,7 @@ const mockConfirm = vi.fn();
 const mockSuccess = vi.fn();
 const mockError = vi.fn();
 const mockPush = vi.fn();
-const mockSwitchAgencyContext = vi.fn();
+const mockSwitchAgencyContext = vi.hoisted(() => vi.fn());
 
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: mockPush }),
@@ -42,14 +42,18 @@ vi.mock("@/lib/api", () => ({
   registerAuthInterceptorHandlers: vi.fn(),
 }));
 
-vi.mock("@/lib/auth", () => ({
-  useAuthStore: {
-    getState: () => ({
-      switchAgencyContext: mockSwitchAgencyContext,
-      user: { agency_scope: ["products"] },
-    }),
-  },
-}));
+vi.mock("@/lib/auth", () => {
+  const state = {
+    switchAgencyContext: mockSwitchAgencyContext,
+    user: { agency_scope: ["products"] },
+  };
+  return {
+    useAuthStore: Object.assign(
+      (selector: (value: typeof state) => unknown) => selector(state),
+      { getState: () => state }
+    ),
+  };
+});
 
 function summary(overrides = {}) {
   return {
@@ -121,6 +125,14 @@ function mockWorkbench({
   },
 } = {}) {
   mockGet.mockImplementation((url: string) => {
+    if (url === "/ops/pilot-aggregate") {
+      return Promise.resolve({
+        data: {
+          summary: { total_clients: 0, clients_with_pending_retros: 0 },
+          clients: [],
+        },
+      });
+    }
     if (url === "/ops/workbench") {
       return Promise.resolve({
         data: {

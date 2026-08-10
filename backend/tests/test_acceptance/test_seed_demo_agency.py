@@ -1,17 +1,50 @@
 from __future__ import annotations
 
+import asyncio
+import os
+import subprocess
 import uuid
+from pathlib import Path
 
+import asyncpg
 import pytest
 from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.models.audit import PlatformAuditLog
 from app.models.plan import TenantQuotaUsage
-from app.models.tenant import Account, Role, Tenant, TenantType, account_roles
-from scripts.seed_demo import DEMO_AGENCY_EMAIL, _ensure_demo_agency_identity
+from app.models.tenant import Account, AgencyAuthorization, Role, Tenant, TenantType, account_roles
+from scripts.seed_demo import (
+    DEMO_AGENCY_EMAIL,
+    DEMO_AGENCY_SCOPES,
+    _ensure_demo_agency_authorization,
+    _ensure_demo_agency_identity,
+)
 
 pytestmark = pytest.mark.acceptance
+BACKEND_DIR = Path(__file__).resolve().parents[2]
+
+
+def _run_official_demo_seed(owner_url: str) -> None:
+    environment = os.environ.copy()
+    environment.update(
+        {
+            "database_url": owner_url.replace("yimatong:yimatong@", "yimatong_app:yimatong_app@"),
+            "control_database_url": owner_url.replace("yimatong:yimatong@", "acceptance_control:control_pwd@"),
+            "migration_database_url": owner_url,
+            "environment": "test",
+        }
+    )
+    result = subprocess.run(
+        ["uv", "run", "python", "scripts/seed_demo.py", "generate", "--target", "demo"],
+        cwd=BACKEND_DIR,
+        env=environment,
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=180,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
 
 
 @pytest.mark.parametrize("identity_residual", [False, True])
@@ -85,4 +118,141 @@ async def test_demo_agency_birth_commits_with_an_active_admin(
                 assert await db.get(Tenant, residual_id) is None
     finally:
         await control_engine.dispose()
+        await owner_engine.dispose()
+
+
+async def test_demo_agency_authorization_uses_control_path_and_runtime_stays_read_only(
+    migrated_pg_url: str,
+    runtime_pg_conn: asyncpg.Connection,
+) -> None:
+    control_url = migrated_pg_url.replace("yimatong:yimatong@", "acceptance_control:control_pwd@")
+    control_engine = create_async_engine(control_url)
+    owner_engine = create_async_engine(migrated_pg_url)
+    control_factory = async_sessionmaker(control_engine, class_=AsyncSession, expire_on_commit=False)
+    owner_factory = async_sessionmaker(owner_engine, class_=AsyncSession, expire_on_commit=False)
+    agency_id = uuid.uuid4()
+    client_id = uuid.uuid4()
+    try:
+        async with owner_factory() as db, db.begin():
+            db.add_all(
+                (
+                    Tenant(
+                        id=agency_id,
+                        name="Seed control agency",
+                        slug=f"seed-agency-{agency_id.hex[:12]}",
+                        tenant_type=TenantType.agency,
+                        plan="pro",
+                    ),
+                    Tenant(
+                        id=client_id,
+                        name="Seed control client",
+                        slug=f"seed-client-{client_id.hex[:12]}",
+                        tenant_type=TenantType.brand,
+                        plan="free",
+                    ),
+                )
+            )
+
+        async with control_factory() as db, db.begin():
+            await db.execute(text("SELECT set_config('app.tenant_id', '', true)"))
+            await db.execute(text("SELECT set_config('app.bypass_rls', 'true', true)"))
+            first_id = await _ensure_demo_agency_authorization(
+                db,
+                agency_tenant_id=agency_id,
+                client_tenant_id=client_id,
+            )
+
+        async with owner_factory() as db:
+            created_at = await db.scalar(
+                select(AgencyAuthorization.created_at).where(AgencyAuthorization.id == first_id)
+            )
+
+        async with control_factory() as db, db.begin():
+            await db.execute(text("SELECT set_config('app.tenant_id', '', true)"))
+            await db.execute(text("SELECT set_config('app.bypass_rls', 'true', true)"))
+            second_id = await _ensure_demo_agency_authorization(
+                db,
+                agency_tenant_id=agency_id,
+                client_tenant_id=client_id,
+            )
+
+        async with owner_factory() as db:
+            authorization = await db.get(AgencyAuthorization, first_id)
+            assert first_id == second_id
+            assert authorization is not None
+            assert authorization.scope == DEMO_AGENCY_SCOPES
+            assert authorization.created_at == created_at
+            assert (
+                await db.scalar(
+                    select(func.count())
+                    .select_from(AgencyAuthorization)
+                    .where(
+                        AgencyAuthorization.agency_tenant_id == agency_id,
+                        AgencyAuthorization.client_tenant_id == client_id,
+                    )
+                )
+                == 1
+            )
+
+        savepoint = runtime_pg_conn.transaction()
+        await savepoint.start()
+        with pytest.raises(asyncpg.InsufficientPrivilegeError):
+            await runtime_pg_conn.execute(
+                "INSERT INTO agency_authorizations "
+                "(id,agency_tenant_id,client_tenant_id,scope,status,granted_at,created_at,updated_at) "
+                "VALUES ($1,$2,$3,$4::json,'active',now(),now(),now())",
+                uuid.uuid4(),
+                agency_id,
+                client_id,
+                '["products"]',
+            )
+        await savepoint.rollback()
+    finally:
+        await control_engine.dispose()
+        await owner_engine.dispose()
+
+
+async def test_official_demo_seed_is_idempotent_on_the_same_database(migrated_pg_url: str) -> None:
+    await asyncio.to_thread(_run_official_demo_seed, migrated_pg_url)
+    owner_engine = create_async_engine(migrated_pg_url)
+    owner_factory = async_sessionmaker(owner_engine, class_=AsyncSession, expire_on_commit=False)
+    try:
+        async with owner_factory() as db:
+            agency_id = await db.scalar(select(Tenant.id).where(Tenant.slug == "demo-agency"))
+            client_id = await db.scalar(select(Tenant.id).where(Tenant.slug == "demo"))
+            authorization = await db.scalar(
+                select(AgencyAuthorization).where(
+                    AgencyAuthorization.agency_tenant_id == agency_id,
+                    AgencyAuthorization.client_tenant_id == client_id,
+                )
+            )
+            assert authorization is not None
+            authorization_id = authorization.id
+            created_at = authorization.created_at
+
+        await asyncio.to_thread(_run_official_demo_seed, migrated_pg_url)
+
+        async with owner_factory() as db:
+            authorization = await db.scalar(
+                select(AgencyAuthorization).where(
+                    AgencyAuthorization.agency_tenant_id == agency_id,
+                    AgencyAuthorization.client_tenant_id == client_id,
+                )
+            )
+            assert authorization is not None
+            assert authorization.id == authorization_id
+            assert authorization.created_at == created_at
+            assert authorization.scope == DEMO_AGENCY_SCOPES
+            assert (
+                await db.scalar(
+                    select(func.count())
+                    .select_from(AgencyAuthorization)
+                    .where(
+                        AgencyAuthorization.agency_tenant_id == agency_id,
+                        AgencyAuthorization.client_tenant_id == client_id,
+                    )
+                )
+                == 1
+            )
+    finally:
         await owner_engine.dispose()

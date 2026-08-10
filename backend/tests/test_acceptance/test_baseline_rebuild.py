@@ -55,8 +55,8 @@ async def _set_rls_context(
     await conn.execute("SELECT set_config('app.bypass_rls', $1, true)", "true" if bypass else "false")
 
 
-async def _assert_insert_denied(conn: asyncpg.Connection, query: str, *args: object) -> None:
-    """Contain an expected WITH CHECK violation in a savepoint."""
+async def _assert_write_denied(conn: asyncpg.Connection, query: str, *args: object) -> None:
+    """Contain an expected write-privilege or WITH CHECK failure in a savepoint."""
     savepoint = conn.transaction()
     await savepoint.start()
     with pytest.raises(asyncpg.exceptions.InsufficientPrivilegeError):
@@ -236,7 +236,7 @@ class TestTenantIsolation:
         for foreign_tenant_id in (counterparty_id, third_id):
             await _set_rls_context(asyncpg_conn, tenant_id=foreign_tenant_id)
             assert await asyncpg_conn.fetchval("SELECT count(*) FROM ops_tasks WHERE id = $1", owner_task_id) == 0
-            await _assert_insert_denied(asyncpg_conn, foreign_insert_sql, uuid.uuid4(), owner_id)
+            await _assert_write_denied(asyncpg_conn, foreign_insert_sql, uuid.uuid4(), owner_id)
             assert (
                 await asyncpg_conn.execute(
                     "UPDATE ops_tasks SET status = 'completed', updated_at = now() WHERE id = $1", owner_task_id
@@ -247,7 +247,7 @@ class TestTenantIsolation:
 
         await _set_rls_context(asyncpg_conn)
         assert await asyncpg_conn.fetchval("SELECT count(*) FROM ops_tasks WHERE id = $1", owner_task_id) == 0
-        await _assert_insert_denied(asyncpg_conn, foreign_insert_sql, uuid.uuid4(), owner_id)
+        await _assert_write_denied(asyncpg_conn, foreign_insert_sql, uuid.uuid4(), owner_id)
         assert (
             await asyncpg_conn.execute(
                 "UPDATE ops_tasks SET status = 'completed', updated_at = now() WHERE id = $1", owner_task_id
@@ -298,8 +298,8 @@ class TestTenantIsolation:
             )
         await savepoint.rollback()
 
-    async def test_agency_authorization_rls_crud_matrix(self, bypass_session, migrated_pg_url, asyncpg_conn):
-        """授权双方可读，但只有客户租户可写；第三方与无上下文均 fail closed。"""
+    async def test_agency_authorization_rls_crud_matrix(self, bypass_session, migrated_pg_url, runtime_pg_conn):
+        """授权双方可读，但 runtime 只能通过窄函数追加或转换授权状态。"""
         await seed_baseline(migrated_pg_url)
         await bypass_session.rollback()
         await bypass_session.execute(text("SET LOCAL app.bypass_rls = 'true'"))
@@ -331,83 +331,78 @@ class TestTenantIsolation:
             "VALUES ($1, $2, $3, '[\"pages\"]'::json, 'revoked', now(), now(), now())"
         )
 
-        await _set_rls_context(asyncpg_conn, tenant_id=client_id)
+        await _set_rls_context(runtime_pg_conn, tenant_id=client_id)
         assert (
-            await asyncpg_conn.fetchval("SELECT count(*) FROM agency_authorizations WHERE id = $1", authorization_id)
+            await runtime_pg_conn.fetchval("SELECT count(*) FROM agency_authorizations WHERE id = $1", authorization_id)
             == 1
         )
-        client_insert_id = uuid.uuid4()
-        await asyncpg_conn.execute(insert_sql, client_insert_id, agency_id, client_id)
-        assert (
-            await asyncpg_conn.execute(
-                "UPDATE agency_authorizations SET scope = '[\"analytics\"]'::json, updated_at = now() WHERE id = $1",
-                client_insert_id,
-            )
-            == "UPDATE 1"
+        await _assert_write_denied(runtime_pg_conn, insert_sql, uuid.uuid4(), agency_id, client_id)
+        await _assert_write_denied(
+            runtime_pg_conn,
+            "UPDATE agency_authorizations SET scope = '[\"analytics\"]'::json, updated_at = now() WHERE id = $1",
+            authorization_id,
         )
-        assert (
-            await asyncpg_conn.execute("DELETE FROM agency_authorizations WHERE id = $1", client_insert_id)
-            == "DELETE 1"
+        await _assert_write_denied(
+            runtime_pg_conn,
+            "DELETE FROM agency_authorizations WHERE id = $1",
+            authorization_id,
         )
 
-        await _set_rls_context(asyncpg_conn, tenant_id=agency_id)
+        await _set_rls_context(runtime_pg_conn, tenant_id=agency_id)
         assert (
-            await asyncpg_conn.fetchval("SELECT count(*) FROM agency_authorizations WHERE id = $1", authorization_id)
+            await runtime_pg_conn.fetchval("SELECT count(*) FROM agency_authorizations WHERE id = $1", authorization_id)
             == 1
         )
-        await _assert_insert_denied(asyncpg_conn, insert_sql, uuid.uuid4(), agency_id, client_id)
-        assert (
-            await asyncpg_conn.execute(
-                "UPDATE agency_authorizations SET scope = '[\"analytics\"]'::json, updated_at = now() WHERE id = $1",
-                authorization_id,
-            )
-            == "UPDATE 0"
+        await _assert_write_denied(runtime_pg_conn, insert_sql, uuid.uuid4(), agency_id, client_id)
+        await _assert_write_denied(
+            runtime_pg_conn,
+            "UPDATE agency_authorizations SET scope = '[\"analytics\"]'::json, updated_at = now() WHERE id = $1",
+            authorization_id,
         )
-        assert (
-            await asyncpg_conn.execute("DELETE FROM agency_authorizations WHERE id = $1", authorization_id)
-            == "DELETE 0"
+        await _assert_write_denied(
+            runtime_pg_conn,
+            "DELETE FROM agency_authorizations WHERE id = $1",
+            authorization_id,
         )
 
         for hidden_tenant_id in (third_id, None):
-            await _set_rls_context(asyncpg_conn, tenant_id=hidden_tenant_id)
+            await _set_rls_context(runtime_pg_conn, tenant_id=hidden_tenant_id)
             assert (
-                await asyncpg_conn.fetchval(
+                await runtime_pg_conn.fetchval(
                     "SELECT count(*) FROM agency_authorizations WHERE id = $1", authorization_id
                 )
                 == 0
             )
-            await _assert_insert_denied(asyncpg_conn, insert_sql, uuid.uuid4(), agency_id, client_id)
-            assert (
-                await asyncpg_conn.execute(
-                    "UPDATE agency_authorizations SET scope = '[\"analytics\"]'::json, updated_at = now() WHERE id = $1",
-                    authorization_id,
-                )
-                == "UPDATE 0"
+            await _assert_write_denied(runtime_pg_conn, insert_sql, uuid.uuid4(), agency_id, client_id)
+            await _assert_write_denied(
+                runtime_pg_conn,
+                "UPDATE agency_authorizations SET scope = '[\"analytics\"]'::json, updated_at = now() WHERE id = $1",
+                authorization_id,
             )
-            assert (
-                await asyncpg_conn.execute("DELETE FROM agency_authorizations WHERE id = $1", authorization_id)
-                == "DELETE 0"
+            await _assert_write_denied(
+                runtime_pg_conn,
+                "DELETE FROM agency_authorizations WHERE id = $1",
+                authorization_id,
             )
 
-        await _set_rls_context(asyncpg_conn, bypass=True)
+        await _set_rls_context(runtime_pg_conn, bypass=True)
         # A NOBYPASSRLS runtime principal cannot promote itself by setting the
         # custom GUC string.  Only the independently configured control role,
         # which owns the parameter SET privilege, may enter this branch.
         assert (
-            await asyncpg_conn.fetchval("SELECT count(*) FROM agency_authorizations WHERE id = $1", authorization_id)
+            await runtime_pg_conn.fetchval("SELECT count(*) FROM agency_authorizations WHERE id = $1", authorization_id)
             == 0
         )
-        await _assert_insert_denied(asyncpg_conn, insert_sql, uuid.uuid4(), agency_id, client_id)
-        assert (
-            await asyncpg_conn.execute(
-                "UPDATE agency_authorizations SET scope = '[\"analytics\"]'::json, updated_at = now() WHERE id = $1",
-                authorization_id,
-            )
-            == "UPDATE 0"
+        await _assert_write_denied(runtime_pg_conn, insert_sql, uuid.uuid4(), agency_id, client_id)
+        await _assert_write_denied(
+            runtime_pg_conn,
+            "UPDATE agency_authorizations SET scope = '[\"analytics\"]'::json, updated_at = now() WHERE id = $1",
+            authorization_id,
         )
-        assert (
-            await asyncpg_conn.execute("DELETE FROM agency_authorizations WHERE id = $1", authorization_id)
-            == "DELETE 0"
+        await _assert_write_denied(
+            runtime_pg_conn,
+            "DELETE FROM agency_authorizations WHERE id = $1",
+            authorization_id,
         )
 
 

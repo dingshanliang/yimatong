@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response,
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.database import get_db
+from app.core.database import get_db, get_db_for_agency_authorization_transition
 from app.core.dependencies import (
     get_current_account_id,
     get_current_role,
@@ -38,6 +38,13 @@ def _require_brand(tenant_type: str) -> None:
         raise HTTPException(status_code=403, detail="仅品牌租户可操作")
 
 
+def _require_durable_session(request: Request) -> uuid.UUID:
+    try:
+        return uuid.UUID(str(request.state.session_id))
+    except (AttributeError, TypeError, ValueError) as exc:
+        raise HTTPException(status_code=401, detail="登录会话已失效，请重新登录") from exc
+
+
 @router.get("", response_model=AuthorizationListResponse)
 async def list_authorizations(
     request: Request,
@@ -66,10 +73,11 @@ async def list_authorizations(
 @router.post("", response_model=AuthorizationResponse, status_code=status.HTTP_201_CREATED)
 async def create_authorization(
     body: AuthorizationCreate,
+    request: Request,
     tenant_id: uuid.UUID = Depends(get_current_tenant),
     tenant_type: str = Depends(get_current_tenant_type),
     account_id: uuid.UUID = Depends(get_current_account_id),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db_for_agency_authorization_transition, scope="function"),
     _permission: None = Depends(require_permission("tenant:manage")),
 ):
     """Brand 授权 agency"""
@@ -89,8 +97,9 @@ async def create_authorization(
             client_tenant_id=tenant_id,
             scope=body.scope,
             granted_by=account_id,
+            auth_session_id=_require_durable_session(request),
         )
-    except ValueError as e:
+    except (AttributeError, ValueError) as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
     await db.flush()
     await db.refresh(auth)
@@ -116,25 +125,42 @@ async def create_authorization(
 @router.delete("/{auth_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def revoke_auth(
     auth_id: uuid.UUID,
+    request: Request,
     tenant_type: str = Depends(get_current_tenant_type),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
     account_id: uuid.UUID = Depends(get_current_account_id),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db_for_agency_authorization_transition, scope="function"),
     _permission: None = Depends(require_permission("tenant:manage")),
 ):
     """Brand 撤销 agency 授权"""
     _require_brand(tenant_type)
 
-    auth = await revoke_authorization(db, auth_id, client_tenant_id=tenant_id)
+    try:
+        auth = await revoke_authorization(
+            db,
+            auth_id,
+            client_tenant_id=tenant_id,
+            actor_id=account_id,
+            auth_session_id=_require_durable_session(request),
+        )
+    except (AttributeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     if not auth:
         raise HTTPException(status_code=404, detail="授权记录不存在")
+    resulting_status = auth.status.value
+    if resulting_status not in {"expired", "revoked"}:
+        raise HTTPException(status_code=409, detail="授权状态已变化，请刷新后重试")
     await write_audit_log(
         db,
         operator_id=str(account_id),
         target_tenant_id=str(tenant_id),
-        action="agency_authorization_revoked",
+        action=f"agency_authorization_{resulting_status}",
         resource=f"agency_authorization:{auth.id}",
-        details={"agency_tenant_id": str(auth.agency_tenant_id), "scope": auth.scope},
+        details={
+            "agency_tenant_id": str(auth.agency_tenant_id),
+            "scope": auth.scope,
+            "resulting_status": resulting_status,
+        },
     )
     await db.flush()
 
@@ -175,17 +201,36 @@ async def switch_context(
     tenant_type: str = Depends(get_current_tenant_type),
     account_id: uuid.UUID = Depends(get_current_account_id),
     role: str = Depends(require_role("admin", "operator")),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db_for_agency_authorization_transition, scope="function"),
 ):
     """Agency 切换到客户上下文，返回带 acting_tenant_id 的新 JWT"""
     _require_agency(tenant_type)
+    _require_durable_session(request)
 
     # Verify authorization
     auth = await verify_authorization(db, tenant_id, body.client_tenant_id)
     if not auth:
         raise HTTPException(status_code=403, detail="未获得该客户的授权")
 
-    # Generate new JWT with acting_tenant_id
+    await write_audit_log(
+        db,
+        operator_id=str(account_id),
+        target_tenant_id=str(body.client_tenant_id),
+        action="agency_context_entered",
+        resource=f"agency_authorization:{auth.id}",
+        details={
+            "agency_tenant_id": str(tenant_id),
+            "acting_tenant_id": str(body.client_tenant_id),
+            "scope": list(auth.scope),
+        },
+    )
+    # The audit function holds the pair advisory lock until commit and has
+    # revalidated the durable actor plus the live grant. Re-read the grant
+    # under that lock so the token never receives stale scope.
+    auth = await verify_authorization(db, tenant_id, body.client_tenant_id)
+    if not auth:
+        raise HTTPException(status_code=403, detail="代运营授权已变化，请重试")
+
     from app.utils.security import create_access_token
 
     access_token = create_access_token(
@@ -198,18 +243,6 @@ async def switch_context(
             "scope": auth.scope,
             "auth_version": request.state.auth_version,
             "sid": request.state.session_id,
-        },
-    )
-    await write_audit_log(
-        db,
-        operator_id=str(account_id),
-        target_tenant_id=str(body.client_tenant_id),
-        action="agency_context_entered",
-        resource=f"agency_authorization:{auth.id}",
-        details={
-            "agency_tenant_id": str(tenant_id),
-            "acting_tenant_id": str(body.client_tenant_id),
-            "scope": list(auth.scope),
         },
     )
     await db.flush()

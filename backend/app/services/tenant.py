@@ -1,10 +1,11 @@
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 
-from sqlalchemy import select
+from sqlalchemy import or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.tenant import Tenant, TenantStatus, TenantType
+from app.models.auth_security import AuthSession
+from app.models.tenant import Account, AgencyAuthorization, AgencyAuthStatus, Tenant, TenantStatus, TenantType
 from app.modules.brand_tenant_initialization import (
     BrandTenantInitialization,
     InitializeBrandTenant,
@@ -92,6 +93,10 @@ async def get_tenant(db: AsyncSession, tenant_id: uuid.UUID) -> Tenant | None:
     return result.scalar_one_or_none()
 
 
+class TenantTypeTransitionConflict(ValueError):
+    """A tenant with a live agency relationship cannot change identity type."""
+
+
 async def update_tenant(
     db: AsyncSession,
     tenant_id: uuid.UUID,
@@ -106,10 +111,34 @@ async def update_tenant(
     tenant_type: str | None = None,
     categories: list[str] | None = None,
     brand_profile: dict | None = None,
+    actor_id: str = "system",
 ) -> Tenant | None:
-    tenant = await get_tenant(db, tenant_id)
+    if tenant_type is not None:
+        from app.services.quota import lock_quota_rollout_state
+
+        await lock_quota_rollout_state(db)
+        tenant = (await db.execute(select(Tenant).where(Tenant.id == tenant_id).with_for_update())).scalar_one_or_none()
+    else:
+        tenant = await get_tenant(db, tenant_id)
     if not tenant:
         return None
+    tenant_type_changed = False
+    old_tenant_type = tenant.tenant_type
+    next_tenant_type = TenantType(tenant_type) if tenant_type is not None else None
+    if next_tenant_type is not None and next_tenant_type != old_tenant_type:
+        active_authorization_id = await db.scalar(
+            select(AgencyAuthorization.id)
+            .where(
+                AgencyAuthorization.status == AgencyAuthStatus.active,
+                or_(
+                    AgencyAuthorization.agency_tenant_id == tenant_id,
+                    AgencyAuthorization.client_tenant_id == tenant_id,
+                ),
+            )
+            .limit(1)
+        )
+        if active_authorization_id is not None:
+            raise TenantTypeTransitionConflict("租户存在生效中的代运营授权，请先撤销授权后再变更租户类型")
     if name:
         tenant.name = name
     if industry is not None:
@@ -129,7 +158,18 @@ async def update_tenant(
     if enabled_features is not None:
         tenant.enabled_features = enabled_features
     if tenant_type is not None:
-        tenant.tenant_type = TenantType(tenant_type)
+        assert next_tenant_type is not None
+        if next_tenant_type != tenant.tenant_type:
+            tenant.tenant_type = next_tenant_type
+            tenant_type_changed = True
+            await db.execute(
+                update(Account).where(Account.tenant_id == tenant_id).values(auth_version=Account.auth_version + 1)
+            )
+            await db.execute(
+                update(AuthSession)
+                .where(AuthSession.tenant_id == tenant_id, AuthSession.revoked_at.is_(None))
+                .values(revoked_at=datetime.now(UTC))
+            )
     if categories is not None:
         tenant.categories = categories
     if brand_profile is not None:
@@ -138,7 +178,22 @@ async def update_tenant(
         tenant.brand_profile = existing
     await db.flush()
     await db.refresh(tenant)
-    await _audit(db, "system", str(tenant.id), "tenant_update", f"tenant:{tenant_id}")
+    if tenant_type_changed:
+        from app.services.audit import write_audit_log
+
+        await write_audit_log(
+            db,
+            operator_id=actor_id,
+            target_tenant_id=str(tenant.id),
+            action="tenant_type_changed",
+            resource=f"tenant:{tenant_id}",
+            details={
+                "old_tenant_type": old_tenant_type.value,
+                "new_tenant_type": tenant.tenant_type.value,
+            },
+        )
+    else:
+        await _audit(db, actor_id, str(tenant.id), "tenant_update", f"tenant:{tenant_id}")
     return tenant
 
 

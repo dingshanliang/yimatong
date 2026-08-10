@@ -50,6 +50,7 @@ from app.models.tenant import (
     Organization,
     Role,
     Tenant,
+    TenantStatus,
     TenantType,
     account_roles,
 )
@@ -86,6 +87,7 @@ DEMO_ENABLED_FEATURES = {"channel_portal": True}
 DEMO_AGENCY_SLUG = "demo-agency"
 DEMO_AGENCY_EMAIL = "agency_admin@demo.com"
 DEMO_AGENCY_PASSWORD = "demopass"
+DEMO_AGENCY_SCOPES = ["products", "pages", "campaigns", "codes", "analytics"]
 
 
 def _guard_demo_command(*, target: str, allow_production: bool, identity_bearing: bool) -> None:
@@ -736,8 +738,88 @@ async def _ensure_demo_agency_identity(
     return agency_tenant.id
 
 
+async def _ensure_demo_agency_authorization(
+    db: AsyncSession,
+    *,
+    agency_tenant_id: uuid.UUID,
+    client_tenant_id: uuid.UUID,
+) -> uuid.UUID:
+    """Create the demo-only grant through an explicit trusted control session.
+
+    The public grant transition deliberately requires a live administrator
+    session. Demo bootstrap must not fabricate one, so its production-forbidden
+    identity path uses the control role and preserves any exact existing grant.
+    """
+
+    if settings.environment == "production":
+        raise RuntimeError("Production may not bootstrap the built-in demo agency authorization")
+    if db.get_bind().dialect.name == "postgresql":
+        bypass_enabled = await db.scalar(text("SELECT current_setting('app.bypass_rls', true)"))
+        if bypass_enabled != "true":
+            raise RuntimeError("Demo agency authorization requires an explicit control-session RLS bypass")
+
+    await lock_quota_rollout_state(db)
+    tenants = list(
+        (
+            await db.scalars(
+                select(Tenant)
+                .where(Tenant.id.in_((agency_tenant_id, client_tenant_id)))
+                .order_by(Tenant.id)
+                .with_for_update()
+            )
+        ).all()
+    )
+    tenants_by_id = {tenant.id: tenant for tenant in tenants}
+    agency_tenant = tenants_by_id.get(agency_tenant_id)
+    client_tenant = tenants_by_id.get(client_tenant_id)
+    if (
+        agency_tenant is None
+        or agency_tenant.tenant_type != TenantType.agency
+        or agency_tenant.status != TenantStatus.active
+        or client_tenant is None
+        or client_tenant.tenant_type != TenantType.brand
+        or client_tenant.status != TenantStatus.active
+        or agency_tenant_id == client_tenant_id
+    ):
+        raise RuntimeError("Demo agency authorization requires one active agency and one distinct active brand client")
+
+    if db.get_bind().dialect.name == "postgresql":
+        pair_key = f"{agency_tenant_id}:{client_tenant_id}"
+        await db.execute(select(func.pg_advisory_xact_lock(func.hashtextextended(pair_key, 0))))
+
+    active_authorizations = list(
+        (
+            await db.scalars(
+                select(AgencyAuthorization).where(
+                    AgencyAuthorization.agency_tenant_id == agency_tenant_id,
+                    AgencyAuthorization.client_tenant_id == client_tenant_id,
+                    AgencyAuthorization.status == AgencyAuthStatus.active,
+                )
+            )
+        ).all()
+    )
+    if len(active_authorizations) > 1:
+        raise RuntimeError("Demo agency authorization has multiple active grants")
+    if active_authorizations:
+        authorization = active_authorizations[0]
+        if authorization.scope != DEMO_AGENCY_SCOPES or authorization.expires_at is not None:
+            raise RuntimeError("Demo agency authorization conflicts with the expected non-expiring scope")
+        return authorization.id
+
+    authorization = AgencyAuthorization(
+        agency_tenant_id=agency_tenant_id,
+        client_tenant_id=client_tenant_id,
+        scope=DEMO_AGENCY_SCOPES.copy(),
+        status=AgencyAuthStatus.active,
+        granted_by=None,
+    )
+    db.add(authorization)
+    await db.flush()
+    return authorization.id
+
+
 async def _ensure_demo_agency(client_tenant_id: uuid.UUID) -> None:
-    """Seed the agency via one atomic identity transaction plus client RLS."""
+    """Seed the agency via atomic identity and trusted bootstrap transactions."""
 
     async with control_session() as db:
         await db.execute(text("SELECT set_config('app.tenant_id', '', true)"))
@@ -745,25 +827,14 @@ async def _ensure_demo_agency(client_tenant_id: uuid.UUID) -> None:
         agency_tenant_id = await _ensure_demo_agency_identity(db)
         await db.commit()
 
-    async with async_session() as db:
-        await set_session_tenant_context(db, client_tenant_id)
-        authorization = await db.scalar(
-            select(AgencyAuthorization).where(
-                AgencyAuthorization.agency_tenant_id == agency_tenant_id,
-                AgencyAuthorization.client_tenant_id == client_tenant_id,
-                AgencyAuthorization.status == AgencyAuthStatus.active,
-            )
+    async with control_session() as db:
+        await db.execute(text("SELECT set_config('app.tenant_id', '', true)"))
+        await db.execute(text("SELECT set_config('app.bypass_rls', 'true', true)"))
+        await _ensure_demo_agency_authorization(
+            db,
+            agency_tenant_id=agency_tenant_id,
+            client_tenant_id=client_tenant_id,
         )
-        if authorization is None:
-            db.add(
-                AgencyAuthorization(
-                    agency_tenant_id=agency_tenant_id,
-                    client_tenant_id=client_tenant_id,
-                    scope=["pages", "campaigns", "analytics", "products", "codes"],
-                    status=AgencyAuthStatus.active,
-                    granted_by=None,
-                )
-            )
         await db.commit()
     typer.echo(f"  Ensured demo agency tenant: {DEMO_AGENCY_SLUG}")
 

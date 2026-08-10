@@ -132,13 +132,13 @@ _LEGACY_BOTH_TIMESTAMP_TABLES = {
 LEGACY_TIMESTAMP_NULLABILITY = {
     *((table_name, "created_at") for table_name in _LEGACY_BOTH_TIMESTAMP_TABLES),
     *((table_name, "updated_at") for table_name in _LEGACY_BOTH_TIMESTAMP_TABLES),
-    ("agency_authorizations", "updated_at"),
     ("point_redemptions", "updated_at"),
     ("point_transactions", "updated_at"),
     ("tenants", "updated_at"),
 }
 
 MIGRATION_ONLY_TABLES = {
+    "agency_authorization_integrity_backups",
     "alembic_version",
     "rls_force_remediation_backups",
     "runtime_privilege_remediation_backup",
