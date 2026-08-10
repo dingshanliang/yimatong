@@ -1,18 +1,176 @@
 """Webhook / Open API 服务"""
 
+import hashlib
+import hmac
+import json
+import re
 import secrets
 import uuid
+from dataclasses import dataclass
+from datetime import UTC, datetime
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
+from uuid6 import uuid7
 
+from app.core.config import settings
 from app.models.webhook import ApiKey, WebhookDelivery, WebhookEndpoint
-from app.utils.auth_rbac import VALID_ROLES, get_permissions_for_role
+from app.services.audit import write_audit_log
+from app.services.connectors.secrets import decrypt_secrets, encrypt_secrets
+from app.utils.auth_rbac import VALID_API_KEY_ROLES, get_permissions_for_role
 
 
 def _generate_secret() -> str:
     """生成 webhook secret（whsec_ 前缀，32 字节随机）。"""
     return f"whsec_{secrets.token_hex(32)}"
+
+
+@dataclass(frozen=True)
+class IssuedApiKey:
+    id: uuid.UUID
+    name: str
+    key: str
+    key_prefix: str
+    role: str
+    permissions: list[str]
+    expires_at: datetime | None
+
+
+@dataclass(frozen=True)
+class ApiKeyLifecycleMaterial:
+    idempotency_digest: str
+    request_fingerprint: str
+    secret: str
+    key_prefix: str
+    key_digest: str
+    escrow_ciphertext: bytes
+
+
+class ApiKeyLifecycleConflict(ValueError):
+    pass
+
+
+class ApiKeyActiveLimitReached(ValueError):
+    pass
+
+
+def _canonical_json(value: dict) -> str:
+    return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+
+def _lifecycle_hmac(domain: str, value: str) -> str:
+    try:
+        pepper = bytes.fromhex(settings.hmac_pepper)
+    except ValueError as exc:
+        raise RuntimeError("HMAC pepper is not valid hexadecimal") from exc
+    return hmac.new(
+        pepper,
+        f"api-key-lifecycle:{domain}:v1:{value}".encode(),
+        hashlib.sha256,
+    ).hexdigest()
+
+
+def build_api_key_lifecycle_material(
+    *,
+    tenant_id: uuid.UUID,
+    actor_id: uuid.UUID,
+    action: str,
+    target_id: uuid.UUID | None,
+    idempotency_key: str,
+    payload: dict,
+    candidate_id: uuid.UUID,
+) -> ApiKeyLifecycleMaterial:
+    if action not in {"issue", "rotate"}:
+        raise ValueError("Unsupported API key lifecycle action")
+    request_payload = {
+        "action": action,
+        "payload": payload,
+        "target_id": str(target_id) if target_id else None,
+    }
+    request_json = _canonical_json(request_payload)
+    secret_json = _canonical_json(
+        {
+            "actor_id": str(actor_id),
+            "idempotency_key": idempotency_key,
+            "request": request_payload,
+            "tenant_id": str(tenant_id),
+        }
+    )
+    secret = f"ymt_{_lifecycle_hmac('secret', secret_json)[:48]}"
+    return ApiKeyLifecycleMaterial(
+        idempotency_digest=_lifecycle_hmac("idempotency", idempotency_key),
+        request_fingerprint=_lifecycle_hmac("request", request_json),
+        secret=secret,
+        key_prefix=secret[:12],
+        key_digest=hashlib.sha256(secret.encode()).hexdigest(),
+        escrow_ciphertext=encrypt_secrets({"v": 1, "api_key_id": str(candidate_id), "secret": secret}),
+    )
+
+
+def recover_api_key_secret(
+    escrow_ciphertext: bytes,
+    api_key_id: uuid.UUID,
+    *,
+    expected_prefix: str | None = None,
+    expected_digest: str | None = None,
+) -> str:
+    try:
+        escrow = decrypt_secrets(escrow_ciphertext)
+    except Exception as exc:
+        raise RuntimeError("API key escrow could not be decrypted") from exc
+    secret = escrow.get("secret")
+    if (
+        set(escrow) != {"v", "api_key_id", "secret"}
+        or escrow.get("v") != 1
+        or escrow.get("api_key_id") != str(api_key_id)
+        or not isinstance(secret, str)
+        or re.fullmatch(r"ymt_[0-9a-f]{48}", secret) is None
+    ):
+        raise RuntimeError("API key escrow payload is invalid")
+    if expected_prefix is not None and not hmac.compare_digest(secret[:12], expected_prefix):
+        raise RuntimeError("API key escrow does not match lifecycle material")
+    if expected_digest is not None and not hmac.compare_digest(
+        hashlib.sha256(secret.encode()).hexdigest(), expected_digest
+    ):
+        raise RuntimeError("API key escrow does not match lifecycle material")
+    return secret
+
+
+def _api_key_request_payload(
+    *,
+    name: str,
+    role: str,
+    expires_at: datetime | None,
+    permanent_reason: str | None = None,
+) -> dict:
+    return {
+        "expires_at": _as_utc(expires_at).isoformat() if expires_at else None,
+        "name": name,
+        "permanent_reason": permanent_reason,
+        "role": role,
+    }
+
+
+def _as_utc(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)
+
+
+def _returned_escrow(value) -> bytes:
+    try:
+        return bytes(value)
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError("API key lifecycle returned invalid escrow") from exc
+
+
+def _audit_details(*, key_prefix: str, role: str, expires_at: datetime | None, **extra) -> dict:
+    return {
+        "key_prefix": key_prefix,
+        "role": role,
+        "expires_at": expires_at.isoformat() if expires_at else None,
+        **extra,
+    }
 
 
 async def create_webhook_endpoint(
@@ -110,49 +268,335 @@ async def list_webhook_endpoints(
 async def create_api_key(
     db: AsyncSession,
     tenant_id: uuid.UUID,
+    actor_id: uuid.UUID,
+    auth_session_id: uuid.UUID,
     name: str,
     role: str = "data_reader",
-    expires_at=None,
-) -> ApiKey:
-    if role not in VALID_ROLES:
-        raise ValueError(f"Invalid role: {role}. Must be one of {VALID_ROLES}")
+    expires_at: datetime | None = None,
+    *,
+    idempotency_key: str,
+    permanent_reason: str | None = None,
+) -> IssuedApiKey:
+    if role not in VALID_API_KEY_ROLES:
+        raise ValueError(f"Invalid role: {role}. Must be one of {VALID_API_KEY_ROLES}")
     permissions = get_permissions_for_role(role)
-    key_str = f"ymt_{secrets.token_hex(24)}"
-    api_key = ApiKey(
+    key_id = uuid7()
+    audit_id = uuid7()
+    material = build_api_key_lifecycle_material(
         tenant_id=tenant_id,
-        name=name,
-        key=key_str,
-        role=role,
-        permissions=permissions,
-        expires_at=expires_at,
+        actor_id=actor_id,
+        action="issue",
+        target_id=None,
+        idempotency_key=idempotency_key,
+        payload=_api_key_request_payload(
+            name=name,
+            role=role,
+            expires_at=expires_at,
+            permanent_reason=permanent_reason,
+        ),
+        candidate_id=key_id,
     )
-    db.add(api_key)
-    await db.flush()
-    await db.refresh(api_key)
-    return api_key
+    if db.get_bind().dialect.name == "postgresql":
+        result = await db.execute(
+            text(
+                "SELECT * FROM public.issue_api_key("
+                ":requested_id, :requested_tenant_id, :requested_actor_id, :requested_auth_session_id, "
+                ":requested_name, :requested_key_prefix, :requested_key_digest, :requested_role, "
+                ":requested_expires_at, :requested_idempotency_digest, :requested_request_fingerprint, "
+                ":requested_escrow_ciphertext, :requested_permanent_reason, :requested_audit_id)"
+            ),
+            {
+                "requested_id": key_id,
+                "requested_tenant_id": tenant_id,
+                "requested_actor_id": actor_id,
+                "requested_auth_session_id": auth_session_id,
+                "requested_name": name,
+                "requested_key_prefix": material.key_prefix,
+                "requested_key_digest": material.key_digest,
+                "requested_role": role,
+                "requested_expires_at": expires_at,
+                "requested_idempotency_digest": material.idempotency_digest,
+                "requested_request_fingerprint": material.request_fingerprint,
+                "requested_escrow_ciphertext": material.escrow_ciphertext,
+                "requested_permanent_reason": permanent_reason,
+                "requested_audit_id": audit_id,
+            },
+        )
+        returned = result.mappings().one()
+        returned_id = uuid.UUID(str(returned["api_key_id"]))
+        secret = recover_api_key_secret(
+            _returned_escrow(returned["escrow_ciphertext"]),
+            returned_id,
+            expected_prefix=material.key_prefix,
+            expected_digest=material.key_digest,
+        )
+    else:
+        existing = await db.scalar(
+            select(ApiKey).where(
+                ApiKey.tenant_id == tenant_id,
+                ApiKey.created_by == actor_id,
+                ApiKey.idempotency_key_digest == material.idempotency_digest,
+            )
+        )
+        if existing is not None:
+            if existing.request_fingerprint != material.request_fingerprint:
+                raise ApiKeyLifecycleConflict("API key idempotency payload conflicts")
+            return IssuedApiKey(
+                existing.id,
+                existing.name,
+                material.secret,
+                existing.key_prefix,
+                existing.role,
+                list(existing.permissions),
+                existing.expires_at,
+            )
+        active_count = await db.scalar(
+            select(func.count())
+            .select_from(ApiKey)
+            .where(
+                ApiKey.tenant_id == tenant_id,
+                ApiKey.revoked.is_(False),
+                (ApiKey.expires_at.is_(None) | (ApiKey.expires_at > datetime.now(UTC))),
+            )
+        )
+        if (active_count or 0) >= 20:
+            raise ApiKeyActiveLimitReached("API key active limit reached")
+        api_key = ApiKey(
+            id=key_id,
+            tenant_id=tenant_id,
+            name=name,
+            key_prefix=material.key_prefix,
+            key_digest=material.key_digest,
+            role=role,
+            permissions=permissions,
+            expires_at=expires_at,
+            created_by=actor_id,
+            idempotency_key_digest=material.idempotency_digest,
+            request_fingerprint=material.request_fingerprint,
+            permanent_reason=permanent_reason,
+        )
+        db.add(api_key)
+        await db.flush()
+        await write_audit_log(
+            db,
+            operator_id=str(actor_id),
+            target_tenant_id=str(tenant_id),
+            action="api_key_issued",
+            resource=f"api_key:{key_id}",
+            details=_audit_details(
+                key_prefix=material.key_prefix,
+                role=role,
+                expires_at=expires_at,
+                permanent_reason=permanent_reason,
+            ),
+        )
+        returned_id = key_id
+        secret = material.secret
+    return IssuedApiKey(
+        returned_id,
+        name,
+        secret,
+        secret[:12],
+        role,
+        permissions,
+        expires_at,
+    )
+
+
+async def rotate_api_key(
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    key_id: uuid.UUID,
+    actor_id: uuid.UUID,
+    auth_session_id: uuid.UUID,
+    *,
+    idempotency_key: str,
+) -> IssuedApiKey:
+    old_key = await db.scalar(
+        select(ApiKey).where(
+            ApiKey.id == key_id,
+            ApiKey.tenant_id == tenant_id,
+        )
+    )
+    if old_key is None:
+        raise ValueError("API key not found")
+
+    new_key_id = uuid7()
+    audit_id = uuid7()
+    permissions = get_permissions_for_role(old_key.role)
+    material = build_api_key_lifecycle_material(
+        tenant_id=tenant_id,
+        actor_id=actor_id,
+        action="rotate",
+        target_id=key_id,
+        idempotency_key=idempotency_key,
+        payload=_api_key_request_payload(
+            name=old_key.name,
+            role=old_key.role,
+            expires_at=old_key.expires_at,
+        ),
+        candidate_id=new_key_id,
+    )
+    if db.get_bind().dialect.name == "postgresql":
+        result = await db.execute(
+            text(
+                "SELECT * FROM public.rotate_api_key("
+                ":requested_old_id, :requested_new_id, :requested_tenant_id, :requested_actor_id, "
+                ":requested_auth_session_id, :requested_name, :requested_key_prefix, :requested_key_digest, "
+                ":requested_role, :requested_expires_at, :requested_idempotency_digest, "
+                ":requested_request_fingerprint, :requested_escrow_ciphertext, :requested_audit_id)"
+            ),
+            {
+                "requested_old_id": key_id,
+                "requested_new_id": new_key_id,
+                "requested_tenant_id": tenant_id,
+                "requested_actor_id": actor_id,
+                "requested_auth_session_id": auth_session_id,
+                "requested_name": old_key.name,
+                "requested_key_prefix": material.key_prefix,
+                "requested_key_digest": material.key_digest,
+                "requested_role": old_key.role,
+                "requested_expires_at": old_key.expires_at,
+                "requested_idempotency_digest": material.idempotency_digest,
+                "requested_request_fingerprint": material.request_fingerprint,
+                "requested_escrow_ciphertext": material.escrow_ciphertext,
+                "requested_audit_id": audit_id,
+            },
+        )
+        returned = result.mappings().one()
+        returned_id = uuid.UUID(str(returned["api_key_id"]))
+        secret = recover_api_key_secret(
+            _returned_escrow(returned["escrow_ciphertext"]),
+            returned_id,
+            expected_prefix=material.key_prefix,
+            expected_digest=material.key_digest,
+        )
+    else:
+        existing = await db.scalar(
+            select(ApiKey).where(
+                ApiKey.tenant_id == tenant_id,
+                ApiKey.created_by == actor_id,
+                ApiKey.idempotency_key_digest == material.idempotency_digest,
+            )
+        )
+        if existing is not None:
+            if existing.request_fingerprint != material.request_fingerprint:
+                raise ApiKeyLifecycleConflict("API key idempotency payload conflicts")
+            return IssuedApiKey(
+                existing.id,
+                existing.name,
+                material.secret,
+                existing.key_prefix,
+                existing.role,
+                list(existing.permissions),
+                existing.expires_at,
+            )
+        if old_key.revoked or (old_key.expires_at is not None and _as_utc(old_key.expires_at) <= datetime.now(UTC)):
+            raise ApiKeyLifecycleConflict("API key is no longer active")
+        old_key.revoked = True
+        old_key.revoked_at = datetime.now(UTC)
+        db.add(
+            ApiKey(
+                id=new_key_id,
+                tenant_id=tenant_id,
+                name=old_key.name,
+                key_prefix=material.key_prefix,
+                key_digest=material.key_digest,
+                role=old_key.role,
+                permissions=permissions,
+                expires_at=old_key.expires_at,
+                rotated_from_id=old_key.id,
+                created_by=actor_id,
+                idempotency_key_digest=material.idempotency_digest,
+                request_fingerprint=material.request_fingerprint,
+                permanent_reason=old_key.permanent_reason,
+            )
+        )
+        await db.flush()
+        await write_audit_log(
+            db,
+            operator_id=str(actor_id),
+            target_tenant_id=str(tenant_id),
+            action="api_key_rotated",
+            resource=f"api_key:{new_key_id}",
+            details=_audit_details(
+                key_prefix=material.key_prefix,
+                role=old_key.role,
+                expires_at=old_key.expires_at,
+                permanent_reason=old_key.permanent_reason,
+                rotated_from_id=str(old_key.id),
+            ),
+        )
+        returned_id = new_key_id
+        secret = material.secret
+    return IssuedApiKey(
+        returned_id,
+        old_key.name,
+        secret,
+        secret[:12],
+        old_key.role,
+        permissions,
+        old_key.expires_at,
+    )
 
 
 async def list_api_keys(
     db: AsyncSession,
     tenant_id: uuid.UUID,
-) -> list[ApiKey]:
+    page: int = 1,
+    page_size: int = 20,
+) -> tuple[list[ApiKey], int]:
+    filters = [ApiKey.tenant_id == tenant_id, ApiKey.revoked.is_(False)]
+    total = await db.scalar(select(func.count()).select_from(ApiKey).where(*filters)) or 0
     result = await db.execute(
-        select(ApiKey).where(ApiKey.tenant_id == tenant_id, ApiKey.revoked.is_(False)).order_by(ApiKey.id.desc())
+        select(ApiKey).where(*filters).order_by(ApiKey.id.desc()).offset((page - 1) * page_size).limit(page_size)
     )
-    return list(result.scalars().all())
+    return list(result.scalars().all()), total
 
 
 async def revoke_api_key(
     db: AsyncSession,
     tenant_id: uuid.UUID,
     key_id: uuid.UUID,
+    actor_id: uuid.UUID,
+    auth_session_id: uuid.UUID,
 ) -> bool:
     result = await db.execute(select(ApiKey).where(ApiKey.id == key_id, ApiKey.tenant_id == tenant_id))
     key = result.scalar_one_or_none()
     if not key:
         raise ValueError("API key not found")
-    key.revoked = True
-    await db.flush()
+    audit_id = uuid7()
+    if db.get_bind().dialect.name == "postgresql":
+        revoked_id = await db.scalar(
+            text(
+                "SELECT public.revoke_api_key("
+                ":requested_key_id, :requested_tenant_id, :requested_actor_id, "
+                ":requested_auth_session_id, :requested_audit_id)"
+            ),
+            {
+                "requested_key_id": key_id,
+                "requested_tenant_id": tenant_id,
+                "requested_actor_id": actor_id,
+                "requested_auth_session_id": auth_session_id,
+                "requested_audit_id": audit_id,
+            },
+        )
+        if revoked_id is None:
+            raise ValueError("API key not found")
+        if revoked_id != key_id:
+            raise RuntimeError("API key revocation did not return the requested identifier")
+    else:
+        key.revoked = True
+        key.revoked_at = datetime.now(UTC)
+        await db.flush()
+        await write_audit_log(
+            db,
+            operator_id=str(actor_id),
+            target_tenant_id=str(tenant_id),
+            action="api_key_revoked",
+            resource=f"api_key:{key_id}",
+            details=_audit_details(key_prefix=key.key_prefix, role=key.role, expires_at=key.expires_at),
+        )
     return True
 
 

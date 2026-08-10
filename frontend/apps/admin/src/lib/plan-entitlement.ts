@@ -20,6 +20,13 @@ const READ_ONLY_RECOVERY_REQUESTS = new Set([
   "post /auth/change-password",
   "post /agency/exit-context",
 ]);
+const API_KEY_REVOKE_PATH =
+  /^\/webhooks\/api-keys\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function exactApiPath(url?: string): string {
+  if (!url || /^[a-z][a-z\d+.-]*:\/\//i.test(url)) return "";
+  return (url.split(/[?#]/, 1)[0] ?? "").replace(/^\/api\/v1(?=\/|$)/, "");
+}
 
 function normalizedApiPath(url?: string): string {
   if (!url) return "";
@@ -37,6 +44,12 @@ export function tenantPlanBlocksRequest(
 
   const normalizedMethod = (method || "get").toLowerCase();
   if (["get", "head", "options"].includes(normalizedMethod)) return false;
+  if (
+    normalizedMethod === "delete" &&
+    API_KEY_REVOKE_PATH.test(exactApiPath(url))
+  ) {
+    return false;
+  }
 
   return !READ_ONLY_RECOVERY_REQUESTS.has(
     `${normalizedMethod} ${normalizedApiPath(url)}`

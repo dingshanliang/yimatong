@@ -33,10 +33,7 @@ export default function TenantPlanReadOnly({
           style={{ marginBottom: 16 }}
         />
       )}
-      <div
-        aria-disabled={active}
-        data-tenant-plan-read-only={active ? "true" : "false"}
-      >
+      <div data-tenant-plan-read-only={active ? "true" : "false"}>
         {children}
       </div>
     </>

@@ -57,7 +57,7 @@ CREATE TEMP TABLE runtime_business_relation_allowlist (
 INSERT INTO runtime_business_relation_allowlist (table_name)
 SELECT unnest(ARRAY[
     'account_channel_scopes', 'account_roles', 'accounts',
-    'ai_generations', 'anonymous_visitors', 'api_keys', 'benefit_claims',
+    'ai_generations', 'anonymous_visitors', 'benefit_claims',
     'benefit_deliveries', 'benefits', 'brands', 'campaign_risk_rules',
     'campaigns', 'code_allocations', 'code_batches', 'code_items',
     'connectors', 'consent_records', 'consumer_profiles', 'coupon_codes',
@@ -80,14 +80,30 @@ SELECT unnest(ARRAY[
     'webhook_endpoints', 'wecom_contact_ways', 'wecom_external_contacts',
     'whitelabel_configs'
 ]::name[]);
+-- During the explicit expand/deploy phase the nullable legacy raw column still
+-- exists so drained old processes require the previous tenant-scoped CRUD ACL.
+-- The finalize revision drops that column and moves api_keys to the restricted
+-- mutation registry below.
+INSERT INTO runtime_business_relation_allowlist (table_name)
+SELECT 'api_keys'::name
+WHERE EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'api_keys' AND column_name = 'key'
+);
 
--- Authorization grants are tenant-visible, while every create/renew/revoke
--- transition is available only through reviewed SECURITY DEFINER functions.
-CREATE TEMP TABLE runtime_agency_authorization_relation_allowlist (
+-- Sensitive tenant-owned state is visible to runtime but all transitions are
+-- available only through reviewed SECURITY DEFINER functions.
+CREATE TEMP TABLE runtime_restricted_mutation_relation_allowlist (
     table_name name PRIMARY KEY
 ) ON COMMIT DROP;
-INSERT INTO runtime_agency_authorization_relation_allowlist (table_name)
+INSERT INTO runtime_restricted_mutation_relation_allowlist (table_name)
 VALUES ('agency_authorizations');
+INSERT INTO runtime_restricted_mutation_relation_allowlist (table_name)
+SELECT 'api_keys'::name
+WHERE NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'api_keys' AND column_name = 'key'
+);
 
 CREATE TEMP TABLE runtime_append_only_relation_allowlist (
     table_name name PRIMARY KEY
@@ -133,6 +149,53 @@ BEGIN
             uuid, uuid, text, text, text, jsonb
         ) TO yimatong_app;
     END IF;
+    IF to_regprocedure('public.resolve_active_api_key(text)') IS NOT NULL THEN
+        REVOKE ALL ON FUNCTION public.resolve_active_api_key(text) FROM PUBLIC;
+        GRANT EXECUTE ON FUNCTION public.resolve_active_api_key(text) TO yimatong_app;
+    END IF;
+    IF to_regprocedure('public.lock_active_api_key(uuid,uuid)') IS NOT NULL THEN
+        REVOKE ALL ON FUNCTION public.lock_active_api_key(uuid, uuid) FROM PUBLIC;
+        GRANT EXECUTE ON FUNCTION public.lock_active_api_key(uuid, uuid) TO yimatong_app;
+    END IF;
+    IF to_regprocedure(
+        'public.issue_api_key(uuid,uuid,uuid,uuid,text,text,text,text,timestamp with time zone,text,text,bytea,text,uuid)'
+    ) IS NOT NULL THEN
+        REVOKE ALL ON FUNCTION public.issue_api_key(
+            uuid, uuid, uuid, uuid, text, text, text, text, timestamptz,
+            text, text, bytea, text, uuid
+        ) FROM PUBLIC;
+        GRANT EXECUTE ON FUNCTION public.issue_api_key(
+            uuid, uuid, uuid, uuid, text, text, text, text, timestamptz,
+            text, text, bytea, text, uuid
+        ) TO yimatong_app;
+    END IF;
+    IF to_regprocedure(
+        'public.rotate_api_key(uuid,uuid,uuid,uuid,uuid,text,text,text,text,timestamp with time zone,text,text,bytea,uuid)'
+    ) IS NOT NULL THEN
+        REVOKE ALL ON FUNCTION public.rotate_api_key(
+            uuid, uuid, uuid, uuid, uuid, text, text, text, text, timestamptz,
+            text, text, bytea, uuid
+        ) FROM PUBLIC;
+        GRANT EXECUTE ON FUNCTION public.rotate_api_key(
+            uuid, uuid, uuid, uuid, uuid, text, text, text, text, timestamptz,
+            text, text, bytea, uuid
+        ) TO yimatong_app;
+    END IF;
+    IF to_regprocedure('public.revoke_api_key(uuid,uuid,uuid,uuid,uuid)') IS NOT NULL THEN
+        REVOKE ALL ON FUNCTION public.revoke_api_key(uuid, uuid, uuid, uuid, uuid) FROM PUBLIC;
+        GRANT EXECUTE ON FUNCTION public.revoke_api_key(uuid, uuid, uuid, uuid, uuid) TO yimatong_app;
+    END IF;
+    IF to_regprocedure('public.api_key_permissions_for_role(text)') IS NOT NULL THEN
+        REVOKE ALL ON FUNCTION public.api_key_permissions_for_role(text) FROM PUBLIC;
+        IF EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = 'public' AND table_name = 'api_keys' AND column_name = 'key'
+        ) THEN
+            GRANT EXECUTE ON FUNCTION public.api_key_permissions_for_role(text) TO yimatong_app;
+        ELSE
+            REVOKE EXECUTE ON FUNCTION public.api_key_permissions_for_role(text) FROM yimatong_app;
+        END IF;
+    END IF;
 END
 $$;
 
@@ -167,6 +230,7 @@ CREATE TEMP TABLE runtime_migration_relation_allowlist (
 INSERT INTO runtime_migration_relation_allowlist (table_name)
 VALUES ('alembic_version'),
        ('agency_authorization_integrity_backups'),
+       ('api_key_legacy_secret_backups'),
        ('rls_force_remediation_backups'),
        ('runtime_privilege_remediation_backup');
 
@@ -183,7 +247,7 @@ BEGIN
     SELECT count(*) INTO registry_count
     FROM (
         SELECT table_name FROM runtime_business_relation_allowlist
-        UNION ALL SELECT table_name FROM runtime_agency_authorization_relation_allowlist
+        UNION ALL SELECT table_name FROM runtime_restricted_mutation_relation_allowlist
         UNION ALL SELECT table_name FROM runtime_append_only_relation_allowlist
         UNION ALL SELECT table_name FROM runtime_control_relation_allowlist
         UNION ALL SELECT table_name FROM runtime_public_relation_allowlist
@@ -196,7 +260,7 @@ BEGIN
     SELECT string_agg(table_name::text, ', ' ORDER BY table_name) INTO missing
     FROM (
         SELECT table_name FROM runtime_business_relation_allowlist
-        UNION ALL SELECT table_name FROM runtime_agency_authorization_relation_allowlist
+        UNION ALL SELECT table_name FROM runtime_restricted_mutation_relation_allowlist
         UNION ALL SELECT table_name FROM runtime_append_only_relation_allowlist
         UNION ALL SELECT table_name FROM runtime_control_relation_allowlist
         UNION ALL SELECT table_name FROM runtime_public_relation_allowlist
@@ -218,7 +282,7 @@ BEGIN
           SELECT 1
           FROM (
               SELECT table_name FROM runtime_business_relation_allowlist
-              UNION ALL SELECT table_name FROM runtime_agency_authorization_relation_allowlist
+              UNION ALL SELECT table_name FROM runtime_restricted_mutation_relation_allowlist
               UNION ALL SELECT table_name FROM runtime_append_only_relation_allowlist
               UNION ALL SELECT table_name FROM runtime_control_relation_allowlist
               UNION ALL SELECT table_name FROM runtime_public_relation_allowlist
@@ -233,9 +297,9 @@ BEGIN
 END
 $$;
 
--- Agency authorization history is SELECT-only for runtime. Every transition
--- is performed by the reviewed functions after revalidating the durable login
--- session and the actor's live tenant-management permission.
+-- Restricted mutation relations are SELECT-only for runtime. Every transition
+-- is performed by reviewed functions after revalidating the durable login
+-- session or the presented credential as appropriate.
 DO $$
 DECLARE
     relation_row record;
@@ -244,13 +308,13 @@ BEGIN
     FOR relation_row IN
         SELECT cls.oid, ns.nspname AS schema_name, cls.relname AS table_name,
                cls.relrowsecurity, cls.relforcerowsecurity
-        FROM runtime_agency_authorization_relation_allowlist AS allowlist
+        FROM runtime_restricted_mutation_relation_allowlist AS allowlist
         JOIN pg_class AS cls ON cls.relname = allowlist.table_name
         JOIN pg_namespace AS ns ON ns.oid = cls.relnamespace
         WHERE ns.nspname = 'public' AND cls.relkind = 'r'
     LOOP
         IF NOT relation_row.relrowsecurity OR NOT relation_row.relforcerowsecurity THEN
-            RAISE EXCEPTION 'Agency authorization relation %.% lacks ENABLE+FORCE RLS',
+            RAISE EXCEPTION 'Restricted mutation relation %.% lacks ENABLE+FORCE RLS',
                 relation_row.schema_name, relation_row.table_name;
         END IF;
         SELECT bool_or(polcmd IN ('*', 'r') AND polqual IS NOT NULL)
@@ -258,7 +322,7 @@ BEGIN
         FROM pg_policy
         WHERE polrelid = relation_row.oid;
         IF NOT COALESCE(has_select, false) THEN
-            RAISE EXCEPTION 'Agency authorization relation lacks a tenant read policy';
+            RAISE EXCEPTION 'Restricted mutation relation lacks a tenant read policy';
         END IF;
         EXECUTE format(
             'GRANT SELECT ON TABLE %I.%I TO yimatong_app',
@@ -446,6 +510,7 @@ BEGIN
         'tenant_invite_codes',
         'operator_campaign_manage_grants',
         'agency_authorization_integrity_backups',
+        'api_key_legacy_secret_backups',
         'rls_force_remediation_backups',
         'runtime_privilege_remediation_backup',
         'alembic_version'

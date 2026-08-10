@@ -1,15 +1,22 @@
+import hashlib
 import hmac
 import re
+import uuid
 
 from fastapi import Request
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from app.core.config import settings
-from app.services.redis_cache import SharedSecurityCacheUnavailable
+from app.services.redis_cache import AsyncRedisCache, SharedSecurityCacheUnavailable
 from app.utils.security import verify_access_token
 
 # Open API 路径前缀，使用 API Key 认证
 OPEN_API_PREFIX = "/open/v1/"
+_OPEN_API_RATE_WINDOW_SECONDS = 60
+_OPEN_API_GLOBAL_RATE_LIMIT = 6000
+_OPEN_API_IP_RATE_LIMIT = 300
+_OPEN_API_KEY_RATE_LIMIT = 600
+_open_api_security_cache = AsyncRedisCache(prefix="open_api_security", default_ttl=_OPEN_API_RATE_WINDOW_SECONDS)
 
 _AGENCY_AUTHORIZATION_DETAIL_PATH = re.compile(
     r"/api/v1/ops/authorizations/"
@@ -282,49 +289,90 @@ class TenantScopeMiddleware(BaseHTTPMiddleware):
         from starlette.responses import JSONResponse
 
         api_key_str = request.headers.get("X-Api-Key", "")
+        rate_response = await self._enforce_open_api_request_rate_limit(request)
+        if rate_response is not None:
+            return rate_response
         if not api_key_str:
-            return JSONResponse(status_code=401, content={"detail": "Missing X-Api-Key header"})
+            return JSONResponse(status_code=401, content={"detail": "Invalid API key"})
 
-        # 查询数据库验证 API Key
-        from app.core.database import async_session_factory, bootstrap_tenant_row
-        from app.models.webhook import ApiKey
+        api_key_digest = hashlib.sha256(api_key_str.encode()).hexdigest()
+
+        # PostgreSQL resolves credentials through a constrained SECURITY DEFINER
+        # function. SQLite keeps an equivalent ORM path for isolated API tests.
+        from app.core.database import _session_uses_postgresql, async_session_factory
 
         async with async_session_factory() as db:
-            from sqlalchemy import select
-
-            key = await bootstrap_tenant_row(
-                db,
-                select(ApiKey).where(ApiKey.key == api_key_str, ApiKey.revoked.is_(False)),
-            )
-
-            if not key:
-                return JSONResponse(status_code=401, content={"detail": "Invalid or revoked API key"})
-
             from datetime import UTC, datetime
 
-            if key.expires_at and key.expires_at < datetime.now(UTC):
-                return JSONResponse(status_code=401, content={"detail": "API key has expired"})
+            from sqlalchemy import or_, select, text
+
+            if _session_uses_postgresql(db):
+                resolved = (
+                    (
+                        await db.execute(
+                            text("SELECT * FROM public.resolve_active_api_key(:requested_digest)"),
+                            {"requested_digest": api_key_digest},
+                        )
+                    )
+                    .mappings()
+                    .one_or_none()
+                )
+                if resolved is None:
+                    return JSONResponse(status_code=401, content={"detail": "Invalid API key"})
+                key_id = resolved["api_key_id"]
+                key_tenant_id = resolved["tenant_id"]
+                key_role = resolved["role"]
+                key_permissions = resolved["permissions"]
+                from app.core.database import set_session_tenant_context
+
+                await set_session_tenant_context(db, key_tenant_id)
+            else:
+                from app.models.tenant import Tenant, TenantStatus, TenantType
+                from app.models.webhook import ApiKey
+
+                key = (
+                    await db.execute(
+                        select(ApiKey)
+                        .join(Tenant, Tenant.id == ApiKey.tenant_id)
+                        .where(
+                            ApiKey.key_digest == api_key_digest,
+                            ApiKey.revoked.is_(False),
+                            or_(ApiKey.expires_at.is_(None), ApiKey.expires_at > datetime.now(UTC)),
+                            Tenant.status == TenantStatus.active,
+                            Tenant.tenant_type == TenantType.brand,
+                        )
+                    )
+                ).scalar_one_or_none()
+                if key is None:
+                    return JSONResponse(status_code=401, content={"detail": "Invalid API key"})
+                key.last_used_at = datetime.now(UTC)
+                key_id = key.id
+                key_tenant_id = key.tenant_id
+                key_role = key.role
+                key_permissions = key.permissions
+
+            key_rate_response = await self._enforce_open_api_key_rate_limit(key_id)
+            if key_rate_response is not None:
+                return key_rate_response
 
             if self._requires_active_plan(request):
                 from app.models.tenant import Tenant
                 from app.services.entitlement import is_plan_expired
 
-                tenant = await db.get(Tenant, key.tenant_id)
+                tenant = await db.get(Tenant, key_tenant_id)
                 if tenant is None or is_plan_expired(tenant.plan_expires_at):
                     return self._plan_expired_response()
-
-            # 更新 last_used_at
-            key.last_used_at = datetime.now(UTC)
             await db.commit()
 
-            tenant_id = str(key.tenant_id)
+            tenant_id = str(key_tenant_id)
             request.state.tenant_id = tenant_id
             request.state.account_id = None
-            request.state.role = key.role
-            request.state.permissions = key.permissions
+            request.state.role = key_role
+            request.state.permissions = key_permissions
             request.state.tenant_type = "brand"
             request.state.auth_method = "api_key"
-            request.state.api_key_id = str(key.id)
+            request.state.api_key_id = str(key_id)
+            request.state.api_key_digest = api_key_digest
 
         # Set context var for RLS
         from app.core.context import reset_request_tenant_id, set_request_tenant_id
@@ -340,6 +388,45 @@ class TenantScopeMiddleware(BaseHTTPMiddleware):
 
             reset_request_security_credential(credential_token)
             reset_request_tenant_id(context_token)
+
+    @staticmethod
+    async def _check_open_api_rate_limit(checks: list[tuple[str, int]]):
+        from starlette.responses import JSONResponse
+
+        try:
+            for key, limit in checks:
+                allowed, _ = await _open_api_security_cache.rate_limit_check_shared(
+                    key,
+                    max_attempts=limit,
+                    window_seconds=_OPEN_API_RATE_WINDOW_SECONDS,
+                )
+                if not allowed:
+                    return JSONResponse(
+                        status_code=429,
+                        content={"detail": "Open API 请求过于频繁，请稍后重试"},
+                        headers={"Retry-After": str(_OPEN_API_RATE_WINDOW_SECONDS)},
+                    )
+        except SharedSecurityCacheUnavailable:
+            return JSONResponse(status_code=503, content={"detail": "Open API 认证服务暂时不可用"})
+        return None
+
+    @staticmethod
+    async def _enforce_open_api_request_rate_limit(request: Request):
+        keyed_secret = (settings.hmac_pepper or settings.secret_key).encode()
+        peer_host = request.client.host if request.client else "unknown"
+        ip_digest = hmac.new(keyed_secret, peer_host.encode(), hashlib.sha256).hexdigest()
+        return await TenantScopeMiddleware._check_open_api_rate_limit(
+            [
+                ("global:requests", _OPEN_API_GLOBAL_RATE_LIMIT),
+                (f"ip:{ip_digest}", _OPEN_API_IP_RATE_LIMIT),
+            ]
+        )
+
+    @staticmethod
+    async def _enforce_open_api_key_rate_limit(api_key_id: uuid.UUID):
+        keyed_secret = (settings.hmac_pepper or settings.secret_key).encode()
+        key_digest = hmac.new(keyed_secret, str(api_key_id).encode(), hashlib.sha256).hexdigest()
+        return await TenantScopeMiddleware._check_open_api_rate_limit([(f"key:{key_digest}", _OPEN_API_KEY_RATE_LIMIT)])
 
     @staticmethod
     async def _call_with_security_credential(
@@ -361,6 +448,10 @@ class TenantScopeMiddleware(BaseHTTPMiddleware):
     @staticmethod
     def _requires_active_plan(request: Request) -> bool:
         if request.method in {"GET", "HEAD"}:
+            return False
+        from app.core.database import is_plan_recovery_write
+
+        if is_plan_recovery_write(request):
             return False
         # Revocation is a security recovery action: an expired brand must still
         # be able to remove an agency's access. Keep the exception bound to the

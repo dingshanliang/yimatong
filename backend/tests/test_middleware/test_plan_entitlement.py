@@ -1,16 +1,59 @@
 """套餐到期状态在 Open API 认证边界的行为。"""
 
+import hashlib
 import uuid
 from datetime import UTC, datetime, timedelta
 
 import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
+from starlette.requests import Request
 
+from app.core.database import is_plan_recovery_write
 from app.middleware.tenant import TenantScopeMiddleware
 from app.models.tenant import Tenant
 from app.models.webhook import ApiKey
 from tests.conftest import TestSessionLocal
+
+
+def _request(method: str, path: str) -> Request:
+    return Request(
+        {
+            "type": "http",
+            "method": method,
+            "path": path,
+            "headers": [],
+            "query_string": b"",
+            "server": ("test", 80),
+            "client": ("test", 1),
+            "scheme": "http",
+            "root_path": "",
+        }
+    )
+
+
+def test_api_key_revoke_is_an_exact_plan_recovery_action():
+    key_id = "00000000-0000-0000-0000-000000000001"
+    revoke = _request("DELETE", f"/api/v1/webhooks/api-keys/{key_id}")
+
+    assert TenantScopeMiddleware._requires_active_plan(revoke) is False
+    assert is_plan_recovery_write(revoke) is True
+
+
+@pytest.mark.parametrize(
+    ("method", "path"),
+    [
+        ("POST", "/api/v1/webhooks/api-keys"),
+        ("POST", "/api/v1/webhooks/api-keys/00000000-0000-0000-0000-000000000001/rotate"),
+        ("DELETE", "/api/v1/webhooks/api-keys"),
+        ("DELETE", "/api/v1/webhooks/api-keys/not-a-uuid"),
+    ],
+)
+def test_neighboring_api_key_actions_still_require_an_active_plan(method: str, path: str):
+    request = _request(method, path)
+
+    assert TenantScopeMiddleware._requires_active_plan(request) is True
+    assert is_plan_recovery_write(request) is False
 
 
 @pytest.mark.anyio
@@ -32,7 +75,8 @@ async def test_expired_api_key_tenant_is_read_only_and_renewal_restores_writes(m
                 ApiKey(
                     tenant_id=tenant_id,
                     name="外部集成",
-                    key=api_key,
+                    key_prefix=api_key[:12],
+                    key_digest=hashlib.sha256(api_key.encode()).hexdigest(),
                     permissions=["scan:list", "coupon:issue"],
                 ),
             ]

@@ -52,6 +52,13 @@ CONTROL_TABLES = (
 
 APPEND_ONLY_RUNTIME_TABLES = ("platform_audit_log",)
 READ_ONLY_GLOBAL_TABLES = ("quota_rollout_state",)
+MIGRATION_ONLY_TABLES = (
+    "agency_authorization_integrity_backups",
+    "alembic_version",
+    "api_key_legacy_secret_backups",
+    "rls_force_remediation_backups",
+    "runtime_privilege_remediation_backup",
+)
 PARENT_REVISION = "649cdfd94581"
 
 
@@ -209,11 +216,140 @@ async def test_registry_catalog_acl_and_control_boundary(
             "SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace "
             "WHERE n.nspname='public' AND c.relkind IN ('r','p') "
             "AND NOT EXISTS (SELECT 1 FROM pg_inherits i WHERE i.inhrelid=c.oid) "
-            "AND c.relname NOT IN "
-            "('agency_authorization_integrity_backups','alembic_version',"
-            "'rls_force_remediation_backups','runtime_privilege_remediation_backup')"
+            "AND c.relname <> ALL($1::text[])",
+            list(MIGRATION_ONLY_TABLES),
         )
         assert orm_root_count == 97
+        migration_only = await owner.fetch(
+            "SELECT c.relname FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace "
+            "WHERE n.nspname='public' AND c.relkind='r' AND c.relname=ANY($1::text[])",
+            list(MIGRATION_ONLY_TABLES),
+        )
+        assert {row["relname"] for row in migration_only} == set(MIGRATION_ONLY_TABLES)
+        for table in MIGRATION_ONLY_TABLES:
+            assert (
+                await owner.fetchval(
+                    "SELECT count(*) FROM information_schema.role_table_grants "
+                    "WHERE table_schema='public' AND table_name=$1 "
+                    "AND grantee IN ('PUBLIC','yimatong_app')",
+                    table,
+                )
+                == 0
+            )
+
+        api_key_columns = await owner.fetch(
+            "SELECT column_name,data_type,character_maximum_length,is_nullable "
+            "FROM information_schema.columns WHERE table_schema='public' AND table_name='api_keys' "
+            "AND column_name=ANY($1::text[]) ORDER BY column_name",
+            [
+                "created_by",
+                "idempotency_key_digest",
+                "key",
+                "key_digest",
+                "key_prefix",
+                "permanent_reason",
+                "request_fingerprint",
+                "revoked_at",
+                "rotated_from_id",
+            ],
+        )
+        assert {
+            row["column_name"]: (row["data_type"], row["character_maximum_length"], row["is_nullable"])
+            for row in api_key_columns
+        } == {
+            "created_by": ("uuid", None, "YES"),
+            "idempotency_key_digest": ("character varying", 64, "YES"),
+            "key_digest": ("character varying", 64, "NO"),
+            "key_prefix": ("character varying", 20, "NO"),
+            "permanent_reason": ("character varying", 200, "YES"),
+            "request_fingerprint": ("character varying", 64, "YES"),
+            "revoked_at": ("timestamp with time zone", None, "YES"),
+            "rotated_from_id": ("uuid", None, "YES"),
+        }
+        api_key_relation = await owner.fetchrow(
+            "SELECT relrowsecurity,relforcerowsecurity FROM pg_class WHERE oid='public.api_keys'::regclass"
+        )
+        assert api_key_relation["relrowsecurity"] and api_key_relation["relforcerowsecurity"]
+        assert await owner.fetchval("SELECT count(*) FROM pg_policy WHERE polrelid='public.api_keys'::regclass") > 0
+        assert {
+            row["conname"]
+            for row in await owner.fetch("SELECT conname FROM pg_constraint WHERE conrelid='public.api_keys'::regclass")
+        }.issuperset(
+            {
+                "ck_api_keys_digest_format",
+                "ck_api_keys_expiry_after_creation",
+                "ck_api_keys_idempotency_contract",
+                "ck_api_keys_permanent_reason",
+                "ck_api_keys_post_contract_expiry_max",
+                "ck_api_keys_prefix_format",
+                "ck_api_keys_revocation_state",
+                "ck_api_keys_role_permissions",
+                "fk_api_keys_tenant",
+                "fk_api_keys_tenant_creator",
+                "fk_api_keys_tenant_rotated_from",
+                "uq_api_keys_tenant_id_id",
+            }
+        )
+        api_key_indexes = {
+            row["indexname"]: row["indexdef"]
+            for row in await owner.fetch(
+                "SELECT indexname,indexdef FROM pg_indexes WHERE schemaname='public' AND tablename='api_keys'"
+            )
+        }
+        assert "UNIQUE" in api_key_indexes["uq_api_keys_key_digest"]
+        assert "(key_digest)" in api_key_indexes["uq_api_keys_key_digest"]
+        assert "UNIQUE" in api_key_indexes["uq_api_keys_tenant_creator_idempotency"]
+        assert (
+            "(tenant_id, created_by, idempotency_key_digest)"
+            in api_key_indexes["uq_api_keys_tenant_creator_idempotency"]
+        )
+        assert "WHERE (idempotency_key_digest IS NOT NULL)" in api_key_indexes["uq_api_keys_tenant_creator_idempotency"]
+        assert "(tenant_id, expires_at)" in api_key_indexes["ix_api_keys_tenant_active_expiry"]
+        assert (
+            "WHERE ((revoked = false) AND (revoked_at IS NULL))" in api_key_indexes["ix_api_keys_tenant_active_expiry"]
+        )
+
+        function_contract = {
+            "resolve_active_api_key": (
+                "text",
+                "TABLE(api_key_id uuid, tenant_id uuid, role text, permissions json, expires_at timestamp with time zone)",
+            ),
+            "lock_active_api_key": ("uuid, uuid", "boolean"),
+            "issue_api_key": (
+                "uuid, uuid, uuid, uuid, text, text, text, text, timestamp with time zone, text, text, bytea, text, uuid",
+                "TABLE(api_key_id uuid, replayed boolean, escrow_ciphertext bytea)",
+            ),
+            "rotate_api_key": (
+                "uuid, uuid, uuid, uuid, uuid, text, text, text, text, timestamp with time zone, text, text, bytea, uuid",
+                "TABLE(api_key_id uuid, replayed boolean, escrow_ciphertext bytea)",
+            ),
+            "revoke_api_key": ("uuid, uuid, uuid, uuid, uuid", "uuid"),
+        }
+        functions = await owner.fetch(
+            "SELECT p.proname,oidvectortypes(p.proargtypes) AS arguments,"
+            "pg_get_function_result(p.oid) AS result,p.prosecdef,p.proconfig,p.oid::regprocedure::text AS signature "
+            "FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace "
+            "WHERE n.nspname='public' AND p.proname=ANY($1::text[]) ORDER BY p.proname",
+            list(function_contract),
+        )
+        assert {row["proname"] for row in functions} == set(function_contract)
+        for row in functions:
+            assert (row["arguments"], row["result"]) == function_contract[row["proname"]]
+            assert row["prosecdef"]
+            assert row["proconfig"] == ["search_path=pg_catalog, public"]
+            assert await owner.fetchval("SELECT has_function_privilege('yimatong_app',$1,'EXECUTE')", row["signature"])
+            assert not await owner.fetchval("SELECT has_function_privilege('public',$1,'EXECUTE')", row["signature"])
+
+        for helper_signature in (
+            "public.api_key_permissions_for_role(text)",
+            "public.assert_api_key_actor(uuid,uuid,uuid,boolean)",
+            "public.append_api_key_audit(uuid,uuid,uuid,text,uuid,jsonb)",
+            "public.guard_api_key_row()",
+        ):
+            assert not await owner.fetchval(
+                "SELECT has_function_privilege('yimatong_app',$1,'EXECUTE')", helper_signature
+            )
+            assert not await owner.fetchval("SELECT has_function_privilege('public',$1,'EXECUTE')", helper_signature)
     finally:
         await owner.close()
 
@@ -225,6 +361,11 @@ async def test_registry_catalog_acl_and_control_boundary(
     for table in CONTROL_TABLES:
         assert not await runtime_pg_conn.fetchval(
             "SELECT has_table_privilege('yimatong_app', $1, 'SELECT')", f"public.{table}"
+        )
+    assert await runtime_pg_conn.fetchval("SELECT has_table_privilege('yimatong_app','public.api_keys','SELECT')")
+    for privilege in ("INSERT", "UPDATE", "DELETE", "TRUNCATE", "REFERENCES", "TRIGGER"):
+        assert not await runtime_pg_conn.fetchval(
+            "SELECT has_table_privilege('yimatong_app','public.api_keys',$1)", privilege
         )
     assert await runtime_pg_conn.fetchval(
         "SELECT has_table_privilege('yimatong_app', 'public.agency_authorizations', 'SELECT')"

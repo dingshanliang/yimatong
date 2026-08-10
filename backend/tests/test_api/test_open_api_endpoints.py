@@ -12,8 +12,9 @@ request.state.permissions 里。因此每个测试用对应角色的 ApiKey：
   ——product:create/list/update 不在任何 API Key 角色契约里，这是已知缺口。
 """
 
+import hashlib
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from fastapi import FastAPI
@@ -26,19 +27,48 @@ from app.models.member import ConsumerProfile
 from app.models.plan import TenantQuotaUsage
 from app.models.product import Brand, Product
 from app.models.scan import ScanEvent
-from app.models.tenant import Tenant
+from app.models.tenant import Tenant, TenantStatus, TenantType
 from app.models.webhook import ApiKey
 from tests.conftest import TestSessionLocal
 
 
-def _seed(api_key: str, role: str, permissions: list[str]):
+def _seed(
+    api_key: str,
+    role: str,
+    permissions: list[str],
+    *,
+    tenant_status: TenantStatus = TenantStatus.active,
+    tenant_type: TenantType = TenantType.brand,
+    revoked: bool = False,
+    expires_at: datetime | None = None,
+):
     """写入一套最小数据，返回关键字段 id。"""
 
     tenant_id = uuid.uuid4()
 
     async def _run(db):
-        db.add(Tenant(id=tenant_id, name="Open API 测试租户", slug=f"open-{tenant_id.hex[:8]}"))
-        db.add(ApiKey(tenant_id=tenant_id, name="外部集成", key=api_key, role=role, permissions=permissions))
+        db.add(
+            Tenant(
+                id=tenant_id,
+                name="Open API 测试租户",
+                slug=f"open-{tenant_id.hex[:8]}",
+                status=tenant_status,
+                tenant_type=tenant_type,
+            )
+        )
+        db.add(
+            ApiKey(
+                tenant_id=tenant_id,
+                name="外部集成",
+                key_prefix=api_key[:12],
+                key_digest=hashlib.sha256(api_key.encode()).hexdigest(),
+                role=role,
+                permissions=permissions,
+                revoked=revoked,
+                revoked_at=datetime.now(UTC) if revoked else None,
+                expires_at=expires_at,
+            )
+        )
         await db.flush()
         db.add(
             ScanEvent(
@@ -122,6 +152,161 @@ async def test_open_api_rejects_invalid_key(open_api_app):
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         resp = await client.get("/open/v1/scans", headers={"X-Api-Key": "bogus"})
         assert resp.status_code == 401
+
+
+@pytest.mark.anyio
+async def test_open_api_authentication_failures_are_uniform(open_api_app):
+    from app.utils.auth_rbac import API_KEY_ROLE_PERMISSIONS
+
+    permissions = API_KEY_ROLE_PERMISSIONS["data_reader"]
+    cases = [
+        (f"revoked-{uuid.uuid4()}", {"revoked": True}),
+        (f"expired-{uuid.uuid4()}", {"expires_at": datetime.now(UTC) - timedelta(seconds=1)}),
+        (f"suspended-{uuid.uuid4()}", {"tenant_status": TenantStatus.suspended}),
+        (f"agency-{uuid.uuid4()}", {"tenant_type": TenantType.agency}),
+    ]
+    async with TestSessionLocal() as db:
+        for api_key, options in cases:
+            await _seed(api_key, "data_reader", permissions, **options)(db)
+
+    async with AsyncClient(transport=ASGITransport(app=open_api_app), base_url="http://test") as client:
+        responses = [await client.get("/open/v1/scans")]
+        responses.append(await client.get("/open/v1/scans", headers={"X-Api-Key": "invalid"}))
+        for api_key, _ in cases:
+            responses.append(await client.get("/open/v1/scans", headers={"X-Api-Key": api_key}))
+
+    assert {(response.status_code, response.json().get("detail")) for response in responses} == {
+        (401, "Invalid API key")
+    }
+
+
+@pytest.mark.anyio
+async def test_open_api_x_api_key_precedes_bearer_and_cookie(open_api_app):
+    from app.utils.auth_rbac import API_KEY_ROLE_PERMISSIONS
+
+    api_key = f"precedence-{uuid.uuid4()}"
+    async with TestSessionLocal() as db:
+        await _seed(api_key, "data_reader", API_KEY_ROLE_PERMISSIONS["data_reader"])(db)
+
+    headers = {
+        "X-Api-Key": api_key,
+        "Authorization": "Bearer invalid-bearer",
+        "Cookie": "access_token=invalid-cookie",
+    }
+    async with AsyncClient(transport=ASGITransport(app=open_api_app), base_url="http://test") as client:
+        valid_key = await client.get("/open/v1/scans", headers=headers)
+        invalid_key = await client.get(
+            "/open/v1/scans",
+            headers={**headers, "X-Api-Key": "invalid-key"},
+        )
+
+    assert valid_key.status_code == 200
+    assert invalid_key.status_code == 401
+
+
+@pytest.mark.anyio
+async def test_open_api_rate_limit_fails_closed(open_api_app, shared_security_cache):
+    shared_security_cache.fail_rate_limits = True
+
+    async with AsyncClient(transport=ASGITransport(app=open_api_app), base_url="http://test") as client:
+        resp = await client.get("/open/v1/scans", headers={"X-Api-Key": "untrusted-key"})
+
+    assert resp.status_code == 503
+
+
+@pytest.mark.anyio
+async def test_open_api_rate_limit_returns_retry_after(open_api_app, monkeypatch):
+    from app.services.redis_cache import AsyncRedisCache
+
+    async def reject(*_args, **_kwargs):
+        return False, 0
+
+    monkeypatch.setattr(AsyncRedisCache, "rate_limit_check_shared", reject)
+    async with AsyncClient(transport=ASGITransport(app=open_api_app), base_url="http://test") as client:
+        resp = await client.get("/open/v1/scans", headers={"X-Api-Key": "untrusted-key"})
+
+    assert resp.status_code == 429
+    assert resp.headers["Retry-After"] == "60"
+
+
+@pytest.mark.anyio
+async def test_open_api_rate_limit_keys_never_contain_the_secret(open_api_app, shared_security_cache):
+    from app.utils.auth_rbac import API_KEY_ROLE_PERMISSIONS
+
+    api_key = f"secret-{uuid.uuid4()}"
+    async with TestSessionLocal() as db:
+        await _seed(api_key, "data_reader", API_KEY_ROLE_PERMISSIONS["data_reader"])(db)
+
+    async with AsyncClient(transport=ASGITransport(app=open_api_app), base_url="http://test") as client:
+        resp = await client.get("/open/v1/scans", headers={"X-Api-Key": api_key})
+
+    assert resp.status_code == 200
+    assert len(shared_security_cache.rate_keys) == 3
+    assert all(api_key not in key for key in shared_security_cache.rate_keys)
+    assert any(key.startswith("global:") for key in shared_security_cache.rate_keys)
+    assert any(key.startswith("ip:") for key in shared_security_cache.rate_keys)
+    assert any(key.startswith("key:") for key in shared_security_cache.rate_keys)
+
+
+@pytest.mark.anyio
+async def test_invalid_api_keys_do_not_create_unbounded_per_key_rate_buckets(open_api_app, shared_security_cache):
+    async with AsyncClient(transport=ASGITransport(app=open_api_app), base_url="http://test") as client:
+        responses = [
+            await client.get("/open/v1/scans", headers={"X-Api-Key": f"random-{uuid.uuid4()}"}) for _ in range(25)
+        ]
+
+    assert {response.status_code for response in responses} == {401}
+    assert not any(key.startswith("key:") for key in shared_security_cache.rate_keys)
+    assert {key.split(":", 1)[0] for key in shared_security_cache.rate_keys} == {"global", "ip"}
+
+
+@pytest.mark.anyio
+async def test_open_api_ip_limit_ignores_caller_supplied_forwarding_headers(
+    open_api_app,
+    shared_security_cache,
+    caplog,
+):
+    spoofed_addresses = [f"198.51.100.{index % 250 + 1}" for index in range(301)]
+    async with AsyncClient(transport=ASGITransport(app=open_api_app), base_url="http://test") as client:
+        responses = [
+            await client.get(
+                "/open/v1/scans",
+                headers={
+                    "X-Api-Key": "invalid",
+                    "X-Real-IP": spoofed_ip,
+                    "X-Forwarded-For": f"{spoofed_ip}, 203.0.113.10",
+                },
+            )
+            for spoofed_ip in spoofed_addresses
+        ]
+
+    assert {response.status_code for response in responses[:300]} == {401}
+    assert responses[300].status_code == 429
+    ip_buckets = {key for key in shared_security_cache.rate_keys if key.startswith("ip:")}
+    assert len(ip_buckets) == 1
+    cache_and_log_evidence = " ".join([*shared_security_cache.rate_keys, caplog.text])
+    assert "127.0.0.1" not in cache_and_log_evidence
+    assert all(address not in cache_and_log_evidence for address in spoofed_addresses)
+
+
+@pytest.mark.anyio
+async def test_valid_api_key_has_a_stable_shared_rate_bucket(open_api_app, shared_security_cache):
+    from app.utils.auth_rbac import API_KEY_ROLE_PERMISSIONS
+
+    api_key = f"secret-{uuid.uuid4()}"
+    async with TestSessionLocal() as db:
+        await _seed(api_key, "data_reader", API_KEY_ROLE_PERMISSIONS["data_reader"])(db)
+
+    async with AsyncClient(transport=ASGITransport(app=open_api_app), base_url="http://test") as client:
+        first = await client.get("/open/v1/scans", headers={"X-Api-Key": api_key})
+        key_bucket = next(key for key in shared_security_cache.rate_keys if key.startswith("key:"))
+        shared_security_cache.rate_counts[key_bucket] = 600
+        blocked = await client.get("/open/v1/scans", headers={"X-Api-Key": api_key})
+
+    assert first.status_code == 200
+    assert blocked.status_code == 429
+    assert blocked.headers["Retry-After"] == "60"
+    assert api_key not in key_bucket
 
 
 @pytest.mark.anyio

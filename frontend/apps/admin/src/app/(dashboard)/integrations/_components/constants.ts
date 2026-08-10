@@ -12,12 +12,36 @@ export const EVENT_OPTIONS = [
   { value: "campaign.ended", label: "活动结束" },
 ];
 
-export const ROLE_OPTIONS = [
-  { value: "data_reader", label: "数据只读 (data_reader)" },
-  { value: "coupon_operator", label: "券操作 (coupon_operator)" },
-  { value: "webhook_admin", label: "Webhook 管理 (webhook_admin)" },
-  { value: "full_access", label: "完全访问 (full_access)" },
-];
+export const API_KEY_ROLE_OPTIONS = [
+  { value: "data_reader", label: "数据只读" },
+  { value: "coupon_operator", label: "优惠券操作" },
+  { value: "webhook_admin", label: "消息推送管理" },
+  { value: "erp_sync", label: "商品资料同步" },
+  { value: "full_access", label: "全部开放接口" },
+] as const;
+
+export type ApiKeyRole = (typeof API_KEY_ROLE_OPTIONS)[number]["value"];
+
+export const API_KEY_ROLE_LABELS: Record<ApiKeyRole, string> =
+  Object.fromEntries(
+    API_KEY_ROLE_OPTIONS.map(({ value, label }) => [value, label])
+  ) as Record<ApiKeyRole, string>;
+
+export interface ApiKeyPrincipal {
+  role?: string | null;
+  tenant_type?: string | null;
+  acting_tenant_id?: string | null;
+}
+
+export function canManageApiKeys(
+  principal: ApiKeyPrincipal | null | undefined
+): boolean {
+  return (
+    principal?.role?.toLowerCase() === "admin" &&
+    principal.tenant_type === "brand" &&
+    !principal.acting_tenant_id
+  );
+}
 
 export const INTEGRATION_STATUS: Record<string, string> = {
   delivered: STATUS_COLORS.success,

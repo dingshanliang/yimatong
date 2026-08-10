@@ -221,3 +221,16 @@ def require_permission(permission: str):
             raise HTTPException(status_code=403, detail=f"Missing permission: {permission}")
 
     return _check
+
+
+async def require_api_key_admin(request: Request) -> None:
+    """Restrict API credential lifecycle operations to durable brand admins."""
+
+    if (
+        getattr(request.state, "auth_method", None) != "jwt"
+        or getattr(request.state, "role", None) != "admin"
+        or getattr(request.state, "tenant_type", None) != "brand"
+        or not getattr(request.state, "session_id", None)
+        or "tenant:manage" not in (getattr(request.state, "permissions", []) or [])
+    ):
+        raise HTTPException(status_code=403, detail="Only a brand administrator may manage API keys")

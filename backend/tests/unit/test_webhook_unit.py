@@ -2,14 +2,16 @@
 
 import hashlib
 import hmac
+import uuid
 
 import pytest
 
 from app.core.event_bus import _EventBus
+from app.services.connectors.secrets import encrypt_secrets
+from app.services.webhook import build_api_key_lifecycle_material, recover_api_key_secret
 from app.services.webhook_sender import build_envelope, compute_signature, should_retry
 from app.utils.auth_rbac import (
     ROLE_PERMISSIONS,
-    VALID_ROLES,
     get_permissions_for_role,
     role_has_permission,
 )
@@ -19,7 +21,7 @@ class TestPermissions:
     """角色权限映射测试。"""
 
     def test_all_roles_have_permissions(self):
-        for role in VALID_ROLES:
+        for role in ROLE_PERMISSIONS:
             perms = get_permissions_for_role(role)
             assert len(perms) > 0, f"Role {role} has no permissions"
 
@@ -41,6 +43,66 @@ class TestPermissions:
     def test_invalid_role_returns_empty(self):
         assert get_permissions_for_role("nonexistent") == []
         assert not role_has_permission("nonexistent", "scan:list")
+
+
+class TestApiKeyLifecycleMaterial:
+    def test_derives_replayable_hmac_material_and_encrypted_secret(self):
+        arguments = {
+            "tenant_id": uuid.UUID("00000000-0000-4000-8000-000000000001"),
+            "actor_id": uuid.UUID("00000000-0000-4000-8000-000000000002"),
+            "action": "issue",
+            "target_id": None,
+            "idempotency_key": "11111111-1111-4111-8111-111111111111",
+            "payload": {
+                "expires_at": "2027-01-02T03:04:05+00:00",
+                "name": "ERP 同步",
+                "permanent_reason": None,
+                "role": "data_reader",
+            },
+            "candidate_id": uuid.UUID("00000000-0000-4000-8000-000000000003"),
+        }
+
+        first = build_api_key_lifecycle_material(**arguments)
+        retried = build_api_key_lifecycle_material(**arguments)
+        changed = build_api_key_lifecycle_material(
+            **{**arguments, "payload": {**arguments["payload"], "role": "full_access"}}
+        )
+
+        assert first.idempotency_digest == "2dedbd077eb3c758086fb921a9fe8bfdb03f0fc35434dcb00f3f681b37c89d87"
+        assert first.secret == retried.secret
+        assert first.request_fingerprint == retried.request_fingerprint
+        assert first.secret != changed.secret
+        assert first.request_fingerprint != changed.request_fingerprint
+        assert first.secret.startswith("ymt_") and len(first.secret) == 52
+        assert first.key_prefix == first.secret[:12]
+        assert first.key_digest == hashlib.sha256(first.secret.encode()).hexdigest()
+        assert first.escrow_ciphertext != retried.escrow_ciphertext
+        assert recover_api_key_secret(first.escrow_ciphertext, arguments["candidate_id"]) == first.secret
+
+    def test_rejects_escrow_that_does_not_match_the_candidate_or_derived_material(self):
+        candidate_id = uuid.UUID("00000000-0000-4000-8000-000000000003")
+        other_id = uuid.UUID("00000000-0000-4000-8000-000000000004")
+        material = build_api_key_lifecycle_material(
+            tenant_id=uuid.UUID("00000000-0000-4000-8000-000000000001"),
+            actor_id=uuid.UUID("00000000-0000-4000-8000-000000000002"),
+            action="issue",
+            target_id=None,
+            idempotency_key="11111111-1111-4111-8111-111111111111",
+            payload={"name": "ERP", "role": "data_reader", "expires_at": "2027-01-02T03:04:05+00:00"},
+            candidate_id=candidate_id,
+        )
+        wrong_secret = "ymt_" + "f" * 48
+        wrong_secret_escrow = encrypt_secrets({"v": 1, "api_key_id": str(candidate_id), "secret": wrong_secret})
+
+        with pytest.raises(RuntimeError, match="does not match lifecycle material"):
+            recover_api_key_secret(
+                wrong_secret_escrow,
+                candidate_id,
+                expected_prefix=material.key_prefix,
+                expected_digest=material.key_digest,
+            )
+        with pytest.raises(RuntimeError, match="payload is invalid"):
+            recover_api_key_secret(material.escrow_ciphertext, other_id)
 
 
 class TestEventBus:

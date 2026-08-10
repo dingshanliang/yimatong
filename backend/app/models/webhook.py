@@ -3,7 +3,20 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import JSON, DateTime, Index, Integer, String, Text, func
+from sqlalchemy import (
+    JSON,
+    CheckConstraint,
+    DateTime,
+    ForeignKey,
+    ForeignKeyConstraint,
+    Index,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+    func,
+    text,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 from uuid6 import uuid7
 
@@ -34,12 +47,19 @@ class ApiKey(Base):
     __tablename__ = "api_keys"
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid7)
-    tenant_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("tenants.id"), nullable=False)
     name: Mapped[str] = mapped_column(String(200), nullable=False)
-    key: Mapped[str] = mapped_column(String(100), nullable=False, unique=True)
+    key_prefix: Mapped[str] = mapped_column(String(20), nullable=False)
+    key_digest: Mapped[str] = mapped_column(String(64), nullable=False)
     role: Mapped[str] = mapped_column(String(50), nullable=False, default="data_reader")
     permissions: Mapped[dict] = mapped_column(JSON, nullable=False, default=list)
     revoked: Mapped[bool] = mapped_column(default=False, nullable=False)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    rotated_from_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True)
+    created_by: Mapped[uuid.UUID | None] = mapped_column(nullable=True)
+    idempotency_key_digest: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    request_fingerprint: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    permanent_reason: Mapped[str | None] = mapped_column(String(200), nullable=True)
     last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
@@ -47,7 +67,68 @@ class ApiKey(Base):
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
 
-    __table_args__ = (Index("ix_api_keys_tenant", "tenant_id"),)
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "id", name="uq_api_keys_tenant_id_id"),
+        ForeignKeyConstraint(
+            ["tenant_id", "created_by"],
+            ["accounts.tenant_id", "accounts.id"],
+            name="fk_api_keys_tenant_creator",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "rotated_from_id"],
+            ["api_keys.tenant_id", "api_keys.id"],
+            name="fk_api_keys_tenant_rotated_from",
+        ),
+        CheckConstraint(
+            "(revoked = false AND revoked_at IS NULL) OR (revoked = true AND revoked_at IS NOT NULL)",
+            name="ck_api_keys_revocation_state",
+        ),
+        CheckConstraint(
+            "created_by IS NULL OR "
+            "((expires_at IS NULL AND permanent_reason IS NOT NULL "
+            "AND length(trim(permanent_reason)) BETWEEN 10 AND 200) "
+            "OR (expires_at IS NOT NULL AND permanent_reason IS NULL))",
+            name="ck_api_keys_permanent_reason",
+        ),
+        CheckConstraint(
+            "(idempotency_key_digest IS NULL AND request_fingerprint IS NULL) OR "
+            "(created_by IS NOT NULL "
+            "AND idempotency_key_digest ~ '^[0-9a-f]{64}$' "
+            "AND request_fingerprint ~ '^[0-9a-f]{64}$')",
+            name="ck_api_keys_idempotency_contract",
+        ).ddl_if(dialect="postgresql"),
+        CheckConstraint(
+            "idempotency_key_digest IS NULL OR expires_at IS NULL OR "
+            "(created_at IS NOT NULL AND expires_at <= created_at + INTERVAL '365 days')",
+            name="ck_api_keys_post_contract_expiry_max",
+        ).ddl_if(dialect="postgresql"),
+        Index("ix_api_keys_tenant", "tenant_id"),
+        Index("uq_api_keys_key_digest", "key_digest", unique=True),
+        Index(
+            "uq_api_keys_tenant_creator_idempotency",
+            "tenant_id",
+            "created_by",
+            "idempotency_key_digest",
+            unique=True,
+            postgresql_where=text("idempotency_key_digest IS NOT NULL"),
+            sqlite_where=text("idempotency_key_digest IS NOT NULL"),
+        ),
+        Index(
+            "ix_api_keys_tenant_active_expiry",
+            "tenant_id",
+            "expires_at",
+            postgresql_where=text("revoked = false AND revoked_at IS NULL"),
+            sqlite_where=text("revoked = false AND revoked_at IS NULL"),
+        ),
+        Index(
+            "uq_api_keys_tenant_rotated_from",
+            "tenant_id",
+            "rotated_from_id",
+            unique=True,
+            postgresql_where=text("rotated_from_id IS NOT NULL"),
+            sqlite_where=text("rotated_from_id IS NOT NULL"),
+        ),
+    )
 
 
 class WebhookDelivery(Base):

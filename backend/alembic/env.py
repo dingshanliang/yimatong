@@ -140,6 +140,7 @@ LEGACY_TIMESTAMP_NULLABILITY = {
 MIGRATION_ONLY_TABLES = {
     "agency_authorization_integrity_backups",
     "alembic_version",
+    "api_key_legacy_secret_backups",
     "rls_force_remediation_backups",
     "runtime_privilege_remediation_backup",
 }

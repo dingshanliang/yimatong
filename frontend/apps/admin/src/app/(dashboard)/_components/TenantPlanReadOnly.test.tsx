@@ -13,10 +13,17 @@ describe("TenantPlanReadOnly", () => {
       </TenantPlanReadOnly>
     );
 
-    expect(screen.getByRole("link", { name: "查看活动" })).toHaveAttribute(
-      "href",
-      "/campaigns"
+    const readLink = screen.getByRole("link", { name: "查看活动" });
+    const childButton = screen.getByRole("button", { name: "新建活动" });
+
+    expect(readLink).toHaveAttribute("href", "/campaigns");
+    expect(readLink).toBeEnabled();
+    expect(childButton).toBeEnabled();
+    expect(readLink.parentElement).toHaveAttribute(
+      "data-tenant-plan-read-only",
+      "true"
     );
+    expect(readLink.parentElement).not.toHaveAttribute("aria-disabled");
     expect(screen.getByText(/请联系一码通平台管理员续期/)).toBeVisible();
   });
 

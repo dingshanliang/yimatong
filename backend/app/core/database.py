@@ -1,3 +1,4 @@
+import re
 import uuid
 from collections.abc import AsyncGenerator
 from contextvars import ContextVar, Token
@@ -178,6 +179,19 @@ _PLAN_RECOVERY_WRITE_PATHS = frozenset(
         "/api/v1/agency/exit-context",
     }
 )
+_API_KEY_REVOKE_PATH = re.compile(
+    r"/api/v1/webhooks/api-keys/"
+    r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
+)
+
+
+def is_plan_recovery_write(request: Request) -> bool:
+    """Return whether this exact request is an allowed security recovery write."""
+
+    if request.url.path in _PLAN_RECOVERY_WRITE_PATHS:
+        return True
+    return request.method == "DELETE" and _API_KEY_REVOKE_PATH.fullmatch(request.url.path) is not None
+
 
 _request_security_credential: ContextVar[tuple[str, str] | None] = ContextVar(
     "request_security_credential",
@@ -385,6 +399,23 @@ async def _revalidate_mutating_principal(session: AsyncSession, request: Request
     await _apply_tenant_context(session, tenant_id)
 
 
+async def _revalidate_api_key_mutation(session: AsyncSession, request: Request, tenant_id: uuid.UUID) -> None:
+    """Serialize an Open API mutation with revoke/rotate and reject stale keys."""
+
+    if getattr(request.state, "auth_method", None) != "api_key":
+        return
+    try:
+        api_key_id = uuid.UUID(str(request.state.api_key_id))
+    except (AttributeError, TypeError, ValueError) as exc:
+        raise HTTPException(status_code=401, detail="Invalid API key") from exc
+    is_active = await session.scalar(
+        text("SELECT public.lock_active_api_key(:tenant_id, :api_key_id)"),
+        {"tenant_id": tenant_id, "api_key_id": api_key_id},
+    )
+    if is_active is not True:
+        raise HTTPException(status_code=401, detail="Invalid API key")
+
+
 async def get_db(request: Request) -> AsyncGenerator[AsyncSession, None]:
     async with async_session_factory() as session:
         from app.core.context import get_request_tenant_id
@@ -433,9 +464,10 @@ async def get_db(request: Request) -> AsyncGenerator[AsyncSession, None]:
                     await lock_quota_rollout_state(session)
                     await _lock_request_tenants(session, request, validated_tenant_id)
                     await lock_auth_session_serialization(session, getattr(request.state, "session_id", None))
+                    await _revalidate_api_key_mutation(session, request, validated_tenant_id)
                     await _revalidate_mutating_principal(session, request, validated_tenant_id)
                     await _revalidate_acting_authorization(session, request)
-                if is_mutation and request.url.path not in _PLAN_RECOVERY_WRITE_PATHS:
+                if is_mutation and not is_plan_recovery_write(request):
                     from app.services.entitlement import require_active_plan
 
                     await require_active_plan(session, validated_tenant_id, lock_tenant=True)

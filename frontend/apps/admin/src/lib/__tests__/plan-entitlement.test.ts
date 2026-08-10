@@ -63,6 +63,27 @@ describe("tenant plan entitlement client contract", () => {
     expect(tenantPlanBlocksRequest("post", "/agency/switch-context")).toBe(
       true
     );
+
+    const keyId = "0198dca0-1234-7abc-8def-0123456789ab";
+    expect(
+      tenantPlanBlocksRequest("DELETE", `/api/v1/webhooks/api-keys/${keyId}`)
+    ).toBe(false);
+    expect(
+      tenantPlanBlocksRequest("POST", `/webhooks/api-keys/${keyId}/rotate`)
+    ).toBe(true);
+    expect(tenantPlanBlocksRequest("POST", "/webhooks/api-keys")).toBe(true);
+    expect(
+      tenantPlanBlocksRequest("DELETE", `/webhooks/api-keys/${keyId}/rotate`)
+    ).toBe(true);
+    expect(
+      tenantPlanBlocksRequest("DELETE", `/webhooks/api-keys/${keyId}/`)
+    ).toBe(true);
+    expect(
+      tenantPlanBlocksRequest(
+        "DELETE",
+        "https://untrusted.example/webhooks/api-keys/0198dca0-1234-7abc-8def-0123456789ab"
+      )
+    ).toBe(true);
   });
 
   it("fails closed for paid features when the entitlement payload is absent", () => {

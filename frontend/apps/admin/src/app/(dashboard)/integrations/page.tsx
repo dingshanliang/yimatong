@@ -19,7 +19,9 @@ import {
 import { WebhooksTab } from "./_components/WebhooksTab";
 import { ApiKeysTab } from "./_components/ApiKeysTab";
 import { DeliveriesTab } from "./_components/DeliveriesTab";
+import { canManageApiKeys } from "./_components/constants";
 import api from "@/lib/api";
+import { useAuthStore } from "@/lib/auth";
 import { STATUS_COLORS } from "@/lib/status-colors";
 
 const { Paragraph, Text, Title } = Typography;
@@ -355,14 +357,23 @@ function WeComTab() {
   );
 }
 
-const tabItems = [
-  { key: "wecom", label: "企业微信", children: <WeComTab /> },
-  { key: "webhooks", label: "消息推送", children: <WebhooksTab /> },
-  { key: "api-keys", label: "API 密钥", children: <ApiKeysTab /> },
-  { key: "deliveries", label: "推送记录", children: <DeliveriesTab /> },
-];
-
 export default function IntegrationsPage() {
+  const user = useAuthStore((state) => state.user);
+  const tabItems = [
+    { key: "wecom", label: "企业微信", children: <WeComTab /> },
+    { key: "webhooks", label: "消息推送", children: <WebhooksTab /> },
+    ...(canManageApiKeys(user)
+      ? [
+          {
+            key: "api-keys",
+            label: "API 密钥",
+            children: <ApiKeysTab />,
+          },
+        ]
+      : []),
+    { key: "deliveries", label: "推送记录", children: <DeliveriesTab /> },
+  ];
+
   return (
     <div>
       <Title level={4} className="!mb-4">

@@ -290,6 +290,45 @@ async def test_acting_read_holds_live_principal_and_authorization_boundary_befor
 
 
 @pytest.mark.anyio
+async def test_api_key_mutation_revalidates_after_quota_tenant_and_session_locks(monkeypatch):
+    tenant_id = uuid.uuid4()
+    api_key_id = uuid.uuid4()
+    request = _request("/open/v1/products")
+    request.state.auth_method = "api_key"
+    request.state.api_key_id = str(api_key_id)
+    request.state.session_id = None
+    request.state.tenant_type = "brand"
+    events: list[str] = []
+
+    session = AsyncMock()
+    context = AsyncMock()
+    context.__aenter__.return_value = session
+    monkeypatch.setattr(database, "async_session_factory", MagicMock(return_value=context))
+    monkeypatch.setattr(database, "_is_pg", False)
+    monkeypatch.setattr(database, "_session_uses_postgresql", lambda _session: True)
+
+    async def record(name):
+        events.append(name)
+
+    monkeypatch.setattr("app.services.quota.lock_quota_rollout_state", lambda _session: record("quota"))
+    monkeypatch.setattr(database, "_lock_request_tenants", lambda *_args: record("tenants"))
+    monkeypatch.setattr(database, "lock_auth_session_serialization", lambda *_args: record("session"))
+    monkeypatch.setattr(database, "_revalidate_api_key_mutation", lambda *_args: record("api-key"), raising=False)
+    monkeypatch.setattr(database, "_revalidate_mutating_principal", lambda *_args: record("principal"))
+    monkeypatch.setattr(database, "_revalidate_acting_authorization", lambda *_args: record("authorization"))
+    monkeypatch.setattr("app.services.entitlement.require_active_plan", lambda *_args, **_kwargs: record("plan"))
+
+    context_token = set_request_tenant_id(str(tenant_id))
+    dependency = database.get_db(request)
+    try:
+        assert await anext(dependency) is session
+        assert events == ["quota", "tenants", "session", "api-key", "principal", "authorization", "plan"]
+    finally:
+        await dependency.aclose()
+        reset_request_tenant_id(context_token)
+
+
+@pytest.mark.anyio
 async def test_locked_acting_read_rejects_removed_live_permission(monkeypatch):
     agency_id = uuid.uuid4()
     client_id = uuid.uuid4()
@@ -468,6 +507,61 @@ def test_only_exact_agency_authorization_transitions_commit_before_response():
         ("DELETE", "/api/v1/ops/authorizations/{auth_id}", "function"),
         ("POST", "/api/v1/agency/switch-context", "function"),
     }
+
+
+def test_only_api_key_lifecycle_mutations_use_function_scoped_get_db():
+    registered_scopes = set()
+    for route in app.routes:
+        for dependency in getattr(route, "dependant", SimpleNamespace(dependencies=())).dependencies:
+            if dependency.call is not database.get_db or dependency.scope != "function":
+                continue
+            for method in route.methods:
+                registered_scopes.add((method, route.path, dependency.scope))
+
+    assert registered_scopes == {
+        ("POST", "/api/v1/webhooks/api-keys", "function"),
+        ("POST", "/api/v1/webhooks/api-keys/{key_id}/rotate", "function"),
+        ("DELETE", "/api/v1/webhooks/api-keys/{key_id}", "function"),
+    }
+
+
+@pytest.mark.anyio
+async def test_function_scoped_get_db_commit_failure_replaces_success_response(monkeypatch):
+    events: list[str] = []
+
+    class FailingCommitSession:
+        async def commit(self) -> None:
+            events.append("commit")
+            raise RuntimeError("commit failed")
+
+        async def rollback(self) -> None:
+            events.append("rollback")
+
+    class SessionContext:
+        async def __aenter__(self):
+            return FailingCommitSession()
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            return False
+
+    monkeypatch.setattr(database, "async_session_factory", lambda: SessionContext())
+    monkeypatch.setattr(database, "_is_pg", False)
+    probe = FastAPI()
+
+    @probe.post("/api/v1/webhooks/api-keys")
+    async def api_key_probe(_db=Depends(database.get_db, scope="function")):
+        events.append("handler")
+        return JSONResponse(status_code=201, content={"status": "success"})
+
+    async with AsyncClient(
+        transport=ASGITransport(app=probe, raise_app_exceptions=False),
+        base_url="http://test",
+    ) as client:
+        response = await client.post("/api/v1/webhooks/api-keys")
+
+    assert response.status_code == 500
+    assert response.text == "Internal Server Error"
+    assert events == ["handler", "commit", "rollback"]
 
 
 @pytest.mark.anyio
