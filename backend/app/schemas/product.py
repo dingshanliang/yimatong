@@ -1,7 +1,8 @@
 import uuid
 from datetime import date, datetime
+from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator, model_validator
 
 from app.models.product import (
     BatchStatus,
@@ -12,6 +13,7 @@ from app.models.product import (
     SKUStatus,
 )
 from app.schemas.common import PaginatedResponse  # noqa: F401 — re-exported
+from app.utils import china_business_date
 from app.utils.public_url import normalize_public_url
 
 
@@ -179,7 +181,11 @@ class ProductionBatchUpdate(CatalogWriteSchema):
     production_date: date | None = Field(None, description="生产日期")
     expiry_date: date | None = Field(None, description="保质期至")
     origin: str | None = Field(None, max_length=200, description="批次产地")
-    status: BatchStatus | None = Field(None, description="批次状态")
+
+
+class ProductionBatchRecallRequest(CatalogWriteSchema):
+    reason: str = Field(..., min_length=1, max_length=500, description="召回原因")
+    confirm: Literal["recall"] = Field(..., description="二次确认")
 
 
 class ProductionBatchRead(BaseModel):
@@ -195,7 +201,19 @@ class ProductionBatchRead(BaseModel):
     expiry_date: date = Field(..., description="保质期至")
     origin: str | None = Field(None, description="批次产地")
     status: BatchStatus = Field(..., description="批次状态")
+    recall_reason: str | None = Field(None, description="召回原因")
+    recalled_at: datetime | None = Field(None, description="召回时间")
+    recalled_by: uuid.UUID | None = Field(None, description="召回操作人")
     created_at: datetime | None = Field(None, description="创建时间")
+
+    @computed_field(description="按当前日期计算的有效状态；召回优先于过期")
+    @property
+    def effective_status(self) -> BatchStatus:
+        if self.status == BatchStatus.recalled:
+            return BatchStatus.recalled
+        if self.status == BatchStatus.active and self.expiry_date < china_business_date():
+            return BatchStatus.expired
+        return self.status
 
     model_config = {"from_attributes": True}
 

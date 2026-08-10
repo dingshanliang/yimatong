@@ -2,6 +2,7 @@
 
 import React, { useCallback, useEffect, useState } from "react";
 import {
+  Alert,
   App,
   Button,
   Card,
@@ -20,7 +21,10 @@ import {
 } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
 import api from "@/lib/api";
+import { useAuthStore } from "@/lib/auth";
+import { catalogAccessForPrincipal } from "@/lib/catalog-access";
 import { STATUS_COLORS } from "@/lib/status-colors";
+import { useTenantPlanReadOnly } from "../_components/TenantPlanReadOnly";
 
 const { Title, Text } = Typography;
 const { Dragger } = Upload;
@@ -52,7 +56,20 @@ function formatDate(dateStr?: string): string {
 }
 
 export default function ImportsPage() {
+  const user = useAuthStore((state) => state.user);
+  const access = catalogAccessForPrincipal(user);
+
+  if (!access.canRead) {
+    return <Alert type="warning" showIcon title="当前账号无权访问产品导入" />;
+  }
+
+  return <ImportsWorkspace canWrite={access.canWrite} />;
+}
+
+function ImportsWorkspace({ canWrite }: { canWrite: boolean }) {
   const { message } = App.useApp();
+  const planReadOnly = useTenantPlanReadOnly();
+  const uploadDisabled = planReadOnly || !canWrite;
   const [records, setRecords] = useState<ImportRecord[]>([]);
   const [loading, setLoading] = useState(false);
   const [downloading, setDownloading] = useState(false);
@@ -112,7 +129,16 @@ export default function ImportsPage() {
     name: "file",
     action: `${process.env.NEXT_PUBLIC_API_URL || ""}/api/v1/imports/excel`,
     headers: { Authorization: `Bearer ${getToken()}` },
-    accept: ".xlsx,.xls",
+    accept: ".xlsx",
+    disabled: uploadDisabled,
+    beforeUpload(file: File) {
+      if (uploadDisabled) return Upload.LIST_IGNORE;
+      if (!file.name.toLowerCase().endsWith(".xlsx")) {
+        message.error("不支持该文件格式，请上传 .xlsx 文件");
+        return Upload.LIST_IGNORE;
+      }
+      return true;
+    },
     onChange(info: {
       file: {
         status?: string;
@@ -127,7 +153,11 @@ export default function ImportsPage() {
         );
         fetchRecords();
       } else if (info.file.status === "error") {
-        message.error("导入失败，请检查文件格式是否正确");
+        if (info.file.response?.detail === "Unsupported import file type") {
+          message.error("不支持该文件格式，请上传 .xlsx 文件");
+        } else {
+          message.error("导入失败，请检查文件格式是否正确");
+        }
       }
     },
   };
@@ -235,7 +265,7 @@ export default function ImportsPage() {
             </p>
             <p className="ant-upload-text">点击或拖拽 Excel 文件到此区域上传</p>
             <p className="ant-upload-hint">
-              支持 .xlsx / .xls 格式，请先下载模板填写数据
+              仅支持 .xlsx 格式，请先下载模板填写数据
             </p>
           </Dragger>
         </Space>

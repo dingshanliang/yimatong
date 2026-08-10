@@ -1,13 +1,17 @@
 """A5-002: PageTemplate CRUD API + A5-003: PageVersion 版本管理 验收测试"""
 
+import uuid
 from collections.abc import AsyncGenerator
 
 import pytest
+from fastapi.routing import APIRoute
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy.dialects import postgresql
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.main import app
+from app.models.page import PageTemplate
 from app.utils.security import create_access_token
 from tests.conftest import TestSessionLocal
 
@@ -67,6 +71,23 @@ async def create_product(client: AsyncClient, headers: dict[str, str], name: str
         headers=headers,
     )
     return product.json()["id"]
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/api/v1/page-templates/industry-templates/{index}/clone",
+        "/api/v1/page-templates/{template_id}/versions",
+        "/api/v1/page-templates/{template_id}/versions/{version_id}/rollback",
+    ],
+)
+def test_page_version_mutations_commit_before_success_response(path: str):
+    route = next(
+        route for route in app.routes if isinstance(route, APIRoute) and route.path == path and "POST" in route.methods
+    )
+    db_dependency = next(dependency for dependency in route.dependant.dependencies if dependency.call is get_db)
+
+    assert db_dependency.scope == "function"
 
 
 class TestPageTemplateCRUD:
@@ -212,6 +233,85 @@ class TestPageTemplateCRUD:
 
 
 class TestPageVersionManagement:
+    @pytest.mark.anyio
+    async def test_create_version_locks_parent_before_unlocked_version_aggregate(
+        self,
+        client: AsyncClient,
+        db_session: AsyncSession,
+        auth_setup,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        create = await client.post(
+            "/api/v1/page-templates",
+            json={"name": "并发版本测试", "template_type": "product_info"},
+            headers=auth_setup,
+        )
+        template_id = create.json()["id"]
+        statements = []
+        original_execute = db_session.execute
+
+        async def capture_execute(statement, *args, **kwargs):
+            statements.append(statement)
+            return await original_execute(statement, *args, **kwargs)
+
+        monkeypatch.setattr(db_session, "execute", capture_execute)
+
+        response = await client.post(
+            f"/api/v1/page-templates/{template_id}/versions",
+            json={"config_json": {"brand_name": "测试品牌"}},
+            headers=auth_setup,
+        )
+
+        assert response.status_code == 201
+        postgres_sql = [str(statement.compile(dialect=postgresql.dialect())) for statement in statements]
+        parent_locks = [
+            sql
+            for sql in postgres_sql
+            if "FROM page_templates" in sql
+            and "page_templates.id =" in sql
+            and "page_templates.tenant_id =" in sql
+            and "FOR UPDATE" in sql
+        ]
+        version_aggregates = [sql for sql in postgres_sql if "max(page_versions.version)" in sql]
+        assert len(parent_locks) == 1
+        assert len(version_aggregates) == 1
+        assert "FOR UPDATE" not in version_aggregates[0]
+
+    @pytest.mark.anyio
+    async def test_create_version_returns_404_for_missing_template(self, client: AsyncClient, auth_setup):
+        response = await client.post(
+            f"/api/v1/page-templates/{uuid.uuid4()}/versions",
+            json={"config_json": {"brand_name": "测试品牌"}},
+            headers=auth_setup,
+        )
+
+        assert response.status_code == 404
+        assert response.json()["detail"] == "Page template not found"
+
+    @pytest.mark.anyio
+    async def test_create_version_returns_404_for_cross_tenant_template(
+        self,
+        client: AsyncClient,
+        db_session: AsyncSession,
+        auth_setup,
+    ):
+        other_template = PageTemplate(
+            tenant_id=uuid.uuid4(),
+            name="其他租户页面",
+            template_type="product_info",
+        )
+        db_session.add(other_template)
+        await db_session.flush()
+
+        response = await client.post(
+            f"/api/v1/page-templates/{other_template.id}/versions",
+            json={"config_json": {"brand_name": "测试品牌"}},
+            headers=auth_setup,
+        )
+
+        assert response.status_code == 404
+        assert response.json()["detail"] == "Page template not found"
+
     @pytest.mark.anyio
     async def test_create_version(self, client: AsyncClient, auth_setup):
         create = await client.post(

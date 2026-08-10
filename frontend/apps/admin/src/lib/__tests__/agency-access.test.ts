@@ -23,6 +23,8 @@ describe("canManageAgencyAuthorizations", () => {
 
   it("maps acting routes to the exact granted scope", () => {
     expect(isAgencyScopedRouteAllowed("/products/p1", ["products"])).toBe(true);
+    expect(isAgencyScopedRouteAllowed("/imports", ["products"])).toBe(true);
+    expect(isAgencyScopedRouteAllowed("/imports", ["codes"])).toBe(false);
     expect(isAgencyScopedRouteAllowed("/campaigns", ["products"])).toBe(false);
     expect(isAgencyScopedRouteAllowed("/settings/tenant", ["products"])).toBe(
       false

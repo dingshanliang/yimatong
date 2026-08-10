@@ -4,12 +4,12 @@ import { catalogAccessForPrincipal } from "../catalog-access";
 
 describe("catalogAccessForPrincipal", () => {
   it.each([
-    ["admin", true, true, true],
-    ["operator", true, true, false],
-    ["viewer", false, false, false],
+    ["admin", true, true, true, true],
+    ["operator", true, true, false, false],
+    ["viewer", false, false, false, false],
   ] as const)(
     "maps brand %s to the backend catalog contract",
-    (role, canRead, canWrite, canDelete) => {
+    (role, canRead, canWrite, canDelete, canRecall) => {
       expect(
         catalogAccessForPrincipal({
           tenant_type: "brand",
@@ -17,7 +17,7 @@ describe("catalogAccessForPrincipal", () => {
           acting_tenant_id: null,
           agency_scope: null,
         })
-      ).toEqual({ canRead, canWrite, canDelete });
+      ).toEqual({ canRead, canWrite, canDelete, canRecall });
     }
   );
 
@@ -29,7 +29,12 @@ describe("catalogAccessForPrincipal", () => {
         acting_tenant_id: null,
         agency_scope: ["products"],
       })
-    ).toEqual({ canRead: false, canWrite: false, canDelete: false });
+    ).toEqual({
+      canRead: false,
+      canWrite: false,
+      canDelete: false,
+      canRecall: false,
+    });
     expect(
       catalogAccessForPrincipal({
         tenant_type: "agency",
@@ -37,7 +42,12 @@ describe("catalogAccessForPrincipal", () => {
         acting_tenant_id: "client-1",
         agency_scope: ["pages"],
       })
-    ).toEqual({ canRead: false, canWrite: false, canDelete: false });
+    ).toEqual({
+      canRead: false,
+      canWrite: false,
+      canDelete: false,
+      canRecall: false,
+    });
     expect(
       catalogAccessForPrincipal({
         tenant_type: "agency",
@@ -45,6 +55,24 @@ describe("catalogAccessForPrincipal", () => {
         acting_tenant_id: "client-1",
         agency_scope: ["products"],
       })
-    ).toEqual({ canRead: true, canWrite: true, canDelete: false });
+    ).toEqual({
+      canRead: true,
+      canWrite: true,
+      canDelete: false,
+      canRecall: false,
+    });
+    expect(
+      catalogAccessForPrincipal({
+        tenant_type: "agency",
+        role: "admin",
+        acting_tenant_id: "client-1",
+        agency_scope: ["products"],
+      })
+    ).toEqual({
+      canRead: true,
+      canWrite: true,
+      canDelete: true,
+      canRecall: false,
+    });
   });
 });

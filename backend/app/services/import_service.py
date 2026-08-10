@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import uuid
@@ -9,22 +10,99 @@ from dataclasses import dataclass, field
 from datetime import date
 from io import BytesIO
 from typing import Any
+from zipfile import BadZipFile, ZipFile
 
 from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Font, PatternFill
 from openpyxl.utils import get_column_letter
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import AppException
 from app.models.integration import SyncRecord
 from app.models.product import SKU, Brand, Product, ProductionBatch
+from app.services.product import is_production_batch_effectively_active
 from app.services.quota import CumulativeQuotaKey, reserve_quota
 
 logger = logging.getLogger(__name__)
 
 SOURCE_SYSTEM = "csv_import"
+
+MAX_XLSX_FILE_SIZE = 10 * 1024 * 1024
+MAX_XLSX_ENTRIES = 1_000
+MAX_XLSX_TOTAL_UNCOMPRESSED = 50 * 1024 * 1024
+MAX_XLSX_SINGLE_UNCOMPRESSED = 10 * 1024 * 1024
+MAX_XLSX_COMPRESSION_RATIO = 200.0
+MAX_XLSX_SHEETS = 20
+MAX_XLSX_ROWS_PER_SHEET = 10_001  # header + 10,000 data rows
+MAX_XLSX_CELLS = 200_000
+MAX_XLSX_ERRORS = 100
+MAX_XLSX_GLOBAL_CONCURRENCY = 4
+MAX_XLSX_PER_TENANT_CONCURRENCY = 1
+
+
+class XLSXValidationError(ValueError):
+    """Stable, user-safe workbook rejection."""
+
+
+class XLSXParseCapacityUnavailable(RuntimeError):
+    """No worker-thread capacity is immediately available for this tenant."""
+
+
+class XLSXParseLease:
+    def __init__(self, capacity: XLSXParseCapacity, tenant_key: str):
+        self._capacity = capacity
+        self._tenant_key = tenant_key
+        self._released = False
+
+    def release(self) -> None:
+        if self._released:
+            return
+        self._released = True
+        self._capacity._release(self._tenant_key)
+
+
+class XLSXParseCapacity:
+    """Immediate, per-process admission control for CPU-heavy workbook parsing."""
+
+    def __init__(self, *, global_limit: int, per_tenant_limit: int):
+        if global_limit < 2 or per_tenant_limit < 1 or per_tenant_limit >= global_limit:
+            raise ValueError("XLSX parse capacity must preserve at least one slot for another tenant")
+        self.global_limit = global_limit
+        self.per_tenant_limit = per_tenant_limit
+        self._active_global = 0
+        self._active_by_tenant: dict[str, int] = {}
+
+    def reserve(self, tenant_id: uuid.UUID) -> XLSXParseLease | None:
+        tenant_key = str(tenant_id)
+        tenant_active = self._active_by_tenant.get(tenant_key, 0)
+        if self._active_global >= self.global_limit or tenant_active >= self.per_tenant_limit:
+            return None
+        self._active_global += 1
+        self._active_by_tenant[tenant_key] = tenant_active + 1
+        return XLSXParseLease(self, tenant_key)
+
+    def owns(self, lease: XLSXParseLease, tenant_id: uuid.UUID) -> bool:
+        return lease._capacity is self and lease._tenant_key == str(tenant_id) and not lease._released
+
+    def _release(self, tenant_key: str) -> None:
+        tenant_active = self._active_by_tenant.get(tenant_key, 0)
+        if tenant_active <= 0 or self._active_global <= 0:
+            raise RuntimeError("XLSX parse capacity lease was not active")
+        self._active_global -= 1
+        if tenant_active == 1:
+            self._active_by_tenant.pop(tenant_key, None)
+        else:
+            self._active_by_tenant[tenant_key] = tenant_active - 1
+
+
+_xlsx_parse_capacity = XLSXParseCapacity(
+    global_limit=MAX_XLSX_GLOBAL_CONCURRENCY,
+    per_tenant_limit=MAX_XLSX_PER_TENANT_CONCURRENCY,
+)
+
 
 # ---------------------------------------------------------------------------
 # Pydantic 行校验模型
@@ -77,6 +155,7 @@ class BatchRow(BaseModel):
     production_date: date = Field(alias="生产日期*")
     expiry_date: date = Field(alias="有效期至*")
     external_id: str | None = Field(None, max_length=100, alias="external_id")
+    origin: str | None = Field(None, max_length=200, alias="产地")
 
     model_config = {"populate_by_name": True}
 
@@ -91,6 +170,37 @@ class RowError:
     sheet: str
     row: int
     message: str
+    code: str | None = None
+    reference_id: str | None = None
+
+
+def _execution_row_error(
+    sheet: str,
+    row: int,
+    *,
+    exc: Exception | None = None,
+    code: str | None = None,
+    message: str | None = None,
+) -> RowError:
+    if code is None:
+        is_conflict = isinstance(exc, IntegrityError)
+        code = "IMPORT_ROW_CONFLICT" if is_conflict else "IMPORT_ROW_FAILED"
+        message = "该行数据冲突，未完成导入" if is_conflict else "该行导入失败，请核对数据后重试"
+    reference_id = f"imp_{uuid.uuid4().hex}"
+    logger.warning(
+        "Catalog import row rejected sheet=%s row=%d error_code=%s reference_id=%s",
+        sheet,
+        row,
+        code,
+        reference_id,
+    )
+    return RowError(
+        sheet=sheet,
+        row=row,
+        message=message or "该行导入失败，请核对数据后重试",
+        code=code,
+        reference_id=reference_id,
+    )
 
 
 @dataclass
@@ -130,6 +240,7 @@ class ParsedBatch:
     production_date: date
     expiry_date: date
     external_id: str | None
+    origin: str | None = None
 
 
 @dataclass
@@ -208,6 +319,7 @@ BATCH_COLUMNS = [
     ("生产日期*", "production_date", 20, "必填，格式 YYYY-MM-DD"),
     ("有效期至*", "expiry_date", 20, "必填，格式 YYYY-MM-DD"),
     ("external_id", "external_id", 25, "可选，外部系统 ID"),
+    ("产地", "origin", 30, "可选，生产批次产地"),
 ]
 
 SHEET_DEFS = {
@@ -229,7 +341,7 @@ EXAMPLE_ROWS: dict[str, list[list[str | None]]] = {
         ["示例产品", "SKU-001", "500g 装", '{"重量":"500g"}', "SKU-EXT-001"],
     ],
     "批次": [
-        ["SKU-001", "BATCH-20260101", "2026-01-01", "2027-01-01", "BATCH-EXT-001"],
+        ["SKU-001", "BATCH-20260101", "2026-01-01", "2027-01-01", "BATCH-EXT-001", "黑龙江省五常市"],
     ],
 }
 
@@ -241,6 +353,12 @@ EXAMPLE_ROWS: dict[str, list[list[str | None]]] = {
 
 class ExcelImportService:
     """Excel 多 Sheet 导入服务"""
+
+    def __init__(self, *, parse_capacity: XLSXParseCapacity | None = None):
+        self._parse_capacity = parse_capacity or _xlsx_parse_capacity
+
+    def reserve_parse_capacity(self, tenant_id: uuid.UUID) -> XLSXParseLease | None:
+        return self._parse_capacity.reserve(tenant_id)
 
     # --- 模板生成 ---
 
@@ -283,53 +401,120 @@ class ExcelImportService:
 
     # --- 解析与校验 ---
 
-    async def parse_and_validate(self, file_content: bytes, tenant_id: uuid.UUID) -> ImportResult:
+    async def parse_and_validate(
+        self,
+        file_content: bytes,
+        tenant_id: uuid.UUID,
+        *,
+        capacity_lease: XLSXParseLease | None = None,
+    ) -> ImportResult:
         """解析多 Sheet Excel，校验每一行，返回结构化结果"""
-        result = ImportResult()
+        owns_lease = capacity_lease is None
+        if capacity_lease is None:
+            capacity_lease = self.reserve_parse_capacity(tenant_id)
+            if capacity_lease is None:
+                raise XLSXParseCapacityUnavailable("Excel parsing capacity is full")
+        elif not self._parse_capacity.owns(capacity_lease, tenant_id):
+            raise ValueError("Invalid Excel parse capacity lease")
+        try:
+            if len(file_content) > MAX_XLSX_FILE_SIZE:
+                return ImportResult(
+                    errors=[
+                        RowError(
+                            sheet="文件",
+                            row=0,
+                            message=f"文件大小超过限制（最大 {MAX_XLSX_FILE_SIZE // (1024 * 1024)} MB）",
+                        )
+                    ]
+                )
+            try:
+                return await asyncio.to_thread(self._parse_workbook, file_content)
+            except XLSXValidationError as exc:
+                return ImportResult(errors=[RowError(sheet="文件", row=0, message=str(exc))])
+            except Exception:
+                logger.warning("Excel workbook parsing failed")
+                return ImportResult(errors=[RowError(sheet="文件", row=0, message="无法解析 Excel 文件")])
+        finally:
+            if owns_lease:
+                capacity_lease.release()
 
-        # File size limit: 10 MB
-        max_file_size = 10 * 1024 * 1024
-        if len(file_content) > max_file_size:
-            result.errors.append(
-                RowError(sheet="文件", row=0, message=f"文件大小超过限制（最大 {max_file_size // (1024 * 1024)} MB）")
-            )
-            return result
-
+    def _parse_workbook(self, file_content: bytes) -> ImportResult:
+        self._preflight_xlsx(file_content)
         try:
             wb = load_workbook(BytesIO(file_content), data_only=True, read_only=True)
         except Exception as exc:
-            result.errors.append(RowError(sheet="文件", row=0, message=f"无法解析 Excel 文件: {exc}"))
+            raise XLSXValidationError("无法解析 Excel 文件") from exc
+
+        result = ImportResult()
+        try:
+            if len(wb.sheetnames) > MAX_XLSX_SHEETS:
+                raise XLSXValidationError("Excel Sheet 数量超过限制")
+
+            total_cells = 0
+            for ws in wb.worksheets:
+                if ws.max_row > MAX_XLSX_ROWS_PER_SHEET:
+                    raise XLSXValidationError("Excel Sheet 行数超过限制")
+                total_cells += ws.max_row * ws.max_column
+                if total_cells > MAX_XLSX_CELLS:
+                    raise XLSXValidationError("Excel 单元格数量超过限制")
+
+            def extend_errors(errors: list[RowError]) -> None:
+                remaining = MAX_XLSX_ERRORS - len(result.errors)
+                if remaining > 0:
+                    result.errors.extend(errors[:remaining])
+
+            # 按顺序解析各 Sheet
+            if "品牌" in wb.sheetnames:
+                brands, errs = self._parse_sheet_brands(wb["品牌"])
+                result.brands = brands
+                extend_errors(errs)
+
+            if "产品" in wb.sheetnames:
+                products, errs = self._parse_sheet_products(wb["产品"])
+                result.products = products
+                extend_errors(errs)
+
+            if "SKU" in wb.sheetnames:
+                skus, errs = self._parse_sheet_skus(wb["SKU"])
+                result.skus = skus
+                extend_errors(errs)
+
+            if "批次" in wb.sheetnames:
+                batches, errs = self._parse_sheet_batches(wb["批次"])
+                result.batches = batches
+                extend_errors(errs)
+
             return result
+        finally:
+            wb.close()
 
-        # 按顺序解析各 Sheet
-        if "品牌" in wb.sheetnames:
-            brands, errs = await self._parse_sheet_brands(wb["品牌"])
-            result.brands = brands
-            result.errors.extend(errs)
+    @staticmethod
+    def _preflight_xlsx(file_content: bytes) -> None:
+        try:
+            with ZipFile(BytesIO(file_content)) as archive:
+                entries = archive.infolist()
+                if len(entries) > MAX_XLSX_ENTRIES:
+                    raise XLSXValidationError("Excel 文件包含过多压缩条目")
+                if len({entry.filename for entry in entries}) != len(entries):
+                    raise XLSXValidationError("无法解析 Excel 文件")
+                total_uncompressed = 0
+                for entry in entries:
+                    if entry.file_size > MAX_XLSX_SINGLE_UNCOMPRESSED:
+                        raise XLSXValidationError("Excel 文件包含过大的压缩条目")
+                    if entry.file_size and (
+                        entry.compress_size == 0 or entry.file_size / entry.compress_size > MAX_XLSX_COMPRESSION_RATIO
+                    ):
+                        raise XLSXValidationError("Excel 文件压缩比超过限制")
+                    total_uncompressed += entry.file_size
+                if total_uncompressed > MAX_XLSX_TOTAL_UNCOMPRESSED:
+                    raise XLSXValidationError("Excel 文件解压后总大小超过限制")
+                names = {entry.filename for entry in entries}
+                if "[Content_Types].xml" not in names or "xl/workbook.xml" not in names:
+                    raise XLSXValidationError("无法解析 Excel 文件")
+        except BadZipFile as exc:
+            raise XLSXValidationError("无法解析 Excel 文件") from exc
 
-        if "产品" in wb.sheetnames:
-            # 构建品牌名称映射（包括本次新导入的品牌 + 数据库已有品牌）
-            brand_name_map: dict[str, str] = {}
-            for b in result.brands:
-                brand_name_map[b.brand_name] = b.brand_name  # 占位，后面执行时才真正查找 ID
-            products, errs = await self._parse_sheet_products(wb["产品"])
-            result.products = products
-            result.errors.extend(errs)
-
-        if "SKU" in wb.sheetnames:
-            skus, errs = await self._parse_sheet_skus(wb["SKU"])
-            result.skus = skus
-            result.errors.extend(errs)
-
-        if "批次" in wb.sheetnames:
-            batches, errs = await self._parse_sheet_batches(wb["批次"])
-            result.batches = batches
-            result.errors.extend(errs)
-
-        wb.close()
-        return result
-
-    async def _parse_sheet_brands(self, ws) -> tuple[list[ParsedBrand], list[RowError]]:
+    def _parse_sheet_brands(self, ws) -> tuple[list[ParsedBrand], list[RowError]]:
         """解析品牌 Sheet"""
         rows: list[ParsedBrand] = []
         errors: list[RowError] = []
@@ -358,11 +543,15 @@ class ExcelImportService:
                     )
                 )
             except Exception as exc:
-                errors.append(RowError(sheet="品牌", row=row_idx, message=str(exc)))
+                del exc
+                if len(errors) < MAX_XLSX_ERRORS:
+                    errors.append(RowError(sheet="品牌", row=row_idx, message="品牌数据无效"))
+                if len(errors) >= MAX_XLSX_ERRORS:
+                    break
 
         return rows, errors
 
-    async def _parse_sheet_products(self, ws) -> tuple[list[ParsedProduct], list[RowError]]:
+    def _parse_sheet_products(self, ws) -> tuple[list[ParsedProduct], list[RowError]]:
         """解析产品 Sheet"""
         rows: list[ParsedProduct] = []
         errors: list[RowError] = []
@@ -393,11 +582,15 @@ class ExcelImportService:
                     )
                 )
             except Exception as exc:
-                errors.append(RowError(sheet="产品", row=row_idx, message=str(exc)))
+                del exc
+                if len(errors) < MAX_XLSX_ERRORS:
+                    errors.append(RowError(sheet="产品", row=row_idx, message="产品数据无效"))
+                if len(errors) >= MAX_XLSX_ERRORS:
+                    break
 
         return rows, errors
 
-    async def _parse_sheet_skus(self, ws) -> tuple[list[ParsedSKU], list[RowError]]:
+    def _parse_sheet_skus(self, ws) -> tuple[list[ParsedSKU], list[RowError]]:
         """解析 SKU Sheet"""
         rows: list[ParsedSKU] = []
         errors: list[RowError] = []
@@ -431,11 +624,15 @@ class ExcelImportService:
                     )
                 )
             except Exception as exc:
-                errors.append(RowError(sheet="SKU", row=row_idx, message=str(exc)))
+                del exc
+                if len(errors) < MAX_XLSX_ERRORS:
+                    errors.append(RowError(sheet="SKU", row=row_idx, message="SKU 数据无效"))
+                if len(errors) >= MAX_XLSX_ERRORS:
+                    break
 
         return rows, errors
 
-    async def _parse_sheet_batches(self, ws) -> tuple[list[ParsedBatch], list[RowError]]:
+    def _parse_sheet_batches(self, ws) -> tuple[list[ParsedBatch], list[RowError]]:
         """解析批次 Sheet"""
         rows: list[ParsedBatch] = []
         errors: list[RowError] = []
@@ -461,6 +658,7 @@ class ExcelImportService:
                     production_date=prod_date,
                     expiry_date=exp_date,
                     external_id=self._str_or_none(values[4]),
+                    origin=self._str_or_none(values[5]),
                 )
                 rows.append(
                     ParsedBatch(
@@ -470,10 +668,15 @@ class ExcelImportService:
                         production_date=parsed.production_date,
                         expiry_date=parsed.expiry_date,
                         external_id=parsed.external_id,
+                        origin=parsed.origin,
                     )
                 )
             except Exception as exc:
-                errors.append(RowError(sheet="批次", row=row_idx, message=str(exc)))
+                del exc
+                if len(errors) < MAX_XLSX_ERRORS:
+                    errors.append(RowError(sheet="批次", row=row_idx, message="批次数据无效"))
+                if len(errors) >= MAX_XLSX_ERRORS:
+                    break
 
         return rows, errors
 
@@ -494,31 +697,36 @@ class ExcelImportService:
         for item in parsed.brands:
             report.brands.total += 1
             try:
-                brand = await self._upsert_brand(db, tenant_id, item)
+                brand: Brand | None = None
+                brand_outcome = "skipped"
+                async with db.begin_nested():
+                    brand = await self._upsert_brand(db, tenant_id, item)
+                    if brand is not None:
+                        if brand.external_id and brand.external_id == item.external_id:
+                            # 通过 external_id 匹配到的算更新
+                            brand_outcome = "updated"
+                        else:
+                            brand_outcome = "created"
+                        await self._write_sync_record(
+                            db,
+                            tenant_id,
+                            "brand_import",
+                            item.external_id,
+                            {
+                                "action": "upsert",
+                                "brand_name": item.brand_name,
+                                "external_id": item.external_id,
+                                "row": item.row_num,
+                            },
+                        )
+                    await db.flush()
                 if brand is not None:
                     brand_name_to_id[item.brand_name] = brand.id
-                    if brand.external_id and brand.external_id == item.external_id:
-                        # 通过 external_id 匹配到的算更新
-                        report.brands.updated += 1
-                    else:
-                        report.brands.created += 1
-                    await self._write_sync_record(
-                        db,
-                        tenant_id,
-                        "brand_import",
-                        item.external_id,
-                        {
-                            "action": "upsert",
-                            "brand_name": item.brand_name,
-                            "external_id": item.external_id,
-                            "row": item.row_num,
-                        },
-                    )
-                else:
-                    report.brands.skipped += 1
+                setattr(report.brands, brand_outcome, getattr(report.brands, brand_outcome) + 1)
+            except AppException:
+                raise
             except Exception as exc:
-                report.brands.errors.append(RowError(sheet="品牌", row=item.row_num, message=str(exc)))
-                logger.warning("品牌导入第 %d 行失败: %s", item.row_num, exc)
+                report.brands.errors.append(_execution_row_error("品牌", item.row_num, exc=exc))
 
         await db.flush()
 
@@ -535,8 +743,14 @@ class ExcelImportService:
                     )
                     brand = result.scalar_one_or_none()
                     if brand is None:
-                        msg = f"品牌 '{item.brand_name}' 不存在，请先在品牌 Sheet 中添加"
-                        report.products.errors.append(RowError(sheet="产品", row=item.row_num, message=msg))
+                        report.products.errors.append(
+                            _execution_row_error(
+                                "产品",
+                                item.row_num,
+                                code="IMPORT_REFERENCE_NOT_FOUND",
+                                message="关联数据不存在，请先完成上游数据导入",
+                            )
+                        )
                         continue
                     brand_id = brand.id
                     brand_name_to_id[item.brand_name] = brand_id
@@ -565,8 +779,7 @@ class ExcelImportService:
             except AppException:
                 raise
             except Exception as exc:
-                report.products.errors.append(RowError(sheet="产品", row=item.row_num, message=str(exc)))
-                logger.warning("产品导入第 %d 行失败: %s", item.row_num, exc)
+                report.products.errors.append(_execution_row_error("产品", item.row_num, exc=exc))
 
         await db.flush()
 
@@ -582,37 +795,48 @@ class ExcelImportService:
                     )
                     product = result.scalar_one_or_none()
                     if product is None:
-                        msg = f"产品 '{item.product_name}' 不存在，请先在产品 Sheet 中添加"
-                        report.skus.errors.append(RowError(sheet="SKU", row=item.row_num, message=msg))
+                        report.skus.errors.append(
+                            _execution_row_error(
+                                "SKU",
+                                item.row_num,
+                                code="IMPORT_REFERENCE_NOT_FOUND",
+                                message="关联数据不存在，请先完成上游数据导入",
+                            )
+                        )
                         continue
                     product_id = product.id
                     product_name_to_id[item.product_name] = product_id
 
-                sku = await self._upsert_sku(db, tenant_id, product_id, item)
+                async with db.begin_nested():
+                    sku = await self._upsert_sku(db, tenant_id, product_id, item)
+                    if sku is not None:
+                        if sku.external_id and sku.external_id == item.external_id:
+                            sku_outcome = "updated"
+                        else:
+                            sku_outcome = "created"
+                        await self._write_sync_record(
+                            db,
+                            tenant_id,
+                            "sku_import",
+                            item.external_id,
+                            {
+                                "action": "upsert",
+                                "sku_code": item.sku_code,
+                                "product_name": item.product_name,
+                                "external_id": item.external_id,
+                                "row": item.row_num,
+                            },
+                        )
+                    else:
+                        sku_outcome = "skipped"
+                    await db.flush()
                 if sku is not None:
                     sku_code_to_id[item.sku_code] = sku.id
-                    if sku.external_id and sku.external_id == item.external_id:
-                        report.skus.updated += 1
-                    else:
-                        report.skus.created += 1
-                    await self._write_sync_record(
-                        db,
-                        tenant_id,
-                        "sku_import",
-                        item.external_id,
-                        {
-                            "action": "upsert",
-                            "sku_code": item.sku_code,
-                            "product_name": item.product_name,
-                            "external_id": item.external_id,
-                            "row": item.row_num,
-                        },
-                    )
-                else:
-                    report.skus.skipped += 1
+                setattr(report.skus, sku_outcome, getattr(report.skus, sku_outcome) + 1)
+            except AppException:
+                raise
             except Exception as exc:
-                report.skus.errors.append(RowError(sheet="SKU", row=item.row_num, message=str(exc)))
-                logger.warning("SKU 导入第 %d 行失败: %s", item.row_num, exc)
+                report.skus.errors.append(_execution_row_error("SKU", item.row_num, exc=exc))
 
         await db.flush()
 
@@ -625,8 +849,14 @@ class ExcelImportService:
                     result = await db.execute(select(SKU).where(SKU.tenant_id == tenant_id, SKU.code == item.sku_code))
                     sku = result.scalar_one_or_none()
                     if sku is None:
-                        msg = f"SKU 编码 '{item.sku_code}' 不存在，请先在 SKU Sheet 中添加"
-                        report.batches.errors.append(RowError(sheet="批次", row=item.row_num, message=msg))
+                        report.batches.errors.append(
+                            _execution_row_error(
+                                "批次",
+                                item.row_num,
+                                code="IMPORT_REFERENCE_NOT_FOUND",
+                                message="关联数据不存在，请先完成上游数据导入",
+                            )
+                        )
                         continue
                     sku_id = sku.id
                     sku_code_to_id[item.sku_code] = sku_id
@@ -636,30 +866,34 @@ class ExcelImportService:
                 sku_obj = result.scalar_one()
                 product_id = sku_obj.product_id
 
-                batch = await self._upsert_batch(db, tenant_id, product_id, sku_id, item)
-                if batch is not None:
-                    if batch.external_id and batch.external_id == item.external_id:
-                        report.batches.updated += 1
+                async with db.begin_nested():
+                    batch = await self._upsert_batch(db, tenant_id, product_id, sku_id, item)
+                    if batch is not None:
+                        if batch.external_id and batch.external_id == item.external_id:
+                            batch_outcome = "updated"
+                        else:
+                            batch_outcome = "created"
+                        await self._write_sync_record(
+                            db,
+                            tenant_id,
+                            "batch_import",
+                            item.external_id,
+                            {
+                                "action": "upsert",
+                                "batch_code": item.batch_code,
+                                "sku_code": item.sku_code,
+                                "external_id": item.external_id,
+                                "row": item.row_num,
+                            },
+                        )
                     else:
-                        report.batches.created += 1
-                    await self._write_sync_record(
-                        db,
-                        tenant_id,
-                        "batch_import",
-                        item.external_id,
-                        {
-                            "action": "upsert",
-                            "batch_code": item.batch_code,
-                            "sku_code": item.sku_code,
-                            "external_id": item.external_id,
-                            "row": item.row_num,
-                        },
-                    )
-                else:
-                    report.batches.skipped += 1
+                        batch_outcome = "skipped"
+                    await db.flush()
+                setattr(report.batches, batch_outcome, getattr(report.batches, batch_outcome) + 1)
+            except AppException:
+                raise
             except Exception as exc:
-                report.batches.errors.append(RowError(sheet="批次", row=item.row_num, message=str(exc)))
-                logger.warning("批次导入第 %d 行失败: %s", item.row_num, exc)
+                report.batches.errors.append(_execution_row_error("批次", item.row_num, exc=exc))
 
         await db.flush()
         return report
@@ -785,20 +1019,27 @@ class ExcelImportService:
         existing = None
         if item.external_id:
             result = await db.execute(
-                select(ProductionBatch).where(
+                select(ProductionBatch)
+                .where(
                     ProductionBatch.tenant_id == tenant_id,
                     ProductionBatch.source_system == SOURCE_SYSTEM,
                     ProductionBatch.external_id == item.external_id,
                 )
+                .with_for_update()
             )
             existing = result.scalar_one_or_none()
 
         if existing:
+            if not is_production_batch_effectively_active(existing):
+                raise ValueError("Production batch is not active and cannot be updated")
+            if existing.product_id != product_id or existing.sku_id != sku_id:
+                raise ValueError("external_id is already bound to a different SKU or product")
             existing.product_id = product_id
             existing.sku_id = sku_id
             existing.batch_code = item.batch_code
             existing.production_date = item.production_date
             existing.expiry_date = item.expiry_date
+            existing.origin = item.origin
             return existing
 
         batch = ProductionBatch(
@@ -808,6 +1049,7 @@ class ExcelImportService:
             batch_code=item.batch_code,
             production_date=item.production_date,
             expiry_date=item.expiry_date,
+            origin=item.origin,
             source_system=SOURCE_SYSTEM,
             external_id=item.external_id,
         )

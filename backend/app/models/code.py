@@ -4,7 +4,7 @@ import uuid
 from datetime import date, datetime
 from enum import StrEnum
 
-from sqlalchemy import DateTime, ForeignKey, Index, String, UniqueConstraint, func
+from sqlalchemy import DateTime, ForeignKey, ForeignKeyConstraint, Index, String, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from uuid6 import uuid7
 
@@ -81,12 +81,48 @@ class CodeGenerationMode(StrEnum):
 class CodeBatch(Base):
     __tablename__ = "code_batches"
 
+    __table_args__ = (
+        ForeignKeyConstraint(["tenant_id"], ["tenants.id"], name="fk_code_batches_tenant"),
+        ForeignKeyConstraint(
+            ["tenant_id", "product_id"],
+            ["products.tenant_id", "products.id"],
+            name="fk_code_batches_tenant_product",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "product_id", "sku_id"],
+            ["skus.tenant_id", "skus.product_id", "skus.id"],
+            name="fk_code_batches_tenant_product_sku",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "product_id", "sku_id", "production_batch_id"],
+            [
+                "production_batches.tenant_id",
+                "production_batches.product_id",
+                "production_batches.sku_id",
+                "production_batches.id",
+            ],
+            name="fk_code_batches_tenant_product_sku_production_batch",
+        ),
+        UniqueConstraint("tenant_id", "id", name="uq_code_batches_tenant_id_id"),
+        UniqueConstraint("tenant_id", "batch_code", name="uq_code_batches_tenant_batch_code"),
+        Index("ix_code_batches_tenant_batch", "tenant_id", "batch_code"),
+        Index("ix_code_batches_tenant_product", "tenant_id", "product_id"),
+        Index("ix_code_batches_tenant_product_sku", "tenant_id", "product_id", "sku_id"),
+        Index(
+            "ix_code_batches_tenant_product_sku_production_batch",
+            "tenant_id",
+            "product_id",
+            "sku_id",
+            "production_batch_id",
+        ),
+    )
+
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid7)
     tenant_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
     product_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("products.id"), nullable=False, index=True)
     sku_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("skus.id"), nullable=False, index=True)
-    production_batch_id: Mapped[uuid.UUID | None] = mapped_column(
-        ForeignKey("production_batches.id"), nullable=True, index=True
+    production_batch_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("production_batches.id"), nullable=False, index=True
     )
     batch_code: Mapped[str] = mapped_column(String(100), nullable=False)
     quantity: Mapped[int] = mapped_column(nullable=False)
@@ -101,14 +137,33 @@ class CodeBatch(Base):
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
 
-    __table_args__ = (
-        Index("ix_code_batches_tenant_batch", "tenant_id", "batch_code"),
-        UniqueConstraint("tenant_id", "batch_code", name="uq_code_batches_tenant_batch_code"),
+    product = relationship(
+        "Product",
+        lazy="selectin",
+        primaryjoin="and_(CodeBatch.tenant_id == Product.tenant_id, CodeBatch.product_id == Product.id)",
+        foreign_keys="[CodeBatch.tenant_id, CodeBatch.product_id]",
     )
-
-    product = relationship("Product", lazy="selectin")
-    sku = relationship("SKU", lazy="selectin")
-    production_batch = relationship("ProductionBatch", lazy="selectin")
+    sku = relationship(
+        "SKU",
+        lazy="selectin",
+        primaryjoin=(
+            "and_(CodeBatch.tenant_id == SKU.tenant_id, CodeBatch.product_id == SKU.product_id, "
+            "CodeBatch.sku_id == SKU.id)"
+        ),
+        foreign_keys="[CodeBatch.tenant_id, CodeBatch.product_id, CodeBatch.sku_id]",
+        overlaps="product",
+    )
+    production_batch = relationship(
+        "ProductionBatch",
+        lazy="selectin",
+        primaryjoin=(
+            "and_(CodeBatch.tenant_id == ProductionBatch.tenant_id, "
+            "CodeBatch.product_id == ProductionBatch.product_id, CodeBatch.sku_id == ProductionBatch.sku_id, "
+            "CodeBatch.production_batch_id == ProductionBatch.id)"
+        ),
+        foreign_keys=("[CodeBatch.tenant_id, CodeBatch.product_id, CodeBatch.sku_id, CodeBatch.production_batch_id]"),
+        overlaps="product,sku",
+    )
 
     @property
     def product_name(self) -> str | None:
@@ -144,6 +199,18 @@ class CodeBatch(Base):
 class CodeItem(Base):
     __tablename__ = "code_items"
 
+    __table_args__ = (
+        ForeignKeyConstraint(["tenant_id"], ["tenants.id"], name="fk_code_items_tenant"),
+        ForeignKeyConstraint(
+            ["tenant_id", "code_batch_id"],
+            ["code_batches.tenant_id", "code_batches.id"],
+            name="fk_code_items_tenant_code_batch",
+        ),
+        Index("ix_code_items_tenant_batch", "tenant_id", "code_batch_id"),
+        Index("ix_code_items_tenant_status", "tenant_id", "status"),
+        Index("ix_code_items_pair", "pair_id"),
+    )
+
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid7)
     tenant_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
     code_batch_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("code_batches.id"), nullable=False, index=True)
@@ -160,10 +227,8 @@ class CodeItem(Base):
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
 
-    code_batch = relationship("CodeBatch")
-
-    __table_args__ = (
-        Index("ix_code_items_tenant_batch", "tenant_id", "code_batch_id"),
-        Index("ix_code_items_tenant_status", "tenant_id", "status"),
-        Index("ix_code_items_pair", "pair_id"),
+    code_batch = relationship(
+        "CodeBatch",
+        primaryjoin="and_(CodeItem.tenant_id == CodeBatch.tenant_id, CodeItem.code_batch_id == CodeBatch.id)",
+        foreign_keys="[CodeItem.tenant_id, CodeItem.code_batch_id]",
     )

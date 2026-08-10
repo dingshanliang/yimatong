@@ -13,8 +13,10 @@ from app.models.campaign import Campaign, CampaignStatus
 from app.models.code import CodeBatch, CodeBatchStatus, CodeItem, CodeItemStatus
 from app.models.launch import LaunchRelease, LaunchReleaseStatus
 from app.models.page import PageTemplate, PageVersion, PageVersionStatus
+from app.models.product import ProductionBatch
 from app.models.scan import ScanEvent
 from app.services.audit import write_audit_log
+from app.services.product import is_production_batch_effectively_active
 from app.services.takeover import build_takeover_launch_gate_check
 
 
@@ -49,6 +51,16 @@ async def build_launch_readiness(
     code_batch = await db.scalar(
         select(CodeBatch).where(CodeBatch.id == code_batch_id, CodeBatch.tenant_id == tenant_id)
     )
+    production_batch = None
+    if code_batch and code_batch.production_batch_id:
+        production_batch = await db.scalar(
+            select(ProductionBatch).where(
+                ProductionBatch.id == code_batch.production_batch_id,
+                ProductionBatch.tenant_id == tenant_id,
+                ProductionBatch.product_id == code_batch.product_id,
+                ProductionBatch.sku_id == code_batch.sku_id,
+            )
+        )
 
     page_product_id = page_template.product_id if page_template else None
     page_passed = bool(
@@ -66,7 +78,12 @@ async def build_launch_readiness(
         and campaign.product_id
         and campaign.product_id == code_batch.product_id
     )
-    batch_passed = bool(code_batch and code_batch.status == CodeBatchStatus.activated)
+    batch_passed = bool(
+        code_batch
+        and code_batch.status == CodeBatchStatus.activated
+        and production_batch
+        and is_production_batch_effectively_active(production_batch)
+    )
 
     scan_passed = False
     if code_batch:
@@ -110,7 +127,7 @@ async def build_launch_readiness(
             "code_batch_activated",
             "至少一个码批次已激活",
             batch_passed,
-            "码批次已激活" if batch_passed else "请先激活本次上线使用的码批次",
+            "码批次已激活且生产批次有效" if batch_passed else "请确认码批次已激活，且关联生产批次仍为有效状态",
         ),
         _check(
             "scan_path_verified",

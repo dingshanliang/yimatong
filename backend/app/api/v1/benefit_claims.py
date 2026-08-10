@@ -80,6 +80,76 @@ async def claim_benefit_h5(
             content={"code": PLAN_EXPIRED_CODE, "detail": PLAN_EXPIRED_DETAIL},
         )
 
+    # A scan token proves a previous scan, not current eligibility. Rebuild the
+    # code -> code batch -> production batch chain under the locked tenant.
+    from app.models.code import CodeBatch, CodeItem, CodeItemStatus
+    from app.models.product import ProductionBatch
+    from app.services.product import is_production_batch_effectively_active
+
+    token_public_id = payload.get("public_id")
+    if not isinstance(token_public_id, str):
+        raise HTTPException(status_code=401, detail="invalid token: missing public_id")
+    locator_result = await db.execute(
+        select(CodeItem.id, CodeItem.code_batch_id, CodeBatch.production_batch_id)
+        .join(
+            CodeBatch,
+            (CodeBatch.id == CodeItem.code_batch_id) & (CodeBatch.tenant_id == CodeItem.tenant_id),
+        )
+        .where(
+            CodeItem.public_id == token_public_id,
+            CodeItem.tenant_id == tid,
+        )
+    )
+    locator = locator_result.one_or_none()
+    if locator is None:
+        raise HTTPException(
+            status_code=403,
+            detail={"code": "production_batch_unavailable", "message": "该码对应生产批次当前不可领取权益"},
+        )
+    code_item_id, code_batch_id, production_batch_id = locator
+
+    production_batch = await db.scalar(
+        select(ProductionBatch)
+        .where(
+            ProductionBatch.id == production_batch_id,
+            ProductionBatch.tenant_id == tid,
+        )
+        .with_for_update()
+    )
+    code_batch = await db.scalar(
+        select(CodeBatch)
+        .where(
+            CodeBatch.id == code_batch_id,
+            CodeBatch.tenant_id == tid,
+        )
+        .with_for_update()
+    )
+    live_code = await db.scalar(
+        select(CodeItem)
+        .where(
+            CodeItem.id == code_item_id,
+            CodeItem.tenant_id == tid,
+        )
+        .with_for_update()
+    )
+    chain_is_available = (
+        production_batch is not None
+        and code_batch is not None
+        and live_code is not None
+        and code_batch.production_batch_id == production_batch.id
+        and code_batch.product_id == production_batch.product_id
+        and code_batch.sku_id == production_batch.sku_id
+        and live_code.code_batch_id == code_batch.id
+        and live_code.public_id == token_public_id
+        and live_code.status in (CodeItemStatus.activated, CodeItemStatus.bound)
+        and is_production_batch_effectively_active(production_batch)
+    )
+    if not chain_is_available:
+        raise HTTPException(
+            status_code=403,
+            detail={"code": "production_batch_unavailable", "message": "该码对应生产批次当前不可领取权益"},
+        )
+
     result = await db.execute(select(Benefit).where(Benefit.id == benefit_id, Benefit.tenant_id == tid))
     benefit = result.scalar_one_or_none()
     if not benefit:

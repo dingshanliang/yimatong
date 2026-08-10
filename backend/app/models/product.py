@@ -1,5 +1,5 @@
 import uuid
-from datetime import date
+from datetime import date, datetime
 from enum import StrEnum
 
 from sqlalchemy import (
@@ -228,7 +228,21 @@ class ProductionBatch(Base, ExternalRefMixin):
             "expiry_date >= production_date",
             name="ck_production_batches_expiry_not_before_production",
         ),
+        CheckConstraint(
+            "((status = 'recalled' AND NULLIF(trim(recall_reason), '') IS NOT NULL "
+            "AND recalled_at IS NOT NULL AND recalled_by IS NOT NULL) "
+            "OR (status <> 'recalled' AND recall_reason IS NULL "
+            "AND recalled_at IS NULL AND recalled_by IS NULL))",
+            name="ck_production_batches_recall_metadata",
+        ),
         UniqueConstraint("tenant_id", "batch_code", name="uq_production_batches_tenant_batch_code"),
+        UniqueConstraint(
+            "tenant_id",
+            "product_id",
+            "sku_id",
+            "id",
+            name="uq_production_batches_tenant_product_sku_id",
+        ),
         Index("ix_production_batches_tenant_product", "tenant_id", "product_id"),
         Index("ix_production_batches_tenant_product_sku", "tenant_id", "product_id", "sku_id"),
     )
@@ -242,6 +256,9 @@ class ProductionBatch(Base, ExternalRefMixin):
     expiry_date: Mapped[date] = mapped_column(Date, nullable=False)
     origin: Mapped[str | None] = mapped_column(String(200), nullable=True)
     status: Mapped[BatchStatus] = mapped_column(default=BatchStatus.active, nullable=False)
+    recall_reason: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    recalled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    recalled_by: Mapped[str | None] = mapped_column(String(64), nullable=True)
     created_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[DateTime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()

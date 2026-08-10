@@ -101,9 +101,38 @@ def test_acting_context_routes_are_mapped_to_live_scope():
     assert not middleware._acting_path_is_explicitly_supported("/api/v1/tenants/me", ["products", "pages"])
 
 
+def test_import_routes_have_exact_method_bound_agency_scope_mapping():
+    middleware = TenantScopeMiddleware(Starlette())
+
+    assert middleware._acting_path_is_explicitly_supported("/api/v1/imports/excel", ["products"], "POST")
+    assert middleware._acting_path_is_explicitly_supported("/api/v1/imports/products", ["products"], "POST")
+    assert middleware._acting_path_is_explicitly_supported("/api/v1/imports/existing-codes", ["codes"], "POST")
+    assert middleware._acting_path_is_explicitly_supported("/api/v1/imports/template", ["products"], "GET")
+    assert middleware._acting_path_is_explicitly_supported("/api/v1/imports/records", ["products"], "GET")
+    assert not middleware._acting_path_is_explicitly_supported("/api/v1/imports/template", ["codes"], "GET")
+    assert not middleware._acting_path_is_explicitly_supported("/api/v1/imports/records", ["codes"], "GET")
+
+    for method in ("GET", "PUT", "PATCH", "DELETE"):
+        assert not middleware._acting_path_is_explicitly_supported("/api/v1/imports/excel", ["products"], method)
+        assert not middleware._acting_path_is_explicitly_supported("/api/v1/imports/products", ["products"], method)
+        assert not middleware._acting_path_is_explicitly_supported("/api/v1/imports/existing-codes", ["codes"], method)
+
+    assert not middleware._acting_path_is_explicitly_supported("/api/v1/imports/existing-codes", ["products"], "POST")
+    assert not middleware._acting_path_is_explicitly_supported("/api/v1/imports/products", ["codes"], "POST")
+    assert not middleware._acting_path_is_explicitly_supported("/api/v1/imports/template", ["products"], "POST")
+    assert not middleware._acting_path_is_explicitly_supported("/api/v1/imports/template/extra", ["products"], "GET")
+    assert not middleware._acting_path_is_explicitly_supported("/api/v1/imports/excel/preview", ["products"], "POST")
+    assert not middleware._acting_path_is_explicitly_supported("/api/v1/imports", ["products", "codes"], "POST")
+
+
 def test_agency_without_acting_context_cannot_write_product_materials():
     middleware = TenantScopeMiddleware(Starlette())
 
     assert middleware._is_brand_write_surface("/api/v1/product-assets/123", "PATCH")
     assert middleware._is_brand_write_surface("/api/v1/files/upload", "POST")
     assert not middleware._is_brand_write_surface("/api/v1/files/upload", "GET")
+    assert middleware._is_brand_write_surface("/api/v1/imports/excel", "POST")
+    assert middleware._is_brand_write_surface("/api/v1/imports/products", "POST")
+    assert middleware._is_brand_write_surface("/api/v1/imports/existing-codes", "POST")
+    assert not middleware._is_brand_write_surface("/api/v1/imports/products", "GET")
+    assert not middleware._is_brand_write_surface("/api/v1/imports/products/preview", "POST")

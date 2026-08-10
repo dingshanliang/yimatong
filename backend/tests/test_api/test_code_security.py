@@ -2,13 +2,25 @@
 
 import uuid
 from collections.abc import AsyncGenerator
+from datetime import date, timedelta
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy import func, select
+from sqlalchemy.exc import DataError, DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.v1 import imports
 from app.core.database import get_db
 from app.main import app
+from app.models.code import CodeBatch, CodeBatchStatus, CodeItem
+from app.models.product import SKU, BatchStatus, Brand, Product, ProductionBatch
+from app.services import import_service as import_service_module
+from app.services.import_service import ExcelImportService
+from app.services.public_id import generate_public_id
+from app.services.redis_cache import SharedSecurityCacheUnavailable
 from app.utils.security import create_access_token
 from tests.conftest import TestSessionLocal
 
@@ -41,6 +53,15 @@ async def client(db_session: AsyncSession):
     async with AsyncClient(transport=transport, base_url="http://test") as c:
         yield c
     app.dependency_overrides.clear()
+
+
+@pytest.fixture(autouse=True)
+def allow_shared_import_rate_limit(monkeypatch):
+    monkeypatch.setattr(
+        imports._import_rate_cache,
+        "rate_limit_check_shared",
+        AsyncMock(return_value=(True, 9)),
+    )
 
 
 @pytest.fixture
@@ -84,7 +105,7 @@ async def sku_with_auth(client: AsyncClient, tenant_with_auth):
             "sku_id": sku_id,
             "batch_code": "PB-001",
             "production_date": "2024-01-01",
-            "expiry_date": "2025-01-01",
+            "expiry_date": str(date.today() + timedelta(days=365)),
         },
         headers=headers,
     )
@@ -160,6 +181,299 @@ class TestPermissionEnforcement:
         )
         # operator 没有 code:manage，应返回 403
         assert resp.status_code == 403
+
+    @pytest.mark.anyio
+    async def test_operator_cannot_patch_batch_and_schema_is_strict(
+        self, client: AsyncClient, code_batch_with_auth, tenant_with_auth
+    ):
+        tid, admin_headers = tenant_with_auth
+        _, _, batch_id, _ = code_batch_with_auth
+        op_token = create_access_token(tid, "00000000-0000-0000-0000-000000000002", "operator")
+        denied = await client.patch(
+            f"/api/v1/code-batches/{batch_id}",
+            json={"batch_code": "OPERATOR-EDIT"},
+            headers={"Authorization": f"Bearer {op_token}"},
+        )
+        assert denied.status_code == 403
+
+        extra = await client.patch(
+            f"/api/v1/code-batches/{batch_id}",
+            json={"batch_code": "SAFE", "status": "activated"},
+            headers=admin_headers,
+        )
+        too_long = await client.patch(
+            f"/api/v1/code-batches/{batch_id}",
+            json={"batch_code": "X" * 101},
+            headers=admin_headers,
+        )
+        assert extra.status_code == 422
+        assert too_long.status_code == 422
+
+    @pytest.mark.anyio
+    @pytest.mark.parametrize("batch_status", [BatchStatus.recalled, BatchStatus.expired])
+    async def test_existing_code_import_rejects_non_active_production_batch_before_writes(
+        self,
+        client,
+        db_session,
+        tenant_with_auth,
+        sku_with_auth,
+        code_batch_with_auth,
+        monkeypatch,
+        batch_status,
+    ):
+        _, headers = tenant_with_auth
+        _, _, production_batch_id = sku_with_auth
+        _, _, code_batch_id, _ = code_batch_with_auth
+        if batch_status == BatchStatus.recalled:
+            recalled = await client.post(
+                f"/api/v1/production-batches/{production_batch_id}/recall",
+                json={"reason": "safety recall", "confirm": "recall"},
+                headers=headers,
+            )
+            assert recalled.status_code == 200
+        else:
+            production_batch = await db_session.get(ProductionBatch, uuid.UUID(production_batch_id))
+            production_batch.status = BatchStatus.expired
+            await db_session.flush()
+
+        import_audit = AsyncMock()
+        monkeypatch.setattr("app.api.v1.imports.write_audit_log", import_audit)
+        public_id = generate_public_id()
+
+        response = await client.post(
+            "/api/v1/imports/existing-codes",
+            params={"code_batch_id": str(code_batch_id)},
+            files={"file": ("codes.csv", f"public_id\n{public_id}\n".encode(), "text/csv")},
+            headers=headers,
+        )
+
+        assert response.status_code == 409
+        assert await db_session.scalar(select(CodeItem).where(CodeItem.public_id == public_id)) is None
+        import_audit.assert_not_awaited()
+
+    @pytest.mark.anyio
+    @pytest.mark.parametrize(
+        ("path", "filename", "content_type"),
+        [
+            (
+                "/api/v1/imports/excel",
+                "catalog.xlsx",
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            ),
+            ("/api/v1/imports/products", "products.csv", "text/csv"),
+            ("/api/v1/imports/existing-codes", "codes.csv", "text/csv"),
+        ],
+    )
+    async def test_import_rate_limit_rejects_before_upload_read(
+        self,
+        client,
+        tenant_with_auth,
+        code_batch_with_auth,
+        monkeypatch,
+        path,
+        filename,
+        content_type,
+    ):
+        _, headers = tenant_with_auth
+        _, _, code_batch_id, _ = code_batch_with_auth
+        rate_check = AsyncMock(return_value=(False, 0))
+        read_upload = AsyncMock(return_value=b"public_id\n")
+        to_thread = AsyncMock()
+        monkeypatch.setattr(
+            imports, "_import_rate_cache", SimpleNamespace(rate_limit_check_shared=rate_check), raising=False
+        )
+        monkeypatch.setattr(imports, "_read_upload", read_upload)
+        monkeypatch.setattr(import_service_module.asyncio, "to_thread", to_thread)
+
+        response = await client.post(
+            path,
+            params={"code_batch_id": str(code_batch_id)},
+            files={"file": (filename, b"payload", content_type)},
+            headers=headers,
+        )
+
+        assert response.status_code == 429
+        assert response.headers["Retry-After"] == str(imports.IMPORT_RATE_LIMIT_WINDOW_SECONDS)
+        read_upload.assert_not_awaited()
+        to_thread.assert_not_awaited()
+
+    @pytest.mark.anyio
+    async def test_import_rate_limit_fails_closed_before_upload_read(
+        self,
+        client,
+        tenant_with_auth,
+        monkeypatch,
+    ):
+        _, headers = tenant_with_auth
+        rate_check = AsyncMock(side_effect=SharedSecurityCacheUnavailable("redis unavailable"))
+        read_upload = AsyncMock(return_value=b"product_name\n")
+        to_thread = AsyncMock()
+        monkeypatch.setattr(
+            imports, "_import_rate_cache", SimpleNamespace(rate_limit_check_shared=rate_check), raising=False
+        )
+        monkeypatch.setattr(imports, "_read_upload", read_upload)
+        monkeypatch.setattr(import_service_module.asyncio, "to_thread", to_thread)
+
+        response = await client.post(
+            "/api/v1/imports/products",
+            files={"file": ("products.csv", b"payload", "text/csv")},
+            headers=headers,
+        )
+
+        assert response.status_code == 503
+        read_upload.assert_not_awaited()
+        to_thread.assert_not_awaited()
+
+    @pytest.mark.anyio
+    async def test_excel_capacity_rejects_before_upload_read_or_thread_parse(
+        self,
+        client,
+        tenant_with_auth,
+        monkeypatch,
+    ):
+        tenant_id, headers = tenant_with_auth
+        lease = ExcelImportService().reserve_parse_capacity(uuid.UUID(tenant_id))
+        assert lease is not None
+        read_upload = AsyncMock(return_value=b"workbook")
+        to_thread = AsyncMock()
+        monkeypatch.setattr(imports, "_read_upload", read_upload)
+        monkeypatch.setattr(import_service_module.asyncio, "to_thread", to_thread)
+        try:
+            response = await client.post(
+                "/api/v1/imports/excel",
+                files={
+                    "file": (
+                        "catalog.xlsx",
+                        b"payload",
+                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    )
+                },
+                headers=headers,
+            )
+        finally:
+            lease.release()
+
+        assert response.status_code == 503
+        read_upload.assert_not_awaited()
+        to_thread.assert_not_awaited()
+
+    @pytest.mark.anyio
+    async def test_import_rate_limit_key_hides_tenant_and_principal(self, monkeypatch, caplog):
+        tenant_id = uuid.uuid4()
+        account_id = uuid.uuid4()
+        rate_check = AsyncMock(return_value=(True, 9))
+        monkeypatch.setattr(
+            imports,
+            "_import_rate_cache",
+            SimpleNamespace(rate_limit_check_shared=rate_check),
+            raising=False,
+        )
+
+        await imports._enforce_import_rate_limit(tenant_id, account_id)
+
+        key = rate_check.await_args.args[0]
+        assert str(tenant_id) not in key
+        assert str(account_id) not in key
+        assert str(tenant_id) not in caplog.text
+        assert str(account_id) not in caplog.text
+
+    @pytest.mark.anyio
+    async def test_existing_code_import_rejects_active_batch_with_past_expiry_before_writes(
+        self,
+        client,
+        db_session,
+        tenant_with_auth,
+        sku_with_auth,
+        code_batch_with_auth,
+        monkeypatch,
+    ):
+        _, headers = tenant_with_auth
+        _, _, production_batch_id = sku_with_auth
+        _, _, code_batch_id, _ = code_batch_with_auth
+        production_batch = await db_session.get(ProductionBatch, uuid.UUID(production_batch_id))
+        production_batch.expiry_date = date.today() - timedelta(days=1)
+        await db_session.flush()
+
+        import_audit = AsyncMock()
+        monkeypatch.setattr("app.api.v1.imports.write_audit_log", import_audit)
+        public_id = generate_public_id()
+        response = await client.post(
+            "/api/v1/imports/existing-codes",
+            params={"code_batch_id": str(code_batch_id)},
+            files={"file": ("codes.csv", f"public_id\n{public_id}\n".encode(), "text/csv")},
+            headers=headers,
+        )
+
+        assert response.status_code == 409
+        assert await db_session.scalar(select(CodeItem).where(CodeItem.public_id == public_id)) is None
+        import_audit.assert_not_awaited()
+
+    @pytest.mark.anyio
+    async def test_existing_code_import_revalidates_locked_code_batch_status_before_writes(
+        self,
+        client,
+        db_session,
+        tenant_with_auth,
+        code_batch_with_auth,
+        monkeypatch,
+    ):
+        _, headers = tenant_with_auth
+        _, _, code_batch_id, _ = code_batch_with_auth
+        code_batch = await db_session.get(CodeBatch, code_batch_id)
+        code_batch.status = CodeBatchStatus.activated
+        await db_session.flush()
+        public_id = generate_public_id()
+        import_audit = AsyncMock()
+        monkeypatch.setattr(imports, "write_audit_log", import_audit)
+
+        response = await client.post(
+            "/api/v1/imports/existing-codes",
+            params={"code_batch_id": str(code_batch_id)},
+            files={"file": ("codes.csv", f"public_id\n{public_id}\n".encode(), "text/csv")},
+            headers=headers,
+        )
+
+        assert response.status_code == 409
+        assert await db_session.scalar(select(CodeItem).where(CodeItem.public_id == public_id)) is None
+        import_audit.assert_not_awaited()
+
+    @pytest.mark.anyio
+    async def test_existing_code_import_audit_failure_rolls_back_items(
+        self,
+        client,
+        db_session,
+        tenant_with_auth,
+        code_batch_with_auth,
+        monkeypatch,
+    ):
+        _, headers = tenant_with_auth
+        _, _, code_batch_id, _ = code_batch_with_auth
+        public_id = generate_public_id()
+
+        async def rollbacking_get_db():
+            transaction = await db_session.begin_nested()
+            try:
+                yield db_session
+                await transaction.commit()
+            except BaseException:
+                await transaction.rollback()
+                raise
+
+        app.dependency_overrides[get_db] = rollbacking_get_db
+        monkeypatch.setattr(
+            "app.api.v1.imports.write_audit_log",
+            AsyncMock(side_effect=RuntimeError("audit unavailable")),
+        )
+
+        with pytest.raises(RuntimeError, match="audit unavailable"):
+            await client.post(
+                "/api/v1/imports/existing-codes",
+                params={"code_batch_id": str(code_batch_id)},
+                files={"file": ("codes.csv", f"public_id\n{public_id}\n".encode(), "text/csv")},
+                headers=headers,
+            )
+
+        assert await db_session.scalar(select(CodeItem).where(CodeItem.public_id == public_id)) is None
 
     @pytest.mark.anyio
     async def test_operator_can_export(self, client: AsyncClient, code_batch_with_auth, tenant_with_auth):
@@ -254,6 +568,97 @@ class TestBatchStateMachine:
         )
         assert resp2.status_code == 200
 
+    @pytest.mark.anyio
+    @pytest.mark.parametrize("transition", ["mark-printing", "mark-delivered"])
+    @pytest.mark.parametrize("production_batch_state", ["recalled", "past_expiry"])
+    async def test_non_active_production_batch_blocks_operational_transition_with_stable_conflict(
+        self,
+        client,
+        db_session,
+        tenant_with_auth,
+        sku_with_auth,
+        code_batch_with_auth,
+        monkeypatch,
+        transition,
+        production_batch_state,
+    ):
+        _, headers = tenant_with_auth
+        _, _, production_batch_id = sku_with_auth
+        _, _, code_batch_id, _ = code_batch_with_auth
+        if transition == "mark-delivered":
+            printing = await client.post(f"/api/v1/code-batches/{code_batch_id}/mark-printing", headers=headers)
+            assert printing.status_code == 200
+        if production_batch_state == "recalled":
+            recalled = await client.post(
+                f"/api/v1/production-batches/{production_batch_id}/recall",
+                json={"reason": "operational stop", "confirm": "recall"},
+                headers=headers,
+            )
+            assert recalled.status_code == 200
+        else:
+            production_batch = await db_session.get(ProductionBatch, uuid.UUID(production_batch_id))
+            production_batch.expiry_date = date.today() - timedelta(days=1)
+            await db_session.flush()
+        audit = AsyncMock()
+        monkeypatch.setattr("app.services.audit.write_audit_log", audit)
+
+        response = await client.post(f"/api/v1/code-batches/{code_batch_id}/{transition}", headers=headers)
+
+        assert response.status_code == 409
+        assert response.json()["error_code"] == "PRODUCTION_BATCH_NOT_ACTIVE"
+        assert response.json()["detail"] == "Production batch is not active"
+        batch = await db_session.get(CodeBatch, code_batch_id)
+        assert batch.status == (
+            CodeBatchStatus.completed if transition == "mark-printing" else CodeBatchStatus.printing
+        )
+        audit.assert_not_awaited()
+
+    @pytest.mark.anyio
+    @pytest.mark.parametrize(
+        ("transition", "expected_status"),
+        [
+            ("mark-printing", CodeBatchStatus.completed),
+            ("mark-delivered", CodeBatchStatus.printing),
+        ],
+    )
+    async def test_operational_transition_audit_failure_rolls_back_status(
+        self,
+        client,
+        db_session,
+        tenant_with_auth,
+        code_batch_with_auth,
+        monkeypatch,
+        transition,
+        expected_status,
+    ):
+        _, headers = tenant_with_auth
+        _, _, code_batch_id, _ = code_batch_with_auth
+        if transition == "mark-delivered":
+            printing = await client.post(f"/api/v1/code-batches/{code_batch_id}/mark-printing", headers=headers)
+            assert printing.status_code == 200
+
+        async def rollbacking_get_db():
+            transaction = await db_session.begin_nested()
+            try:
+                yield db_session
+                await transaction.commit()
+            except BaseException:
+                await transaction.rollback()
+                raise
+
+        app.dependency_overrides[get_db] = rollbacking_get_db
+        monkeypatch.setattr(
+            "app.services.audit.write_audit_log",
+            AsyncMock(side_effect=RuntimeError("audit unavailable")),
+        )
+
+        with pytest.raises(RuntimeError, match="audit unavailable"):
+            await client.post(f"/api/v1/code-batches/{code_batch_id}/{transition}", headers=headers)
+
+        batch = await db_session.get(CodeBatch, code_batch_id)
+        await db_session.refresh(batch)
+        assert batch.status == expected_status
+
 
 class TestExportNotFound:
     """1.4 导出 404 测试"""
@@ -266,3 +671,205 @@ class TestExportNotFound:
             headers=headers,
         )
         assert resp.status_code == 404
+
+
+class TestProductCSVImportSafety:
+    @pytest.mark.anyio
+    async def test_row_fields_are_trimmed_before_catalog_writes(self, client, db_session, tenant_with_auth):
+        tenant_id, headers = tenant_with_auth
+        content = (
+            "brand_name,product_name,category,description,sku_code,sku_name\n"
+            "  修剪品牌  ,  修剪产品  ,  食品  ,  产品说明  ,  TRIM-SKU  ,  默认规格  \n"
+        )
+
+        response = await client.post(
+            "/api/v1/imports/products",
+            files={"file": ("products.csv", content.encode(), "text/csv")},
+            headers=headers,
+        )
+
+        assert response.status_code == 200
+        assert response.json() == {"imported": 1, "errors": []}
+        tenant_uuid = uuid.UUID(tenant_id)
+        brand = await db_session.scalar(select(Brand).where(Brand.tenant_id == tenant_uuid))
+        product = await db_session.scalar(select(Product).where(Product.tenant_id == tenant_uuid))
+        sku = await db_session.scalar(select(SKU).where(SKU.tenant_id == tenant_uuid))
+        assert (brand.name, product.name, product.category, product.description, sku.code, sku.name) == (
+            "修剪品牌",
+            "修剪产品",
+            "食品",
+            "产品说明",
+            "TRIM-SKU",
+            "默认规格",
+        )
+
+    @pytest.mark.anyio
+    async def test_unexpected_csv_column_is_rejected_before_catalog_writes(self, client, db_session, tenant_with_auth):
+        tenant_id, headers = tenant_with_auth
+        content = "brand_name,product_name,unexpected\n安全品牌,安全产品,SENSITIVE-EXTRA\n"
+
+        response = await client.post(
+            "/api/v1/imports/products",
+            files={"file": ("products.csv", content.encode(), "text/csv")},
+            headers=headers,
+        )
+
+        assert response.status_code == 200
+        assert response.json()["imported"] == 0
+        assert response.json()["errors"][0]["code"] == "IMPORT_ROW_INVALID"
+        assert (
+            await db_session.scalar(
+                select(func.count()).select_from(Product).where(Product.tenant_id == uuid.UUID(tenant_id))
+            )
+            == 0
+        )
+
+    @pytest.mark.anyio
+    @pytest.mark.parametrize(
+        ("field", "oversized_value"),
+        [
+            ("brand_name", "B" * 101),
+            ("product_name", "P" * 201),
+            ("category", "C" * 101),
+            ("description", "D" * 1001),
+            ("sku_code", "S" * 101),
+            ("sku_name", "N" * 201),
+        ],
+    )
+    async def test_oversized_row_is_rejected_before_catalog_writes(
+        self, client, db_session, tenant_with_auth, field, oversized_value
+    ):
+        tenant_id, headers = tenant_with_auth
+        row = {
+            "brand_name": "安全品牌",
+            "product_name": "安全产品",
+            "category": "食品",
+            "description": "产品说明",
+            "sku_code": "SAFE-SKU",
+            "sku_name": "默认规格",
+        }
+        row[field] = oversized_value
+        columns = tuple(row)
+        content = ",".join(columns) + "\n" + ",".join(row[column] for column in columns) + "\n"
+
+        response = await client.post(
+            "/api/v1/imports/products",
+            files={"file": ("products.csv", content.encode(), "text/csv")},
+            headers=headers,
+        )
+
+        assert response.status_code == 200
+        assert response.json()["imported"] == 0
+        error = response.json()["errors"][0]
+        assert set(error) == {"code", "message", "reference_id"}
+        assert error["code"] == "IMPORT_ROW_INVALID"
+        assert error["message"] == "该行商品数据无效"
+        assert error["reference_id"].startswith("imp_")
+        assert (
+            await db_session.scalar(
+                select(func.count()).select_from(Product).where(Product.tenant_id == uuid.UUID(tenant_id))
+            )
+            == 0
+        )
+
+    @pytest.mark.anyio
+    @pytest.mark.parametrize(
+        ("exception_factory", "exception_type"),
+        [
+            (
+                lambda secret: DataError("INSERT INTO products VALUES (?)", {"name": secret}, RuntimeError(secret)),
+                "DataError",
+            ),
+            (
+                lambda secret: DBAPIError("UPDATE products SET name=?", {"name": secret}, RuntimeError(secret)),
+                "DBAPIError",
+            ),
+            (lambda secret: RuntimeError(secret), "RuntimeError"),
+        ],
+    )
+    async def test_row_failure_returns_sanitized_diagnostic_and_recovers_savepoint(
+        self,
+        client,
+        db_session,
+        tenant_with_auth,
+        monkeypatch,
+        caplog,
+        exception_factory,
+        exception_type,
+    ):
+        tenant_id, headers = tenant_with_auth
+        secret = "SENSITIVE-UPLOAD-AND-SQL-PARAM"
+        monkeypatch.setattr(imports, "reserve_quota", AsyncMock(side_effect=exception_factory(secret)))
+        caplog.set_level("WARNING", logger="app.api.v1.imports")
+        content = (
+            "brand_name,product_name,category,description,sku_code,sku_name\n"
+            "秘密品牌,秘密产品,食品,秘密描述,SECRET-SKU,秘密规格\n"
+        )
+
+        response = await client.post(
+            "/api/v1/imports/products",
+            files={"file": ("products.csv", content.encode(), "text/csv")},
+            headers=headers,
+        )
+
+        assert response.status_code == 200
+        assert response.json()["imported"] == 0
+        error = response.json()["errors"][0]
+        assert set(error) == {"code", "message", "reference_id"}
+        assert error["code"] == "IMPORT_ROW_FAILED"
+        assert error["message"] == "该行商品导入失败"
+        assert error["reference_id"].startswith("imp_")
+        assert error["reference_id"] in caplog.text
+        assert f"exception_type={exception_type}" in caplog.text
+        assert secret not in response.text
+        assert secret not in caplog.text
+        assert "INSERT INTO products" not in caplog.text
+        assert "UPDATE products" not in caplog.text
+        assert (
+            await db_session.scalar(
+                select(func.count()).select_from(Brand).where(Brand.tenant_id == uuid.UUID(tenant_id))
+            )
+            == 0
+        )
+
+    @pytest.mark.anyio
+    async def test_failed_middle_row_does_not_corrupt_import_count_or_brand_reuse(
+        self, client, db_session, tenant_with_auth, monkeypatch, caplog
+    ):
+        tenant_id, headers = tenant_with_auth
+        secret = "SECOND-ROW-SENSITIVE-VALUE"
+        monkeypatch.setattr(
+            imports,
+            "reserve_quota",
+            AsyncMock(side_effect=[None, RuntimeError(secret), None]),
+        )
+        caplog.set_level("WARNING", logger="app.api.v1.imports")
+        content = (
+            "brand_name,product_name,category,description,sku_code,sku_name\n"
+            "共享品牌,成功产品一,食品,说明一,SAFE-SKU-1,规格一\n"
+            "回滚品牌,失败产品,食品,秘密描述,FAILED-SKU,失败规格\n"
+            "共享品牌,成功产品二,食品,说明二,SAFE-SKU-2,规格二\n"
+        )
+
+        response = await client.post(
+            "/api/v1/imports/products",
+            files={"file": ("products.csv", content.encode(), "text/csv")},
+            headers=headers,
+        )
+
+        payload = response.json()
+        assert response.status_code == 200
+        assert payload["imported"] == 2
+        assert len(payload["errors"]) == 1
+        assert payload["errors"][0]["code"] == "IMPORT_ROW_FAILED"
+        assert secret not in response.text
+        assert secret not in caplog.text
+        tenant_uuid = uuid.UUID(tenant_id)
+        assert (
+            await db_session.scalar(select(func.count()).select_from(Product).where(Product.tenant_id == tenant_uuid))
+            == 2
+        )
+        assert await db_session.scalar(select(func.count()).select_from(SKU).where(SKU.tenant_id == tenant_uuid)) == 2
+        assert (
+            await db_session.scalar(select(func.count()).select_from(Brand).where(Brand.tenant_id == tenant_uuid)) == 1
+        )

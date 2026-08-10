@@ -102,7 +102,7 @@ async def list_industry_templates(
 async def clone_industry_template(
     index: int,
     body: IndustryTemplateCloneRequest | None = None,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
     account_id: uuid.UUID = Depends(get_current_account_id),
     _role: str = Depends(require_role("admin", "operator")),
@@ -244,13 +244,13 @@ async def preview_page_template_endpoint(
 async def create_page_version_endpoint(
     template_id: uuid.UUID,
     body: PageVersionCreateRequest,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
     account_id: uuid.UUID = Depends(get_current_account_id),
     _role: str = Depends(require_role("admin")),
 ):
     try:
-        return await create_page_version(
+        data = await create_page_version(
             db,
             tenant_id,
             template_id,
@@ -259,6 +259,9 @@ async def create_page_version_endpoint(
         )
     except ValidationError as e:
         raise HTTPException(status_code=422, detail=e.errors()) from e
+    if data is None:
+        raise HTTPException(status_code=404, detail="Page template not found")
+    return data
 
 
 @page_template_router.get("/{template_id}/versions", summary="页面版本 列表")
@@ -348,7 +351,7 @@ async def archive_page_version_endpoint(
 async def rollback_page_version_endpoint(
     template_id: uuid.UUID,
     version_id: uuid.UUID,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
     account_id: uuid.UUID = Depends(get_current_account_id),
     _role: str = Depends(require_role("admin")),

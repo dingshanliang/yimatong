@@ -10,7 +10,7 @@
 
 import uuid
 from collections.abc import AsyncGenerator
-from datetime import date
+from datetime import date, timedelta
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -21,7 +21,8 @@ from app.core.database import get_db
 from app.main import app
 from app.models.analytics import DailyScanStats
 from app.models.campaign import Benefit, BenefitClaim, Campaign, CampaignStatus
-from app.models.code import CodeItem
+from app.models.code import CodeBatch, CodeItem, CodeItemStatus
+from app.models.product import ProductionBatch
 from app.models.scan import ScanEvent
 from app.utils.security import create_access_token
 from tests.conftest import TestSessionLocal
@@ -488,6 +489,113 @@ class TestBenefitClaimClosedLoop:
         claim_data = claim_resp.json()
         assert claim_data["status"] == "claimed"
         assert claim_data["benefit_id"] == benefit_id
+
+    @pytest.mark.anyio
+    async def test_old_scan_token_is_rejected_after_production_batch_recall(self, client, full_setup):
+        public_id = full_setup["public_ids"][0]
+        scan_resp = await client.get(f"/c/{public_id}", headers={"Accept": "application/json"})
+        scan_token = scan_resp.json()["scan_token"]
+
+        recalled = await client.post(
+            f"/api/v1/production-batches/{full_setup['production_batch_id']}/recall",
+            json={"reason": "consumer safety", "confirm": "recall"},
+            headers=full_setup["headers"],
+        )
+        assert recalled.status_code == 200
+
+        claim = await client.post(
+            "/api/v1/benefit-claims",
+            json={"benefit_id": full_setup["benefit_id"], "scan_token": scan_token},
+        )
+        assert claim.status_code == 403
+        assert claim.json()["detail"]["code"] == "production_batch_unavailable"
+
+    @pytest.mark.anyio
+    async def test_old_scan_token_is_rejected_after_production_batch_expiry(self, client, full_setup, db_session):
+        public_id = full_setup["public_ids"][0]
+        scan_resp = await client.get(f"/c/{public_id}", headers={"Accept": "application/json"})
+        scan_token = scan_resp.json()["scan_token"]
+        production_batch = await db_session.get(ProductionBatch, uuid.UUID(full_setup["production_batch_id"]))
+        production_batch.expiry_date = date.today() - timedelta(days=1)
+        await db_session.flush()
+
+        claim = await client.post(
+            "/api/v1/benefit-claims",
+            json={"benefit_id": full_setup["benefit_id"], "scan_token": scan_token},
+        )
+
+        assert claim.status_code == 403
+        assert claim.json()["detail"]["code"] == "production_batch_unavailable"
+
+    @pytest.mark.anyio
+    async def test_old_scan_token_rejects_changed_batch_chain_without_benefit_write(
+        self, client, full_setup, db_session
+    ):
+        public_id = full_setup["public_ids"][0]
+        scan_resp = await client.get(f"/c/{public_id}", headers={"Accept": "application/json"})
+        scan_token = scan_resp.json()["scan_token"]
+        benefit_id = uuid.UUID(full_setup["benefit_id"])
+        before_stock = await db_session.scalar(select(Benefit.stock_used).where(Benefit.id == benefit_id))
+        before_claims = await db_session.scalar(
+            select(func.count()).select_from(BenefitClaim).where(BenefitClaim.benefit_id == benefit_id)
+        )
+
+        other_brand = await client.post(
+            "/api/v1/brands",
+            json={"name": "变更链路品牌"},
+            headers=full_setup["headers"],
+        )
+        other_product = await client.post(
+            "/api/v1/products",
+            json={"brand_id": other_brand.json()["id"], "name": "变更链路产品"},
+            headers=full_setup["headers"],
+        )
+        code_batch = await db_session.get(CodeBatch, uuid.UUID(full_setup["batch_id"]))
+        code_batch.product_id = uuid.UUID(other_product.json()["id"])
+        await db_session.flush()
+
+        claim = await client.post(
+            "/api/v1/benefit-claims",
+            json={"benefit_id": str(benefit_id), "scan_token": scan_token},
+        )
+
+        assert claim.status_code == 403
+        assert claim.json()["detail"]["code"] == "production_batch_unavailable"
+        assert await db_session.scalar(select(Benefit.stock_used).where(Benefit.id == benefit_id)) == before_stock
+        assert (
+            await db_session.scalar(
+                select(func.count()).select_from(BenefitClaim).where(BenefitClaim.benefit_id == benefit_id)
+            )
+            == before_claims
+        )
+
+    @pytest.mark.anyio
+    async def test_old_scan_token_rejects_changed_item_status_without_benefit_write(
+        self, client, full_setup, db_session
+    ):
+        public_id = full_setup["public_ids"][0]
+        scan_resp = await client.get(f"/c/{public_id}", headers={"Accept": "application/json"})
+        scan_token = scan_resp.json()["scan_token"]
+        benefit_id = uuid.UUID(full_setup["benefit_id"])
+        before_stock = await db_session.scalar(select(Benefit.stock_used).where(Benefit.id == benefit_id))
+        code_item = await db_session.scalar(select(CodeItem).where(CodeItem.public_id == public_id))
+        code_item.status = CodeItemStatus.revoked
+        await db_session.flush()
+
+        claim = await client.post(
+            "/api/v1/benefit-claims",
+            json={"benefit_id": str(benefit_id), "scan_token": scan_token},
+        )
+
+        assert claim.status_code == 403
+        assert claim.json()["detail"]["code"] == "production_batch_unavailable"
+        assert await db_session.scalar(select(Benefit.stock_used).where(Benefit.id == benefit_id)) == before_stock
+        assert (
+            await db_session.scalar(
+                select(func.count()).select_from(BenefitClaim).where(BenefitClaim.benefit_id == benefit_id)
+            )
+            == 0
+        )
 
     @pytest.mark.anyio
     async def test_claim_idempotent_rejection(self, client: AsyncClient, full_setup):

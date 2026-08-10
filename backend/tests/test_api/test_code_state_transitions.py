@@ -1,6 +1,8 @@
 """A4-004: 码状态转换 API 测试"""
 
+import uuid
 from collections.abc import AsyncGenerator
+from unittest.mock import AsyncMock
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -8,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.main import app
+from app.models.code import CodeItem, CodeItemStatus
 from app.utils.security import create_access_token
 from tests.conftest import TestSessionLocal
 
@@ -164,3 +167,61 @@ class TestCodeStateTransitions:
             headers=headers,
         )
         assert resp.status_code == 409
+        assert resp.json()["error_code"] == "CODE_BIND_BATCH_NOT_ACTIVE"
+        assert resp.json()["detail"] == "Code batch is not active"
+
+    @pytest.mark.anyio
+    async def test_repeated_bind_has_stable_lifecycle_conflict(self, client: AsyncClient, batch_with_codes):
+        _, headers, batch_id = batch_with_codes
+        await client.post(f"/api/v1/code-batches/{batch_id}/activate", headers=headers)
+        items_resp = await client.get(
+            f"/api/v1/code-items?code_batch_id={batch_id}&page_size=1",
+            headers=headers,
+        )
+        item_id = items_resp.json()["items"][0]["id"]
+        first = await client.post(f"/api/v1/code-items/{item_id}/bind", headers=headers)
+        assert first.status_code == 200
+
+        repeated = await client.post(f"/api/v1/code-items/{item_id}/bind", headers=headers)
+
+        assert repeated.status_code == 409
+        assert repeated.json()["error_code"] == "CODE_BIND_CONFLICT"
+        assert repeated.json()["detail"] == "Code item cannot be bound in its current lifecycle state"
+
+    @pytest.mark.anyio
+    async def test_bind_audit_failure_rolls_back_lifecycle_change(
+        self,
+        client,
+        db_session,
+        batch_with_codes,
+        monkeypatch,
+    ):
+        _, headers, batch_id = batch_with_codes
+        await client.post(f"/api/v1/code-batches/{batch_id}/activate", headers=headers)
+        items_resp = await client.get(
+            f"/api/v1/code-items?code_batch_id={batch_id}&page_size=1",
+            headers=headers,
+        )
+        item_id = items_resp.json()["items"][0]["id"]
+
+        async def rollbacking_get_db():
+            transaction = await db_session.begin_nested()
+            try:
+                yield db_session
+                await transaction.commit()
+            except BaseException:
+                await transaction.rollback()
+                raise
+
+        app.dependency_overrides[get_db] = rollbacking_get_db
+        monkeypatch.setattr(
+            "app.services.audit.write_audit_log",
+            AsyncMock(side_effect=RuntimeError("audit unavailable")),
+        )
+
+        with pytest.raises(RuntimeError, match="audit unavailable"):
+            await client.post(f"/api/v1/code-items/{item_id}/bind", headers=headers)
+
+        item = await db_session.get(CodeItem, uuid.UUID(item_id))
+        await db_session.refresh(item)
+        assert item.status == CodeItemStatus.activated

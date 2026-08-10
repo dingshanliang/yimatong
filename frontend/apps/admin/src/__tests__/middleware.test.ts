@@ -95,22 +95,49 @@ describe("admin middleware agency scope gate", () => {
     expect(response.status).toBe(307);
     expect(response.headers.get("location")).toBe("http://localhost/agency");
   });
-});
 
-describe("admin middleware catalog role gate", () => {
-  it("redirects a viewer before a catalog page can mount", () => {
+  it("allows imports only from an acting products workspace", () => {
+    expect(middleware(request("/imports", actingPayload)).status).toBe(200);
+
+    const codesOnly = middleware(
+      request("/imports", { ...actingPayload, scope: ["codes"] })
+    );
+    expect(codesOnly.status).toBe(307);
+    expect(codesOnly.headers.get("location")).toBe("http://localhost/codes");
+  });
+
+  it("redirects a base agency before the imports page can mount", () => {
     const response = middleware(
-      request("/products", {
-        sub: "viewer-1",
-        tenant_id: "tenant-1",
-        tenant_type: "brand",
-        role: "viewer",
+      request("/imports", {
+        sub: "agency-account",
+        tenant_id: "agency-tenant",
+        tenant_type: "agency",
+        role: "admin",
       })
     );
 
     expect(response.status).toBe(307);
-    expect(response.headers.get("location")).toBe("http://localhost/");
+    expect(response.headers.get("location")).toBe("http://localhost/agency");
   });
+});
+
+describe("admin middleware catalog role gate", () => {
+  it.each(["/products", "/batches", "/imports"])(
+    "redirects a viewer before %s can mount",
+    (pathname) => {
+      const response = middleware(
+        request(pathname, {
+          sub: "viewer-1",
+          tenant_id: "tenant-1",
+          tenant_type: "brand",
+          role: "viewer",
+        })
+      );
+
+      expect(response.status).toBe(307);
+      expect(response.headers.get("location")).toBe("http://localhost/");
+    }
+  );
 
   it.each(["admin", "operator"])(
     "allows a brand %s to open catalog routes",
@@ -127,4 +154,19 @@ describe("admin middleware catalog role gate", () => {
       expect(response.status).toBe(200);
     }
   );
+
+  it("allows an acting agency with products scope to open batches", () => {
+    const response = middleware(
+      request("/batches", {
+        sub: "agency-operator",
+        tenant_id: "agency-tenant",
+        tenant_type: "agency",
+        role: "operator",
+        acting_tenant_id: "client-tenant",
+        scope: ["products"],
+      })
+    );
+
+    expect(response.status).toBe(200);
+  });
 });

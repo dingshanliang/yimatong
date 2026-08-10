@@ -640,6 +640,13 @@ class TenantScopeMiddleware(BaseHTTPMiddleware):
     def _is_brand_write_surface(path: str, method: str) -> bool:
         if method not in {"POST", "PUT", "PATCH", "DELETE"}:
             return False
+        import_write_paths = {
+            "/api/v1/imports/excel",
+            "/api/v1/imports/products",
+            "/api/v1/imports/existing-codes",
+        }
+        if path in import_write_paths:
+            return method == "POST"
         brand_prefixes = (
             "/api/v1/brands",
             "/api/v1/products",
@@ -666,6 +673,22 @@ class TenantScopeMiddleware(BaseHTTPMiddleware):
         # any authorized client workspace. It exposes no profile or quota data.
         if path == "/api/v1/tenants/me/entitlement":
             return method == "GET"
+        if path.startswith("/api/v1/imports"):
+            if method == "GET":
+                return (
+                    path
+                    in {
+                        "/api/v1/imports/template",
+                        "/api/v1/imports/records",
+                    }
+                    and "products" in scopes
+                )
+            required_scope = {
+                "/api/v1/imports/excel": "products",
+                "/api/v1/imports/products": "products",
+                "/api/v1/imports/existing-codes": "codes",
+            }.get(path)
+            return method == "POST" and required_scope is not None and required_scope in scopes
         scope_prefixes = {
             "products": (
                 "/api/v1/brands",

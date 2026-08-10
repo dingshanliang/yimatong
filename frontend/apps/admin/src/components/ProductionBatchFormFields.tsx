@@ -32,7 +32,6 @@ export interface ProductionBatchFormValues {
   origin?: string | null;
   production_date?: Dayjs;
   expiry_date?: Dayjs;
-  status?: string;
 }
 
 interface ProductionBatchFormFieldsProps {
@@ -42,16 +41,13 @@ interface ProductionBatchFormFieldsProps {
   selectedProductId?: string;
   productLocked?: boolean;
   editing?: boolean;
+  skusLoading?: boolean;
+  skuLoadError?: boolean;
   onProductChange?: (productId?: string) => void;
   onCreateSkuClick?: () => void;
+  onRetrySkus?: () => void;
   onDateRangeReset?: () => void;
 }
-
-const STATUS_OPTIONS = [
-  { value: "active", label: "有效" },
-  { value: "recalled", label: "已召回" },
-  { value: "expired", label: "已过期" },
-];
 
 function buildBatchToken(input?: string) {
   const token = (input || "")
@@ -88,8 +84,11 @@ export default function ProductionBatchFormFields({
   selectedProductId,
   productLocked = false,
   editing = false,
+  skusLoading = false,
+  skuLoadError = false,
   onProductChange,
   onCreateSkuClick,
+  onRetrySkus,
   onDateRangeReset,
 }: ProductionBatchFormFieldsProps) {
   const productionDate = Form.useWatch("production_date", form);
@@ -153,7 +152,23 @@ export default function ProductionBatchFormFields({
         label="关联 SKU"
         rules={[{ required: true, message: "请选择 SKU" }]}
         extra={
-          hasProduct && !hasSku ? (
+          hasProduct && skuLoadError ? (
+            <Space size={8}>
+              <Text type="danger">SKU 选项加载失败，暂不能保存批次</Text>
+              {onRetrySkus && (
+                <Button
+                  type="link"
+                  size="small"
+                  className="!px-0"
+                  onClick={onRetrySkus}
+                >
+                  重试
+                </Button>
+              )}
+            </Space>
+          ) : hasProduct && skusLoading ? (
+            <Text type="secondary">正在加载 SKU 选项</Text>
+          ) : hasProduct && !hasSku ? (
             <Space size={8}>
               <Text type="secondary">
                 该产品暂无 SKU，请先创建 SKU 后再新增批次
@@ -180,7 +195,10 @@ export default function ProductionBatchFormFields({
           }))}
           showSearch
           optionFilterProp="label"
-          disabled={!hasProduct || editing || !hasSku}
+          loading={skusLoading}
+          disabled={
+            !hasProduct || editing || !hasSku || skusLoading || skuLoadError
+          }
         />
       </Form.Item>
 
@@ -246,16 +264,6 @@ export default function ProductionBatchFormFields({
           <DatePicker className="w-full" minDate={productionDate} />
         </Form.Item>
       </div>
-
-      {editing && (
-        <Form.Item
-          name="status"
-          label="状态"
-          rules={[{ required: true, message: "请选择状态" }]}
-        >
-          <Select options={STATUS_OPTIONS} />
-        </Form.Item>
-      )}
     </>
   );
 }

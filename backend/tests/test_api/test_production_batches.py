@@ -1,14 +1,20 @@
 """A3-004: ProductionBatch 数据模型与 CRUD API 验收测试"""
 
 import io
+import uuid
 from collections.abc import AsyncGenerator
+from datetime import date, timedelta
 
 import pytest
+from fastapi.routing import APIRoute
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.main import app
+from app.models.audit import PlatformAuditLog
+from app.models.product import BatchStatus, ProductionBatch
 from app.utils.security import create_access_token
 from tests.conftest import TestSessionLocal
 
@@ -79,6 +85,241 @@ async def sku_id(client: AsyncClient, tenant_with_auth):
 
 
 class TestProductionBatchCRUD:
+    @pytest.mark.anyio
+    async def test_cross_tenant_recall_returns_not_found_without_state_or_audit_change(
+        self,
+        client: AsyncClient,
+        db_session: AsyncSession,
+        tenant_with_auth,
+    ):
+        tenant_a_id, tenant_a_headers = tenant_with_auth
+        tenant_b_response = await client.post(
+            "/api/v1/tenants",
+            json={
+                "name": "跨租户召回对照",
+                "admin_email": "batch-isolation@test.com",
+                "admin_name": "Admin",
+                "admin_password": "Pass1234",
+            },
+            headers=_platform_admin_headers(),
+        )
+        assert tenant_b_response.status_code == 201
+        tenant_b_id = tenant_b_response.json()["id"]
+        tenant_b_headers = {"Authorization": f"Bearer {create_access_token(tenant_b_id, str(uuid.uuid4()), 'admin')}"}
+        brand = await client.post("/api/v1/brands", json={"name": "租户 B 品牌"}, headers=tenant_b_headers)
+        assert brand.status_code == 201
+        product = await client.post(
+            "/api/v1/products",
+            json={"brand_id": brand.json()["id"], "name": "租户 B 产品"},
+            headers=tenant_b_headers,
+        )
+        assert product.status_code == 201
+        sku = await client.post(
+            "/api/v1/skus",
+            json={"product_id": product.json()["id"], "code": "TENANT-B-SKU", "name": "租户 B SKU"},
+            headers=tenant_b_headers,
+        )
+        assert sku.status_code == 201
+        created = await client.post(
+            "/api/v1/production-batches",
+            json={
+                "product_id": product.json()["id"],
+                "sku_id": sku.json()["id"],
+                "batch_code": "TENANT-B-RECALL-TARGET",
+                "production_date": "2026-08-01",
+                "expiry_date": "2099-08-01",
+            },
+            headers=tenant_b_headers,
+        )
+        assert created.status_code == 201
+        batch_id = uuid.UUID(created.json()["id"])
+        await db_session.commit()
+
+        recall_route = next(
+            route
+            for route in app.routes
+            if isinstance(route, APIRoute)
+            and route.path == "/api/v1/production-batches/{batch_id}/recall"
+            and "POST" in route.methods
+        )
+        db_dependency = next(
+            dependency for dependency in recall_route.dependant.dependencies if dependency.call is get_db
+        )
+        assert db_dependency.scope == "function"
+        before_audit_count = await db_session.scalar(
+            select(func.count())
+            .select_from(PlatformAuditLog)
+            .where(PlatformAuditLog.action == "production_batch_recalled")
+        )
+        assert before_audit_count == 0
+
+        response = await client.post(
+            f"/api/v1/production-batches/{batch_id}/recall",
+            json={"reason": "tenant A must not mutate tenant B", "confirm": "recall"},
+            headers=tenant_a_headers,
+        )
+
+        assert response.status_code == 404
+        assert response.json()["detail"] == "Batch not found"
+        assert tenant_a_id != tenant_b_id
+        persisted = await db_session.get(ProductionBatch, batch_id)
+        await db_session.refresh(persisted)
+        assert persisted.tenant_id == uuid.UUID(tenant_b_id)
+        assert persisted.status == BatchStatus.active
+        assert persisted.recall_reason is None
+        assert persisted.recalled_at is None
+        assert persisted.recalled_by is None
+        after_audit_count = await db_session.scalar(
+            select(func.count())
+            .select_from(PlatformAuditLog)
+            .where(PlatformAuditLog.action == "production_batch_recalled")
+        )
+        assert after_audit_count == before_audit_count
+
+    @pytest.mark.anyio
+    async def test_responses_expose_effective_status_with_recall_priority(
+        self,
+        client,
+        db_session,
+        tenant_with_auth,
+        sku_id,
+    ):
+        product_id, sid = sku_id
+        _, headers = tenant_with_auth
+        expired = await client.post(
+            "/api/v1/production-batches",
+            json={
+                "product_id": product_id,
+                "sku_id": sid,
+                "batch_code": "EFFECTIVE-EXPIRED",
+                "production_date": str(date.today() - timedelta(days=30)),
+                "expiry_date": str(date.today() - timedelta(days=1)),
+            },
+            headers=headers,
+        )
+        assert expired.status_code == 201
+        assert expired.json()["status"] == "active"
+        assert expired.json()["effective_status"] == "expired"
+
+        recalled = await client.post(
+            "/api/v1/production-batches",
+            json={
+                "product_id": product_id,
+                "sku_id": sid,
+                "batch_code": "EFFECTIVE-RECALLED",
+                "production_date": str(date.today() - timedelta(days=30)),
+                "expiry_date": str(date.today() + timedelta(days=30)),
+            },
+            headers=headers,
+        )
+        recalled_id = recalled.json()["id"]
+        recall_response = await client.post(
+            f"/api/v1/production-batches/{recalled_id}/recall",
+            json={"reason": "safety recall", "confirm": "recall"},
+            headers=headers,
+        )
+        assert recall_response.status_code == 200
+        recalled_batch = await db_session.get(ProductionBatch, uuid.UUID(recalled_id))
+        recalled_batch.expiry_date = date.today() - timedelta(days=1)
+        await db_session.flush()
+
+        listed = await client.get("/api/v1/production-batches", headers=headers)
+        by_code = {item["batch_code"]: item for item in listed.json()["items"]}
+        assert by_code["EFFECTIVE-EXPIRED"]["status"] == "active"
+        assert by_code["EFFECTIVE-EXPIRED"]["effective_status"] == "expired"
+        assert by_code["EFFECTIVE-RECALLED"]["status"] == "recalled"
+        assert by_code["EFFECTIVE-RECALLED"]["effective_status"] == "recalled"
+
+    @pytest.mark.anyio
+    async def test_status_is_not_patchable_and_recall_is_explicit(self, client, tenant_with_auth, sku_id):
+        product_id, sid = sku_id
+        _, headers = tenant_with_auth
+        created = await client.post(
+            "/api/v1/production-batches",
+            json={
+                "product_id": product_id,
+                "sku_id": sid,
+                "batch_code": "RECALL-001",
+                "production_date": "2026-01-01",
+                "expiry_date": "2027-01-01",
+            },
+            headers=headers,
+        )
+        batch_id = created.json()["id"]
+
+        patched = await client.patch(
+            f"/api/v1/production-batches/{batch_id}", json={"status": "recalled"}, headers=headers
+        )
+        assert patched.status_code == 422
+
+        invalid_confirm = await client.post(
+            f"/api/v1/production-batches/{batch_id}/recall",
+            json={"reason": " quality incident ", "confirm": "yes"},
+            headers=headers,
+        )
+        assert invalid_confirm.status_code == 422
+
+        recalled = await client.post(
+            f"/api/v1/production-batches/{batch_id}/recall",
+            json={"reason": " quality incident ", "confirm": "recall"},
+            headers=headers,
+        )
+        assert recalled.status_code == 200
+        assert recalled.json()["status"] == "recalled"
+        assert recalled.json()["recall_reason"] == "quality incident"
+        assert recalled.json()["recalled_at"]
+        assert recalled.json()["recalled_by"]
+
+        immutable_update = await client.patch(
+            f"/api/v1/production-batches/{batch_id}",
+            json={"origin": "must not change"},
+            headers=headers,
+        )
+        assert immutable_update.status_code == 409
+
+        repeated = await client.post(
+            f"/api/v1/production-batches/{batch_id}/recall",
+            json={"reason": "again", "confirm": "recall"},
+            headers=headers,
+        )
+        assert repeated.status_code == 409
+
+    @pytest.mark.anyio
+    async def test_recall_audit_failure_aborts_the_state_change(
+        self, client, db_session, tenant_with_auth, sku_id, monkeypatch
+    ):
+        product_id, sid = sku_id
+        _, headers = tenant_with_auth
+        created = await client.post(
+            "/api/v1/production-batches",
+            json={
+                "product_id": product_id,
+                "sku_id": sid,
+                "batch_code": "RECALL-AUDIT-ROLLBACK",
+                "production_date": "2026-01-01",
+                "expiry_date": "2027-01-01",
+            },
+            headers=headers,
+        )
+        await db_session.commit()
+
+        async def fail_audit(*_args, **_kwargs):
+            raise RuntimeError("audit unavailable")
+
+        monkeypatch.setattr("app.services.audit.write_audit_log", fail_audit)
+        with pytest.raises(RuntimeError, match="audit unavailable"):
+            await client.post(
+                f"/api/v1/production-batches/{created.json()['id']}/recall",
+                json={"reason": "safety recall", "confirm": "recall"},
+                headers=headers,
+            )
+
+        await db_session.rollback()
+        persisted = await db_session.scalar(
+            select(ProductionBatch).where(ProductionBatch.id == uuid.UUID(created.json()["id"]))
+        )
+        assert persisted.status == BatchStatus.active
+
     @pytest.mark.anyio
     async def test_create_batch(self, client: AsyncClient, tenant_with_auth, sku_id):
         tid, headers = tenant_with_auth
@@ -322,3 +563,30 @@ class TestProductionBatchCRUD:
         fake_id = "00000000-0000-0000-0000-000000000000"
         resp = await client.delete(f"/api/v1/production-batches/{fake_id}", headers=headers)
         assert resp.status_code == 404
+
+
+class TestImportWriteAuthorization:
+    @pytest.mark.anyio
+    @pytest.mark.parametrize(
+        ("path", "filename", "content_type"),
+        [
+            (
+                "/api/v1/imports/excel",
+                "catalog.xlsx",
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            ),
+            ("/api/v1/imports/products", "products.csv", "text/csv"),
+            ("/api/v1/imports/existing-codes", "codes.csv", "text/csv"),
+        ],
+    )
+    async def test_viewer_cannot_import(self, client, tenant_with_auth, path, filename, content_type):
+        tenant_id, _ = tenant_with_auth
+        viewer_token = create_access_token(tenant_id, "00000000-0000-0000-0000-000000000003", "viewer")
+
+        response = await client.post(
+            path,
+            files={"file": (filename, b"header\n", content_type)},
+            headers={"Authorization": f"Bearer {viewer_token}"},
+        )
+
+        assert response.status_code == 403

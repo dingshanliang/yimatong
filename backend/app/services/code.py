@@ -6,7 +6,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.core.exceptions import BadRequestError, NotFoundError
+from app.core.exceptions import BadRequestError, ConflictError, NotFoundError
 from app.models.code import (
     CodeBatch,
     CodeBatchStatus,
@@ -22,6 +22,7 @@ from app.schemas.code import (
     CodeBatchFreezeResponse,
     CodeBatchVoidResponse,
 )
+from app.services.product import is_production_batch_effectively_active
 from app.services.public_id import generate_public_id
 from app.utils import utcnow
 
@@ -60,11 +61,18 @@ async def create_code_batch(
     if sku.product_id != product_id:
         raise ValueError("SKU does not belong to selected product")
 
-    production_batch = await db.get(ProductionBatch, production_batch_id)
-    if not production_batch or production_batch.tenant_id != tenant_id:
+    production_batch_result = await db.execute(
+        select(ProductionBatch)
+        .where(ProductionBatch.id == production_batch_id, ProductionBatch.tenant_id == tenant_id)
+        .with_for_update()
+    )
+    production_batch = production_batch_result.scalar_one_or_none()
+    if not production_batch:
         raise ValueError("Production batch not found")
     if production_batch.product_id != product_id or production_batch.sku_id != sku_id:
         raise ValueError("Production batch does not belong to selected product and SKU")
+    if not is_production_batch_effectively_active(production_batch):
+        raise ConflictError("Production batch is not active")
 
     # Validate all referenced resources before reserving. A service caller may
     # deliberately catch a validation error and keep using its transaction;
@@ -168,6 +176,14 @@ async def create_code_batch(
     batch.status = CodeBatchStatus.completed
     await db.flush()
     await db.refresh(batch)
+
+    await _audit_code_op(
+        db,
+        str(created_by),
+        str(tenant_id),
+        "code_batch_created",
+        f"code_batch:{batch.id}",
+    )
 
     return {
         "id": str(batch.id),
@@ -376,17 +392,43 @@ async def activate_batch(
 
     from app.services.code_state import InvalidStateTransitionError, can_transition
 
-    # Lock the batch row to prevent concurrent state transitions
+    # Locate the authoritative parent without taking a child lock. The write
+    # transaction then follows the global PB -> CodeBatch -> CodeItem order.
+    production_batch_id = await db.scalar(
+        select(CodeBatch.production_batch_id).where(CodeBatch.id == batch_id, CodeBatch.tenant_id == tenant_id)
+    )
+    if production_batch_id is None:
+        raise ValueError("Code batch not found")
+
+    production_batch = await db.scalar(
+        select(ProductionBatch)
+        .where(
+            ProductionBatch.id == production_batch_id,
+            ProductionBatch.tenant_id == tenant_id,
+        )
+        .with_for_update()
+    )
+    if production_batch is None:
+        raise InvalidStateTransitionError("Production batch is not active")
+
     result = await db.execute(
         select(CodeBatch).where(CodeBatch.id == batch_id, CodeBatch.tenant_id == tenant_id).with_for_update()
     )
     batch = result.scalar_one_or_none()
     if not batch:
         raise ValueError("Code batch not found")
+    if (
+        batch.production_batch_id != production_batch.id
+        or batch.product_id != production_batch.product_id
+        or batch.sku_id != production_batch.sku_id
+    ):
+        raise InvalidStateTransitionError("Code batch production batch association changed")
     if batch.status == CodeBatchStatus.activated:
         raise InvalidStateTransitionError("Code batch is already activated")
     if batch.status != CodeBatchStatus.completed:
         raise InvalidStateTransitionError(f"Cannot activate code batch with status '{batch.status.value}'")
+    if not is_production_batch_effectively_active(production_batch):
+        raise InvalidStateTransitionError("Production batch is not active")
 
     # Validate current state with a lightweight count query
     result = await db.execute(
@@ -397,6 +439,7 @@ async def activate_batch(
             CodeItem.status == CodeItemStatus.created,
         )
         .limit(1)
+        .with_for_update()
     )
     sample = result.scalar_one_or_none()
     if sample is not None:
@@ -418,7 +461,13 @@ async def activate_batch(
     batch.status = CodeBatchStatus.activated
     await db.flush()
     # 状态变更审计（yimatong-zgb1.3 AC5）
-    await _audit_code_op(db, actor_id, str(tenant_id), "code_activate", f"code_batch:{batch_id}")
+    await _audit_code_op(
+        db,
+        actor_id or str(batch.created_by),
+        str(tenant_id),
+        "code_activate",
+        f"code_batch:{batch_id}",
+    )
     return CodeBatchActivateResponse(activated=r.rowcount)
 
 
@@ -470,18 +519,69 @@ async def revoke_code_item(
     return item
 
 
-async def bind_code_item(db: AsyncSession, tenant_id: uuid.UUID, item_id: uuid.UUID) -> CodeItem:
+async def bind_code_item(
+    db: AsyncSession, tenant_id: uuid.UUID, item_id: uuid.UUID, actor_id: str | None = None
+) -> CodeItem:
+    from app.services.code_state import InvalidStateTransitionError, can_transition
 
-    from app.services.code_state import can_transition
-
-    result = await db.execute(select(CodeItem).where(CodeItem.id == item_id, CodeItem.tenant_id == tenant_id))
-    item = result.scalar_one_or_none()
-    if not item:
+    locator_result = await db.execute(
+        select(CodeItem.code_batch_id, CodeBatch.production_batch_id)
+        .join(
+            CodeBatch,
+            (CodeBatch.id == CodeItem.code_batch_id) & (CodeBatch.tenant_id == CodeItem.tenant_id),
+        )
+        .where(CodeItem.id == item_id, CodeItem.tenant_id == tenant_id)
+    )
+    locator = locator_result.one_or_none()
+    if locator is None:
         raise NotFoundError("Code item not found")
-    can_transition(item.status, CodeItemStatus.bound, raise_on_invalid=True)
+
+    code_batch_id, production_batch_id = locator
+    production_batch = await db.scalar(
+        select(ProductionBatch)
+        .where(
+            ProductionBatch.id == production_batch_id,
+            ProductionBatch.tenant_id == tenant_id,
+        )
+        .with_for_update()
+    )
+    if production_batch is None:
+        raise ConflictError("Code item production chain is unavailable", error_code="CODE_BIND_CHAIN_CONFLICT")
+
+    batch = await db.scalar(
+        select(CodeBatch).where(CodeBatch.id == code_batch_id, CodeBatch.tenant_id == tenant_id).with_for_update()
+    )
+    if batch is None:
+        raise ConflictError("Code item production chain is unavailable", error_code="CODE_BIND_CHAIN_CONFLICT")
+    if (
+        batch.production_batch_id != production_batch.id
+        or batch.product_id != production_batch.product_id
+        or batch.sku_id != production_batch.sku_id
+    ):
+        raise ConflictError("Code item production chain changed", error_code="CODE_BIND_CHAIN_CONFLICT")
+    if batch.status != CodeBatchStatus.activated:
+        raise ConflictError("Code batch is not active", error_code="CODE_BIND_BATCH_NOT_ACTIVE")
+    if not is_production_batch_effectively_active(production_batch):
+        raise ConflictError("Production batch is not active", error_code="PRODUCTION_BATCH_NOT_ACTIVE")
+
+    item = await db.scalar(
+        select(CodeItem).where(CodeItem.id == item_id, CodeItem.tenant_id == tenant_id).with_for_update()
+    )
+    if item is None:
+        raise NotFoundError("Code item not found")
+    if item.code_batch_id != batch.id:
+        raise ConflictError("Code item production chain changed", error_code="CODE_BIND_CHAIN_CONFLICT")
+    try:
+        can_transition(item.status, CodeItemStatus.bound, raise_on_invalid=True)
+    except InvalidStateTransitionError as exc:
+        raise ConflictError(
+            "Code item cannot be bound in its current lifecycle state",
+            error_code="CODE_BIND_CONFLICT",
+        ) from exc
     item.status = CodeItemStatus.bound
     item.bound_at = utcnow()
     await db.flush()
+    await _audit_code_op(db, actor_id, str(tenant_id), "code_bind", f"code_item:{item.public_id}")
     await db.refresh(item)
     return item
 
@@ -593,60 +693,94 @@ async def _audit_code_op(
     action: str,
     resource: str,
 ) -> None:
-    """写码状态变更审计日志，失败不阻断主流程（与 tenant._audit 一致）。"""
-    try:
-        from app.services.audit import write_audit_log
+    """Write a mandatory actor-bound audit record in the mutation transaction."""
+    if not actor_id:
+        raise ValueError("actor_id is required for code mutation audit")
+    from app.services.audit import write_audit_log
 
-        # Runtime roles intentionally cannot write the global control-plane
-        # audit table. Isolate the best-effort write in a savepoint so an ACL
-        # denial does not poison the surrounding tenant transaction.
-        async with db.begin_nested():
-            await write_audit_log(
-                db,
-                operator_id=actor_id or "system",
-                target_tenant_id=target_tenant_id,
-                action=action,
-                resource=resource,
-            )
-    except Exception:
-        # 审计失败不影响状态变更本身（已 flush）；与 tenant 服务一致兜底
-        pass
+    await write_audit_log(
+        db,
+        operator_id=actor_id,
+        target_tenant_id=target_tenant_id,
+        action=action,
+        resource=resource,
+    )
 
 
-async def mark_printing(db: AsyncSession, tenant_id: uuid.UUID, batch_id: uuid.UUID) -> dict:
+async def _lock_forward_operational_code_batch(
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    batch_id: uuid.UUID,
+) -> CodeBatch:
+    production_batch_id = await db.scalar(
+        select(CodeBatch.production_batch_id).where(CodeBatch.id == batch_id, CodeBatch.tenant_id == tenant_id)
+    )
+    if production_batch_id is None:
+        raise ValueError("Code batch not found")
+
+    production_batch = await db.scalar(
+        select(ProductionBatch)
+        .where(
+            ProductionBatch.id == production_batch_id,
+            ProductionBatch.tenant_id == tenant_id,
+        )
+        .with_for_update()
+    )
+    batch = await db.scalar(
+        select(CodeBatch).where(CodeBatch.id == batch_id, CodeBatch.tenant_id == tenant_id).with_for_update()
+    )
+    if production_batch is None or batch is None:
+        raise ConflictError(
+            "Code batch production chain is unavailable",
+            error_code="CODE_BATCH_PRODUCTION_CHAIN_CONFLICT",
+        )
+    if (
+        batch.production_batch_id != production_batch.id
+        or batch.product_id != production_batch.product_id
+        or batch.sku_id != production_batch.sku_id
+    ):
+        raise ConflictError(
+            "Code batch production chain changed",
+            error_code="CODE_BATCH_PRODUCTION_CHAIN_CONFLICT",
+        )
+    if not is_production_batch_effectively_active(production_batch):
+        raise ConflictError(
+            "Production batch is not active",
+            error_code="PRODUCTION_BATCH_NOT_ACTIVE",
+        )
+    return batch
+
+
+async def mark_printing(
+    db: AsyncSession, tenant_id: uuid.UUID, batch_id: uuid.UUID, actor_id: str | None = None
+) -> dict:
     """标记码批次为印刷中（completed -> printing）"""
     from app.services.batch_state import can_transition_batch
 
-    result = await db.execute(
-        select(CodeBatch).where(CodeBatch.id == batch_id, CodeBatch.tenant_id == tenant_id).with_for_update()
-    )
-    batch = result.scalar_one_or_none()
-    if not batch:
-        raise ValueError("Code batch not found")
+    batch = await _lock_forward_operational_code_batch(db, tenant_id, batch_id)
     can_transition_batch(batch.status, CodeBatchStatus.printing, raise_on_invalid=True)
 
     batch.status = CodeBatchStatus.printing
     await db.flush()
+    await _audit_code_op(db, actor_id, str(tenant_id), "code_mark_printing", f"code_batch:{batch_id}")
     detail = await get_code_batch(db, tenant_id, batch_id)
     if detail is None:
         raise ValueError("Code batch not found after update")
     return detail
 
 
-async def mark_delivered(db: AsyncSession, tenant_id: uuid.UUID, batch_id: uuid.UUID) -> dict:
+async def mark_delivered(
+    db: AsyncSession, tenant_id: uuid.UUID, batch_id: uuid.UUID, actor_id: str | None = None
+) -> dict:
     """标记码批次为已交付（printing -> delivered）"""
     from app.services.batch_state import can_transition_batch
 
-    result = await db.execute(
-        select(CodeBatch).where(CodeBatch.id == batch_id, CodeBatch.tenant_id == tenant_id).with_for_update()
-    )
-    batch = result.scalar_one_or_none()
-    if not batch:
-        raise ValueError("Code batch not found")
+    batch = await _lock_forward_operational_code_batch(db, tenant_id, batch_id)
     can_transition_batch(batch.status, CodeBatchStatus.delivered, raise_on_invalid=True)
 
     batch.status = CodeBatchStatus.delivered
     await db.flush()
+    await _audit_code_op(db, actor_id, str(tenant_id), "code_mark_delivered", f"code_batch:{batch_id}")
     detail = await get_code_batch(db, tenant_id, batch_id)
     if detail is None:
         raise ValueError("Code batch not found after update")
@@ -660,6 +794,7 @@ async def update_batch(
     db: AsyncSession,
     tenant_id: uuid.UUID,
     batch_id: uuid.UUID,
+    actor_id: str | None = None,
     **kwargs,
 ) -> CodeBatchDetailRead | None:
     batch = await get_code_batch(db, tenant_id, batch_id)
@@ -673,6 +808,7 @@ async def update_batch(
         if k in _BATCH_ALLOWED_FIELDS and v is not None:
             setattr(obj, k, v)
     await db.flush()
+    await _audit_code_op(db, actor_id, str(tenant_id), "code_batch_updated", f"code_batch:{batch_id}")
     return await get_code_batch(db, tenant_id, batch_id)
 
 

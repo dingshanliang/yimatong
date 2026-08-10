@@ -244,20 +244,32 @@ async def create_page_version(
     template_id: uuid.UUID,
     config_json: dict,
     created_by: uuid.UUID,
-) -> dict:
+) -> dict | None:
     # 消毒 custom_html 模块中的 HTML 内容
     sanitize_config_html(config_json)
 
     # 后端 DSL 校验
     validate_page_dsl(config_json)
 
-    # 获取当前最大版本号（加行级锁防止并发重复）
-    max_ver_result = await db.execute(
-        select(func.max(PageVersion.version))
+    # Lock the tenant-scoped parent row so concurrent creates for one template
+    # serialize before calculating the next version number. PostgreSQL forbids
+    # FOR UPDATE on aggregate queries, so the max query itself must stay unlocked.
+    template_result = await db.execute(
+        select(PageTemplate)
         .where(
-            PageVersion.page_template_id == template_id,
+            PageTemplate.id == template_id,
+            PageTemplate.tenant_id == tenant_id,
         )
         .with_for_update()
+    )
+    if template_result.scalar_one_or_none() is None:
+        return None
+
+    max_ver_result = await db.execute(
+        select(func.max(PageVersion.version)).where(
+            PageVersion.page_template_id == template_id,
+            PageVersion.tenant_id == tenant_id,
+        )
     )
     max_ver = max_ver_result.scalar() or 0
 

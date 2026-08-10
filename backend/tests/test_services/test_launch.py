@@ -1,7 +1,10 @@
 """上线门禁事实源与幂等执行测试。"""
 
+from datetime import UTC, date, datetime, timedelta
+
 import pytest
 
+from app.models.product import BatchStatus, ProductionBatch
 from app.services.launch import (
     build_launch_readiness,
     confirm_and_launch,
@@ -45,6 +48,51 @@ async def test_readiness_rejects_unbound_campaign(db, launch_facts):
 
     campaign_check = next(item for item in snapshot["checks"] if item["key"] == "campaign_active")
     assert campaign_check["passed"] is False
+    assert snapshot["ready"] is False
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("status", [BatchStatus.recalled, BatchStatus.expired])
+async def test_readiness_rejects_non_active_production_batch(db, launch_facts, status):
+    tenant_id, _account_id, version, campaign, batch = launch_facts
+    production_batch = await db.get(ProductionBatch, batch.production_batch_id)
+    production_batch.status = status
+    if status == BatchStatus.recalled:
+        production_batch.recall_reason = "safety recall"
+        production_batch.recalled_at = datetime.now(UTC)
+        production_batch.recalled_by = str(_account_id)
+    await db.flush()
+
+    snapshot, _digest, _ = await build_launch_readiness(
+        db,
+        tenant_id,
+        page_version_id=version.id,
+        campaign_id=campaign.id,
+        code_batch_id=batch.id,
+    )
+
+    batch_check = next(item for item in snapshot["checks"] if item["key"] == "code_batch_activated")
+    assert batch_check["passed"] is False
+    assert snapshot["ready"] is False
+
+
+@pytest.mark.anyio
+async def test_readiness_rejects_active_batch_with_past_expiry_date(db, launch_facts):
+    tenant_id, _account_id, version, campaign, batch = launch_facts
+    production_batch = await db.get(ProductionBatch, batch.production_batch_id)
+    production_batch.expiry_date = date.today() - timedelta(days=1)
+    await db.flush()
+
+    snapshot, _digest, _ = await build_launch_readiness(
+        db,
+        tenant_id,
+        page_version_id=version.id,
+        campaign_id=campaign.id,
+        code_batch_id=batch.id,
+    )
+
+    batch_check = next(item for item in snapshot["checks"] if item["key"] == "code_batch_activated")
+    assert batch_check["passed"] is False
     assert snapshot["ready"] is False
 
 

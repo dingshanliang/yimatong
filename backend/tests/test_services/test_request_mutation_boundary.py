@@ -1,3 +1,4 @@
+import inspect
 import uuid
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
@@ -531,10 +532,28 @@ def test_only_expected_business_mutations_use_function_scoped_get_db():
         ("DELETE", "/api/v1/skus/{sku_id}", "function"),
         ("POST", "/api/v1/production-batches", "function"),
         ("PATCH", "/api/v1/production-batches/{batch_id}", "function"),
+        ("POST", "/api/v1/production-batches/{batch_id}/recall", "function"),
         ("POST", "/api/v1/production-batches/import-csv", "function"),
         ("DELETE", "/api/v1/production-batches/{batch_id}", "function"),
         ("PATCH", "/api/v1/product-assets/{asset_id}", "function"),
         ("DELETE", "/api/v1/product-assets/{asset_id}", "function"),
+        ("POST", "/api/v1/code-batches", "function"),
+        ("POST", "/api/v1/code-batches/{batch_id}/activate", "function"),
+        ("POST", "/api/v1/code-batches/{batch_id}/export", "function"),
+        ("PATCH", "/api/v1/code-batches/{batch_id}", "function"),
+        ("POST", "/api/v1/code-batches/{batch_id}/freeze", "function"),
+        ("POST", "/api/v1/code-batches/{batch_id}/void", "function"),
+        ("POST", "/api/v1/code-batches/{batch_id}/mark-printing", "function"),
+        ("POST", "/api/v1/code-batches/{batch_id}/mark-delivered", "function"),
+        ("PATCH", "/api/v1/code-items/{item_id}", "function"),
+        ("POST", "/api/v1/code-items/{item_id}/revoke", "function"),
+        ("POST", "/api/v1/code-items/{item_id}/bind", "function"),
+        ("POST", "/api/v1/imports/excel", "function"),
+        ("POST", "/api/v1/imports/products", "function"),
+        ("POST", "/api/v1/imports/existing-codes", "function"),
+        ("POST", "/api/v1/page-templates/industry-templates/{index}/clone", "function"),
+        ("POST", "/api/v1/page-templates/{template_id}/versions", "function"),
+        ("POST", "/api/v1/page-templates/{template_id}/versions/{version_id}/rollback", "function"),
         ("POST", "/api/v1/webhooks/api-keys", "function"),
         ("POST", "/api/v1/webhooks/api-keys/{key_id}/rotate", "function"),
         ("DELETE", "/api/v1/webhooks/api-keys/{key_id}", "function"),
@@ -544,6 +563,182 @@ def test_only_expected_business_mutations_use_function_scoped_get_db():
         ("PATCH", "/open/v1/skus/{sku_id}", "function"),
         ("POST", "/open/v1/batches", "function"),
     }
+
+
+def test_existing_code_import_uses_authoritative_parent_first_lock_order():
+    from app.api.v1 import imports
+
+    source = inspect.getsource(imports.import_existing_codes)
+    production_batch_locator = source.index("select(CodeBatch.production_batch_id)")
+    production_batch_lock = source.index("select(ProductionBatch)", production_batch_locator)
+    code_batch_lock = source.index("select(CodeBatch)", production_batch_lock)
+    code_item_write = source.index("CodeItem(", code_batch_lock)
+
+    assert production_batch_locator < production_batch_lock < code_batch_lock < code_item_write
+    assert ".with_for_update()" not in source[production_batch_locator:production_batch_lock]
+    assert ".with_for_update()" in source[production_batch_lock:code_batch_lock]
+    assert ".with_for_update()" in source[code_batch_lock:code_item_write]
+    assert "select(CodeBatch, ProductionBatch)" not in source
+
+
+def test_old_token_claim_locks_authoritative_chain_before_benefit_access():
+    from app.api.v1 import benefit_claims
+
+    source = inspect.getsource(benefit_claims.claim_benefit_h5)
+    tenant_lock = source.index("lock_active_tenant_context")
+    chain_locator = source.index("select(CodeItem.id, CodeItem.code_batch_id, CodeBatch.production_batch_id)")
+    production_batch_lock = source.index("select(ProductionBatch)", chain_locator)
+    code_batch_lock = source.index("select(CodeBatch)", production_batch_lock)
+    code_item_lock = source.index("select(CodeItem)", code_batch_lock)
+    benefit_access = source.index("select(Benefit)", code_item_lock)
+
+    assert tenant_lock < chain_locator < production_batch_lock < code_batch_lock < code_item_lock < benefit_access
+    assert ".with_for_update()" not in source[chain_locator:production_batch_lock]
+    assert ".with_for_update()" in source[production_batch_lock:code_batch_lock]
+    assert ".with_for_update()" in source[code_batch_lock:code_item_lock]
+    assert ".with_for_update()" in source[code_item_lock:benefit_access]
+    assert "select(CodeItem).join(" not in source
+
+
+def test_excel_import_row_error_payload_exposes_only_safe_diagnostics():
+    from app.api.v1 import imports
+    from app.services.import_service import RowError
+
+    payload = imports._row_error_payload(
+        RowError(
+            sheet="SKU",
+            row=2,
+            message="该行数据冲突，未完成导入",
+            code="IMPORT_ROW_CONFLICT",
+            reference_id="imp_0123456789abcdef0123456789abcdef",
+        )
+    )
+
+    assert payload == {
+        "sheet": "SKU",
+        "row": 2,
+        "message": "该行数据冲突，未完成导入",
+        "code": "IMPORT_ROW_CONFLICT",
+        "reference_id": "imp_0123456789abcdef0123456789abcdef",
+    }
+
+
+@pytest.mark.anyio
+async def test_excel_import_audit_failure_is_not_swallowed(monkeypatch):
+    from app.api.v1 import imports
+
+    parsed = SimpleNamespace(errors=[], has_data=True)
+    sheet = SimpleNamespace(total=1, created=1, updated=0, errors=[])
+    report = SimpleNamespace(
+        total_created=4,
+        total_updated=0,
+        total_errors=0,
+        brands=sheet,
+        products=sheet,
+        skus=sheet,
+        batches=sheet,
+    )
+    service = MagicMock()
+    service.parse_and_validate = AsyncMock(return_value=parsed)
+    service.execute_import = AsyncMock(return_value=report)
+    monkeypatch.setattr(imports, "ExcelImportService", MagicMock(return_value=service))
+    monkeypatch.setattr(imports, "_read_upload", AsyncMock(return_value=b"workbook"))
+    monkeypatch.setattr(imports, "write_audit_log", AsyncMock(side_effect=RuntimeError("audit unavailable")))
+
+    with pytest.raises(RuntimeError, match="audit unavailable"):
+        await imports.import_excel(
+            file=MagicMock(),
+            db=AsyncMock(),
+            tenant_id=uuid.uuid4(),
+            account_id=uuid.uuid4(),
+            _role="admin",
+            _permission=None,
+        )
+
+
+@pytest.mark.anyio
+async def test_excel_import_uses_operation_uuid_audit_and_does_not_commit_in_route(monkeypatch):
+    from app.api.v1 import imports
+
+    parsed = SimpleNamespace(errors=[], has_data=True)
+    sheet = SimpleNamespace(total=1, created=1, updated=0, errors=[])
+    report = SimpleNamespace(
+        total_created=4,
+        total_updated=0,
+        total_errors=0,
+        brands=sheet,
+        products=sheet,
+        skus=sheet,
+        batches=sheet,
+    )
+    service = MagicMock()
+    service.parse_and_validate = AsyncMock(return_value=parsed)
+    service.execute_import = AsyncMock(return_value=report)
+    audit = AsyncMock()
+    db = AsyncMock()
+    monkeypatch.setattr(imports, "ExcelImportService", MagicMock(return_value=service))
+    monkeypatch.setattr(imports, "_read_upload", AsyncMock(return_value=b"workbook"))
+    monkeypatch.setattr(imports, "write_audit_log", audit)
+
+    await imports.import_excel(
+        file=MagicMock(),
+        db=db,
+        tenant_id=uuid.uuid4(),
+        account_id=uuid.uuid4(),
+        _role="admin",
+        _permission=None,
+    )
+
+    audit_args = audit.await_args.args
+    assert audit_args[3] == "catalog_import_completed"
+    assert audit_args[4].startswith("catalog_import:")
+    uuid.UUID(audit_args[4].removeprefix("catalog_import:"))
+    assert audit_args[5] == {"created": 4, "updated": 0, "errors": 0, "import_type": "excel"}
+    db.commit.assert_not_awaited()
+
+
+@pytest.mark.anyio
+async def test_product_csv_import_uses_strict_catalog_audit_shape(monkeypatch):
+    from app.api.v1 import imports
+
+    audit = AsyncMock()
+    db = AsyncMock()
+    monkeypatch.setattr(imports, "_read_upload", AsyncMock(return_value=b"product_name\n"))
+    monkeypatch.setattr(imports, "write_audit_log", audit)
+
+    await imports.import_products(
+        file=MagicMock(),
+        db=db,
+        tenant_id=uuid.uuid4(),
+        account_id=uuid.uuid4(),
+        _role="admin",
+        _permission=None,
+    )
+
+    audit_args = audit.await_args.args
+    assert audit_args[3] == "catalog_import_completed"
+    assert audit_args[4].startswith("catalog_import:")
+    uuid.UUID(audit_args[4].removeprefix("catalog_import:"))
+    assert audit_args[5] == {"created": 0, "updated": 0, "errors": 0, "import_type": "csv"}
+    db.commit.assert_not_awaited()
+
+
+@pytest.mark.anyio
+async def test_product_csv_import_audit_failure_is_not_swallowed(monkeypatch):
+    from app.api.v1 import imports
+
+    monkeypatch.setattr(imports, "_read_upload", AsyncMock(return_value=b"product_name\n"))
+    monkeypatch.setattr(imports, "write_audit_log", AsyncMock(side_effect=RuntimeError("audit unavailable")))
+
+    with pytest.raises(RuntimeError, match="audit unavailable"):
+        await imports.import_products(
+            file=MagicMock(),
+            db=AsyncMock(),
+            tenant_id=uuid.uuid4(),
+            account_id=uuid.uuid4(),
+            _role="admin",
+            _permission=None,
+        )
 
 
 @pytest.mark.anyio

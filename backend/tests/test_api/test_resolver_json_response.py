@@ -1,13 +1,16 @@
 """验证 resolver JSON 响应结构完整性"""
 
 import uuid
+from datetime import date, timedelta
 
 import pytest
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.main import app
+from app.models.product import ProductionBatch
 from app.models.tenant import Tenant
 from app.utils.security import create_access_token
 from tests.conftest import TestSessionLocal
@@ -124,6 +127,54 @@ async def traceability_setup(client: AsyncClient):
 
 
 class TestResolverJsonResponse:
+    @pytest.mark.anyio
+    async def test_recalled_production_batch_keeps_traceability_but_blocks_benefits(self, client, traceability_setup):
+        tenant_resp = await client.get("/api/v1/tenants", headers=_platform_admin_headers())
+        tenant_id = tenant_resp.json()["items"][0]["id"]
+        headers = {
+            "Authorization": f"Bearer {create_access_token(tenant_id, '00000000-0000-0000-0000-000000000001', 'admin')}"
+        }
+        batches = await client.get("/api/v1/production-batches", headers=headers)
+        batch_id = batches.json()["items"][0]["id"]
+        recalled = await client.post(
+            f"/api/v1/production-batches/{batch_id}/recall",
+            json={"reason": "检测结果异常", "confirm": "recall"},
+            headers=headers,
+        )
+        assert recalled.status_code == 200
+
+        response = await client.get(f"/c/{traceability_setup}", headers={"Accept": "application/json"})
+
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload.get("scan_token") is None
+        assert payload["code_data"]["batch"]["status"] == "recalled"
+        assert payload["code_data"]["batch"]["recall_reason"] == "检测结果异常"
+        assert payload["scan_info"]["paused_reason"] == "production_batch_recalled"
+        assert payload["scan_info"]["recall_warning"]["reason"] == "检测结果异常"
+        assert "campaign" not in payload
+
+    @pytest.mark.anyio
+    async def test_expired_production_batch_keeps_traceability_without_scan_token(
+        self, client, traceability_setup, db_session
+    ):
+        tenant_resp = await client.get("/api/v1/tenants", headers=_platform_admin_headers())
+        tenant_id = tenant_resp.json()["items"][0]["id"]
+        batch = (
+            await db_session.execute(select(ProductionBatch).where(ProductionBatch.tenant_id == uuid.UUID(tenant_id)))
+        ).scalar_one()
+        batch.expiry_date = date.today() - timedelta(days=1)
+        await db_session.flush()
+
+        response = await client.get(f"/c/{traceability_setup}", headers={"Accept": "application/json"})
+
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload.get("scan_token") is None
+        assert payload["code_data"]["batch"]["status"] == "expired"
+        assert payload["scan_info"]["paused_reason"] == "production_batch_expired"
+        assert "campaign" not in payload
+
     @pytest.mark.anyio
     async def test_brand_identity_update_invalidates_warm_public_product_cache(self, client, traceability_setup):
         first = await client.get(f"/c/{traceability_setup}", headers={"Accept": "application/json"})

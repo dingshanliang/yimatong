@@ -2,6 +2,7 @@
 
 import os
 import sys
+from datetime import date, timedelta
 from pathlib import Path
 
 import pytest
@@ -35,21 +36,25 @@ class TestCodeBatchModel:
     @pytest.mark.anyio
     async def test_create_code_batch(self):
         async with TestSession() as db:
+            tenant_id, product_id, sku_id = uuid(), uuid(), uuid()
+            production_batch = _production_batch(tenant_id, product_id, sku_id)
             batch = CodeBatch(
-                tenant_id=uuid(),
-                product_id=uuid(),
-                sku_id=uuid(),
+                tenant_id=tenant_id,
+                product_id=product_id,
+                sku_id=sku_id,
+                production_batch_id=production_batch.id,
                 batch_code="BATCH-001",
                 quantity=1000,
                 created_by=uuid(),
             )
-            db.add(batch)
+            db.add_all([production_batch, batch])
             await db.flush()
             await db.refresh(batch)
             assert batch.id is not None
             assert batch.batch_code == "BATCH-001"
             assert batch.quantity == 1000
             assert batch.status == "pending"
+            assert batch.production_batch_id == production_batch.id
 
     @pytest.mark.anyio
     async def test_code_batch_has_required_fields(self):
@@ -74,15 +79,18 @@ class TestCodeItemModel:
     @pytest.mark.anyio
     async def test_create_code_item(self):
         async with TestSession() as db:
+            tenant_id, product_id, sku_id = uuid(), uuid(), uuid()
+            production_batch = _production_batch(tenant_id, product_id, sku_id)
             batch = CodeBatch(
-                tenant_id=uuid(),
-                product_id=uuid(),
-                sku_id=uuid(),
+                tenant_id=tenant_id,
+                product_id=product_id,
+                sku_id=sku_id,
+                production_batch_id=production_batch.id,
                 batch_code="BATCH-002",
                 quantity=10,
                 created_by=uuid(),
             )
-            db.add(batch)
+            db.add_all([production_batch, batch])
             await db.flush()
 
             item = CodeItem(
@@ -96,6 +104,7 @@ class TestCodeItemModel:
             assert item.id is not None
             assert item.public_id == "ABC12345678"
             assert item.status == CodeItemStatus.created
+            assert batch.production_batch_id == production_batch.id
 
     @pytest.mark.anyio
     async def test_code_item_has_required_fields(self):
@@ -123,3 +132,16 @@ def uuid():
     from uuid6 import uuid7
 
     return uuid7()
+
+
+def _production_batch(tenant_id, product_id, sku_id):
+    batch_id = uuid()
+    return ProductionBatch(
+        id=batch_id,
+        tenant_id=tenant_id,
+        product_id=product_id,
+        sku_id=sku_id,
+        batch_code=f"PB-{batch_id.hex[:12]}",
+        production_date=date.today(),
+        expiry_date=date.today() + timedelta(days=365),
+    )

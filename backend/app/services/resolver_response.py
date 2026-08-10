@@ -19,6 +19,7 @@ from app.models.product import (
 )
 from app.models.risk import RiskAlert
 from app.models.tenant import Tenant
+from app.services.product import effective_production_batch_status
 from app.services.redis_cache import AsyncRedisCache
 from app.utils.public_url import normalize_public_url
 
@@ -241,12 +242,15 @@ async def build_json_response(
                 "production_date": str(prod_batch.production_date),
                 "expiry_date": str(prod_batch.expiry_date),
                 "origin": prod_batch.origin or "",
+                "status": effective_production_batch_status(prod_batch).value,
+                "recall_reason": prod_batch.recall_reason,
+                "recalled_at": prod_batch.recalled_at.isoformat() if prod_batch.recalled_at else None,
             }
             result["batch"] = batch_data  # 兼容顶层键
             result["code_data"]["batch"] = batch_data  # H5 契约位置
 
     # 查询当前产品可用活动，供 H5 展示权益与活动规则
-    if product_id:
+    if product_id and data.get("production_batch_status") == "active":
         campaign_result = await db.execute(
             select(Campaign)
             .where(

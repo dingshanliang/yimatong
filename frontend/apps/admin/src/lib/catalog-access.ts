@@ -9,12 +9,14 @@ export interface CatalogAccess {
   canRead: boolean;
   canWrite: boolean;
   canDelete: boolean;
+  canRecall: boolean;
 }
 
 const NO_CATALOG_ACCESS: CatalogAccess = {
   canRead: false,
   canWrite: false,
   canDelete: false,
+  canRecall: false,
 };
 
 export function catalogAccessForPrincipal(
@@ -40,5 +42,9 @@ export function catalogAccessForPrincipal(
     canRead: true,
     canWrite: true,
     canDelete: role === "admin",
+    canRecall:
+      role === "admin" &&
+      principal.tenant_type === "brand" &&
+      !principal.acting_tenant_id,
   };
 }

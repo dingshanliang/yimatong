@@ -192,7 +192,7 @@ function PreviewModule({
           codeData={{
             batch: {
               // 权威字段：缺失时传空串，由 TraceabilitySection 的明确空态接管（yimatong-zgb1.2）
-              origin: latestBatch?.origin || product?.origin || "",
+              origin: latestBatch?.origin || "",
               production_date: latestBatch?.production_date || "",
               expiry_date: latestBatch?.expiry_date || "",
               batch_code: latestBatch?.batch_code || "",

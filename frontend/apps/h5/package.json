@@ -6,7 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "test": "vitest run"
   },
   "dependencies": {
     "@headlessui/react": "^2.2.0",
@@ -32,8 +33,10 @@
     "eslint": "^9",
     "eslint-config-next": "16.2.6",
     "eslint-plugin-tailwindcss": "^4.2.0",
+    "jsdom": "^29.1.1",
     "lucide-react": "^1.28.0",
     "tailwindcss": "^4",
-    "typescript": "^5"
+    "typescript": "^5",
+    "vitest": "^4.1.8"
   }
 }

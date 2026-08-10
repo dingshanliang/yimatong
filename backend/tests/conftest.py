@@ -1,7 +1,7 @@
 import os
 import sys
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from pathlib import Path
 
 import pytest
@@ -253,10 +253,22 @@ async def launch_facts(db):
         end_at="2026-12-31T00:00:00Z",
         rules_json={},
     )
+    sku_id = uuid.uuid4()
+    production_batch = ProductionBatch(
+        tenant_id=tenant_id,
+        product_id=product_id,
+        sku_id=sku_id,
+        batch_code="PB-LAUNCH-001",
+        production_date=date(2026, 7, 1),
+        expiry_date=date(2027, 7, 1),
+    )
+    db.add(production_batch)
+    await db.flush()
     batch = CodeBatch(
         tenant_id=tenant_id,
         product_id=product_id,
-        sku_id=uuid.uuid4(),
+        sku_id=sku_id,
+        production_batch_id=production_batch.id,
         batch_code="LAUNCH-001",
         quantity=1,
         status=CodeBatchStatus.activated,

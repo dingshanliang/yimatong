@@ -13,7 +13,7 @@ request.state.permissions 里。因此每个测试用对应角色的 ApiKey：
 
 import hashlib
 import uuid
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 
 import pytest
 from fastapi import FastAPI
@@ -25,7 +25,7 @@ from app.middleware.tenant import TenantScopeMiddleware
 from app.models.campaign import Benefit, BenefitClaim, Campaign
 from app.models.member import ConsumerProfile
 from app.models.plan import TenantQuotaUsage
-from app.models.product import SKU, Brand, Product
+from app.models.product import SKU, Brand, Product, ProductionBatch
 from app.models.scan import ScanEvent
 from app.models.tenant import Tenant, TenantStatus, TenantType
 from app.models.webhook import ApiKey
@@ -524,10 +524,73 @@ async def test_open_api_compatibility_names_fail_closed_when_ambiguous(open_api_
                 "batch_code": "EXACT-BATCH",
                 "production_date": "2026-08-10",
                 "expiry_date": "2027-08-10",
+                "origin": "黑龙江省五常市",
+                "external_id": "ERP-BATCH-001",
             },
             headers=headers,
         )
         assert exact_sku.status_code == 201
+        assert exact_sku.json()["product_id"] == str(first_sku.product_id)
+        assert exact_sku.json()["sku_id"] == str(first_sku.id)
+        assert exact_sku.json()["origin"] == "黑龙江省五常市"
+
+        updated_origin = await client.post(
+            "/open/v1/batches",
+            json={
+                "sku_id": str(first_sku.id),
+                "batch_code": "EXACT-BATCH",
+                "production_date": "2026-08-10",
+                "expiry_date": "2027-08-10",
+                "origin": "黑龙江省哈尔滨市五常市",
+                "external_id": "ERP-BATCH-001",
+            },
+            headers=headers,
+        )
+        assert updated_origin.status_code == 201
+        assert updated_origin.json()["action"] == "updated"
+        assert updated_origin.json()["origin"] == "黑龙江省哈尔滨市五常市"
+
+        mismatched_upsert = await client.post(
+            "/open/v1/batches",
+            json={
+                "sku_id": str(second_sku.id),
+                "batch_code": "MUST-NOT-RETARGET",
+                "production_date": "2026-08-11",
+                "expiry_date": "2027-08-11",
+                "external_id": "ERP-BATCH-001",
+            },
+            headers=headers,
+        )
+        assert mismatched_upsert.status_code == 409
+        assert mismatched_upsert.json()["detail"]["authoritative_product_id"] == str(first_sku.product_id)
+        assert mismatched_upsert.json()["detail"]["authoritative_sku_id"] == str(first_sku.id)
+
+        async with TestSessionLocal() as db:
+            persisted = await db.scalar(
+                select(ProductionBatch).where(
+                    ProductionBatch.tenant_id == ids["tenant_id"],
+                    ProductionBatch.external_id == "ERP-BATCH-001",
+                )
+            )
+            assert persisted.origin == "黑龙江省哈尔滨市五常市"
+            persisted.production_date = date.today() - timedelta(days=2)
+            persisted.expiry_date = date.today() - timedelta(days=1)
+            await db.commit()
+
+        immutable = await client.post(
+            "/open/v1/batches",
+            json={
+                "sku_id": str(first_sku.id),
+                "batch_code": "MUST-STAY-IMMUTABLE",
+                "production_date": "2026-08-12",
+                "expiry_date": "2027-08-12",
+                "external_id": "ERP-BATCH-001",
+            },
+            headers=headers,
+        )
+        assert immutable.status_code == 409
+        assert immutable.json()["detail"]["code"] == "production_batch_not_active"
+        assert immutable.json()["detail"]["status"] == "expired"
 
 
 @pytest.mark.anyio

@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import _session_uses_postgresql, get_db, lock_active_tenant_context, set_session_tenant_context
 from app.middleware.rate_limit import rate_limiter
 from app.models.code import CodeItem, CodeItemStatus, CodeType, to_lifecycle
+from app.models.product import BatchStatus
 from app.models.scan import ScanEvent
 from app.services.page_render import render_page
 from app.services.page_templates import (
@@ -93,7 +94,15 @@ async def resolve_code_endpoint(
     except TenantPlanExpiredError:
         return _plan_expired(want_json)
 
+    # Cache is only a locator/fast path. Security and lifecycle decisions are
+    # rebuilt from tenant-scoped live rows after the tenant lock.
+    data = await resolve_public_code(db, public_id)
+    if not data or data.get("tenant_id") != str(tenant_uuid):
+        return _not_found(want_json)
+
     status = data["status"]
+    production_batch_status = data.get("production_batch_status")
+    production_batch_blocked = production_batch_status != BatchStatus.active
 
     # 4. 终止性状态（revoked/created/expired）— 不颁发 token、不返回溯源
     if status in _TERMINAL_STATUSES:
@@ -120,7 +129,9 @@ async def resolve_code_endpoint(
     visitor_id = visitor.visitor_id
     # yimatong-zgb1.10 Decision 20：有效访问判断（4 条规则）
     is_robot = _is_robot_traffic(user_agent, request)
-    is_valid_visit = status in (CodeItemStatus.activated, CodeItemStatus.frozen) and not is_robot
+    is_valid_visit = (
+        status in (CodeItemStatus.activated, CodeItemStatus.frozen) and not production_batch_blocked and not is_robot
+    )
     # frozen 仍记录扫码事实（消费者查看了溯源），但不颁发 scan_token
     try:
         scan_info = await _record_scan(
@@ -140,16 +151,26 @@ async def resolve_code_endpoint(
 
     # 7. 生成 scan_token（含 tenant_id）— frozen 不颁发（权益暂停，AC3）
     scan_token = None
-    if not is_frozen:
+    if not is_frozen and not production_batch_blocked:
         scan_token = create_scan_token(
             public_id=public_id,
             ip_hash=ip_hash,
             tenant_id=data["tenant_id"],
         )
-    else:
+    elif is_frozen:
         # frozen：标记权益暂停（H5 据此隐藏领取入口）
         scan_info["benefit_paused"] = True
         scan_info["paused_reason"] = "frozen"
+    if production_batch_status == BatchStatus.recalled:
+        scan_info["benefit_paused"] = True
+        scan_info["paused_reason"] = "production_batch_recalled"
+        scan_info["recall_warning"] = {
+            "reason": data.get("production_batch_recall_reason"),
+            "recalled_at": data.get("production_batch_recalled_at"),
+        }
+    elif production_batch_status == BatchStatus.expired:
+        scan_info["benefit_paused"] = True
+        scan_info["paused_reason"] = "production_batch_expired"
 
     # 8. JSON 模式
     if want_json:

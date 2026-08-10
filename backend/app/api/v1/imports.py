@@ -1,22 +1,33 @@
 """批量导入端点：产品导入 + 既有码接管 + Excel 多 Sheet 导入"""
 
 import csv
+import hashlib
+import hmac
 import io
 import logging
 import uuid
+from collections.abc import AsyncGenerator
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
-from sqlalchemy.exc import IntegrityError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
+from uuid6 import uuid7
 
+from app.core.config import settings
 from app.core.database import get_db
 from app.core.dependencies import get_current_account_id, get_current_tenant
 from app.core.exceptions import AppException
-from app.models.code import CodeItem, CodeItemStatus
-from app.models.product import SKU, Brand, Product
-from app.services.import_service import ExcelImportService
+from app.models.code import CodeBatch, CodeBatchStatus, CodeItem, CodeItemStatus
+from app.models.product import SKU, Brand, Product, ProductionBatch
+from app.services.audit import write_audit_log
+from app.services.import_service import ExcelImportService, XLSXParseLease
+from app.services.product import is_production_batch_effectively_active
+from app.services.public_id import validate_public_id
 from app.services.quota import CumulativeQuotaKey, reserve_quota
+from app.services.redis_cache import AsyncRedisCache, SharedSecurityCacheUnavailable
+from app.utils.auth_rbac import require_permission, require_role
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +35,115 @@ import_router = APIRouter(prefix="/api/v1/imports", tags=["imports"])
 
 # 最大文件大小：10 MB
 MAX_EXCEL_SIZE = 10 * 1024 * 1024
+MAX_CSV_SIZE = 5 * 1024 * 1024
+MAX_CSV_ROWS = 10_000
+MAX_IMPORT_ERRORS = 100
+IMPORT_RATE_LIMIT_MAX_ATTEMPTS = 10
+IMPORT_RATE_LIMIT_WINDOW_SECONDS = 60
+
+_import_rate_cache = AsyncRedisCache(prefix="import_security", default_ttl=IMPORT_RATE_LIMIT_WINDOW_SECONDS)
+
+
+async def _enforce_import_rate_limit(
+    tenant_id: uuid.UUID = Depends(get_current_tenant),
+    account_id: uuid.UUID = Depends(get_current_account_id),
+) -> None:
+    secret = (settings.hmac_pepper or settings.secret_key).encode()
+    digest = hmac.new(secret, f"{tenant_id}:{account_id}".encode(), hashlib.sha256).hexdigest()
+    try:
+        allowed, _ = await _import_rate_cache.rate_limit_check_shared(
+            f"principal:{digest}",
+            IMPORT_RATE_LIMIT_MAX_ATTEMPTS,
+            IMPORT_RATE_LIMIT_WINDOW_SECONDS,
+        )
+    except SharedSecurityCacheUnavailable as exc:
+        raise HTTPException(status_code=503, detail="Import service is temporarily unavailable") from exc
+    if not allowed:
+        raise HTTPException(
+            status_code=429,
+            detail="Too many import requests",
+            headers={"Retry-After": str(IMPORT_RATE_LIMIT_WINDOW_SECONDS)},
+        )
+
+
+async def _reserve_excel_parse_capacity(
+    tenant_id: uuid.UUID = Depends(get_current_tenant),
+    _rate_limit: None = Depends(_enforce_import_rate_limit),
+) -> AsyncGenerator[XLSXParseLease, None]:
+    service = ExcelImportService()
+    lease = service.reserve_parse_capacity(tenant_id)
+    if lease is None:
+        raise HTTPException(status_code=503, detail="Excel import capacity is temporarily full")
+    try:
+        yield lease
+    finally:
+        lease.release()
+
+
+async def _read_upload(file: UploadFile, *, max_size: int, suffixes: tuple[str, ...], content_types: set[str]) -> bytes:
+    filename = (file.filename or "").lower()
+    if not filename.endswith(suffixes) or file.content_type not in content_types:
+        raise HTTPException(status_code=415, detail="Unsupported import file type")
+    content = await file.read(max_size + 1)
+    if len(content) > max_size:
+        raise HTTPException(status_code=413, detail="Import file is too large")
+    return content
+
+
+def _decode_csv(content: bytes) -> str:
+    try:
+        return content.decode("utf-8-sig")
+    except UnicodeDecodeError as exc:
+        raise HTTPException(status_code=400, detail="CSV file must be UTF-8 encoded") from exc
+
+
+def _row_error_payload(error) -> dict:
+    payload = {"sheet": error.sheet, "row": error.row, "message": error.message}
+    if error.code is not None:
+        payload["code"] = error.code
+    if error.reference_id is not None:
+        payload["reference_id"] = error.reference_id
+    return payload
+
+
+class ProductCSVRow(BaseModel):
+    brand_name: str = Field(min_length=1, max_length=100)
+    product_name: str = Field(min_length=1, max_length=200)
+    category: str | None = Field(default=None, max_length=100)
+    description: str | None = Field(default=None, max_length=1000)
+    sku_code: str | None = Field(default=None, min_length=1, max_length=100)
+    sku_name: str | None = Field(default=None, min_length=1, max_length=200)
+
+    model_config = ConfigDict(extra="forbid", strict=True, str_strip_whitespace=True)
+
+    @field_validator("category", "description", "sku_code", "sku_name", mode="before")
+    @classmethod
+    def empty_optional_field_to_none(cls, value: object) -> object:
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
+
+
+def _product_csv_row_error(
+    row: int,
+    *,
+    code: str,
+    message: str,
+    exception_type: str,
+) -> dict[str, object]:
+    reference_id = f"imp_{uuid.uuid4().hex}"
+    logger.warning(
+        "Product CSV row rejected row=%d error_code=%s exception_type=%s reference_id=%s",
+        row,
+        code,
+        exception_type,
+        reference_id,
+    )
+    return {
+        "code": code,
+        "message": message,
+        "reference_id": reference_id,
+    }
 
 
 @import_router.get("/template")
@@ -43,27 +163,39 @@ async def download_import_template():
 @import_router.post("/excel")
 async def import_excel(
     file: UploadFile = File(...),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
     account_id: uuid.UUID = Depends(get_current_account_id),
+    _role: str = Depends(require_role("admin", "operator")),
+    _permission: None = Depends(require_permission("product:create")),
+    _capacity_lease: XLSXParseLease = Depends(_reserve_excel_parse_capacity, scope="function"),
 ):
     """上传 Excel 文件进行多 Sheet 导入（品牌 → 产品 → SKU → 批次）"""
     # 校验文件类型
-    filename = file.filename or ""
-    if not (filename.endswith(".xlsx") or filename.endswith(".xls")):
-        raise HTTPException(status_code=400, detail="仅支持 .xlsx 或 .xls 格式的 Excel 文件")
-
-    content = await file.read()
-    if len(content) > MAX_EXCEL_SIZE:
-        raise HTTPException(status_code=400, detail="文件大小不能超过 10MB")
+    content = await _read_upload(
+        file,
+        max_size=MAX_EXCEL_SIZE,
+        suffixes=(".xlsx",),
+        content_types={
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        },
+    )
 
     service = ExcelImportService()
 
     # 解析与校验
-    parsed = await service.parse_and_validate(content, tenant_id)
+    if isinstance(_capacity_lease, XLSXParseLease):
+        try:
+            parsed = await service.parse_and_validate(content, tenant_id, capacity_lease=_capacity_lease)
+        finally:
+            _capacity_lease.release()
+    else:
+        # Preserve direct service-call tests; registered HTTP routes always
+        # receive a validated lease from the dependency above.
+        parsed = await service.parse_and_validate(content, tenant_id)
     if parsed.errors:
         # 存在文件级解析错误时直接返回
-        parse_errors = [{"sheet": e.sheet, "row": e.row, "message": e.message} for e in parsed.errors]
+        parse_errors = [_row_error_payload(error) for error in parsed.errors]
         return {
             "success": False,
             "message": "文件解析失败",
@@ -82,18 +214,30 @@ async def import_excel(
 
     # 执行导入
     report = await service.execute_import(parsed, tenant_id, db, account_id)
-    await db.commit()
+    await write_audit_log(
+        db,
+        str(account_id),
+        str(tenant_id),
+        "catalog_import_completed",
+        f"catalog_import:{uuid7()}",
+        {
+            "created": report.total_created,
+            "updated": report.total_updated,
+            "errors": report.total_errors,
+            "import_type": "excel",
+        },
+    )
 
     # 构建错误信息
     all_errors = []
     for err in report.brands.errors:
-        all_errors.append({"sheet": err.sheet, "row": err.row, "message": err.message})
+        all_errors.append(_row_error_payload(err))
     for err in report.products.errors:
-        all_errors.append({"sheet": err.sheet, "row": err.row, "message": err.message})
+        all_errors.append(_row_error_payload(err))
     for err in report.skus.errors:
-        all_errors.append({"sheet": err.sheet, "row": err.row, "message": err.message})
+        all_errors.append(_row_error_payload(err))
     for err in report.batches.errors:
-        all_errors.append({"sheet": err.sheet, "row": err.row, "message": err.message})
+        all_errors.append(_row_error_payload(err))
 
     return {
         "success": report.total_errors == 0,
@@ -133,24 +277,55 @@ async def import_excel(
 @import_router.post("/products")
 async def import_products(
     file: UploadFile = File(...),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
     account_id: uuid.UUID = Depends(get_current_account_id),
+    _role: str = Depends(require_role("admin", "operator")),
+    _permission: None = Depends(require_permission("product:create")),
+    _rate_limit: None = Depends(_enforce_import_rate_limit),
 ):
     """CSV 批量导入产品"""
-    content = await file.read()
-    text = content.decode("utf-8-sig")
+    content = await _read_upload(
+        file,
+        max_size=MAX_CSV_SIZE,
+        suffixes=(".csv",),
+        content_types={"text/csv", "application/csv", "application/vnd.ms-excel"},
+    )
+    text = _decode_csv(content)
     reader = csv.DictReader(io.StringIO(text))
 
     imported = 0
-    errors = []
-    for row in reader:
+    failed = 0
+    errors: list[dict[str, object]] = []
+    for row_num, row in enumerate(reader, start=2):
+        if row_num > MAX_CSV_ROWS + 1:
+            failed += 1
+            if len(errors) < MAX_IMPORT_ERRORS:
+                errors.append(
+                    _product_csv_row_error(
+                        row_num,
+                        code="IMPORT_ROW_LIMIT_EXCEEDED",
+                        message="商品导入行数超过限制",
+                        exception_type="RowLimitExceeded",
+                    )
+                )
+            break
         try:
-            brand_name = row.get("brand_name", "").strip()
-            product_name = row.get("product_name", "").strip()
-            if not product_name:
-                continue
+            parsed_row = ProductCSVRow.model_validate(row)
+        except ValidationError as exc:
+            failed += 1
+            if len(errors) < MAX_IMPORT_ERRORS:
+                errors.append(
+                    _product_csv_row_error(
+                        row_num,
+                        code="IMPORT_ROW_INVALID",
+                        message="该行商品数据无效",
+                        exception_type=type(exc).__name__,
+                    )
+                )
+            continue
 
+        try:
             async with db.begin_nested():
                 # 查找或创建品牌
                 from sqlalchemy import select
@@ -158,43 +333,70 @@ async def import_products(
                 result = await db.execute(
                     select(Brand).where(
                         Brand.tenant_id == tenant_id,
-                        Brand.name == brand_name,
+                        Brand.name == parsed_row.brand_name,
                     )
                 )
                 brand = result.scalar_one_or_none()
-                if not brand and brand_name:
-                    brand = Brand(tenant_id=tenant_id, name=brand_name)
+                if not brand:
+                    brand = Brand(tenant_id=tenant_id, name=parsed_row.brand_name)
                     db.add(brand)
                     await db.flush()
 
                 await reserve_quota(db, tenant_id, CumulativeQuotaKey.MAX_PRODUCTS)
                 product = Product(
                     tenant_id=tenant_id,
-                    brand_id=brand.id if brand else None,
-                    name=product_name,
-                    category=row.get("category", ""),
-                    description=row.get("description", ""),
+                    brand_id=brand.id,
+                    name=parsed_row.product_name,
+                    category=parsed_row.category,
+                    description=parsed_row.description,
                 )
                 db.add(product)
                 await db.flush()
 
                 # 创建 SKU
-                sku_code = row.get("sku_code", f"SKU-{product.id.hex[:8]}")
+                sku_code = parsed_row.sku_code or f"SKU-{product.id.hex[:8]}"
                 sku = SKU(
                     tenant_id=tenant_id,
                     product_id=product.id,
                     code=sku_code,
-                    name=row.get("sku_name", "默认规格"),
+                    name=parsed_row.sku_name or "默认规格",
                 )
                 db.add(sku)
                 await db.flush()
             imported += 1
         except AppException:
             raise
-        except Exception as e:
-            errors.append({"row": row, "error": str(e)})
+        except SQLAlchemyError as exc:
+            failed += 1
+            if len(errors) < MAX_IMPORT_ERRORS:
+                errors.append(
+                    _product_csv_row_error(
+                        row_num,
+                        code="IMPORT_ROW_FAILED",
+                        message="该行商品导入失败",
+                        exception_type=type(exc).__name__,
+                    )
+                )
+        except Exception as exc:
+            failed += 1
+            if len(errors) < MAX_IMPORT_ERRORS:
+                errors.append(
+                    _product_csv_row_error(
+                        row_num,
+                        code="IMPORT_ROW_FAILED",
+                        message="该行商品导入失败",
+                        exception_type=type(exc).__name__,
+                    )
+                )
 
-    await db.commit()
+    await write_audit_log(
+        db,
+        str(account_id),
+        str(tenant_id),
+        "catalog_import_completed",
+        f"catalog_import:{uuid7()}",
+        {"created": imported, "updated": 0, "errors": failed, "import_type": "csv"},
+    )
     return {"imported": imported, "errors": errors}
 
 
@@ -202,31 +404,69 @@ async def import_products(
 async def import_existing_codes(
     file: UploadFile = File(...),
     code_batch_id: uuid.UUID = None,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
     account_id: uuid.UUID = Depends(get_current_account_id),
+    _role: str = Depends(require_role("admin", "operator")),
+    _permission: None = Depends(require_permission("code:generate")),
+    _rate_limit: None = Depends(_enforce_import_rate_limit),
 ):
     """CSV 导入既有码（接管已有印刷码），幂等保护"""
     from sqlalchemy import select
 
-    from app.models.code import CodeBatch
     from app.schemas.code import ExistingCodeImportResponse
 
     if not code_batch_id:
         raise HTTPException(status_code=400, detail="code_batch_id is required")
 
-    result = await db.execute(
-        select(CodeBatch).where(
+    production_batch_id = await db.scalar(
+        select(CodeBatch.production_batch_id).where(
             CodeBatch.id == code_batch_id,
             CodeBatch.tenant_id == tenant_id,
         )
     )
-    batch = result.scalar_one_or_none()
-    if not batch:
+    if production_batch_id is None:
         raise HTTPException(status_code=404, detail="Code batch not found")
 
-    content = await file.read()
-    text = content.decode("utf-8-sig")
+    production_batch = await db.scalar(
+        select(ProductionBatch)
+        .where(
+            ProductionBatch.id == production_batch_id,
+            ProductionBatch.tenant_id == tenant_id,
+        )
+        .with_for_update()
+    )
+    if production_batch is None:
+        raise HTTPException(status_code=409, detail="Code batch production batch is unavailable")
+
+    batch = await db.scalar(
+        select(CodeBatch)
+        .where(
+            CodeBatch.id == code_batch_id,
+            CodeBatch.tenant_id == tenant_id,
+        )
+        .with_for_update()
+    )
+    if batch is None:
+        raise HTTPException(status_code=404, detail="Code batch not found")
+    if (
+        batch.production_batch_id != production_batch.id
+        or batch.product_id != production_batch.product_id
+        or batch.sku_id != production_batch.sku_id
+    ):
+        raise HTTPException(status_code=409, detail="Code batch production batch association changed")
+    if batch.status != CodeBatchStatus.completed:
+        raise HTTPException(status_code=409, detail="Code batch is not open for existing-code import")
+    if not is_production_batch_effectively_active(production_batch):
+        raise HTTPException(status_code=409, detail="Production batch is not active")
+
+    content = await _read_upload(
+        file,
+        max_size=MAX_CSV_SIZE,
+        suffixes=(".csv",),
+        content_types={"text/csv", "application/csv", "application/vnd.ms-excel"},
+    )
+    text = _decode_csv(content)
     reader = csv.DictReader(io.StringIO(text))
 
     imported = 0
@@ -236,19 +476,27 @@ async def import_existing_codes(
     errors: list[dict] = []
 
     for row_num, row in enumerate(reader, start=2):
+        if row_num > MAX_CSV_ROWS + 1:
+            if len(errors) < MAX_IMPORT_ERRORS:
+                errors.append({"row": row_num, "message": "row limit exceeded"})
+            failed += 1
+            break
         total += 1
         public_id = row.get("public_id", "").strip()
-        if not public_id:
+        if not public_id or not validate_public_id(public_id):
             failed += 1
-            errors.append({"row": row_num, "message": "public_id 为空"})
+            if len(errors) < MAX_IMPORT_ERRORS:
+                errors.append({"row": row_num, "message": "invalid public_id"})
             continue
 
         try:
             existing = await db.execute(
-                select(CodeItem.id).where(
+                select(CodeItem.id)
+                .where(
                     CodeItem.public_id == public_id,
                     CodeItem.tenant_id == tenant_id,
                 )
+                .with_for_update()
             )
             if existing.scalar_one_or_none() is not None:
                 skipped += 1
@@ -272,11 +520,19 @@ async def import_existing_codes(
             skipped += 1
         except AppException:
             raise
-        except Exception as e:
+        except (KeyError, TypeError, ValueError):
             failed += 1
-            errors.append({"row": row_num, "public_id": public_id, "message": str(e)})
+            if len(errors) < MAX_IMPORT_ERRORS:
+                errors.append({"row": row_num, "message": "invalid code data"})
 
-    await db.commit()
+    await write_audit_log(
+        db,
+        str(account_id),
+        str(tenant_id),
+        "code_import_completed",
+        f"code_batch:{code_batch_id}",
+        {"created": imported, "skipped": skipped, "errors": failed},
+    )
     return ExistingCodeImportResponse(
         imported=imported,
         skipped=skipped,

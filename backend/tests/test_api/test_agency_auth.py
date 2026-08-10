@@ -3,12 +3,13 @@
 import uuid
 from collections.abc import AsyncGenerator
 from datetime import UTC, datetime, timedelta
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.v1 import imports as imports_api
 from app.core.database import get_db, get_db_for_agency_authorization_transition
 from app.main import app
 from app.models.auth_security import AuthSession
@@ -246,6 +247,35 @@ class TestCreateAuthorization:
 
         assert response.status_code == 403
         assert response.json()["detail"] == "代运营服务商必须先进入已授权的客户工作区才能修改品牌数据"
+
+    @pytest.mark.anyio
+    @pytest.mark.parametrize(
+        "path",
+        [
+            "/api/v1/imports/excel",
+            "/api/v1/imports/products",
+            "/api/v1/imports/existing-codes",
+        ],
+    )
+    async def test_non_acting_agency_import_is_denied_before_upload_read_or_audit(
+        self, client: AsyncClient, agency_headers, monkeypatch, path
+    ):
+        read_upload = AsyncMock(side_effect=AssertionError("denied agency import must not read upload"))
+        audit = AsyncMock(side_effect=AssertionError("denied agency import must not write audit"))
+        monkeypatch.setattr(imports_api, "_read_upload", read_upload)
+        monkeypatch.setattr(imports_api, "write_audit_log", audit)
+
+        response = await client.post(
+            path,
+            params={"code_batch_id": str(uuid.uuid4())},
+            files={"file": ("import.csv", b"sensitive", "text/csv")},
+            headers=agency_headers,
+        )
+
+        assert response.status_code == 403
+        assert response.json()["detail"] == "代运营服务商必须先进入已授权的客户工作区才能修改品牌数据"
+        read_upload.assert_not_awaited()
+        audit.assert_not_awaited()
 
     @pytest.mark.anyio
     async def test_brand_authorize_agency(self, client: AsyncClient, brand_tenant, agency_tenant, brand_headers):
@@ -580,6 +610,151 @@ class TestGetAuthorizedClientIds:
 
 
 class TestAgencyContextTokenVersion:
+    @pytest.mark.anyio
+    @pytest.mark.parametrize(("scope", "expected_status"), [("products", 200), ("codes", 403)])
+    async def test_acting_agency_import_template_requires_products_scope(
+        self,
+        client: AsyncClient,
+        db_session: AsyncSession,
+        brand_tenant,
+        agency_tenant,
+        scope,
+        expected_status,
+    ):
+        brand, _ = brand_tenant
+        agency, agency_account = agency_tenant
+        db_session.add(
+            AgencyAuthorization(
+                agency_tenant_id=agency.id,
+                client_tenant_id=brand.id,
+                scope=[scope],
+                status=AgencyAuthStatus.active,
+            )
+        )
+        await db_session.flush()
+        await _grant_fixed_role(db_session, agency_account, "admin")
+        token = await _durable_access_token(db_session, agency, agency_account, "admin")
+        switched = await client.post(
+            "/api/v1/agency/switch-context",
+            json={"client_tenant_id": str(brand.id)},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert switched.status_code == 200
+
+        with patch("app.core.database.async_session_factory", TestSessionLocal):
+            response = await client.get(
+                "/api/v1/imports/template",
+                headers={"Authorization": f"Bearer {switched.json()['access_token']}"},
+            )
+
+        assert response.status_code == expected_status
+        if expected_status == 403:
+            assert response.json()["detail"] == "当前代运营授权不允许访问该功能"
+
+    @pytest.mark.anyio
+    @pytest.mark.parametrize(
+        "path",
+        [
+            "/api/v1/imports/excel",
+            "/api/v1/imports/products",
+            "/api/v1/imports/existing-codes",
+        ],
+    )
+    async def test_acting_agency_wrong_scope_import_is_denied_before_upload_read_or_audit(
+        self,
+        client: AsyncClient,
+        db_session: AsyncSession,
+        brand_tenant,
+        agency_tenant,
+        monkeypatch,
+        path,
+    ):
+        brand, _ = brand_tenant
+        agency, agency_account = agency_tenant
+        db_session.add(
+            AgencyAuthorization(
+                agency_tenant_id=agency.id,
+                client_tenant_id=brand.id,
+                scope=["pages"],
+                status=AgencyAuthStatus.active,
+            )
+        )
+        await db_session.flush()
+        await _grant_fixed_role(db_session, agency_account, "admin")
+        token = await _durable_access_token(db_session, agency, agency_account, "admin")
+        switched = await client.post(
+            "/api/v1/agency/switch-context",
+            json={"client_tenant_id": str(brand.id)},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert switched.status_code == 200
+        acting_headers = {"Authorization": f"Bearer {switched.json()['access_token']}"}
+        read_upload = AsyncMock(side_effect=AssertionError("wrong-scope import must not read upload"))
+        audit = AsyncMock(side_effect=AssertionError("wrong-scope import must not write audit"))
+        monkeypatch.setattr(imports_api, "_read_upload", read_upload)
+        monkeypatch.setattr(imports_api, "write_audit_log", audit)
+
+        with patch("app.core.database.async_session_factory", TestSessionLocal):
+            response = await client.post(
+                path,
+                params={"code_batch_id": str(uuid.uuid4())},
+                files={"file": ("import.csv", b"sensitive", "text/csv")},
+                headers=acting_headers,
+            )
+
+        assert response.status_code == 403
+        assert response.json()["detail"] == "当前代运营授权不允许访问该功能"
+        read_upload.assert_not_awaited()
+        audit.assert_not_awaited()
+
+    @pytest.mark.anyio
+    async def test_revoked_acting_grant_blocks_import_before_upload_read_or_audit(
+        self,
+        client: AsyncClient,
+        db_session: AsyncSession,
+        brand_tenant,
+        agency_tenant,
+        monkeypatch,
+    ):
+        brand, _ = brand_tenant
+        agency, agency_account = agency_tenant
+        authorization = AgencyAuthorization(
+            agency_tenant_id=agency.id,
+            client_tenant_id=brand.id,
+            scope=["products"],
+            status=AgencyAuthStatus.active,
+        )
+        db_session.add(authorization)
+        await db_session.flush()
+        await _grant_fixed_role(db_session, agency_account, "admin")
+        token = await _durable_access_token(db_session, agency, agency_account, "admin")
+        switched = await client.post(
+            "/api/v1/agency/switch-context",
+            json={"client_tenant_id": str(brand.id)},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert switched.status_code == 200
+        authorization.status = AgencyAuthStatus.revoked
+        authorization.revoked_at = datetime.now(UTC)
+        await db_session.commit()
+        acting_headers = {"Authorization": f"Bearer {switched.json()['access_token']}"}
+        read_upload = AsyncMock(side_effect=AssertionError("revoked grant import must not read upload"))
+        audit = AsyncMock(side_effect=AssertionError("revoked grant import must not write audit"))
+        monkeypatch.setattr(imports_api, "_read_upload", read_upload)
+        monkeypatch.setattr(imports_api, "write_audit_log", audit)
+
+        with patch("app.core.database.async_session_factory", TestSessionLocal):
+            response = await client.post(
+                "/api/v1/imports/products",
+                files={"file": ("products.csv", b"sensitive", "text/csv")},
+                headers=acting_headers,
+            )
+
+        assert response.status_code == 403
+        assert response.json()["detail"] == "代运营授权已失效"
+        read_upload.assert_not_awaited()
+        audit.assert_not_awaited()
+
     @pytest.mark.anyio
     async def test_campaign_scope_reads_wecom_state_without_decrypting_callback_credentials(
         self, client: AsyncClient, db_session: AsyncSession, brand_tenant, agency_tenant

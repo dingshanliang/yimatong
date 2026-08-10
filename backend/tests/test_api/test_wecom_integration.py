@@ -161,6 +161,55 @@ async def create_product(client: AsyncClient, headers: dict[str, str]) -> str:
     return product.json()["id"]
 
 
+async def create_live_scan_token(
+    client: AsyncClient,
+    headers: dict[str, str],
+    tenant_id: str,
+    product_id: str,
+    label: str,
+) -> str:
+    sku = await client.post(
+        "/api/v1/skus",
+        json={"product_id": product_id, "code": f"WECOM-{label}", "name": f"企微规格-{label}"},
+        headers=headers,
+    )
+    assert sku.status_code == 201
+    today = datetime.now(UTC).date()
+    production_batch = await client.post(
+        "/api/v1/production-batches",
+        json={
+            "product_id": product_id,
+            "sku_id": sku.json()["id"],
+            "batch_code": f"WECOM-PB-{label}",
+            "production_date": str(today),
+            "expiry_date": str(today + timedelta(days=365)),
+        },
+        headers=headers,
+    )
+    assert production_batch.status_code == 201
+    code_batch = await client.post(
+        "/api/v1/code-batches",
+        json={
+            "product_id": product_id,
+            "sku_id": sku.json()["id"],
+            "production_batch_id": production_batch.json()["id"],
+            "batch_code": f"WECOM-CB-{label}",
+            "quantity": 1,
+        },
+        headers=headers,
+    )
+    assert code_batch.status_code == 201
+    activated = await client.post(f"/api/v1/code-batches/{code_batch.json()['id']}/activate", headers=headers)
+    assert activated.status_code == 200
+    items = await client.get(
+        "/api/v1/code-items",
+        params={"code_batch_id": code_batch.json()["id"]},
+        headers=headers,
+    )
+    assert items.status_code == 200
+    return _scan_token(tenant_id, items.json()["items"][0]["public_id"])
+
+
 @pytest.mark.anyio
 async def test_wecom_required_claim_rejects_public_and_mock_confirmation(client: AsyncClient, auth_setup, monkeypatch):
     tenant_id, headers = auth_setup
@@ -188,14 +237,15 @@ async def test_wecom_required_claim_rejects_public_and_mock_confirmation(client:
     )
     assert forged_callback.status_code == 400
 
+    now = datetime.now(UTC)
     campaign = await client.post(
         "/api/v1/campaigns",
         json={
             "name": "加企微后领取",
             "campaign_type": "coupon",
             "product_id": product_id,
-            "start_at": "2026-06-01T00:00:00",
-            "end_at": "2026-06-30T23:59:59",
+            "start_at": (now - timedelta(days=1)).isoformat(),
+            "end_at": (now + timedelta(days=30)).isoformat(),
             "rules_json": {**RULES_JSON, "wecom_mode": "required"},
         },
         headers=headers,
@@ -212,7 +262,7 @@ async def test_wecom_required_claim_rejects_public_and_mock_confirmation(client:
         headers=headers,
     )
     benefit_id = benefit.json()["id"]
-    scan_token = _scan_token(tenant_id, "PUBLIC12345")
+    scan_token = await create_live_scan_token(client, headers, tenant_id, product_id, "REQUIRED")
 
     blocked = await client.post(
         "/api/v1/benefit-claims",
@@ -260,14 +310,15 @@ async def test_wecom_required_claim_rejects_public_and_mock_confirmation(client:
 async def test_wecom_guide_mode_does_not_block_claim(client: AsyncClient, auth_setup):
     tenant_id, headers = auth_setup
     product_id = await create_product(client, headers)
+    now = datetime.now(UTC)
     campaign = await client.post(
         "/api/v1/campaigns",
         json={
             "name": "引导添加企微",
             "campaign_type": "coupon",
             "product_id": product_id,
-            "start_at": "2026-06-01T00:00:00",
-            "end_at": "2026-06-30T23:59:59",
+            "start_at": (now - timedelta(days=1)).isoformat(),
+            "end_at": (now + timedelta(days=30)).isoformat(),
             "rules_json": {**RULES_JSON, "wecom_mode": "guide"},
         },
         headers=headers,
@@ -282,9 +333,10 @@ async def test_wecom_guide_mode_does_not_block_claim(client: AsyncClient, auth_s
         },
         headers=headers,
     )
+    scan_token = await create_live_scan_token(client, headers, tenant_id, product_id, "GUIDE")
     claimed = await client.post(
         "/api/v1/benefit-claims",
-        json={"benefit_id": benefit.json()["id"], "scan_token": _scan_token(tenant_id, "PUBLIC67890")},
+        json={"benefit_id": benefit.json()["id"], "scan_token": scan_token},
     )
     assert claimed.status_code == 201
     assert claimed.json()["status"] == "claimed"

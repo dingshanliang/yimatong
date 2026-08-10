@@ -7,6 +7,13 @@ interface TraceabilitySectionProps {
   config?: TraceabilityConfig;
 }
 
+interface TraceabilityBatch extends Record<string, unknown> {
+  origin?: string | null;
+  production_date?: string | null;
+  expiry_date?: string | null;
+  batch_code?: string | null;
+}
+
 const FIELD_LABELS: Record<string, string> = {
   origin: "产地",
   production_date: "生产日期",
@@ -25,14 +32,13 @@ export function TraceabilitySection({
   codeData,
   config,
 }: TraceabilitySectionProps) {
-  const batch = codeData?.batch as Record<string, unknown> | undefined;
-  const product = codeData?.product as Record<string, unknown> | undefined;
+  const batch = codeData?.batch as TraceabilityBatch | undefined;
   const fields = config?.fields || DEFAULT_FIELDS;
 
   const data: Record<string, string> = {};
   for (const f of fields) {
     if (f === "origin")
-      data[f] = (product?.origin as string) || (batch?.origin as string) || "";
+      data[f] = batch ? batch.origin?.trim() || "未提供批次产地" : "";
     else if (f === "production_date")
       data[f] = (batch?.production_date as string) || "";
     else if (f === "expiry_date")

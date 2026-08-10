@@ -11,12 +11,19 @@ const PUBLIC_PATHS = ["/login", "/register", "/reset-password"];
 
 // Route access rules by tenant_type
 const AGENCY_ONLY_ROUTES = ["/agency"];
-const CATALOG_ROUTES = ["/brands", "/products", "/skus"];
+const CATALOG_ROUTES = [
+  "/brands",
+  "/products",
+  "/skus",
+  "/batches",
+  "/imports",
+];
 const BRAND_ONLY_ROUTES = [
   "/brands",
   "/products",
   "/skus",
   "/batches",
+  "/imports",
   "/codes",
   "/pages",
   "/campaigns",

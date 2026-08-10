@@ -1,5 +1,6 @@
 "use client";
 
+import dayjs from "dayjs";
 import { TriangleAlert } from "lucide-react";
 
 import { useScanEvent } from "@/lib/useScanEvent";
@@ -44,6 +45,26 @@ type ModuleConfig = {
   config?: Record<string, unknown>;
 };
 
+type ProductionBatchData = Record<string, unknown> & {
+  origin?: string | null;
+  status?: "active" | "recalled" | "expired";
+  recall_reason?: string | null;
+  recalled_at?: string | null;
+};
+
+const BATCH_BLOCKED_MODULE_TYPES = new Set([
+  "benefit_card",
+  "cta_group",
+  "shop_redirect",
+  "lead_form",
+  "member_card",
+  "points_balance",
+  "points_shop",
+  "points_exchange",
+  "points_history",
+  "dual_code_verify",
+]);
+
 function safeLogoUrl(value: unknown): string {
   return typeof value === "string" ? safePublicUrl(value) || "" : "";
 }
@@ -55,11 +76,20 @@ export function ResolveContent({
   htmlContent,
 }: ResolveContentProps) {
   const scanToken = (jsonPayload?.scan_token as string) || undefined;
+  const codeData = jsonPayload?.code_data as
+    Record<string, unknown> | undefined;
+  const batch = codeData?.batch as ProductionBatchData | undefined;
+  const scanInfo = jsonPayload?.scan_info as
+    Record<string, unknown> | undefined;
+  const batchStatus = batch?.status as string | undefined;
+  const batchBlocksBenefits =
+    batchStatus === "recalled" || batchStatus === "expired";
 
   useScanEvent({
     publicId,
     scanToken,
     pageVersionId: undefined,
+    enabled: !batchBlocksBenefits,
   });
 
   if (mode === "html") {
@@ -74,7 +104,6 @@ export function ResolveContent({
 
   if (!jsonPayload) return <FallbackError />;
 
-  const codeData = jsonPayload.code_data as Record<string, unknown> | undefined;
   const codeStatus = codeData?.status as string | undefined;
   // yimatong-zgb1.6：用权威 lifecycle 判断状态（互不混淆）
   const lifecycle = codeData?.lifecycle as string | undefined;
@@ -116,12 +145,15 @@ export function ResolveContent({
 
   const modules = (pageConfig?.modules as ModuleConfig[] | undefined) || [];
   const enabledModules = modules.filter((m) => m.enabled !== false);
+  const visibleModules = batchBlocksBenefits
+    ? enabledModules.filter(
+        (module) => !BATCH_BLOCKED_MODULE_TYPES.has(module.type)
+      )
+    : enabledModules;
 
   const product = codeData?.product as Record<string, unknown> | undefined;
   const brand = codeData?.brand as Record<string, unknown> | undefined;
-  const batch = codeData?.batch as Record<string, unknown> | undefined;
   const campaign = jsonPayload.campaign as Record<string, unknown> | undefined;
-  const scanInfo = jsonPayload.scan_info as Record<string, unknown> | undefined;
 
   const brandName = (brand?.name as string) || tenantBranding?.name || "";
   const tenantBrandLogo = safeLogoUrl(tenantBranding?.logo_url);
@@ -143,6 +175,8 @@ export function ResolveContent({
           productDesc={productDesc}
           productImage={productImages?.[0]}
           codeData={codeData || {}}
+          batchStatus={batchStatus}
+          recallWarning={scanInfo?.recall_warning}
         />
       </BrandStyle>
     );
@@ -151,6 +185,11 @@ export function ResolveContent({
   return (
     <BrandStyle slots={brandSlots}>
       <div className="mx-auto max-w-md min-h-screen">
+        <BatchStatusNotice
+          status={batchStatus}
+          batch={batch}
+          recallWarning={scanInfo?.recall_warning}
+        />
         <BrandHeader
           name={brandName || tenantBranding?.name || ""}
           logoUrl={tenantBrandLogo}
@@ -203,7 +242,7 @@ export function ResolveContent({
           </div>
         )}
 
-        {enabledModules.map((mod) => (
+        {visibleModules.map((mod) => (
           <ModuleRenderer
             key={mod.id}
             module={mod}
@@ -230,6 +269,72 @@ export function ResolveContent({
       </div>
     </BrandStyle>
   );
+}
+
+function BatchStatusNotice({
+  status,
+  batch,
+  recallWarning,
+}: {
+  status?: string;
+  batch?: Record<string, unknown>;
+  recallWarning?: unknown;
+}) {
+  if (status === "recalled") {
+    const warning = recallWarning as
+      { reason?: string; recalled_at?: string } | undefined;
+    const reason = warning?.reason || (batch?.recall_reason as string) || "";
+    const recalledAt =
+      warning?.recalled_at || (batch?.recalled_at as string) || "";
+    const formattedTime = dayjs(recalledAt).isValid()
+      ? dayjs(recalledAt).format("YYYY-MM-DD HH:mm")
+      : "";
+
+    return (
+      <div
+        className="mx-4 mt-3 rounded-xl border border-danger bg-danger-bg p-3 text-sm text-danger"
+        role="alert"
+        aria-label="该生产批次已召回"
+      >
+        <div className="flex items-start gap-2">
+          <TriangleAlert
+            className="mt-0.5 h-5 w-5 shrink-0"
+            aria-hidden="true"
+          />
+          <div>
+            <p className="font-semibold">该生产批次已召回</p>
+            {reason && <p className="mt-1">召回原因：{reason}</p>}
+            {formattedTime && (
+              <p className="mt-1 text-xs">召回时间：{formattedTime}</p>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (status === "expired") {
+    return (
+      <div
+        className="mx-4 mt-3 rounded-xl border border-warning bg-warning-bg p-3 text-sm text-warning"
+        role="status"
+        aria-label="该生产批次已过期"
+      >
+        <div className="flex items-start gap-2">
+          <TriangleAlert
+            className="mt-0.5 h-5 w-5 shrink-0"
+            aria-hidden="true"
+          />
+          <div>
+            <p className="font-semibold">该生产批次已过期</p>
+            <p className="mt-1 text-xs">溯源信息保留展示，权益入口已关闭。</p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return null;
 }
 
 /* ─── 模块渲染器 ──────────────────────────────── */
@@ -690,6 +795,8 @@ function DefaultRender({
   productDesc,
   productImage,
   codeData,
+  batchStatus,
+  recallWarning,
 }: {
   publicId: string;
   scanToken?: string;
@@ -700,10 +807,20 @@ function DefaultRender({
   productDesc: string;
   productImage?: string;
   codeData: Record<string, unknown>;
+  batchStatus?: string;
+  recallWarning?: unknown;
 }) {
   const _product = codeData.product as Record<string, unknown> | undefined;
+  const batch = codeData.batch as Record<string, unknown> | undefined;
+  const batchBlocksBenefits =
+    batchStatus === "recalled" || batchStatus === "expired";
   return (
     <div className="mx-auto max-w-md min-h-screen bg-canvas">
+      <BatchStatusNotice
+        status={batchStatus}
+        batch={batch}
+        recallWarning={recallWarning}
+      />
       <BrandHeader
         name={brandName}
         logoUrl={brandLogo}
@@ -717,9 +834,11 @@ function DefaultRender({
         showBadge
       />
       <TraceabilitySection codeData={codeData} />
-      <div className="px-4 pb-6">
-        <LeadForm publicId={publicId} scanToken={scanToken} />
-      </div>
+      {!batchBlocksBenefits && (
+        <div className="px-4 pb-6">
+          <LeadForm publicId={publicId} scanToken={scanToken} />
+        </div>
+      )}
       <FooterSection branding={{ name: brandName, logo_url: brandLogo }} />
     </div>
   );

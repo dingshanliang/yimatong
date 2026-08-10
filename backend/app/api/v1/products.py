@@ -21,6 +21,7 @@ from app.schemas.product import (
     ProductCreate,
     ProductionBatchCreate,
     ProductionBatchRead,
+    ProductionBatchRecallRequest,
     ProductionBatchUpdate,
     ProductRead,
     ProductUpdate,
@@ -52,13 +53,14 @@ from app.services.product import (
     list_production_batches,
     list_products,
     list_skus,
+    recall_production_batch,
     update_brand,
     update_product,
     update_product_asset,
     update_production_batch,
     update_sku,
 )
-from app.utils.auth_rbac import require_role
+from app.utils.auth_rbac import require_permission, require_role, require_tenant_type
 
 brand_router = APIRouter(prefix="/api/v1/brands", tags=["brands"])
 product_router = APIRouter(prefix="/api/v1/products", tags=["products"])
@@ -691,7 +693,6 @@ async def update_batch_endpoint(
         production_date=body.production_date,
         expiry_date=body.expiry_date,
         origin=body.origin,
-        status=getattr(body, "status", None),
         fields_to_update=body.model_fields_set,
     )
     if not batch:
@@ -707,6 +708,29 @@ async def update_batch_endpoint(
     return batch
 
 
+@batch_router.post("/{batch_id}/recall", response_model=ProductionBatchRead, summary="召回生产批次")
+async def recall_batch_endpoint(
+    batch_id: uuid.UUID,
+    body: ProductionBatchRecallRequest,
+    db: AsyncSession = Depends(get_db, scope="function"),
+    tenant_id: uuid.UUID = Depends(get_current_tenant),
+    actor_id: uuid.UUID = Depends(get_current_account_id),
+    _tenant_type: str = Depends(require_tenant_type("brand")),
+    _role: str = Depends(require_role("admin")),
+    _permission: None = Depends(require_permission("code:manage")),
+):
+    batch = await recall_production_batch(
+        db,
+        tenant_id,
+        batch_id,
+        reason=body.reason,
+        actor_id=actor_id,
+    )
+    if batch is None:
+        raise HTTPException(status_code=404, detail="Batch not found")
+    return batch
+
+
 @batch_router.post("/import-csv", response_model=CSVImportResult, summary="导入 csv")
 async def import_csv_endpoint(
     product_id: str = Form(...),
@@ -717,7 +741,17 @@ async def import_csv_endpoint(
     actor_id: uuid.UUID = Depends(get_current_account_id),
     _role: str = Depends(require_role("admin", "operator")),
 ):
-    content = (await file.read()).decode("utf-8")
+    filename = (file.filename or "").lower()
+    allowed_types = {"text/csv", "application/csv", "application/vnd.ms-excel"}
+    if not filename.endswith(".csv") or file.content_type not in allowed_types:
+        raise HTTPException(status_code=415, detail="Only CSV files are supported")
+    raw = await file.read(5 * 1024 * 1024 + 1)
+    if len(raw) > 5 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="CSV file must not exceed 5MB")
+    try:
+        content = raw.decode("utf-8-sig")
+    except UnicodeDecodeError as exc:
+        raise HTTPException(status_code=400, detail="CSV file must be UTF-8 encoded") from exc
     imported, errors = await import_batches_csv(
         db,
         tenant_id,

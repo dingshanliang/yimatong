@@ -6,7 +6,7 @@ from datetime import date, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
@@ -40,10 +40,11 @@ code_item_router = APIRouter(prefix="/api/v1/code-items", tags=["code-items"])
 
 
 class CodeBatchCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
     product_id: uuid.UUID
     sku_id: uuid.UUID
     production_batch_id: uuid.UUID
-    batch_code: str | None = None
+    batch_code: str | None = Field(None, min_length=1, max_length=100)
     quantity: int = Field(ge=1, le=100000)
     code_type: str = CodeType.single
     generation_mode: CodeGenerationMode = CodeGenerationMode.item_level
@@ -91,7 +92,7 @@ class CodeItemRead(BaseModel):
 @code_batch_router.post("", status_code=201, summary="创建 码批次")
 async def create_code_batch_endpoint(
     body: CodeBatchCreateRequest,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
     account_id: uuid.UUID = Depends(get_current_account_id),
     _: None = Depends(require_permission("code:generate")),
@@ -159,14 +160,15 @@ async def get_code_batch_endpoint(
 @code_batch_router.post("/{batch_id}/activate")
 async def activate_batch_endpoint(
     batch_id: uuid.UUID,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
+    account_id: uuid.UUID = Depends(get_current_account_id),
     _: None = Depends(require_permission("code:manage")),
 ):
     from app.services.code_state import InvalidStateTransitionError
 
     try:
-        return await activate_batch(db, tenant_id, batch_id)
+        return await activate_batch(db, tenant_id, batch_id, actor_id=str(account_id))
     except InvalidStateTransitionError as e:
         raise HTTPException(status_code=409, detail=str(e))
     except ValueError as e:
@@ -176,7 +178,7 @@ async def activate_batch_endpoint(
 @code_batch_router.post("/{batch_id}/export", summary="导出 码批次")
 async def export_code_batch_endpoint(
     batch_id: uuid.UUID,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
     account_id: uuid.UUID = Depends(get_current_account_id),
     _: None = Depends(require_permission("code:export")),
@@ -199,7 +201,6 @@ async def export_code_batch_endpoint(
         file_name=f"codes-{batch_id}.csv",
         row_count=csv_content.count("\n") - 1,
     )
-    await db.commit()
     return StreamingResponse(
         io.StringIO(csv_content),
         media_type="text/csv",
@@ -208,21 +209,26 @@ async def export_code_batch_endpoint(
 
 
 class CodeBatchUpdateRequest(BaseModel):
-    batch_code: str | None = None
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    batch_code: str | None = Field(None, min_length=1, max_length=100)
 
 
 @code_batch_router.patch("/{batch_id}", summary="更新 码批次")
 async def update_code_batch_endpoint(
     batch_id: uuid.UUID,
     body: CodeBatchUpdateRequest,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
+    account_id: uuid.UUID = Depends(get_current_account_id),
+    _: None = Depends(require_permission("code:manage")),
 ):
 
     result = await update_batch(
         db,
         tenant_id,
         batch_id,
+        actor_id=str(account_id),
         batch_code=body.batch_code,
     )
     if not result:
@@ -233,11 +239,12 @@ async def update_code_batch_endpoint(
 @code_batch_router.post("/{batch_id}/freeze")
 async def freeze_batch_endpoint(
     batch_id: uuid.UUID,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
+    account_id: uuid.UUID = Depends(get_current_account_id),
     _: None = Depends(require_permission("code:manage")),
 ):
-    return await freeze_batch(db, tenant_id, batch_id)
+    return await freeze_batch(db, tenant_id, batch_id, actor_id=str(account_id))
 
 
 @code_batch_router.post("/{batch_id}/void")
@@ -246,7 +253,7 @@ async def void_batch_endpoint(
     # yimatong-zgb1.8 AC2：作废是受保护的不可逆动作，必须 reason + 二次确认（User Story 28）
     reason: str = "",
     confirm: str = "",
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
     account_id: uuid.UUID = Depends(get_current_account_id),
     _: None = Depends(require_permission("code:manage")),
@@ -266,12 +273,13 @@ async def void_batch_endpoint(
 @code_batch_router.post("/{batch_id}/mark-printing", summary="标记印刷中")
 async def mark_printing_endpoint(
     batch_id: uuid.UUID,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
+    account_id: uuid.UUID = Depends(get_current_account_id),
     _: None = Depends(require_permission("code:manage")),
 ):
     try:
-        result = await mark_printing(db, tenant_id, batch_id)
+        result = await mark_printing(db, tenant_id, batch_id, actor_id=str(account_id))
         return {"status": result.status}
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e)) from e
@@ -282,12 +290,13 @@ async def mark_printing_endpoint(
 @code_batch_router.post("/{batch_id}/mark-delivered", summary="标记已交付")
 async def mark_delivered_endpoint(
     batch_id: uuid.UUID,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
+    account_id: uuid.UUID = Depends(get_current_account_id),
     _: None = Depends(require_permission("code:manage")),
 ):
     try:
-        result = await mark_delivered(db, tenant_id, batch_id)
+        result = await mark_delivered(db, tenant_id, batch_id, actor_id=str(account_id))
         return {"status": result.status}
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e)) from e
@@ -317,7 +326,7 @@ class CodeItemUpdateRequest(BaseModel):
 async def update_code_item_endpoint(
     item_id: uuid.UUID,
     body: CodeItemUpdateRequest,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
     _: None = Depends(require_permission("code:manage")),
 ):
@@ -374,14 +383,15 @@ async def get_pair_endpoint(
 @code_item_router.post("/{item_id}/revoke", response_model=CodeItemRead)
 async def revoke_code_item_endpoint(
     item_id: uuid.UUID,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
+    account_id: uuid.UUID = Depends(get_current_account_id),
     _: None = Depends(require_permission("code:manage")),
 ):
     from app.services.code_state import InvalidStateTransitionError
 
     try:
-        return await revoke_code_item(db, tenant_id, item_id)
+        return await revoke_code_item(db, tenant_id, item_id, actor_id=str(account_id))
     except InvalidStateTransitionError as e:
         raise HTTPException(status_code=409, detail=str(e))
 
@@ -389,14 +399,15 @@ async def revoke_code_item_endpoint(
 @code_item_router.post("/{item_id}/bind", response_model=CodeItemRead)
 async def bind_code_item_endpoint(
     item_id: uuid.UUID,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
+    account_id: uuid.UUID = Depends(get_current_account_id),
     _: None = Depends(require_permission("code:manage")),
 ):
     from app.services.code_state import InvalidStateTransitionError
 
     try:
-        return await bind_code_item(db, tenant_id, item_id)
+        return await bind_code_item(db, tenant_id, item_id, actor_id=str(account_id))
     except InvalidStateTransitionError as e:
         raise HTTPException(status_code=409, detail=str(e))
 

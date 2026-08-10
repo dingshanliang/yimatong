@@ -7,13 +7,16 @@
 - 状态转换校验（非法转换抛 InvalidStateTransitionError）
 """
 
+import inspect
 import uuid
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
+from types import SimpleNamespace
 
 import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
+from app.core.exceptions import ConflictError
 from app.models.base import Base
 from app.models.code import (
     CodeBatch,
@@ -26,12 +29,16 @@ from app.models.code import (
 from app.models.plan import QuotaRolloutPhase, QuotaRolloutState, TenantQuotaUsage
 from app.models.product import SKU, BatchStatus, Brand, Product, ProductionBatch
 from app.models.tenant import Tenant
+from app.services import code as code_service
 from app.services.code import (
     activate_batch,
+    bind_code_item,
     create_code_batch,
     freeze_batch,
     list_code_batches,
     list_code_items,
+    mark_delivered,
+    mark_printing,
     void_batch,
 )
 from app.services.code_state import InvalidStateTransitionError
@@ -54,6 +61,23 @@ def _uuid() -> uuid.UUID:
     from uuid6 import uuid7
 
     return uuid7()
+
+
+@pytest.mark.anyio
+async def test_code_mutation_audit_failure_is_mandatory(monkeypatch):
+    async def fail_audit(*_args, **_kwargs):
+        raise RuntimeError("audit unavailable")
+
+    monkeypatch.setattr("app.services.audit.write_audit_log", fail_audit)
+    async with TestSession() as db:
+        with pytest.raises(RuntimeError, match="audit unavailable"):
+            await code_service._audit_code_op(
+                db,
+                str(uuid.uuid4()),
+                str(uuid.uuid4()),
+                "code_batch_updated",
+                f"code_batch:{uuid.uuid4()}",
+            )
 
 
 async def _activate_current_quota_epoch(db: AsyncSession) -> None:
@@ -370,6 +394,16 @@ class TestCreateCodeBatch:
 class TestActivateBatch:
     """activate_batch 测试"""
 
+    def test_activation_lock_order_is_production_batch_then_code_batch_then_items(self):
+        source = inspect.getsource(activate_batch)
+        production_batch_lock = source.index("select(ProductionBatch)")
+        code_batch_lock = source.index("select(CodeBatch)", production_batch_lock)
+        code_item_update = source.index("sa_update(CodeItem)", code_batch_lock)
+
+        assert production_batch_lock < code_batch_lock < code_item_update
+        assert ".with_for_update()" in source[production_batch_lock:code_batch_lock]
+        assert ".with_for_update()" in source[code_batch_lock:code_item_update]
+
     @pytest.mark.anyio
     async def test_activate_success(self):
         async with TestSession() as db:
@@ -387,7 +421,7 @@ class TestActivateBatch:
             )
             batch_id = uuid.UUID(result["id"])
 
-            activate_result = await activate_batch(db, tenant_id, batch_id)
+            activate_result = await activate_batch(db, tenant_id, batch_id, actor_id=str(created_by))
             assert activate_result.activated == 5
 
             # 验证所有码项状态已变为 activated
@@ -403,17 +437,108 @@ class TestActivateBatch:
             assert batch.status == CodeBatchStatus.activated
 
     @pytest.mark.anyio
+    @pytest.mark.parametrize("status", [BatchStatus.recalled, BatchStatus.expired])
+    async def test_non_active_production_batch_blocks_create(self, status):
+        async with TestSession() as db:
+            tenant_id, _, product_id, sku_id, production_batch_id = await _create_prerequisites(db)
+            production_batch = await db.get(ProductionBatch, production_batch_id)
+            production_batch.status = status
+            if status == BatchStatus.recalled:
+                production_batch.recall_reason = "safety recall"
+                production_batch.recalled_at = datetime.now(UTC)
+                production_batch.recalled_by = str(uuid.uuid4())
+            await db.flush()
+
+            with pytest.raises(ConflictError, match="not active"):
+                await create_code_batch(
+                    db,
+                    tenant_id,
+                    product_id,
+                    sku_id,
+                    production_batch_id,
+                    quantity=1,
+                    created_by=uuid.uuid4(),
+                )
+
+    @pytest.mark.anyio
+    @pytest.mark.parametrize("status", [BatchStatus.recalled, BatchStatus.expired])
+    async def test_non_active_production_batch_blocks_activation(self, status):
+        async with TestSession() as db:
+            tenant_id, _, product_id, sku_id, production_batch_id = await _create_prerequisites(db)
+            actor_id = uuid.uuid4()
+            created = await create_code_batch(
+                db,
+                tenant_id,
+                product_id,
+                sku_id,
+                production_batch_id,
+                quantity=1,
+                created_by=actor_id,
+            )
+            production_batch = await db.get(ProductionBatch, production_batch_id)
+            production_batch.status = status
+            if status == BatchStatus.recalled:
+                production_batch.recall_reason = "safety recall"
+                production_batch.recalled_at = datetime.now(UTC)
+                production_batch.recalled_by = str(actor_id)
+            await db.flush()
+
+            with pytest.raises(InvalidStateTransitionError, match="not active"):
+                await activate_batch(db, tenant_id, uuid.UUID(created["id"]), actor_id=str(actor_id))
+
+    @pytest.mark.anyio
+    async def test_past_expiry_date_blocks_code_batch_creation(self):
+        async with TestSession() as db:
+            tenant_id, _, product_id, sku_id, production_batch_id = await _create_prerequisites(db)
+            production_batch = await db.get(ProductionBatch, production_batch_id)
+            production_batch.expiry_date = date.today() - timedelta(days=1)
+            await db.flush()
+
+            with pytest.raises(ConflictError, match="not active"):
+                await create_code_batch(
+                    db,
+                    tenant_id,
+                    product_id,
+                    sku_id,
+                    production_batch_id,
+                    quantity=1,
+                    created_by=uuid.uuid4(),
+                )
+
+    @pytest.mark.anyio
+    async def test_past_expiry_date_blocks_code_batch_activation(self):
+        async with TestSession() as db:
+            tenant_id, _, product_id, sku_id, production_batch_id = await _create_prerequisites(db)
+            actor_id = uuid.uuid4()
+            created = await create_code_batch(
+                db,
+                tenant_id,
+                product_id,
+                sku_id,
+                production_batch_id,
+                quantity=1,
+                created_by=actor_id,
+            )
+            production_batch = await db.get(ProductionBatch, production_batch_id)
+            production_batch.expiry_date = date.today() - timedelta(days=1)
+            await db.flush()
+
+            with pytest.raises(InvalidStateTransitionError, match="not active"):
+                await activate_batch(db, tenant_id, uuid.UUID(created["id"]), actor_id=str(actor_id))
+
+    @pytest.mark.anyio
     async def test_activate_non_completed_batch_rejected(self):
         """只有 completed 状态的批次才能激活"""
         async with TestSession() as db:
-            tenant_id = _uuid()
+            tenant_id, _, product_id, sku_id, production_batch_id = await _create_prerequisites(db)
             created_by = _uuid()
 
             # 手动创建一个 pending 状态的批次
             batch = CodeBatch(
                 tenant_id=tenant_id,
-                product_id=_uuid(),
-                sku_id=_uuid(),
+                product_id=product_id,
+                sku_id=sku_id,
+                production_batch_id=production_batch_id,
                 batch_code="PENDING-001",
                 quantity=1,
                 created_by=created_by,
@@ -423,7 +548,7 @@ class TestActivateBatch:
             await db.flush()
 
             with pytest.raises(InvalidStateTransitionError, match="Cannot activate"):
-                await activate_batch(db, tenant_id, batch.id)
+                await activate_batch(db, tenant_id, batch.id, actor_id=str(created_by))
 
     @pytest.mark.anyio
     async def test_activate_already_activated_rejected(self):
@@ -443,10 +568,10 @@ class TestActivateBatch:
             )
             batch_id = uuid.UUID(result["id"])
 
-            await activate_batch(db, tenant_id, batch_id)
+            await activate_batch(db, tenant_id, batch_id, actor_id=str(created_by))
 
             with pytest.raises(InvalidStateTransitionError, match="already activated"):
-                await activate_batch(db, tenant_id, batch_id)
+                await activate_batch(db, tenant_id, batch_id, actor_id=str(created_by))
 
     @pytest.mark.anyio
     async def test_activate_wrong_tenant(self):
@@ -471,6 +596,200 @@ class TestActivateBatch:
                 await activate_batch(db, other_tenant_id, batch_id)
 
 
+class TestOperationalBatchTransitions:
+    def test_transition_lock_order_is_production_batch_then_code_batch(self):
+        source = inspect.getsource(code_service._lock_forward_operational_code_batch)
+        locator = source.index("select(CodeBatch.production_batch_id)")
+        production_batch_lock = source.index("select(ProductionBatch)", locator)
+        code_batch_lock = source.index("select(CodeBatch)", production_batch_lock)
+
+        assert locator < production_batch_lock < code_batch_lock
+        assert ".with_for_update()" not in source[locator:production_batch_lock]
+        assert ".with_for_update()" in source[production_batch_lock:code_batch_lock]
+        assert ".with_for_update()" in source[code_batch_lock:]
+        for transition in (mark_printing, mark_delivered):
+            transition_source = inspect.getsource(transition)
+            assert transition_source.index("_lock_forward_operational_code_batch") < transition_source.index(
+                "batch.status ="
+            )
+
+    @pytest.mark.anyio
+    async def test_changed_parent_chain_fails_closed_after_ordered_locks(self):
+        tenant_id = uuid.uuid4()
+        batch_id = uuid.uuid4()
+        production_batch_id = uuid.uuid4()
+        product_id = uuid.uuid4()
+        sku_id = uuid.uuid4()
+        production_batch = SimpleNamespace(
+            id=production_batch_id,
+            tenant_id=tenant_id,
+            product_id=product_id,
+            sku_id=sku_id,
+            status=BatchStatus.active,
+            expiry_date=date.today() + timedelta(days=1),
+        )
+        changed_batch = SimpleNamespace(
+            id=batch_id,
+            tenant_id=tenant_id,
+            production_batch_id=uuid.uuid4(),
+            product_id=product_id,
+            sku_id=sku_id,
+        )
+
+        class RacingDB:
+            def __init__(self):
+                self.scalars = iter((production_batch_id, production_batch, changed_batch))
+                self.scalar_calls = 0
+
+            async def scalar(self, _statement):
+                self.scalar_calls += 1
+                return next(self.scalars)
+
+        db = RacingDB()
+        with pytest.raises(ConflictError, match="production chain changed") as exc_info:
+            await code_service._lock_forward_operational_code_batch(db, tenant_id, batch_id)
+
+        assert exc_info.value.error_code == "CODE_BATCH_PRODUCTION_CHAIN_CONFLICT"
+        assert db.scalar_calls == 3
+
+    @pytest.mark.anyio
+    @pytest.mark.parametrize("transition", ["printing", "delivered"])
+    @pytest.mark.parametrize("production_batch_state", ["recalled", "past_expiry"])
+    async def test_non_active_production_batch_blocks_forward_transition(self, transition, production_batch_state):
+        async with TestSession() as db:
+            tenant_id, _, product_id, sku_id, production_batch_id = await _create_prerequisites(db)
+            actor_id = _uuid()
+            created = await create_code_batch(
+                db,
+                tenant_id,
+                product_id,
+                sku_id,
+                production_batch_id,
+                quantity=1,
+                created_by=actor_id,
+            )
+            batch_id = uuid.UUID(created["id"])
+            if transition == "delivered":
+                await mark_printing(db, tenant_id, batch_id, actor_id=str(actor_id))
+
+            production_batch = await db.get(ProductionBatch, production_batch_id)
+            if production_batch_state == "recalled":
+                production_batch.status = BatchStatus.recalled
+                production_batch.recall_reason = "safety recall"
+                production_batch.recalled_at = datetime.now(UTC)
+                production_batch.recalled_by = str(actor_id)
+            else:
+                production_batch.expiry_date = date.today() - timedelta(days=1)
+            await db.flush()
+
+            operation = mark_printing if transition == "printing" else mark_delivered
+            with pytest.raises(ConflictError) as exc_info:
+                await operation(db, tenant_id, batch_id, actor_id=str(actor_id))
+
+            assert exc_info.value.error_code == "PRODUCTION_BATCH_NOT_ACTIVE"
+            batch = await db.get(CodeBatch, batch_id)
+            assert batch.status == (CodeBatchStatus.completed if transition == "printing" else CodeBatchStatus.printing)
+
+
+class TestBindCodeItem:
+    def test_bind_lock_order_is_production_batch_then_code_batch_then_item(self):
+        source = inspect.getsource(bind_code_item)
+        locator = source.index("select(CodeItem.code_batch_id, CodeBatch.production_batch_id)")
+        production_batch_lock = source.index("select(ProductionBatch)", locator)
+        code_batch_lock = source.index("select(CodeBatch)", production_batch_lock)
+        code_item_lock = source.index("select(CodeItem)", code_batch_lock)
+
+        assert locator < production_batch_lock < code_batch_lock < code_item_lock
+        assert ".with_for_update()" not in source[locator:production_batch_lock]
+        assert ".with_for_update()" in source[production_batch_lock:code_batch_lock]
+        assert ".with_for_update()" in source[code_batch_lock:code_item_lock]
+        assert ".with_for_update()" in source[code_item_lock:]
+
+    @pytest.mark.anyio
+    @pytest.mark.parametrize("batch_state", ["recalled", "past_expiry"])
+    async def test_non_active_production_batch_blocks_bind(self, batch_state):
+        async with TestSession() as db:
+            tenant_id, _, product_id, sku_id, production_batch_id = await _create_prerequisites(db)
+            actor_id = uuid.uuid4()
+            created = await create_code_batch(
+                db,
+                tenant_id,
+                product_id,
+                sku_id,
+                production_batch_id,
+                quantity=1,
+                created_by=actor_id,
+            )
+            batch_id = uuid.UUID(created["id"])
+            await activate_batch(db, tenant_id, batch_id, actor_id=str(actor_id))
+            item = await db.scalar(select(CodeItem).where(CodeItem.code_batch_id == batch_id))
+            production_batch = await db.get(ProductionBatch, production_batch_id)
+            if batch_state == "recalled":
+                production_batch.status = BatchStatus.recalled
+                production_batch.recall_reason = "safety recall"
+                production_batch.recalled_at = datetime.now(UTC)
+                production_batch.recalled_by = str(actor_id)
+            else:
+                production_batch.expiry_date = date.today() - timedelta(days=1)
+            await db.flush()
+
+            with pytest.raises(ConflictError, match="Production batch is not active") as exc_info:
+                await bind_code_item(db, tenant_id, item.id, actor_id=str(actor_id))
+
+            assert exc_info.value.error_code == "PRODUCTION_BATCH_NOT_ACTIVE"
+            await db.refresh(item)
+            assert item.status == CodeItemStatus.activated
+
+    @pytest.mark.anyio
+    async def test_changed_parent_chain_fails_closed_before_item_lock(self):
+        tenant_id = uuid.uuid4()
+        item_id = uuid.uuid4()
+        code_batch_id = uuid.uuid4()
+        located_production_batch_id = uuid.uuid4()
+        product_id = uuid.uuid4()
+        sku_id = uuid.uuid4()
+        production_batch = SimpleNamespace(
+            id=located_production_batch_id,
+            tenant_id=tenant_id,
+            product_id=product_id,
+            sku_id=sku_id,
+            status=BatchStatus.active,
+            expiry_date=date.today() + timedelta(days=1),
+        )
+        changed_batch = SimpleNamespace(
+            id=code_batch_id,
+            tenant_id=tenant_id,
+            production_batch_id=uuid.uuid4(),
+            product_id=product_id,
+            sku_id=sku_id,
+            status=CodeBatchStatus.activated,
+        )
+
+        class LocatorResult:
+            @staticmethod
+            def one_or_none():
+                return code_batch_id, located_production_batch_id
+
+        class RacingDB:
+            def __init__(self):
+                self.scalars = iter((production_batch, changed_batch))
+                self.scalar_calls = 0
+
+            async def execute(self, _statement):
+                return LocatorResult()
+
+            async def scalar(self, _statement):
+                self.scalar_calls += 1
+                return next(self.scalars)
+
+        db = RacingDB()
+        with pytest.raises(ConflictError, match="production chain changed") as exc_info:
+            await bind_code_item(db, tenant_id, item_id, actor_id=str(uuid.uuid4()))
+
+        assert exc_info.value.error_code == "CODE_BIND_CHAIN_CONFLICT"
+        assert db.scalar_calls == 2
+
+
 class TestFreezeBatch:
     """freeze_batch 测试"""
 
@@ -490,9 +809,9 @@ class TestFreezeBatch:
                 created_by=created_by,
             )
             batch_id = uuid.UUID(result["id"])
-            await activate_batch(db, tenant_id, batch_id)
+            await activate_batch(db, tenant_id, batch_id, actor_id=str(created_by))
 
-            freeze_result = await freeze_batch(db, tenant_id, batch_id)
+            freeze_result = await freeze_batch(db, tenant_id, batch_id, actor_id=str(created_by))
             assert freeze_result.frozen == 5
 
             # 验证码项状态
@@ -519,7 +838,7 @@ class TestFreezeBatch:
             batch_id = uuid.UUID(result["id"])
             # 批次处于 completed 但码项都是 created 状态，不在 activated/bound
 
-            freeze_result = await freeze_batch(db, tenant_id, batch_id)
+            freeze_result = await freeze_batch(db, tenant_id, batch_id, actor_id=str(created_by))
             assert freeze_result.frozen == 0
 
 
@@ -543,7 +862,7 @@ class TestVoidBatch:
             )
             batch_id = uuid.UUID(result["id"])
 
-            void_result = await void_batch(db, tenant_id, batch_id)
+            void_result = await void_batch(db, tenant_id, batch_id, actor_id=str(created_by))
             assert void_result.voided == 5
 
             # 验证码项状态
@@ -571,11 +890,11 @@ class TestVoidBatch:
             batch_id = uuid.UUID(result["id"])
 
             # 先作废一次
-            first_void = await void_batch(db, tenant_id, batch_id)
+            first_void = await void_batch(db, tenant_id, batch_id, actor_id=str(created_by))
             assert first_void.voided == 3
 
             # 再作废一次（所有码已是 revoked）
-            second_void = await void_batch(db, tenant_id, batch_id)
+            second_void = await void_batch(db, tenant_id, batch_id, actor_id=str(created_by))
             assert second_void.voided == 0
 
 
@@ -627,7 +946,7 @@ class TestListCodeBatches:
                 created_by=created_by,
             )
             batch_id = uuid.UUID(result["id"])
-            await activate_batch(db, tenant_id, batch_id)
+            await activate_batch(db, tenant_id, batch_id, actor_id=str(created_by))
 
             # 新建一个不激活的
             await create_code_batch(
@@ -707,7 +1026,7 @@ class TestListCodeItems:
                 created_by=created_by,
             )
             batch_id = uuid.UUID(result["id"])
-            await activate_batch(db, tenant_id, batch_id)
+            await activate_batch(db, tenant_id, batch_id, actor_id=str(created_by))
 
             activated_items, total = await list_code_items(db, tenant_id, status=CodeItemStatus.activated)
             assert total == 5

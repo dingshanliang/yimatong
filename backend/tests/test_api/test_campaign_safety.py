@@ -2,6 +2,7 @@
 
 import uuid
 from collections.abc import AsyncGenerator
+from datetime import date, timedelta
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -10,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
 from app.main import app
 from app.models.tenant import Tenant
+from app.services.scan_token import create_scan_token
 from app.utils.client_ip import compute_ip_hash
 from app.utils.security import create_access_token
 from tests.conftest import TestSessionLocal
@@ -50,6 +52,59 @@ async def create_product(client: AsyncClient, headers: dict[str, str], name: str
         headers=headers,
     )
     return product.json()["id"]
+
+
+async def create_live_scan_token(
+    client: AsyncClient,
+    headers: dict[str, str],
+    tenant_id: str,
+    product_id: str,
+    label: str,
+) -> str:
+    sku = await client.post(
+        "/api/v1/skus",
+        json={"product_id": product_id, "code": f"CLAIM-{label}", "name": f"领取规格-{label}"},
+        headers=headers,
+    )
+    assert sku.status_code == 201
+    today = date.today()
+    production_batch = await client.post(
+        "/api/v1/production-batches",
+        json={
+            "product_id": product_id,
+            "sku_id": sku.json()["id"],
+            "batch_code": f"CLAIM-PB-{label}",
+            "production_date": str(today),
+            "expiry_date": str(today + timedelta(days=365)),
+        },
+        headers=headers,
+    )
+    assert production_batch.status_code == 201
+    code_batch = await client.post(
+        "/api/v1/code-batches",
+        json={
+            "product_id": product_id,
+            "sku_id": sku.json()["id"],
+            "production_batch_id": production_batch.json()["id"],
+            "batch_code": f"CLAIM-CB-{label}",
+            "quantity": 1,
+        },
+        headers=headers,
+    )
+    assert code_batch.status_code == 201
+    activated = await client.post(f"/api/v1/code-batches/{code_batch.json()['id']}/activate", headers=headers)
+    assert activated.status_code == 200
+    items = await client.get(
+        "/api/v1/code-items",
+        params={"code_batch_id": code_batch.json()["id"]},
+        headers=headers,
+    )
+    assert items.status_code == 200
+    return create_scan_token(
+        items.json()["items"][0]["public_id"],
+        compute_ip_hash("127.0.0.1"),
+        tenant_id=tenant_id,
+    )
 
 
 @pytest.fixture
@@ -505,9 +560,6 @@ class TestBenefitAttach:
 
 # ── H5 领取端点租户隔离测试 ──────────────────────────────
 
-# httpx ASGITransport 将 request.client.host 设为 "127.0.0.1"
-_TEST_CLIENT_IP_HASH = compute_ip_hash("127.0.0.1")
-
 
 class TestH5ClaimTenantIsolation:
     """验证 H5 领取端点的租户隔离和权益状态检查"""
@@ -518,9 +570,10 @@ class TestH5ClaimTenantIsolation:
         from sqlalchemy import update as sa_update
 
         from app.models.campaign import Benefit
-        from app.services.scan_token import create_scan_token
 
         tenant_id, headers = auth_setup
+        product_id = await create_product(client, headers, "停用权益码产品")
+        token = await create_live_scan_token(client, headers, tenant_id, product_id, "INACTIVE")
 
         # 通过 API 创建活动 + 权益
         campaign_resp = await client.post(
@@ -554,8 +607,6 @@ class TestH5ClaimTenantIsolation:
         await db_session.execute(sa_update(Benefit).where(Benefit.id == uuid.UUID(bid)).values(status="inactive"))
         await db_session.commit()
 
-        # 用正确的 ip_hash 创建 scan_token
-        token = create_scan_token("test_pub_id", _TEST_CLIENT_IP_HASH, tenant_id=str(tenant_id))
         resp = await client.post(
             "/api/v1/benefit-claims",
             json={"benefit_id": bid, "scan_token": token},

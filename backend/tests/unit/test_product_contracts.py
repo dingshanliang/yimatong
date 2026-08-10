@@ -1,11 +1,21 @@
-from datetime import date, timedelta
+import uuid
+from datetime import UTC, date, datetime, timedelta
 
 import pytest
 from pydantic import ValidationError
 
 from app.api.v1.open_api import SkuCreateRequest
-from app.models.product import ProductAssetType
-from app.schemas.product import BrandCreate, ProductAssetCreate, ProductCreate, ProductionBatchCreate, SKUCreate
+from app.models.product import BatchStatus, ProductAssetType
+from app.schemas.product import (
+    BrandCreate,
+    ProductAssetCreate,
+    ProductCreate,
+    ProductionBatchCreate,
+    ProductionBatchRead,
+    SKUCreate,
+)
+from app.services.product import effective_production_batch_status
+from app.utils import china_business_date
 from app.utils.public_url import normalize_public_url
 
 
@@ -102,6 +112,30 @@ def test_batch_schema_rejects_inverted_dates():
                 "expiry_date": "2026-08-09",
             }
         )
+
+
+def test_production_batch_expiry_uses_shanghai_business_date_with_recall_priority(monkeypatch):
+    frozen_utc = datetime(2026, 8, 10, 16, 30, tzinfo=UTC)
+    current_date = china_business_date(frozen_utc)
+    assert current_date == date(2026, 8, 11)
+
+    active_batch = ProductionBatchRead(
+        id=uuid.uuid4(),
+        tenant_id=uuid.uuid4(),
+        product_id=uuid.uuid4(),
+        sku_id=uuid.uuid4(),
+        batch_code="SHANGHAI-BOUNDARY",
+        production_date=date(2026, 8, 1),
+        expiry_date=date(2026, 8, 10),
+        status=BatchStatus.active,
+    )
+    recalled_batch = active_batch.model_copy(update={"status": BatchStatus.recalled})
+
+    assert effective_production_batch_status(active_batch, current_date=current_date) == BatchStatus.expired
+    assert effective_production_batch_status(recalled_batch, current_date=current_date) == BatchStatus.recalled
+    monkeypatch.setattr("app.schemas.product.china_business_date", lambda: current_date)
+    assert active_batch.effective_status == BatchStatus.expired
+    assert recalled_batch.effective_status == BatchStatus.recalled
 
 
 def test_active_trust_asset_requires_current_public_evidence():

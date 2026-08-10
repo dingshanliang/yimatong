@@ -3,7 +3,7 @@ import type { AuthUser } from "./auth";
 type AgencyAuthorizationPrincipal = Pick<AuthUser, "role" | "tenant_type">;
 
 const AGENCY_SCOPE_ROUTES: Record<string, readonly string[]> = {
-  products: ["/brands", "/products", "/skus", "/batches"],
+  products: ["/brands", "/products", "/skus", "/batches", "/imports"],
   pages: ["/pages"],
   campaigns: ["/campaigns", "/benefits"],
   codes: ["/codes"],

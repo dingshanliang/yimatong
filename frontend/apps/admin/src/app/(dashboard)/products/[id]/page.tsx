@@ -284,16 +284,22 @@ export default function ProductWorkbenchPage() {
   }
 
   return (
-    <ProductWorkbench canWrite={access.canWrite} canDelete={access.canDelete} />
+    <ProductWorkbench
+      canWrite={access.canWrite}
+      canDelete={access.canDelete}
+      canRecall={access.canRecall}
+    />
   );
 }
 
 function ProductWorkbench({
   canWrite,
   canDelete,
+  canRecall,
 }: {
   canWrite: boolean;
   canDelete: boolean;
+  canRecall: boolean;
 }) {
   const params = useParams<{ id: string }>();
   const router = useRouter();
@@ -326,6 +332,9 @@ function ProductWorkbench({
   const [editingBatch, setEditingBatch] = useState<ProductionBatch | null>(
     null
   );
+  const [recallBatch, setRecallBatch] = useState<ProductionBatch | null>(null);
+  const [recallingBatch, setRecallingBatch] = useState(false);
+  const [recallBatchForm] = Form.useForm<{ reason: string }>();
   const [activeTab, setActiveTab] = useState("profile");
   const [importModalOpen, setImportModalOpen] = useState(false);
   const [importing, setImporting] = useState(false);
@@ -610,6 +619,8 @@ function ProductWorkbench({
   };
 
   const openBatchModal = (batch?: ProductionBatch) => {
+    if (writesDisabled || (batch && batch.effective_status !== "active"))
+      return;
     setEditingBatch(batch || null);
     batchForm.resetFields();
     batchForm.setFieldsValue(
@@ -625,7 +636,11 @@ function ProductWorkbench({
   };
 
   const handleBatchSubmit = async (values: ProductionBatchFormValues) => {
-    if (writesDisabled) return;
+    if (
+      writesDisabled ||
+      (editingBatch && editingBatch.effective_status !== "active")
+    )
+      return;
     try {
       const payload = buildBatchPayload(values, productId);
       if (editingBatch) {
@@ -648,6 +663,38 @@ function ProductWorkbench({
       load();
     } catch (err) {
       message.error(extractErrorMessage(err, "保存批次失败"));
+    }
+  };
+
+  const openBatchRecall = (batch: ProductionBatch) => {
+    if (!canRecall || planReadOnly || batch.effective_status !== "active")
+      return;
+    recallBatchForm.resetFields();
+    setRecallBatch(batch);
+  };
+
+  const handleBatchRecall = async ({ reason }: { reason: string }) => {
+    if (
+      !recallBatch ||
+      !canRecall ||
+      planReadOnly ||
+      recallBatch.effective_status !== "active"
+    )
+      return;
+    setRecallingBatch(true);
+    try {
+      await api.post(`/production-batches/${recallBatch.id}/recall`, {
+        reason: reason.trim(),
+        confirm: "recall",
+      });
+      message.success("生产批次已召回，关联码的权益入口已关闭");
+      setRecallBatch(null);
+      recallBatchForm.resetFields();
+      await load();
+    } catch (err) {
+      message.error(extractErrorMessage(err, "召回失败，请重试"));
+    } finally {
+      setRecallingBatch(false);
     }
   };
 
@@ -877,7 +924,7 @@ function ProductWorkbench({
     },
     {
       title: "状态",
-      dataIndex: "status",
+      dataIndex: "effective_status",
       key: "status",
       render: (s: string) => (
         <Tag color={BATCH_STATUS_MAP[s]?.color || STATUS_COLORS.neutral}>
@@ -893,11 +940,30 @@ function ProductWorkbench({
           <Button
             type="link"
             size="small"
-            disabled={writesDisabled}
+            disabled={writesDisabled || record.effective_status !== "active"}
+            title={
+              planReadOnly
+                ? "套餐已到期，续期后可编辑生产批次"
+                : record.effective_status !== "active"
+                  ? "终态生产批次不可编辑"
+                  : undefined
+            }
             onClick={() => openBatchModal(record)}
           >
             编辑
           </Button>
+          {canRecall && record.effective_status === "active" && (
+            <Button
+              type="link"
+              size="small"
+              danger
+              disabled={planReadOnly}
+              title={planReadOnly ? "套餐已到期，续期后可执行召回" : undefined}
+              onClick={() => openBatchRecall(record)}
+            >
+              召回批次
+            </Button>
+          )}
           {canDelete && (
             <Popconfirm
               title="确认删除批次"
@@ -1489,14 +1555,21 @@ function ProductWorkbench({
         onCancel={() => setBatchModalOpen(false)}
         onOk={() => batchForm.submit()}
         okText={editingBatch ? "更新批次" : "创建批次"}
-        okButtonProps={{ disabled: writesDisabled }}
+        okButtonProps={{
+          disabled:
+            writesDisabled ||
+            Boolean(editingBatch && editingBatch.effective_status !== "active"),
+        }}
         width={560}
         forceRender
       >
         <Form<ProductionBatchFormValues>
           form={batchForm}
           layout="vertical"
-          disabled={writesDisabled}
+          disabled={
+            writesDisabled ||
+            Boolean(editingBatch && editingBatch.effective_status !== "active")
+          }
           onFinish={handleBatchSubmit}
         >
           <ProductionBatchFormFields
@@ -1514,6 +1587,44 @@ function ProductWorkbench({
               message.warning("保质期至不能早于生产日期，已清空原日期")
             }
           />
+        </Form>
+      </Modal>
+
+      <Modal
+        title={`召回生产批次${recallBatch ? `：${recallBatch.batch_code}` : ""}`}
+        open={Boolean(recallBatch)}
+        okText="确认召回"
+        okButtonProps={{ danger: true, disabled: planReadOnly }}
+        confirmLoading={recallingBatch}
+        onCancel={() => {
+          setRecallBatch(null);
+          recallBatchForm.resetFields();
+        }}
+        onOk={() => recallBatchForm.submit()}
+        forceRender
+      >
+        <Alert
+          className="mb-4"
+          type="warning"
+          showIcon
+          title="召回后该批次不可继续编辑，关联码不再提供权益入口"
+        />
+        <Form
+          form={recallBatchForm}
+          layout="vertical"
+          onFinish={handleBatchRecall}
+        >
+          <Form.Item
+            name="reason"
+            label="召回原因"
+            rules={[
+              { required: true, whitespace: true, message: "请输入召回原因" },
+              { max: 500, message: "召回原因不能超过 500 个字符" },
+            ]}
+            normalize={(value: string) => value.trimStart()}
+          >
+            <TextArea maxLength={500} showCount rows={4} />
+          </Form.Item>
         </Form>
       </Modal>
 

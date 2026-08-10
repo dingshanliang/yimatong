@@ -92,6 +92,57 @@ async def sku_with_auth(client: AsyncClient, tenant_with_auth):
 
 class TestCodeBatchCreate:
     @pytest.mark.anyio
+    async def test_recalled_production_batch_cannot_supply_new_codes(
+        self, client: AsyncClient, tenant_with_auth, sku_with_auth
+    ):
+        _, headers = tenant_with_auth
+        product_id, sku_id, production_batch_id = sku_with_auth
+        recalled = await client.post(
+            f"/api/v1/production-batches/{production_batch_id}/recall",
+            json={"reason": "safety recall", "confirm": "recall"},
+            headers=headers,
+        )
+        assert recalled.status_code == 200
+
+        response = await client.post(
+            "/api/v1/code-batches",
+            json={
+                "product_id": product_id,
+                "sku_id": sku_id,
+                "production_batch_id": production_batch_id,
+                "quantity": 1,
+            },
+            headers=headers,
+        )
+        assert response.status_code == 409
+
+    @pytest.mark.anyio
+    async def test_code_batch_cannot_activate_after_production_batch_recall(
+        self, client: AsyncClient, tenant_with_auth, sku_with_auth
+    ):
+        _, headers = tenant_with_auth
+        product_id, sku_id, production_batch_id = sku_with_auth
+        created = await client.post(
+            "/api/v1/code-batches",
+            json={
+                "product_id": product_id,
+                "sku_id": sku_id,
+                "production_batch_id": production_batch_id,
+                "quantity": 1,
+            },
+            headers=headers,
+        )
+        await client.post(
+            f"/api/v1/production-batches/{production_batch_id}/recall",
+            json={"reason": "safety recall", "confirm": "recall"},
+            headers=headers,
+        )
+
+        response = await client.post(f"/api/v1/code-batches/{created.json()['id']}/activate", headers=headers)
+
+        assert response.status_code == 409
+
+    @pytest.mark.anyio
     async def test_create_code_batch(self, client: AsyncClient, tenant_with_auth, sku_with_auth):
         tid, headers = tenant_with_auth
         product_id, sku_id, production_batch_id = sku_with_auth

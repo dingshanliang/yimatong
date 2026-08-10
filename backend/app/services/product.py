@@ -10,6 +10,7 @@ from app.models.campaign import Campaign
 from app.models.code import CodeBatch
 from app.models.product import (
     SKU,
+    BatchStatus,
     Brand,
     BrandStatus,
     Product,
@@ -21,8 +22,27 @@ from app.models.product import (
     SKUStatus,
 )
 from app.services.quota import CumulativeQuotaKey, check_quota_for_tenant, release_quota
-from app.utils import escape_like_pattern
+from app.utils import china_business_date, escape_like_pattern
 from app.utils.public_url import normalize_public_url
+
+
+def effective_production_batch_status(
+    batch: ProductionBatch,
+    *,
+    current_date: date | None = None,
+) -> BatchStatus:
+    """Return the runtime lifecycle without rewriting historical status rows."""
+    if batch.status == BatchStatus.active and batch.expiry_date < (current_date or china_business_date()):
+        return BatchStatus.expired
+    return batch.status
+
+
+def is_production_batch_effectively_active(
+    batch: ProductionBatch,
+    *,
+    current_date: date | None = None,
+) -> bool:
+    return effective_production_batch_status(batch, current_date=current_date) == BatchStatus.active
 
 
 def _validate_active_trust_asset(asset: ProductAsset) -> None:
@@ -512,7 +532,6 @@ async def update_production_batch(
     production_date=None,
     expiry_date=None,
     origin: str | None = None,
-    status=None,
     fields_to_update: set[str] | None = None,
 ) -> ProductionBatch | None:
     fields_to_update = fields_to_update or set()
@@ -520,10 +539,13 @@ async def update_production_batch(
         select(ProductionBatch)
         .options(selectinload(ProductionBatch.product), selectinload(ProductionBatch.sku))
         .where(ProductionBatch.id == batch_id, ProductionBatch.tenant_id == tenant_id)
+        .with_for_update()
     )
     batch = result.scalar_one_or_none()
     if not batch:
         return None
+    if not is_production_batch_effectively_active(batch):
+        raise ConflictError("Only an active production batch can be updated")
 
     if batch_code is not None:
         existing = await db.execute(
@@ -542,8 +564,6 @@ async def update_production_batch(
         batch.expiry_date = expiry_date
     if "origin" in fields_to_update:
         batch.origin = origin
-    if status is not None:
-        batch.status = status
     if batch.expiry_date < batch.production_date:
         raise BadRequestError("Expiry date cannot be earlier than production date")
 
@@ -551,6 +571,49 @@ async def update_production_batch(
     await db.refresh(batch)
     # 失效公共解析缓存：生产批次字段被消费者页直接渲染（yimatong-zgb1.2 AC1）。
     # 注意批次变更影响所有引用该批次的码 → 失效其 product 的缓存条目。
+    from app.services.resolver_response import invalidate_product_cache
+
+    await invalidate_product_cache(batch.product_id)
+    return batch
+
+
+async def recall_production_batch(
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    batch_id: uuid.UUID,
+    *,
+    reason: str,
+    actor_id: uuid.UUID,
+) -> ProductionBatch | None:
+    from app.services.audit import write_audit_log
+    from app.utils import utcnow
+
+    result = await db.execute(
+        select(ProductionBatch)
+        .options(selectinload(ProductionBatch.product), selectinload(ProductionBatch.sku))
+        .where(ProductionBatch.id == batch_id, ProductionBatch.tenant_id == tenant_id)
+        .with_for_update()
+    )
+    batch = result.scalar_one_or_none()
+    if batch is None:
+        return None
+    if not is_production_batch_effectively_active(batch):
+        raise ConflictError("Only an active production batch can be recalled")
+
+    batch.status = BatchStatus.recalled
+    batch.recall_reason = reason
+    batch.recalled_at = utcnow()
+    batch.recalled_by = str(actor_id)
+    await db.flush()
+    await write_audit_log(
+        db,
+        str(actor_id),
+        str(tenant_id),
+        "production_batch_recalled",
+        f"production_batch:{batch.id}",
+        {"resource_name": batch.batch_code, "reason": reason, "result": "success"},
+    )
+
     from app.services.resolver_response import invalidate_product_cache
 
     await invalidate_product_cache(batch.product_id)
@@ -741,7 +804,10 @@ async def import_batches_csv(
 
     reader = csv.DictReader(StringIO(csv_content))
     imported = 0
-    errors = []
+    errors: list[str] = []
+
+    max_rows = 10_000
+    max_errors = 100
 
     product = (
         await db.execute(select(Product).where(Product.id == product_id, Product.tenant_id == tenant_id))
@@ -755,6 +821,10 @@ async def import_batches_csv(
         raise BadRequestError("SKU does not belong to selected product")
 
     for row_num, row in enumerate(reader, start=2):
+        if row_num > max_rows + 1:
+            if len(errors) < max_errors:
+                errors.append(f"Row {row_num}: row limit exceeded ({max_rows})")
+            break
         try:
             batch_code = row["batch_code"].strip()
             production_date_str = row["production_date"].strip()
@@ -771,7 +841,8 @@ async def import_batches_csv(
                 )
             )
             if existing.scalar_one_or_none():
-                errors.append(f"Row {row_num}: batch_code '{batch_code}' already exists")
+                if len(errors) < max_errors:
+                    errors.append(f"Row {row_num}: batch_code '{batch_code}' already exists")
                 continue
 
             batch = ProductionBatch(
@@ -785,8 +856,9 @@ async def import_batches_csv(
             )
             db.add(batch)
             imported += 1
-        except Exception as e:
-            errors.append(f"Row {row_num}: {e}")
+        except (KeyError, TypeError, ValueError):
+            if len(errors) < max_errors:
+                errors.append(f"Row {row_num}: invalid batch data")
 
     if imported > 0:
         await db.flush()

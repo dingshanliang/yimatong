@@ -294,13 +294,13 @@ function DashboardInner({ children }: { children: React.ReactNode }) {
                 icon: <ProfileOutlined />,
                 label: t("menu.skus"),
               },
+              {
+                key: "/batches",
+                icon: <DatabaseOutlined />,
+                label: t("menu.batches"),
+              },
             ]
           : []),
-        {
-          key: "/batches",
-          icon: <DatabaseOutlined />,
-          label: t("menu.batches"),
-        },
       ],
     },
     {

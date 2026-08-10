@@ -384,6 +384,7 @@ class BatchCreateRequest(CatalogRequest):
     batch_code: str = Field(min_length=1, max_length=100)
     production_date: date
     expiry_date: date
+    origin: str | None = Field(None, max_length=200)
     external_id: str | None = Field(None, max_length=100)
 
     @model_validator(mode="after")
@@ -735,6 +736,7 @@ async def open_create_batch(
     _: None = Depends(require_permission("product:create")),
 ):
     from app.models.product import SKU, ProductionBatch
+    from app.services.product import effective_production_batch_status, is_production_batch_effectively_active
 
     sku_query = select(SKU).where(SKU.tenant_id == tenant_id)
     if body.sku_id is not None:
@@ -751,18 +753,43 @@ async def open_create_batch(
     existing = None
     if body.external_id:
         eresult = await db.execute(
-            select(ProductionBatch).where(
+            select(ProductionBatch)
+            .where(
                 ProductionBatch.tenant_id == tenant_id,
                 ProductionBatch.source_system == "open_api",
                 ProductionBatch.external_id == body.external_id,
             )
+            .with_for_update()
         )
         existing = eresult.scalar_one_or_none()
 
     if existing:
+        if not is_production_batch_effectively_active(existing):
+            effective_status = effective_production_batch_status(existing)
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "production_batch_not_active",
+                    "message": "A non-active production batch is immutable",
+                    "authoritative_product_id": str(existing.product_id),
+                    "authoritative_sku_id": str(existing.sku_id),
+                    "status": effective_status.value,
+                },
+            )
+        if existing.sku_id != sku.id or existing.product_id != sku.product_id:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "external_id_resource_mismatch",
+                    "message": "external_id is already bound to a different SKU or product",
+                    "authoritative_product_id": str(existing.product_id),
+                    "authoritative_sku_id": str(existing.sku_id),
+                },
+            )
         existing.batch_code = body.batch_code
         existing.production_date = body.production_date
         existing.expiry_date = body.expiry_date
+        existing.origin = body.origin
         await db.flush()
         await write_audit_log(
             db,
@@ -774,7 +801,10 @@ async def open_create_batch(
         )
         return {
             "id": str(existing.id),
+            "product_id": str(existing.product_id),
+            "sku_id": str(existing.sku_id),
             "batch_code": existing.batch_code,
+            "origin": existing.origin,
             "external_id": existing.external_id,
             "action": "updated",
         }
@@ -786,6 +816,7 @@ async def open_create_batch(
         batch_code=body.batch_code,
         production_date=body.production_date,
         expiry_date=body.expiry_date,
+        origin=body.origin,
         external_id=body.external_id,
         source_system="open_api" if body.external_id else None,
     )
@@ -801,7 +832,10 @@ async def open_create_batch(
     )
     return {
         "id": str(batch.id),
+        "product_id": str(batch.product_id),
+        "sku_id": str(batch.sku_id),
         "batch_code": batch.batch_code,
+        "origin": batch.origin,
         "external_id": batch.external_id,
         "action": "created",
     }

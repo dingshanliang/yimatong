@@ -18,7 +18,8 @@ export interface Brand {
   name: string;
 }
 
-export type ProductAssetType = "image" | "video" | "test_report" | "certificate" | "story" | "other";
+export type ProductAssetType =
+  "image" | "video" | "test_report" | "certificate" | "story" | "other";
 
 export interface ProductAsset {
   id: string;
@@ -60,4 +61,5 @@ export interface ProductionBatch {
   expiry_date: string;
   origin?: string;
   status: string;
+  effective_status: string;
 }

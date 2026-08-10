@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { Form } from "antd";
 import dayjs from "dayjs";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import ProductionBatchFormFields, {
   type ProductionBatchFormValues,
@@ -19,14 +19,29 @@ const skus = [
 
 function FormHarness({
   initialValues,
+  editing = false,
+  skuOptions = skus,
+  skuLoadError = false,
+  onRetrySkus,
 }: {
   initialValues?: ProductionBatchFormValues;
+  editing?: boolean;
+  skuOptions?: typeof skus;
+  skuLoadError?: boolean;
+  onRetrySkus?: () => void;
 }) {
   const [form] = Form.useForm<ProductionBatchFormValues>();
 
   return (
     <Form form={form} initialValues={initialValues}>
-      <ProductionBatchFormFields form={form} products={products} skus={skus} />
+      <ProductionBatchFormFields
+        form={form}
+        products={products}
+        skus={skuOptions}
+        editing={editing}
+        skuLoadError={skuLoadError}
+        onRetrySkus={onRetrySkus}
+      />
     </Form>
   );
 }
@@ -56,5 +71,29 @@ describe("ProductionBatchFormFields", () => {
     expect(screen.getByPlaceholderText("例如 PB-20260531-001")).toHaveValue(
       "PB-20260729-RICE5KG0"
     );
+  });
+
+  it("does not expose lifecycle status as an ordinary edit field", () => {
+    render(<FormHarness editing />);
+
+    expect(screen.queryByLabelText("状态")).not.toBeInTheDocument();
+  });
+
+  it("distinguishes SKU option failure and offers a retry without clearing the form", () => {
+    const retry = vi.fn();
+    render(
+      <FormHarness
+        initialValues={{ product_id: "product-1", origin: "已输入产地" }}
+        skuOptions={[]}
+        skuLoadError
+        onRetrySkus={retry}
+      />
+    );
+
+    expect(screen.getByText(/SKU 选项加载失败/)).toBeVisible();
+    expect(screen.getByLabelText("关联 SKU")).toBeDisabled();
+    expect(screen.getByLabelText("本批次产地")).toHaveValue("已输入产地");
+    fireEvent.click(screen.getByRole("button", { name: "重试" }));
+    expect(retry).toHaveBeenCalledOnce();
   });
 });
