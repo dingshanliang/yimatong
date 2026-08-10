@@ -85,7 +85,7 @@ export function useCrud<T extends { id: string }>(
   ).toString();
   const swrKey = `${basePath}?page=${page}&page_size=${pageSize}${filterStr ? `&${filterStr}` : ""}`;
 
-  const { data, isLoading, mutate } = useSWR<PaginatedResponse<T> | T[]>(
+  const { data, error, isLoading, mutate } = useSWR<PaginatedResponse<T> | T[]>(
     swrKey
   );
 
@@ -125,11 +125,13 @@ export function useCrud<T extends { id: string }>(
     page,
     pageSize,
     loading: isLoading,
+    error: error as unknown,
     filters,
     setPage,
     setFilter,
     resetFilters,
     mutate,
+    retry: () => mutate(),
     create,
     update,
     remove,

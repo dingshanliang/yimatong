@@ -5,11 +5,13 @@ from collections.abc import AsyncGenerator
 
 import pytest
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.main import app
-from app.models.tenant import Organization
+from app.models.audit import PlatformAuditLog
+from app.models.tenant import Account, Organization
 from app.utils.security import create_access_token, decode_token
 from tests.conftest import TestSessionLocal
 
@@ -433,6 +435,99 @@ class TestAccountCRUD:
             headers=headers,
         )
         assert resp.status_code == 404
+
+    @pytest.mark.anyio
+    async def test_cross_tenant_mutations_leave_target_and_audit_unchanged(
+        self,
+        client: AsyncClient,
+        db_session: AsyncSession,
+        tenant_with_auth,
+    ):
+        first_tenant_id, first_headers = tenant_with_auth
+        second_resp = await client.post(
+            "/api/v1/tenants",
+            json={
+                "name": "Cross Tenant Target",
+                "admin_email": "cross-target@example.com",
+                "admin_name": "Target Admin",
+                "admin_password": "Pass1234",
+            },
+            headers=_platform_admin_headers(),
+        )
+        assert second_resp.status_code == 201
+        second_tenant_id = second_resp.json()["id"]
+        second_headers = _auth_headers(second_tenant_id)
+        target_org_resp = await client.post(
+            "/api/v1/organizations",
+            json={"name": "Target Empty Organization"},
+            headers=second_headers,
+        )
+        assert target_org_resp.status_code == 201
+        target_org_id = target_org_resp.json()["id"]
+        member_org_resp = await client.post(
+            "/api/v1/organizations",
+            json={"name": "Target Member Organization"},
+            headers=second_headers,
+        )
+        target_account_resp = await client.post(
+            "/api/v1/accounts",
+            json={
+                "email": "cross-tenant-member@example.com",
+                "name": "Cross Tenant Member",
+                "password": "MemberPass1234",
+                "organization_id": member_org_resp.json()["id"],
+            },
+            headers=second_headers,
+        )
+        assert target_account_resp.status_code == 201
+        target_account_id = target_account_resp.json()["id"]
+        target_resources = [f"organization:{target_org_id}", f"account:{target_account_id}"]
+        baseline_target_audits = await db_session.scalar(
+            select(func.count()).select_from(PlatformAuditLog).where(PlatformAuditLog.resource.in_(target_resources))
+        )
+
+        rejected = [
+            await client.patch(
+                f"/api/v1/organizations/{target_org_id}",
+                json={"name": "Unauthorized Rename"},
+                headers=first_headers,
+            ),
+            await client.delete(f"/api/v1/organizations/{target_org_id}", headers=first_headers),
+            await client.patch(
+                f"/api/v1/accounts/{target_account_id}",
+                json={"name": "Unauthorized Member Rename"},
+                headers=first_headers,
+            ),
+            await client.patch(
+                f"/api/v1/accounts/{target_account_id}/status",
+                json={"is_active": False, "reason": "cross-tenant attempt"},
+                headers=first_headers,
+            ),
+        ]
+
+        assert [response.status_code for response in rejected] == [404, 404, 404, 404]
+        db_session.expire_all()
+        target_org = await db_session.get(Organization, uuid.UUID(target_org_id))
+        target_account = await db_session.get(Account, uuid.UUID(target_account_id))
+        assert target_org is not None and target_org.name == "Target Empty Organization"
+        assert target_account is not None
+        assert target_account.name == "Cross Tenant Member"
+        assert target_account.is_active is True
+        rejected_audits = await db_session.scalar(
+            select(func.count())
+            .select_from(PlatformAuditLog)
+            .where(
+                PlatformAuditLog.operator_id == "00000000-0000-0000-0000-000000000001",
+                PlatformAuditLog.target_tenant_id == first_tenant_id,
+                PlatformAuditLog.resource.in_(target_resources),
+            )
+        )
+        target_audits_after_rejection = await db_session.scalar(
+            select(func.count()).select_from(PlatformAuditLog).where(PlatformAuditLog.resource.in_(target_resources))
+        )
+        assert rejected_audits == 0
+        assert target_audits_after_rejection == baseline_target_audits
+        assert first_tenant_id != second_tenant_id
 
     @pytest.mark.anyio
     async def test_pagination_params(self, client: AsyncClient, tenant_with_auth):

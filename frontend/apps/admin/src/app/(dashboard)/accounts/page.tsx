@@ -6,6 +6,7 @@ import {
   App,
   Button,
   Dropdown,
+  Empty,
   Form,
   Input,
   Modal,
@@ -28,7 +29,7 @@ import {
   StopOutlined,
 } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
-import api from "@/lib/api";
+import api, { extractErrorMessage } from "@/lib/api";
 import { useAuthStore } from "@/lib/auth";
 import { useCrud } from "@/lib/hooks";
 import { STATUS_COLORS } from "@/lib/status-colors";
@@ -155,13 +156,13 @@ function AccountsWorkspace({ canManage }: { canManage: boolean }) {
   const [activeTab, setActiveTab] = useState("orgs");
   const [orgs, setOrgs] = useState<Organization[]>([]);
   const [orgsLoading, setOrgsLoading] = useState(false);
+  const [orgsError, setOrgsError] = useState<unknown>(null);
   const [orgModalOpen, setOrgModalOpen] = useState(false);
   const [editingOrg, setEditingOrg] = useState<Organization | null>(null);
   const [accountModalOpen, setAccountModalOpen] = useState(false);
   const [createdAccount, setCreatedAccount] = useState<Account | null>(null);
   const [resetLinkModalOpen, setResetLinkModalOpen] = useState(false);
   const [resetLink, setResetLink] = useState("");
-  const [resetLoading, setResetLoading] = useState(false);
   const [orgForm] = Form.useForm();
   const [accountForm] = Form.useForm();
   const [editModalOpen, setEditModalOpen] = useState(false);
@@ -180,18 +181,30 @@ function AccountsWorkspace({ canManage }: { canManage: boolean }) {
     setPage: setAccountsPage,
     setFilter: setAccountsFilter,
     mutate: mutateAccounts,
+    error: accountsError,
+    retry: retryAccounts,
   } = useCrud<Account>("/accounts");
 
   // Roles list for account create/edit
-  const { items: availableRoles } = useCrud<Role>("/roles");
+  const {
+    items: availableRoles,
+    error: rolesError,
+    retry: retryRoles,
+  } = useCrud<Role>("/roles");
+
+  const canManageOrganizations = canManage && !orgsError;
+  const canManageAccounts =
+    canManage && !orgsError && !accountsError && !rolesError;
 
   const fetchOrgs = useCallback(async () => {
     setOrgsLoading(true);
+    setOrgsError(null);
     try {
       const { data } = await api.get<Organization[]>("/organizations/tree");
       setOrgs(data);
-    } catch {
-      message.error("加载组织列表失败");
+    } catch (error) {
+      setOrgsError(error);
+      message.error(extractErrorMessage(error, "加载组织列表失败"));
     } finally {
       setOrgsLoading(false);
     }
@@ -214,6 +227,7 @@ function AccountsWorkspace({ canManage }: { canManage: boolean }) {
     name: string;
     parent_id?: string;
   }) => {
+    if (!canManageOrganizations) return;
     try {
       await api.post("/organizations", {
         name: values.name,
@@ -223,8 +237,8 @@ function AccountsWorkspace({ canManage }: { canManage: boolean }) {
       setOrgModalOpen(false);
       orgForm.resetFields();
       fetchOrgs();
-    } catch {
-      message.error("创建失败");
+    } catch (error) {
+      message.error(extractErrorMessage(error, "创建失败"));
     }
   };
 
@@ -232,7 +246,7 @@ function AccountsWorkspace({ canManage }: { canManage: boolean }) {
     name: string;
     parent_id?: string;
   }) => {
-    if (!editingOrg) return;
+    if (!editingOrg || !canManageOrganizations) return;
     try {
       await api.patch(`/organizations/${editingOrg.id}`, {
         name: values.name,
@@ -242,12 +256,13 @@ function AccountsWorkspace({ canManage }: { canManage: boolean }) {
       setEditingOrg(null);
       orgForm.resetFields();
       fetchOrgs();
-    } catch {
-      message.error("更新失败");
+    } catch (error) {
+      message.error(extractErrorMessage(error, "更新失败"));
     }
   };
 
   const handleDeleteOrg = (org: Organization) => {
+    if (!canManageOrganizations) return;
     modal.confirm({
       title: "删除组织",
       content: `确定删除「${org.name}」吗？删除后不可恢复。`,
@@ -269,6 +284,7 @@ function AccountsWorkspace({ canManage }: { canManage: boolean }) {
   };
 
   const handleCreateAccount = async (values: Record<string, string>) => {
+    if (!canManageAccounts) return;
     try {
       const { data } = await api.post("/accounts", values);
       message.success("账户创建成功");
@@ -276,8 +292,8 @@ function AccountsWorkspace({ canManage }: { canManage: boolean }) {
       accountForm.resetFields();
       mutateAccounts();
       fetchOrgs();
-    } catch {
-      message.error("创建失败");
+    } catch (error) {
+      message.error(extractErrorMessage(error, "创建失败"));
     }
   };
 
@@ -300,13 +316,13 @@ function AccountsWorkspace({ canManage }: { canManage: boolean }) {
   };
 
   const handleResetPassword = (account: Account) => {
+    if (!canManageAccounts) return;
     modal.confirm({
       title: "生成密码重置链接",
       content: `确定为「${account.name}」（${account.email}）生成密码重置链接吗？`,
       okText: "确定生成",
       cancelText: "取消",
       onOk: async () => {
-        setResetLoading(true);
         try {
           const { data } = await api.post("/auth/generate-reset-token", {
             account_id: account.id,
@@ -315,8 +331,6 @@ function AccountsWorkspace({ canManage }: { canManage: boolean }) {
           setResetLinkModalOpen(true);
         } catch {
           message.error("生成重置链接失败");
-        } finally {
-          setResetLoading(false);
         }
       },
     });
@@ -327,6 +341,7 @@ function AccountsWorkspace({ canManage }: { canManage: boolean }) {
     isActive: boolean,
     reason: string
   ) => {
+    if (!canManageAccounts) return;
     setStatusLoading(true);
     try {
       await api.patch(`/accounts/${account.id}/status`, {
@@ -360,6 +375,7 @@ function AccountsWorkspace({ canManage }: { canManage: boolean }) {
   };
 
   const openEditOrgModal = (org: Organization) => {
+    if (!canManageOrganizations) return;
     setEditingOrg(org);
     orgForm.setFieldsValue({
       name: org.name,
@@ -395,7 +411,7 @@ function AccountsWorkspace({ canManage }: { canManage: boolean }) {
         <Tag data-testid={`org-account-count-${record.id}`}>{v || 0}</Tag>
       ),
     },
-    ...(canManage
+    ...(canManageOrganizations
       ? [
           {
             title: "操作",
@@ -500,7 +516,7 @@ function AccountsWorkspace({ canManage }: { canManage: boolean }) {
         </Tag>
       ),
     },
-    ...(canManage
+    ...(canManageAccounts
       ? [
           {
             title: "操作",
@@ -521,6 +537,7 @@ function AccountsWorkspace({ canManage }: { canManage: boolean }) {
   ];
 
   const openAccountModal = () => {
+    if (!canManageAccounts) return;
     setCreatedAccount(null);
     accountForm.setFieldsValue({ organization_id: orgs[0]?.id });
     setAccountModalOpen(true);
@@ -531,7 +548,7 @@ function AccountsWorkspace({ canManage }: { canManage: boolean }) {
     organization_id: string;
     role_ids?: string[];
   }) => {
-    if (!editingAccount) return;
+    if (!editingAccount || !canManageAccounts) return;
     try {
       await api.patch(`/accounts/${editingAccount.id}`, {
         name: values.name,
@@ -544,8 +561,8 @@ function AccountsWorkspace({ canManage }: { canManage: boolean }) {
       editForm.resetFields();
       mutateAccounts();
       fetchOrgs();
-    } catch {
-      message.error("更新失败");
+    } catch (error) {
+      message.error(extractErrorMessage(error, "更新失败"));
     }
   };
 
@@ -572,11 +589,29 @@ function AccountsWorkspace({ canManage }: { canManage: boolean }) {
                   message="组织用于账户归类和日常管理"
                   description="组织本身不会自动限制数据范围；账号可查看和操作的内容由角色与权限决定。"
                 />
+                {orgsError && (
+                  <Alert
+                    className="mb-4"
+                    type="error"
+                    showIcon
+                    message="组织列表加载失败"
+                    description={extractErrorMessage(
+                      orgsError,
+                      "请检查网络后重试"
+                    )}
+                    action={
+                      <Button size="small" onClick={() => void fetchOrgs()}>
+                        重新加载
+                      </Button>
+                    }
+                  />
+                )}
                 <div className="mb-4 flex items-center gap-4">
                   {canManage && (
                     <Button
                       type="primary"
                       icon={<PlusOutlined />}
+                      disabled={!canManageOrganizations}
                       onClick={() => {
                         setEditingOrg(null);
                         orgForm.resetFields();
@@ -601,15 +636,19 @@ function AccountsWorkspace({ canManage }: { canManage: boolean }) {
                     }}
                   />
                 </div>
-                <Table
-                  columns={orgColumns}
-                  dataSource={orgTreeData}
-                  rowKey="id"
-                  loading={orgsLoading}
-                  pagination={false}
-                  indentSize={20}
-                  defaultExpandAllRows
-                />
+                {orgsError ? null : !orgsLoading && orgTreeData.length === 0 ? (
+                  <Empty description="暂无组织，请先创建组织" />
+                ) : (
+                  <Table
+                    columns={orgColumns}
+                    dataSource={orgTreeData}
+                    rowKey="id"
+                    loading={orgsLoading}
+                    pagination={false}
+                    indentSize={20}
+                    defaultExpandAllRows
+                  />
+                )}
               </>
             ),
           },
@@ -634,11 +673,46 @@ function AccountsWorkspace({ canManage }: { canManage: boolean }) {
                     description="运营人员可以查看组织和账户信息；新建、编辑、重置密码及停用或启用账户由租户管理员处理。"
                   />
                 )}
+                {accountsError && (
+                  <Alert
+                    className="mb-4"
+                    type="error"
+                    showIcon
+                    message="账户目录加载失败"
+                    description={extractErrorMessage(
+                      accountsError,
+                      "请检查网络后重试"
+                    )}
+                    action={
+                      <Button size="small" onClick={() => void retryAccounts()}>
+                        重新加载账户
+                      </Button>
+                    }
+                  />
+                )}
+                {rolesError && (
+                  <Alert
+                    className="mb-4"
+                    type="error"
+                    showIcon
+                    message="角色目录加载失败"
+                    description={extractErrorMessage(
+                      rolesError,
+                      "暂时不能创建或编辑账户，请重试"
+                    )}
+                    action={
+                      <Button size="small" onClick={() => void retryRoles()}>
+                        重新加载角色
+                      </Button>
+                    }
+                  />
+                )}
                 <div className="mb-4 flex items-center gap-4">
                   {canManage && (
                     <Button
                       type="primary"
                       icon={<PlusOutlined />}
+                      disabled={!canManageAccounts}
                       onClick={openAccountModal}
                     >
                       新建账户
@@ -653,19 +727,24 @@ function AccountsWorkspace({ canManage }: { canManage: boolean }) {
                     }
                   />
                 </div>
-                <Table
-                  columns={accountColumns}
-                  dataSource={accounts}
-                  rowKey="id"
-                  loading={accountsLoading}
-                  pagination={{
-                    current: accountsPage,
-                    total: accountsTotal,
-                    pageSize: 20,
-                    onChange: setAccountsPage,
-                    showTotal: (t) => `共 ${t} 条`,
-                  }}
-                />
+                {accountsError ? null : !accountsLoading &&
+                  accounts.length === 0 ? (
+                  <Empty description="暂无账户" />
+                ) : (
+                  <Table
+                    columns={accountColumns}
+                    dataSource={accounts}
+                    rowKey="id"
+                    loading={accountsLoading}
+                    pagination={{
+                      current: accountsPage,
+                      total: accountsTotal,
+                      pageSize: 20,
+                      onChange: setAccountsPage,
+                      showTotal: (t) => `共 ${t} 条`,
+                    }}
+                  />
+                )}
               </>
             ),
           },
@@ -685,6 +764,7 @@ function AccountsWorkspace({ canManage }: { canManage: boolean }) {
         okText={editingOrg ? "保存" : "创建"}
       >
         <Form
+          name="organization-form"
           form={orgForm}
           layout="vertical"
           onFinish={editingOrg ? handleEditOrg : handleCreateOrg}
@@ -771,6 +851,7 @@ function AccountsWorkspace({ canManage }: { canManage: boolean }) {
           description="提交后系统会生成一次性临时密码。临时密码只在创建成功后显示一次，请当场交付给使用人。"
         />
         <Form
+          name="create-account-form"
           form={accountForm}
           layout="vertical"
           onFinish={handleCreateAccount}
@@ -863,7 +944,12 @@ function AccountsWorkspace({ canManage }: { canManage: boolean }) {
         okText="保存"
         width={520}
       >
-        <Form form={editForm} layout="vertical" onFinish={handleEditAccount}>
+        <Form
+          name="edit-account-form"
+          form={editForm}
+          layout="vertical"
+          onFinish={handleEditAccount}
+        >
           <Form.Item
             name="name"
             label="姓名"

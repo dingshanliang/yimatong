@@ -45,6 +45,7 @@ import {
 } from "@ant-design/icons";
 import type { MenuProps } from "antd";
 import { useAuthStore } from "@/lib/auth";
+import { canViewRoleDirectory } from "@/lib/account-access";
 import { extractErrorMessage } from "@/lib/api";
 import { I18nProvider, useI18n } from "@/lib/i18n";
 import { useAdminTheme } from "@/lib/theme-provider";
@@ -388,11 +389,15 @@ function DashboardInner({ children }: { children: React.ReactNode }) {
           icon: <BgColorsOutlined />,
           label: t("menu.brand-profile"),
         },
-        {
-          key: "/settings/roles",
-          icon: <UserAddOutlined />,
-          label: t("menu.roles"),
-        },
+        ...(canViewRoleDirectory(user?.role?.toLowerCase())
+          ? [
+              {
+                key: "/settings/roles",
+                icon: <UserAddOutlined />,
+                label: t("menu.roles"),
+              },
+            ]
+          : []),
         {
           key: "/settings/compliance",
           icon: <SafetyCertificateOutlined />,

@@ -131,10 +131,14 @@ async function prepareDatabase() {
      GRANT USAGE, SELECT, UPDATE ON ALL SEQUENCES IN SCHEMA public TO acceptance_control;
      GRANT SET ON PARAMETER "app.bypass_rls" TO acceptance_control;`
   );
-  await run("uv", ["run", "python", "scripts/seed_demo.py", "generate"], {
-    cwd: backendDir,
-    env: backendEnvironment,
-  });
+  await run(
+    "uv",
+    ["run", "python", "scripts/seed_demo.py", "generate", "--target", "demo"],
+    {
+      cwd: backendDir,
+      env: backendEnvironment,
+    }
+  );
   await composePsql(
     databaseName,
     `INSERT INTO roles (id, tenant_id, name, description)

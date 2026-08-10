@@ -87,6 +87,18 @@ CREATE TEMP TABLE runtime_append_only_relation_allowlist (
 INSERT INTO runtime_append_only_relation_allowlist (table_name)
 VALUES ('platform_audit_log');
 
+-- Scoped capability for tenant-owned account maintenance. The SECURITY
+-- DEFINER function validates the runtime principal and current tenant before
+-- touching the otherwise control-only auth_sessions relation.
+DO $$
+BEGIN
+    IF to_regprocedure('public.revoke_current_tenant_account_sessions(uuid)') IS NOT NULL THEN
+        REVOKE ALL ON FUNCTION public.revoke_current_tenant_account_sessions(uuid) FROM PUBLIC;
+        GRANT EXECUTE ON FUNCTION public.revoke_current_tenant_account_sessions(uuid) TO yimatong_app;
+    END IF;
+END
+$$;
+
 CREATE TEMP TABLE runtime_control_relation_allowlist (
     table_name name PRIMARY KEY
 ) ON COMMIT DROP;

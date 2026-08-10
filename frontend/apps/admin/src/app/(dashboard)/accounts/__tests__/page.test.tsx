@@ -8,7 +8,11 @@ const mockPost = vi.fn();
 const mockPatch = vi.fn();
 const mockDelete = vi.fn();
 const mockClipboardWriteText = vi.fn();
+const mockRetryAccounts = vi.fn();
+const mockRetryRoles = vi.fn();
 let mockCurrentRole = "admin";
+let mockAccountsError: unknown;
+let mockRolesError: unknown;
 let mockAccounts = [
   {
     id: "acct-1",
@@ -49,6 +53,9 @@ vi.mock("@/lib/api", () => ({
     patch: (...args: unknown[]) => mockPatch(...args),
     delete: (...args: unknown[]) => mockDelete(...args),
   },
+  extractErrorMessage: (error: unknown, fallback: string) =>
+    (error as { response?: { data?: { detail?: string } } })?.response?.data
+      ?.detail || fallback,
 }));
 
 vi.mock("@/lib/auth", () => ({
@@ -64,9 +71,11 @@ vi.mock("@/lib/hooks", () => ({
     total: path === "/accounts" ? mockAccounts.length : 0,
     page: 1,
     loading: false,
+    error: path === "/accounts" ? mockAccountsError : mockRolesError,
     setPage: vi.fn(),
     setFilter: vi.fn(),
     mutate: mockMutateAccounts,
+    retry: path === "/accounts" ? mockRetryAccounts : mockRetryRoles,
   }),
 }));
 
@@ -74,6 +83,8 @@ describe("AccountsPage", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockCurrentRole = "admin";
+    mockAccountsError = undefined;
+    mockRolesError = undefined;
     mockAccounts = [
       {
         id: "acct-1",
@@ -139,6 +150,10 @@ describe("AccountsPage", () => {
 
     const dialog = await screen.findByRole("dialog");
     expect(dialog).toHaveTextContent("编辑账户");
+    expect(screen.getByLabelText("姓名")).toHaveAttribute(
+      "id",
+      "edit-account-form_name"
+    );
     fireEvent.click(screen.getByRole("button", { name: /保\s*存/ }));
 
     await waitFor(() => {
@@ -148,6 +163,70 @@ describe("AccountsPage", () => {
         role_ids: ["role-operator"],
       });
     });
+  });
+
+  it("shows the backend self-lockout reason and keeps the edit form open", async () => {
+    mockAccounts = [
+      {
+        id: "acct-1",
+        email: "admin@test.com",
+        name: "当前管理员",
+        organization_id: "org-1",
+        organization_name: "销售部",
+        is_active: true,
+        roles: [{ id: "role-admin", name: "admin" }],
+      },
+    ];
+    mockPatch.mockRejectedValueOnce({
+      response: {
+        data: { detail: "不能移除当前登录账户的管理员角色" },
+      },
+    });
+
+    render(<AccountsPage />);
+    await screen.findByTestId("org-account-count-org-1");
+    fireEvent.click(screen.getByRole("tab", { name: "账户管理" }));
+    fireEvent.mouseEnter(
+      screen.getByRole("button", { name: "操作菜单-当前管理员" })
+    );
+    fireEvent.click(await screen.findByText("编辑账户"));
+    fireEvent.click(screen.getByRole("button", { name: /保\s*存/ }));
+
+    await waitFor(() => {
+      expect(mockMessage.error).toHaveBeenCalledWith(
+        "不能移除当前登录账户的管理员角色"
+      );
+    });
+    expect(screen.getByRole("dialog")).toHaveTextContent("编辑账户");
+    expect(mockMutateAccounts).not.toHaveBeenCalled();
+  });
+
+  it("shows directory errors, allows retry, and blocks account mutations", async () => {
+    mockAccountsError = {
+      response: { data: { detail: "账户目录暂时不可用" } },
+    };
+    mockRolesError = {
+      response: { data: { detail: "角色目录暂时不可用" } },
+    };
+
+    render(<AccountsPage />);
+    await screen.findByTestId("org-account-count-org-1");
+    fireEvent.click(screen.getByRole("tab", { name: "账户管理" }));
+
+    expect(screen.getByText("账户目录加载失败")).toBeInTheDocument();
+    expect(screen.getByText("角色目录加载失败")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /新建账户/ })).toBeDisabled();
+    expect(
+      screen.queryByRole("button", { name: "操作菜单-销售账号" })
+    ).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "重新加载账户" }));
+    fireEvent.click(screen.getByRole("button", { name: "重新加载角色" }));
+
+    expect(mockRetryAccounts).toHaveBeenCalledTimes(1);
+    expect(mockRetryRoles).toHaveBeenCalledTimes(1);
+    expect(mockPost).not.toHaveBeenCalled();
+    expect(mockPatch).not.toHaveBeenCalled();
   });
 
   it("requires a reason before disabling an account", async () => {
@@ -225,6 +304,10 @@ describe("AccountsPage", () => {
     fireEvent.click(screen.getByRole("button", { name: /新建账户/ }));
 
     expect(screen.queryByLabelText("密码")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("姓名")).toHaveAttribute(
+      "id",
+      "create-account-form_name"
+    );
 
     fireEvent.change(screen.getByLabelText("邮箱"), {
       target: { value: "new@test.com" },
@@ -286,8 +369,37 @@ describe("AccountsPage", () => {
     await waitFor(() => {
       expect(screen.getByLabelText("组织名称")).toBeInTheDocument();
     });
+    expect(screen.getByLabelText("组织名称")).toHaveAttribute(
+      "id",
+      "organization-form_name"
+    );
     // TreeSelect for parent org should be present
     expect(screen.getByText("上级组织")).toBeInTheDocument();
+  });
+
+  it("shows a 500 organization failure, blocks changes, and recovers on retry", async () => {
+    mockGet
+      .mockRejectedValueOnce({
+        response: {
+          status: 500,
+          data: { detail: "组织目录暂时不可用" },
+        },
+      })
+      .mockResolvedValueOnce({
+        data: [{ id: "org-1", name: "销售部", account_count: 1 }],
+      });
+
+    render(<AccountsPage />);
+
+    expect(await screen.findByText("组织列表加载失败")).toBeInTheDocument();
+    expect(screen.getByText("组织目录暂时不可用")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /新建组织/ })).toBeDisabled();
+
+    fireEvent.click(screen.getByRole("button", { name: "重新加载" }));
+
+    expect(await screen.findByText("销售部")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /新建组织/ })).toBeEnabled();
+    expect(mockPost).not.toHaveBeenCalled();
   });
 
   it("renders multiple organizations in the table", async () => {

@@ -20,6 +20,7 @@ from app.schemas.account import (
 from app.schemas.common import PaginatedResponse
 from app.services.audit import write_audit_log
 from app.services.organization import (
+    DuplicateAccountEmailError,
     count_accounts_by_org,
     create_account,
     create_organization,
@@ -219,23 +220,23 @@ async def create_account_endpoint(
             password=body.password or initial_password,
             role_ids=body.role_ids,
             must_change_password=initial_password is not None,
+            actor_id=actor_id,
         )
+    except DuplicateAccountEmailError as e:
+        raise HTTPException(status_code=409, detail=str(e)) from e
     except ValueError as e:
         if "already exists" in str(e):
             raise HTTPException(status_code=409, detail=str(e)) from e
         raise HTTPException(status_code=400, detail=str(e)) from e
 
     org_name = (
-        await db.execute(select(Organization.name).where(Organization.id == account.organization_id))
+        await db.execute(
+            select(Organization.name).where(
+                Organization.id == account.organization_id,
+                Organization.tenant_id == tenant_id,
+            )
+        )
     ).scalar_one_or_none()
-    await write_audit_log(
-        db,
-        str(actor_id),
-        str(tenant_id),
-        "account_created",
-        f"account:{account.id}",
-        {"resource_name": account.name, "target_email": account.email, "result": "success"},
-    )
     return {
         "id": account.id,
         "tenant_id": account.tenant_id,
@@ -306,18 +307,6 @@ async def update_account_endpoint(
         raise HTTPException(status_code=400, detail=str(e)) from e
     if not account:
         raise HTTPException(status_code=404, detail="Account not found")
-    await write_audit_log(
-        db,
-        str(actor_id),
-        str(tenant_id),
-        "account_updated",
-        f"account:{account.id}",
-        {
-            "resource_name": account.name,
-            "changed_fields": sorted(body.model_dump(exclude_unset=True)),
-            "result": "success",
-        },
-    )
     return account
 
 

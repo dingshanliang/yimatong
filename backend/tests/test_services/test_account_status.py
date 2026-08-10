@@ -40,8 +40,8 @@ async def _build_accounts(db: AsyncSession) -> tuple[Tenant, Account, Account, R
     )
     db.add_all([actor, target])
     await db.flush()
-    await db.execute(account_roles.insert().values(account_id=actor.id, role_id=admin_role.id))
-    await db.execute(account_roles.insert().values(account_id=target.id, role_id=operator_role.id))
+    await db.execute(account_roles.insert().values(tenant_id=tenant.id, account_id=actor.id, role_id=admin_role.id))
+    await db.execute(account_roles.insert().values(tenant_id=tenant.id, account_id=target.id, role_id=operator_role.id))
     await db.commit()
     return tenant, actor, target, admin_role
 
@@ -71,10 +71,22 @@ async def test_disable_account_records_audit_and_increments_auth_version(db: Asy
         )
     ).scalar_one()
     assert audit.details == {
+        "resource_name": "运营人员",
         "target_account_id": str(target.id),
         "reason": "员工离职",
-        "before": "enabled",
-        "after": "disabled",
+        "before": {
+            "name": "运营人员",
+            "status": "enabled",
+            "organization": {"id": str(target.organization_id), "name": "总部"},
+            "roles": [{"id": str(target.roles[0].id), "name": "operator"}],
+        },
+        "after": {
+            "name": "运营人员",
+            "status": "disabled",
+            "organization": {"id": str(target.organization_id), "name": "总部"},
+            "roles": [{"id": str(target.roles[0].id), "name": "operator"}],
+        },
+        "result": "success",
     }
 
 
@@ -97,6 +109,32 @@ async def test_account_status_change_is_tenant_scoped(db: AsyncSession):
 
 
 @pytest.mark.anyio
+async def test_account_status_and_version_roll_back_when_audit_fails(db: AsyncSession, monkeypatch):
+    tenant, actor, target, _ = await _build_accounts(db)
+    target_id = target.id
+
+    async def fail_audit(*_args, **_kwargs):
+        raise RuntimeError("audit unavailable")
+
+    monkeypatch.setattr("app.services.organization.write_audit_log", fail_audit)
+    with pytest.raises(RuntimeError, match="audit unavailable"):
+        await set_account_active_status(
+            db,
+            tenant_id=tenant.id,
+            actor_id=actor.id,
+            account_id=target.id,
+            is_active=False,
+            reason="员工离职",
+        )
+    await db.rollback()
+
+    persisted = await db.get(Account, target_id)
+    assert persisted is not None
+    assert persisted.is_active is True
+    assert persisted.auth_version == 0
+
+
+@pytest.mark.anyio
 async def test_account_cannot_disable_itself(db: AsyncSession):
     tenant, actor, _, _ = await _build_accounts(db)
 
@@ -115,7 +153,7 @@ async def test_account_cannot_disable_itself(db: AsyncSession):
 async def test_last_active_admin_cannot_be_disabled(db: AsyncSession):
     tenant, actor, target, admin_role = await _build_accounts(db)
     await db.execute(account_roles.delete().where(account_roles.c.account_id == target.id))
-    await db.execute(account_roles.insert().values(account_id=target.id, role_id=admin_role.id))
+    await db.execute(account_roles.insert().values(tenant_id=tenant.id, account_id=target.id, role_id=admin_role.id))
     actor.is_active = False
     await db.commit()
 

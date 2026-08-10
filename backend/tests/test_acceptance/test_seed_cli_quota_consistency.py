@@ -272,6 +272,7 @@ async def test_seed_all_and_baseline_refresh_active_quota_usage_atomically(migra
             "Cycle 9 Seed",
             "--slug",
             seed_slug,
+            "--allow-non-demo-target",
             "--admin-email",
             seed_email,
             "--admin-password",
@@ -291,7 +292,16 @@ async def test_seed_all_and_baseline_refresh_active_quota_usage_atomically(migra
         baseline_tenant_id = await _tenant_id(owner, BASELINE_SLUGS[0])
         if baseline_tenant_id is None:
             baseline_tenant_id = await _insert_expired_baseline_identity(owner)
-            expired = _run_cli(runtime_url, migrated_pg_url, "baseline", "build", "--json", succeeds=False)
+            expired = _run_cli(
+                runtime_url,
+                migrated_pg_url,
+                "baseline",
+                "build",
+                "--json",
+                "--target",
+                "baseline-base",
+                succeeds=False,
+            )
             assert "plan is expired" in expired.stderr
             assert "renew it and rerun baseline build" in expired.stderr
             assert await _tenant_id(owner, BASELINE_SLUGS[0]) == baseline_tenant_id
@@ -323,6 +333,8 @@ async def test_seed_all_and_baseline_refresh_active_quota_usage_atomically(migra
                 "baseline",
                 "build",
                 "--json",
+                "--target",
+                "baseline-base",
                 succeeds=False,
             )
             assert "injected failure after account repair" in repaired_then_failed.stderr
@@ -357,14 +369,31 @@ async def test_seed_all_and_baseline_refresh_active_quota_usage_atomically(migra
             "Cycle 9 Seed",
             "--slug",
             seed_slug,
+            "--allow-non-demo-target",
             "--admin-email",
             seed_email,
             "--admin-password",
             "StrongPass123",
         )
-        first_baseline = _run_cli(runtime_url, migrated_pg_url, "baseline", "build", "--json")
+        first_baseline = _run_cli(
+            runtime_url,
+            migrated_pg_url,
+            "baseline",
+            "build",
+            "--json",
+            "--target",
+            "baseline-base",
+        )
         first_summary = json.loads(first_baseline.stdout)
-        second_baseline = _run_cli(runtime_url, migrated_pg_url, "baseline", "build", "--json")
+        second_baseline = _run_cli(
+            runtime_url,
+            migrated_pg_url,
+            "baseline",
+            "build",
+            "--json",
+            "--target",
+            "baseline-base",
+        )
         second_summary = json.loads(second_baseline.stdout)
         assert second_summary == first_summary
         verified = _run_cli(runtime_url, migrated_pg_url, "baseline", "verify", "--json")

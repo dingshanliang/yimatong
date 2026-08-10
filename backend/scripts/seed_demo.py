@@ -13,6 +13,7 @@ from pathlib import Path
 import typer
 from sqlalchemy import delete, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.orm import selectinload
 
 # 确保可以 import app 模块
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -49,16 +50,25 @@ from app.models.tenant import (
     Organization,
     Role,
     Tenant,
+    TenantType,
     account_roles,
 )
+from app.modules.brand_tenant_initialization import (
+    BrandTenantInitialization,
+    InitializeBrandTenant,
+    TrustedAutomationOpening,
+)
 from app.services.analytics import aggregate_daily_stats
+from app.services.audit import write_audit_log
+from app.services.auth import revoke_current_tenant_account_sessions
 from app.services.channel import create_account_scope
 from app.services.code import activate_batch, create_code_batch
+from app.services.entitlement import require_active_plan
 from app.services.product import create_brand, create_product, create_sku
-from app.services.quota import refresh_quota_usage_from_authoritative_rows
+from app.services.quota import lock_quota_rollout_state, refresh_quota_usage_from_authoritative_rows
 from app.services.tenant import create_tenant
 from app.utils import utcnow
-from app.utils.security import hash_password
+from app.utils.security import hash_password, verify_password
 
 app = typer.Typer(help="一码通演示数据生成器")
 
@@ -73,6 +83,23 @@ TENANT_SLUG = "demo"
 TENANT_NAME = "青岭良仓演示租户"
 TOTAL_DAYS = 60
 DEMO_ENABLED_FEATURES = {"channel_portal": True}
+DEMO_AGENCY_SLUG = "demo-agency"
+DEMO_AGENCY_EMAIL = "agency_admin@demo.com"
+DEMO_AGENCY_PASSWORD = "demopass"
+
+
+def _guard_demo_command(*, target: str, allow_production: bool, identity_bearing: bool) -> None:
+    """Reject an unapproved environment or target before any DB session opens."""
+
+    if settings.environment == "production" and identity_bearing:
+        typer.echo("production 环境禁止生成或重置仓库内置演示账号；--allow-production 不适用于该命令", err=True)
+        raise typer.Exit(code=2)
+    if settings.environment == "production" and not allow_production:
+        typer.echo("拒绝在 production 环境操作演示数据；如确有需要请显式传 --allow-production", err=True)
+        raise typer.Exit(code=2)
+    if target != TENANT_SLUG:
+        typer.echo(f"拒绝操作非 {TENANT_SLUG} 目标；请显式传 --target {TENANT_SLUG}", err=True)
+        raise typer.Exit(code=2)
 
 
 # ─── 进度报告器 ──────────────────────────────────────────
@@ -641,48 +668,81 @@ async def _ensure_tenant(db: AsyncSession) -> Tenant:
     return tenant
 
 
+async def _ensure_demo_agency_identity(
+    db: AsyncSession,
+    *,
+    agency_slug: str = DEMO_AGENCY_SLUG,
+) -> uuid.UUID:
+    """Create the demo agency and its first active admin in one transaction."""
+
+    await lock_quota_rollout_state(db)
+    agency_tenant = await db.scalar(select(Tenant).where(Tenant.slug == agency_slug).with_for_update())
+    if agency_tenant is not None:
+        active_admin_id = await db.scalar(
+            select(Account.id)
+            .join(
+                account_roles,
+                (account_roles.c.tenant_id == Account.tenant_id) & (account_roles.c.account_id == Account.id),
+            )
+            .join(
+                Role,
+                (Role.tenant_id == account_roles.c.tenant_id) & (Role.id == account_roles.c.role_id),
+            )
+            .where(
+                Account.tenant_id == agency_tenant.id,
+                Account.is_active.is_(True),
+                Role.name == "admin",
+            )
+        )
+        if active_admin_id is not None:
+            if agency_tenant.tenant_type != TenantType.agency:
+                raise RuntimeError("Demo agency slug belongs to a non-agency tenant")
+            return agency_tenant.id
+
+        owned_rows = await db.scalar(
+            select(func.count()).select_from(Organization).where(Organization.tenant_id == agency_tenant.id)
+        )
+        if owned_rows:
+            raise RuntimeError("Demo agency exists without an active administrator; clean it before regenerating")
+        # A failed pre-fix run committed only the Tenant row before the later
+        # account transaction hit the deferred last-admin constraint. Remove
+        # exactly that empty identity and recreate it through the atomic seam.
+        await db.delete(agency_tenant)
+        await db.flush()
+
+    receipt = await BrandTenantInitialization(db).initialize(
+        InitializeBrandTenant(
+            name="示例代运营服务商",
+            admin_name="代运营管理员",
+            admin_email=DEMO_AGENCY_EMAIL,
+            opening=TrustedAutomationOpening(
+                actor="seed-demo",
+                # The initializer validates a temporary strong credential.
+                # The legacy demo-only password is restored below before this
+                # same transaction commits so existing E2E fixtures stay valid.
+                chosen_password="DemoAgency1234",
+                plan_name="pro",
+                stable_tenant_key=agency_slug,
+            ),
+        )
+    )
+    agency_tenant = await db.get(Tenant, receipt.tenant_id)
+    agency_admin = await db.get(Account, receipt.initial_admin_id)
+    if agency_tenant is None or agency_admin is None:  # pragma: no cover - initializer postcondition
+        raise RuntimeError("Demo agency initialization did not materialize its identity")
+    agency_tenant.tenant_type = TenantType.agency
+    agency_admin.hashed_password = hash_password(DEMO_AGENCY_PASSWORD)
+    await db.flush()
+    return agency_tenant.id
+
+
 async def _ensure_demo_agency(client_tenant_id: uuid.UUID) -> None:
-    """Seed the agency via bounded control discovery plus tenant transactions."""
-    agency_slug = "demo-agency"
+    """Seed the agency via one atomic identity transaction plus client RLS."""
+
     async with control_session() as db:
         await db.execute(text("SELECT set_config('app.tenant_id', '', true)"))
         await db.execute(text("SELECT set_config('app.bypass_rls', 'true', true)"))
-        agency_tenant = await db.scalar(select(Tenant).where(Tenant.slug == agency_slug).limit(1))
-        if agency_tenant is None:
-            agency_tenant = Tenant(
-                name="示例代运营服务商",
-                slug=agency_slug,
-                tenant_type="agency",
-                plan="pro",
-            )
-            db.add(agency_tenant)
-            await db.flush()
-        agency_tenant_id = agency_tenant.id
-        await db.commit()
-
-    async with async_session() as db:
-        await set_session_tenant_context(db, agency_tenant_id)
-        agency_org = await db.scalar(select(Organization).where(Organization.tenant_id == agency_tenant_id).limit(1))
-        if agency_org is None:
-            agency_org = Organization(tenant_id=agency_tenant_id, name="示例代运营服务商")
-            db.add(agency_org)
-            await db.flush()
-        agency_admin = await db.scalar(
-            select(Account).where(
-                Account.tenant_id == agency_tenant_id,
-                Account.email == "agency_admin@demo.com",
-            )
-        )
-        if agency_admin is None:
-            db.add(
-                Account(
-                    tenant_id=agency_tenant_id,
-                    organization_id=agency_org.id,
-                    email="agency_admin@demo.com",
-                    hashed_password=hash_password("demopass"),
-                    name="代运营管理员",
-                )
-            )
+        agency_tenant_id = await _ensure_demo_agency_identity(db)
         await db.commit()
 
     async with async_session() as db:
@@ -705,7 +765,7 @@ async def _ensure_demo_agency(client_tenant_id: uuid.UUID) -> None:
                 )
             )
         await db.commit()
-    typer.echo(f"  Ensured demo agency tenant: {agency_slug}")
+    typer.echo(f"  Ensured demo agency tenant: {DEMO_AGENCY_SLUG}")
 
 
 async def _ensure_org(db: AsyncSession, tenant_id: uuid.UUID) -> Organization:
@@ -734,6 +794,15 @@ async def _ensure_role(db: AsyncSession, tenant_id: uuid.UUID, name: str, descri
 
 
 async def _ensure_accounts(db: AsyncSession, tenant_id: uuid.UUID, org_id: uuid.UUID) -> list[Account]:
+    await lock_quota_rollout_state(db)
+    tenant = await require_active_plan(db, tenant_id, lock_tenant=True)
+    if tenant is None:
+        raise RuntimeError("Demo tenant disappeared before account reconciliation")
+    desired_organization = await db.scalar(
+        select(Organization).where(Organization.id == org_id, Organization.tenant_id == tenant_id)
+    )
+    if desired_organization is None:
+        raise RuntimeError("Demo organization disappeared before account reconciliation")
     roles = {
         "admin": await _ensure_role(db, tenant_id, "admin", "品牌管理员：完整管理权限。"),
         "operator": await _ensure_role(db, tenant_id, "operator", "运营人员：日常运营权限。"),
@@ -742,12 +811,85 @@ async def _ensure_accounts(db: AsyncSession, tenant_id: uuid.UUID, org_id: uuid.
     }
     accounts: list[Account] = []
     for item in DEMO_ACCOUNTS:
-        result = await db.execute(select(Account).where(Account.tenant_id == tenant_id, Account.email == item["email"]))
+        result = await db.execute(
+            select(Account)
+            .options(selectinload(Account.roles))
+            .execution_options(populate_existing=True)
+            .where(Account.tenant_id == tenant_id, Account.email == item["email"])
+        )
         account = result.scalar_one_or_none()
         if account:
-            account.name = item["name"]
-            account.organization_id = org_id
-            account.hashed_password = hash_password(item["password"])
+            desired_role = roles[item["role"]]
+            current_role_ids = {role.id for role in account.roles}
+            current_organization = await db.scalar(
+                select(Organization).where(
+                    Organization.id == account.organization_id,
+                    Organization.tenant_id == tenant_id,
+                )
+            )
+            identity_changes: list[str] = []
+            security_changes: list[str] = []
+            before = {
+                "name": account.name,
+                "organization": {
+                    "id": str(account.organization_id),
+                    "name": current_organization.name if current_organization else None,
+                },
+                "roles": [
+                    {"id": str(role.id), "name": role.name}
+                    for role in sorted(account.roles, key=lambda role: (role.name, str(role.id)))
+                ],
+            }
+            if account.name != item["name"]:
+                account.name = item["name"]
+                identity_changes.append("name")
+            if account.organization_id != org_id:
+                account.organization_id = org_id
+                security_changes.append("organization")
+            if not verify_password(item["password"], account.hashed_password):
+                account.hashed_password = hash_password(item["password"])
+                security_changes.append("password")
+            if current_role_ids != {desired_role.id}:
+                await db.execute(
+                    account_roles.delete().where(
+                        account_roles.c.tenant_id == tenant_id,
+                        account_roles.c.account_id == account.id,
+                    )
+                )
+                await db.execute(
+                    account_roles.insert().values(
+                        tenant_id=tenant_id,
+                        account_id=account.id,
+                        role_id=desired_role.id,
+                    )
+                )
+                security_changes.append("roles")
+            identity_changes.extend(security_changes)
+            if security_changes:
+                account.auth_version += 1
+                await revoke_current_tenant_account_sessions(db, account.id)
+            if identity_changes:
+                await write_audit_log(
+                    db,
+                    operator_id="seed-demo",
+                    target_tenant_id=str(tenant_id),
+                    action="account_identity_reconciled",
+                    resource=f"account:{account.id}",
+                    details={
+                        "resource_name": account.name,
+                        "changed_fields": sorted(identity_changes),
+                        "before": before,
+                        "after": {
+                            "name": account.name,
+                            "organization": {
+                                "id": str(desired_organization.id),
+                                "name": desired_organization.name,
+                            },
+                            "roles": [{"id": str(desired_role.id), "name": desired_role.name}],
+                        },
+                        "result": "success",
+                    },
+                )
         else:
             account = Account(
                 tenant_id=tenant_id,
@@ -758,8 +900,13 @@ async def _ensure_accounts(db: AsyncSession, tenant_id: uuid.UUID, org_id: uuid.
             )
             db.add(account)
             await db.flush()
-        await db.execute(account_roles.delete().where(account_roles.c.account_id == account.id))
-        await db.execute(account_roles.insert().values(account_id=account.id, role_id=roles[item["role"]].id))
+            await db.execute(
+                account_roles.insert().values(
+                    tenant_id=tenant_id,
+                    account_id=account.id,
+                    role_id=roles[item["role"]].id,
+                )
+            )
         accounts.append(account)
     await db.flush()
     return accounts
@@ -1832,8 +1979,12 @@ async def _clean_demo_data(db: AsyncSession, tenant_id: uuid.UUID) -> None:
 
 
 @app.command()
-def generate():
+def generate(
+    target: str = typer.Option(..., "--target", help="必须显式确认目标租户 slug"),
+    allow_production: bool = typer.Option(False, "--allow-production", help="明确允许在 production 环境运行"),
+):
     """一键生成全部演示数据"""
+    _guard_demo_command(target=target, allow_production=allow_production, identity_bearing=True)
     typer.echo("\U0001f3ad 一码通演示数据生成器")
     typer.echo("=" * 50)
 
@@ -1852,7 +2003,8 @@ def generate():
             await set_session_tenant_context(db, tenant_id)
             p = Progress(10)
 
-            scoped_tenant = await db.get(Tenant, tenant_id)
+            await lock_quota_rollout_state(db)
+            scoped_tenant = await require_active_plan(db, tenant_id, lock_tenant=True)
             if scoped_tenant is None:  # pragma: no cover - control bootstrap is the precondition
                 raise RuntimeError("Demo tenant disappeared before scoped seed")
             scoped_tenant.enabled_features = {
@@ -1950,8 +2102,12 @@ def generate():
 
 
 @app.command()
-def clean():
+def clean(
+    target: str = typer.Option(..., "--target", help="必须显式确认目标租户 slug"),
+    allow_production: bool = typer.Option(False, "--allow-production", help="明确允许在 production 环境运行"),
+):
     """清理所有演示数据"""
+    _guard_demo_command(target=target, allow_production=allow_production, identity_bearing=False)
 
     async def _run():
         async with control_session() as db:
@@ -1973,8 +2129,12 @@ def clean():
 
 
 @app.command()
-def reset():
+def reset(
+    target: str = typer.Option(..., "--target", help="必须显式确认目标租户 slug"),
+    allow_production: bool = typer.Option(False, "--allow-production", help="明确允许在 production 环境运行"),
+):
     """清理后重新生成"""
+    _guard_demo_command(target=target, allow_production=allow_production, identity_bearing=True)
 
     async def _run():
         async with control_session() as db:
@@ -1994,7 +2154,8 @@ def reset():
     # SQLAlchemy async engines are bound to the event loop that first used
     # them. Run generation in a fresh process rather than reusing the module's
     # global pools after asyncio.run(_run()) has closed its loop.
-    result = subprocess.run([sys.executable, str(Path(__file__).resolve()), "generate"])
+    generate_command = [sys.executable, str(Path(__file__).resolve()), "generate", "--target", target]
+    result = subprocess.run(generate_command)
     if result.returncode != 0:
         raise typer.Exit(code=result.returncode)
 

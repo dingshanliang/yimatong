@@ -20,6 +20,7 @@ from typing import Any
 import typer
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.orm import selectinload
 
 from app.constants.categories import get_default_categories
 from app.core.config import settings
@@ -47,6 +48,8 @@ from app.models.tenant import (
     TenantType,
     account_roles,
 )
+from app.services.audit import write_audit_log
+from app.services.auth import revoke_current_tenant_account_sessions
 from app.services.code import activate_batch, create_code_batch
 from app.services.entitlement import TenantPlanExpiredError, require_active_plan, validate_feature_flags
 from app.services.quota import (
@@ -55,7 +58,7 @@ from app.services.quota import (
     validate_quota_config,
 )
 from app.utils import utcnow
-from app.utils.security import hash_password
+from app.utils.security import hash_password, verify_password
 
 # ── 稳定业务标识 ──────────────────────────────────────────────────────────
 # 对应 BASELINE_ACCEPTANCE_MATRIX.md §2 的“稳定业务标识示例”。这些不是数据库主键，
@@ -90,6 +93,21 @@ BASELINE_CODE_QUANTITY = 20
 CONTROL_CODE_QUANTITY = 3
 
 app = typer.Typer(help="Baseline dataset for product acceptance (yimatong-zgb1.1)")
+
+
+def _guard_baseline_build(*, target: str, allow_production: bool) -> None:
+    """Reject an unapproved environment or target before opening an engine."""
+
+    if settings.environment == "production":
+        authority_note = "；--allow-production 不适用于该命令" if allow_production else ""
+        typer.echo(f"production 环境禁止构建包含仓库内置账号密码的基准数据{authority_note}", err=True)
+        raise typer.Exit(code=2)
+    if target != BASELINE_TENANT_SLUG:
+        typer.echo(
+            f"拒绝写入非 {BASELINE_TENANT_SLUG} 目标；请显式传 --target {BASELINE_TENANT_SLUG}",
+            err=True,
+        )
+        raise typer.Exit(code=2)
 
 
 class BaselineRecoveryRequired(RuntimeError):
@@ -233,19 +251,28 @@ async def _ensure_runtime_admin(
 ) -> Account:
     """Repair the baseline admin graph after the active-plan gate."""
 
-    result = await db.execute(select(Organization).where(Organization.tenant_id == tenant.id).limit(1))
+    default_organization_name = f"{tenant.name} 默认组织"
+    result = await db.execute(
+        select(Organization).where(
+            Organization.tenant_id == tenant.id,
+            Organization.name == default_organization_name,
+        )
+    )
     org = result.scalar_one_or_none()
     if org is None:
-        org = Organization(tenant_id=tenant.id, name=f"{tenant.name} 默认组织")
+        org = Organization(tenant_id=tenant.id, name=default_organization_name)
         db.add(org)
         await db.flush()
 
     # 确保账号存在
     result = await db.execute(
-        select(Account).where(Account.tenant_id == tenant.id, Account.email == tenant_ref.admin_email)
+        select(Account)
+        .options(selectinload(Account.roles))
+        .where(Account.tenant_id == tenant.id, Account.email == tenant_ref.admin_email)
     )
     account = result.scalar_one_or_none()
-    if account is None:
+    account_created = account is None
+    if account_created:
         account = Account(
             tenant_id=tenant.id,
             organization_id=org.id,
@@ -255,11 +282,6 @@ async def _ensure_runtime_admin(
         )
         db.add(account)
         await db.flush()
-    else:
-        # 保持密码与组织可预期（二次运行不漂移）
-        account.hashed_password = hash_password(tenant_ref.admin_password)
-        account.organization_id = org.id
-
     # 确保 admin 角色存在并关联
     result = await db.execute(select(Role).where(Role.tenant_id == tenant.id, Role.name == "admin"))
     role = result.scalar_one_or_none()
@@ -268,11 +290,75 @@ async def _ensure_runtime_admin(
         db.add(role)
         await db.flush()
 
-    result = await db.execute(
-        account_roles.select().where(account_roles.c.account_id == account.id, account_roles.c.role_id == role.id)
-    )
-    if result.first() is None:
-        await db.execute(account_roles.insert().values(account_id=account.id, role_id=role.id))
+    if account_created:
+        current_role_ids = set()
+    else:
+        current_role_ids = {current_role.id for current_role in account.roles}
+    if account_created:
+        await db.execute(account_roles.insert().values(tenant_id=tenant.id, account_id=account.id, role_id=role.id))
+    elif account.id is not None:
+        identity_changes: list[str] = []
+        security_changes: list[str] = []
+        current_organization = await db.scalar(
+            select(Organization).where(
+                Organization.tenant_id == tenant.id,
+                Organization.id == account.organization_id,
+            )
+        )
+        before = {
+            "name": account.name,
+            "organization": {
+                "id": str(account.organization_id),
+                "name": current_organization.name if current_organization else None,
+            },
+            "roles": [
+                {"id": str(current_role.id), "name": current_role.name}
+                for current_role in sorted(
+                    account.roles, key=lambda current_role: (current_role.name, str(current_role.id))
+                )
+            ],
+        }
+        if account.name != tenant_ref.admin_name:
+            account.name = tenant_ref.admin_name
+            identity_changes.append("name")
+        if account.organization_id != org.id:
+            account.organization_id = org.id
+            security_changes.append("organization")
+        if not verify_password(tenant_ref.admin_password, account.hashed_password):
+            account.hashed_password = hash_password(tenant_ref.admin_password)
+            security_changes.append("password")
+        if current_role_ids != {role.id}:
+            await db.execute(
+                account_roles.delete().where(
+                    account_roles.c.tenant_id == tenant.id,
+                    account_roles.c.account_id == account.id,
+                )
+            )
+            await db.execute(account_roles.insert().values(tenant_id=tenant.id, account_id=account.id, role_id=role.id))
+            security_changes.append("roles")
+        identity_changes.extend(security_changes)
+        if security_changes:
+            account.auth_version += 1
+            await revoke_current_tenant_account_sessions(db, account.id)
+        if identity_changes:
+            await write_audit_log(
+                db,
+                operator_id="baseline-cli",
+                target_tenant_id=str(tenant.id),
+                action="account_identity_reconciled",
+                resource=f"account:{account.id}",
+                details={
+                    "resource_name": account.name,
+                    "changed_fields": sorted(identity_changes),
+                    "before": before,
+                    "after": {
+                        "name": account.name,
+                        "organization": {"id": str(org.id), "name": org.name},
+                        "roles": [{"id": str(role.id), "name": role.name}],
+                    },
+                    "result": "success",
+                },
+            )
 
     await db.flush()
     await db.refresh(account)
@@ -903,9 +989,12 @@ def _format_summary(result: dict[str, Any]) -> str:
 @app.command()
 def build(
     json_out: bool = typer.Option(False, "--json", help="输出机器可读 JSON 摘要而非人类可读文本"),
+    target: str = typer.Option(..., "--target", help="必须显式确认基准租户 slug"),
+    allow_production: bool = typer.Option(False, "--allow-production", help="明确允许在 production 环境运行"),
 ):
     """幂等创建基准租户 + 对照租户 + 完整首条扫码旅程业务数据。"""
 
+    _guard_baseline_build(target=target, allow_production=allow_production)
     result = asyncio.run(_build_baseline_dataset())
     if json_out:
         typer.echo(json.dumps(result, ensure_ascii=False, indent=2, default=str))
@@ -947,6 +1036,7 @@ def verify(
 # 便于测试/Playwright 直接 import 调用的入口
 def build_sync(database_url: str | None = None) -> dict[str, Any]:
     """同步包装：构建基准数据并返回摘要 dict。"""
+    _guard_baseline_build(target=BASELINE_TENANT_SLUG, allow_production=False)
     return asyncio.run(_build_baseline_dataset(database_url))
 
 

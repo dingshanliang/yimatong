@@ -5,9 +5,11 @@ import pytest
 
 
 @pytest.mark.asyncio
-async def test_create_account_rejects_duplicate_email():
+async def test_create_account_rejects_duplicate_email(monkeypatch):
     """Duplicate email within same tenant should be rejected with 409"""
     from app.services.organization import create_account
+
+    monkeypatch.setattr("app.services.organization.check_quota_for_tenant", AsyncMock())
 
     db = AsyncMock()
 
@@ -44,8 +46,10 @@ async def test_create_account_rejects_duplicate_email():
 
 
 @pytest.mark.asyncio
-async def test_create_account_normalizes_email_before_duplicate_check():
+async def test_create_account_normalizes_email_before_duplicate_check(monkeypatch):
     from app.services.organization import create_account
+
+    monkeypatch.setattr("app.services.organization.check_quota_for_tenant", AsyncMock())
 
     db = AsyncMock()
     org_result = MagicMock()

@@ -3,11 +3,13 @@ import string
 import uuid
 
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.models.tenant import Account, Organization, Role, account_roles
+from app.models.tenant import Account, Organization, Role, Tenant, account_roles
 from app.services.audit import write_audit_log
+from app.services.auth import revoke_current_tenant_account_sessions
 from app.services.quota import CumulativeQuotaKey, check_quota_for_tenant
 from app.utils import escape_like_pattern
 from app.utils.email import normalize_email
@@ -19,9 +21,41 @@ def generate_initial_password(length: int = 14) -> str:
     return "Ymt-" + "".join(secrets.choice(alphabet) for _ in range(length))
 
 
+class DuplicateAccountEmailError(ValueError):
+    """The canonical tenant/email identity already exists."""
+
+
+async def _lock_tenant_mutation(db: AsyncSession, tenant_id: uuid.UUID) -> Tenant | None:
+    """Serialize direct service callers with request-scoped tenant writes."""
+
+    tenant = await db.scalar(select(Tenant).where(Tenant.id == tenant_id).with_for_update())
+    return tenant
+
+
+def _role_snapshot(roles: list[Role]) -> list[dict[str, str]]:
+    return [
+        {"id": str(role.id), "name": role.name} for role in sorted(roles, key=lambda item: (item.name, str(item.id)))
+    ]
+
+
+def _organization_snapshot(organization: Organization) -> dict[str, str]:
+    return {"id": str(organization.id), "name": organization.name}
+
+
+def _is_account_email_conflict(exc: IntegrityError) -> bool:
+    constraint = getattr(getattr(exc, "orig", None), "diag", None)
+    constraint_name = getattr(constraint, "constraint_name", None)
+    if constraint_name in {"uq_accounts_tenant_email_ci", "uq_account_tenant_email"}:
+        return True
+    message = str(getattr(exc, "orig", exc)).lower()
+    return "accounts.tenant_id" in message and "accounts.email" in message
+
+
 async def create_organization(
     db: AsyncSession, tenant_id: uuid.UUID, name: str, parent_id: uuid.UUID | None
 ) -> Organization:
+    if await _lock_tenant_mutation(db, tenant_id) is None:
+        raise ValueError("Tenant not found")
     if parent_id is not None:
         parent = (
             await db.execute(
@@ -94,21 +128,25 @@ async def create_account(
     password: str | None,
     role_ids: list[uuid.UUID] | None = None,
     must_change_password: bool = False,
+    actor_id: uuid.UUID | None = None,
 ) -> Account:
     email = normalize_email(email)
     password = password or generate_initial_password()
+    # The quota reservation takes the canonical global-epoch -> Tenant lock
+    # order. Every identity check below therefore observes one serialized
+    # tenant mutation timeline.
+    await check_quota_for_tenant(db, tenant_id, CumulativeQuotaKey.MAX_ACCOUNTS, Account)
     org_result = await db.execute(
         select(Organization).where(Organization.id == organization_id, Organization.tenant_id == tenant_id)
     )
-    if not org_result.scalar_one_or_none():
+    organization = org_result.scalar_one_or_none()
+    if organization is None:
         raise ValueError("Organization does not belong to current tenant")
 
     # Email uniqueness check within tenant
     existing = await db.execute(select(Account).where(Account.tenant_id == tenant_id, Account.email == email))
     if existing.scalar_one_or_none():
         raise ValueError("An account with this email already exists in this tenant")
-
-    await check_quota_for_tenant(db, tenant_id, CumulativeQuotaKey.MAX_ACCOUNTS, Account)
 
     hashed = hash_password(password)
     account = Account(
@@ -121,7 +159,12 @@ async def create_account(
         roles=[],
     )
     db.add(account)
-    await db.flush()
+    try:
+        await db.flush()
+    except IntegrityError as exc:
+        if _is_account_email_conflict(exc):
+            raise DuplicateAccountEmailError("An account with this email already exists in this tenant") from exc
+        raise
 
     if role_ids:
         from app.models.tenant import Role
@@ -140,6 +183,26 @@ async def create_account(
 
     await db.flush()
     await db.refresh(account)
+    if actor_id is not None:
+        await write_audit_log(
+            db,
+            operator_id=str(actor_id),
+            target_tenant_id=str(tenant_id),
+            action="account_created",
+            resource=f"account:{account.id}",
+            details={
+                "resource_name": account.name,
+                "target_email": account.email,
+                "before": None,
+                "after": {
+                    "name": account.name,
+                    "status": "enabled",
+                    "organization": _organization_snapshot(organization),
+                    "roles": _role_snapshot(list(account.roles)),
+                },
+                "result": "success",
+            },
+        )
     return account
 
 
@@ -165,7 +228,7 @@ async def list_accounts(
     total_result = await db.execute(count_query)
     total = total_result.scalar() or 0
 
-    query = query.offset((page - 1) * page_size).limit(page_size)
+    query = query.order_by(Account.created_at, Account.id).offset((page - 1) * page_size).limit(page_size)
     result = await db.execute(query)
     items = list(result.scalars().all())
 
@@ -185,6 +248,8 @@ async def update_organization(
     - parent_id: only updated if parent_id_provided is True
       (caller should set this based on exclude_unset)
     """
+    if await _lock_tenant_mutation(db, tenant_id) is None:
+        return None
     result = await db.execute(
         select(Organization).where(Organization.id == org_id, Organization.tenant_id == tenant_id)
     )
@@ -207,7 +272,12 @@ async def update_organization(
                 if current_id in visited:
                     raise ValueError("Circular reference detected in organization hierarchy")
                 visited.add(current_id)
-                ancestor = await db.execute(select(Organization.parent_id).where(Organization.id == current_id))
+                ancestor = await db.execute(
+                    select(Organization.parent_id).where(
+                        Organization.id == current_id,
+                        Organization.tenant_id == tenant_id,
+                    )
+                )
                 current_id = ancestor.scalar_one_or_none()
 
             # Verify parent belongs to same tenant
@@ -230,6 +300,8 @@ async def delete_organization(
     org_id: uuid.UUID,
 ) -> bool:
     """Delete an organization. Rejects if it has children or associated accounts."""
+    if await _lock_tenant_mutation(db, tenant_id) is None:
+        raise ValueError("Organization not found")
     result = await db.execute(
         select(Organization).where(Organization.id == org_id, Organization.tenant_id == tenant_id)
     )
@@ -239,7 +311,9 @@ async def delete_organization(
 
     # Check for child organizations
     children_result = await db.execute(
-        select(func.count()).select_from(Organization).where(Organization.parent_id == org_id)
+        select(func.count())
+        .select_from(Organization)
+        .where(Organization.tenant_id == tenant_id, Organization.parent_id == org_id)
     )
     child_count = children_result.scalar() or 0
     if child_count > 0:
@@ -247,7 +321,9 @@ async def delete_organization(
 
     # Check for associated accounts
     account_result = await db.execute(
-        select(func.count()).select_from(Account).where(Account.organization_id == org_id)
+        select(func.count())
+        .select_from(Account)
+        .where(Account.tenant_id == tenant_id, Account.organization_id == org_id)
     )
     account_count = account_result.scalar() or 0
     if account_count > 0:
@@ -267,12 +343,28 @@ async def update_account(
     organization_id: uuid.UUID | None = None,
     role_ids: list[uuid.UUID] | None = None,
 ) -> Account | None:
+    if await _lock_tenant_mutation(db, tenant_id) is None:
+        return None
     result = await db.execute(
         select(Account).where(Account.id == account_id, Account.tenant_id == tenant_id).with_for_update()
     )
     account = result.scalar_one_or_none()
     if not account:
         return None
+    current_organization = await db.scalar(
+        select(Organization).where(
+            Organization.id == account.organization_id,
+            Organization.tenant_id == tenant_id,
+        )
+    )
+    if current_organization is None:
+        raise ValueError("Account organization not found in current tenant")
+    before = {
+        "name": account.name,
+        "status": "enabled" if account.is_active else "disabled",
+        "organization": _organization_snapshot(current_organization),
+        "roles": _role_snapshot(list(account.roles)),
+    }
     if name:
         account.name = name
     if organization_id is not None:
@@ -280,9 +372,12 @@ async def update_account(
         org_result = await db.execute(
             select(Organization).where(Organization.id == organization_id, Organization.tenant_id == tenant_id)
         )
-        if not org_result.scalar_one_or_none():
+        target_organization = org_result.scalar_one_or_none()
+        if target_organization is None:
             raise ValueError("Organization does not belong to current tenant")
         account.organization_id = organization_id
+    else:
+        target_organization = current_organization
     if role_ids is not None:
         from app.models.tenant import Role
 
@@ -322,6 +417,29 @@ async def update_account(
                     raise ValueError("不能移除租户最后一个有效管理员的角色")
             account.roles = roles
             account.auth_version += 1
+            await revoke_current_tenant_account_sessions(db, account.id)
+    after = {
+        "name": account.name,
+        "status": "enabled" if account.is_active else "disabled",
+        "organization": _organization_snapshot(target_organization),
+        "roles": _role_snapshot(list(account.roles)),
+    }
+    changed_fields = [key for key in ("name", "organization", "roles") if before[key] != after[key]]
+    if changed_fields:
+        await write_audit_log(
+            db,
+            operator_id=str(actor_id),
+            target_tenant_id=str(tenant_id),
+            action="account_updated",
+            resource=f"account:{account.id}",
+            details={
+                "resource_name": account.name,
+                "changed_fields": changed_fields,
+                "before": before,
+                "after": after,
+                "result": "success",
+            },
+        )
     await db.flush()
     await db.refresh(account)
     return account
@@ -336,6 +454,8 @@ async def set_account_active_status(
     reason: str,
 ) -> Account | None:
     """启用或停用租户账户，并使该账户此前签发的 token 全部失效。"""
+    if await _lock_tenant_mutation(db, tenant_id) is None:
+        return None
     result = await db.execute(
         select(Account)
         .options(selectinload(Account.roles))
@@ -370,10 +490,24 @@ async def set_account_active_status(
         if len(set(active_admin_ids)) <= 1:
             raise ValueError("不能停用租户最后一个有效管理员")
 
-    before = "enabled" if account.is_active else "disabled"
-    after = "enabled" if is_active else "disabled"
+    organization = await db.scalar(
+        select(Organization).where(
+            Organization.id == account.organization_id,
+            Organization.tenant_id == tenant_id,
+        )
+    )
+    if organization is None:
+        raise ValueError("Account organization not found in current tenant")
+    before = {
+        "name": account.name,
+        "status": "enabled" if account.is_active else "disabled",
+        "organization": _organization_snapshot(organization),
+        "roles": _role_snapshot(list(account.roles)),
+    }
     account.is_active = is_active
     account.auth_version += 1
+    await revoke_current_tenant_account_sessions(db, account.id)
+    after = {**before, "status": "enabled" if is_active else "disabled"}
 
     await write_audit_log(
         db,
@@ -382,10 +516,12 @@ async def set_account_active_status(
         action="account_enabled" if is_active else "account_disabled",
         resource=f"account:{account.id}",
         details={
+            "resource_name": account.name,
             "target_account_id": str(account.id),
             "reason": reason,
             "before": before,
             "after": after,
+            "result": "success",
         },
     )
     await db.flush()

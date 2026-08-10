@@ -15,7 +15,9 @@ from sqlalchemy import (
     String,
     Table,
     UniqueConstraint,
+    Uuid,
     func,
+    select,
     text,
 )
 from sqlalchemy import Enum as SQLEnum
@@ -25,20 +27,86 @@ from uuid6 import uuid7
 from app.models.base import Base
 from app.utils.email import normalize_email
 
+
+def _account_role_tenant_id(context) -> uuid.UUID:
+    """Derive association ownership for ORM secondary inserts.
+
+    SQLAlchemy's ``relationship(..., secondary=...)`` writes only the endpoint
+    identifiers.  The database trigger is the authoritative guard for raw SQL;
+    this default preserves the same interface for ORM and SQLite-backed tests.
+    """
+
+    parameters = context.get_current_parameters()
+    accounts_table = Base.metadata.tables["accounts"]
+    roles_table = Base.metadata.tables["roles"]
+    account_tenant_id = context.connection.execute(
+        select(accounts_table.c.tenant_id).where(accounts_table.c.id == parameters["account_id"])
+    ).scalar_one_or_none()
+    role_tenant_id = context.connection.execute(
+        select(roles_table.c.tenant_id).where(roles_table.c.id == parameters["role_id"])
+    ).scalar_one_or_none()
+    if account_tenant_id is None or account_tenant_id != role_tenant_id:
+        raise ValueError("Account and role must exist in the same tenant")
+    return account_tenant_id
+
+
+def _role_permission_tenant_id(context) -> uuid.UUID:
+    """Derive tenant ownership for ORM role-permission secondary inserts."""
+
+    parameters = context.get_current_parameters()
+    roles_table = Base.metadata.tables["roles"]
+    permissions_table = Base.metadata.tables["permissions"]
+    role_tenant_id = context.connection.execute(
+        select(roles_table.c.tenant_id).where(roles_table.c.id == parameters["role_id"])
+    ).scalar_one_or_none()
+    permission_tenant_id = context.connection.execute(
+        select(permissions_table.c.tenant_id).where(permissions_table.c.id == parameters["permission_id"])
+    ).scalar_one_or_none()
+    if role_tenant_id is None or role_tenant_id != permission_tenant_id:
+        raise ValueError("Role and permission must exist in the same tenant")
+    return role_tenant_id
+
+
 account_roles = Table(
     "account_roles",
     Base.metadata,
+    Column("tenant_id", Uuid(), nullable=False, default=_account_role_tenant_id),
     Column("account_id", ForeignKey("accounts.id"), primary_key=True),
     Column("role_id", ForeignKey("roles.id"), primary_key=True),
+    ForeignKeyConstraint(
+        ["tenant_id", "account_id"],
+        ["accounts.tenant_id", "accounts.id"],
+        name="fk_account_roles_tenant_account",
+    ),
+    ForeignKeyConstraint(
+        ["tenant_id", "role_id"],
+        ["roles.tenant_id", "roles.id"],
+        name="fk_account_roles_tenant_role",
+    ),
+    CheckConstraint("tenant_id IS NOT NULL", name="ck_account_roles_tenant_id_nn"),
     Index("ix_account_roles_role_id", "role_id"),
+    Index("ix_account_roles_tenant_id", "tenant_id"),
 )
 
 role_permissions = Table(
     "role_permissions",
     Base.metadata,
+    Column("tenant_id", Uuid(), nullable=False, default=_role_permission_tenant_id),
     Column("role_id", ForeignKey("roles.id"), primary_key=True),
     Column("permission_id", ForeignKey("permissions.id"), primary_key=True),
+    ForeignKeyConstraint(
+        ["tenant_id", "role_id"],
+        ["roles.tenant_id", "roles.id"],
+        name="fk_role_permissions_tenant_role",
+    ),
+    ForeignKeyConstraint(
+        ["tenant_id", "permission_id"],
+        ["permissions.tenant_id", "permissions.id"],
+        name="fk_role_permissions_tenant_permission",
+    ),
+    CheckConstraint("tenant_id IS NOT NULL", name="ck_role_permissions_tenant_id_nn"),
     Index("ix_role_permissions_permission_id", "permission_id"),
+    Index("ix_role_permissions_tenant_id", "tenant_id"),
 )
 
 
@@ -118,7 +186,12 @@ class Organization(Base):
     )
 
     tenant = relationship("Tenant", back_populates="organizations")
-    accounts = relationship("Account", back_populates="organization", lazy="noload")
+    accounts = relationship(
+        "Account",
+        back_populates="organization",
+        foreign_keys="[Account.organization_id]",
+        lazy="noload",
+    )
 
 
 class Account(Base):
@@ -144,6 +217,11 @@ class Account(Base):
     __table_args__ = (
         CheckConstraint("email = lower(trim(email))", name="ck_accounts_email_canonical"),
         UniqueConstraint("tenant_id", "id", name="uq_accounts_tenant_id_id"),
+        ForeignKeyConstraint(
+            ["tenant_id", "organization_id"],
+            ["organizations.tenant_id", "organizations.id"],
+            name="fk_accounts_tenant_organization",
+        ),
         Index("uq_accounts_tenant_email_ci", tenant_id, func.lower(email), unique=True),
     )
 
@@ -151,12 +229,24 @@ class Account(Base):
     def _normalize_email(self, _key: str, value: str) -> str:
         return normalize_email(value)
 
-    organization = relationship("Organization", back_populates="accounts")
-    roles = relationship("Role", secondary="account_roles", back_populates="accounts", lazy="selectin")
+    organization = relationship("Organization", back_populates="accounts", foreign_keys=[organization_id])
+    roles = relationship(
+        "Role",
+        secondary="account_roles",
+        primaryjoin="Account.id == account_roles.c.account_id",
+        secondaryjoin="Role.id == account_roles.c.role_id",
+        foreign_keys="[account_roles.c.account_id, account_roles.c.role_id]",
+        back_populates="accounts",
+        lazy="selectin",
+    )
 
 
 class Role(Base):
     __tablename__ = "roles"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "id", name="uq_roles_tenant_id_id"),
+        UniqueConstraint("tenant_id", "name", name="uq_roles_tenant_name"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid7)
     tenant_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("tenants.id"), nullable=False, index=True)
@@ -167,12 +257,32 @@ class Role(Base):
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
 
-    accounts = relationship("Account", secondary="account_roles", back_populates="roles", lazy="selectin")
-    permissions = relationship("Permission", secondary="role_permissions", back_populates="roles", lazy="selectin")
+    accounts = relationship(
+        "Account",
+        secondary="account_roles",
+        primaryjoin="Role.id == account_roles.c.role_id",
+        secondaryjoin="Account.id == account_roles.c.account_id",
+        foreign_keys="[account_roles.c.account_id, account_roles.c.role_id]",
+        back_populates="roles",
+        lazy="selectin",
+    )
+    permissions = relationship(
+        "Permission",
+        secondary="role_permissions",
+        primaryjoin="Role.id == role_permissions.c.role_id",
+        secondaryjoin="Permission.id == role_permissions.c.permission_id",
+        foreign_keys="[role_permissions.c.role_id, role_permissions.c.permission_id]",
+        back_populates="roles",
+        lazy="selectin",
+    )
 
 
 class Permission(Base):
     __tablename__ = "permissions"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "id", name="uq_permissions_tenant_id_id"),
+        UniqueConstraint("tenant_id", "code", name="uq_permissions_tenant_code"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid7)
     tenant_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("tenants.id"), nullable=False, index=True)
@@ -183,7 +293,15 @@ class Permission(Base):
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
 
-    roles = relationship("Role", secondary="role_permissions", back_populates="permissions", lazy="selectin")
+    roles = relationship(
+        "Role",
+        secondary="role_permissions",
+        primaryjoin="Permission.id == role_permissions.c.permission_id",
+        secondaryjoin="Role.id == role_permissions.c.role_id",
+        foreign_keys="[role_permissions.c.role_id, role_permissions.c.permission_id]",
+        back_populates="permissions",
+        lazy="selectin",
+    )
 
 
 class OpsTaskStatus(StrEnum):

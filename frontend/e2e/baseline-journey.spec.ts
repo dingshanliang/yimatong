@@ -52,16 +52,19 @@ interface BaselineContext {
  * 注意：infra PG 在 5433；CLI 通过环境变量 database_url 覆盖（.env 默认 5432 是 stale 的）。
  */
 async function ensureBaseline(): Promise<BaselineContext> {
-  const out = execSync("uv run python -m app.cli baseline build --json", {
-    cwd: BACKEND_DIR,
-    encoding: "utf-8",
-    env: {
-      ...process.env,
-      database_url:
-        "postgresql+asyncpg://yimatong:yimatong@localhost:5433/yimatong_dev",
-    },
-    timeout: 90_000,
-  });
+  const out = execSync(
+    "uv run python -m app.cli baseline build --target baseline-base --json",
+    {
+      cwd: BACKEND_DIR,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        database_url:
+          "postgresql+asyncpg://yimatong:yimatong@localhost:5433/yimatong_dev",
+      },
+      timeout: 90_000,
+    }
+  );
   const summary = JSON.parse(out);
   const ctx: BaselineContext = {
     baselineTenant: {

@@ -7,6 +7,7 @@ from datetime import date, timedelta
 import typer
 from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.orm import selectinload
 
 from app.constants.campaign import BenefitType
 from app.core.config import settings
@@ -20,6 +21,8 @@ from app.models.product import SKU, Brand, Product, ProductionBatch
 from app.models.scan import ScanEvent
 from app.models.tenant import Account, Organization, Permission, Role, Tenant, account_roles, role_permissions
 from app.services.analytics import aggregate_daily_stats
+from app.services.audit import write_audit_log
+from app.services.auth import revoke_current_tenant_account_sessions
 from app.services.channel import create_account_scope
 from app.services.code import activate_batch, create_code_batch
 from app.services.public_id import generate_public_id
@@ -27,7 +30,8 @@ from app.services.quota import lock_quota_rollout_state, refresh_quota_usage_fro
 from app.services.tenant import create_tenant
 from app.utils import utcnow
 from app.utils.auth_rbac import WEB_ROLE_PERMISSIONS
-from app.utils.security import hash_password
+from app.utils.email import normalize_email
+from app.utils.security import hash_password, verify_password
 
 app = typer.Typer(help="Seed data for development")
 
@@ -74,6 +78,40 @@ DEMO_ACCOUNTS = [
 ]
 
 DEMO_ENABLED_FEATURES = {"channel_portal": True}
+DEFAULT_TENANT_ADMIN_EMAIL = "admin@example.com"
+DEFAULT_TENANT_ADMIN_PASSWORD = "Admin1234"
+
+
+def _guard_seed_mutation(
+    *,
+    command: str,
+    target: str,
+    allow_production: bool,
+    demo_only: bool = False,
+    allow_non_demo_target: bool = False,
+    unsafe_default_identity: bool = False,
+    forbid_production: bool = False,
+) -> None:
+    """Authorize one exact seed target before any database work starts."""
+
+    if not target.strip():
+        typer.echo(f"拒绝执行 {command}：必须提供明确的目标租户", err=True)
+        raise typer.Exit(code=2)
+    if settings.environment == "production" and forbid_production:
+        typer.echo(f"production 环境禁止执行 {command}：该命令会写入仓库内置演示账号或密码", err=True)
+        raise typer.Exit(code=2)
+    if settings.environment == "production" and not allow_production:
+        typer.echo(
+            f"拒绝在 production 环境执行 {command}；如确有需要请显式传 --allow-production",
+            err=True,
+        )
+        raise typer.Exit(code=2)
+    if settings.environment == "production" and unsafe_default_identity:
+        typer.echo("拒绝在 production 环境使用默认管理员邮箱或密码创建租户", err=True)
+        raise typer.Exit(code=2)
+    if demo_only and target != "demo" and not allow_non_demo_target:
+        typer.echo("拒绝向非 demo 租户写入演示数据；如确有需要请显式传 --allow-non-demo-target", err=True)
+        raise typer.Exit(code=2)
 
 
 async def _get_tenant_by_slug(db: AsyncSession, slug: str) -> Tenant | None:
@@ -143,7 +181,12 @@ async def _generate_codes(db: AsyncSession, tenant_id: uuid.UUID, batch_code: st
 
 
 async def _get_default_org(db: AsyncSession, tenant_id: uuid.UUID) -> Organization:
-    result = await db.execute(select(Organization).where(Organization.tenant_id == tenant_id).limit(1))
+    result = await db.execute(
+        select(Organization).where(
+            Organization.tenant_id == tenant_id,
+            Organization.name == "演示默认组织",
+        )
+    )
     org = result.scalar_one_or_none()
     if org:
         return org
@@ -184,7 +227,13 @@ async def _ensure_role(db: AsyncSession, tenant_id: uuid.UUID, name: str, descri
             )
         )
         if linked is None:
-            await db.execute(role_permissions.insert().values(role_id=role.id, permission_id=permission.id))
+            await db.execute(
+                role_permissions.insert().values(
+                    tenant_id=tenant_id,
+                    role_id=role.id,
+                    permission_id=permission.id,
+                )
+            )
     return role
 
 
@@ -217,12 +266,69 @@ async def _ensure_demo_accounts(db: AsyncSession, tenant_id: uuid.UUID, org_id: 
     }
     accounts: list[Account] = []
     for item in DEMO_ACCOUNTS:
-        result = await db.execute(select(Account).where(Account.tenant_id == tenant_id, Account.email == item["email"]))
+        result = await db.execute(
+            select(Account)
+            .options(selectinload(Account.roles))
+            .where(Account.tenant_id == tenant_id, Account.email == item["email"])
+        )
         account = result.scalar_one_or_none()
         if account:
-            account.name = item["name"]
-            account.organization_id = org_id
-            account.hashed_password = hash_password(item["password"])
+            desired_role = roles[item["role"]]
+            current_role_ids = {role.id for role in account.roles}
+            identity_changes: list[str] = []
+            security_changes: list[str] = []
+            before = {
+                "name": account.name,
+                "organization_id": str(account.organization_id),
+                "roles": sorted(role.name for role in account.roles),
+            }
+            if account.name != item["name"]:
+                account.name = item["name"]
+                identity_changes.append("name")
+            if account.organization_id != org_id:
+                account.organization_id = org_id
+                security_changes.append("organization")
+            if not verify_password(item["password"], account.hashed_password):
+                account.hashed_password = hash_password(item["password"])
+                security_changes.append("password")
+            if current_role_ids != {desired_role.id}:
+                await db.execute(
+                    account_roles.delete().where(
+                        account_roles.c.tenant_id == tenant_id,
+                        account_roles.c.account_id == account.id,
+                    )
+                )
+                await db.execute(
+                    account_roles.insert().values(
+                        tenant_id=tenant_id,
+                        account_id=account.id,
+                        role_id=desired_role.id,
+                    )
+                )
+                security_changes.append("roles")
+            identity_changes.extend(security_changes)
+            if security_changes:
+                account.auth_version += 1
+                await revoke_current_tenant_account_sessions(db, account.id)
+            if identity_changes:
+                await write_audit_log(
+                    db,
+                    operator_id="seed-cli",
+                    target_tenant_id=str(tenant_id),
+                    action="account_identity_reconciled",
+                    resource=f"account:{account.id}",
+                    details={
+                        "resource_name": account.name,
+                        "changed_fields": sorted(identity_changes),
+                        "before": before,
+                        "after": {
+                            "name": account.name,
+                            "organization_id": str(account.organization_id),
+                            "roles": [desired_role.name],
+                        },
+                        "result": "success",
+                    },
+                )
         else:
             account = Account(
                 tenant_id=tenant_id,
@@ -233,8 +339,13 @@ async def _ensure_demo_accounts(db: AsyncSession, tenant_id: uuid.UUID, org_id: 
             )
             db.add(account)
             await db.flush()
-        await db.execute(account_roles.delete().where(account_roles.c.account_id == account.id))
-        await db.execute(account_roles.insert().values(account_id=account.id, role_id=roles[item["role"]].id))
+            await db.execute(
+                account_roles.insert().values(
+                    tenant_id=tenant_id,
+                    account_id=account.id,
+                    role_id=roles[item["role"]].id,
+                )
+            )
         accounts.append(account)
     await db.flush()
     return accounts
@@ -646,17 +757,29 @@ async def _ensure_demo_channels(
 def tenant(
     name: str = typer.Option(..., help="租户名称"),
     slug: str = typer.Option(..., help="租户标识"),
-    admin_email: str = typer.Option("admin@example.com", help="管理员邮箱"),
+    admin_email: str = typer.Option(DEFAULT_TENANT_ADMIN_EMAIL, help="管理员邮箱"),
     admin_name: str = typer.Option("Admin", help="管理员姓名"),
-    admin_password: str = typer.Option("Admin1234", help="管理员密码"),
+    admin_password: str = typer.Option(DEFAULT_TENANT_ADMIN_PASSWORD, help="管理员密码"),
+    allow_production: bool = typer.Option(False, "--allow-production", help="明确允许在 production 环境运行"),
 ):
     """创建租户及默认组织和 admin 账号"""
+
+    canonical_admin_email = normalize_email(admin_email)
+    _guard_seed_mutation(
+        command="tenant seed",
+        target=slug,
+        allow_production=allow_production,
+        unsafe_default_identity=(
+            canonical_admin_email == normalize_email(DEFAULT_TENANT_ADMIN_EMAIL)
+            or admin_password == DEFAULT_TENANT_ADMIN_PASSWORD
+        ),
+    )
 
     async def _run():
         tenant_id, created = await _ensure_tenant(
             name=name,
             slug=slug,
-            admin_email=admin_email,
+            admin_email=canonical_admin_email,
             admin_name=admin_name,
             admin_password=admin_password,
         )
@@ -674,8 +797,11 @@ def product(
     brand: str = typer.Option(..., help="品牌名称"),
     product_name: str = typer.Option(..., help="产品名称"),
     sku: str = typer.Option(..., help="SKU 编码"),
+    allow_production: bool = typer.Option(False, "--allow-production", help="明确允许在 production 环境运行"),
 ):
     """创建完整产品链（品牌 → 产品 → SKU）"""
+
+    _guard_seed_mutation(command="product seed", target=tenant, allow_production=allow_production)
 
     async def _run():
         tenant_id = await _find_tenant_id(tenant)
@@ -701,8 +827,11 @@ def code(
     tenant: str = typer.Option(..., help="租户 slug"),
     batch_code: str = typer.Option(..., help="批次编码"),
     count: int = typer.Option(100, help="生成数量"),
+    allow_production: bool = typer.Option(False, "--allow-production", help="明确允许在 production 环境运行"),
 ):
     """生成码批次"""
+
+    _guard_seed_mutation(command="code seed", target=tenant, allow_production=allow_production)
 
     async def _run():
         tenant_id = await _find_tenant_id(tenant)
@@ -728,8 +857,23 @@ def all(
     brand: str = typer.Option("青岭良仓", help="品牌名称"),
     product_name: str = typer.Option("五常稻花香大米 5kg", help="产品名称"),
     sku: str = typer.Option("RICE-5KG-001", help="SKU 编码"),
+    allow_production: bool = typer.Option(False, "--allow-production", help="明确允许向 production 环境写入演示数据"),
+    allow_non_demo_target: bool = typer.Option(
+        False,
+        "--allow-non-demo-target",
+        help="明确允许演示 seed 写入非 demo slug",
+    ),
 ):
     """一键创建全部演示数据（租户 + 角色账号 + 产品 + 码 + 页面 + 活动 + 扫码数据）"""
+
+    _guard_seed_mutation(
+        command="all seed",
+        target=slug,
+        allow_production=allow_production,
+        demo_only=True,
+        allow_non_demo_target=allow_non_demo_target,
+        forbid_production=True,
+    )
 
     async def _run():
         tenant_id, created = await _ensure_tenant(
@@ -834,18 +978,26 @@ async def create_sku_if_needed(
 @app.command()
 def demo(
     clean: bool = typer.Option(False, "--clean", help="清理现有演示数据后重新生成"),
+    allow_production: bool = typer.Option(False, "--allow-production", help="明确允许在 production 环境运行"),
 ):
     """生成丰富演示数据（委托 scripts/seed_demo.py）"""
     import subprocess
     import sys
     from pathlib import Path
 
+    _guard_seed_mutation(
+        command="demo seed",
+        target="demo",
+        allow_production=allow_production,
+        forbid_production=True,
+    )
+
     script = Path(__file__).resolve().parent.parent.parent / "scripts" / "seed_demo.py"
     if not script.exists():
         typer.echo(f"Demo script not found: {script}", err=True)
         raise typer.Exit(code=1)
 
-    cmd = [sys.executable, str(script), "reset" if clean else "generate"]
+    cmd = [sys.executable, str(script), "reset" if clean else "generate", "--target", "demo"]
     result = subprocess.run(cmd, cwd=str(script.parent.parent))
     raise typer.Exit(code=result.returncode)
 

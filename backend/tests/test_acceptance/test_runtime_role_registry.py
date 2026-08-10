@@ -62,6 +62,14 @@ async def _assert_insert_denied(conn: asyncpg.Connection, query: str, *args: obj
     await savepoint.rollback()
 
 
+async def _assert_association_insert_denied(conn: asyncpg.Connection, query: str, *args: object) -> None:
+    savepoint = conn.transaction()
+    await savepoint.start()
+    with pytest.raises(asyncpg.ForeignKeyViolationError):
+        await conn.execute(query, *args)
+    await savepoint.rollback()
+
+
 async def _assert_statement_privilege_denied(conn: asyncpg.Connection, query: str) -> None:
     savepoint = conn.transaction()
     await savepoint.start()
@@ -695,7 +703,7 @@ async def test_repaired_business_relations_runtime_crud_and_isolation(
                 )
                 == 0
             )
-            await _assert_insert_denied(
+            await _assert_association_insert_denied(
                 runtime_pg_conn, f"INSERT INTO {table} ({left},{right}) VALUES ($1,$2)", *cross_pair
             )
             await runtime_pg_conn.execute(f"INSERT INTO {table} ({left},{right}) VALUES ($1,$2)", *own_pair)

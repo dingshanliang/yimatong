@@ -127,7 +127,7 @@ async def test_tenant_platform_admin_assignment_is_removed_and_reversible(migrat
     finally:
         await conn.close()
 
-    _alembic(migrated_pg_url, "upgrade", "head")
+    _alembic(migrated_pg_url, "upgrade", "h496fd756a88")
     conn = await asyncpg.connect(dsn)
     try:
         assert (
@@ -158,6 +158,17 @@ async def test_tenant_platform_admin_assignment_is_removed_and_reversible(migrat
             == 1
         )
         assert await conn.fetchval("SELECT auth_version FROM accounts WHERE id = $1", account_id) == 4
+        async with conn.transaction():
+            await conn.execute(
+                "DELETE FROM account_roles WHERE account_id = $1 AND role_id = $2",
+                account_id,
+                role_id,
+            )
+            await conn.execute("DELETE FROM accounts WHERE id = $1", account_id)
+            await conn.execute("DELETE FROM organizations WHERE id = $1", organization_id)
+            await conn.execute("DELETE FROM roles WHERE id = $1", role_id)
+            await conn.execute("DELETE FROM tenants WHERE id = $1", tenant_id)
+        assert await conn.fetchval("SELECT count(*) FROM tenants WHERE id = $1", tenant_id) == 0
     finally:
         await conn.close()
     _alembic(migrated_pg_url, "upgrade", "head")
@@ -358,6 +369,11 @@ async def test_operator_campaign_manage_grants_are_backfilled_and_reversed_safel
             )
             == 1
         )
+        # This fixture intentionally creates duplicate legacy operator roles to
+        # exercise the historical grant migration.  The governance head now
+        # fails closed on that drift, so remove the test-only duplicate after
+        # the historical downgrade has been proven reversible.
+        await conn.execute("DELETE FROM roles WHERE id = $1", role_new_duplicate)
     finally:
         await conn.close()
     _alembic(migrated_pg_url, "upgrade", "head")

@@ -33,6 +33,7 @@ import asyncpg
 import pytest
 import pytest_asyncio
 from sqlalchemy import text
+from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 BACKEND_DIR = Path(__file__).resolve().parents[2]
@@ -546,7 +547,12 @@ async def control_pg_conn(migrated_pg_url: str) -> AsyncGenerator[asyncpg.Connec
 
 
 async def seed_baseline(database_url: str) -> dict:
-    """在给定 DSN 上幂等构建基准数据，返回摘要 dict。"""
+    """Build baseline identities as control and tenant data as runtime."""
     from app.cli.baseline import _build_baseline_dataset
 
-    return await _build_baseline_dataset(database_url)
+    runtime_url = (
+        make_url(database_url)
+        .set(username="yimatong_app", password="yimatong_app")
+        .render_as_string(hide_password=False)
+    )
+    return await _build_baseline_dataset(runtime_url, control_database_url=database_url)

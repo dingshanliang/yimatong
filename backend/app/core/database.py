@@ -1,10 +1,12 @@
 import uuid
 from collections.abc import AsyncGenerator
+from datetime import UTC, datetime
 from typing import Any
 
-from fastapi import Depends, Request
-from sqlalchemy import text
+from fastapi import Depends, HTTPException, Request
+from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.orm import selectinload
 from sqlalchemy.sql import Executable
 
 from app.core.config import settings
@@ -177,6 +179,127 @@ _PLAN_RECOVERY_WRITE_PATHS = frozenset(
 )
 
 
+async def _lock_request_tenants(session: AsyncSession, request: Request, tenant_id: uuid.UUID) -> None:
+    """Lock the acting and business tenants in one stable order."""
+
+    from app.models.tenant import Tenant, TenantStatus
+
+    original_tenant_id = getattr(request.state, "original_tenant_id", None)
+    tenant_ids = {tenant_id}
+    if original_tenant_id:
+        tenant_ids.add(uuid.UUID(str(original_tenant_id)))
+    for locked_tenant_id in sorted(tenant_ids, key=str):
+        await _apply_tenant_context(session, locked_tenant_id)
+        locked_tenant = await session.scalar(select(Tenant).where(Tenant.id == locked_tenant_id).with_for_update())
+        if locked_tenant is None or locked_tenant.status != TenantStatus.active:
+            raise HTTPException(status_code=401, detail="Tenant context is no longer valid")
+    await _apply_tenant_context(session, tenant_id)
+
+
+async def _revalidate_durable_session(request: Request, principal_tenant_id: uuid.UUID) -> None:
+    """Fail closed when a durable JWT family was revoked while middleware ran."""
+
+    session_id = getattr(request.state, "session_id", None)
+    if not session_id:
+        # Legacy access tokens remain valid for their original short lifetime,
+        # matching the middleware rollout compatibility rule.
+        return
+    from app.models.auth_security import AuthSession
+
+    try:
+        validated_session_id = uuid.UUID(str(session_id))
+        account_id = uuid.UUID(str(request.state.account_id))
+    except (AttributeError, ValueError) as exc:
+        raise HTTPException(status_code=401, detail="Invalid login session") from exc
+    async with control_session_factory() as control_db:
+        active_session = await control_db.scalar(
+            select(AuthSession.id).where(
+                AuthSession.id == validated_session_id,
+                AuthSession.account_id == account_id,
+                AuthSession.tenant_id == principal_tenant_id,
+                AuthSession.auth_version == int(getattr(request.state, "auth_version", 0)),
+                AuthSession.revoked_at.is_(None),
+                AuthSession.expires_at > func.now(),
+            )
+        )
+    if active_session is None:
+        raise HTTPException(status_code=401, detail="登录会话已撤销或过期")
+
+
+async def _revalidate_acting_authorization(request: Request) -> None:
+    """Recheck a live agency grant after both tenant rows are locked."""
+
+    acting_tenant_id = getattr(request.state, "acting_tenant_id", None)
+    original_tenant_id = getattr(request.state, "original_tenant_id", None)
+    if not acting_tenant_id or not original_tenant_id or request.url.path == "/api/v1/agency/exit-context":
+        return
+    from app.middleware.tenant import TenantScopeMiddleware
+    from app.models.tenant import AgencyAuthorization, AgencyAuthStatus
+
+    agency_id = uuid.UUID(str(original_tenant_id))
+    client_id = uuid.UUID(str(acting_tenant_id))
+    async with control_session_factory() as control_db:
+        await control_db.execute(text("SELECT set_config('app.tenant_id', '', true)"))
+        await control_db.execute(text("SELECT set_config('app.bypass_rls', 'true', true)"))
+        authorization = await control_db.scalar(
+            select(AgencyAuthorization).where(
+                AgencyAuthorization.agency_tenant_id == agency_id,
+                AgencyAuthorization.client_tenant_id == client_id,
+                AgencyAuthorization.status == AgencyAuthStatus.active,
+            )
+        )
+    if authorization is None:
+        raise HTTPException(status_code=403, detail="代运营授权已失效")
+    expires_at = authorization.expires_at
+    if expires_at is not None:
+        if expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=UTC)
+        if expires_at <= datetime.now(UTC):
+            raise HTTPException(status_code=403, detail="代运营授权已失效")
+    live_scopes = list(authorization.scope)
+    if not TenantScopeMiddleware._acting_path_is_explicitly_supported(
+        request.url.path,
+        live_scopes,
+        request.method,
+    ):
+        raise HTTPException(status_code=403, detail="当前代运营授权不允许访问该功能")
+    request.state.agency_scopes = live_scopes
+
+
+async def _revalidate_mutating_principal(session: AsyncSession, request: Request, tenant_id: uuid.UUID) -> None:
+    """Revalidate the JWT principal at the serialized mutation boundary."""
+
+    if getattr(request.state, "auth_method", None) != "jwt":
+        return
+    from app.models.tenant import Account
+    from app.services.auth import resolve_account_role
+
+    principal_tenant_id = uuid.UUID(str(getattr(request.state, "original_tenant_id", None) or tenant_id))
+    try:
+        account_id = uuid.UUID(str(request.state.account_id))
+    except (AttributeError, ValueError) as exc:
+        raise HTTPException(status_code=401, detail="Invalid account context") from exc
+    # Keep the same lock order as refresh/logout: durable family first, then
+    # the tenant account row. This avoids AuthSession <-> Account deadlocks.
+    await _revalidate_durable_session(request, principal_tenant_id)
+    await _apply_tenant_context(session, principal_tenant_id)
+    account = await session.scalar(
+        select(Account)
+        .options(selectinload(Account.roles))
+        .where(Account.id == account_id, Account.tenant_id == principal_tenant_id)
+        .with_for_update()
+    )
+    if (
+        account is None
+        or account.is_active is False
+        or account.auth_version != int(getattr(request.state, "auth_version", 0))
+        or resolve_account_role(account) != getattr(request.state, "role", None)
+    ):
+        raise HTTPException(status_code=401, detail="账户已停用或登录状态已失效")
+    await _revalidate_acting_authorization(request)
+    await _apply_tenant_context(session, tenant_id)
+
+
 async def get_db(request: Request) -> AsyncGenerator[AsyncSession, None]:
     async with async_session_factory() as session:
         from app.core.context import get_request_tenant_id
@@ -209,15 +332,20 @@ async def get_db(request: Request) -> AsyncGenerator[AsyncSession, None]:
             # authenticated business mutation. This closes the middleware
             # check/write race without blocking read-only access or the exact
             # authentication recovery operations an expired tenant needs.
-            if (
-                tenant_id
-                and str(tenant_id) != "platform"
-                and request.method not in {"GET", "HEAD", "OPTIONS"}
-                and request.url.path not in _PLAN_RECOVERY_WRITE_PATHS
-            ):
-                from app.services.entitlement import require_active_plan
+            if tenant_id and str(tenant_id) != "platform" and request.method not in {"GET", "HEAD", "OPTIONS"}:
+                validated_tenant_id = uuid.UUID(str(tenant_id))
+                if _session_uses_postgresql(session):
+                    # Global quota epoch is always first; only then may this
+                    # request lock its complete, precomputed Tenant set.
+                    from app.services.quota import lock_quota_rollout_state
 
-                await require_active_plan(session, uuid.UUID(str(tenant_id)), lock_tenant=True)
+                    await lock_quota_rollout_state(session)
+                    await _lock_request_tenants(session, request, validated_tenant_id)
+                    await _revalidate_mutating_principal(session, request, validated_tenant_id)
+                if request.url.path not in _PLAN_RECOVERY_WRITE_PATHS:
+                    from app.services.entitlement import require_active_plan
+
+                    await require_active_plan(session, validated_tenant_id, lock_tenant=True)
             yield session
             await session.commit()
         except Exception:

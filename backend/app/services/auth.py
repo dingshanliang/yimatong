@@ -9,7 +9,7 @@ import secrets
 import uuid
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -70,6 +70,15 @@ def resolve_account_role(account: Account) -> str:
 async def _get_account_with_roles(db: AsyncSession, account_id: uuid.UUID) -> Account | None:
     result = await db.execute(select(Account).options(selectinload(Account.roles)).where(Account.id == account_id))
     return result.scalar_one_or_none()
+
+
+async def revoke_current_tenant_account_sessions(db: AsyncSession, account_id: uuid.UUID) -> int:
+    """Revoke one account's durable families inside its runtime transaction."""
+
+    if db.get_bind().dialect.name != "postgresql":
+        return 0
+    revoked = await db.scalar(select(func.revoke_current_tenant_account_sessions(account_id)))
+    return int(revoked or 0)
 
 
 async def _prune_expired_auth_sessions(db: AsyncSession, *, limit: int = 256) -> None:
