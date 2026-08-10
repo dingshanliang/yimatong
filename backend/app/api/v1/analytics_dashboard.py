@@ -24,7 +24,8 @@ dashboard_router = APIRouter(prefix="/api/v1/analytics", tags=["analytics-dashbo
 
 def require_admin(request: Request) -> None:
     role = getattr(request.state, "role", None)
-    if role != "admin":
+    tenant_type = getattr(request.state, "tenant_type", None)
+    if role != "admin" or tenant_type != "brand":
         raise HTTPException(status_code=403, detail="Admin permission required")
 
 
@@ -161,14 +162,26 @@ async def regional_dashboard(
 async def list_exports(
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
+    _: None = Depends(require_admin),
 ):
     """导出记录列表"""
     from app.models.export_log import ExportLog
 
     result = await db.execute(
-        select(ExportLog).where(ExportLog.tenant_id == tenant_id).order_by(ExportLog.created_at.desc()).limit(50)
+        select(
+            ExportLog.id,
+            ExportLog.export_type,
+            ExportLog.resource_id,
+            ExportLog.file_name,
+            ExportLog.row_count,
+            ExportLog.status,
+            ExportLog.created_at,
+        )
+        .where(ExportLog.tenant_id == tenant_id)
+        .order_by(ExportLog.created_at.desc())
+        .limit(50)
     )
-    exports = result.scalars().all()
+    exports = result.all()
     return {
         "items": [
             {

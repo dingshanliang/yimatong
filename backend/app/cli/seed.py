@@ -24,12 +24,13 @@ from app.services.analytics import aggregate_daily_stats
 from app.services.audit import write_audit_log
 from app.services.auth import revoke_current_tenant_account_sessions
 from app.services.channel import create_account_scope
-from app.services.code import activate_batch, create_code_batch
-from app.services.public_id import generate_public_id
+from app.services.code import activate_batch, create_code_batch, mark_delivered, mark_printing
+from app.services.code_export import generate_code_csv
 from app.services.quota import lock_quota_rollout_state, refresh_quota_usage_from_authoritative_rows
 from app.services.tenant import create_tenant
 from app.utils import utcnow
 from app.utils.auth_rbac import WEB_ROLE_PERMISSIONS
+from app.utils.crypto import EnvKeyProvider, init_crypto
 from app.utils.email import normalize_email
 from app.utils.security import hash_password, verify_password
 
@@ -491,6 +492,49 @@ async def _ensure_campaign(db: AsyncSession, tenant_id: uuid.UUID) -> Campaign:
     return campaign
 
 
+def _seed_code_generation_idempotency_key(tenant_id: uuid.UUID, production_batch_id: uuid.UUID) -> str:
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, f"yimatong:seed-code:v1:{tenant_id}:{production_batch_id}"))
+
+
+async def _create_and_deliver_seed_code_batch(
+    db: AsyncSession,
+    *,
+    tenant_id: uuid.UUID,
+    product_id: uuid.UUID,
+    sku_id: uuid.UUID,
+    production_batch_id: uuid.UUID,
+    batch_code: str,
+    quantity: int,
+    created_by: uuid.UUID,
+) -> uuid.UUID:
+    init_crypto(EnvKeyProvider())
+    data = await create_code_batch(
+        db,
+        tenant_id,
+        product_id,
+        sku_id,
+        production_batch_id,
+        quantity,
+        created_by,
+        batch_code=batch_code,
+        idempotency_key=_seed_code_generation_idempotency_key(tenant_id, production_batch_id),
+    )
+    batch_id = uuid.UUID(data["id"])
+    await generate_code_csv(db, tenant_id, batch_id, created_by)
+    await mark_printing(db, tenant_id, batch_id, actor_id=str(created_by))
+    await mark_delivered(
+        db,
+        tenant_id,
+        batch_id,
+        actor_id=str(created_by),
+        reason="Seed data delivery",
+        recipient="Seed data operations",
+        confirm="deliver",
+    )
+    await activate_batch(db, tenant_id, batch_id, actor_id=str(created_by))
+    return batch_id
+
+
 async def _ensure_demo_codes(
     db: AsyncSession,
     tenant_id: uuid.UUID,
@@ -506,18 +550,17 @@ async def _ensure_demo_codes(
     )
     batch = result.scalar_one_or_none()
     if not batch:
-        data = await create_code_batch(
+        batch_id = await _create_and_deliver_seed_code_batch(
             db,
-            tenant_id,
-            product_id,
-            sku_id,
-            production_batch_id,
-            12,
-            created_by,
+            tenant_id=tenant_id,
+            product_id=product_id,
+            sku_id=sku_id,
+            production_batch_id=production_batch_id,
             batch_code="DEMO-CODE-202605",
+            quantity=12,
+            created_by=created_by,
         )
-        await activate_batch(db, tenant_id, uuid.UUID(data["id"]))
-        result = await db.execute(select(CodeBatch).where(CodeBatch.id == uuid.UUID(data["id"])))
+        result = await db.execute(select(CodeBatch).where(CodeBatch.id == batch_id))
         batch = result.scalar_one()
 
     result = await db.execute(
@@ -525,22 +568,9 @@ async def _ensure_demo_codes(
     )
     items = list(result.scalars().all())
     if not items:
-        items = [
-            CodeItem(
-                tenant_id=tenant_id,
-                code_batch_id=batch.id,
-                public_id=generate_public_id(),
-                status=CodeItemStatus.activated,
-                activated_at=utcnow(),
-            )
-            for _ in range(12)
-        ]
-        db.add_all(items)
-        await db.flush()
-    for item in items:
-        if item.status == CodeItemStatus.created:
-            item.status = CodeItemStatus.activated
-            item.activated_at = utcnow()
+        raise RuntimeError("Demo code batch exists without authoritative code items")
+    if any(item.status == CodeItemStatus.created for item in items):
+        raise RuntimeError("Demo code batch contains unactivated authoritative code items")
     if len(items) >= 3:
         items[1].status = CodeItemStatus.revoked
         items[1].revoked_at = utcnow()

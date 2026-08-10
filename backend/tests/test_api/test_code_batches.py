@@ -55,7 +55,10 @@ async def tenant_with_auth(client: AsyncClient):
     )
     tid = resp.json()["id"]
     token = create_access_token(tid, "00000000-0000-0000-0000-000000000001", "admin")
-    return tid, {"Authorization": f"Bearer {token}"}
+    return tid, {
+        "Authorization": f"Bearer {token}",
+        "Idempotency-Key": "11111111-1111-4111-8111-111111111111",
+    }
 
 
 @pytest.fixture

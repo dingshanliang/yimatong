@@ -9,6 +9,9 @@ import {
   Card,
   Col,
   Descriptions,
+  Form,
+  Input,
+  Modal,
   Progress,
   Row,
   Space,
@@ -18,9 +21,12 @@ import {
   Typography,
 } from "antd";
 import { ArrowLeftOutlined, DownloadOutlined } from "@ant-design/icons";
-import api, { extractErrorMessage } from "@/lib/api";
+import api from "@/lib/api";
+import { useAuthStore } from "@/lib/auth";
+import { codeAccessForPrincipal, type CodeAccess } from "@/lib/code-access";
 import { formatDate, formatDateTime } from "@/lib/format";
 import { STATUS_COLORS } from "@/lib/status-colors";
+import { useTenantPlanReadOnly } from "../../_components/TenantPlanReadOnly";
 
 const { Title, Text } = Typography;
 
@@ -28,12 +34,14 @@ interface CodeBatchDetail {
   id: string;
   batch_code: string;
   quantity: number;
+  expected_item_count?: number;
   product_id: string;
   sku_id: string;
   production_batch_id?: string;
   code_type: string;
   generation_mode: string;
   status: string;
+  source?: "generated" | "imported";
   product_name?: string;
   sku_name?: string;
   sku_code?: string;
@@ -43,6 +51,12 @@ interface CodeBatchDetail {
   created_by: string;
   created_at?: string;
   stats?: Record<string, number>;
+}
+
+interface DeliveryFormValues {
+  reason: string;
+  recipient: string;
+  confirm: "deliver";
 }
 
 const STATUS_MAP: Record<string, { label: string; color: string }> = {
@@ -74,36 +88,56 @@ const GENERATION_MODE_LABELS: Record<string, string> = {
 };
 
 export default function CodeBatchDetailPage() {
+  const user = useAuthStore((state) => state.user);
+  const access = codeAccessForPrincipal(user);
+
+  if (!access.canRead) {
+    return <Alert type="warning" showIcon title="当前账号无权访问码管理" />;
+  }
+
+  return <CodeBatchDetailWorkspace access={access} />;
+}
+
+function CodeBatchDetailWorkspace({ access }: { access: CodeAccess }) {
   const params = useParams<{ id: string }>();
   const router = useRouter();
   const { message, modal } = App.useApp();
+  const planReadOnly = useTenantPlanReadOnly();
+  const [deliveryForm] = Form.useForm<DeliveryFormValues>();
 
   const [batch, setBatch] = useState<CodeBatchDetail | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadState, setLoadState] = useState<"not_found" | "error" | null>(
+    null
+  );
   const [activating, setActivating] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [markingPrinting, setMarkingPrinting] = useState(false);
   const [markingDelivered, setMarkingDelivered] = useState(false);
+  const [deliveryOpen, setDeliveryOpen] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
+    setLoadState(null);
     try {
       const { data } = await api.get(`/code-batches/${params.id}`);
       setBatch(data);
     } catch (err) {
       setBatch(null);
-      message.error(extractErrorMessage(err, "加载码批次详情失败"));
+      const status = (err as { response?: { status?: number } })?.response
+        ?.status;
+      setLoadState(status === 404 ? "not_found" : "error");
     } finally {
       setLoading(false);
     }
-  }, [params.id, message]);
+  }, [params.id]);
 
   useEffect(() => {
     load();
   }, [load]);
 
   const handleActivate = async () => {
-    if (!batch) return;
+    if (!batch || planReadOnly || !access.canManage) return;
     setActivating(true);
     try {
       await api.post(`/code-batches/${batch.id}/activate`);
@@ -154,7 +188,7 @@ export default function CodeBatchDetailPage() {
   };
 
   const handleExport = async () => {
-    if (!batch) return;
+    if (!batch || planReadOnly || !access.canExport) return;
     setExporting(true);
     try {
       const response = await api.post<Blob>(
@@ -170,7 +204,10 @@ export default function CodeBatchDetailPage() {
       const url = window.URL.createObjectURL(blob);
       const link = document.createElement("a");
       link.href = url;
-      link.download = `codes-${batch.id}.csv`;
+      const contentDisposition = response.headers["content-disposition"] as
+        string | undefined;
+      const filename = contentDisposition?.match(/filename="?([^";]+)"?/i)?.[1];
+      link.download = filename || `codes-${batch.id}.csv`;
       document.body.appendChild(link);
       link.click();
       link.remove();
@@ -184,7 +221,7 @@ export default function CodeBatchDetailPage() {
   };
 
   const handleMarkPrinting = async () => {
-    if (!batch) return;
+    if (!batch || planReadOnly || !access.canManage) return;
     setMarkingPrinting(true);
     try {
       await api.post(`/code-batches/${batch.id}/mark-printing`);
@@ -197,12 +234,14 @@ export default function CodeBatchDetailPage() {
     }
   };
 
-  const handleMarkDelivered = async () => {
-    if (!batch) return;
+  const handleMarkDelivered = async (values: DeliveryFormValues) => {
+    if (!batch || planReadOnly || !access.canManage) return;
     setMarkingDelivered(true);
     try {
-      await api.post(`/code-batches/${batch.id}/mark-delivered`);
+      await api.post(`/code-batches/${batch.id}/mark-delivered`, values);
       message.success("已标记为已交付");
+      setDeliveryOpen(false);
+      deliveryForm.resetFields();
       load();
     } catch {
       message.error("标记已交付失败");
@@ -216,6 +255,21 @@ export default function CodeBatchDetailPage() {
       <div className="flex justify-center py-20">
         <Spin size="large" />
       </div>
+    );
+  }
+
+  if (!batch && loadState === "error") {
+    return (
+      <Alert
+        type="error"
+        showIcon
+        title="码批次详情加载失败"
+        action={
+          <Button size="small" onClick={() => void load()}>
+            重试
+          </Button>
+        }
+      />
     );
   }
 
@@ -289,6 +343,15 @@ export default function CodeBatchDetailPage() {
               </Descriptions.Item>
               <Descriptions.Item label="数量">
                 {Number(batch.quantity).toLocaleString()}
+                {batch.code_type === "paired" ? " 组" : ""}
+              </Descriptions.Item>
+              <Descriptions.Item label="物理码数量">
+                {batch.expected_item_count == null
+                  ? "-"
+                  : Number(batch.expected_item_count).toLocaleString()}
+              </Descriptions.Item>
+              <Descriptions.Item label="码来源">
+                {batch.source === "imported" ? "接管已有印刷码" : "系统生成"}
               </Descriptions.Item>
               <Descriptions.Item label="码类型">
                 {CODE_TYPE_OPTIONS[batch.code_type] || batch.code_type}
@@ -330,57 +393,54 @@ export default function CodeBatchDetailPage() {
           </Card>
 
           <Card title="操作" size="small">
-            <Space direction="vertical" style={{ width: "100%" }}>
-              {[
-                "activated",
-                "completed",
-                "exported",
-                "printing",
-                "delivered",
-              ].includes(batch.status) && (
-                <Button
-                  block
-                  icon={<DownloadOutlined />}
-                  onClick={handleExport}
-                  loading={exporting}
-                >
-                  导出码表
-                </Button>
-              )}
-              {batch.status === "completed" && (
-                <>
+            <Space orientation="vertical" style={{ width: "100%" }}>
+              {access.canExport &&
+                [
+                  "activated",
+                  "completed",
+                  "exported",
+                  "printing",
+                  "delivered",
+                ].includes(batch.status) && (
                   <Button
                     block
-                    type="primary"
-                    onClick={showActivateConfirm}
-                    loading={activating}
+                    icon={<DownloadOutlined />}
+                    onClick={handleExport}
+                    loading={exporting}
+                    disabled={planReadOnly}
                   >
-                    激活码批次
+                    导出码表
                   </Button>
+                )}
+              {access.canManage && batch.status === "exported" && (
+                <>
                   <Button
                     block
                     onClick={handleMarkPrinting}
                     loading={markingPrinting}
+                    disabled={planReadOnly}
                   >
                     标记印刷中
                   </Button>
                 </>
               )}
-              {batch.status === "printing" && (
+              {access.canManage && batch.status === "printing" && (
                 <Button
                   block
-                  onClick={handleMarkDelivered}
+                  onClick={() => setDeliveryOpen(true)}
                   loading={markingDelivered}
+                  disabled={planReadOnly}
                 >
                   标记已交付
                 </Button>
               )}
-              {batch.status === "delivered" && (
+              {access.canManage && batch.status === "delivered" && (
                 <Button
                   block
                   type="primary"
                   onClick={showActivateConfirm}
                   loading={activating}
+                  disabled={planReadOnly}
                 >
                   激活码批次
                 </Button>
@@ -398,6 +458,45 @@ export default function CodeBatchDetailPage() {
           </Card>
         </Col>
       </Row>
+      <Modal
+        title="确认码表已交付"
+        open={deliveryOpen}
+        onCancel={() => {
+          setDeliveryOpen(false);
+          deliveryForm.resetFields();
+        }}
+        onOk={() => deliveryForm.submit()}
+        okText="确认交付"
+        confirmLoading={markingDelivered}
+        okButtonProps={{ disabled: planReadOnly || !access.canManage }}
+        forceRender
+      >
+        <Form<DeliveryFormValues>
+          form={deliveryForm}
+          layout="vertical"
+          onFinish={handleMarkDelivered}
+          disabled={planReadOnly || !access.canManage}
+          initialValues={{ confirm: "deliver" }}
+        >
+          <Form.Item
+            name="recipient"
+            label="交付对象"
+            rules={[{ required: true, whitespace: true, max: 255 }]}
+          >
+            <Input placeholder="例如：华东印刷供应商" />
+          </Form.Item>
+          <Form.Item
+            name="reason"
+            label="交付说明"
+            rules={[{ required: true, whitespace: true, max: 500 }]}
+          >
+            <Input.TextArea rows={3} placeholder="说明本次交付用途或交付单据" />
+          </Form.Item>
+          <Form.Item name="confirm" hidden>
+            <input />
+          </Form.Item>
+        </Form>
+      </Modal>
     </div>
   );
 }

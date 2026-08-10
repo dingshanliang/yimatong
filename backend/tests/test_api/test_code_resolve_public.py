@@ -99,7 +99,7 @@ async def setup_activated_code(client: AsyncClient):
             "production_batch_id": production_batch.json()["id"],
             "quantity": 3,
         },
-        headers=headers,
+        headers={**headers, "Idempotency-Key": "11111111-1111-4111-8111-111111111111"},
     )
     batch_id = batch.json()["id"]
 
@@ -112,11 +112,14 @@ async def setup_activated_code(client: AsyncClient):
     public_id = first_item["public_id"]
     item_id = first_item["id"]
 
-    # 激活
+    await client.post(f"/api/v1/code-batches/{batch_id}/export", headers=headers)
+    await client.post(f"/api/v1/code-batches/{batch_id}/mark-printing", headers=headers)
     await client.post(
-        f"/api/v1/code-batches/{batch_id}/activate",
+        f"/api/v1/code-batches/{batch_id}/mark-delivered",
+        json={"reason": "public resolver test", "recipient": "test recipient", "confirm": "deliver"},
         headers=headers,
     )
+    await client.post(f"/api/v1/code-batches/{batch_id}/activate", headers=headers)
 
     return tid, headers, batch_id, item_id, public_id
 

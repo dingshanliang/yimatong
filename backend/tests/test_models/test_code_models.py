@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 from sqlalchemy import inspect
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 backend_dir = Path(__file__).resolve().parent.parent.parent
@@ -16,7 +17,8 @@ os.environ.setdefault("redis_url", "redis://localhost:6379/0")
 os.environ.setdefault("secret_key", "test-secret-key-0123456789-ABCDEFGHIJKLMNOPQRSTUVWXYZ")
 
 from app.models.base import Base  # noqa: E402
-from app.models.code import CodeBatch, CodeItem, CodeItemStatus  # noqa: E402
+from app.models.code import CodeBatch, CodeBatchGenerationReceipt, CodeItem, CodeItemStatus  # noqa: E402
+from app.models.export_log import ExportLog  # noqa: E402
 from app.models.product import SKU, Product, ProductionBatch  # noqa: E402,F401
 
 engine = create_async_engine("sqlite+aiosqlite://")
@@ -126,6 +128,56 @@ class TestCodeItemModel:
     async def test_code_item_status_enum(self):
         statuses = {s.value for s in CodeItemStatus}
         assert statuses == {"created", "activated", "bound", "expired", "revoked", "frozen"}
+
+
+class TestCodeDeliveryConstraintModels:
+    @pytest.mark.anyio
+    @pytest.mark.parametrize("field", ["idempotency_digest", "request_fingerprint"])
+    async def test_generation_receipt_rejects_non_hex_digest(self, field: str):
+        values = {
+            "tenant_id": uuid(),
+            "created_by": uuid(),
+            "idempotency_digest": "a" * 64,
+            "request_fingerprint": "b" * 64,
+        }
+        values[field] = "g" * 64
+        async with TestSession() as db:
+            with pytest.raises(IntegrityError):
+                db.add(CodeBatchGenerationReceipt(**values))
+                await db.flush()
+
+    @pytest.mark.anyio
+    @pytest.mark.parametrize(
+        ("checksum", "key_id"),
+        [
+            ("g" * 64, "aes-master-v1"),
+            ("a" * 64, "invalid key id"),
+        ],
+    )
+    async def test_export_manifest_rejects_noncanonical_crypto_metadata(self, checksum: str, key_id: str):
+        plaintext_size = 32
+        async with TestSession() as db:
+            with pytest.raises(IntegrityError):
+                batch_id = uuid()
+                db.add(
+                    ExportLog(
+                        tenant_id=uuid(),
+                        account_id=uuid(),
+                        export_type="code_csv",
+                        resource_id=batch_id,
+                        row_count=1,
+                        status="completed",
+                        code_batch_id=batch_id,
+                        manifest_version=1,
+                        checksum_sha256=checksum,
+                        artifact_size_bytes=plaintext_size,
+                        artifact_ciphertext=b"c" * (plaintext_size + 16),
+                        artifact_nonce=b"n" * 12,
+                        artifact_scheme="aes-256-gcm-v1",
+                        artifact_key_id=key_id,
+                    )
+                )
+                await db.flush()
 
 
 def uuid():

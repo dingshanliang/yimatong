@@ -579,6 +579,7 @@ def test_existing_code_import_uses_authoritative_parent_first_lock_order():
     assert ".with_for_update()" in source[production_batch_lock:code_batch_lock]
     assert ".with_for_update()" in source[code_batch_lock:code_item_write]
     assert "select(CodeBatch, ProductionBatch)" not in source
+    assert "map_code_batch_db_error(exc)" in source
 
 
 def test_old_token_claim_locks_authoritative_chain_before_benefit_access():

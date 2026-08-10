@@ -43,8 +43,28 @@ def downgrade() -> None:
     if bind.dialect.name != "postgresql":
         return
 
-    # PG 不支持直接删除 enum 值；重建 enum 类型为不含 printing/delivered/exported 的版本
-    op.execute("UPDATE code_batches SET status = 'completed' WHERE status IN ('printing', 'delivered', 'exported')")
+    op.execute("SET LOCAL lock_timeout = '5s'")
+    op.execute("SET LOCAL statement_timeout = '60s'")
+    op.execute(
+        """
+        DO $block$
+        DECLARE protected_batches text;
+        BEGIN
+            SELECT string_agg(id::text, ', ' ORDER BY id::text)
+            INTO protected_batches
+            FROM public.code_batches
+            WHERE status::text IN ('printing', 'delivered', 'exported');
+            IF protected_batches IS NOT NULL THEN
+                RAISE EXCEPTION USING
+                    ERRCODE = '23514',
+                    MESSAGE = 'Cannot discard code batch delivery state; batch ids: ' || protected_batches;
+            END IF;
+        END
+        $block$
+        """
+    )
+
+    # PG 不支持直接删除 enum 值；仅在没有交付态数据时重建旧 enum。
     op.execute("ALTER TYPE codebatchstatus RENAME TO codebatchstatus_old")
     new_enum = sa.Enum(
         "pending",

@@ -47,6 +47,7 @@ import type { MenuProps } from "antd";
 import { useAuthStore } from "@/lib/auth";
 import { canViewRoleDirectory } from "@/lib/account-access";
 import { catalogAccessForPrincipal } from "@/lib/catalog-access";
+import { codeAccessForPrincipal } from "@/lib/code-access";
 import {
   agencyScopeMenuRoutes,
   canManageAgencyAuthorizations,
@@ -135,7 +136,6 @@ const MENU_PERMISSIONS: Record<TenantType, MenuPolicy> = {
       "/launch-checklist",
       "/pilot",
       "/analytics",
-      "/exports",
       "settings-group",
       "/settings/brand-profile",
       "/settings/roles",
@@ -248,6 +248,7 @@ function DashboardInner({ children }: { children: React.ReactNode }) {
     )
   ).map(({ key }) => key);
   const catalogAccess = catalogAccessForPrincipal(user);
+  const codeAccess = codeAccessForPrincipal(user);
 
   const channelMenuChildren: MenuProps["items"] = [
     { key: "/channels", icon: <ShopOutlined />, label: t("menu.channels") },
@@ -352,7 +353,15 @@ function DashboardInner({ children }: { children: React.ReactNode }) {
       icon: <SafetyCertificateOutlined />,
       label: t("menu.risk-center"),
     },
-    { key: "/exports", icon: <ExportOutlined />, label: t("menu.exports") },
+    ...(user?.tenant_type === "brand" && codeAccess.canManage
+      ? [
+          {
+            key: "/exports",
+            icon: <ExportOutlined />,
+            label: t("menu.exports"),
+          },
+        ]
+      : []),
     {
       key: "integrations-group",
       icon: <DatabaseOutlined />,

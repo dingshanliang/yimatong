@@ -50,7 +50,8 @@ from app.models.tenant import (
 )
 from app.services.audit import write_audit_log
 from app.services.auth import revoke_current_tenant_account_sessions
-from app.services.code import activate_batch, create_code_batch
+from app.services.code import activate_batch, create_code_batch, mark_delivered, mark_printing
+from app.services.code_export import generate_code_csv
 from app.services.entitlement import TenantPlanExpiredError, require_active_plan, validate_feature_flags
 from app.services.quota import (
     lock_quota_rollout_state,
@@ -58,6 +59,7 @@ from app.services.quota import (
     validate_quota_config,
 )
 from app.utils import utcnow
+from app.utils.crypto import EnvKeyProvider, init_crypto
 from app.utils.security import hash_password, verify_password
 
 # ── 稳定业务标识 ──────────────────────────────────────────────────────────
@@ -442,6 +444,49 @@ async def _ensure_production_batch(
     return pb
 
 
+def _seed_code_generation_idempotency_key(tenant_id: uuid.UUID, production_batch_id: uuid.UUID) -> str:
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, f"yimatong:baseline-code:v1:{tenant_id}:{production_batch_id}"))
+
+
+async def _create_and_deliver_seed_code_batch(
+    db: AsyncSession,
+    *,
+    tenant_id: uuid.UUID,
+    product_id: uuid.UUID,
+    sku_id: uuid.UUID,
+    production_batch_id: uuid.UUID,
+    batch_code: str,
+    quantity: int,
+    created_by: uuid.UUID,
+) -> uuid.UUID:
+    init_crypto(EnvKeyProvider())
+    data = await create_code_batch(
+        db,
+        tenant_id,
+        product_id,
+        sku_id,
+        production_batch_id,
+        quantity,
+        created_by,
+        batch_code=batch_code,
+        idempotency_key=_seed_code_generation_idempotency_key(tenant_id, production_batch_id),
+    )
+    batch_id = uuid.UUID(data["id"])
+    await generate_code_csv(db, tenant_id, batch_id, created_by)
+    await mark_printing(db, tenant_id, batch_id, actor_id=str(created_by))
+    await mark_delivered(
+        db,
+        tenant_id,
+        batch_id,
+        actor_id=str(created_by),
+        reason="Seed data delivery",
+        recipient="Seed data operations",
+        confirm="deliver",
+    )
+    await activate_batch(db, tenant_id, batch_id, actor_id=str(created_by))
+    return batch_id
+
+
 async def _ensure_code_batch(
     db: AsyncSession,
     tenant_id: uuid.UUID,
@@ -452,14 +497,11 @@ async def _ensure_code_batch(
     quantity: int,
     created_by: uuid.UUID,
 ) -> tuple[CodeBatch, list[CodeItem]]:
-    """幂等创建并激活码批次。返回 (batch, items)。
+    """幂等定位或创建并完整交付、激活码批次。返回 (batch, items)。
 
-    `create_code_batch` service 用 `production_batch.batch_code` 作为 batch_code
-    （见 backend/app/services/code.py:82），不接受自定义 batch_code。因此：
-    1. 先按稳定 batch_code 查；
-    2. 若未命中，再按 production_batch_id 查（兼容历史/demo 数据衍生的 batch_code）；
-    3. 若都没有，调 service 创建，随后在会话内将 batch_code 校正为稳定标识。
-    这保持在受支持的创建路径内，仅做确定性标识归一化。
+    先按稳定 ``batch_code`` 定位，再按 ``production_batch_id`` 兼容定位历史数据。
+    未命中时以确定性 UUID5 幂等键和指定 ``batch_code`` 调用权威创建服务，随后依次完成
+    导出、印刷、交付和激活状态链；不会在 CLI 内直接改写批次标识或跳过交付证据。
     """
     result = await db.execute(
         select(CodeBatch).where(CodeBatch.tenant_id == tenant_id, CodeBatch.batch_code == batch_code)
@@ -474,35 +516,27 @@ async def _ensure_code_batch(
         )
         batch = result.scalar_one_or_none()
     if batch is None:
-        data = await create_code_batch(
+        batch_id = await _create_and_deliver_seed_code_batch(
             db,
-            tenant_id,
-            product_id,
-            sku_id,
-            production_batch_id,
-            quantity,
-            created_by,
+            tenant_id=tenant_id,
+            product_id=product_id,
+            sku_id=sku_id,
+            production_batch_id=production_batch_id,
+            batch_code=batch_code,
+            quantity=quantity,
+            created_by=created_by,
         )
-        batch_id = uuid.UUID(data["id"])
-        await activate_batch(db, tenant_id, batch_id)
         result = await db.execute(select(CodeBatch).where(CodeBatch.id == batch_id))
         batch = result.scalar_one()
-
-    # 将 batch_code 归一化为稳定标识（service 创建时会用 production_batch.batch_code）
-    if batch.batch_code != batch_code:
-        batch.batch_code = batch_code
-        await db.flush()
 
     result = await db.execute(
         select(CodeItem).where(CodeItem.tenant_id == tenant_id, CodeItem.code_batch_id == batch.id)
     )
     items = list(result.scalars().all())
-    # 保证已激活（二次运行若状态漂移可纠正）
-    for item in items:
-        if item.status == CodeItemStatus.created:
-            item.status = CodeItemStatus.activated
-            item.activated_at = utcnow()
-    await db.flush()
+    if not items:
+        raise RuntimeError("Baseline code batch exists without authoritative code items")
+    if any(item.status == CodeItemStatus.created for item in items):
+        raise RuntimeError("Baseline code batch contains unactivated authoritative code items")
     return batch, items
 
 

@@ -63,12 +63,14 @@ from app.services.analytics import aggregate_daily_stats
 from app.services.audit import write_audit_log
 from app.services.auth import revoke_current_tenant_account_sessions
 from app.services.channel import create_account_scope
-from app.services.code import activate_batch, create_code_batch
+from app.services.code import activate_batch, create_code_batch, mark_delivered, mark_printing
+from app.services.code_export import generate_code_csv
 from app.services.entitlement import require_active_plan
 from app.services.product import create_brand, create_product, create_sku
 from app.services.quota import lock_quota_rollout_state, refresh_quota_usage_from_authoritative_rows
 from app.services.tenant import create_tenant
 from app.utils import utcnow
+from app.utils.crypto import EnvKeyProvider, init_crypto
 from app.utils.security import hash_password, verify_password
 
 app = typer.Typer(help="一码通演示数据生成器")
@@ -1093,6 +1095,47 @@ CODE_QUANTITIES = {
 }
 
 
+def _demo_code_generation_idempotency_key(tenant_id: uuid.UUID, production_batch_id: uuid.UUID) -> str:
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, f"yimatong:demo-code:v1:{tenant_id}:{production_batch_id}"))
+
+
+async def _create_and_deliver_demo_code_batch(
+    db: AsyncSession,
+    *,
+    tenant_id: uuid.UUID,
+    product_id: uuid.UUID,
+    sku_id: uuid.UUID,
+    production_batch_id: uuid.UUID,
+    quantity: int,
+    created_by: uuid.UUID,
+) -> uuid.UUID:
+    init_crypto(EnvKeyProvider())
+    data = await create_code_batch(
+        db,
+        tenant_id,
+        product_id,
+        sku_id,
+        production_batch_id,
+        quantity,
+        created_by,
+        idempotency_key=_demo_code_generation_idempotency_key(tenant_id, production_batch_id),
+    )
+    batch_id = uuid.UUID(data["id"])
+    await generate_code_csv(db, tenant_id, batch_id, created_by)
+    await mark_printing(db, tenant_id, batch_id, actor_id=str(created_by))
+    await mark_delivered(
+        db,
+        tenant_id,
+        batch_id,
+        actor_id=str(created_by),
+        reason="Demo seed delivery",
+        recipient="Demo operations",
+        confirm="deliver",
+    )
+    await activate_batch(db, tenant_id, batch_id, actor_id=str(created_by))
+    return batch_id
+
+
 async def _ensure_code_batches(
     db: AsyncSession,
     tenant_id: uuid.UUID,
@@ -1123,17 +1166,15 @@ async def _ensure_code_batches(
             code_batch = result.scalar_one_or_none()
 
             if not code_batch:
-                data = await create_code_batch(
+                batch_id = await _create_and_deliver_demo_code_batch(
                     db,
-                    tenant_id,
-                    prod_rec["product"].id,
-                    sku.id,
-                    prod_batch.id,
-                    quantity,
-                    created_by,
+                    tenant_id=tenant_id,
+                    product_id=prod_rec["product"].id,
+                    sku_id=sku.id,
+                    production_batch_id=prod_batch.id,
+                    quantity=quantity,
+                    created_by=created_by,
                 )
-                batch_id = uuid.UUID(data["id"])
-                await activate_batch(db, tenant_id, batch_id)
                 result = await db.execute(select(CodeBatch).where(CodeBatch.id == batch_id))
                 code_batch = result.scalar_one()
 

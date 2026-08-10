@@ -36,6 +36,13 @@ BUSINESS_GAP_TABLES = (
     "whitelabel_configs",
 )
 
+NO_DELETE_RUNTIME_TABLES = (
+    "code_batch_generation_receipts",
+    "code_batches",
+    "code_items",
+)
+SENSITIVE_ARTIFACT_TABLES = ("export_logs",)
+
 CONTROL_TABLES = (
     "auth_sessions",
     "consumed_refresh_tokens",
@@ -57,6 +64,7 @@ MIGRATION_ONLY_TABLES = (
     "alembic_version",
     "api_key_catalog_audit_context_secrets",
     "api_key_legacy_secret_backups",
+    "code_delivery_contract_rollout_state",
     "rls_force_remediation_backups",
     "runtime_privilege_remediation_backup",
 )
@@ -208,9 +216,21 @@ async def test_registry_catalog_acl_and_control_boundary(
             "LEFT JOIN pg_policy p ON p.polrelid=c.oid "
             "WHERE n.nspname='public' AND c.relname=ANY($1::text[]) "
             "GROUP BY c.relname,c.relrowsecurity,c.relforcerowsecurity ORDER BY c.relname",
-            list((*BUSINESS_GAP_TABLES, *APPEND_ONLY_RUNTIME_TABLES)),
+            list(
+                (
+                    *BUSINESS_GAP_TABLES,
+                    *APPEND_ONLY_RUNTIME_TABLES,
+                    *NO_DELETE_RUNTIME_TABLES,
+                    *SENSITIVE_ARTIFACT_TABLES,
+                )
+            ),
         )
-        assert len(states) == len(BUSINESS_GAP_TABLES) + len(APPEND_ONLY_RUNTIME_TABLES)
+        assert len(states) == (
+            len(BUSINESS_GAP_TABLES)
+            + len(APPEND_ONLY_RUNTIME_TABLES)
+            + len(NO_DELETE_RUNTIME_TABLES)
+            + len(SENSITIVE_ARTIFACT_TABLES)
+        )
         assert all(row["relrowsecurity"] and row["relforcerowsecurity"] and row["policies"] for row in states)
 
         orm_root_count = await owner.fetchval(
@@ -220,7 +240,7 @@ async def test_registry_catalog_acl_and_control_boundary(
             "AND c.relname <> ALL($1::text[])",
             list(MIGRATION_ONLY_TABLES),
         )
-        assert orm_root_count == 97
+        assert orm_root_count == 98
         migration_only = await owner.fetch(
             "SELECT c.relname FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace "
             "WHERE n.nspname='public' AND c.relkind='r' AND c.relname=ANY($1::text[])",
@@ -359,6 +379,57 @@ async def test_registry_catalog_acl_and_control_boundary(
             assert await runtime_pg_conn.fetchval(
                 "SELECT has_table_privilege('yimatong_app', $1, $2)", f"public.{table}", privilege
             )
+    for table in NO_DELETE_RUNTIME_TABLES:
+        for privilege in ("SELECT", "INSERT", "UPDATE"):
+            assert await runtime_pg_conn.fetchval(
+                "SELECT has_table_privilege('yimatong_app', $1, $2)", f"public.{table}", privilege
+            )
+        for privilege in ("DELETE", "TRUNCATE", "REFERENCES", "TRIGGER"):
+            assert not await runtime_pg_conn.fetchval(
+                "SELECT has_table_privilege('yimatong_app', $1, $2)", f"public.{table}", privilege
+            )
+    assert not await runtime_pg_conn.fetchval(
+        "SELECT has_table_privilege('yimatong_app','public.export_logs','SELECT')"
+    )
+    for column in (
+        "id",
+        "tenant_id",
+        "account_id",
+        "export_type",
+        "resource_id",
+        "file_name",
+        "row_count",
+        "status",
+        "code_batch_id",
+        "manifest_version",
+        "checksum_sha256",
+        "artifact_size_bytes",
+        "created_at",
+        "updated_at",
+    ):
+        assert await runtime_pg_conn.fetchval(
+            "SELECT has_column_privilege('yimatong_app','public.export_logs',$1,'SELECT')",
+            column,
+        )
+    for column in ("artifact_ciphertext", "artifact_nonce", "artifact_scheme", "artifact_key_id"):
+        assert not await runtime_pg_conn.fetchval(
+            "SELECT has_column_privilege('yimatong_app','public.export_logs',$1,'SELECT')",
+            column,
+        )
+    for privilege in ("INSERT", "UPDATE"):
+        assert await runtime_pg_conn.fetchval(
+            "SELECT has_table_privilege('yimatong_app','public.export_logs',$1)", privilege
+        )
+    for privilege in ("DELETE", "TRUNCATE", "REFERENCES", "TRIGGER"):
+        assert not await runtime_pg_conn.fetchval(
+            "SELECT has_table_privilege('yimatong_app','public.export_logs',$1)", privilege
+        )
+    assert await runtime_pg_conn.fetchval(
+        "SELECT has_function_privilege('yimatong_app','public.get_code_export_artifact(uuid,uuid,uuid)','EXECUTE')"
+    )
+    assert not await runtime_pg_conn.fetchval(
+        "SELECT has_function_privilege('public','public.get_code_export_artifact(uuid,uuid,uuid)','EXECUTE')"
+    )
     for table in CONTROL_TABLES:
         assert not await runtime_pg_conn.fetchval(
             "SELECT has_table_privilege('yimatong_app', $1, 'SELECT')", f"public.{table}"

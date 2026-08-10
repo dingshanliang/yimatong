@@ -4,11 +4,30 @@ import uuid
 from datetime import date, datetime
 from enum import StrEnum
 
-from sqlalchemy import DateTime, ForeignKey, ForeignKeyConstraint, Index, String, UniqueConstraint, func
+from sqlalchemy import (
+    CheckConstraint,
+    DateTime,
+    ForeignKey,
+    ForeignKeyConstraint,
+    Index,
+    SmallInteger,
+    String,
+    UniqueConstraint,
+    func,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from uuid6 import uuid7
 
 from app.models.base import Base
+
+
+def _contains_only(column: str, allowed: str) -> str:
+    """Build a PostgreSQL/SQLite-compatible exact character whitelist."""
+
+    remainder = column
+    for character in allowed:
+        remainder = f"replace({remainder}, '{character}', '')"
+    return f"{remainder} = ''"
 
 
 class CodeBatchStatus(StrEnum):
@@ -78,6 +97,19 @@ class CodeGenerationMode(StrEnum):
     batch_level = "batch_level"
 
 
+class CodeBatchSource(StrEnum):
+    generated = "generated"
+    imported = "imported"
+
+
+def _default_expected_item_count(context) -> int:
+    values = context.get_current_parameters()
+    quantity = int(values.get("quantity") or 1)
+    if values.get("generation_mode") == CodeGenerationMode.batch_level:
+        return 1
+    return quantity * (2 if values.get("code_type") == CodeType.paired else 1)
+
+
 class CodeBatch(Base):
     __tablename__ = "code_batches"
 
@@ -103,8 +135,42 @@ class CodeBatch(Base):
             ],
             name="fk_code_batches_tenant_product_sku_production_batch",
         ),
+        ForeignKeyConstraint(
+            ["tenant_id", "export_manifest_id"],
+            ["export_logs.tenant_id", "export_logs.id"],
+            name="fk_code_batches_tenant_export_manifest",
+            use_alter=True,
+        ),
         UniqueConstraint("tenant_id", "id", name="uq_code_batches_tenant_id_id"),
         UniqueConstraint("tenant_id", "batch_code", name="uq_code_batches_tenant_batch_code"),
+        CheckConstraint("contract_version IN (0, 1)", name="ck_code_batches_contract_version"),
+        CheckConstraint("source IN ('generated', 'imported')", name="ck_code_batches_source"),
+        CheckConstraint(
+            "contract_version = 0 OR (expected_item_count BETWEEN 1 AND 10000)",
+            name="ck_code_batches_expected_item_count_cap",
+        ),
+        CheckConstraint(
+            "contract_version = 0 OR ("
+            "(source = 'generated' AND generation_mode = 'batch_level' AND code_type = 'single' "
+            "AND quantity = 1 AND expected_item_count = 1) OR "
+            "(source = 'generated' AND generation_mode = 'item_level' AND code_type = 'single' "
+            "AND quantity > 0 AND expected_item_count = quantity) OR "
+            "(source = 'generated' AND generation_mode = 'item_level' AND code_type = 'paired' "
+            "AND quantity > 0 AND expected_item_count = quantity * 2) OR "
+            "(source = 'imported' AND generation_mode = 'item_level' AND code_type = 'single' "
+            "AND quantity > 0 AND expected_item_count = quantity))",
+            name="ck_code_batches_generation_shape",
+        ),
+        CheckConstraint(
+            "(printing_at IS NULL OR (exported_at IS NOT NULL AND printing_at >= exported_at)) AND "
+            "(delivered_at IS NULL OR (printing_at IS NOT NULL AND delivered_at >= printing_at))",
+            name="ck_code_batches_delivery_timestamps",
+        ),
+        CheckConstraint(
+            "(delivered_at IS NULL AND delivery_recipient IS NULL) OR "
+            "(delivered_at IS NOT NULL AND NULLIF(trim(delivery_recipient), '') IS NOT NULL)",
+            name="ck_code_batches_delivery_recipient",
+        ),
         Index("ix_code_batches_tenant_batch", "tenant_id", "batch_code"),
         Index("ix_code_batches_tenant_product", "tenant_id", "product_id"),
         Index("ix_code_batches_tenant_product_sku", "tenant_id", "product_id", "sku_id"),
@@ -129,6 +195,25 @@ class CodeBatch(Base):
     status: Mapped[CodeBatchStatus] = mapped_column(default=CodeBatchStatus.pending, nullable=False)
     code_type: Mapped[str] = mapped_column(String(20), nullable=False, default=CodeType.single)
     generation_mode: Mapped[str] = mapped_column(String(20), nullable=False, default=CodeGenerationMode.item_level)
+    # Version 0 is a rolling-deploy compatibility marker for pre-contract rows.
+    # New application writes explicitly set version 1; PostgreSQL rejects
+    # runtime attempts to create new version-0 rows after rollout finalization.
+    contract_version: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=0, server_default="0")
+    source: Mapped[str] = mapped_column(
+        String(16),
+        nullable=False,
+        default=CodeBatchSource.generated,
+        server_default=CodeBatchSource.generated.value,
+    )
+    expected_item_count: Mapped[int] = mapped_column(
+        nullable=False,
+        default=_default_expected_item_count,
+    )
+    export_manifest_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True, index=True)
+    exported_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    printing_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    delivered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    delivery_recipient: Mapped[str | None] = mapped_column(String(255), nullable=True)
     created_by: Mapped[uuid.UUID] = mapped_column(nullable=False)
     distributor_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True, index=True)
     region_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True, index=True)
@@ -232,3 +317,46 @@ class CodeItem(Base):
         primaryjoin="and_(CodeItem.tenant_id == CodeBatch.tenant_id, CodeItem.code_batch_id == CodeBatch.id)",
         foreign_keys="[CodeItem.tenant_id, CodeItem.code_batch_id]",
     )
+
+
+class CodeBatchGenerationReceipt(Base):
+    """Tenant-owned idempotency receipt for one physical code generation request."""
+
+    __tablename__ = "code_batch_generation_receipts"
+    __table_args__ = (
+        ForeignKeyConstraint(["tenant_id"], ["tenants.id"], name="fk_code_batch_generation_receipts_tenant"),
+        ForeignKeyConstraint(
+            ["tenant_id", "created_by"],
+            ["accounts.tenant_id", "accounts.id"],
+            name="fk_code_batch_generation_receipts_tenant_creator",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "code_batch_id"],
+            ["code_batches.tenant_id", "code_batches.id"],
+            name="fk_code_batch_generation_receipts_tenant_code_batch",
+        ),
+        UniqueConstraint(
+            "tenant_id",
+            "idempotency_digest",
+            name="uq_code_batch_generation_receipts_tenant_idempotency",
+        ),
+        CheckConstraint(
+            "length(idempotency_digest) = 64 AND idempotency_digest = lower(idempotency_digest) AND "
+            + _contains_only("idempotency_digest", "0123456789abcdef"),
+            name="ck_code_batch_generation_receipts_idempotency_digest",
+        ),
+        CheckConstraint(
+            "length(request_fingerprint) = 64 AND request_fingerprint = lower(request_fingerprint) AND "
+            + _contains_only("request_fingerprint", "0123456789abcdef"),
+            name="ck_code_batch_generation_receipts_request_fingerprint",
+        ),
+        Index("ix_code_batch_generation_receipts_tenant_batch", "tenant_id", "code_batch_id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid7)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
+    created_by: Mapped[uuid.UUID] = mapped_column(nullable=False)
+    idempotency_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    request_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    code_batch_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)

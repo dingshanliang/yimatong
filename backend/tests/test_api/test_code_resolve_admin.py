@@ -92,7 +92,7 @@ async def setup_codes(client: AsyncClient):
             "production_batch_id": production_batch.json()["id"],
             "quantity": 3,
         },
-        headers=headers,
+        headers={**headers, "Idempotency-Key": "11111111-1111-4111-8111-111111111111"},
     )
     batch_id = batch.json()["id"]
 
@@ -111,7 +111,7 @@ class TestCodeResolveAdmin:
         _, headers, item_id, public_id, _ = setup_codes
         resp = await client.get(
             f"/api/v1/code-items/public/{public_id}",
-            headers=headers,
+            headers={**headers, "Idempotency-Key": "11111111-1111-4111-8111-111111111111"},
         )
         assert resp.status_code == 200
         data = resp.json()
@@ -160,3 +160,20 @@ class TestCodeResolveAdmin:
             f"/api/v1/code-items/public/{public_id}",
         )
         assert resp.status_code == 401
+
+    @pytest.mark.anyio
+    async def test_viewer_cannot_resolve_raw_internal_ids_by_public_id(self, client: AsyncClient, setup_codes):
+        tenant_id, _, _, public_id, _ = setup_codes
+        viewer = create_access_token(
+            tenant_id,
+            "00000000-0000-0000-0000-000000000003",
+            "viewer",
+        )
+
+        response = await client.get(
+            f"/api/v1/code-items/public/{public_id}",
+            headers={"Authorization": f"Bearer {viewer}"},
+        )
+
+        assert response.status_code == 403
+        assert response.json()["detail"] == "Missing permission: code:export"

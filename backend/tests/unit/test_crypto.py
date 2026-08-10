@@ -11,7 +11,9 @@ os.environ["HMAC_PEPPER"] = "ff" * 32
 from app.utils.crypto import (
     CryptoError,
     EnvKeyProvider,
+    decrypt_bytes,
     decrypt_phone,
+    encrypt_bytes,
     encrypt_phone,
     hash_phone,
     init_crypto,
@@ -70,6 +72,35 @@ class TestEncryptDecrypt:
         """空字符串应正常加解密"""
         encrypted = encrypt_phone("")
         assert decrypt_phone(encrypted) == ""
+
+    def test_bytes_roundtrip_is_bound_to_aad(self):
+        plaintext = b"public_id,status\nABC,created\n"
+        aad = b"yimatong:code-csv:v1:tenant:batch:1"
+
+        ciphertext, nonce, key_id = encrypt_bytes(plaintext, aad=aad)
+
+        assert plaintext not in ciphertext
+        assert len(nonce) == 12
+        assert key_id == "aes-master-v1"
+        assert decrypt_bytes(ciphertext, nonce=nonce, key_id=key_id, aad=aad) == plaintext
+
+    @pytest.mark.parametrize("mutation", ["ciphertext", "nonce", "aad"])
+    def test_bytes_decryption_fails_closed_on_tampering(self, mutation):
+        ciphertext, nonce, key_id = encrypt_bytes(b"sensitive csv", aad=b"correct-aad")
+        if mutation == "ciphertext":
+            ciphertext = bytes([ciphertext[0] ^ 1]) + ciphertext[1:]
+        elif mutation == "nonce":
+            nonce = bytes([nonce[0] ^ 1]) + nonce[1:]
+        aad = b"wrong-aad" if mutation == "aad" else b"correct-aad"
+
+        with pytest.raises(CryptoError, match="Decryption failed"):
+            decrypt_bytes(ciphertext, nonce=nonce, key_id=key_id, aad=aad)
+
+    def test_bytes_decryption_rejects_unknown_key(self):
+        ciphertext, nonce, _ = encrypt_bytes(b"sensitive csv", aad=b"aad")
+
+        with pytest.raises(CryptoError, match="Unknown key id"):
+            decrypt_bytes(ciphertext, nonce=nonce, key_id="aes-master-v999", aad=b"aad")
 
 
 class TestHmacHash:

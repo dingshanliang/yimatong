@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import { createHash, randomUUID } from "node:crypto";
 import path from "node:path";
 import { promisify } from "node:util";
 
@@ -185,7 +186,10 @@ async function createCodeBatch(
   batchCode: string
 ) {
   return request.post(`${API_BASE}/api/v1/code-batches`, {
-    headers: authorization(token),
+    headers: {
+      ...authorization(token),
+      "Idempotency-Key": randomUUID(),
+    },
     data: {
       product_id: ids.productId,
       sku_id: ids.skuId,
@@ -194,11 +198,12 @@ async function createCodeBatch(
       quantity: 1,
       code_type: "single",
       generation_mode: "item_level",
+      source: "generated",
     },
   });
 }
 
-test("U02B keeps one authoritative batch across Admin, codes, audits, and consumer H5", async ({
+test("U02B/U03A keeps one authoritative batch through code delivery, recall, Admin, and H5", async ({
   page,
   request,
 }) => {
@@ -444,7 +449,7 @@ test("U02B keeps one authoritative batch across Admin, codes, audits, and consum
     201,
     "create active-path code batch"
   );
-  const pendingCodeBatch = await expectJson<CreatedRow>(
+  const withheldCodeBatch = await expectJson<CreatedRow>(
     await createCodeBatch(
       request,
       admin.accessToken,
@@ -453,6 +458,41 @@ test("U02B keeps one authoritative batch across Admin, codes, audits, and consum
     ),
     201,
     "create pending code batch"
+  );
+
+  const exportedCodes = await request.post(
+    `${API_BASE}/api/v1/code-batches/${activeCodeBatch.id}/export`,
+    { headers: authorization(admin.accessToken) }
+  );
+  const exportedCsv = await exportedCodes.body();
+  expect(exportedCodes.status()).toBe(200);
+  expect(exportedCodes.headers()["x-code-manifest-version"]).toBe("1");
+  expect(exportedCodes.headers()["x-code-item-count"]).toBe("1");
+  expect(exportedCodes.headers()["x-content-sha256"]).toBe(
+    createHash("sha256").update(exportedCsv).digest("hex")
+  );
+  await expectJson<Record<string, unknown>>(
+    await request.post(
+      `${API_BASE}/api/v1/code-batches/${activeCodeBatch.id}/mark-printing`,
+      { headers: authorization(admin.accessToken) }
+    ),
+    200,
+    "mark first code batch printing"
+  );
+  await expectJson<Record<string, unknown>>(
+    await request.post(
+      `${API_BASE}/api/v1/code-batches/${activeCodeBatch.id}/mark-delivered`,
+      {
+        headers: authorization(admin.accessToken),
+        data: {
+          reason: "U03A 码表已交付验证",
+          recipient: "U03A 验收印刷方",
+          confirm: "deliver",
+        },
+      }
+    ),
+    200,
+    "mark first code batch delivered"
   );
   await expectJson<Record<string, unknown>>(
     await request.post(
@@ -507,11 +547,11 @@ test("U02B keeps one authoritative batch across Admin, codes, audits, and consum
     `U02B-RECALLED-${suffix}`
   );
   expect(createAfterRecall.status()).toBe(409);
-  const activateAfterRecall = await request.post(
-    `${API_BASE}/api/v1/code-batches/${pendingCodeBatch.id}/activate`,
+  const exportAfterRecall = await request.post(
+    `${API_BASE}/api/v1/code-batches/${withheldCodeBatch.id}/export`,
     { headers: authorization(admin.accessToken) }
   );
-  expect(activateAfterRecall.status()).toBe(409);
+  expect(exportAfterRecall.status()).toBe(409);
 
   const recalledResolve = await request.get(`${API_BASE}/c/${publicId}`, {
     headers: { Accept: "application/json" },

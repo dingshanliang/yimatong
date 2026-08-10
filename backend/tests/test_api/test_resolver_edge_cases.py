@@ -1,5 +1,6 @@
 """码解析模块边缘场景测试：expired 码、scan_token tenant_id、IP 提取"""
 
+import uuid
 from collections.abc import AsyncGenerator
 from datetime import date, timedelta
 from unittest.mock import MagicMock
@@ -91,9 +92,19 @@ async def _create_code_chain(client: AsyncClient, prefix: str):
             "batch_code": f"{prefix}-001",
             "quantity": 1,
         },
-        headers=headers,
+        headers={
+            **headers,
+            "Idempotency-Key": str(uuid.uuid5(uuid.NAMESPACE_URL, f"resolver-edge:{prefix}")),
+        },
     )
     batch_id = batch.json()["id"]
+    await client.post(f"/api/v1/code-batches/{batch_id}/export", headers=headers)
+    await client.post(f"/api/v1/code-batches/{batch_id}/mark-printing", headers=headers)
+    await client.post(
+        f"/api/v1/code-batches/{batch_id}/mark-delivered",
+        json={"reason": "resolver edge test", "recipient": "test recipient", "confirm": "deliver"},
+        headers=headers,
+    )
     await client.post(f"/api/v1/code-batches/{batch_id}/activate", headers=headers)
 
     items = await client.get(

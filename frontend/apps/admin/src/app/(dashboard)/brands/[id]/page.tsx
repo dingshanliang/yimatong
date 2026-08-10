@@ -102,6 +102,9 @@ const CODE_STATUS_MAP: Record<string, { label: string; color: string }> = {
   pending: { label: "待生成", color: STATUS_COLORS.neutral },
   generating: { label: "生成中", color: STATUS_COLORS.processing },
   completed: { label: "已生成", color: STATUS_COLORS.success },
+  exported: { label: "已导出", color: STATUS_COLORS.processing },
+  printing: { label: "印刷中", color: STATUS_COLORS.warning },
+  delivered: { label: "已交付", color: STATUS_COLORS.warning },
   activated: { label: "已激活", color: STATUS_COLORS.processing },
   failed: { label: "失败", color: STATUS_COLORS.error },
 };

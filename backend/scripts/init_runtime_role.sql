@@ -59,7 +59,7 @@ SELECT unnest(ARRAY[
     'account_channel_scopes', 'account_roles', 'accounts',
     'ai_generations', 'anonymous_visitors', 'benefit_claims',
     'benefit_deliveries', 'benefits', 'brands', 'campaign_risk_rules',
-    'campaigns', 'code_allocations', 'code_batches', 'code_items',
+    'campaigns', 'code_allocations', 'code_batch_generation_receipts', 'code_batches', 'code_items',
     'connectors', 'consent_records', 'consumer_profiles', 'coupon_codes',
     'coupon_pools', 'daily_scan_stats', 'distributors', 'diversion_clues',
     'diversion_evidence', 'diversion_investigation_history', 'export_logs',
@@ -80,6 +80,18 @@ SELECT unnest(ARRAY[
     'webhook_endpoints', 'wecom_contact_ways', 'wecom_external_contacts',
     'whitelabel_configs'
 ]::name[]);
+
+-- Physical code identities, generation receipts, and export manifests are
+-- durable evidence. Runtime may create and advance them through guarded
+-- transitions, but it must never erase them.
+CREATE TEMP TABLE runtime_no_delete_relation_allowlist (
+    table_name name PRIMARY KEY
+) ON COMMIT DROP;
+INSERT INTO runtime_no_delete_relation_allowlist (table_name)
+VALUES ('code_batches'),
+       ('code_items'),
+       ('code_batch_generation_receipts'),
+       ('export_logs');
 -- During the explicit expand/deploy phase the nullable legacy raw column still
 -- exists so drained old processes require the previous tenant-scoped CRUD ACL.
 -- The finalize revision drops that column and moves api_keys to the restricted
@@ -242,6 +254,7 @@ VALUES ('alembic_version'),
        ('agency_authorization_integrity_backups'),
        ('api_key_catalog_audit_context_secrets'),
        ('api_key_legacy_secret_backups'),
+       ('code_delivery_contract_rollout_state'),
        ('rls_force_remediation_backups'),
        ('runtime_privilege_remediation_backup');
 
@@ -264,8 +277,8 @@ BEGIN
         UNION ALL SELECT table_name FROM runtime_public_relation_allowlist
         UNION ALL SELECT table_name FROM runtime_read_only_global_relation_allowlist
     ) AS orm_registry;
-    IF registry_count <> 97 THEN
-        RAISE EXCEPTION 'Runtime ORM registry must classify exactly 97 relations, got %', registry_count;
+    IF registry_count <> 98 THEN
+        RAISE EXCEPTION 'Runtime ORM registry must classify exactly 98 relations, got %', registry_count;
     END IF;
 
     SELECT string_agg(table_name::text, ', ' ORDER BY table_name) INTO missing
@@ -494,6 +507,37 @@ BEGIN
     END LOOP;
 END
 $$;
+
+DO $$
+DECLARE
+    relation_row record;
+BEGIN
+    FOR relation_row IN
+        SELECT cls.oid, ns.nspname AS schema_name, cls.relname AS table_name
+        FROM runtime_no_delete_relation_allowlist AS allowlist
+        JOIN pg_class AS cls ON cls.relname = allowlist.table_name
+        JOIN pg_namespace AS ns ON ns.oid = cls.relnamespace
+        WHERE ns.nspname = 'public' AND cls.relkind = 'r'
+    LOOP
+        EXECUTE format(
+            'REVOKE DELETE, TRUNCATE, REFERENCES, TRIGGER ON TABLE %I.%I FROM yimatong_app',
+            relation_row.schema_name,
+            relation_row.table_name
+        );
+    END LOOP;
+END
+$$;
+
+-- CSV artifacts contain the complete code list. The runtime role may read
+-- ordinary export-log metadata, but encrypted envelope columns are available
+-- only through the tenant-bound SECURITY DEFINER getter installed by Alembic.
+REVOKE SELECT ON TABLE public.export_logs FROM yimatong_app;
+GRANT SELECT (
+    id, tenant_id, account_id, export_type, resource_id, file_name,
+    row_count, status, code_batch_id, manifest_version, checksum_sha256,
+    artifact_size_bytes, created_at, updated_at
+) ON TABLE public.export_logs TO yimatong_app;
+GRANT EXECUTE ON FUNCTION public.get_code_export_artifact(uuid, uuid, uuid) TO yimatong_app;
 
 -- Deliberately public catalog data used by tenant requests is read-only.
 GRANT SELECT ON TABLE public.plan_definitions TO yimatong_app;

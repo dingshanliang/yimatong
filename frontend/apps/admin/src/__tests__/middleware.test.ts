@@ -121,6 +121,40 @@ describe("admin middleware agency scope gate", () => {
   });
 });
 
+describe("admin middleware export audit gate", () => {
+  it("allows only a base brand administrator to mount export audit", () => {
+    const brandAdmin = {
+      sub: "brand-admin",
+      tenant_id: "brand-tenant",
+      tenant_type: "brand",
+      role: "admin",
+    };
+    expect(middleware(request("/exports", brandAdmin)).status).toBe(200);
+
+    for (const [payload, destination] of [
+      [{ ...brandAdmin, role: "viewer" }, "/"],
+      [{ ...brandAdmin, role: "operator" }, "/"],
+      [
+        {
+          sub: "agency-admin",
+          tenant_id: "agency-tenant",
+          tenant_type: "agency",
+          role: "admin",
+          acting_tenant_id: "brand-tenant",
+          scope: ["codes"],
+        },
+        "/codes",
+      ],
+    ]) {
+      const response = middleware(request("/exports", payload));
+      expect(response.status).toBe(307);
+      expect(response.headers.get("location")).toBe(
+        `http://localhost${destination}`
+      );
+    }
+  });
+});
+
 describe("admin middleware catalog role gate", () => {
   it.each(["/products", "/batches", "/imports"])(
     "redirects a viewer before %s can mount",

@@ -4,7 +4,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import bootstrap_tenant_row
-from app.models.code import CodeBatch, CodeItem
+from app.models.code import CodeBatch, CodeBatchStatus, CodeItem
 from app.models.page import PageTemplate
 from app.models.product import ProductionBatch
 from app.services.product import effective_production_batch_status
@@ -38,6 +38,7 @@ async def resolve_public_code(
         .where(
             CodeItem.public_id == public_id,
             CodeBatch.tenant_id == bootstrap_item.tenant_id,
+            CodeBatch.status == CodeBatchStatus.activated,
             ProductionBatch.tenant_id == bootstrap_item.tenant_id,
         )
     )

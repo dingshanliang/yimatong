@@ -5,8 +5,9 @@ from app.models.code import CodeBatchStatus
 TRANSITIONS: dict[CodeBatchStatus, set[CodeBatchStatus]] = {
     CodeBatchStatus.pending: {CodeBatchStatus.generating},
     CodeBatchStatus.generating: {CodeBatchStatus.completed, CodeBatchStatus.failed},
-    CodeBatchStatus.completed: {CodeBatchStatus.printing, CodeBatchStatus.activated},
-    CodeBatchStatus.printing: {CodeBatchStatus.delivered, CodeBatchStatus.activated},
+    CodeBatchStatus.completed: {CodeBatchStatus.exported},
+    CodeBatchStatus.exported: {CodeBatchStatus.printing},
+    CodeBatchStatus.printing: {CodeBatchStatus.delivered},
     CodeBatchStatus.delivered: {CodeBatchStatus.activated},
     CodeBatchStatus.activated: set(),
     CodeBatchStatus.failed: set(),

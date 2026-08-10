@@ -9,17 +9,18 @@ from collections.abc import AsyncGenerator
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
-from sqlalchemy.exc import IntegrityError, SQLAlchemyError
+from sqlalchemy.exc import DBAPIError, IntegrityError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 from uuid6 import uuid7
 
 from app.core.database import get_db
 from app.core.dependencies import get_current_account_id, get_current_tenant
 from app.core.exceptions import AppException
-from app.models.code import CodeBatch, CodeBatchStatus, CodeItem, CodeItemStatus
+from app.models.code import CodeBatch, CodeBatchStatus, CodeGenerationMode, CodeItem, CodeItemStatus, CodeType
 from app.models.product import SKU, Brand, Product, ProductionBatch
 from app.services import import_admission
 from app.services.audit import write_audit_log
+from app.services.code import map_code_batch_db_error
 from app.services.import_admission import enforce_import_rate_limit
 from app.services.import_service import ExcelImportService, XLSXParseLease
 from app.services.product import is_production_batch_effectively_active
@@ -433,8 +434,12 @@ async def import_existing_codes(
         or batch.sku_id != production_batch.sku_id
     ):
         raise HTTPException(status_code=409, detail="Code batch production batch association changed")
-    if batch.status != CodeBatchStatus.completed:
+    if batch.source != "imported":
+        raise HTTPException(status_code=409, detail="Existing codes require an imported-source code batch")
+    if batch.status != CodeBatchStatus.generating:
         raise HTTPException(status_code=409, detail="Code batch is not open for existing-code import")
+    if batch.code_type != CodeType.single or batch.generation_mode != CodeGenerationMode.item_level:
+        raise HTTPException(status_code=409, detail="Imported code batch contract is invalid")
     if not is_production_batch_effectively_active(production_batch):
         raise HTTPException(status_code=409, detail="Production batch is not active")
 
@@ -446,62 +451,76 @@ async def import_existing_codes(
     )
     text = _decode_csv(content)
     reader = csv.DictReader(io.StringIO(text))
+    if reader.fieldnames != ["public_id"]:
+        raise HTTPException(status_code=422, detail="Existing-code CSV must contain only the public_id column")
 
-    imported = 0
-    skipped = 0
-    failed = 0
-    total = 0
-    errors: list[dict] = []
-
+    public_ids: list[str] = []
     for row_num, row in enumerate(reader, start=2):
         if row_num > MAX_CSV_ROWS + 1:
-            if len(errors) < MAX_IMPORT_ERRORS:
-                errors.append({"row": row_num, "message": "row limit exceeded"})
-            failed += 1
-            break
-        total += 1
+            raise HTTPException(status_code=422, detail="Existing-code CSV exceeds the row limit")
         public_id = row.get("public_id", "").strip()
         if not public_id or not validate_public_id(public_id):
-            failed += 1
-            if len(errors) < MAX_IMPORT_ERRORS:
-                errors.append({"row": row_num, "message": "invalid public_id"})
-            continue
+            raise HTTPException(status_code=422, detail=f"Invalid public_id at row {row_num}")
+        public_ids.append(public_id)
 
-        try:
-            existing = await db.execute(
-                select(CodeItem.id)
-                .where(
-                    CodeItem.public_id == public_id,
-                    CodeItem.tenant_id == tenant_id,
-                )
-                .with_for_update()
+    if len(public_ids) != batch.expected_item_count:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Existing-code CSV must contain exactly {batch.expected_item_count} codes",
+        )
+    if len(set(public_ids)) != len(public_ids):
+        raise HTTPException(status_code=422, detail="Existing-code CSV contains duplicate public_id values")
+
+    existing_batch_item = await db.scalar(
+        select(CodeItem.id)
+        .where(CodeItem.tenant_id == tenant_id, CodeItem.code_batch_id == code_batch_id)
+        .limit(1)
+        .with_for_update()
+    )
+    if existing_batch_item is not None:
+        raise HTTPException(status_code=409, detail="Imported code batch already contains code items")
+    existing_public_id = await db.scalar(select(CodeItem.public_id).where(CodeItem.public_id.in_(public_ids)).limit(1))
+    if existing_public_id is not None:
+        raise HTTPException(status_code=409, detail="Existing-code CSV contains a public_id that is already in use")
+
+    for _ in public_ids:
+        await reserve_quota(db, tenant_id, CumulativeQuotaKey.MAX_CODES)
+    try:
+        async with db.begin_nested():
+            db.add_all(
+                [
+                    CodeItem(
+                        tenant_id=tenant_id,
+                        code_batch_id=code_batch_id,
+                        public_id=public_id,
+                        status=CodeItemStatus.created,
+                        code_type=CodeType.single,
+                        pair_id=None,
+                    )
+                    for public_id in public_ids
+                ]
             )
-            if existing.scalar_one_or_none() is not None:
-                skipped += 1
-                continue
+            await db.flush()
+    except IntegrityError as exc:
+        mapped = map_code_batch_db_error(exc)
+        if mapped is not None:
+            raise mapped from exc
+        diagnostic = getattr(exc.orig, "diag", None)
+        if getattr(diagnostic, "constraint_name", None) == "code_items_public_id_key":
+            raise HTTPException(
+                status_code=409,
+                detail="Existing-code CSV contains a code that is already in use",
+            ) from exc
+        raise
 
-            async with db.begin_nested():
-                await reserve_quota(db, tenant_id, CumulativeQuotaKey.MAX_CODES)
-                item = CodeItem(
-                    tenant_id=tenant_id,
-                    code_batch_id=code_batch_id,
-                    public_id=public_id,
-                    status=CodeItemStatus.activated,
-                    code_type=batch.code_type,
-                )
-                db.add(item)
-                await db.flush()
-            imported += 1
-        except IntegrityError:
-            # A concurrent import may win the globally unique public_id race.
-            # The nested rollback also releases this row's reservation.
-            skipped += 1
-        except AppException:
-            raise
-        except (KeyError, TypeError, ValueError):
-            failed += 1
-            if len(errors) < MAX_IMPORT_ERRORS:
-                errors.append({"row": row_num, "message": "invalid code data"})
+    batch.status = CodeBatchStatus.completed
+    try:
+        await db.flush()
+    except DBAPIError as exc:
+        mapped = map_code_batch_db_error(exc)
+        if mapped is not None:
+            raise mapped from exc
+        raise
 
     await write_audit_log(
         db,
@@ -509,13 +528,13 @@ async def import_existing_codes(
         str(tenant_id),
         "code_import_completed",
         f"code_batch:{code_batch_id}",
-        {"created": imported, "skipped": skipped, "errors": failed},
+        {"created": len(public_ids), "skipped": 0, "errors": 0},
     )
     return ExistingCodeImportResponse(
-        imported=imported,
-        skipped=skipped,
-        failed=failed,
-        total=total,
+        imported=len(public_ids),
+        skipped=0,
+        failed=0,
+        total=len(public_ids),
         batch_id=str(code_batch_id),
-        errors=errors,
+        errors=[],
     )

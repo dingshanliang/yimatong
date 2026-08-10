@@ -1,21 +1,25 @@
 "use client";
 
 import { useState } from "react";
-import { App, Button, Table, Tabs, Tag, Typography } from "antd";
+import { Alert, App, Button, Empty, Table, Tabs, Tag, Typography } from "antd";
 import { DownloadOutlined } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
 import api from "@/lib/api";
+import { useAuthStore } from "@/lib/auth";
+import { codeAccessForPrincipal } from "@/lib/code-access";
 import { useCrud } from "@/lib/hooks";
 import { STATUS_COLORS } from "@/lib/status-colors";
+import { useTenantPlanReadOnly } from "../_components/TenantPlanReadOnly";
 
 const { Title } = Typography;
 
 interface CodeBatch {
   id: string;
-  name?: string;
+  batch_code: string;
   quantity: number;
+  expected_item_count: number;
   status: string;
-  code_type?: string;
+  code_type: string;
   created_at: string;
 }
 
@@ -30,14 +34,43 @@ interface ExportLog {
 }
 
 const BATCH_STATUS_MAP: Record<string, { label: string; color: string }> = {
-  draft: { label: "草稿", color: STATUS_COLORS.neutral },
+  pending: { label: "待生成", color: STATUS_COLORS.neutral },
+  generating: { label: "生成中", color: STATUS_COLORS.processing },
+  completed: { label: "已生成", color: STATUS_COLORS.success },
+  exported: { label: "已导出", color: STATUS_COLORS.processing },
+  printing: { label: "印刷中", color: STATUS_COLORS.warning },
+  delivered: { label: "已交付", color: STATUS_COLORS.warning },
   activated: { label: "已激活", color: STATUS_COLORS.success },
-  frozen: { label: "已冻结", color: STATUS_COLORS.warning },
-  voided: { label: "已作废", color: STATUS_COLORS.error },
+  failed: { label: "失败", color: STATUS_COLORS.error },
 };
 
+function getDownloadFilename(
+  contentDisposition: string | undefined,
+  fallback: string
+) {
+  if (!contentDisposition) return fallback;
+  const utf8Match = contentDisposition.match(/filename\*=UTF-8''([^;]+)/i);
+  if (utf8Match?.[1]) {
+    return decodeURIComponent(utf8Match[1].replace(/"/g, ""));
+  }
+  const filenameMatch = contentDisposition.match(/filename="?([^";]+)"?/i);
+  return filenameMatch?.[1] || fallback;
+}
+
 export default function ExportsPage() {
+  const user = useAuthStore((state) => state.user);
+  const access = codeAccessForPrincipal(user);
+
+  if (user?.tenant_type !== "brand" || !access.canManage) {
+    return <Alert type="warning" showIcon title="当前账号无权查看导出记录" />;
+  }
+
+  return <ExportsCatalog />;
+}
+
+function ExportsCatalog() {
   const { message } = App.useApp();
+  const planReadOnly = useTenantPlanReadOnly();
   const {
     items: batches,
     total: batchTotal,
@@ -45,6 +78,8 @@ export default function ExportsPage() {
     loading: batchLoading,
     setPage: setBatchPage,
     mutate: mutateBatches,
+    error: batchError,
+    retry: retryBatches,
   } = useCrud<CodeBatch>("/code-batches");
 
   const {
@@ -54,15 +89,39 @@ export default function ExportsPage() {
     loading: exportLoading,
     setPage: setExportPage,
     mutate: mutateExports,
+    error: exportError,
+    retry: retryExports,
   } = useCrud<ExportLog>("/analytics/exports");
 
   const [exportingId, setExportingId] = useState<string | null>(null);
 
   const handleExport = async (batchId: string) => {
+    if (planReadOnly) return;
     setExportingId(batchId);
     try {
-      await api.post(`/code-batches/${batchId}/export`);
-      message.success("导出任务已提交");
+      const response = await api.post<Blob>(
+        `/code-batches/${batchId}/export`,
+        undefined,
+        {
+          responseType: "blob",
+        }
+      );
+      if (!response.data || response.data.size === 0) {
+        message.error("当前码批次没有可下载的码表");
+        return;
+      }
+      const url = window.URL.createObjectURL(response.data);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = getDownloadFilename(
+        response.headers["content-disposition"],
+        `codes-${batchId}.csv`
+      );
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+      message.success("码表已导出");
       mutateBatches();
       mutateExports();
     } catch {
@@ -75,11 +134,15 @@ export default function ExportsPage() {
   const batchColumns: ColumnsType<CodeBatch> = [
     {
       title: "批次名称",
-      dataIndex: "name",
-      key: "name",
+      dataIndex: "batch_code",
+      key: "batch_code",
       render: (v: string) => v || "—",
     },
-    { title: "码数量", dataIndex: "quantity", key: "quantity" },
+    {
+      title: "物理码数",
+      dataIndex: "expected_item_count",
+      key: "expected_item_count",
+    },
     {
       title: "码类型",
       dataIndex: "code_type",
@@ -101,16 +164,18 @@ export default function ExportsPage() {
     {
       title: "操作",
       key: "action",
-      render: (_: unknown, record: CodeBatch) => (
-        <Button
-          size="small"
-          icon={<DownloadOutlined />}
-          loading={exportingId === record.id}
-          onClick={() => handleExport(record.id)}
-        >
-          导出
-        </Button>
-      ),
+      render: (_: unknown, record: CodeBatch) =>
+        record.status === "completed" ? (
+          <Button
+            size="small"
+            icon={<DownloadOutlined />}
+            loading={exportingId === record.id}
+            disabled={planReadOnly}
+            onClick={() => handleExport(record.id)}
+          >
+            导出
+          </Button>
+        ) : null,
     },
   ];
 
@@ -165,38 +230,72 @@ export default function ExportsPage() {
             key: "exports",
             label: "导出记录",
             children: (
-              <Table
-                columns={exportColumns}
-                dataSource={exports}
-                rowKey="id"
-                loading={exportLoading}
-                pagination={{
-                  current: exportPage,
-                  total: exportTotal,
-                  pageSize: 20,
-                  onChange: setExportPage,
-                  showTotal: (t) => `共 ${t} 条`,
-                }}
-              />
+              <>
+                {exportError ? (
+                  <Alert
+                    type="error"
+                    showIcon
+                    title="导出记录加载失败"
+                    action={
+                      <Button size="small" onClick={() => void retryExports()}>
+                        重新加载
+                      </Button>
+                    }
+                  />
+                ) : exports.length === 0 && !exportLoading ? (
+                  <Empty description="暂无导出记录" />
+                ) : (
+                  <Table
+                    columns={exportColumns}
+                    dataSource={exports}
+                    rowKey="id"
+                    loading={exportLoading}
+                    pagination={{
+                      current: exportPage,
+                      total: exportTotal,
+                      pageSize: 20,
+                      onChange: setExportPage,
+                      showTotal: (t) => `共 ${t} 条`,
+                    }}
+                  />
+                )}
+              </>
             ),
           },
           {
             key: "batches",
             label: "码批次导出",
             children: (
-              <Table
-                columns={batchColumns}
-                dataSource={batches}
-                rowKey="id"
-                loading={batchLoading}
-                pagination={{
-                  current: batchPage,
-                  total: batchTotal,
-                  pageSize: 20,
-                  onChange: setBatchPage,
-                  showTotal: (t) => `共 ${t} 条`,
-                }}
-              />
+              <>
+                {batchError ? (
+                  <Alert
+                    type="error"
+                    showIcon
+                    title="码批次加载失败"
+                    action={
+                      <Button size="small" onClick={() => void retryBatches()}>
+                        重新加载
+                      </Button>
+                    }
+                  />
+                ) : batches.length === 0 && !batchLoading ? (
+                  <Empty description="暂无可导出的码批次" />
+                ) : (
+                  <Table
+                    columns={batchColumns}
+                    dataSource={batches}
+                    rowKey="id"
+                    loading={batchLoading}
+                    pagination={{
+                      current: batchPage,
+                      total: batchTotal,
+                      pageSize: 20,
+                      onChange: setBatchPage,
+                      showTotal: (t) => `共 ${t} 条`,
+                    }}
+                  />
+                )}
+              </>
             ),
           },
         ]}

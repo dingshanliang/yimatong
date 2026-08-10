@@ -10,6 +10,7 @@ import base64
 import hashlib
 import hmac
 import os
+import re
 import struct
 from typing import Protocol
 
@@ -83,6 +84,35 @@ def _get_provider() -> KeyProvider:
     if _provider is None:
         raise CryptoError("Crypto not initialized. Call init_crypto() first.")
     return _provider
+
+
+def encrypt_bytes(plaintext: bytes, *, aad: bytes) -> tuple[bytes, bytes, str]:
+    """Encrypt arbitrary bytes with the active AES-GCM key and caller-bound AAD."""
+
+    provider = _get_provider()
+    kid = provider.get_current_kid()
+    nonce = os.urandom(12)
+    ciphertext = AESGCM(provider.get_key(kid)).encrypt(nonce, plaintext, aad)
+    return ciphertext, nonce, f"aes-master-v{kid}"
+
+
+def decrypt_bytes(ciphertext: bytes, *, nonce: bytes, key_id: str, aad: bytes) -> bytes:
+    """Decrypt arbitrary bytes, failing closed for malformed keys or envelopes."""
+
+    match = re.fullmatch(r"aes-master-v([1-9][0-9]*)", key_id)
+    if match is None:
+        raise CryptoError("Invalid key id")
+    kid = int(match.group(1))
+    try:
+        key = _get_provider().get_key(kid)
+    except KeyError as exc:
+        raise CryptoError(f"Unknown key id {kid}") from exc
+    if len(nonce) != 12 or len(ciphertext) < 16:
+        raise CryptoError("Invalid AES-GCM envelope")
+    try:
+        return AESGCM(key).decrypt(nonce, ciphertext, aad)
+    except Exception as exc:
+        raise CryptoError("Decryption failed") from exc
 
 
 def encrypt_phone(plaintext: str) -> str:

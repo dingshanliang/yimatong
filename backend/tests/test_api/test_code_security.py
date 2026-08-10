@@ -12,11 +12,14 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import DataError, DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.v1 import code_batches as code_batches_api
 from app.api.v1 import imports
 from app.core.database import get_db
 from app.main import app
-from app.models.code import CodeBatch, CodeBatchStatus, CodeItem
+from app.models.code import CodeBatch, CodeBatchStatus, CodeItem, CodeItemStatus, CodeType
+from app.models.export_log import ExportLog
 from app.models.product import SKU, BatchStatus, Brand, Product, ProductionBatch
+from app.services import code as code_service
 from app.services import import_admission
 from app.services import import_service as import_service_module
 from app.services.import_service import ExcelImportService
@@ -126,7 +129,7 @@ async def code_batch_with_auth(client: AsyncClient, tenant_with_auth, sku_with_a
             "production_batch_id": production_batch_id,
             "quantity": 5,
         },
-        headers=headers,
+        headers={**headers, "Idempotency-Key": "11111111-1111-4111-8111-111111111111"},
     )
     assert resp.status_code == 201
     batch_id = uuid.UUID(resp.json()["id"])
@@ -136,6 +139,29 @@ async def code_batch_with_auth(client: AsyncClient, tenant_with_auth, sku_with_a
     items = items_resp.json()["items"]
     item_id = uuid.UUID(items[0]["id"])
     return tid, headers, batch_id, item_id
+
+
+@pytest.fixture
+async def imported_code_batch_with_auth(client: AsyncClient, tenant_with_auth, sku_with_auth):
+    tid, headers = tenant_with_auth
+    product_id, sku_id, production_batch_id = sku_with_auth
+    response = await client.post(
+        "/api/v1/code-batches",
+        json={
+            "product_id": product_id,
+            "sku_id": sku_id,
+            "production_batch_id": production_batch_id,
+            "quantity": 2,
+            "source": "imported",
+        },
+        headers={**headers, "Idempotency-Key": "22222222-2222-4222-8222-222222222222"},
+    )
+    assert response.status_code == 201
+    assert response.json()["status"] == CodeBatchStatus.generating
+    assert response.json()["generated_count"] == 0
+    assert response.json()["expected_item_count"] == 2
+    assert response.json()["source"] == "imported"
+    return tid, headers, uuid.UUID(response.json()["id"])
 
 
 class TestStatusMachineProtection:
@@ -167,6 +193,234 @@ class TestStatusMachineProtection:
 
 class TestPermissionEnforcement:
     """1.2 权限校验测试"""
+
+    @pytest.mark.anyio
+    @pytest.mark.parametrize(
+        "path_template",
+        [
+            "/api/v1/code-items?code_batch_id={batch_id}",
+            "/api/v1/code-items/{item_id}",
+            "/api/v1/code-items/{item_id}/pair",
+        ],
+    )
+    async def test_viewer_cannot_read_raw_code_item_identifiers(
+        self,
+        client: AsyncClient,
+        code_batch_with_auth,
+        tenant_with_auth,
+        path_template,
+    ):
+        tenant_id, _ = tenant_with_auth
+        _, _, batch_id, item_id = code_batch_with_auth
+        viewer_token = create_access_token(
+            tenant_id,
+            "00000000-0000-0000-0000-000000000003",
+            "viewer",
+        )
+
+        response = await client.get(
+            path_template.format(batch_id=batch_id, item_id=item_id),
+            headers={"Authorization": f"Bearer {viewer_token}"},
+        )
+
+        assert response.status_code == 403
+        assert response.json()["detail"] == "Missing permission: code:export"
+
+
+class TestCodeOperationAdmission:
+    @pytest.mark.anyio
+    async def test_shared_bucket_hides_tenant_and_durable_principal(self, monkeypatch, caplog):
+        keys: list[str] = []
+
+        async def rate_check(key, *_args):
+            keys.append(key)
+            return True, 9
+
+        monkeypatch.setattr(
+            code_service._code_operation_rate_cache,
+            "rate_limit_check_shared",
+            rate_check,
+        )
+        tenant_id = uuid.UUID("11111111-1111-4111-8111-111111111111")
+        account_id = uuid.UUID("22222222-2222-4222-8222-222222222222")
+
+        await code_service.enforce_code_operation_rate_limit(tenant_id, account_id)
+
+        assert len(keys) == 1
+        assert str(tenant_id) not in keys[0]
+        assert str(account_id) not in keys[0]
+        assert str(tenant_id) not in caplog.text
+        assert str(account_id) not in caplog.text
+
+    @pytest.mark.anyio
+    async def test_generation_limit_rejects_before_service(
+        self,
+        client,
+        tenant_with_auth,
+        sku_with_auth,
+        monkeypatch,
+    ):
+        _, headers = tenant_with_auth
+        product_id, sku_id, production_batch_id = sku_with_auth
+        create = AsyncMock()
+        monkeypatch.setattr(code_batches_api, "create_code_batch", create)
+        monkeypatch.setattr(
+            code_service._code_operation_rate_cache,
+            "rate_limit_check_shared",
+            AsyncMock(return_value=(False, 0)),
+        )
+
+        response = await client.post(
+            "/api/v1/code-batches",
+            json={
+                "product_id": product_id,
+                "sku_id": sku_id,
+                "production_batch_id": production_batch_id,
+                "quantity": 1,
+            },
+            headers={**headers, "Idempotency-Key": "11111111-1111-4111-8111-111111111111"},
+        )
+
+        assert response.status_code == 429
+        assert response.headers["Retry-After"] == str(code_service.CODE_OPERATION_RATE_LIMIT_WINDOW_SECONDS)
+        create.assert_not_awaited()
+
+    @pytest.mark.anyio
+    @pytest.mark.parametrize(
+        "idempotency_key",
+        [
+            None,
+            "not-a-uuid",
+            "11111111-1111-4111-8111-11111111111A",
+            "{11111111-1111-4111-8111-111111111111}",
+        ],
+    )
+    async def test_generation_requires_canonical_uuid_idempotency_key(
+        self,
+        client,
+        tenant_with_auth,
+        sku_with_auth,
+        monkeypatch,
+        idempotency_key,
+    ):
+        _, headers = tenant_with_auth
+        product_id, sku_id, production_batch_id = sku_with_auth
+        create = AsyncMock()
+        monkeypatch.setattr(code_batches_api, "create_code_batch", create)
+        request_headers = dict(headers)
+        if idempotency_key is not None:
+            request_headers["Idempotency-Key"] = idempotency_key
+
+        response = await client.post(
+            "/api/v1/code-batches",
+            json={
+                "product_id": product_id,
+                "sku_id": sku_id,
+                "production_batch_id": production_batch_id,
+                "quantity": 1,
+            },
+            headers=request_headers,
+        )
+
+        assert response.status_code == 422
+        create.assert_not_awaited()
+
+    @pytest.mark.anyio
+    @pytest.mark.parametrize(
+        "overrides",
+        [
+            {"source": "unsupported"},
+            {"source": "imported", "code_type": "paired"},
+            {"source": "imported", "generation_mode": "batch_level"},
+        ],
+    )
+    async def test_imported_batch_request_has_strict_shape(
+        self,
+        client,
+        tenant_with_auth,
+        sku_with_auth,
+        monkeypatch,
+        overrides,
+    ):
+        _, headers = tenant_with_auth
+        product_id, sku_id, production_batch_id = sku_with_auth
+        create = AsyncMock()
+        monkeypatch.setattr(code_batches_api, "create_code_batch", create)
+        payload = {
+            "product_id": product_id,
+            "sku_id": sku_id,
+            "production_batch_id": production_batch_id,
+            "quantity": 1,
+            **overrides,
+        }
+
+        response = await client.post(
+            "/api/v1/code-batches",
+            json=payload,
+            headers={**headers, "Idempotency-Key": "11111111-1111-4111-8111-111111111111"},
+        )
+
+        assert response.status_code == 422
+        create.assert_not_awaited()
+
+    @pytest.mark.anyio
+    async def test_export_fails_closed_before_service_and_audit(
+        self,
+        client,
+        code_batch_with_auth,
+        monkeypatch,
+    ):
+        _, headers, batch_id, _ = code_batch_with_auth
+        export = AsyncMock()
+        audit = AsyncMock()
+        monkeypatch.setattr(code_batches_api, "generate_code_csv", export)
+        monkeypatch.setattr("app.services.export_audit.log_export", audit)
+        monkeypatch.setattr(
+            code_service._code_operation_rate_cache,
+            "rate_limit_check_shared",
+            AsyncMock(side_effect=SharedSecurityCacheUnavailable("redis unavailable")),
+        )
+
+        response = await client.post(f"/api/v1/code-batches/{batch_id}/export", headers=headers)
+
+        assert response.status_code == 503
+        export.assert_not_awaited()
+        audit.assert_not_awaited()
+
+    @pytest.mark.anyio
+    @pytest.mark.parametrize(
+        ("code_type", "quantity"),
+        [
+            ("outer", 1),
+            ("unsupported", 1),
+            ("single", 10_001),
+            ("paired", 5_001),
+        ],
+    )
+    async def test_code_batch_create_rejects_invalid_type_or_physical_item_limit(
+        self,
+        client: AsyncClient,
+        tenant_with_auth,
+        sku_with_auth,
+        code_type,
+        quantity,
+    ):
+        _, headers = tenant_with_auth
+        product_id, sku_id, production_batch_id = sku_with_auth
+
+        response = await client.post(
+            "/api/v1/code-batches",
+            json={
+                "product_id": product_id,
+                "sku_id": sku_id,
+                "production_batch_id": production_batch_id,
+                "quantity": quantity,
+                "code_type": code_type,
+            },
+            headers={**headers, "Idempotency-Key": "11111111-1111-4111-8111-111111111111"},
+        )
+
+        assert response.status_code == 422
 
     @pytest.mark.anyio
     async def test_operator_cannot_manage_batch(self, client: AsyncClient, code_batch_with_auth, tenant_with_auth):
@@ -251,6 +505,94 @@ class TestPermissionEnforcement:
         assert response.status_code == 409
         assert await db_session.scalar(select(CodeItem).where(CodeItem.public_id == public_id)) is None
         import_audit.assert_not_awaited()
+
+    @pytest.mark.anyio
+    async def test_existing_code_import_rejects_generated_source_without_writes(
+        self,
+        client,
+        db_session,
+        code_batch_with_auth,
+    ):
+        _, headers, code_batch_id, _ = code_batch_with_auth
+        public_id = generate_public_id()
+
+        response = await client.post(
+            "/api/v1/imports/existing-codes",
+            params={"code_batch_id": str(code_batch_id)},
+            files={"file": ("codes.csv", f"public_id\n{public_id}\n".encode(), "text/csv")},
+            headers=headers,
+        )
+
+        assert response.status_code == 409
+        assert await db_session.scalar(select(CodeItem).where(CodeItem.public_id == public_id)) is None
+
+    @pytest.mark.anyio
+    async def test_existing_code_import_exact_valid_file_completes_authoritative_batch(
+        self,
+        client,
+        db_session,
+        imported_code_batch_with_auth,
+    ):
+        _, headers, code_batch_id = imported_code_batch_with_auth
+        public_ids = [generate_public_id(), generate_public_id()]
+
+        response = await client.post(
+            "/api/v1/imports/existing-codes",
+            params={"code_batch_id": str(code_batch_id)},
+            files={
+                "file": (
+                    "codes.csv",
+                    f"public_id\n{public_ids[0]}\n{public_ids[1]}\n".encode(),
+                    "text/csv",
+                )
+            },
+            headers=headers,
+        )
+
+        assert response.status_code == 200
+        assert response.json() == {
+            "imported": 2,
+            "skipped": 0,
+            "failed": 0,
+            "total": 2,
+            "batch_id": str(code_batch_id),
+            "errors": [],
+        }
+        batch = await db_session.get(CodeBatch, code_batch_id)
+        await db_session.refresh(batch)
+        assert batch.status == CodeBatchStatus.completed
+        items = list(await db_session.scalars(select(CodeItem).where(CodeItem.code_batch_id == code_batch_id)))
+        assert {item.public_id for item in items} == set(public_ids)
+        assert all(item.status == CodeItemStatus.created for item in items)
+        assert all(item.code_type == CodeType.single and item.pair_id is None for item in items)
+
+    @pytest.mark.anyio
+    @pytest.mark.parametrize("content", ["public_id\n", "public_id\ninvalid\n"])
+    async def test_existing_code_import_requires_exact_all_valid_file_or_writes_nothing(
+        self,
+        client,
+        db_session,
+        imported_code_batch_with_auth,
+        content,
+    ):
+        _, headers, code_batch_id = imported_code_batch_with_auth
+
+        response = await client.post(
+            "/api/v1/imports/existing-codes",
+            params={"code_batch_id": str(code_batch_id)},
+            files={"file": ("codes.csv", content.encode(), "text/csv")},
+            headers=headers,
+        )
+
+        assert response.status_code == 422
+        assert (
+            await db_session.scalar(
+                select(func.count()).select_from(CodeItem).where(CodeItem.code_batch_id == code_batch_id)
+            )
+            == 0
+        )
+        batch = await db_session.get(CodeBatch, code_batch_id)
+        assert batch.status == CodeBatchStatus.generating
 
     @pytest.mark.anyio
     @pytest.mark.parametrize(
@@ -439,12 +781,12 @@ class TestPermissionEnforcement:
         client,
         db_session,
         tenant_with_auth,
-        code_batch_with_auth,
+        imported_code_batch_with_auth,
         monkeypatch,
     ):
         _, headers = tenant_with_auth
-        _, _, code_batch_id, _ = code_batch_with_auth
-        public_id = generate_public_id()
+        _, _, code_batch_id = imported_code_batch_with_auth
+        public_ids = [generate_public_id(), generate_public_id()]
 
         async def rollbacking_get_db():
             transaction = await db_session.begin_nested()
@@ -465,11 +807,17 @@ class TestPermissionEnforcement:
             await client.post(
                 "/api/v1/imports/existing-codes",
                 params={"code_batch_id": str(code_batch_id)},
-                files={"file": ("codes.csv", f"public_id\n{public_id}\n".encode(), "text/csv")},
+                files={
+                    "file": (
+                        "codes.csv",
+                        f"public_id\n{public_ids[0]}\n{public_ids[1]}\n".encode(),
+                        "text/csv",
+                    )
+                },
                 headers=headers,
             )
 
-        assert await db_session.scalar(select(CodeItem).where(CodeItem.public_id == public_id)) is None
+        assert await db_session.scalar(select(CodeItem).where(CodeItem.public_id.in_(public_ids))) is None
 
     @pytest.mark.anyio
     async def test_operator_can_export(self, client: AsyncClient, code_batch_with_auth, tenant_with_auth):
@@ -501,7 +849,7 @@ class TestPublicIdConflictHandling:
                 "production_batch_id": production_batch_id,
                 "quantity": 100,
             },
-            headers=headers,
+            headers={**headers, "Idempotency-Key": "33333333-3333-4333-8333-333333333333"},
         )
         assert resp.status_code == 201
         batch_id = uuid.UUID(resp.json()["id"])
@@ -521,9 +869,35 @@ class TestBatchStateMachine:
     """3.3 批次状态机测试"""
 
     @pytest.mark.anyio
+    async def test_activation_lock_conflict_maps_to_stable_busy_response(
+        self,
+        client: AsyncClient,
+        tenant_with_auth,
+        monkeypatch,
+    ):
+        class LockConflict(Exception):
+            sqlstate = "55P03"
+
+        _, headers = tenant_with_auth
+        monkeypatch.setattr(
+            code_batches_api,
+            "activate_batch",
+            AsyncMock(side_effect=DBAPIError("statement", {}, LockConflict())),
+        )
+
+        response = await client.post(
+            "/api/v1/code-batches/00000000-0000-0000-0000-000000000999/activate",
+            headers=headers,
+        )
+
+        assert response.status_code == 409
+        assert response.json()["error_code"] == "CODE_BATCH_BUSY"
+
+    @pytest.mark.anyio
     async def test_mark_printing_invalid_transition(self, client: AsyncClient, code_batch_with_auth):
         _, headers, batch_id, _ = code_batch_with_auth
-        # 批次状态为 completed（创建后自动完成），可以直接标记 printing
+        exported = await client.post(f"/api/v1/code-batches/{batch_id}/export", headers=headers)
+        assert exported.status_code == 200
         resp = await client.post(
             f"/api/v1/code-batches/{batch_id}/mark-printing",
             headers=headers,
@@ -540,9 +914,11 @@ class TestBatchStateMachine:
     @pytest.mark.anyio
     async def test_mark_delivered_requires_printing(self, client: AsyncClient, code_batch_with_auth):
         _, headers, batch_id, _ = code_batch_with_auth
-        # 直接标记 delivered 应失败（需要 printing 状态）
+        exported = await client.post(f"/api/v1/code-batches/{batch_id}/export", headers=headers)
+        assert exported.status_code == 200
         resp = await client.post(
             f"/api/v1/code-batches/{batch_id}/mark-delivered",
+            json={"reason": "handoff", "recipient": "recipient", "confirm": "deliver"},
             headers=headers,
         )
         assert resp.status_code == 409
@@ -550,7 +926,8 @@ class TestBatchStateMachine:
     @pytest.mark.anyio
     async def test_delivered_after_printing(self, client: AsyncClient, code_batch_with_auth):
         _, headers, batch_id, _ = code_batch_with_auth
-        # 先标记 printing
+        exported = await client.post(f"/api/v1/code-batches/{batch_id}/export", headers=headers)
+        assert exported.status_code == 200
         resp1 = await client.post(
             f"/api/v1/code-batches/{batch_id}/mark-printing",
             headers=headers,
@@ -560,6 +937,7 @@ class TestBatchStateMachine:
         # 再标记 delivered
         resp2 = await client.post(
             f"/api/v1/code-batches/{batch_id}/mark-delivered",
+            json={"reason": "handoff", "recipient": "recipient", "confirm": "deliver"},
             headers=headers,
         )
         assert resp2.status_code == 200
@@ -581,6 +959,8 @@ class TestBatchStateMachine:
         _, headers = tenant_with_auth
         _, _, production_batch_id = sku_with_auth
         _, _, code_batch_id, _ = code_batch_with_auth
+        exported = await client.post(f"/api/v1/code-batches/{code_batch_id}/export", headers=headers)
+        assert exported.status_code == 200
         if transition == "mark-delivered":
             printing = await client.post(f"/api/v1/code-batches/{code_batch_id}/mark-printing", headers=headers)
             assert printing.status_code == 200
@@ -598,22 +978,23 @@ class TestBatchStateMachine:
         audit = AsyncMock()
         monkeypatch.setattr("app.services.audit.write_audit_log", audit)
 
-        response = await client.post(f"/api/v1/code-batches/{code_batch_id}/{transition}", headers=headers)
+        request_kwargs = {"headers": headers}
+        if transition == "mark-delivered":
+            request_kwargs["json"] = {"reason": "handoff", "recipient": "recipient", "confirm": "deliver"}
+        response = await client.post(f"/api/v1/code-batches/{code_batch_id}/{transition}", **request_kwargs)
 
         assert response.status_code == 409
         assert response.json()["error_code"] == "PRODUCTION_BATCH_NOT_ACTIVE"
         assert response.json()["detail"] == "Production batch is not active"
         batch = await db_session.get(CodeBatch, code_batch_id)
-        assert batch.status == (
-            CodeBatchStatus.completed if transition == "mark-printing" else CodeBatchStatus.printing
-        )
+        assert batch.status == (CodeBatchStatus.exported if transition == "mark-printing" else CodeBatchStatus.printing)
         audit.assert_not_awaited()
 
     @pytest.mark.anyio
     @pytest.mark.parametrize(
         ("transition", "expected_status"),
         [
-            ("mark-printing", CodeBatchStatus.completed),
+            ("mark-printing", CodeBatchStatus.exported),
             ("mark-delivered", CodeBatchStatus.printing),
         ],
     )
@@ -629,6 +1010,8 @@ class TestBatchStateMachine:
     ):
         _, headers = tenant_with_auth
         _, _, code_batch_id, _ = code_batch_with_auth
+        exported = await client.post(f"/api/v1/code-batches/{code_batch_id}/export", headers=headers)
+        assert exported.status_code == 200
         if transition == "mark-delivered":
             printing = await client.post(f"/api/v1/code-batches/{code_batch_id}/mark-printing", headers=headers)
             assert printing.status_code == 200
@@ -649,7 +1032,10 @@ class TestBatchStateMachine:
         )
 
         with pytest.raises(RuntimeError, match="audit unavailable"):
-            await client.post(f"/api/v1/code-batches/{code_batch_id}/{transition}", headers=headers)
+            request_kwargs = {"headers": headers}
+            if transition == "mark-delivered":
+                request_kwargs["json"] = {"reason": "handoff", "recipient": "recipient", "confirm": "deliver"}
+            await client.post(f"/api/v1/code-batches/{code_batch_id}/{transition}", **request_kwargs)
 
         batch = await db_session.get(CodeBatch, code_batch_id)
         await db_session.refresh(batch)
@@ -667,6 +1053,83 @@ class TestExportNotFound:
             headers=headers,
         )
         assert resp.status_code == 404
+
+
+class TestAuthoritativeCodeExportBoundary:
+    @pytest.mark.anyio
+    async def test_incomplete_pair_cannot_create_export_manifest(
+        self,
+        client,
+        db_session,
+        tenant_with_auth,
+        sku_with_auth,
+    ):
+        _, headers = tenant_with_auth
+        product_id, sku_id, production_batch_id = sku_with_auth
+        created = await client.post(
+            "/api/v1/code-batches",
+            json={
+                "product_id": product_id,
+                "sku_id": sku_id,
+                "production_batch_id": production_batch_id,
+                "quantity": 1,
+                "code_type": "paired",
+            },
+            headers={**headers, "Idempotency-Key": "44444444-4444-4444-8444-444444444444"},
+        )
+        assert created.status_code == 201
+        batch_id = uuid.UUID(created.json()["id"])
+        item = await db_session.scalar(select(CodeItem).where(CodeItem.code_batch_id == batch_id).limit(1))
+        item.pair_id = None
+        await db_session.flush()
+
+        response = await client.post(f"/api/v1/code-batches/{batch_id}/export", headers=headers)
+
+        assert response.status_code == 409
+        assert (
+            await db_session.scalar(
+                select(func.count()).select_from(ExportLog).where(ExportLog.code_batch_id == batch_id)
+            )
+            == 0
+        )
+
+    @pytest.mark.anyio
+    @pytest.mark.parametrize("blocked_by", ["recall", "void"])
+    async def test_recalled_or_voided_codes_cannot_create_export_manifest(
+        self,
+        client,
+        db_session,
+        tenant_with_auth,
+        sku_with_auth,
+        code_batch_with_auth,
+        blocked_by,
+    ):
+        _, headers = tenant_with_auth
+        _, _, production_batch_id = sku_with_auth
+        _, _, code_batch_id, _ = code_batch_with_auth
+        if blocked_by == "recall":
+            blocked = await client.post(
+                f"/api/v1/production-batches/{production_batch_id}/recall",
+                json={"reason": "safety recall", "confirm": "recall"},
+                headers=headers,
+            )
+        else:
+            blocked = await client.post(
+                f"/api/v1/code-batches/{code_batch_id}/void",
+                params={"reason": "packaging invalid", "confirm": "void"},
+                headers=headers,
+            )
+        assert blocked.status_code == 200
+
+        response = await client.post(f"/api/v1/code-batches/{code_batch_id}/export", headers=headers)
+
+        assert response.status_code == 409
+        assert (
+            await db_session.scalar(
+                select(func.count()).select_from(ExportLog).where(ExportLog.code_batch_id == code_batch_id)
+            )
+            == 0
+        )
 
 
 class TestProductCSVImportSafety:

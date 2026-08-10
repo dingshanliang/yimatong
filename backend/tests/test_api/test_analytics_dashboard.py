@@ -17,6 +17,7 @@ from app.models.channel import DiversionClue
 from app.models.export_log import ExportLog
 from app.models.risk import RiskAlert
 from app.models.scan import ScanEvent
+from app.models.tenant import Tenant, TenantStatus, TenantType
 from app.utils.security import create_access_token
 from tests.conftest import TestSessionLocal
 
@@ -128,6 +129,82 @@ class TestDashboardAPI:
 
 class TestDashboardExport:
     """yimatong-0j6: 扫码看板数据导出"""
+
+    @pytest.mark.anyio
+    async def test_export_log_list_returns_only_safe_projection(
+        self,
+        client: AsyncClient,
+        db_session: AsyncSession,
+        dashboard_setup,
+    ):
+        tenant_id, headers = dashboard_setup
+        db_session.add(
+            ExportLog(
+                tenant_id=uuid.UUID(tenant_id),
+                account_id=uuid.UUID("00000000-0000-0000-0000-000000000001"),
+                export_type="scan_events_xlsx",
+                file_name="safe.xlsx",
+                row_count=1,
+            )
+        )
+        await db_session.flush()
+
+        response = await client.get("/api/v1/analytics/exports", headers=headers)
+
+        assert response.status_code == 200
+        assert set(response.json()["items"][0]) == {
+            "id",
+            "export_type",
+            "resource_id",
+            "file_name",
+            "row_count",
+            "status",
+            "created_at",
+        }
+
+    @pytest.mark.anyio
+    async def test_export_log_list_rejects_viewer(self, client: AsyncClient, dashboard_setup):
+        tenant_id, _ = dashboard_setup
+        viewer = create_access_token(
+            tenant_id,
+            "00000000-0000-0000-0000-000000000003",
+            "viewer",
+        )
+
+        response = await client.get(
+            "/api/v1/analytics/exports",
+            headers={"Authorization": f"Bearer {viewer}"},
+        )
+
+        assert response.status_code == 403
+
+    @pytest.mark.anyio
+    async def test_export_log_list_rejects_base_agency_admin(
+        self,
+        client: AsyncClient,
+        db_session: AsyncSession,
+    ):
+        agency = Tenant(
+            name="导出审计代运营隔离",
+            slug=f"agency-export-{uuid.uuid4().hex[:8]}",
+            status=TenantStatus.active,
+            tenant_type=TenantType.agency,
+        )
+        db_session.add(agency)
+        await db_session.flush()
+        agency_admin = create_access_token(
+            str(agency.id),
+            "00000000-0000-0000-0000-000000000004",
+            "admin",
+            "agency",
+        )
+
+        response = await client.get(
+            "/api/v1/analytics/exports",
+            headers={"Authorization": f"Bearer {agency_admin}"},
+        )
+
+        assert response.status_code == 403
 
     @pytest.mark.anyio
     async def test_export_scan_events_with_date_range(

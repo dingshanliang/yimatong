@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.main import app
+from app.models.code import CodeBatch, CodeBatchStatus
 from app.models.product import ProductionBatch
 from app.models.tenant import Tenant
 from app.utils.security import create_access_token
@@ -113,11 +114,20 @@ async def traceability_setup(client: AsyncClient):
             "batch_code": "CB-TRACE-001",
             "quantity": 2,
         },
-        headers=headers,
+        headers={**headers, "Idempotency-Key": "11111111-1111-4111-8111-111111111111"},
     )
     assert batch.status_code in (200, 201)
 
-    await client.post(f"/api/v1/code-batches/{batch.json()['id']}/activate", headers=headers)
+    batch_id = batch.json()["id"]
+    exported = await client.post(f"/api/v1/code-batches/{batch_id}/export", headers=headers)
+    printing = await client.post(f"/api/v1/code-batches/{batch_id}/mark-printing", headers=headers)
+    delivered = await client.post(
+        f"/api/v1/code-batches/{batch_id}/mark-delivered",
+        json={"reason": "resolver test", "recipient": "test recipient", "confirm": "deliver"},
+        headers=headers,
+    )
+    activated = await client.post(f"/api/v1/code-batches/{batch_id}/activate", headers=headers)
+    assert exported.status_code == printing.status_code == delivered.status_code == activated.status_code == 200
 
     items = await client.get(
         f"/api/v1/code-items?code_batch_id={batch.json()['id']}",
@@ -127,6 +137,22 @@ async def traceability_setup(client: AsyncClient):
 
 
 class TestResolverJsonResponse:
+    @pytest.mark.anyio
+    async def test_item_status_cannot_bypass_unactivated_parent_batch(
+        self,
+        client,
+        traceability_setup,
+        db_session,
+    ):
+        code_batch = await db_session.scalar(select(CodeBatch))
+        code_batch.status = CodeBatchStatus.delivered
+        await db_session.flush()
+
+        response = await client.get(f"/c/{traceability_setup}", headers={"Accept": "application/json"})
+
+        assert response.status_code == 404
+        assert "scan_token" not in response.json()
+
     @pytest.mark.anyio
     async def test_recalled_production_batch_keeps_traceability_but_blocks_benefits(self, client, traceability_setup):
         tenant_resp = await client.get("/api/v1/tenants", headers=_platform_admin_headers())

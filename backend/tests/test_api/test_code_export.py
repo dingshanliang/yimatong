@@ -1,13 +1,17 @@
 """A4-005: 码包导出 CSV API 验收测试"""
 
+import uuid
 from collections.abc import AsyncGenerator
 
 import pytest
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.main import app
+from app.models.code import CodeBatch, CodeBatchStatus, CodeItem
+from app.models.export_log import ExportLog
 from app.utils.security import create_access_token
 from tests.conftest import TestSessionLocal
 
@@ -91,7 +95,7 @@ async def batch_with_codes(client: AsyncClient):
             "production_batch_id": production_batch.json()["id"],
             "quantity": 5,
         },
-        headers=headers,
+        headers={**headers, "Idempotency-Key": "11111111-1111-4111-8111-111111111111"},
     )
     batch_id = batch.json()["id"]
     return tid, headers, batch_id
@@ -109,6 +113,9 @@ class TestCodeExport:
         assert "text/csv" in resp.headers.get("content-type", "")
         assert f"codes-{batch_id}.csv" in resp.headers.get("content-disposition", "")
         assert "public_id" in resp.text
+        assert resp.headers["X-Code-Manifest-Version"] == "1"
+        assert resp.headers["X-Code-Item-Count"] == "5"
+        assert len(resp.headers["X-Content-SHA256"]) == 64
 
     @pytest.mark.anyio
     async def test_export_contains_code_url(self, client: AsyncClient, batch_with_codes):
@@ -119,3 +126,181 @@ class TestCodeExport:
         )
         assert resp.status_code == 200
         assert "qr.yimatong.cn" in resp.text
+
+    @pytest.mark.anyio
+    async def test_export_neutralizes_spreadsheet_formula_metadata(
+        self,
+        client: AsyncClient,
+        db_session: AsyncSession,
+        batch_with_codes,
+    ):
+        _, headers, batch_id = batch_with_codes
+        batch = await db_session.get(CodeBatch, uuid.UUID(batch_id))
+        batch.product.name = '=HYPERLINK("https://evil.invalid")'
+        await db_session.flush()
+
+        response = await client.post(f"/api/v1/code-batches/{batch_id}/export", headers=headers)
+
+        assert response.status_code == 200
+        assert "'=HYPERLINK" in response.text
+
+    @pytest.mark.anyio
+    async def test_export_count_mismatch_creates_no_manifest(
+        self,
+        client: AsyncClient,
+        db_session: AsyncSession,
+        batch_with_codes,
+    ):
+        _, headers, batch_id = batch_with_codes
+        batch_uuid = uuid.UUID(batch_id)
+        item = await db_session.scalar(select(CodeItem).where(CodeItem.code_batch_id == batch_uuid).limit(1))
+        await db_session.delete(item)
+        await db_session.flush()
+
+        response = await client.post(f"/api/v1/code-batches/{batch_id}/export", headers=headers)
+
+        assert response.status_code == 409
+        batch = await db_session.get(CodeBatch, batch_uuid)
+        assert batch.status == CodeBatchStatus.completed
+        assert batch.export_manifest_id is None
+
+    @pytest.mark.anyio
+    async def test_legacy_completed_batch_upgrades_contract_only_during_successful_export(
+        self,
+        client: AsyncClient,
+        db_session: AsyncSession,
+        batch_with_codes,
+    ):
+        _, headers, batch_id = batch_with_codes
+        batch = await db_session.get(CodeBatch, uuid.UUID(batch_id))
+        batch.contract_version = 0
+        await db_session.flush()
+
+        response = await client.post(f"/api/v1/code-batches/{batch_id}/export", headers=headers)
+
+        assert response.status_code == 200
+        await db_session.refresh(batch)
+        assert batch.contract_version == 1
+        assert batch.status == CodeBatchStatus.exported
+
+    @pytest.mark.anyio
+    async def test_legacy_invalid_shape_is_not_upgraded_or_exported(
+        self,
+        client: AsyncClient,
+        db_session: AsyncSession,
+        batch_with_codes,
+    ):
+        _, headers, batch_id = batch_with_codes
+        batch = await db_session.get(CodeBatch, uuid.UUID(batch_id))
+        batch.contract_version = 0
+        batch.expected_item_count = 4
+        await db_session.flush()
+
+        response = await client.post(f"/api/v1/code-batches/{batch_id}/export", headers=headers)
+
+        assert response.status_code == 409
+        await db_session.refresh(batch)
+        assert batch.contract_version == 0
+        assert batch.status == CodeBatchStatus.completed
+        assert batch.export_manifest_id is None
+
+    @pytest.mark.anyio
+    async def test_export_retry_returns_identical_manifest_bytes_without_duplicate_audit(
+        self,
+        client: AsyncClient,
+        db_session: AsyncSession,
+        batch_with_codes,
+    ):
+        _, headers, batch_id = batch_with_codes
+
+        first = await client.post(f"/api/v1/code-batches/{batch_id}/export", headers=headers)
+        replay = await client.post(f"/api/v1/code-batches/{batch_id}/export", headers=headers)
+
+        assert first.status_code == replay.status_code == 200
+        assert replay.content == first.content
+        assert replay.headers["X-Content-SHA256"] == first.headers["X-Content-SHA256"]
+        assert (
+            await db_session.scalar(
+                select(func.count()).select_from(ExportLog).where(ExportLog.code_batch_id == uuid.UUID(batch_id))
+            )
+            == 1
+        )
+
+    @pytest.mark.anyio
+    async def test_export_retry_uses_persisted_bytes_after_catalog_metadata_changes(
+        self,
+        client: AsyncClient,
+        db_session: AsyncSession,
+        batch_with_codes,
+    ):
+        _, headers, batch_id = batch_with_codes
+        batch = await db_session.get(CodeBatch, uuid.UUID(batch_id))
+
+        first = await client.post(f"/api/v1/code-batches/{batch_id}/export", headers=headers)
+        batch.product.name = "导出后修改的产品名"
+        batch.sku.name = "导出后修改的SKU名"
+        batch.sku.code = "CHANGED-AFTER-EXPORT"
+        batch.production_batch.origin = "导出后修改的产地"
+        await db_session.flush()
+        replay = await client.post(f"/api/v1/code-batches/{batch_id}/export", headers=headers)
+
+        assert first.status_code == replay.status_code == 200
+        assert replay.content == first.content
+        assert replay.headers["X-Content-SHA256"] == first.headers["X-Content-SHA256"]
+
+    @pytest.mark.anyio
+    async def test_export_artifact_tampering_fails_closed_without_log_leakage(
+        self,
+        client: AsyncClient,
+        db_session: AsyncSession,
+        batch_with_codes,
+        caplog,
+    ):
+        _, headers, batch_id = batch_with_codes
+        first = await client.post(f"/api/v1/code-batches/{batch_id}/export", headers=headers)
+        manifest = await db_session.scalar(select(ExportLog).where(ExportLog.code_batch_id == uuid.UUID(batch_id)))
+        public_id = first.text.splitlines()[1].split(",", 1)[0]
+        original_ciphertext = bytes(manifest.artifact_ciphertext)
+        assert first.content not in original_ciphertext
+        manifest.artifact_ciphertext = bytes([original_ciphertext[0] ^ 1]) + original_ciphertext[1:]
+        await db_session.flush()
+
+        replay = await client.post(f"/api/v1/code-batches/{batch_id}/export", headers=headers)
+
+        assert replay.status_code == 409
+        assert public_id not in caplog.text
+        assert original_ciphertext.hex() not in caplog.text
+
+    @pytest.mark.anyio
+    async def test_export_print_delivery_activation_requires_complete_evidence(
+        self,
+        client: AsyncClient,
+        db_session: AsyncSession,
+        batch_with_codes,
+    ):
+        _, headers, batch_id = batch_with_codes
+        batch_uuid = uuid.UUID(batch_id)
+
+        premature_print = await client.post(f"/api/v1/code-batches/{batch_id}/mark-printing", headers=headers)
+        assert premature_print.status_code == 409
+
+        exported = await client.post(f"/api/v1/code-batches/{batch_id}/export", headers=headers)
+        printing = await client.post(f"/api/v1/code-batches/{batch_id}/mark-printing", headers=headers)
+        missing_evidence = await client.post(f"/api/v1/code-batches/{batch_id}/mark-delivered", headers=headers)
+        delivered = await client.post(
+            f"/api/v1/code-batches/{batch_id}/mark-delivered",
+            json={"reason": "printer handoff", "recipient": "华东包装厂", "confirm": "deliver"},
+            headers=headers,
+        )
+        activated = await client.post(f"/api/v1/code-batches/{batch_id}/activate", headers=headers)
+
+        assert exported.status_code == printing.status_code == delivered.status_code == activated.status_code == 200
+        assert missing_evidence.status_code == 422
+        batch = await db_session.get(CodeBatch, batch_uuid)
+        await db_session.refresh(batch)
+        assert batch.status == CodeBatchStatus.activated
+        assert batch.export_manifest_id is not None
+        assert batch.exported_at is not None
+        assert batch.printing_at is not None
+        assert batch.delivered_at is not None
+        assert batch.delivery_recipient == "华东包装厂"

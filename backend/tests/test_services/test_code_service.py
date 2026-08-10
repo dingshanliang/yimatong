@@ -13,13 +13,15 @@ from datetime import UTC, date, datetime, timedelta
 from types import SimpleNamespace
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import func, select
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from app.core.exceptions import ConflictError
+from app.core.exceptions import BadRequestError, ConflictError
 from app.models.base import Base
 from app.models.code import (
     CodeBatch,
+    CodeBatchSource,
     CodeBatchStatus,
     CodeGenerationMode,
     CodeItem,
@@ -39,13 +41,68 @@ from app.services.code import (
     list_code_items,
     mark_delivered,
     mark_printing,
+    update_batch,
     void_batch,
 )
+from app.services.code_export import generate_code_csv
 from app.services.code_state import InvalidStateTransitionError
 from app.services.quota import QUOTA_RECONCILIATION_SOURCE_REVISION, QuotaExceededError
 
 engine = create_async_engine("sqlite+aiosqlite://")
 TestSession = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+
+
+class _DatabaseOriginalError(Exception):
+    def __init__(self, sqlstate: str | None, *, constraint_name: str | None = None) -> None:
+        self.sqlstate = sqlstate
+        self.diag = SimpleNamespace(constraint_name=constraint_name)
+        super().__init__(sqlstate)
+
+
+@pytest.mark.parametrize(
+    ("sqlstate", "error_code"),
+    [
+        ("22023", "CODE_BATCH_REQUEST_INVALID"),
+        ("23514", "CODE_BATCH_CONTRACT_CONFLICT"),
+        ("55P03", "CODE_BATCH_BUSY"),
+        ("55000", "CODE_BATCH_IMMUTABLE"),
+    ],
+)
+def test_code_batch_db_error_maps_only_declared_contract_states(sqlstate: str, error_code: str) -> None:
+    error = DBAPIError("statement", {}, _DatabaseOriginalError(sqlstate))
+
+    mapped = code_service.map_code_batch_db_error(error)
+
+    assert mapped is not None
+    assert mapped.status_code == 409
+    assert mapped.error_code == error_code
+
+
+@pytest.mark.parametrize("sqlstate", ["23505", "99999", None])
+def test_code_batch_db_error_does_not_swallow_unknown_database_failures(sqlstate: str | None) -> None:
+    error = DBAPIError("statement", {}, _DatabaseOriginalError(sqlstate))
+
+    assert code_service.map_code_batch_db_error(error) is None
+
+
+def test_code_batch_db_error_maps_only_the_declared_batch_code_unique_constraint() -> None:
+    error = DBAPIError(
+        "statement",
+        {},
+        _DatabaseOriginalError("23505", constraint_name="uq_code_batches_tenant_batch_code"),
+    )
+
+    mapped = code_service.map_code_batch_db_error(error)
+
+    assert mapped is not None
+    assert mapped.status_code == 409
+    assert mapped.error_code == "CODE_BATCH_CODE_CONFLICT"
+
+
+def test_code_batch_db_error_does_not_swallow_an_unrelated_unique_constraint() -> None:
+    error = DBAPIError("statement", {}, _DatabaseOriginalError("23505", constraint_name="unrelated_unique"))
+
+    assert code_service.map_code_batch_db_error(error) is None
 
 
 @pytest.fixture(autouse=True)
@@ -140,8 +197,59 @@ async def _create_prerequisites(db: AsyncSession) -> tuple[uuid.UUID, uuid.UUID,
     return tenant_id, brand.id, product.id, sku.id, prod_batch.id
 
 
+async def _prepare_delivered_batch(
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    batch_id: uuid.UUID,
+    actor_id: uuid.UUID,
+) -> None:
+    await generate_code_csv(db, tenant_id, batch_id, actor_id)
+    await mark_printing(db, tenant_id, batch_id, actor_id=str(actor_id))
+    await mark_delivered(
+        db,
+        tenant_id,
+        batch_id,
+        actor_id=str(actor_id),
+        reason="test handoff",
+        recipient="test recipient",
+        confirm="deliver",
+    )
+
+
 class TestCreateCodeBatch:
     """create_code_batch 测试"""
+
+    @pytest.mark.anyio
+    @pytest.mark.parametrize(
+        ("quantity", "code_type", "generation_mode"),
+        [
+            (0, CodeType.single, CodeGenerationMode.item_level),
+            (10_001, CodeType.single, CodeGenerationMode.item_level),
+            (5_001, CodeType.paired, CodeGenerationMode.item_level),
+            (1, CodeType.outer, CodeGenerationMode.item_level),
+            (1, "unsupported", CodeGenerationMode.item_level),
+            (1, CodeType.single, "unsupported"),
+        ],
+    )
+    async def test_create_batch_defends_type_mode_and_physical_item_limit(
+        self,
+        quantity,
+        code_type,
+        generation_mode,
+    ):
+        async with TestSession() as db:
+            with pytest.raises(BadRequestError):
+                await create_code_batch(
+                    db,
+                    _uuid(),
+                    _uuid(),
+                    _uuid(),
+                    _uuid(),
+                    quantity=quantity,
+                    created_by=_uuid(),
+                    code_type=code_type,
+                    generation_mode=generation_mode,
+                )
 
     @pytest.mark.anyio
     async def test_create_batch_success(self):
@@ -197,6 +305,143 @@ class TestCreateCodeBatch:
                 assert len(item.public_id) > 0
                 assert item.status == CodeItemStatus.created
                 assert item.tenant_id == tenant_id
+
+    @pytest.mark.anyio
+    async def test_create_batch_retries_historical_public_id_collision(self, monkeypatch):
+        generated_ids = iter(("HISTORICAL-ID", "HISTORICAL-ID", "RETRY-SUCCEEDED"))
+        monkeypatch.setattr(code_service, "generate_public_id", lambda: next(generated_ids))
+
+        async with TestSession() as db:
+            tenant_id, _, product_id, sku_id, production_batch_id = await _create_prerequisites(db)
+            await create_code_batch(
+                db,
+                tenant_id,
+                product_id,
+                sku_id,
+                production_batch_id,
+                quantity=1,
+                created_by=_uuid(),
+            )
+            second = await create_code_batch(
+                db,
+                tenant_id,
+                product_id,
+                sku_id,
+                production_batch_id,
+                quantity=1,
+                created_by=_uuid(),
+            )
+
+            public_ids = set(
+                await db.scalars(select(CodeItem.public_id).where(CodeItem.code_batch_id == uuid.UUID(second["id"])))
+            )
+            assert public_ids == {"RETRY-SUCCEEDED"}
+
+    @pytest.mark.anyio
+    async def test_create_batch_reports_stable_public_id_exhaustion(self, monkeypatch):
+        monkeypatch.setattr(code_service, "generate_public_id", lambda: "ALWAYS-DUPLICATE")
+
+        async with TestSession() as db:
+            tenant_id, _, product_id, sku_id, production_batch_id = await _create_prerequisites(db)
+            with pytest.raises(ConflictError) as exc_info:
+                await create_code_batch(
+                    db,
+                    tenant_id,
+                    product_id,
+                    sku_id,
+                    production_batch_id,
+                    quantity=2,
+                    created_by=_uuid(),
+                )
+
+            assert exc_info.value.error_code == "PUBLIC_ID_ALLOCATION_EXHAUSTED"
+
+    @pytest.mark.anyio
+    async def test_create_batch_idempotency_replays_without_new_items(self):
+        async with TestSession() as db:
+            tenant_id, _, product_id, sku_id, production_batch_id = await _create_prerequisites(db)
+            created_by = _uuid()
+            key = "11111111-1111-4111-8111-111111111111"
+            first = await create_code_batch(
+                db,
+                tenant_id,
+                product_id,
+                sku_id,
+                production_batch_id,
+                quantity=2,
+                created_by=created_by,
+                idempotency_key=key,
+            )
+            replay = await create_code_batch(
+                db,
+                tenant_id,
+                product_id,
+                sku_id,
+                production_batch_id,
+                quantity=2,
+                created_by=created_by,
+                idempotency_key=key,
+            )
+
+            assert replay == first
+            assert await db.scalar(select(func.count()).select_from(CodeBatch)) == 1
+            assert await db.scalar(select(func.count()).select_from(CodeItem)) == 2
+
+    @pytest.mark.anyio
+    async def test_create_batch_idempotency_rejects_payload_conflict(self):
+        async with TestSession() as db:
+            tenant_id, _, product_id, sku_id, production_batch_id = await _create_prerequisites(db)
+            created_by = _uuid()
+            key = "11111111-1111-4111-8111-111111111111"
+            await create_code_batch(
+                db,
+                tenant_id,
+                product_id,
+                sku_id,
+                production_batch_id,
+                quantity=1,
+                created_by=created_by,
+                idempotency_key=key,
+            )
+
+            with pytest.raises(ConflictError) as exc_info:
+                await create_code_batch(
+                    db,
+                    tenant_id,
+                    product_id,
+                    sku_id,
+                    production_batch_id,
+                    quantity=2,
+                    created_by=created_by,
+                    idempotency_key=key,
+                )
+
+            assert exc_info.value.error_code == "CODE_BATCH_IDEMPOTENCY_CONFLICT"
+            assert await db.scalar(select(func.count()).select_from(CodeBatch)) == 1
+
+    @pytest.mark.anyio
+    async def test_create_imported_batch_stages_authoritative_empty_target(self):
+        async with TestSession() as db:
+            tenant_id, _, product_id, sku_id, production_batch_id = await _create_prerequisites(db)
+
+            result = await create_code_batch(
+                db,
+                tenant_id,
+                product_id,
+                sku_id,
+                production_batch_id,
+                quantity=3,
+                created_by=_uuid(),
+                idempotency_key="11111111-1111-4111-8111-111111111111",
+                source=CodeBatchSource.imported,
+            )
+
+            assert result["source"] == CodeBatchSource.imported
+            assert result["status"] == CodeBatchStatus.generating
+            assert result["quantity"] == 3
+            assert result["expected_item_count"] == 3
+            assert result["generated_count"] == 0
+            assert await db.scalar(select(func.count()).select_from(CodeItem)) == 0
 
     @pytest.mark.anyio
     async def test_create_batch_enforces_cumulative_max_codes(self):
@@ -367,6 +612,9 @@ class TestCreateCodeBatch:
             pair_ids = set(i.pair_id for i in items)
             assert len(pair_ids) == 3
 
+            artifact = await generate_code_csv(db, tenant_id, batch_id, created_by)
+            assert artifact.row_count == 6
+
     @pytest.mark.anyio
     async def test_create_batch_level_mode(self):
         """批次级模式：数量强制为 1，码类型为 single"""
@@ -421,6 +669,7 @@ class TestActivateBatch:
             )
             batch_id = uuid.UUID(result["id"])
 
+            await _prepare_delivered_batch(db, tenant_id, batch_id, created_by)
             activate_result = await activate_batch(db, tenant_id, batch_id, actor_id=str(created_by))
             assert activate_result.activated == 5
 
@@ -475,6 +724,7 @@ class TestActivateBatch:
                 quantity=1,
                 created_by=actor_id,
             )
+            await _prepare_delivered_batch(db, tenant_id, uuid.UUID(created["id"]), actor_id)
             production_batch = await db.get(ProductionBatch, production_batch_id)
             production_batch.status = status
             if status == BatchStatus.recalled:
@@ -519,6 +769,7 @@ class TestActivateBatch:
                 quantity=1,
                 created_by=actor_id,
             )
+            await _prepare_delivered_batch(db, tenant_id, uuid.UUID(created["id"]), actor_id)
             production_batch = await db.get(ProductionBatch, production_batch_id)
             production_batch.expiry_date = date.today() - timedelta(days=1)
             await db.flush()
@@ -568,6 +819,7 @@ class TestActivateBatch:
             )
             batch_id = uuid.UUID(result["id"])
 
+            await _prepare_delivered_batch(db, tenant_id, batch_id, created_by)
             await activate_batch(db, tenant_id, batch_id, actor_id=str(created_by))
 
             with pytest.raises(InvalidStateTransitionError, match="already activated"):
@@ -597,6 +849,34 @@ class TestActivateBatch:
 
 
 class TestOperationalBatchTransitions:
+    @pytest.mark.anyio
+    async def test_exported_batch_code_is_immutable(self):
+        async with TestSession() as db:
+            tenant_id, _, product_id, sku_id, production_batch_id = await _create_prerequisites(db)
+            actor_id = _uuid()
+            created = await create_code_batch(
+                db,
+                tenant_id,
+                product_id,
+                sku_id,
+                production_batch_id,
+                quantity=1,
+                created_by=actor_id,
+            )
+            batch_id = uuid.UUID(created["id"])
+            batch = await db.get(CodeBatch, batch_id)
+            batch.status = CodeBatchStatus.exported
+            await db.flush()
+
+            with pytest.raises(ConflictError, match="immutable"):
+                await update_batch(
+                    db,
+                    tenant_id,
+                    batch_id,
+                    actor_id=str(actor_id),
+                    batch_code="CHANGED",
+                )
+
     def test_transition_lock_order_is_production_batch_then_code_batch(self):
         source = inspect.getsource(code_service._lock_forward_operational_code_batch)
         locator = source.index("select(CodeBatch.production_batch_id)")
@@ -669,6 +949,7 @@ class TestOperationalBatchTransitions:
                 created_by=actor_id,
             )
             batch_id = uuid.UUID(created["id"])
+            await generate_code_csv(db, tenant_id, batch_id, actor_id)
             if transition == "delivered":
                 await mark_printing(db, tenant_id, batch_id, actor_id=str(actor_id))
 
@@ -682,13 +963,23 @@ class TestOperationalBatchTransitions:
                 production_batch.expiry_date = date.today() - timedelta(days=1)
             await db.flush()
 
-            operation = mark_printing if transition == "printing" else mark_delivered
             with pytest.raises(ConflictError) as exc_info:
-                await operation(db, tenant_id, batch_id, actor_id=str(actor_id))
+                if transition == "printing":
+                    await mark_printing(db, tenant_id, batch_id, actor_id=str(actor_id))
+                else:
+                    await mark_delivered(
+                        db,
+                        tenant_id,
+                        batch_id,
+                        actor_id=str(actor_id),
+                        reason="test handoff",
+                        recipient="test recipient",
+                        confirm="deliver",
+                    )
 
             assert exc_info.value.error_code == "PRODUCTION_BATCH_NOT_ACTIVE"
             batch = await db.get(CodeBatch, batch_id)
-            assert batch.status == (CodeBatchStatus.completed if transition == "printing" else CodeBatchStatus.printing)
+            assert batch.status == (CodeBatchStatus.exported if transition == "printing" else CodeBatchStatus.printing)
 
 
 class TestBindCodeItem:
@@ -721,6 +1012,7 @@ class TestBindCodeItem:
                 created_by=actor_id,
             )
             batch_id = uuid.UUID(created["id"])
+            await _prepare_delivered_batch(db, tenant_id, batch_id, actor_id)
             await activate_batch(db, tenant_id, batch_id, actor_id=str(actor_id))
             item = await db.scalar(select(CodeItem).where(CodeItem.code_batch_id == batch_id))
             production_batch = await db.get(ProductionBatch, production_batch_id)
@@ -809,6 +1101,7 @@ class TestFreezeBatch:
                 created_by=created_by,
             )
             batch_id = uuid.UUID(result["id"])
+            await _prepare_delivered_batch(db, tenant_id, batch_id, created_by)
             await activate_batch(db, tenant_id, batch_id, actor_id=str(created_by))
 
             freeze_result = await freeze_batch(db, tenant_id, batch_id, actor_id=str(created_by))
@@ -946,6 +1239,7 @@ class TestListCodeBatches:
                 created_by=created_by,
             )
             batch_id = uuid.UUID(result["id"])
+            await _prepare_delivered_batch(db, tenant_id, batch_id, created_by)
             await activate_batch(db, tenant_id, batch_id, actor_id=str(created_by))
 
             # 新建一个不激活的
@@ -1026,6 +1320,7 @@ class TestListCodeItems:
                 created_by=created_by,
             )
             batch_id = uuid.UUID(result["id"])
+            await _prepare_delivered_batch(db, tenant_id, batch_id, created_by)
             await activate_batch(db, tenant_id, batch_id, actor_id=str(created_by))
 
             activated_items, total = await list_code_items(db, tenant_id, status=CodeItemStatus.activated)

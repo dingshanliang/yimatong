@@ -3,9 +3,9 @@
 import uuid
 from datetime import date, datetime
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from app.models.code import CodeGenerationMode, CodeItemStatus, CodeType
+from app.models.code import CodeBatchSource, CodeGenerationMode, CodeItemStatus, CodeType
 from app.schemas.common import PaginatedResponse
 
 # ── 码批次 Schema ──────────────────────────────────────────────
@@ -14,13 +14,28 @@ from app.schemas.common import PaginatedResponse
 class CodeBatchCreateRequest(BaseModel):
     """创建码批次请求"""
 
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
     product_id: uuid.UUID = Field(..., description="关联产品 ID")
     sku_id: uuid.UUID = Field(..., description="关联 SKU ID")
     production_batch_id: uuid.UUID = Field(..., description="关联生产批次 ID")
     batch_code: str | None = Field(None, max_length=100, description="批次编码（留空则取生产批次号）")
-    quantity: int = Field(..., gt=0, le=100000, description="生成数量")
-    code_type: str = Field(CodeType.single, description="码类型")
+    quantity: int = Field(..., gt=0, le=10_000, description="包装/配对组数量")
+    code_type: CodeType = Field(CodeType.single, description="码类型")
     generation_mode: CodeGenerationMode = Field(CodeGenerationMode.item_level, description="生成方式")
+    source: CodeBatchSource = Field(CodeBatchSource.generated, description="码来源")
+
+    @model_validator(mode="after")
+    def validate_generation_shape(self) -> "CodeBatchCreateRequest":
+        if self.code_type not in {CodeType.single, CodeType.paired}:
+            raise ValueError("code_type must be single or paired")
+        if self.code_type == CodeType.paired and self.quantity > 5_000:
+            raise ValueError("paired code batches cannot exceed 5,000 pairs")
+        if self.source == CodeBatchSource.imported and (
+            self.code_type != CodeType.single or self.generation_mode != CodeGenerationMode.item_level
+        ):
+            raise ValueError("imported code batches must use item-level single codes")
+        return self
 
 
 class CodeBatchUpdateRequest(BaseModel):
@@ -42,6 +57,8 @@ class CodeBatchRead(BaseModel):
     status: str
     code_type: str = CodeType.single
     generation_mode: str = CodeGenerationMode.item_level
+    source: str = CodeBatchSource.generated
+    expected_item_count: int
     created_by: uuid.UUID
     product_name: str | None = None
     sku_name: str | None = None

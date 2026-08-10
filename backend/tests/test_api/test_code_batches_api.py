@@ -67,7 +67,10 @@ async def auth_setup(client: AsyncClient):
     assert resp.status_code in (200, 201)
     tid = resp.json()["id"]
     token = create_access_token(tid, "00000000-0000-0000-0000-000000000001", "admin")
-    headers = {"Authorization": f"Bearer {token}"}
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Idempotency-Key": "11111111-1111-4111-8111-111111111111",
+    }
 
     brand = await client.post("/api/v1/brands", json={"name": "码API品牌"}, headers=headers)
     assert brand.status_code == 201
@@ -105,6 +108,17 @@ async def auth_setup(client: AsyncClient):
     production_batch_id = batch.json()["id"]
 
     return tid, headers, product_id, sku_id, production_batch_id
+
+
+async def _prepare_delivered_batch(client: AsyncClient, headers: dict, batch_id: str) -> None:
+    exported = await client.post(f"/api/v1/code-batches/{batch_id}/export", headers=headers)
+    printing = await client.post(f"/api/v1/code-batches/{batch_id}/mark-printing", headers=headers)
+    delivered = await client.post(
+        f"/api/v1/code-batches/{batch_id}/mark-delivered",
+        json={"reason": "test handoff", "recipient": "test recipient", "confirm": "deliver"},
+        headers=headers,
+    )
+    assert exported.status_code == printing.status_code == delivered.status_code == 200
 
 
 class TestCreateCodeBatchAPI:
@@ -190,7 +204,7 @@ class TestListCodeBatchesAPI:
                 "production_batch_id": production_batch_id,
                 "quantity": 3,
             },
-            headers=headers,
+            headers={**headers, "Idempotency-Key": "22222222-2222-4222-8222-222222222222"},
         )
         assert first.status_code == 201
         assert second.status_code == 201
@@ -220,6 +234,7 @@ class TestListCodeBatchesAPI:
         batch_id = resp.json()["id"]
 
         # 激活一个
+        await _prepare_delivered_batch(client, headers, batch_id)
         await client.post(f"/api/v1/code-batches/{batch_id}/activate", headers=headers)
 
         # 过滤 activated
@@ -252,6 +267,7 @@ class TestActivateCodeBatchAPI:
         )
         batch_id = resp.json()["id"]
 
+        await _prepare_delivered_batch(client, headers, batch_id)
         activate_resp = await client.post(f"/api/v1/code-batches/{batch_id}/activate", headers=headers)
         assert activate_resp.status_code == 200
         assert activate_resp.json()["activated"] == 5
@@ -282,6 +298,7 @@ class TestActivateCodeBatchAPI:
         )
         batch_id = resp.json()["id"]
 
+        await _prepare_delivered_batch(client, headers, batch_id)
         await client.post(f"/api/v1/code-batches/{batch_id}/activate", headers=headers)
         # 再次激活应失败
         dup_resp = await client.post(f"/api/v1/code-batches/{batch_id}/activate", headers=headers)
@@ -348,6 +365,7 @@ class TestFreezeCodeBatchAPI:
             headers=headers,
         )
         batch_id = resp.json()["id"]
+        await _prepare_delivered_batch(client, headers, batch_id)
         await client.post(f"/api/v1/code-batches/{batch_id}/activate", headers=headers)
 
         freeze_resp = await client.post(f"/api/v1/code-batches/{batch_id}/freeze", headers=headers)
@@ -408,6 +426,7 @@ class TestVoidCodeBatchAPI:
             headers=headers,
         )
         batch_id = resp.json()["id"]
+        await _prepare_delivered_batch(client, headers, batch_id)
         await client.post(f"/api/v1/code-batches/{batch_id}/activate", headers=headers)
 
         void_resp = await client.post(
@@ -459,6 +478,7 @@ class TestCodeItemsAPI:
         batch_id = resp.json()["id"]
 
         # 激活后过滤 activated
+        await _prepare_delivered_batch(client, headers, batch_id)
         await client.post(f"/api/v1/code-batches/{batch_id}/activate", headers=headers)
 
         activated_resp = await client.get(
@@ -558,6 +578,7 @@ class TestFullCodeLifecycleAPI:
             assert item["status"] == "created"
 
         # 2. 激活
+        await _prepare_delivered_batch(client, headers, batch_id)
         activate_resp = await client.post(f"/api/v1/code-batches/{batch_id}/activate", headers=headers)
         assert activate_resp.status_code == 200
         assert activate_resp.json()["activated"] == 10

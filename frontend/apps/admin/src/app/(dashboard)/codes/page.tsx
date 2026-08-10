@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useCrud } from "@/lib/hooks";
 import {
   Alert,
@@ -9,6 +9,7 @@ import {
   Descriptions,
   Empty,
   Form,
+  Input,
   InputNumber,
   Modal,
   Select,
@@ -16,16 +17,21 @@ import {
   Table,
   Tag,
   Typography,
+  Upload,
 } from "antd";
 import {
   QrcodeOutlined,
   PlusOutlined,
   DownloadOutlined,
+  UploadOutlined,
 } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
 import api from "@/lib/api";
+import { useAuthStore } from "@/lib/auth";
+import { codeAccessForPrincipal, type CodeAccess } from "@/lib/code-access";
 import { formatDate } from "@/lib/format";
 import { STATUS_COLORS } from "@/lib/status-colors";
+import { useTenantPlanReadOnly } from "../_components/TenantPlanReadOnly";
 
 const { Title } = Typography;
 
@@ -39,6 +45,8 @@ interface CodeBatch {
   code_type: string;
   generation_mode: string;
   status: string;
+  source?: "generated" | "imported";
+  expected_item_count?: number;
   created_at?: string;
   product_name?: string;
   sku_name?: string;
@@ -69,6 +77,7 @@ interface ProductionBatch {
   expiry_date: string;
   origin?: string;
   status: string;
+  effective_status: "active" | "recalled" | "expired";
 }
 
 interface CodeBatchFormValues {
@@ -78,6 +87,13 @@ interface CodeBatchFormValues {
   generation_mode: "item_level" | "batch_level";
   quantity?: number;
   code_type: string;
+  source: "generated" | "imported";
+}
+
+interface DeliveryFormValues {
+  reason: string;
+  recipient: string;
+  confirm: "deliver";
 }
 
 const STATUS_MAP: Record<string, { label: string; color: string }> = {
@@ -104,16 +120,12 @@ const FILTER_STATUS_OPTIONS = [
 const CODE_TYPE_OPTIONS = [
   { value: "single", label: "普通二维码" },
   { value: "paired", label: "内外双码" },
-  { value: "outer", label: "外包装码（引流）" },
-  { value: "inner", label: "内包装码（验真）" },
 ];
 
 const CODE_TYPE_DESCRIPTIONS: Record<string, string> = {
   single: "普通二维码：每个包装一个独立二维码，适合大多数溯源场景。",
   paired:
     "内外双码：生成内码和外码配对，用于外包装引流、内包装验真或权益核销。",
-  outer: "外包装码：贴在外包装上，主要用于消费者扫码引流和产品展示。",
-  inner: "内包装码：放在包装内侧，主要用于验真、防伪或内部核验。",
 };
 
 const GENERATION_MODE_OPTIONS = [
@@ -159,15 +171,35 @@ function getSkuDisplay(record: CodeBatch) {
 }
 
 export default function CodesPage() {
+  const user = useAuthStore((state) => state.user);
+  const access = codeAccessForPrincipal(user);
+
+  if (!access.canRead) {
+    return <Alert type="warning" showIcon title="当前账号无权访问码管理" />;
+  }
+
+  return <CodesCatalog access={access} />;
+}
+
+function CodesCatalog({ access }: { access: CodeAccess }) {
   const { message, modal } = App.useApp();
+  const planReadOnly = useTenantPlanReadOnly();
   const [products, setProducts] = useState<Product[]>([]);
+  const [productsLoading, setProductsLoading] = useState(false);
+  const [productsError, setProductsError] = useState(false);
   const [skus, setSKUs] = useState<SKU[]>([]);
+  const [skusLoading, setSKUsLoading] = useState(false);
+  const [skusError, setSKUsError] = useState(false);
   const [productionBatches, setProductionBatches] = useState<ProductionBatch[]>(
     []
   );
+  const [productionBatchesLoading, setProductionBatchesLoading] =
+    useState(false);
+  const [productionBatchesError, setProductionBatchesError] = useState(false);
   const [status, setStatus] = useState<string | undefined>(undefined);
   const [createOpen, setCreateOpen] = useState(false);
   const [form] = Form.useForm<CodeBatchFormValues>();
+  const [deliveryForm] = Form.useForm<DeliveryFormValues>();
   const [selectedProduct, setSelectedProduct] = useState<string | undefined>(
     undefined
   );
@@ -183,9 +215,15 @@ export default function CodesPage() {
   const [markingDeliveredId, setMarkingDeliveredId] = useState<
     string | undefined
   >(undefined);
+  const [importingId, setImportingId] = useState<string | undefined>(undefined);
+  const [deliveryTarget, setDeliveryTarget] = useState<CodeBatch | null>(null);
+  const createAttempt = useRef<
+    { idempotencyKey: string; payload: string } | undefined
+  >(undefined);
 
   const generationMode = Form.useWatch("generation_mode", form) || "item_level";
   const codeType = Form.useWatch("code_type", form) || "single";
+  const source = Form.useWatch("source", form) || "generated";
   const quantity = Form.useWatch("quantity", form);
   const selectedProductionBatchId = Form.useWatch("production_batch_id", form);
 
@@ -194,19 +232,26 @@ export default function CodesPage() {
     total,
     page,
     loading,
+    error,
     setPage,
     setFilter,
     mutate,
+    retry,
   } = useCrud<CodeBatch>("/code-batches");
 
   const fetchProducts = useCallback(async () => {
+    setProductsLoading(true);
+    setProductsError(false);
     try {
       const { data } = await api.get("/products", {
         params: { page_size: 100 },
       });
       setProducts(data.items || []);
     } catch {
-      /* ignore */
+      setProducts([]);
+      setProductsError(true);
+    } finally {
+      setProductsLoading(false);
     }
   }, []);
 
@@ -214,8 +259,12 @@ export default function CodesPage() {
     if (!productId) {
       setSKUs([]);
       setProductionBatches([]);
+      setSKUsError(false);
+      setProductionBatchesError(false);
       return;
     }
+    setSKUsLoading(true);
+    setSKUsError(false);
     try {
       const { data } = await api.get("/skus", {
         params: { product_id: productId, page_size: 100 },
@@ -223,6 +272,9 @@ export default function CodesPage() {
       setSKUs(data.items || []);
     } catch {
       setSKUs([]);
+      setSKUsError(true);
+    } finally {
+      setSKUsLoading(false);
     }
   }, []);
 
@@ -230,23 +282,33 @@ export default function CodesPage() {
     async (productId?: string, skuId?: string) => {
       if (!productId || !skuId) {
         setProductionBatches([]);
+        setProductionBatchesError(false);
         return;
       }
+      setProductionBatchesLoading(true);
+      setProductionBatchesError(false);
       try {
         const { data } = await api.get("/production-batches", {
           params: { product_id: productId, sku_id: skuId, page_size: 100 },
         });
-        setProductionBatches(data.items || []);
+        setProductionBatches(
+          (data.items || []).filter(
+            (batch: ProductionBatch) => batch.effective_status === "active"
+          )
+        );
       } catch {
         setProductionBatches([]);
+        setProductionBatchesError(true);
+      } finally {
+        setProductionBatchesLoading(false);
       }
     },
     []
   );
 
   useEffect(() => {
-    fetchProducts();
-  }, [fetchProducts]);
+    if (access.canGenerate) void fetchProducts();
+  }, [access.canGenerate, fetchProducts]);
 
   const resetCreateState = () => {
     setCreateOpen(false);
@@ -255,9 +317,13 @@ export default function CodesPage() {
     setSelectedSku(undefined);
     setSKUs([]);
     setProductionBatches([]);
+    setSKUsError(false);
+    setProductionBatchesError(false);
+    createAttempt.current = undefined;
   };
 
   const submitCreate = async (values: CodeBatchFormValues) => {
+    if (planReadOnly || !access.canGenerate) return;
     const payload = {
       product_id: values.product_id,
       sku_id: values.sku_id,
@@ -266,11 +332,28 @@ export default function CodesPage() {
       quantity: values.generation_mode === "batch_level" ? 1 : values.quantity,
       code_type:
         values.generation_mode === "batch_level" ? "single" : values.code_type,
+      source: values.source,
     };
+    const serializedPayload = JSON.stringify(payload);
+    if (
+      !createAttempt.current ||
+      createAttempt.current.payload !== serializedPayload
+    ) {
+      createAttempt.current = {
+        idempotencyKey: crypto.randomUUID(),
+        payload: serializedPayload,
+      };
+    }
     setCreating(true);
     try {
-      await api.post("/code-batches", payload);
-      message.success("码批次已生成，可继续导出码表、激活或关联扫码页");
+      await api.post("/code-batches", payload, {
+        headers: { "Idempotency-Key": createAttempt.current.idempotencyKey },
+      });
+      message.success(
+        values.source === "imported"
+          ? "接管批次已创建，请导入声明数量的既有码"
+          : "码批次已生成，可继续导出码表、激活或关联扫码页"
+      );
       resetCreateState();
       mutate();
     } catch {
@@ -298,6 +381,7 @@ export default function CodesPage() {
   };
 
   const handleActivate = async (id: string) => {
+    if (planReadOnly || !access.canManage) return;
     setActivatingId(id);
     try {
       await api.post(`/code-batches/${id}/activate`);
@@ -311,6 +395,7 @@ export default function CodesPage() {
   };
 
   const handleExport = async (record: CodeBatch) => {
+    if (planReadOnly || !access.canExport) return;
     setExportingId(record.id);
     try {
       const response = await api.post<Blob>(
@@ -386,6 +471,7 @@ export default function CodesPage() {
   };
 
   const handleMarkPrinting = async (id: string) => {
+    if (planReadOnly || !access.canManage) return;
     setMarkingPrintingId(id);
     try {
       await api.post(`/code-batches/${id}/mark-printing`);
@@ -398,16 +484,46 @@ export default function CodesPage() {
     }
   };
 
-  const handleMarkDelivered = async (id: string) => {
-    setMarkingDeliveredId(id);
+  const handleMarkDelivered = async (values: DeliveryFormValues) => {
+    if (!deliveryTarget) return;
+    if (planReadOnly || !access.canManage) return;
+    setMarkingDeliveredId(deliveryTarget.id);
     try {
-      await api.post(`/code-batches/${id}/mark-delivered`);
+      await api.post(
+        `/code-batches/${deliveryTarget.id}/mark-delivered`,
+        values
+      );
       message.success("已标记为已交付");
+      setDeliveryTarget(null);
+      deliveryForm.resetFields();
       mutate();
     } catch {
       message.error("标记已交付失败");
     } finally {
       setMarkingDeliveredId(undefined);
+    }
+  };
+
+  const handleImportExistingCodes = async (record: CodeBatch, file: File) => {
+    if (planReadOnly || !access.canGenerate) return;
+    if (!file.name.toLowerCase().endsWith(".csv")) {
+      message.error("请选择 CSV 文件");
+      return;
+    }
+
+    const formData = new FormData();
+    formData.append("file", file);
+    setImportingId(record.id);
+    try {
+      await api.post("/imports/existing-codes", formData, {
+        params: { code_batch_id: record.id },
+      });
+      message.success("既有码导入完成，码批次已进入可导出状态");
+      mutate();
+    } catch {
+      message.error("既有码导入失败，请核对数量、格式和码值唯一性");
+    } finally {
+      setImportingId(undefined);
     }
   };
 
@@ -444,10 +560,22 @@ export default function CodesPage() {
       render: (v: string) => GENERATION_MODE_LABELS[v] || "一物一码",
     },
     {
-      title: "数量",
+      title: "包装/码数量",
       dataIndex: "quantity",
       key: "quantity",
-      render: (v: number) => Number(v || 0).toLocaleString(),
+      render: (v: number, record: CodeBatch) => (
+        <div>
+          <div>
+            {Number(v || 0).toLocaleString()}
+            {record.code_type === "paired" ? " 组" : ""}
+          </div>
+          {record.expected_item_count != null ? (
+            <div className="text-xs text-text-muted">
+              {Number(record.expected_item_count).toLocaleString()} 个物理码
+            </div>
+          ) : null}
+        </div>
+      ),
     },
     {
       title: "码类型",
@@ -476,73 +604,96 @@ export default function CodesPage() {
     {
       title: "操作",
       key: "actions",
-      render: (_: unknown, record: CodeBatch) => (
-        <Space>
-          {[
-            "activated",
-            "completed",
-            "exported",
-            "printing",
-            "delivered",
-          ].includes(record.status) && (
-            <Button
-              size="small"
-              icon={<DownloadOutlined />}
-              onClick={() => handleExport(record)}
-              loading={exportingId === record.id}
-            >
-              导出码表
-            </Button>
-          )}
-          {record.status === "completed" && (
-            <Button
-              size="small"
-              type="primary"
-              loading={activatingId === record.id}
-              onClick={() => showActivateConfirm(record)}
-            >
-              激活码批次
-            </Button>
-          )}
-          {record.status === "completed" && (
-            <Button
-              size="small"
-              loading={markingPrintingId === record.id}
-              onClick={() => handleMarkPrinting(record.id)}
-            >
-              标记印刷中
-            </Button>
-          )}
-          {record.status === "printing" && (
-            <Button
-              size="small"
-              loading={markingDeliveredId === record.id}
-              onClick={() => handleMarkDelivered(record.id)}
-            >
-              标记已交付
-            </Button>
-          )}
-          {record.status === "delivered" && (
-            <Button
-              size="small"
-              type="primary"
-              loading={activatingId === record.id}
-              onClick={() => showActivateConfirm(record)}
-            >
-              激活码批次
-            </Button>
-          )}
-          {![
-            "activated",
-            "completed",
-            "exported",
-            "printing",
-            "delivered",
-          ].includes(record.status) && (
-            <Typography.Text type="secondary">暂无可用操作</Typography.Text>
-          )}
-        </Space>
-      ),
+      render: (_: unknown, record: CodeBatch) => {
+        const canImport =
+          access.canGenerate &&
+          record.source === "imported" &&
+          record.status === "generating";
+        const hasLifecycleAction = [
+          "activated",
+          "completed",
+          "exported",
+          "printing",
+          "delivered",
+        ].includes(record.status);
+
+        return (
+          <Space>
+            {canImport ? (
+              <Upload
+                accept=".csv,text/csv"
+                showUploadList={false}
+                beforeUpload={(file) => {
+                  void handleImportExistingCodes(record, file);
+                  return Upload.LIST_IGNORE;
+                }}
+                disabled={planReadOnly || importingId === record.id}
+              >
+                <Button
+                  size="small"
+                  icon={<UploadOutlined />}
+                  loading={importingId === record.id}
+                  disabled={planReadOnly}
+                >
+                  导入既有码
+                </Button>
+              </Upload>
+            ) : null}
+            {access.canExport &&
+              [
+                "activated",
+                "completed",
+                "exported",
+                "printing",
+                "delivered",
+              ].includes(record.status) && (
+                <Button
+                  size="small"
+                  icon={<DownloadOutlined />}
+                  onClick={() => handleExport(record)}
+                  loading={exportingId === record.id}
+                  disabled={planReadOnly}
+                >
+                  导出码表
+                </Button>
+              )}
+            {access.canManage && record.status === "exported" && (
+              <Button
+                size="small"
+                loading={markingPrintingId === record.id}
+                onClick={() => handleMarkPrinting(record.id)}
+                disabled={planReadOnly}
+              >
+                标记印刷中
+              </Button>
+            )}
+            {access.canManage && record.status === "printing" && (
+              <Button
+                size="small"
+                loading={markingDeliveredId === record.id}
+                onClick={() => setDeliveryTarget(record)}
+                disabled={planReadOnly}
+              >
+                标记已交付
+              </Button>
+            )}
+            {access.canManage && record.status === "delivered" && (
+              <Button
+                size="small"
+                type="primary"
+                loading={activatingId === record.id}
+                onClick={() => showActivateConfirm(record)}
+                disabled={planReadOnly}
+              >
+                激活码批次
+              </Button>
+            )}
+            {!canImport && !hasLifecycleAction && (
+              <Typography.Text type="secondary">暂无可用操作</Typography.Text>
+            )}
+          </Space>
+        );
+      },
     },
   ];
 
@@ -564,16 +715,30 @@ export default function CodesPage() {
             }}
             options={FILTER_STATUS_OPTIONS}
           />
-          <Button
-            type="primary"
-            icon={<PlusOutlined />}
-            onClick={() => setCreateOpen(true)}
-          >
-            生成码批次
-          </Button>
+          {access.canGenerate ? (
+            <Button
+              type="primary"
+              icon={<PlusOutlined />}
+              onClick={() => setCreateOpen(true)}
+              disabled={planReadOnly || productsLoading || productsError}
+            >
+              生成码批次
+            </Button>
+          ) : null}
         </Space>
       </div>
-      {batches.length === 0 && !loading ? (
+      {error ? (
+        <Alert
+          type="error"
+          showIcon
+          title="码批次加载失败"
+          action={
+            <Button size="small" onClick={() => void retry()}>
+              重试
+            </Button>
+          }
+        />
+      ) : batches.length === 0 && !loading ? (
         <Empty
           image={
             <QrcodeOutlined
@@ -607,6 +772,17 @@ export default function CodesPage() {
         onOk={() => form.submit()}
         okText="生成码批次"
         confirmLoading={creating}
+        okButtonProps={{
+          disabled:
+            planReadOnly ||
+            !access.canGenerate ||
+            productsLoading ||
+            productsError ||
+            skusLoading ||
+            skusError ||
+            productionBatchesLoading ||
+            productionBatchesError,
+        }}
         forceRender
         width={500}
       >
@@ -614,8 +790,55 @@ export default function CodesPage() {
           form={form}
           layout="vertical"
           onFinish={handleCreate}
-          initialValues={{ generation_mode: "item_level", code_type: "single" }}
+          disabled={
+            planReadOnly ||
+            !access.canGenerate ||
+            productsLoading ||
+            productsError
+          }
+          initialValues={{
+            source: "generated",
+            generation_mode: "item_level",
+            code_type: "single",
+          }}
         >
+          {productsError ? (
+            <Alert
+              className="mb-4"
+              type="error"
+              showIcon
+              title="产品选项加载失败"
+              action={
+                <Button size="small" onClick={() => void fetchProducts()}>
+                  重试
+                </Button>
+              }
+            />
+          ) : null}
+          <Form.Item name="source" label="码来源" rules={[{ required: true }]}>
+            <Select
+              options={[
+                { value: "generated", label: "系统生成新码" },
+                { value: "imported", label: "接管已有印刷码" },
+              ]}
+              onChange={(value) => {
+                if (value === "imported") {
+                  form.setFieldsValue({
+                    generation_mode: "item_level",
+                    code_type: "single",
+                  });
+                }
+              }}
+            />
+          </Form.Item>
+          {source === "imported" ? (
+            <Alert
+              className="mb-4"
+              type="info"
+              showIcon
+              title="先创建接管批次，再一次性导入声明数量的既有码。"
+            />
+          ) : null}
           <Form.Item
             name="product_id"
             label="关联产品"
@@ -652,7 +875,7 @@ export default function CodesPage() {
               }))}
               showSearch
               optionFilterProp="label"
-              disabled={!selectedProduct}
+              disabled={!selectedProduct || skusLoading || skusError}
               notFoundContent={
                 selectedProduct ? (
                   <Empty
@@ -673,6 +896,22 @@ export default function CodesPage() {
               data-testid="code-batch-sku-select"
             />
           </Form.Item>
+          {skusError ? (
+            <Alert
+              className="mb-4"
+              type="error"
+              showIcon
+              title="SKU 选项加载失败"
+              action={
+                <Button
+                  size="small"
+                  onClick={() => void fetchSKUs(selectedProduct)}
+                >
+                  重试
+                </Button>
+              }
+            />
+          ) : null}
           <Form.Item
             name="production_batch_id"
             label="关联生产批次"
@@ -686,7 +925,11 @@ export default function CodesPage() {
               }))}
               showSearch
               optionFilterProp="label"
-              disabled={!selectedSku}
+              disabled={
+                !selectedSku ||
+                productionBatchesLoading ||
+                productionBatchesError
+              }
               notFoundContent={
                 selectedSku ? (
                   <Empty
@@ -702,6 +945,24 @@ export default function CodesPage() {
               data-testid="code-batch-production-batch-select"
             />
           </Form.Item>
+          {productionBatchesError ? (
+            <Alert
+              className="mb-4"
+              type="error"
+              showIcon
+              title="生产批次选项加载失败"
+              action={
+                <Button
+                  size="small"
+                  onClick={() =>
+                    void fetchProductionBatches(selectedProduct, selectedSku)
+                  }
+                >
+                  重试
+                </Button>
+              }
+            />
+          ) : null}
           <Form.Item
             name="generation_mode"
             label="生成方式"
@@ -709,6 +970,7 @@ export default function CodesPage() {
           >
             <Select
               options={GENERATION_MODE_OPTIONS}
+              disabled={source === "imported"}
               onChange={(v) => {
                 if (v === "batch_level")
                   form.setFieldsValue({ quantity: 1, code_type: "single" });
@@ -725,9 +987,9 @@ export default function CodesPage() {
             >
               <InputNumber
                 min={1}
-                max={100000}
+                max={codeType === "paired" ? 5000 : 10000}
                 style={{ width: "100%" }}
-                placeholder="1-100000"
+                placeholder={codeType === "paired" ? "1-5000 组" : "1-10000"}
                 data-testid="code-batch-quantity-input"
               />
             </Form.Item>
@@ -750,7 +1012,9 @@ export default function CodesPage() {
           >
             <Select
               options={CODE_TYPE_OPTIONS}
-              disabled={generationMode === "batch_level"}
+              disabled={
+                generationMode === "batch_level" || source === "imported"
+              }
               data-testid="code-batch-type-select"
             />
           </Form.Item>
@@ -773,7 +1037,12 @@ export default function CodesPage() {
               <Descriptions.Item label="生成数量">
                 {generationMode === "batch_level"
                   ? 1
-                  : Number(quantity || 0).toLocaleString()}
+                  : `${Number(quantity || 0).toLocaleString()}${codeType === "paired" ? " 组" : ""}`}
+              </Descriptions.Item>
+              <Descriptions.Item label="预计物理码">
+                {generationMode === "batch_level"
+                  ? 1
+                  : Number(quantity || 0) * (codeType === "paired" ? 2 : 1)}
               </Descriptions.Item>
               <Descriptions.Item label="码类型">
                 {getCodeTypeLabel(
@@ -782,6 +1051,45 @@ export default function CodesPage() {
               </Descriptions.Item>
             </Descriptions>
           ) : null}
+        </Form>
+      </Modal>
+      <Modal
+        title="确认码表已交付"
+        open={deliveryTarget !== null}
+        onCancel={() => {
+          setDeliveryTarget(null);
+          deliveryForm.resetFields();
+        }}
+        onOk={() => deliveryForm.submit()}
+        okText="确认交付"
+        confirmLoading={markingDeliveredId === deliveryTarget?.id}
+        okButtonProps={{ disabled: planReadOnly || !access.canManage }}
+        forceRender
+      >
+        <Form<DeliveryFormValues>
+          form={deliveryForm}
+          layout="vertical"
+          onFinish={handleMarkDelivered}
+          disabled={planReadOnly || !access.canManage}
+          initialValues={{ confirm: "deliver" }}
+        >
+          <Form.Item
+            name="recipient"
+            label="交付对象"
+            rules={[{ required: true, whitespace: true, max: 255 }]}
+          >
+            <Input placeholder="例如：华东印刷供应商" />
+          </Form.Item>
+          <Form.Item
+            name="reason"
+            label="交付说明"
+            rules={[{ required: true, whitespace: true, max: 500 }]}
+          >
+            <Input.TextArea rows={3} placeholder="说明本次交付用途或交付单据" />
+          </Form.Item>
+          <Form.Item name="confirm" hidden>
+            <input />
+          </Form.Item>
         </Form>
       </Modal>
     </div>

@@ -6,11 +6,13 @@ import {
   isAgencyScopedRouteAllowed,
 } from "@/lib/agency-access";
 import { catalogAccessForPrincipal } from "@/lib/catalog-access";
+import { codeAccessForPrincipal } from "@/lib/code-access";
 
 const PUBLIC_PATHS = ["/login", "/register", "/reset-password"];
 
 // Route access rules by tenant_type
 const AGENCY_ONLY_ROUTES = ["/agency"];
+const EXPORT_ADMIN_ROUTES = ["/exports"];
 const CATALOG_ROUTES = [
   "/brands",
   "/products",
@@ -146,6 +148,25 @@ export function middleware(request: NextRequest) {
       }).canRead
     ) {
       return NextResponse.redirect(new URL("/", request.url));
+    }
+
+    if (matchesRoute(pathname, EXPORT_ADMIN_ROUTES)) {
+      const exportAccess = codeAccessForPrincipal({
+        tenant_type: tenantType,
+        role,
+        acting_tenant_id:
+          typeof payload.acting_tenant_id === "string"
+            ? payload.acting_tenant_id
+            : null,
+        agency_scope: Array.isArray(payload.scope)
+          ? payload.scope.filter(
+              (scope): scope is string => typeof scope === "string"
+            )
+          : [],
+      });
+      if (tenantType !== "brand" || !exportAccess.canManage) {
+        return NextResponse.redirect(new URL("/", request.url));
+      }
     }
   } catch {
     // Invalid token, redirect to login
