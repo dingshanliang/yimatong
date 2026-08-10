@@ -1,6 +1,7 @@
 import uuid
 from datetime import date
 
+from pydantic import ValidationError
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -21,6 +22,7 @@ from app.models.product import (
     ProductStatus,
     SKUStatus,
 )
+from app.schemas.product import ProductionBatchCSVRow
 from app.services.quota import CumulativeQuotaKey, check_quota_for_tenant, release_quota
 from app.utils import china_business_date, escape_like_pattern
 from app.utils.public_url import normalize_public_url
@@ -799,7 +801,6 @@ async def import_batches_csv(
     csv_content: str,
 ) -> tuple[int, list[str]]:
     import csv
-    from datetime import date as date_type
     from io import StringIO
 
     reader = csv.DictReader(StringIO(csv_content))
@@ -826,37 +827,31 @@ async def import_batches_csv(
                 errors.append(f"Row {row_num}: row limit exceeded ({max_rows})")
             break
         try:
-            batch_code = row["batch_code"].strip()
-            production_date_str = row["production_date"].strip()
-            expiry_date_str = row["expiry_date"].strip()
-            production_date = date_type.fromisoformat(production_date_str)
-            expiry_date = date_type.fromisoformat(expiry_date_str)
-            if expiry_date < production_date:
-                raise ValueError("expiry_date cannot be earlier than production_date")
+            parsed = ProductionBatchCSVRow.model_validate(row)
 
             existing = await db.execute(
                 select(ProductionBatch).where(
                     ProductionBatch.tenant_id == tenant_id,
-                    ProductionBatch.batch_code == batch_code,
+                    ProductionBatch.batch_code == parsed.batch_code,
                 )
             )
             if existing.scalar_one_or_none():
                 if len(errors) < max_errors:
-                    errors.append(f"Row {row_num}: batch_code '{batch_code}' already exists")
+                    errors.append(f"Row {row_num}: batch_code already exists")
                 continue
 
             batch = ProductionBatch(
                 tenant_id=tenant_id,
                 product_id=product_id,
                 sku_id=sku_id,
-                batch_code=batch_code,
-                production_date=production_date,
-                expiry_date=expiry_date,
-                origin=row.get("origin", "").strip() or None,
+                batch_code=parsed.batch_code,
+                production_date=parsed.production_date,
+                expiry_date=parsed.expiry_date,
+                origin=parsed.origin,
             )
             db.add(batch)
             imported += 1
-        except (KeyError, TypeError, ValueError):
+        except ValidationError:
             if len(errors) < max_errors:
                 errors.append(f"Row {row_num}: invalid batch data")
 

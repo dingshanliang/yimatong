@@ -223,6 +223,37 @@ class CSVImportResult(BaseModel):
     errors: list[str] = Field(..., description="错误信息列表")
 
 
+class ProductionBatchCSVRow(BaseModel):
+    """Strict row contract for production-batch CSV ingestion."""
+
+    batch_code: str = Field(min_length=1, max_length=100)
+    production_date: date
+    expiry_date: date
+    origin: str | None = Field(default=None, max_length=200)
+
+    model_config = ConfigDict(extra="forbid", strict=True, str_strip_whitespace=True)
+
+    @field_validator("production_date", "expiry_date", mode="before")
+    @classmethod
+    def parse_iso_date(cls, value: object) -> object:
+        if isinstance(value, str):
+            return date.fromisoformat(value.strip())
+        return value
+
+    @field_validator("origin", mode="before")
+    @classmethod
+    def empty_origin_to_none(cls, value: object) -> object:
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
+
+    @model_validator(mode="after")
+    def validate_date_order(self):
+        if self.expiry_date < self.production_date:
+            raise ValueError("Expiry date cannot be earlier than production date")
+        return self
+
+
 class ProductAssetCreate(CatalogWriteSchema):
     asset_type: ProductAssetType = Field(..., description="资料类型")
     name: str = Field(..., min_length=1, max_length=200, description="资料名称")

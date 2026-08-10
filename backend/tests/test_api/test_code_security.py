@@ -17,6 +17,7 @@ from app.core.database import get_db
 from app.main import app
 from app.models.code import CodeBatch, CodeBatchStatus, CodeItem
 from app.models.product import SKU, BatchStatus, Brand, Product, ProductionBatch
+from app.services import import_admission
 from app.services import import_service as import_service_module
 from app.services.import_service import ExcelImportService
 from app.services.public_id import generate_public_id
@@ -58,7 +59,7 @@ async def client(db_session: AsyncSession):
 @pytest.fixture(autouse=True)
 def allow_shared_import_rate_limit(monkeypatch):
     monkeypatch.setattr(
-        imports._import_rate_cache,
+        import_admission._import_rate_cache,
         "rate_limit_check_shared",
         AsyncMock(return_value=(True, 9)),
     )
@@ -279,9 +280,7 @@ class TestPermissionEnforcement:
         rate_check = AsyncMock(return_value=(False, 0))
         read_upload = AsyncMock(return_value=b"public_id\n")
         to_thread = AsyncMock()
-        monkeypatch.setattr(
-            imports, "_import_rate_cache", SimpleNamespace(rate_limit_check_shared=rate_check), raising=False
-        )
+        monkeypatch.setattr(import_admission, "_import_rate_cache", SimpleNamespace(rate_limit_check_shared=rate_check))
         monkeypatch.setattr(imports, "_read_upload", read_upload)
         monkeypatch.setattr(import_service_module.asyncio, "to_thread", to_thread)
 
@@ -293,7 +292,7 @@ class TestPermissionEnforcement:
         )
 
         assert response.status_code == 429
-        assert response.headers["Retry-After"] == str(imports.IMPORT_RATE_LIMIT_WINDOW_SECONDS)
+        assert response.headers["Retry-After"] == str(import_admission.IMPORT_RATE_LIMIT_WINDOW_SECONDS)
         read_upload.assert_not_awaited()
         to_thread.assert_not_awaited()
 
@@ -308,9 +307,7 @@ class TestPermissionEnforcement:
         rate_check = AsyncMock(side_effect=SharedSecurityCacheUnavailable("redis unavailable"))
         read_upload = AsyncMock(return_value=b"product_name\n")
         to_thread = AsyncMock()
-        monkeypatch.setattr(
-            imports, "_import_rate_cache", SimpleNamespace(rate_limit_check_shared=rate_check), raising=False
-        )
+        monkeypatch.setattr(import_admission, "_import_rate_cache", SimpleNamespace(rate_limit_check_shared=rate_check))
         monkeypatch.setattr(imports, "_read_upload", read_upload)
         monkeypatch.setattr(import_service_module.asyncio, "to_thread", to_thread)
 
@@ -363,13 +360,12 @@ class TestPermissionEnforcement:
         account_id = uuid.uuid4()
         rate_check = AsyncMock(return_value=(True, 9))
         monkeypatch.setattr(
-            imports,
+            import_admission,
             "_import_rate_cache",
             SimpleNamespace(rate_limit_check_shared=rate_check),
-            raising=False,
         )
 
-        await imports._enforce_import_rate_limit(tenant_id, account_id)
+        await import_admission.enforce_import_rate_limit(tenant_id, account_id)
 
         key = rate_check.await_args.args[0]
         assert str(tenant_id) not in key

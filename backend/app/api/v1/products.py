@@ -32,6 +32,7 @@ from app.schemas.product import (
 from app.services.audit import write_audit_log
 from app.services.campaign import list_brand_campaigns
 from app.services.code import list_brand_code_batches
+from app.services.import_admission import enforce_import_rate_limit
 from app.services.product import (
     create_brand,
     create_product,
@@ -733,8 +734,9 @@ async def recall_batch_endpoint(
 
 @batch_router.post("/import-csv", response_model=CSVImportResult, summary="导入 csv")
 async def import_csv_endpoint(
-    product_id: str = Form(...),
-    sku_id: str = Form(...),
+    _rate_limit: None = Depends(enforce_import_rate_limit),
+    product_id: uuid.UUID = Form(...),
+    sku_id: uuid.UUID = Form(...),
     file: UploadFile = File(...),
     db: AsyncSession = Depends(get_db, scope="function"),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
@@ -752,11 +754,13 @@ async def import_csv_endpoint(
         content = raw.decode("utf-8-sig")
     except UnicodeDecodeError as exc:
         raise HTTPException(status_code=400, detail="CSV file must be UTF-8 encoded") from exc
+    if not content.strip():
+        raise HTTPException(status_code=400, detail="CSV file must not be empty")
     imported, errors = await import_batches_csv(
         db,
         tenant_id,
-        uuid.UUID(product_id),
-        uuid.UUID(sku_id),
+        product_id,
+        sku_id,
         content,
     )
     if imported:
@@ -766,7 +770,7 @@ async def import_csv_endpoint(
             str(tenant_id),
             "production_batch_imported",
             f"product:{product_id}",
-            {"product_id": product_id, "sku_id": sku_id, "imported": imported, "errors": len(errors)},
+            {"product_id": str(product_id), "sku_id": str(sku_id), "imported": imported, "errors": len(errors)},
         )
     return CSVImportResult(imported=imported, errors=errors)
 

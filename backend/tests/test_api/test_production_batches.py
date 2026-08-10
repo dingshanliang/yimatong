@@ -4,17 +4,23 @@ import io
 import uuid
 from collections.abc import AsyncGenerator
 from datetime import date, timedelta
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 from fastapi.routing import APIRoute
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from starlette.datastructures import UploadFile as StarletteUploadFile
 
+from app.api.v1 import products as products_api
 from app.core.database import get_db
 from app.main import app
 from app.models.audit import PlatformAuditLog
 from app.models.product import BatchStatus, ProductionBatch
+from app.services import import_admission
+from app.services.redis_cache import SharedSecurityCacheUnavailable
 from app.utils.security import create_access_token
 from tests.conftest import TestSessionLocal
 
@@ -532,6 +538,247 @@ class TestProductionBatchCRUD:
         data = resp.json()
         assert data["imported"] == 2
         assert len(data["errors"]) == 0
+
+    @pytest.mark.anyio
+    async def test_csv_import_rate_limit_rejects_before_file_service_or_audit(
+        self,
+        client: AsyncClient,
+        tenant_with_auth,
+        sku_id,
+        monkeypatch,
+    ):
+        product_id, sid = sku_id
+        _, headers = tenant_with_auth
+
+        rate_check = AsyncMock(return_value=(False, 0))
+        read_file = AsyncMock(return_value=b"batch_code,production_date,expiry_date\n")
+        import_service = AsyncMock(return_value=(0, []))
+        audit = AsyncMock()
+        monkeypatch.setattr(
+            import_admission,
+            "_import_rate_cache",
+            SimpleNamespace(rate_limit_check_shared=rate_check),
+        )
+        monkeypatch.setattr(StarletteUploadFile, "read", read_file)
+        monkeypatch.setattr(products_api, "import_batches_csv", import_service)
+        monkeypatch.setattr(products_api, "write_audit_log", audit)
+
+        response = await client.post(
+            "/api/v1/production-batches/import-csv",
+            files={"file": ("batches.csv", b"sensitive payload", "text/csv")},
+            data={"product_id": product_id, "sku_id": sid},
+            headers=headers,
+        )
+
+        assert response.status_code == 429
+        assert response.headers["Retry-After"] == "60"
+        read_file.assert_not_awaited()
+        import_service.assert_not_awaited()
+        audit.assert_not_awaited()
+
+    @pytest.mark.anyio
+    async def test_csv_import_rate_limit_fails_closed_before_file_service_or_audit(
+        self,
+        client: AsyncClient,
+        tenant_with_auth,
+        sku_id,
+        monkeypatch,
+    ):
+        product_id, sid = sku_id
+        _, headers = tenant_with_auth
+
+        rate_check = AsyncMock(side_effect=SharedSecurityCacheUnavailable("redis unavailable"))
+        read_file = AsyncMock(return_value=b"batch_code,production_date,expiry_date\n")
+        import_service = AsyncMock(return_value=(0, []))
+        audit = AsyncMock()
+        monkeypatch.setattr(
+            import_admission,
+            "_import_rate_cache",
+            SimpleNamespace(rate_limit_check_shared=rate_check),
+        )
+        monkeypatch.setattr(StarletteUploadFile, "read", read_file)
+        monkeypatch.setattr(products_api, "import_batches_csv", import_service)
+        monkeypatch.setattr(products_api, "write_audit_log", audit)
+
+        response = await client.post(
+            "/api/v1/production-batches/import-csv",
+            files={"file": ("batches.csv", b"sensitive payload", "text/csv")},
+            data={"product_id": product_id, "sku_id": sid},
+            headers=headers,
+        )
+
+        assert response.status_code == 503
+        read_file.assert_not_awaited()
+        import_service.assert_not_awaited()
+        audit.assert_not_awaited()
+
+    @pytest.mark.anyio
+    @pytest.mark.parametrize(
+        ("submitted_product_id", "submitted_sku_id"),
+        [("not-a-uuid", None), (None, "not-a-uuid")],
+    )
+    async def test_csv_import_rejects_malformed_form_uuid_before_file_service_or_audit(
+        self,
+        client: AsyncClient,
+        tenant_with_auth,
+        sku_id,
+        monkeypatch,
+        submitted_product_id,
+        submitted_sku_id,
+    ):
+        valid_product_id, valid_sku_id = sku_id
+        _, headers = tenant_with_auth
+        read_file = AsyncMock(return_value=b"batch_code,production_date,expiry_date\n")
+        import_service = AsyncMock(return_value=(0, []))
+        audit = AsyncMock()
+        monkeypatch.setattr(StarletteUploadFile, "read", read_file)
+        monkeypatch.setattr(products_api, "import_batches_csv", import_service)
+        monkeypatch.setattr(products_api, "write_audit_log", audit)
+
+        response = await client.post(
+            "/api/v1/production-batches/import-csv",
+            files={"file": ("batches.csv", b"payload", "text/csv")},
+            data={
+                "product_id": submitted_product_id or valid_product_id,
+                "sku_id": submitted_sku_id or valid_sku_id,
+            },
+            headers=headers,
+        )
+
+        assert response.status_code == 422
+        read_file.assert_not_awaited()
+        import_service.assert_not_awaited()
+        audit.assert_not_awaited()
+
+    @pytest.mark.anyio
+    @pytest.mark.parametrize(
+        ("filename", "content_type", "content", "expected_status", "expected_detail", "expected_reads"),
+        [
+            ("batches.txt", "text/plain", b"payload", 415, "Only CSV files are supported", 0),
+            (
+                "batches.csv",
+                "text/csv",
+                b"x" * (5 * 1024 * 1024 + 1),
+                413,
+                "CSV file must not exceed 5MB",
+                1,
+            ),
+            ("batches.csv", "text/csv", b"\xff", 400, "CSV file must be UTF-8 encoded", 1),
+            ("batches.csv", "text/csv", b"", 400, "CSV file must not be empty", 1),
+        ],
+    )
+    async def test_csv_import_rejects_invalid_upload_before_service_or_audit(
+        self,
+        client: AsyncClient,
+        tenant_with_auth,
+        sku_id,
+        monkeypatch,
+        filename,
+        content_type,
+        content,
+        expected_status,
+        expected_detail,
+        expected_reads,
+    ):
+        product_id, sid = sku_id
+        _, headers = tenant_with_auth
+        read_file = AsyncMock(return_value=content)
+        import_service = AsyncMock(return_value=(0, []))
+        audit = AsyncMock()
+        monkeypatch.setattr(StarletteUploadFile, "read", read_file)
+        monkeypatch.setattr(products_api, "import_batches_csv", import_service)
+        monkeypatch.setattr(products_api, "write_audit_log", audit)
+
+        response = await client.post(
+            "/api/v1/production-batches/import-csv",
+            files={"file": (filename, b"multipart payload", content_type)},
+            data={"product_id": product_id, "sku_id": sid},
+            headers=headers,
+        )
+
+        assert response.status_code == expected_status
+        assert response.json()["detail"] == expected_detail
+        assert read_file.await_count == expected_reads
+        import_service.assert_not_awaited()
+        audit.assert_not_awaited()
+
+    @pytest.mark.anyio
+    @pytest.mark.parametrize(
+        "csv_content",
+        [
+            "batch_code,production_date,expiry_date,origin\n,2026-08-01,2027-08-01,黑龙江\n",
+            f"batch_code,production_date,expiry_date,origin\n{'B' * 101},2026-08-01,2027-08-01,黑龙江\n",
+            f"batch_code,production_date,expiry_date,origin\nVALID,2026-08-01,2027-08-01,{'O' * 201}\n",
+            "batch_code,production_date,expiry_date,origin\nVALID,not-a-date,2027-08-01,黑龙江\n",
+            "batch_code,production_date,expiry_date,origin\nVALID,2027-08-01,2026-08-01,黑龙江\n",
+            "batch_code,production_date,expiry_date,origin,unexpected\nVALID,2026-08-01,2027-08-01,黑龙江,nope\n",
+        ],
+    )
+    async def test_csv_import_invalid_row_is_stable_and_writes_nothing(
+        self,
+        client: AsyncClient,
+        db_session: AsyncSession,
+        tenant_with_auth,
+        sku_id,
+        monkeypatch,
+        csv_content,
+    ):
+        product_id, sid = sku_id
+        _, headers = tenant_with_auth
+        audit = AsyncMock()
+        monkeypatch.setattr(products_api, "write_audit_log", audit)
+        before = await db_session.scalar(select(func.count()).select_from(ProductionBatch))
+
+        response = await client.post(
+            "/api/v1/production-batches/import-csv",
+            files={"file": ("batches.csv", csv_content.encode(), "text/csv")},
+            data={"product_id": product_id, "sku_id": sid},
+            headers=headers,
+        )
+
+        assert response.status_code == 200
+        assert response.json() == {"imported": 0, "errors": ["Row 2: invalid batch data"]}
+        after = await db_session.scalar(select(func.count()).select_from(ProductionBatch))
+        assert after == before
+        audit.assert_not_awaited()
+
+    @pytest.mark.anyio
+    async def test_csv_import_continues_after_invalid_row_and_trims_valid_values(
+        self,
+        client: AsyncClient,
+        db_session: AsyncSession,
+        tenant_with_auth,
+        sku_id,
+        monkeypatch,
+    ):
+        product_id, sid = sku_id
+        _, headers = tenant_with_auth
+        audit = AsyncMock()
+        monkeypatch.setattr(products_api, "write_audit_log", audit)
+        csv_content = (
+            "batch_code,production_date,expiry_date,origin\n"
+            ",2026-08-01,2027-08-01,invalid\n"
+            "  VALID-TRIMMED  ,2026-08-01,2027-08-01,  黑龙江省五常市  \n"
+        )
+
+        response = await client.post(
+            "/api/v1/production-batches/import-csv",
+            files={"file": ("batches.csv", csv_content.encode(), "text/csv")},
+            data={"product_id": product_id, "sku_id": sid},
+            headers=headers,
+        )
+
+        assert response.status_code == 200
+        assert response.json() == {"imported": 1, "errors": ["Row 2: invalid batch data"]}
+        persisted = await db_session.scalar(
+            select(ProductionBatch).where(
+                ProductionBatch.tenant_id == uuid.UUID(tenant_with_auth[0]),
+                ProductionBatch.batch_code == "VALID-TRIMMED",
+            )
+        )
+        assert persisted is not None
+        assert persisted.origin == "黑龙江省五常市"
+        audit.assert_awaited_once()
 
     @pytest.mark.anyio
     async def test_delete_batch_success(self, client: AsyncClient, tenant_with_auth, sku_id):

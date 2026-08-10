@@ -1,8 +1,6 @@
 """批量导入端点：产品导入 + 既有码接管 + Excel 多 Sheet 导入"""
 
 import csv
-import hashlib
-import hmac
 import io
 import logging
 import uuid
@@ -15,18 +13,18 @@ from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 from uuid6 import uuid7
 
-from app.core.config import settings
 from app.core.database import get_db
 from app.core.dependencies import get_current_account_id, get_current_tenant
 from app.core.exceptions import AppException
 from app.models.code import CodeBatch, CodeBatchStatus, CodeItem, CodeItemStatus
 from app.models.product import SKU, Brand, Product, ProductionBatch
+from app.services import import_admission
 from app.services.audit import write_audit_log
+from app.services.import_admission import enforce_import_rate_limit
 from app.services.import_service import ExcelImportService, XLSXParseLease
 from app.services.product import is_production_batch_effectively_active
 from app.services.public_id import validate_public_id
 from app.services.quota import CumulativeQuotaKey, reserve_quota
-from app.services.redis_cache import AsyncRedisCache, SharedSecurityCacheUnavailable
 from app.utils.auth_rbac import require_permission, require_role
 
 logger = logging.getLogger(__name__)
@@ -38,37 +36,17 @@ MAX_EXCEL_SIZE = 10 * 1024 * 1024
 MAX_CSV_SIZE = 5 * 1024 * 1024
 MAX_CSV_ROWS = 10_000
 MAX_IMPORT_ERRORS = 100
-IMPORT_RATE_LIMIT_MAX_ATTEMPTS = 10
-IMPORT_RATE_LIMIT_WINDOW_SECONDS = 60
-
-_import_rate_cache = AsyncRedisCache(prefix="import_security", default_ttl=IMPORT_RATE_LIMIT_WINDOW_SECONDS)
-
-
-async def _enforce_import_rate_limit(
-    tenant_id: uuid.UUID = Depends(get_current_tenant),
-    account_id: uuid.UUID = Depends(get_current_account_id),
-) -> None:
-    secret = (settings.hmac_pepper or settings.secret_key).encode()
-    digest = hmac.new(secret, f"{tenant_id}:{account_id}".encode(), hashlib.sha256).hexdigest()
-    try:
-        allowed, _ = await _import_rate_cache.rate_limit_check_shared(
-            f"principal:{digest}",
-            IMPORT_RATE_LIMIT_MAX_ATTEMPTS,
-            IMPORT_RATE_LIMIT_WINDOW_SECONDS,
-        )
-    except SharedSecurityCacheUnavailable as exc:
-        raise HTTPException(status_code=503, detail="Import service is temporarily unavailable") from exc
-    if not allowed:
-        raise HTTPException(
-            status_code=429,
-            detail="Too many import requests",
-            headers={"Retry-After": str(IMPORT_RATE_LIMIT_WINDOW_SECONDS)},
-        )
+# Compatibility aliases for tests and operational probes that inspect the
+# existing import router module. The cache and constants have one owner above.
+IMPORT_RATE_LIMIT_MAX_ATTEMPTS = import_admission.IMPORT_RATE_LIMIT_MAX_ATTEMPTS
+IMPORT_RATE_LIMIT_WINDOW_SECONDS = import_admission.IMPORT_RATE_LIMIT_WINDOW_SECONDS
+_import_rate_cache = import_admission._import_rate_cache
+_enforce_import_rate_limit = enforce_import_rate_limit
 
 
 async def _reserve_excel_parse_capacity(
     tenant_id: uuid.UUID = Depends(get_current_tenant),
-    _rate_limit: None = Depends(_enforce_import_rate_limit),
+    _rate_limit: None = Depends(enforce_import_rate_limit),
 ) -> AsyncGenerator[XLSXParseLease, None]:
     service = ExcelImportService()
     lease = service.reserve_parse_capacity(tenant_id)
@@ -282,7 +260,7 @@ async def import_products(
     account_id: uuid.UUID = Depends(get_current_account_id),
     _role: str = Depends(require_role("admin", "operator")),
     _permission: None = Depends(require_permission("product:create")),
-    _rate_limit: None = Depends(_enforce_import_rate_limit),
+    _rate_limit: None = Depends(enforce_import_rate_limit),
 ):
     """CSV 批量导入产品"""
     content = await _read_upload(
@@ -409,7 +387,7 @@ async def import_existing_codes(
     account_id: uuid.UUID = Depends(get_current_account_id),
     _role: str = Depends(require_role("admin", "operator")),
     _permission: None = Depends(require_permission("code:generate")),
-    _rate_limit: None = Depends(_enforce_import_rate_limit),
+    _rate_limit: None = Depends(enforce_import_rate_limit),
 ):
     """CSV 导入既有码（接管已有印刷码），幂等保护"""
     from sqlalchemy import select

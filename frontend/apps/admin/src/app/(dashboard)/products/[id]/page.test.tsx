@@ -101,6 +101,13 @@ function activeBatch(status = "active", effectiveStatus = status) {
   };
 }
 
+function buttonWithText(label: string) {
+  return (_content: string, element: Element | null) =>
+    Boolean(
+      element?.tagName === "BUTTON" && element.textContent?.includes(label)
+    );
+}
+
 async function openBatchesTab() {
   expect(await screen.findByText("安心大米")).toBeVisible();
   fireEvent.click(screen.getByRole("tab", { name: "批次" }));
@@ -210,20 +217,19 @@ describe("Product workbench batch lifecycle controls", () => {
 
   it("keeps product reads available while an expired plan makes batch mutations request-free", async () => {
     mocks.role = "operator";
-    const { rerender } = render(<ProductWorkbenchPage />);
+    mocks.planReadOnly = true;
+
+    render(<ProductWorkbenchPage />);
     await openBatchesTab();
 
-    mocks.planReadOnly = true;
-    rerender(<ProductWorkbenchPage />);
-
-    const addButton = screen.getByRole("button", { name: /新增批次/ });
-    const importButton = screen.getByRole("button", { name: /批量导入/ });
-    const editButton = screen.getByRole("button", { name: "编辑" });
+    const addButton = screen.getByText(buttonWithText("新增批次"));
+    const importButton = screen.getByText(buttonWithText("批量导入"));
+    const editButton = screen.getByText(buttonWithText("编辑"));
     expect(addButton).toBeDisabled();
     expect(importButton).toBeDisabled();
     expect(editButton).toBeDisabled();
     expect(
-      screen.queryByRole("button", { name: "召回批次" })
+      screen.queryByText(buttonWithText("召回批次"))
     ).not.toBeInTheDocument();
 
     fireEvent.click(addButton);
