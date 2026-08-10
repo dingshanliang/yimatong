@@ -7,6 +7,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.event_bus import event_bus
+from app.core.exceptions import ConflictError
 from app.models.code import CodeItem, CodeItemStatus
 from app.models.risk import RiskAlert, RiskAlertType
 from app.models.scan import ScanEvent
@@ -42,9 +43,16 @@ async def check_multi_location(
 
     if distinct_ips >= MULTI_LOCATION_IP_THRESHOLD:
         if code_item_id is None:
-            code_result = await db.execute(select(CodeItem).where(CodeItem.public_id == public_id))
+            code_result = await db.execute(
+                select(CodeItem).where(
+                    CodeItem.tenant_id == tenant_id,
+                    CodeItem.public_id == public_id,
+                )
+            )
             item = code_result.scalar_one_or_none()
-            code_item_id = item.id if item else uuid.uuid4()
+            if item is None:
+                return None
+            code_item_id = item.id
 
         alert = RiskAlert(
             tenant_id=tenant_id,
@@ -87,9 +95,16 @@ async def check_suspected_copy(
 
     if scan_count >= SUSPECTED_COPY_SCAN_THRESHOLD:
         if code_item_id is None:
-            code_result = await db.execute(select(CodeItem).where(CodeItem.public_id == public_id))
+            code_result = await db.execute(
+                select(CodeItem).where(
+                    CodeItem.tenant_id == tenant_id,
+                    CodeItem.public_id == public_id,
+                )
+            )
             item = code_result.scalar_one_or_none()
-            code_item_id = item.id if item else uuid.uuid4()
+            if item is None:
+                return None
+            code_item_id = item.id
 
         alert = RiskAlert(
             tenant_id=tenant_id,
@@ -114,8 +129,38 @@ async def freeze_code_item(
     db: AsyncSession,
     tenant_id: uuid.UUID,
     item_id: uuid.UUID,
+    actor_id: str,
+    reason: str,
 ) -> CodeItem:
     """冻结码项"""
+    from app.services.code import transition_code_item_lifecycle
+
+    controlled = await transition_code_item_lifecycle(db, tenant_id, item_id, "freeze", reason)
+    if controlled is not None:
+        item = await db.scalar(
+            select(CodeItem)
+            .where(CodeItem.id == item_id, CodeItem.tenant_id == tenant_id)
+            .execution_options(populate_existing=True)
+        )
+        if item is None:
+            from fastapi import HTTPException
+
+            raise HTTPException(status_code=404, detail="Code item not found")
+        alert = RiskAlert(
+            tenant_id=tenant_id,
+            alert_type=RiskAlertType.risk_frozen,
+            public_id=item.public_id,
+            code_item_id=item.id,
+            detail="码已被风险冻结",
+        )
+        db.add(alert)
+        await db.flush()
+        return item
+
+    reason = reason.strip()
+    if not reason or len(reason) > 200:
+        raise ConflictError("Code lifecycle reason is invalid", error_code="CODE_LIFECYCLE_CONFLICT")
+
     from app.services.code_state import can_transition
 
     result = await db.execute(select(CodeItem).where(CodeItem.id == item_id, CodeItem.tenant_id == tenant_id))
@@ -125,8 +170,14 @@ async def freeze_code_item(
 
         raise HTTPException(status_code=404, detail="Code item not found")
 
-    can_transition(item.status, CodeItemStatus.frozen, raise_on_invalid=True)
+    previous_status = item.status
+    can_transition(previous_status, CodeItemStatus.frozen, raise_on_invalid=True)
     item.status = CodeItemStatus.frozen
+    item.frozen_from_status = previous_status.value
+    item.frozen_at = utcnow()
+    item.frozen_by = actor_id
+    item.freeze_reason = reason.strip()
+    item.freeze_provenance_version = 1
 
     # 记录冻结预警
     alert = RiskAlert(
@@ -141,7 +192,18 @@ async def freeze_code_item(
     # 状态变更审计（yimatong-zgb1.3 AC5）
     from app.services.code import _audit_code_op
 
-    await _audit_code_op(db, None, str(tenant_id), "code_freeze", f"code_item:{item.public_id}")
+    await _audit_code_op(
+        db,
+        actor_id,
+        str(tenant_id),
+        "code_freeze",
+        f"code_item:{item.public_id}",
+        details={
+            "reason": reason.strip(),
+            "before": {"status": previous_status.value},
+            "after": {"status": CodeItemStatus.frozen.value},
+        },
+    )
     await db.refresh(item)
     return item
 
@@ -150,8 +212,24 @@ async def unfreeze_code_item(
     db: AsyncSession,
     tenant_id: uuid.UUID,
     item_id: uuid.UUID,
+    actor_id: str,
 ) -> CodeItem:
     """解冻码项，恢复为 activated 状态"""
+    from app.services.code import transition_code_item_lifecycle
+
+    controlled = await transition_code_item_lifecycle(db, tenant_id, item_id, "recover", None)
+    if controlled is not None:
+        item = await db.scalar(
+            select(CodeItem)
+            .where(CodeItem.id == item_id, CodeItem.tenant_id == tenant_id)
+            .execution_options(populate_existing=True)
+        )
+        if item is None:
+            from fastapi import HTTPException
+
+            raise HTTPException(status_code=404, detail="Code item not found")
+        return item
+
     result = await db.execute(select(CodeItem).where(CodeItem.id == item_id, CodeItem.tenant_id == tenant_id))
     item = result.scalar_one_or_none()
     if not item:
@@ -164,14 +242,79 @@ async def unfreeze_code_item(
 
         raise HTTPException(status_code=409, detail="Code item is not frozen")
 
-    item.status = CodeItemStatus.activated
+    if item.freeze_provenance_version != 1 or item.frozen_from_status not in {
+        CodeItemStatus.activated.value,
+        CodeItemStatus.bound.value,
+    }:
+        from fastapi import HTTPException
+
+        raise HTTPException(status_code=409, detail="Code item is not recoverable")
+    previous_status = item.status
+    recovered_status = CodeItemStatus(item.frozen_from_status)
+    item.status = recovered_status
+    item.frozen_from_status = None
+    item.frozen_at = None
+    item.frozen_by = None
+    item.freeze_reason = None
+    item.freeze_provenance_version = None
     await db.flush()
     # 状态变更审计（yimatong-zgb1.3 AC5）
     from app.services.code import _audit_code_op
 
-    await _audit_code_op(db, None, str(tenant_id), "code_unfreeze", f"code_item:{item.public_id}")
+    await _audit_code_op(
+        db,
+        actor_id,
+        str(tenant_id),
+        "code_recover",
+        f"code_item:{item.public_id}",
+        details={
+            "reason": None,
+            "before": {"status": previous_status.value},
+            "after": {"status": recovered_status.value},
+        },
+    )
     await db.refresh(item)
     return item
+
+
+async def resolve_risk_alert(
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    alert_id: uuid.UUID,
+    actor_id: str,
+) -> RiskAlert:
+    """Mark a tenant-owned alert resolved and append its actor-bound audit atomically."""
+    from fastapi import HTTPException
+
+    alert = await db.scalar(
+        select(RiskAlert).where(
+            RiskAlert.id == alert_id,
+            RiskAlert.tenant_id == tenant_id,
+        )
+    )
+    if alert is None:
+        raise HTTPException(status_code=404, detail="Risk alert not found")
+
+    was_resolved = alert.resolved
+    alert.resolved = True
+    await db.flush()
+
+    from app.services.code import _audit_code_op
+
+    await _audit_code_op(
+        db,
+        actor_id,
+        str(tenant_id),
+        "risk_alert_resolved",
+        f"risk_alert:{alert.id}",
+        details={
+            "public_id": alert.public_id,
+            "before": {"resolved": was_resolved},
+            "after": {"resolved": True},
+        },
+    )
+    await db.refresh(alert)
+    return alert
 
 
 async def list_risk_alerts(

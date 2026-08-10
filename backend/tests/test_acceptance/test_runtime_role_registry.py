@@ -40,6 +40,7 @@ NO_DELETE_RUNTIME_TABLES = (
     "code_batch_generation_receipts",
     "code_batches",
     "code_items",
+    "interception_records",
 )
 SENSITIVE_ARTIFACT_TABLES = ("export_logs",)
 
@@ -380,9 +381,14 @@ async def test_registry_catalog_acl_and_control_boundary(
                 "SELECT has_table_privilege('yimatong_app', $1, $2)", f"public.{table}", privilege
             )
     for table in NO_DELETE_RUNTIME_TABLES:
-        for privilege in ("SELECT", "INSERT", "UPDATE"):
+        direct_write_privileges = ("SELECT", "INSERT") if table == "code_items" else ("SELECT", "INSERT", "UPDATE")
+        for privilege in direct_write_privileges:
             assert await runtime_pg_conn.fetchval(
                 "SELECT has_table_privilege('yimatong_app', $1, $2)", f"public.{table}", privilege
+            )
+        if table == "code_items":
+            assert not await runtime_pg_conn.fetchval(
+                "SELECT has_table_privilege('yimatong_app', $1, 'UPDATE')", f"public.{table}"
             )
         for privilege in ("DELETE", "TRUNCATE", "REFERENCES", "TRIGGER"):
             assert not await runtime_pg_conn.fetchval(
@@ -450,10 +456,28 @@ async def test_registry_catalog_acl_and_control_boundary(
         "public.renew_agency_authorization(uuid,uuid,uuid,jsonb,uuid,uuid,timestamptz)",
         "public.revoke_agency_authorization(uuid,uuid,uuid,uuid)",
         "public.append_authenticated_audit_event(uuid,uuid,text,text,text,jsonb)",
+        "public.mark_code_item_first_scanned(uuid,text)",
+        "public.transition_code_item_lifecycle(uuid,uuid,uuid,uuid,text,text)",
+        "public.transition_code_batch_lifecycle(uuid,uuid,uuid,uuid,text,text)",
+        "public.freeze_code_item_for_risk(uuid,uuid,uuid,uuid,uuid)",
     ):
         assert await runtime_pg_conn.fetchval(
             "SELECT has_function_privilege('yimatong_app', $1, 'EXECUTE')", function_signature
         )
+        assert not await runtime_pg_conn.fetchval(
+            "SELECT has_function_privilege('public', $1, 'EXECUTE')", function_signature
+        )
+    assert not await runtime_pg_conn.fetchval(
+        "SELECT has_function_privilege("
+        "'yimatong_app','public.append_authenticated_audit_event_lifecycle_internal"
+        "(uuid,uuid,text,text,text,jsonb)','EXECUTE')"
+    )
+    assert not await runtime_pg_conn.fetchval(
+        "SELECT has_function_privilege('yimatong_app','public.authorize_code_lifecycle_actor(uuid,uuid)','EXECUTE')"
+    )
+    assert not await runtime_pg_conn.fetchval(
+        "SELECT has_function_privilege('public','public.authorize_code_lifecycle_actor(uuid,uuid)','EXECUTE')"
+    )
     for table in APPEND_ONLY_RUNTIME_TABLES:
         for privilege in ("SELECT", "INSERT"):
             assert await runtime_pg_conn.fetchval(

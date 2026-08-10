@@ -3,12 +3,18 @@ import Link from "next/link";
 import { describe, expect, it, vi } from "vitest";
 
 import TenantPlanReadOnly, {
+  useTenantFeatureEnabled,
   useTenantPlanReadOnly,
 } from "./TenantPlanReadOnly";
 
 function CatalogMutationState() {
   const readOnly = useTenantPlanReadOnly();
   return <button disabled={readOnly}>保存产品</button>;
+}
+
+function RiskFeatureState() {
+  const enabled = useTenantFeatureEnabled("risk_module");
+  return <div data-testid="risk-feature" data-enabled={String(enabled)} />;
 }
 
 describe("TenantPlanReadOnly", () => {
@@ -54,5 +60,23 @@ describe("TenantPlanReadOnly", () => {
     );
 
     expect(screen.getByRole("button", { name: "保存产品" })).toBeDisabled();
+  });
+
+  it("exposes canonical tenant features to nested business controls", () => {
+    render(
+      <TenantPlanReadOnly
+        active={false}
+        enabledFeatures={{ risk_module: true }}
+        refreshing={false}
+        onRefresh={vi.fn()}
+      >
+        <RiskFeatureState />
+      </TenantPlanReadOnly>
+    );
+
+    expect(screen.getByTestId("risk-feature")).toHaveAttribute(
+      "data-enabled",
+      "true"
+    );
   });
 });

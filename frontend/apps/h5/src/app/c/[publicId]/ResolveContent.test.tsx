@@ -98,6 +98,41 @@ describe("ResolveContent recalled production batch", () => {
     );
   });
 
+  it("keeps frozen traceability but removes every benefit entry point and scan request", () => {
+    const payload = {
+      ...recalledPayload,
+      scan_token: "frozen-token-must-not-be-used",
+      code_data: {
+        ...recalledPayload.code_data,
+        status: "frozen",
+        lifecycle: "frozen",
+        batch: {
+          batch_code: "PB-FROZEN",
+          origin: "冻结批次产地",
+          status: "active",
+        },
+      },
+      scan_info: {},
+    };
+
+    const markup = renderToStaticMarkup(
+      <ResolveContent
+        mode="json"
+        publicId="PUBLIC-FROZEN"
+        jsonPayload={payload}
+        htmlContent={null}
+      />
+    );
+
+    expect(markup).toContain("该码正在审核中");
+    expect(markup).toContain("冻结批次产地");
+    expect(markup).not.toContain("召回后不应出现的权益");
+    expect(markup).not.toContain("立即领取");
+    expect(useScanEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ enabled: false })
+    );
+  });
+
   it("does not present product origin as an authoritative batch fact", () => {
     const payload = {
       ...recalledPayload,

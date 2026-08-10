@@ -2,6 +2,7 @@
 
 import asyncio
 import uuid
+from contextlib import AsyncExitStack
 from datetime import date, timedelta
 
 import typer
@@ -9,6 +10,7 @@ from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import selectinload
 
+from app.cli.lifecycle_auth import cli_lifecycle_auth_context
 from app.constants.campaign import BenefitType
 from app.core.config import settings
 from app.core.database import control_session_factory, set_session_tenant_context
@@ -24,9 +26,10 @@ from app.services.analytics import aggregate_daily_stats
 from app.services.audit import write_audit_log
 from app.services.auth import revoke_current_tenant_account_sessions
 from app.services.channel import create_account_scope
-from app.services.code import activate_batch, create_code_batch, mark_delivered, mark_printing
+from app.services.code import activate_batch, create_code_batch, mark_delivered, mark_printing, revoke_code_item
 from app.services.code_export import generate_code_csv
 from app.services.quota import lock_quota_rollout_state, refresh_quota_usage_from_authoritative_rows
+from app.services.risk import freeze_code_item
 from app.services.tenant import create_tenant
 from app.utils import utcnow
 from app.utils.auth_rbac import WEB_ROLE_PERMISSIONS
@@ -78,7 +81,7 @@ DEMO_ACCOUNTS = [
     },
 ]
 
-DEMO_ENABLED_FEATURES = {"channel_portal": True}
+DEMO_ENABLED_FEATURES = {"channel_portal": True, "risk_module": True}
 DEFAULT_TENANT_ADMIN_EMAIL = "admin@example.com"
 DEFAULT_TENANT_ADMIN_PASSWORD = "Admin1234"
 
@@ -352,6 +355,23 @@ async def _ensure_demo_accounts(db: AsyncSession, tenant_id: uuid.UUID, org_id: 
     return accounts
 
 
+async def _ensure_committed_demo_admin(tenant_id: uuid.UUID, admin_email: str) -> uuid.UUID:
+    """Commit demo identity repair before the control plane creates a CLI credential."""
+
+    async with async_session() as db:
+        await lock_quota_rollout_state(db)
+        tenant = await _open_tenant_scope(db, tenant_id)
+        _enable_demo_features(tenant)
+        organization = await _get_default_org(db, tenant.id)
+        accounts = await _ensure_demo_accounts(db, tenant.id, organization.id)
+        admin = next((account for account in accounts if account.email == admin_email), None)
+        if admin is None:
+            raise RuntimeError("Durable demo admin is unavailable")
+        admin_id = admin.id
+        await db.commit()
+        return admin_id
+
+
 async def _ensure_production_batch(
     db: AsyncSession,
     tenant_id: uuid.UUID,
@@ -564,7 +584,9 @@ async def _ensure_demo_codes(
         batch = result.scalar_one()
 
     result = await db.execute(
-        select(CodeItem).where(CodeItem.tenant_id == tenant_id, CodeItem.code_batch_id == batch.id)
+        select(CodeItem)
+        .where(CodeItem.tenant_id == tenant_id, CodeItem.code_batch_id == batch.id)
+        .order_by(CodeItem.public_id)
     )
     items = list(result.scalars().all())
     if not items:
@@ -572,11 +594,30 @@ async def _ensure_demo_codes(
     if any(item.status == CodeItemStatus.created for item in items):
         raise RuntimeError("Demo code batch contains unactivated authoritative code items")
     if len(items) >= 3:
-        items[1].status = CodeItemStatus.revoked
-        items[1].revoked_at = utcnow()
-        items[2].status = CodeItemStatus.frozen
-    await db.flush()
-    return items
+        if items[1].status != CodeItemStatus.revoked:
+            await revoke_code_item(
+                db,
+                tenant_id,
+                items[1].id,
+                actor_id=str(created_by),
+                reason="source=official_seed; purpose=permanent_void_sample",
+            )
+        if items[2].status != CodeItemStatus.frozen:
+            await freeze_code_item(
+                db,
+                tenant_id,
+                items[2].id,
+                actor_id=str(created_by),
+                reason="source=official_seed; purpose=risk_freeze_sample",
+            )
+    return list(
+        await db.scalars(
+            select(CodeItem)
+            .where(CodeItem.tenant_id == tenant_id, CodeItem.code_batch_id == batch.id)
+            .order_by(CodeItem.public_id)
+            .execution_options(populate_existing=True)
+        )
+    )
 
 
 async def _ensure_scan_events(db: AsyncSession, tenant_id: uuid.UUID, items: list[CodeItem]) -> None:
@@ -918,7 +959,16 @@ def all(
         else:
             typer.echo(f"Tenant '{slug}' already exists (id={tenant_id})")
 
-        async with async_session() as db:
+        admin_id = await _ensure_committed_demo_admin(tenant_id, admin_email)
+        async with AsyncExitStack() as stack:
+            await stack.enter_async_context(
+                cli_lifecycle_auth_context(
+                    control_session,
+                    tenant_id=tenant_id,
+                    account_id=admin_id,
+                )
+            )
+            db = await stack.enter_async_context(async_session())
             # Tenant creation/discovery above is the only control-plane stage.
             # All demo business rows are written through a restricted runtime
             # transaction scoped to exactly that tenant.
@@ -938,11 +988,8 @@ def all(
             s.specifications = {"净含量": "5kg", "产地": "黑龙江五常", "包装": "礼盒装"}
             typer.echo(f"SKU: {s.code} (id={s.id})")
 
-            org = await _get_default_org(db, t.id)
-            accounts = await _ensure_demo_accounts(db, t.id, org.id)
-            admin_account = next((account for account in accounts if account.email == admin_email), accounts[0])
             production_batch = await _ensure_production_batch(db, t.id, p.id, s.id)
-            await _ensure_page(db, t.id, p.id, admin_account.id)
+            await _ensure_page(db, t.id, p.id, admin_id)
             await _ensure_campaign(db, t.id)
             code_items = await _ensure_demo_codes(
                 db,
@@ -950,9 +997,10 @@ def all(
                 p.id,
                 s.id,
                 production_batch.id,
-                admin_account.id,
+                admin_id,
             )
             await _ensure_scan_events(db, t.id, code_items)
+            accounts = list((await db.scalars(select(Account).where(Account.tenant_id == t.id))).all())
             await _ensure_demo_channels(db, t.id, accounts, code_items)
             await refresh_quota_usage_from_authoritative_rows(db, t.id)
             await db.commit()

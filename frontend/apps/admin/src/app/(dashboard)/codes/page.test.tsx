@@ -93,6 +93,10 @@ describe("CodesPage access and delivery boundaries", () => {
     render(<CodesPage />);
 
     expect(await screen.findByText("CB-20260811-001")).toBeVisible();
+    expect(screen.getByRole("link", { name: "详情" })).toHaveAttribute(
+      "href",
+      "/codes/code-batch-1"
+    );
     expect(mocks.get).not.toHaveBeenCalled();
     expect(
       screen.queryByRole("button", { name: /生成码批次/ })

@@ -368,7 +368,11 @@ class TestFreezeCodeBatchAPI:
         await _prepare_delivered_batch(client, headers, batch_id)
         await client.post(f"/api/v1/code-batches/{batch_id}/activate", headers=headers)
 
-        freeze_resp = await client.post(f"/api/v1/code-batches/{batch_id}/freeze", headers=headers)
+        freeze_resp = await client.post(
+            f"/api/v1/code-batches/{batch_id}/freeze",
+            json={"reason": "batch risk investigation", "confirm": "freeze"},
+            headers=headers,
+        )
         assert freeze_resp.status_code == 200
         assert freeze_resp.json()["frozen"] == 5
 
@@ -378,11 +382,32 @@ class TestFreezeCodeBatchAPI:
 
         resp = await client.post(
             "/api/v1/code-batches/00000000-0000-0000-0000-000000000999/freeze",
+            json={"reason": "batch risk investigation", "confirm": "freeze"},
             headers=headers,
         )
-        # freeze 没找到码项时返回 frozen=0
-        assert resp.status_code == 200
-        assert resp.json()["frozen"] == 0
+        assert resp.status_code == 404
+
+    @pytest.mark.anyio
+    @pytest.mark.parametrize(
+        "body",
+        [
+            None,
+            {"reason": "   ", "confirm": "freeze"},
+            {"reason": "x" * 201, "confirm": "freeze"},
+            {"reason": "batch investigation", "confirm": "void"},
+            {"reason": "batch investigation", "confirm": "freeze", "unexpected": True},
+        ],
+    )
+    async def test_freeze_requires_strict_reason_and_confirmation(self, client: AsyncClient, auth_setup, body):
+        _, headers, *_ = auth_setup
+
+        response = await client.post(
+            "/api/v1/code-batches/00000000-0000-0000-0000-000000000999/freeze",
+            json=body,
+            headers=headers,
+        )
+
+        assert response.status_code == 422
 
 
 class TestVoidCodeBatchAPI:
@@ -590,7 +615,11 @@ class TestFullCodeLifecycleAPI:
         assert len(csv_lines) == 11  # header + 10 rows
 
         # 4. 冻结
-        freeze_resp = await client.post(f"/api/v1/code-batches/{batch_id}/freeze", headers=headers)
+        freeze_resp = await client.post(
+            f"/api/v1/code-batches/{batch_id}/freeze",
+            json={"reason": "full lifecycle risk", "confirm": "freeze"},
+            headers=headers,
+        )
         assert freeze_resp.status_code == 200
         assert freeze_resp.json()["frozen"] == 10
 

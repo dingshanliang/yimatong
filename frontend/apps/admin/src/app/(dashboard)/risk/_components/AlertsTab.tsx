@@ -1,19 +1,49 @@
 "use client";
 
 import { useCrud } from "@/lib/hooks";
-import { App, Button, Popconfirm, Table, Tag } from "antd";
+import { Alert, App, Button, Popconfirm, Table, Tag } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import api from "@/lib/api";
+import { useAuthStore } from "@/lib/auth";
+import { codeAccessForPrincipal } from "@/lib/code-access";
 import { STATUS_COLORS } from "@/lib/status-colors";
+import { useTenantPlanReadOnly } from "../../_components/TenantPlanReadOnly";
 
-type Alert = Record<string, unknown> & { id: string };
+type RiskAlertRow = Record<string, unknown> & { id: string };
 
 export function AlertsTab() {
-  const { message } = App.useApp();
-  const { items, total, page, loading, setPage, mutate } =
-    useCrud<Alert>("/risk-alerts");
+  const user = useAuthStore((state) => state.user);
+  const access = codeAccessForPrincipal(user);
 
-  const columns: ColumnsType<Alert> = [
+  if (!access.canManage) {
+    return <Alert type="warning" showIcon title="当前账号无权查看风险预警" />;
+  }
+
+  return <AlertsWorkspace />;
+}
+
+function AlertsWorkspace() {
+  const { message } = App.useApp();
+  const planReadOnly = useTenantPlanReadOnly();
+  const { items, total, page, loading, error, setPage, mutate, retry } =
+    useCrud<RiskAlertRow>("/risk-alerts");
+
+  if (error) {
+    return (
+      <Alert
+        type="error"
+        showIcon
+        title="风险预警加载失败"
+        action={
+          <Button size="small" onClick={() => void retry()}>
+            重试
+          </Button>
+        }
+      />
+    );
+  }
+
+  const columns: ColumnsType<RiskAlertRow> = [
     { title: "码 ID", dataIndex: "public_id", key: "public_id" },
     {
       title: "类型",
@@ -40,12 +70,13 @@ export function AlertsTab() {
           <Popconfirm
             title="确认标记为已处理？"
             onConfirm={async () => {
+              if (planReadOnly) return;
               await api.post(`/risk-alerts/${record.id as string}/resolve`);
               message.success("已处理");
               mutate();
             }}
           >
-            <Button size="small" type="link">
+            <Button size="small" type="link" disabled={planReadOnly}>
               处理
             </Button>
           </Popconfirm>

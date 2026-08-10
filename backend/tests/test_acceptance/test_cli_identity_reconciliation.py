@@ -110,6 +110,40 @@ async def _create_active_session(
     return session_id
 
 
+async def _assert_cli_lifecycle_actor_and_cleanup(
+    db: AsyncSession,
+    *,
+    tenant_slug: str,
+    admin_email: str,
+) -> None:
+    tenant = await db.scalar(select(Tenant).where(Tenant.slug == tenant_slug))
+    assert tenant is not None
+    admin = await db.scalar(select(Account).where(Account.tenant_id == tenant.id, Account.email == admin_email))
+    assert admin is not None
+    assert (
+        await db.scalar(
+            select(func.count())
+            .select_from(AuthSession)
+            .where(
+                AuthSession.tenant_id == tenant.id,
+                AuthSession.current_refresh_jti.like("cli-%"),
+            )
+        )
+        == 0
+    )
+    lifecycle_operators = set(
+        (
+            await db.scalars(
+                select(PlatformAuditLog.operator_id).where(
+                    PlatformAuditLog.target_tenant_id == str(tenant.id),
+                    PlatformAuditLog.action == "code_activate",
+                )
+            )
+        ).all()
+    )
+    assert lifecycle_operators == {str(admin.id)}
+
+
 async def test_seed_all_reconciles_identity_atomically_and_idempotently(
     migrated_pg_url: str,
     monkeypatch: pytest.MonkeyPatch,
@@ -121,6 +155,11 @@ async def test_seed_all_reconciles_identity_atomically_and_idempotently(
     runtime_factory = async_sessionmaker(runtime_engine, class_=AsyncSession, expire_on_commit=False)
     try:
         async with owner_factory() as db, db.begin():
+            await _assert_cli_lifecycle_actor_and_cleanup(
+                db,
+                tenant_slug="demo",
+                admin_email="admin@demo.com",
+            )
             account = await db.scalar(
                 select(Account).options(selectinload(Account.roles)).where(Account.email == "ops@demo.com")
             )
@@ -236,6 +275,11 @@ async def test_baseline_reconciliation_revokes_session_once(
         async with owner_factory() as db, db.begin():
             tenant = await db.scalar(select(Tenant).where(Tenant.slug == BASELINE_TENANT_SLUG))
             assert tenant is not None
+            await _assert_cli_lifecycle_actor_and_cleanup(
+                db,
+                tenant_slug=BASELINE_TENANT_SLUG,
+                admin_email=BASELINE_ADMIN_EMAIL,
+            )
             account = await db.scalar(
                 select(Account).where(Account.tenant_id == tenant.id, Account.email == BASELINE_ADMIN_EMAIL)
             )

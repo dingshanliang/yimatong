@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import { useCrud } from "@/lib/hooks";
 import {
   Alert,
@@ -619,6 +620,7 @@ function CodesCatalog({ access }: { access: CodeAccess }) {
 
         return (
           <Space>
+            <Link href={`/codes/${record.id}`}>详情</Link>
             {canImport ? (
               <Upload
                 accept=".csv,text/csv"

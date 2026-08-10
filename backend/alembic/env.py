@@ -206,6 +206,7 @@ def run_migrations_offline() -> None:
         dialect_opts={"paramstyle": "named"},
         include_object=include_object,
         version_table_schema="public",
+        transaction_per_migration=True,
     )
     with context.begin_transaction():
         context.execute("SET search_path TO public, pg_catalog")
@@ -224,6 +225,7 @@ def do_run_migrations(connection: Connection) -> None:
         include_object=include_object,
         process_revision_directives=process_revision_directives,
         version_table_schema="public",
+        transaction_per_migration=True,
     )
     with context.begin_transaction():
         context.run_migrations()

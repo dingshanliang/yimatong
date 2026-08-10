@@ -6,10 +6,11 @@ import json
 import uuid
 
 from fastapi import Depends, HTTPException
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.exc import DBAPIError, IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
+from uuid6 import uuid7
 
 from app.core.config import settings
 from app.core.dependencies import get_current_account_id, get_current_tenant
@@ -52,6 +53,203 @@ _CODE_BATCH_DB_CONFLICTS = {
 }
 
 
+def _lifecycle_auth_session_id() -> uuid.UUID:
+    from app.core.database import get_request_security_credential
+
+    credential = get_request_security_credential()
+    if credential is None or credential[0] != "auth_session":
+        raise HTTPException(status_code=401, detail="Live login session required for code lifecycle changes")
+    try:
+        return uuid.UUID(credential[1])
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=401, detail="Invalid login session") from exc
+
+
+async def transition_code_item_lifecycle(
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    item_id: uuid.UUID,
+    action: str,
+    reason: str | None,
+) -> dict | None:
+    from app.core.database import _session_uses_postgresql
+
+    if not _session_uses_postgresql(db):
+        return None
+    row = (
+        (
+            await db.execute(
+                text(
+                    "SELECT * FROM public.transition_code_item_lifecycle("
+                    ":tenant_id, :auth_session_id, :audit_id, :item_id, :action, :reason)"
+                ),
+                {
+                    "tenant_id": tenant_id,
+                    "auth_session_id": _lifecycle_auth_session_id(),
+                    "audit_id": uuid7(),
+                    "item_id": item_id,
+                    "action": action,
+                    "reason": reason,
+                },
+            )
+        )
+        .mappings()
+        .one()
+    )
+    return dict(row)
+
+
+async def transition_code_batch_lifecycle(
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    batch_id: uuid.UUID,
+    action: str,
+    reason: str | None,
+) -> dict | None:
+    from app.core.database import _session_uses_postgresql
+
+    if not _session_uses_postgresql(db):
+        return None
+    row = (
+        (
+            await db.execute(
+                text(
+                    "SELECT * FROM public.transition_code_batch_lifecycle("
+                    ":tenant_id, :auth_session_id, :audit_id, :batch_id, :action, :reason)"
+                ),
+                {
+                    "tenant_id": tenant_id,
+                    "auth_session_id": _lifecycle_auth_session_id(),
+                    "audit_id": uuid7(),
+                    "batch_id": batch_id,
+                    "action": action,
+                    "reason": reason,
+                },
+            )
+        )
+        .mappings()
+        .one()
+    )
+    return dict(row)
+
+
+async def freeze_code_item_for_risk(
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    interception_id: uuid.UUID,
+    item_id: uuid.UUID,
+    alert_id: uuid.UUID,
+    audit_id: uuid.UUID,
+) -> dict:
+    """Execute the freeze-only worker lifecycle authority for one real interception."""
+    from app.core.database import _session_uses_postgresql
+
+    if _session_uses_postgresql(db):
+        row = (
+            (
+                await db.execute(
+                    text(
+                        "SELECT * FROM public.freeze_code_item_for_risk("
+                        ":tenant_id, :interception_id, :item_id, :alert_id, :audit_id)"
+                    ),
+                    {
+                        "tenant_id": tenant_id,
+                        "interception_id": interception_id,
+                        "item_id": item_id,
+                        "alert_id": alert_id,
+                        "audit_id": audit_id,
+                    },
+                )
+            )
+            .mappings()
+            .one()
+        )
+        return dict(row)
+
+    from app.models.audit import PlatformAuditLog
+    from app.models.risk import InterceptionRecord, RiskAlert, RiskAlertType, RiskRule
+    from app.services.code_state import can_transition
+
+    interception = await db.scalar(
+        select(InterceptionRecord).where(
+            InterceptionRecord.id == interception_id,
+            InterceptionRecord.tenant_id == tenant_id,
+        )
+    )
+    if interception is None:
+        raise NotFoundError("Risk interception not found")
+    rule = await db.scalar(
+        select(RiskRule).where(
+            RiskRule.id == interception.risk_rule_id,
+            RiskRule.tenant_id == tenant_id,
+        )
+    )
+    if (
+        rule is None
+        or not rule.enabled
+        or rule.action != "block"
+        or not interception.auto_triggered
+        or interception.action != "block"
+        or interception.action_taken is not None
+        or interception.code_item_id != item_id
+    ):
+        raise ConflictError("Risk interception is not executable", error_code="RISK_INTERCEPTION_CONFLICT")
+    item = await db.scalar(select(CodeItem).where(CodeItem.id == item_id, CodeItem.tenant_id == tenant_id))
+    if item is None:
+        raise NotFoundError("Risk code item not found")
+    previous_status = item.status
+    can_transition(previous_status, CodeItemStatus.frozen, raise_on_invalid=True)
+    now = utcnow()
+    item.status = CodeItemStatus.frozen
+    item.frozen_from_status = previous_status.value
+    item.frozen_at = now
+    item.frozen_by = "system:risk-auto"
+    item.freeze_reason = f"risk auto block rule={rule.id} interception={interception.id}"[:200]
+    item.freeze_provenance_version = 1
+    db.add(
+        RiskAlert(
+            id=alert_id,
+            tenant_id=tenant_id,
+            alert_type=RiskAlertType.risk_frozen,
+            public_id=item.public_id,
+            code_item_id=item.id,
+            detail="风控规则自动触发：码已被冻结",
+            risk_level="high",
+            rule_name=rule.name,
+            rule_version=str(rule.config.get("version", "v1")) if rule.config else "v1",
+            evidence_quality="strong",
+        )
+    )
+    db.add(
+        PlatformAuditLog(
+            id=audit_id,
+            operator_id="system:risk-auto",
+            target_tenant_id=str(tenant_id),
+            action="code_freeze",
+            resource=f"code_item:{item.public_id}",
+            details={
+                "source": "risk_auto",
+                "rule_id": str(rule.id),
+                "interception_id": str(interception.id),
+                "before": {"status": previous_status.value},
+                "after": {"status": CodeItemStatus.frozen.value},
+            },
+            timestamp=now,
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    interception.action_taken = "block"
+    await db.flush()
+    return {
+        "code_item_id": item.id,
+        "prior_status": previous_status.value,
+        "current_status": CodeItemStatus.frozen.value,
+        "risk_alert_id": alert_id,
+        "audit_id": audit_id,
+    }
+
+
 def map_code_batch_db_error(exc: DBAPIError) -> ConflictError | None:
     """Map known PostgreSQL contract failures without exposing DB details."""
 
@@ -66,6 +264,27 @@ def map_code_batch_db_error(exc: DBAPIError) -> ConflictError | None:
         return None
     detail, error_code = response
     return ConflictError(detail, error_code=error_code)
+
+
+def map_code_lifecycle_db_error(exc: DBAPIError) -> HTTPException | ConflictError | NotFoundError | None:
+    """Translate the controlled lifecycle interface's SQLSTATEs without leaking database messages."""
+    sqlstate = getattr(exc.orig, "sqlstate", None) or getattr(exc.orig, "pgcode", None)
+    if sqlstate == "23503":
+        return NotFoundError("Code lifecycle target not found")
+    if sqlstate == "42501":
+        return HTTPException(status_code=401, detail="Code lifecycle authorization is no longer valid")
+    if sqlstate in {"22023", "23514", "55000"}:
+        return ConflictError("Code lifecycle state conflict", error_code="CODE_LIFECYCLE_CONFLICT")
+    if sqlstate in {"55P03", "40001"}:
+        return ConflictError("Code lifecycle is busy; retry the request", error_code="CODE_LIFECYCLE_BUSY")
+    return None
+
+
+def _validated_lifecycle_reason(reason: str | None) -> str:
+    normalized = (reason or "").strip()
+    if not normalized or len(normalized) > 200:
+        raise ConflictError("Code lifecycle reason is invalid", error_code="CODE_LIFECYCLE_CONFLICT")
+    return normalized
 
 
 def _code_contract_hmac(domain: str, value: str) -> str:
@@ -684,6 +903,11 @@ async def resolve_code_by_public_id(
 async def activate_batch(
     db: AsyncSession, tenant_id: uuid.UUID, batch_id: uuid.UUID, actor_id: str | None = None
 ) -> CodeBatchActivateResponse:
+    controlled = await transition_code_batch_lifecycle(db, tenant_id, batch_id, "activate", None)
+    if controlled is not None:
+        await _invalidate_batch_cache(db, tenant_id, batch_id, CodeItemStatus.activated)
+        return CodeBatchActivateResponse(activated=controlled["affected_item_count"])
+
     from sqlalchemy import update as sa_update
 
     from app.services.code_state import InvalidStateTransitionError, can_transition
@@ -797,22 +1021,57 @@ async def _invalidate_batch_cache(
 
 
 async def revoke_code_item(
-    db: AsyncSession, tenant_id: uuid.UUID, item_id: uuid.UUID, actor_id: str | None = None
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    item_id: uuid.UUID,
+    actor_id: str | None = None,
+    reason: str | None = None,
 ) -> CodeItem:
+    controlled = await transition_code_item_lifecycle(db, tenant_id, item_id, "void", reason)
+    if controlled is not None:
+        item = await db.scalar(
+            select(CodeItem)
+            .where(CodeItem.id == item_id, CodeItem.tenant_id == tenant_id)
+            .execution_options(populate_existing=True)
+        )
+        if item is None:
+            raise NotFoundError("Code item not found")
+        await _invalidate_resolve_cache(item.public_id)
+        return item
+
+    reason = _validated_lifecycle_reason(reason)
+
     from app.services.code_state import can_transition
 
     result = await db.execute(select(CodeItem).where(CodeItem.id == item_id, CodeItem.tenant_id == tenant_id))
     item = result.scalar_one_or_none()
     if not item:
         raise NotFoundError("Code item not found")
-    can_transition(item.status, CodeItemStatus.revoked, raise_on_invalid=True)
+    previous_status = item.status
+    can_transition(previous_status, CodeItemStatus.revoked, raise_on_invalid=True)
     item.status = CodeItemStatus.revoked
     item.revoked_at = utcnow()
+    item.frozen_from_status = None
+    item.frozen_at = None
+    item.frozen_by = None
+    item.freeze_reason = None
+    item.freeze_provenance_version = None
     await db.flush()
     # 清除解析缓存，确保下次扫码立即看到 revoked 状态
     await _invalidate_resolve_cache(item.public_id)
     # 状态变更审计（yimatong-zgb1.3 AC5）
-    await _audit_code_op(db, actor_id, str(tenant_id), "code_revoke", f"code_item:{item.public_id}")
+    await _audit_code_op(
+        db,
+        actor_id,
+        str(tenant_id),
+        "code_void",
+        f"code_item:{item.public_id}",
+        details={
+            "reason": reason,
+            "before": {"status": previous_status.value},
+            "after": {"status": CodeItemStatus.revoked.value},
+        },
+    )
     await db.refresh(item)
     return item
 
@@ -820,6 +1079,18 @@ async def revoke_code_item(
 async def bind_code_item(
     db: AsyncSession, tenant_id: uuid.UUID, item_id: uuid.UUID, actor_id: str | None = None
 ) -> CodeItem:
+    controlled = await transition_code_item_lifecycle(db, tenant_id, item_id, "bind", None)
+    if controlled is not None:
+        item = await db.scalar(
+            select(CodeItem)
+            .where(CodeItem.id == item_id, CodeItem.tenant_id == tenant_id)
+            .execution_options(populate_existing=True)
+        )
+        if item is None:
+            raise NotFoundError("Code item not found")
+        await _invalidate_resolve_cache(item.public_id)
+        return item
+
     from app.services.code_state import InvalidStateTransitionError, can_transition
 
     locator_result = await db.execute(
@@ -885,11 +1156,28 @@ async def bind_code_item(
 
 
 async def freeze_batch(
-    db: AsyncSession, tenant_id: uuid.UUID, batch_id: uuid.UUID, actor_id: str | None = None
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    batch_id: uuid.UUID,
+    actor_id: str | None = None,
+    reason: str | None = None,
 ) -> CodeBatchFreezeResponse:
+    controlled = await transition_code_batch_lifecycle(db, tenant_id, batch_id, "freeze", reason)
+    if controlled is not None:
+        await _invalidate_batch_cache(db, tenant_id, batch_id, CodeItemStatus.frozen)
+        return CodeBatchFreezeResponse(frozen=controlled["affected_item_count"])
+
+    reason = _validated_lifecycle_reason(reason)
+
     from sqlalchemy import update as sa_update
 
     from app.services.code_state import InvalidStateTransitionError, can_transition
+
+    batch_exists = await db.scalar(
+        select(CodeBatch.id).where(CodeBatch.id == batch_id, CodeBatch.tenant_id == tenant_id)
+    )
+    if batch_exists is None:
+        raise NotFoundError("Code batch not found")
 
     # Validate current state before bulk update
     sample_result = await db.execute(
@@ -908,6 +1196,7 @@ async def freeze_batch(
         except Exception as e:
             raise InvalidStateTransitionError(str(e)) from e
 
+    now = utcnow()
     stmt = (
         sa_update(CodeItem)
         .where(
@@ -915,14 +1204,30 @@ async def freeze_batch(
             CodeItem.code_batch_id == batch_id,
             CodeItem.status.in_([CodeItemStatus.activated, CodeItemStatus.bound]),
         )
-        .values(status=CodeItemStatus.frozen)
+        .values(
+            status=CodeItemStatus.frozen,
+            frozen_from_status=CodeItem.status,
+            frozen_at=now,
+            frozen_by=actor_id,
+            freeze_reason=reason,
+            freeze_provenance_version=1,
+        )
     )
     r = await db.execute(stmt)
+    if not r.rowcount:
+        raise ConflictError("Code batch has no freezable items", error_code="CODE_LIFECYCLE_CONFLICT")
     await db.flush()
     # 批量清除被冻结码的解析缓存
     await _invalidate_batch_cache(db, tenant_id, batch_id, CodeItemStatus.frozen)
     # 状态变更审计（yimatong-zgb1.3 AC5）
-    await _audit_code_op(db, actor_id, str(tenant_id), "code_freeze", f"code_batch:{batch_id}")
+    await _audit_code_op(
+        db,
+        actor_id,
+        str(tenant_id),
+        "code_freeze",
+        f"code_batch:{batch_id}",
+        details={"reason": reason, "affected_item_count": r.rowcount},
+    )
     return CodeBatchFreezeResponse(frozen=r.rowcount)
 
 
@@ -936,23 +1241,35 @@ async def void_batch(
     """作废整批码（不可逆，yimatong-zgb1.3 强制生命周期合约）。
 
     权威四状态规则：任何未作废（voided）的码都可作废（unactivated/active/frozen → voided）；
-    已经作废（revoked/expired）的幂等跳过。voided 是终态，本操作之后该码不能再回到其他状态。
+    已经作废（revoked/expired）的码不会再次变更；整批无可作废码时返回稳定冲突。
+    voided 是终态，本操作之后该码不能再回到其他状态。
 
     yimatong-zgb1.8 AC2+AC3：作废是受保护的不可逆动作，必须记录原因。
     reason 写入审计日志的 resource 详情（User Story 28）。
     """
+    controlled = await transition_code_batch_lifecycle(db, tenant_id, batch_id, "void", reason)
+    if controlled is not None:
+        await _invalidate_batch_cache(db, tenant_id, batch_id, CodeItemStatus.revoked)
+        return CodeBatchVoidResponse(voided=controlled["affected_item_count"])
+
+    reason = _validated_lifecycle_reason(reason)
+
     from sqlalchemy import update as sa_update
 
     from app.models.code import CodeLifecycle, to_lifecycle
     from app.services.code_lifecycle import can_lifecycle_transition
 
-    # 先取该批所有码的当前状态，校验可作废（已作废的幂等跳过；其余必须能转到 voided）
+    batch = await db.scalar(select(CodeBatch).where(CodeBatch.id == batch_id, CodeBatch.tenant_id == tenant_id))
+    if batch is None:
+        raise NotFoundError("Code batch not found")
+
+    # 先取该批所有码的当前状态，校验可作废（已作废的跳过；其余必须能转到 voided）
     result = await db.execute(
         select(CodeItem.id, CodeItem.status).where(CodeItem.tenant_id == tenant_id, CodeItem.code_batch_id == batch_id)
     )
     voidable_ids: list[uuid.UUID] = []
     for item_id, status in result.all():
-        # 已作废（映射到 voided）幂等跳过
+        # 已作废（映射到 voided）不再写入
         if to_lifecycle(status) == CodeLifecycle.voided:
             continue
         # 校验可作废（unactivated/active/frozen → voided 均合法）
@@ -960,27 +1277,44 @@ async def void_batch(
         voidable_ids.append(item_id)
 
     voided_count = 0
-    if voidable_ids:
-        now = utcnow()
-        stmt = (
-            sa_update(CodeItem)
-            .where(
-                CodeItem.tenant_id == tenant_id,
-                CodeItem.id.in_(voidable_ids),
-            )
-            .values(status=CodeItemStatus.revoked, revoked_at=now)
+    if not voidable_ids:
+        raise ConflictError("Code batch has no voidable items", error_code="CODE_LIFECYCLE_CONFLICT")
+    now = utcnow()
+    stmt = (
+        sa_update(CodeItem)
+        .where(
+            CodeItem.tenant_id == tenant_id,
+            CodeItem.id.in_(voidable_ids),
         )
-        r = await db.execute(stmt)
-        voided_count = r.rowcount or 0
-        await db.flush()
-        # 批量清除被作废码的解析缓存
-        await _invalidate_batch_cache(db, tenant_id, batch_id, CodeItemStatus.revoked)
-    # 状态变更审计（yimatong-zgb1.3 AC5 + 1.8 AC3 reason）— 即使 voided_count=0（幂等）也记录尝试
-    # yimatong-zgb1.8：resource 包含 reason，便于审计追溯
-    resource = f"code_batch:{batch_id}"
-    if reason:
-        resource += f" reason:{reason[:200]}"
-    await _audit_code_op(db, actor_id, str(tenant_id), "code_void", resource)
+        .values(
+            status=CodeItemStatus.revoked,
+            revoked_at=now,
+            frozen_from_status=None,
+            frozen_at=None,
+            frozen_by=None,
+            freeze_reason=None,
+            freeze_provenance_version=None,
+        )
+    )
+    r = await db.execute(stmt)
+    voided_count = r.rowcount or 0
+    await db.flush()
+    # 批量清除被作废码的解析缓存
+    await _invalidate_batch_cache(db, tenant_id, batch_id, CodeItemStatus.revoked)
+    # 状态变更审计（yimatong-zgb1.3 AC5 + 1.8 AC3 reason）
+    await _audit_code_op(
+        db,
+        actor_id,
+        str(tenant_id),
+        "code_void",
+        f"code_batch:{batch_id}",
+        details={
+            "reason": reason,
+            "affected_item_count": voided_count,
+            "before": {"status": batch.status.value},
+            "after": {"status": batch.status.value},
+        },
+    )
     return CodeBatchVoidResponse(voided=voided_count)
 
 

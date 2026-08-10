@@ -17,16 +17,21 @@ import {
   Space,
   Spin,
   Statistic,
+  Table,
   Tag,
   Typography,
 } from "antd";
 import { ArrowLeftOutlined, DownloadOutlined } from "@ant-design/icons";
+import type { ColumnsType } from "antd/es/table";
 import api from "@/lib/api";
 import { useAuthStore } from "@/lib/auth";
 import { codeAccessForPrincipal, type CodeAccess } from "@/lib/code-access";
 import { formatDate, formatDateTime } from "@/lib/format";
 import { STATUS_COLORS } from "@/lib/status-colors";
-import { useTenantPlanReadOnly } from "../../_components/TenantPlanReadOnly";
+import {
+  useTenantFeatureEnabled,
+  useTenantPlanReadOnly,
+} from "../../_components/TenantPlanReadOnly";
 
 const { Title, Text } = Typography;
 
@@ -58,6 +63,26 @@ interface DeliveryFormValues {
   recipient: string;
   confirm: "deliver";
 }
+
+interface CodeItemRow {
+  id: string;
+  public_id: string;
+  status: string;
+  code_type: string;
+}
+
+interface ItemVoidFormValues {
+  reason: string;
+  confirm: "void";
+}
+
+interface ItemFreezeFormValues {
+  reason: string;
+  confirm: "freeze";
+}
+
+type BatchFreezeFormValues = ItemFreezeFormValues;
+type BatchVoidFormValues = ItemVoidFormValues;
 
 const STATUS_MAP: Record<string, { label: string; color: string }> = {
   pending: { label: "待生成", color: STATUS_COLORS.neutral },
@@ -103,7 +128,10 @@ function CodeBatchDetailWorkspace({ access }: { access: CodeAccess }) {
   const router = useRouter();
   const { message, modal } = App.useApp();
   const planReadOnly = useTenantPlanReadOnly();
+  const riskLifecycleEnabled = useTenantFeatureEnabled("risk_module");
   const [deliveryForm] = Form.useForm<DeliveryFormValues>();
+  const [batchFreezeForm] = Form.useForm<BatchFreezeFormValues>();
+  const [batchVoidForm] = Form.useForm<BatchVoidFormValues>();
 
   const [batch, setBatch] = useState<CodeBatchDetail | null>(null);
   const [loading, setLoading] = useState(true);
@@ -115,6 +143,10 @@ function CodeBatchDetailWorkspace({ access }: { access: CodeAccess }) {
   const [markingPrinting, setMarkingPrinting] = useState(false);
   const [markingDelivered, setMarkingDelivered] = useState(false);
   const [deliveryOpen, setDeliveryOpen] = useState(false);
+  const [batchFreezeOpen, setBatchFreezeOpen] = useState(false);
+  const [batchVoidOpen, setBatchVoidOpen] = useState(false);
+  const [batchLifecycleLoading, setBatchLifecycleLoading] = useState(false);
+  const [itemRefreshKey, setItemRefreshKey] = useState(0);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -247,6 +279,45 @@ function CodeBatchDetailWorkspace({ access }: { access: CodeAccess }) {
       message.error("标记已交付失败");
     } finally {
       setMarkingDelivered(false);
+    }
+  };
+
+  const handleBatchFreeze = async (values: BatchFreezeFormValues) => {
+    if (!batch || planReadOnly || !access.canManage) return;
+    setBatchLifecycleLoading(true);
+    try {
+      await api.post(`/code-batches/${batch.id}/freeze`, {
+        reason: values.reason.trim(),
+        confirm: "freeze",
+      });
+      message.success("整批码已冻结");
+      setBatchFreezeOpen(false);
+      batchFreezeForm.resetFields();
+      setItemRefreshKey((key) => key + 1);
+      await load();
+    } catch {
+      message.error("整批冻结失败，请刷新状态后重试");
+    } finally {
+      setBatchLifecycleLoading(false);
+    }
+  };
+
+  const handleBatchVoid = async (values: BatchVoidFormValues) => {
+    if (!batch || planReadOnly || !access.canManage) return;
+    setBatchLifecycleLoading(true);
+    try {
+      await api.post(`/code-batches/${batch.id}/void`, null, {
+        params: { reason: values.reason.trim(), confirm: "void" },
+      });
+      message.success("整批码已永久作废");
+      setBatchVoidOpen(false);
+      batchVoidForm.resetFields();
+      setItemRefreshKey((key) => key + 1);
+      await load();
+    } catch {
+      message.error("整批作废失败，请刷新状态后重试");
+    } finally {
+      setBatchLifecycleLoading(false);
     }
   };
 
@@ -445,6 +516,25 @@ function CodeBatchDetailWorkspace({ access }: { access: CodeAccess }) {
                   激活码批次
                 </Button>
               )}
+              {access.canManage && batch.status === "activated" && (
+                <>
+                  <Button
+                    block
+                    onClick={() => setBatchFreezeOpen(true)}
+                    disabled={planReadOnly}
+                  >
+                    冻结整批
+                  </Button>
+                  <Button
+                    block
+                    danger
+                    onClick={() => setBatchVoidOpen(true)}
+                    disabled={planReadOnly}
+                  >
+                    永久作废整批
+                  </Button>
+                </>
+              )}
               {![
                 "activated",
                 "completed",
@@ -458,6 +548,14 @@ function CodeBatchDetailWorkspace({ access }: { access: CodeAccess }) {
           </Card>
         </Col>
       </Row>
+      {access.canManage ? (
+        <CodeItemsLifecyclePanel
+          batchId={batch.id}
+          disabled={planReadOnly}
+          riskLifecycleEnabled={riskLifecycleEnabled}
+          refreshKey={itemRefreshKey}
+        />
+      ) : null}
       <Modal
         title="确认码表已交付"
         open={deliveryOpen}
@@ -497,6 +595,383 @@ function CodeBatchDetailWorkspace({ access }: { access: CodeAccess }) {
           </Form.Item>
         </Form>
       </Modal>
+      <Modal
+        title="冻结整批码"
+        open={batchFreezeOpen}
+        onCancel={() => {
+          setBatchFreezeOpen(false);
+          batchFreezeForm.resetFields();
+        }}
+        onOk={() => batchFreezeForm.submit()}
+        okText="确认冻结整批"
+        confirmLoading={batchLifecycleLoading}
+        okButtonProps={{ disabled: planReadOnly || !access.canManage }}
+        forceRender
+      >
+        <Form<BatchFreezeFormValues>
+          name="code-batch-freeze"
+          form={batchFreezeForm}
+          layout="vertical"
+          initialValues={{ confirm: "freeze" }}
+          disabled={planReadOnly || !access.canManage}
+          onFinish={handleBatchFreeze}
+        >
+          <Form.Item
+            name="reason"
+            label="整批冻结原因"
+            rules={[{ required: true, whitespace: true, max: 200 }]}
+          >
+            <Input.TextArea rows={3} />
+          </Form.Item>
+          <Form.Item name="confirm" hidden>
+            <input />
+          </Form.Item>
+        </Form>
+      </Modal>
+      <Modal
+        title="永久作废整批码"
+        open={batchVoidOpen}
+        onCancel={() => {
+          setBatchVoidOpen(false);
+          batchVoidForm.resetFields();
+        }}
+        onOk={() => batchVoidForm.submit()}
+        okText="确认作废整批"
+        confirmLoading={batchLifecycleLoading}
+        okButtonProps={{
+          danger: true,
+          disabled: planReadOnly || !access.canManage,
+        }}
+        forceRender
+      >
+        <Alert
+          className="mb-3"
+          type="warning"
+          showIcon
+          title="整批作废后不可恢复，所有码都会停止使用。"
+        />
+        <Form<BatchVoidFormValues>
+          name="code-batch-void"
+          form={batchVoidForm}
+          layout="vertical"
+          initialValues={{ confirm: "void" }}
+          disabled={planReadOnly || !access.canManage}
+          onFinish={handleBatchVoid}
+        >
+          <Form.Item
+            name="reason"
+            label="整批作废原因"
+            rules={[{ required: true, whitespace: true, max: 200 }]}
+          >
+            <Input.TextArea rows={3} />
+          </Form.Item>
+          <Form.Item name="confirm" hidden>
+            <input />
+          </Form.Item>
+        </Form>
+      </Modal>
     </div>
+  );
+}
+
+function CodeItemsLifecyclePanel({
+  batchId,
+  disabled,
+  riskLifecycleEnabled,
+  refreshKey,
+}: {
+  batchId: string;
+  disabled: boolean;
+  riskLifecycleEnabled: boolean;
+  refreshKey: number;
+}) {
+  const { message, modal } = App.useApp();
+  const [voidForm] = Form.useForm<ItemVoidFormValues>();
+  const [freezeForm] = Form.useForm<ItemFreezeFormValues>();
+  const [items, setItems] = useState<CodeItemRow[]>([]);
+  const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(1);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
+  const [mutatingId, setMutatingId] = useState<string | null>(null);
+  const [voidTarget, setVoidTarget] = useState<CodeItemRow | null>(null);
+  const [freezeTarget, setFreezeTarget] = useState<CodeItemRow | null>(null);
+
+  const loadItems = useCallback(
+    async (targetPage: number) => {
+      setLoading(true);
+      setError(false);
+      try {
+        const { data } = await api.get("/code-items", {
+          params: { code_batch_id: batchId, page: targetPage, page_size: 20 },
+        });
+        setItems(data.items || []);
+        setTotal(data.total || 0);
+        setPage(targetPage);
+      } catch {
+        setItems([]);
+        setTotal(0);
+        setError(true);
+      } finally {
+        setLoading(false);
+      }
+    },
+    [batchId]
+  );
+
+  useEffect(() => {
+    void loadItems(1);
+  }, [loadItems, refreshKey]);
+
+  const freezeItem = async (values: ItemFreezeFormValues) => {
+    if (!freezeTarget || disabled || !riskLifecycleEnabled) return;
+    setMutatingId(freezeTarget.id);
+    try {
+      await api.post(`/risk-alerts/code-items/${freezeTarget.id}/freeze`, {
+        reason: values.reason.trim(),
+        confirm: "freeze",
+      });
+      message.success("码已冻结，消费者权益入口同步关闭");
+      setFreezeTarget(null);
+      freezeForm.resetFields();
+      await loadItems(page);
+    } catch {
+      message.error("冻结失败，请刷新状态后重试");
+    } finally {
+      setMutatingId(null);
+    }
+  };
+
+  const recoverItem = async (item: CodeItemRow) => {
+    if (disabled || !riskLifecycleEnabled) return;
+    setMutatingId(item.id);
+    try {
+      await api.post(`/risk-alerts/code-items/${item.id}/unfreeze`);
+      message.success("码已恢复到冻结前状态");
+      await loadItems(page);
+    } catch {
+      message.error("恢复失败，请刷新状态后重试");
+    } finally {
+      setMutatingId(null);
+    }
+  };
+
+  const voidItem = async (values: ItemVoidFormValues) => {
+    if (!voidTarget || disabled) return;
+    setMutatingId(voidTarget.id);
+    try {
+      await api.post(`/code-items/${voidTarget.id}/revoke`, {
+        reason: values.reason.trim(),
+        confirm: "void",
+      });
+      message.success("码已永久作废");
+      setVoidTarget(null);
+      voidForm.resetFields();
+      await loadItems(page);
+    } catch {
+      message.error("作废失败，请刷新状态后重试");
+    } finally {
+      setMutatingId(null);
+    }
+  };
+
+  const columns: ColumnsType<CodeItemRow> = [
+    { title: "码编号", dataIndex: "public_id", key: "public_id" },
+    {
+      title: "状态",
+      dataIndex: "status",
+      key: "status",
+      render: (status: string) => {
+        const info = STATUS_MAP[status] || {
+          label: status,
+          color: STATUS_COLORS.neutral,
+        };
+        return <Tag color={info.color}>{info.label}</Tag>;
+      },
+    },
+    {
+      title: "操作",
+      key: "actions",
+      render: (_value, item) => {
+        let transitionAction: React.ReactNode = null;
+        if (
+          riskLifecycleEnabled &&
+          (item.status === "activated" || item.status === "bound")
+        ) {
+          transitionAction = (
+            <Button
+              size="small"
+              disabled={disabled}
+              loading={mutatingId === item.id}
+              onClick={() => {
+                freezeForm.resetFields();
+                setFreezeTarget(item);
+              }}
+            >
+              冻结
+            </Button>
+          );
+        }
+        if (riskLifecycleEnabled && item.status === "frozen") {
+          transitionAction = (
+            <Button
+              size="small"
+              disabled={disabled}
+              loading={mutatingId === item.id}
+              onClick={() =>
+                modal.confirm({
+                  title: "恢复该码？",
+                  content: "系统会恢复到冻结前的已激活或已绑定状态。",
+                  okText: "确认恢复",
+                  cancelText: "取消",
+                  onOk: () => recoverItem(item),
+                })
+              }
+            >
+              恢复
+            </Button>
+          );
+        }
+        const canVoid = !["revoked", "expired"].includes(item.status);
+        if (!transitionAction && !canVoid) {
+          return <Text type="secondary">暂无可用操作</Text>;
+        }
+        return (
+          <Space>
+            {transitionAction}
+            {canVoid ? (
+              <Button
+                size="small"
+                danger
+                disabled={disabled}
+                onClick={() => {
+                  voidForm.resetFields();
+                  setVoidTarget(item);
+                }}
+              >
+                永久作废
+              </Button>
+            ) : null}
+          </Space>
+        );
+      },
+    },
+  ];
+
+  if (error) {
+    return (
+      <Alert
+        className="mt-4"
+        type="error"
+        showIcon
+        title="码明细加载失败"
+        action={
+          <Button size="small" onClick={() => void loadItems(page)}>
+            重试
+          </Button>
+        }
+      />
+    );
+  }
+
+  return (
+    <>
+      <Card title="码明细与生命周期" size="small" className="mt-4">
+        <Table<CodeItemRow>
+          rowKey="id"
+          size="small"
+          columns={columns}
+          dataSource={items}
+          loading={loading}
+          pagination={{
+            current: page,
+            total,
+            pageSize: 20,
+            onChange: (next) => void loadItems(next),
+            showTotal: (count) => `共 ${count} 个码`,
+          }}
+        />
+      </Card>
+      {riskLifecycleEnabled ? (
+        <Modal
+          title="冻结该码"
+          open={Boolean(freezeTarget)}
+          onCancel={() => {
+            setFreezeTarget(null);
+            freezeForm.resetFields();
+          }}
+          onOk={() => freezeForm.submit()}
+          okText="确认冻结"
+          okButtonProps={{ disabled }}
+          confirmLoading={mutatingId === freezeTarget?.id}
+          forceRender
+        >
+          <Alert
+            className="mb-3"
+            type="warning"
+            showIcon
+            title="冻结后仍可查看溯源，但消费者权益入口会立即暂停。"
+          />
+          <Form<ItemFreezeFormValues>
+            name="code-item-freeze"
+            form={freezeForm}
+            layout="vertical"
+            initialValues={{ confirm: "freeze" }}
+            disabled={disabled}
+            onFinish={freezeItem}
+          >
+            <Form.Item
+              name="reason"
+              label="冻结原因"
+              rules={[{ required: true, whitespace: true, max: 200 }]}
+            >
+              <Input.TextArea rows={3} />
+            </Form.Item>
+            <Form.Item name="confirm" hidden>
+              <input />
+            </Form.Item>
+          </Form>
+        </Modal>
+      ) : null}
+      <Modal
+        title="永久作废该码"
+        open={Boolean(voidTarget)}
+        onCancel={() => {
+          setVoidTarget(null);
+          voidForm.resetFields();
+        }}
+        onOk={() => voidForm.submit()}
+        okText="确认作废"
+        okButtonProps={{ danger: true, disabled }}
+        confirmLoading={mutatingId === voidTarget?.id}
+        forceRender
+      >
+        <Alert
+          className="mb-3"
+          type="warning"
+          showIcon
+          title="作废后不可恢复，消费者将无法再使用该码。"
+        />
+        <Form<ItemVoidFormValues>
+          name="code-item-void"
+          form={voidForm}
+          layout="vertical"
+          initialValues={{ confirm: "void" }}
+          disabled={disabled}
+          onFinish={voidItem}
+        >
+          <Form.Item
+            name="reason"
+            label="作废原因"
+            rules={[{ required: true, whitespace: true, max: 200 }]}
+          >
+            <Input.TextArea rows={3} />
+          </Form.Item>
+          <Form.Item name="confirm" hidden>
+            <input />
+          </Form.Item>
+        </Form>
+      </Modal>
+    </>
   );
 }

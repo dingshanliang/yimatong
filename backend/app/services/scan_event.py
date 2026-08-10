@@ -2,7 +2,7 @@
 
 import uuid
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy import update as sa_update
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -34,37 +34,56 @@ async def record_scan_event(
     # 无效码、终止状态和写入失败不会产生 ScanEvent，因此不计费。
     await check_quota_incremental_locked(db, tenant_id, "max_scans", ScanEvent)
 
-    # 原子判断首扫：更新 first_scanned_at，若之前为空则为首扫。
-    # tenant_id 维度过滤：即使 public_id 全局唯一，应用层也显式限定本租户的码，
-    # 避免跨租户调用方误写其他租户的首查事实。
-    result = await db.execute(
-        sa_update(CodeItem)
-        .where(
-            CodeItem.public_id == public_id,
-            CodeItem.tenant_id == tenant_id,
-            CodeItem.first_scanned_at.is_(None),
-        )
-        .values(first_scanned_at=utcnow())
-    )
+    from app.core.database import _session_uses_postgresql
 
-    if result.rowcount == 1:
-        is_first = True
-    else:
-        # 检查本租户的 CodeItem 是否存在（tenant 维度一致）
-        code_exists = await db.execute(
-            select(CodeItem.id).where(CodeItem.public_id == public_id, CodeItem.tenant_id == tenant_id)
+    if _session_uses_postgresql(db):
+        first_scan_row = (
+            (
+                await db.execute(
+                    text("SELECT * FROM public.mark_code_item_first_scanned(:tenant_id, :public_id)"),
+                    {"tenant_id": tenant_id, "public_id": public_id},
+                )
+            )
+            .mappings()
+            .one()
         )
-        if code_exists.scalar_one_or_none():
-            # CodeItem 存在但 first_scanned_at 已设置 → 非首查
-            is_first = False
+        is_first = bool(first_scan_row["first_scan"])
+        first_scanned_at = first_scan_row["first_scanned_at"]
+        if first_scanned_at is None:
+            raise RuntimeError("First-scan authority returned no timestamp")
+        scan_time = first_scanned_at if is_first else utcnow()
+    else:
+        # SQLite test adapter mirrors the PostgreSQL authority with one
+        # tenant-scoped conditional update.
+        result = await db.execute(
+            sa_update(CodeItem)
+            .where(
+                CodeItem.public_id == public_id,
+                CodeItem.tenant_id == tenant_id,
+                CodeItem.first_scanned_at.is_(None),
+            )
+            .values(first_scanned_at=utcnow())
+        )
+
+        if result.rowcount == 1:
+            is_first = True
         else:
-            # CodeItem 不存在（如测试环境直接调用），回退到查询方式
-            is_first = await _check_first_scan(db, public_id)
+            # 检查本租户的 CodeItem 是否存在（tenant 维度一致）
+            code_exists = await db.execute(
+                select(CodeItem.id).where(CodeItem.public_id == public_id, CodeItem.tenant_id == tenant_id)
+            )
+            if code_exists.scalar_one_or_none():
+                # CodeItem 存在但 first_scanned_at 已设置 → 非首查
+                is_first = False
+            else:
+                # CodeItem 不存在（如测试环境直接调用），回退到查询方式
+                is_first = await _check_first_scan(db, public_id)
+        scan_time = utcnow()
 
     event = ScanEvent(
         tenant_id=tenant_id,
         public_id=public_id,
-        scan_time=utcnow(),
+        scan_time=scan_time,
         ip_hash=ip_hash,
         user_agent=user_agent,
         is_first_scan=is_first,

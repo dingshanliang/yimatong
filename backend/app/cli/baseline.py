@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import json
 import uuid
+from contextlib import AsyncExitStack
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
@@ -22,6 +23,7 @@ from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import selectinload
 
+from app.cli.lifecycle_auth import cli_lifecycle_auth_context
 from app.constants.categories import get_default_categories
 from app.core.config import settings
 from app.core.database import set_session_tenant_context
@@ -785,14 +787,36 @@ async def _open_runtime_tenant(db: AsyncSession, tenant_ref: _TenantSeedRef) -> 
     return tenant
 
 
+async def _ensure_committed_runtime_admin(
+    session_factory: async_sessionmaker[AsyncSession],
+    tenant_ref: _TenantSeedRef,
+) -> uuid.UUID:
+    """Commit the durable CLI actor before control-plane credential creation."""
+
+    async with session_factory() as db, db.begin():
+        tenant = await _open_runtime_tenant(db, tenant_ref)
+        admin = await _ensure_runtime_admin(db, tenant, tenant_ref)
+        return admin.id
+
+
 async def _build_baseline_tenant(
     session_factory: async_sessionmaker[AsyncSession],
+    control_session_factory: async_sessionmaker[AsyncSession],
     tenant_ref: _TenantSeedRef,
 ) -> _BaselineFacts:
     try:
-        async with session_factory() as db, db.begin():
+        admin_id = await _ensure_committed_runtime_admin(session_factory, tenant_ref)
+        async with AsyncExitStack() as stack:
+            await stack.enter_async_context(
+                cli_lifecycle_auth_context(
+                    control_session_factory,
+                    tenant_id=tenant_ref.tenant_id,
+                    account_id=admin_id,
+                )
+            )
+            db = await stack.enter_async_context(session_factory())
+            await stack.enter_async_context(db.begin())
             tenant = await _open_runtime_tenant(db, tenant_ref)
-            admin = await _ensure_runtime_admin(db, tenant, tenant_ref)
             brand = await _ensure_brand(db, tenant.id, BRAND_NAME, "基准品牌：食品/农产品品牌方。")
             product = await _ensure_product(
                 db,
@@ -819,14 +843,14 @@ async def _build_baseline_tenant(
                 production_batch.id,
                 CODE_BATCH_CODE,
                 BASELINE_CODE_QUANTITY,
-                admin.id,
+                admin_id,
             )
             template, version = await _ensure_page(
                 db,
                 tenant.id,
                 product.id,
                 PAGE_TEMPLATE_NAME,
-                admin.id,
+                admin_id,
                 BENEFIT_NAME,
             )
             campaign, benefit = await _ensure_campaign_and_benefit(
@@ -874,12 +898,22 @@ async def _build_baseline_tenant(
 
 async def _build_control_tenant(
     session_factory: async_sessionmaker[AsyncSession],
+    control_session_factory: async_sessionmaker[AsyncSession],
     tenant_ref: _TenantSeedRef,
 ) -> _ControlFacts:
     try:
-        async with session_factory() as db, db.begin():
+        admin_id = await _ensure_committed_runtime_admin(session_factory, tenant_ref)
+        async with AsyncExitStack() as stack:
+            await stack.enter_async_context(
+                cli_lifecycle_auth_context(
+                    control_session_factory,
+                    tenant_id=tenant_ref.tenant_id,
+                    account_id=admin_id,
+                )
+            )
+            db = await stack.enter_async_context(session_factory())
+            await stack.enter_async_context(db.begin())
             tenant = await _open_runtime_tenant(db, tenant_ref)
-            admin = await _ensure_runtime_admin(db, tenant, tenant_ref)
             brand = await _ensure_brand(db, tenant.id, CONTROL_BRAND_NAME, "对照品牌")
             product = await _ensure_product(
                 db,
@@ -912,7 +946,7 @@ async def _build_control_tenant(
                 production_batch.id,
                 CONTROL_CODE_BATCH_CODE,
                 CONTROL_CODE_QUANTITY,
-                admin.id,
+                admin_id,
             )
             await refresh_quota_usage_from_authoritative_rows(db, tenant.id)
             return _ControlFacts(
@@ -958,8 +992,8 @@ async def _build_baseline_dataset(
     control_factory, control_engine = _session_factory(control_url)
     try:
         base_ref, control_ref = await _ensure_control_plane(control_factory)
-        base_facts = await _build_baseline_tenant(runtime_factory, base_ref)
-        control_facts = await _build_control_tenant(runtime_factory, control_ref)
+        base_facts = await _build_baseline_tenant(runtime_factory, control_factory, base_ref)
+        control_facts = await _build_control_tenant(runtime_factory, control_factory, control_ref)
         return {
             "baseline_tenant": {
                 "id": str(base_ref.tenant_id),

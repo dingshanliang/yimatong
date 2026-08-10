@@ -125,6 +125,34 @@ def test_import_routes_have_exact_method_bound_agency_scope_mapping():
     assert not middleware._acting_path_is_explicitly_supported("/api/v1/imports", ["products", "codes"], "POST")
 
 
+def test_risk_alert_routes_have_exact_codes_scope_mapping():
+    middleware = TenantScopeMiddleware(Starlette())
+    alert_id = str(uuid.uuid4())
+    item_id = str(uuid.uuid4())
+
+    assert middleware._acting_path_is_explicitly_supported("/api/v1/risk-alerts", ["codes"], "GET")
+    assert middleware._acting_path_is_explicitly_supported(f"/api/v1/risk-alerts/{alert_id}/resolve", ["codes"], "POST")
+    assert middleware._acting_path_is_explicitly_supported(
+        f"/api/v1/risk-alerts/code-items/{item_id}/freeze", ["codes"], "POST"
+    )
+    assert middleware._acting_path_is_explicitly_supported(
+        f"/api/v1/risk-alerts/code-items/{item_id}/unfreeze", ["codes"], "POST"
+    )
+
+    assert not middleware._acting_path_is_explicitly_supported("/api/v1/risk-alerts", ["analytics"], "GET")
+    assert not middleware._acting_path_is_explicitly_supported("/api/v1/risk-alerts", ["codes"], "POST")
+    assert not middleware._acting_path_is_explicitly_supported(
+        f"/api/v1/risk-alerts/{alert_id}/resolve", ["codes"], "GET"
+    )
+    assert not middleware._acting_path_is_explicitly_supported(
+        f"/api/v1/risk-alerts/code-items/{item_id}/freeze", ["codes"], "GET"
+    )
+    assert not middleware._acting_path_is_explicitly_supported(
+        f"/api/v1/risk-alerts/code-items/{item_id}/void", ["codes"], "POST"
+    )
+    assert not middleware._acting_path_is_explicitly_supported("/api/v1/risk-alerts/unrelated", ["codes"], "GET")
+
+
 def test_agency_without_acting_context_cannot_write_product_materials():
     middleware = TenantScopeMiddleware(Starlette())
 
@@ -136,3 +164,17 @@ def test_agency_without_acting_context_cannot_write_product_materials():
     assert middleware._is_brand_write_surface("/api/v1/imports/existing-codes", "POST")
     assert not middleware._is_brand_write_surface("/api/v1/imports/products", "GET")
     assert not middleware._is_brand_write_surface("/api/v1/imports/products/preview", "POST")
+
+
+def test_agency_without_acting_context_cannot_mutate_risk_alerts_or_codes():
+    middleware = TenantScopeMiddleware(Starlette())
+    alert_id = str(uuid.uuid4())
+    item_id = str(uuid.uuid4())
+
+    assert middleware._is_brand_write_surface(f"/api/v1/risk-alerts/{alert_id}/resolve", "POST")
+    assert middleware._is_brand_write_surface(f"/api/v1/risk-alerts/code-items/{item_id}/freeze", "POST")
+    assert middleware._is_brand_write_surface(f"/api/v1/risk-alerts/code-items/{item_id}/unfreeze", "POST")
+    assert not middleware._is_brand_write_surface("/api/v1/risk-alerts", "GET")
+    assert middleware._requires_client_workspace("/api/v1/risk-alerts", "GET")
+    assert middleware._requires_client_workspace(f"/api/v1/risk-alerts/{alert_id}/resolve", "POST")
+    assert not middleware._requires_client_workspace("/api/v1/agency/projects", "GET")

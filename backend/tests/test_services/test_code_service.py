@@ -1067,6 +1067,9 @@ class TestBindCodeItem:
                 self.scalars = iter((production_batch, changed_batch))
                 self.scalar_calls = 0
 
+            def get_bind(self):
+                return engine.sync_engine
+
             async def execute(self, _statement):
                 return LocatorResult()
 
@@ -1104,17 +1107,27 @@ class TestFreezeBatch:
             await _prepare_delivered_batch(db, tenant_id, batch_id, created_by)
             await activate_batch(db, tenant_id, batch_id, actor_id=str(created_by))
 
-            freeze_result = await freeze_batch(db, tenant_id, batch_id, actor_id=str(created_by))
+            freeze_result = await freeze_batch(
+                db,
+                tenant_id,
+                batch_id,
+                actor_id=str(created_by),
+                reason="batch investigation",
+            )
             assert freeze_result.frozen == 5
 
             # 验证码项状态
             items_result = await db.execute(select(CodeItem).where(CodeItem.code_batch_id == batch_id))
             for item in items_result.scalars().all():
                 assert item.status == CodeItemStatus.frozen
+                assert item.frozen_from_status == CodeItemStatus.activated.value
+                assert item.frozen_by == str(created_by)
+                assert item.freeze_reason == "batch investigation"
+                assert item.freeze_provenance_version == 1
 
     @pytest.mark.anyio
-    async def test_freeze_empty_batch_returns_zero(self):
-        """没有可冻结码项时返回 0"""
+    async def test_freeze_empty_batch_returns_conflict(self):
+        """没有可冻结码项时与 PostgreSQL 权威接口一致返回冲突。"""
         async with TestSession() as db:
             tenant_id, _, product_id, sku_id, production_batch_id = await _create_prerequisites(db)
             created_by = _uuid()
@@ -1131,8 +1144,15 @@ class TestFreezeBatch:
             batch_id = uuid.UUID(result["id"])
             # 批次处于 completed 但码项都是 created 状态，不在 activated/bound
 
-            freeze_result = await freeze_batch(db, tenant_id, batch_id, actor_id=str(created_by))
-            assert freeze_result.frozen == 0
+            with pytest.raises(ConflictError) as raised:
+                await freeze_batch(
+                    db,
+                    tenant_id,
+                    batch_id,
+                    actor_id=str(created_by),
+                    reason="batch investigation",
+                )
+            assert raised.value.error_code == "CODE_LIFECYCLE_CONFLICT"
 
 
 class TestVoidBatch:
@@ -1155,7 +1175,13 @@ class TestVoidBatch:
             )
             batch_id = uuid.UUID(result["id"])
 
-            void_result = await void_batch(db, tenant_id, batch_id, actor_id=str(created_by))
+            void_result = await void_batch(
+                db,
+                tenant_id,
+                batch_id,
+                actor_id=str(created_by),
+                reason="permanent batch incident",
+            )
             assert void_result.voided == 5
 
             # 验证码项状态
@@ -1183,12 +1209,25 @@ class TestVoidBatch:
             batch_id = uuid.UUID(result["id"])
 
             # 先作废一次
-            first_void = await void_batch(db, tenant_id, batch_id, actor_id=str(created_by))
+            first_void = await void_batch(
+                db,
+                tenant_id,
+                batch_id,
+                actor_id=str(created_by),
+                reason="permanent batch incident",
+            )
             assert first_void.voided == 3
 
-            # 再作废一次（所有码已是 revoked）
-            second_void = await void_batch(db, tenant_id, batch_id, actor_id=str(created_by))
-            assert second_void.voided == 0
+            # 再作废一次（所有码已是 revoked）必须保持终态并返回稳定冲突。
+            with pytest.raises(ConflictError) as raised:
+                await void_batch(
+                    db,
+                    tenant_id,
+                    batch_id,
+                    actor_id=str(created_by),
+                    reason="second attempt",
+                )
+            assert raised.value.error_code == "CODE_LIFECYCLE_CONFLICT"
 
 
 class TestListCodeBatches:

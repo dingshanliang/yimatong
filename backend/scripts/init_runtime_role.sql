@@ -91,6 +91,7 @@ INSERT INTO runtime_no_delete_relation_allowlist (table_name)
 VALUES ('code_batches'),
        ('code_items'),
        ('code_batch_generation_receipts'),
+       ('interception_records'),
        ('export_logs');
 -- During the explicit expand/deploy phase the nullable legacy raw column still
 -- exists so drained old processes require the previous tenant-scoped CRUD ACL.
@@ -159,6 +160,44 @@ BEGIN
         ) FROM PUBLIC;
         GRANT EXECUTE ON FUNCTION public.append_authenticated_audit_event(
             uuid, uuid, text, text, text, jsonb
+        ) TO yimatong_app;
+    END IF;
+    IF to_regprocedure('public.mark_code_item_first_scanned(uuid,text)') IS NOT NULL THEN
+        REVOKE ALL ON FUNCTION public.mark_code_item_first_scanned(uuid, text) FROM PUBLIC;
+        GRANT EXECUTE ON FUNCTION public.mark_code_item_first_scanned(uuid, text) TO yimatong_app;
+    END IF;
+    IF to_regprocedure('public.authorize_code_lifecycle_actor(uuid,uuid)') IS NOT NULL THEN
+        REVOKE ALL ON FUNCTION public.authorize_code_lifecycle_actor(uuid, uuid) FROM PUBLIC;
+        REVOKE ALL ON FUNCTION public.authorize_code_lifecycle_actor(uuid, uuid) FROM yimatong_app;
+    END IF;
+    IF to_regprocedure(
+        'public.transition_code_item_lifecycle(uuid,uuid,uuid,uuid,text,text)'
+    ) IS NOT NULL THEN
+        REVOKE ALL ON FUNCTION public.transition_code_item_lifecycle(
+            uuid, uuid, uuid, uuid, text, text
+        ) FROM PUBLIC;
+        GRANT EXECUTE ON FUNCTION public.transition_code_item_lifecycle(
+            uuid, uuid, uuid, uuid, text, text
+        ) TO yimatong_app;
+    END IF;
+    IF to_regprocedure(
+        'public.transition_code_batch_lifecycle(uuid,uuid,uuid,uuid,text,text)'
+    ) IS NOT NULL THEN
+        REVOKE ALL ON FUNCTION public.transition_code_batch_lifecycle(
+            uuid, uuid, uuid, uuid, text, text
+        ) FROM PUBLIC;
+        GRANT EXECUTE ON FUNCTION public.transition_code_batch_lifecycle(
+            uuid, uuid, uuid, uuid, text, text
+        ) TO yimatong_app;
+    END IF;
+    IF to_regprocedure(
+        'public.freeze_code_item_for_risk(uuid,uuid,uuid,uuid,uuid)'
+    ) IS NOT NULL THEN
+        REVOKE ALL ON FUNCTION public.freeze_code_item_for_risk(
+            uuid, uuid, uuid, uuid, uuid
+        ) FROM PUBLIC;
+        GRANT EXECUTE ON FUNCTION public.freeze_code_item_for_risk(
+            uuid, uuid, uuid, uuid, uuid
         ) TO yimatong_app;
     END IF;
     IF to_regprocedure(
@@ -527,6 +566,10 @@ BEGIN
     END LOOP;
 END
 $$;
+
+-- Code items remain runtime-insertable for authoritative generation and
+-- tenant-readable for scan resolution, but lifecycle mutation is function-only.
+REVOKE UPDATE ON TABLE public.code_items FROM yimatong_app;
 
 -- CSV artifacts contain the complete code list. The runtime role may read
 -- ordinary export-log metadata, but encrypted envelope columns are available

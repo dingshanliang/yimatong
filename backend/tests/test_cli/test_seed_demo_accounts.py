@@ -5,10 +5,16 @@ import pytest
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.cli import seed as basic_seed
 from app.models.audit import PlatformAuditLog
 from app.models.tenant import Account, Organization, Role, Tenant, account_roles
 from app.utils.security import hash_password, verify_password
 from scripts import seed_demo
+
+
+def test_official_demo_seeds_enable_the_risk_lifecycle_they_showcase():
+    assert basic_seed.DEMO_ENABLED_FEATURES["risk_module"] is True
+    assert seed_demo.DEMO_ENABLED_FEATURES["risk_module"] is True
 
 
 @pytest.mark.anyio

@@ -157,6 +157,157 @@ class TestRiskActionExecutor:
     """测试处置动作执行器"""
 
     @pytest.mark.asyncio
+    async def test_execute_block_uses_worker_authority_and_records_structured_result(
+        self,
+        sample_rule,
+        tenant_id,
+    ):
+        from app.services.risk_action import execute_risk_action
+
+        mock_db = AsyncMock()
+        mock_db.add = MagicMock()
+        mock_db.flush = AsyncMock()
+        code_item = MagicMock()
+        code_item.id = uuid.uuid4()
+        code_item.code_batch_id = uuid.uuid4()
+        controlled_result = {
+            "code_item_id": code_item.id,
+            "prior_status": "bound",
+            "current_status": "frozen",
+            "risk_alert_id": uuid.uuid4(),
+            "audit_id": uuid.uuid4(),
+        }
+
+        with (
+            patch(
+                "app.services.code.freeze_code_item_for_risk",
+                AsyncMock(return_value=controlled_result),
+            ) as freeze_authority,
+            patch("app.services.risk_action._pause_related_campaigns", AsyncMock(return_value=[])),
+            patch("app.services.risk_action._create_notification", AsyncMock()),
+            patch("app.services.risk_action.event_bus.emit", AsyncMock()),
+            patch("app.api.v1.risk_dashboard._broadcast_alert"),
+        ):
+            await execute_risk_action(
+                db=mock_db,
+                tenant_id=tenant_id,
+                rule=sample_rule,
+                public_id="REALCODE001",
+                code_item=code_item,
+                context={"request_count": 20},
+            )
+
+        interception = mock_db.add.call_args_list[0].args[0]
+        assert interception.code_item_id == code_item.id
+        freeze_authority.assert_awaited_once()
+        authority_args = freeze_authority.await_args.args
+        assert authority_args[:4] == (mock_db, tenant_id, interception.id, code_item.id)
+        assert authority_args[4].version == 7
+        assert authority_args[5].version == 7
+        assert interception.action_taken is None
+        assert interception.action_detail == {
+            "steps": [
+                {
+                    "action": "freeze_code",
+                    "status": "success",
+                    "code_item_id": str(code_item.id),
+                    "before": {"status": "bound"},
+                    "after": {"status": "frozen"},
+                    "risk_alert_id": str(controlled_result["risk_alert_id"]),
+                    "audit_id": str(controlled_result["audit_id"]),
+                    "rule_id": str(sample_rule.id),
+                    "interception_id": str(interception.id),
+                },
+                {"action": "pause_campaigns", "status": "skipped", "reason": "no_active_campaigns_found"},
+            ]
+        }
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("binding", [None, "different-item"])
+    async def test_worker_authority_rejects_unbound_or_different_interception_without_writes(
+        self,
+        sample_rule,
+        tenant_id,
+        binding,
+    ):
+        from app.core.exceptions import ConflictError
+        from app.models.risk import InterceptionRecord
+        from app.services.code import freeze_code_item_for_risk
+
+        requested_item_id = uuid.uuid4()
+        interception = InterceptionRecord(
+            id=uuid.uuid4(),
+            tenant_id=tenant_id,
+            risk_rule_id=sample_rule.id,
+            code_item_id=None if binding is None else uuid.uuid4(),
+            action="block",
+            auto_triggered=True,
+        )
+        db = AsyncMock()
+        db.scalar = AsyncMock(side_effect=[interception, sample_rule])
+        db.add = MagicMock()
+        db.flush = AsyncMock()
+
+        with patch("app.core.database._session_uses_postgresql", return_value=False):
+            with pytest.raises(ConflictError) as raised:
+                await freeze_code_item_for_risk(
+                    db,
+                    tenant_id,
+                    interception.id,
+                    requested_item_id,
+                    uuid.uuid4(),
+                    uuid.uuid4(),
+                )
+
+        assert raised.value.error_code == "RISK_INTERCEPTION_CONFLICT"
+        assert db.scalar.await_count == 2
+        db.add.assert_not_called()
+        db.flush.assert_not_awaited()
+        assert interception.action_taken is None
+        assert interception.action_detail is None
+
+    @pytest.mark.asyncio
+    async def test_execute_block_propagates_authority_failure_without_false_success_or_error_detail(
+        self,
+        sample_rule,
+        tenant_id,
+    ):
+        from app.services.risk_action import execute_risk_action
+
+        mock_db = AsyncMock()
+        mock_db.add = MagicMock()
+        mock_db.flush = AsyncMock()
+        code_item = MagicMock()
+        code_item.id = uuid.uuid4()
+        code_item.code_batch_id = uuid.uuid4()
+
+        with (
+            patch(
+                "app.services.code.freeze_code_item_for_risk",
+                AsyncMock(side_effect=RuntimeError("sensitive database detail")),
+            ),
+            patch("app.services.risk_action._pause_related_campaigns", AsyncMock()) as pause_campaigns,
+            patch("app.services.risk_action._create_notification", AsyncMock()) as create_notification,
+            patch("app.services.risk_action.event_bus.emit", AsyncMock()) as emit,
+        ):
+            with pytest.raises(RuntimeError, match="sensitive database detail"):
+                await execute_risk_action(
+                    db=mock_db,
+                    tenant_id=tenant_id,
+                    rule=sample_rule,
+                    public_id="REALCODE002",
+                    code_item=code_item,
+                    context={"request_count": 20},
+                )
+
+        interception = mock_db.add.call_args_list[0].args[0]
+        assert interception.action_taken is None
+        assert interception.action_detail is None
+        pause_campaigns.assert_not_awaited()
+        create_notification.assert_not_awaited()
+        emit.assert_not_awaited()
+
+    @pytest.mark.asyncio
     async def test_execute_warn_creates_alert_and_notification(self, sample_rule_warn):
         from app.services.risk_action import _execute_warn
 

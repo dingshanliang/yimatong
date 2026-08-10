@@ -191,6 +191,110 @@ class TestStatusMachineProtection:
         assert resp.status_code == 400
 
 
+class TestSingleCodeVoidProtection:
+    @pytest.mark.anyio
+    async def test_single_code_void_requires_reason_and_confirmation(
+        self,
+        client: AsyncClient,
+        code_batch_with_auth,
+    ):
+        _, headers, _, item_id = code_batch_with_auth
+
+        response = await client.post(f"/api/v1/code-items/{item_id}/revoke", headers=headers)
+
+        assert response.status_code == 422
+
+    @pytest.mark.anyio
+    @pytest.mark.parametrize(
+        "body",
+        [
+            {"reason": "   ", "confirm": "void"},
+            {"reason": "x" * 201, "confirm": "void"},
+            {"reason": "confirmed incident", "confirm": "revoke"},
+            {"reason": "confirmed incident", "confirm": "void", "unexpected": True},
+        ],
+    )
+    async def test_single_code_void_rejects_invalid_body(
+        self,
+        client: AsyncClient,
+        code_batch_with_auth,
+        body,
+    ):
+        _, headers, _, item_id = code_batch_with_auth
+
+        response = await client.post(
+            f"/api/v1/code-items/{item_id}/revoke",
+            json=body,
+            headers=headers,
+        )
+
+        assert response.status_code == 422
+
+    @pytest.mark.anyio
+    async def test_single_code_void_records_trimmed_reason_and_actor(
+        self,
+        client: AsyncClient,
+        code_batch_with_auth,
+    ):
+        _, headers, _, item_id = code_batch_with_auth
+
+        response = await client.post(
+            f"/api/v1/code-items/{item_id}/revoke",
+            json={"reason": "  confirmed incident  ", "confirm": "void"},
+            headers=headers,
+        )
+
+        assert response.status_code == 200
+        assert response.json()["status"] == "revoked"
+        audit = await client.get("/api/v1/audit-logs?action=code_void", headers=headers)
+        assert audit.status_code == 200
+        assert audit.json()["total"] == 1
+        event = audit.json()["items"][0]
+        assert event["operator"]["id"] == "00000000-0000-0000-0000-000000000001"
+        assert event["details"] == {
+            "reason": "confirmed incident",
+            "before": {"status": "created"},
+            "after": {"status": "revoked"},
+        }
+
+    @pytest.mark.anyio
+    async def test_single_code_void_audit_failure_rolls_back_lifecycle(
+        self,
+        client: AsyncClient,
+        db_session: AsyncSession,
+        code_batch_with_auth,
+        monkeypatch,
+    ):
+        _, headers, _, item_id = code_batch_with_auth
+
+        async def rollbacking_get_db():
+            transaction = await db_session.begin_nested()
+            try:
+                yield db_session
+                await transaction.commit()
+            except BaseException:
+                await transaction.rollback()
+                raise
+
+        app.dependency_overrides[get_db] = rollbacking_get_db
+        monkeypatch.setattr(
+            "app.services.audit.write_audit_log",
+            AsyncMock(side_effect=RuntimeError("audit unavailable")),
+        )
+
+        with pytest.raises(RuntimeError, match="audit unavailable"):
+            await client.post(
+                f"/api/v1/code-items/{item_id}/revoke",
+                json={"reason": "confirmed incident", "confirm": "void"},
+                headers=headers,
+            )
+
+        item = await db_session.get(CodeItem, item_id)
+        await db_session.refresh(item)
+        assert item.status == CodeItemStatus.created
+        assert item.revoked_at is None
+
+
 class TestPermissionEnforcement:
     """1.2 权限校验测试"""
 
@@ -891,7 +995,48 @@ class TestBatchStateMachine:
         )
 
         assert response.status_code == 409
-        assert response.json()["error_code"] == "CODE_BATCH_BUSY"
+        assert response.json()["error_code"] == "CODE_LIFECYCLE_BUSY"
+
+    @pytest.mark.anyio
+    @pytest.mark.parametrize(
+        ("sqlstate", "expected_status", "expected_error_code"),
+        [
+            ("23503", 404, "NOT_FOUND"),
+            ("22023", 409, "CODE_LIFECYCLE_CONFLICT"),
+            ("55P03", 409, "CODE_LIFECYCLE_BUSY"),
+            ("42501", 401, None),
+        ],
+    )
+    async def test_freeze_database_failures_have_stable_public_mapping(
+        self,
+        client: AsyncClient,
+        tenant_with_auth,
+        monkeypatch,
+        sqlstate,
+        expected_status,
+        expected_error_code,
+    ):
+        class LifecycleFailure(Exception):
+            pass
+
+        failure = LifecycleFailure()
+        failure.sqlstate = sqlstate
+        _, headers = tenant_with_auth
+        monkeypatch.setattr(
+            code_batches_api,
+            "freeze_batch",
+            AsyncMock(side_effect=DBAPIError("statement", {}, failure)),
+        )
+
+        response = await client.post(
+            "/api/v1/code-batches/00000000-0000-0000-0000-000000000999/freeze",
+            json={"reason": "investigation", "confirm": "freeze"},
+            headers=headers,
+        )
+
+        assert response.status_code == expected_status
+        if expected_error_code is not None:
+            assert response.json()["error_code"] == expected_error_code
 
     @pytest.mark.anyio
     async def test_mark_printing_invalid_transition(self, client: AsyncClient, code_batch_with_auth):

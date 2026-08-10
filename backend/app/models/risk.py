@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime
 from enum import StrEnum
 
-from sqlalchemy import JSON, Boolean, DateTime, Index, String, func
+from sqlalchemy import JSON, Boolean, DateTime, ForeignKeyConstraint, Index, String, func
 from sqlalchemy.orm import Mapped, mapped_column
 from uuid6 import uuid7
 
@@ -94,6 +94,7 @@ class InterceptionRecord(Base):
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid7)
     tenant_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
     risk_rule_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
+    code_item_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True)
     campaign_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True, index=True)
     action: Mapped[str] = mapped_column(String(20), nullable=False)
     context: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
@@ -106,7 +107,15 @@ class InterceptionRecord(Base):
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
 
-    __table_args__ = (Index("ix_interceptions_tenant_rule", "tenant_id", "risk_rule_id"),)
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["tenant_id", "code_item_id"],
+            ["code_items.tenant_id", "code_items.id"],
+            name="fk_interception_records_tenant_code_item",
+        ),
+        Index("ix_interceptions_tenant_rule", "tenant_id", "risk_rule_id"),
+        Index("ix_interception_records_tenant_code_item", "tenant_id", "code_item_id"),
+    )
 
 
 class RiskNotification(Base):

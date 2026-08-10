@@ -311,7 +311,6 @@ async def generate_code_csv(
             select(CodeItem)
             .where(CodeItem.tenant_id == tenant_id, CodeItem.code_batch_id == batch_id)
             .order_by(CodeItem.public_id.asc())
-            .with_for_update()
         )
     )
     _validate_item_contract(batch, items)

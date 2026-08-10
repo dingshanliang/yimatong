@@ -7,6 +7,7 @@ import subprocess
 import sys
 import time
 import uuid
+from contextlib import AsyncExitStack
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
@@ -18,6 +19,7 @@ from sqlalchemy.orm import selectinload
 # 确保可以 import app 模块
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from app.cli.lifecycle_auth import cli_lifecycle_auth_context
 from app.core.config import settings
 from app.core.database import set_session_tenant_context
 from app.models.campaign import Benefit, BenefitClaim, Campaign, CampaignStatus
@@ -63,11 +65,12 @@ from app.services.analytics import aggregate_daily_stats
 from app.services.audit import write_audit_log
 from app.services.auth import revoke_current_tenant_account_sessions
 from app.services.channel import create_account_scope
-from app.services.code import activate_batch, create_code_batch, mark_delivered, mark_printing
+from app.services.code import activate_batch, create_code_batch, mark_delivered, mark_printing, revoke_code_item
 from app.services.code_export import generate_code_csv
 from app.services.entitlement import require_active_plan
 from app.services.product import create_brand, create_product, create_sku
 from app.services.quota import lock_quota_rollout_state, refresh_quota_usage_from_authoritative_rows
+from app.services.risk import freeze_code_item
 from app.services.tenant import create_tenant
 from app.utils import utcnow
 from app.utils.crypto import EnvKeyProvider, init_crypto
@@ -85,7 +88,7 @@ control_session = async_sessionmaker(control_engine, class_=AsyncSession, expire
 TENANT_SLUG = "demo"
 TENANT_NAME = "青岭良仓演示租户"
 TOTAL_DAYS = 60
-DEMO_ENABLED_FEATURES = {"channel_portal": True}
+DEMO_ENABLED_FEATURES = {"channel_portal": True, "risk_module": True}
 DEMO_AGENCY_SLUG = "demo-agency"
 DEMO_AGENCY_EMAIL = "agency_admin@demo.com"
 DEMO_AGENCY_PASSWORD = "demopass"
@@ -1180,27 +1183,47 @@ async def _ensure_code_batches(
 
             # 获取该批次的码项
             result = await db.execute(
-                select(CodeItem).where(
+                select(CodeItem)
+                .where(
                     CodeItem.tenant_id == tenant_id,
                     CodeItem.code_batch_id == code_batch.id,
                 )
+                .order_by(CodeItem.public_id)
             )
             items = list(result.scalars().all())
             all_items.extend(items)
 
     # 标记少量码为 revoked/frozen 状态（约 8%）
-    activated_items = [i for i in all_items if i.status == CodeItemStatus.activated]
-    revoke_count = max(1, len(activated_items) // 20)  # ~5%
-    freeze_count = max(1, len(activated_items) // 33)  # ~3%
-    now = utcnow()
-    for item in activated_items[:revoke_count]:
-        item.status = CodeItemStatus.revoked
-        item.revoked_at = now
-    for item in activated_items[revoke_count : revoke_count + freeze_count]:
-        item.status = CodeItemStatus.frozen
-    await db.flush()
+    revoke_count = max(1, len(all_items) // 20)  # ~5%
+    freeze_count = max(1, len(all_items) // 33)  # ~3%
+    for item in all_items[:revoke_count]:
+        if item.status != CodeItemStatus.revoked:
+            await revoke_code_item(
+                db,
+                tenant_id,
+                item.id,
+                actor_id=str(created_by),
+                reason=f"source=official_rich_demo; purpose=permanent_void_sample; public_id={item.public_id}",
+            )
+    for item in all_items[revoke_count : revoke_count + freeze_count]:
+        if item.status != CodeItemStatus.frozen:
+            await freeze_code_item(
+                db,
+                tenant_id,
+                item.id,
+                actor_id=str(created_by),
+                reason=f"source=official_rich_demo; purpose=risk_freeze_sample; public_id={item.public_id}",
+            )
 
-    return all_items
+    refreshed_items = {
+        item.id: item
+        for item in await db.scalars(
+            select(CodeItem)
+            .where(CodeItem.tenant_id == tenant_id, CodeItem.id.in_([item.id for item in all_items]))
+            .execution_options(populate_existing=True)
+        )
+    }
+    return [refreshed_items[item.id] for item in all_items]
 
 
 # ═══════════════════════════════════════════════════════
@@ -2090,6 +2113,32 @@ async def _clean_demo_data(db: AsyncSession, tenant_id: uuid.UUID) -> None:
 # ═══════════════════════════════════════════════════════
 
 
+async def _ensure_committed_lifecycle_admin(tenant_id: uuid.UUID) -> tuple[uuid.UUID, int]:
+    """Commit demo account repair before creating the control-plane CLI credential."""
+
+    async with async_session() as db:
+        await set_session_tenant_context(db, tenant_id)
+        await lock_quota_rollout_state(db)
+        tenant = await require_active_plan(db, tenant_id, lock_tenant=True)
+        if tenant is None:  # pragma: no cover - control bootstrap is the precondition
+            raise RuntimeError("Demo tenant disappeared before scoped seed")
+        tenant.enabled_features = {**(tenant.enabled_features or {}), **DEMO_ENABLED_FEATURES}
+        required_codes = sum(CODE_QUANTITIES.values())
+        tenant.quota = {
+            **(tenant.quota or {}),
+            "max_codes": max(int((tenant.quota or {}).get("max_codes", 0)), required_codes),
+        }
+        organization = await _ensure_org(db, tenant_id)
+        accounts = await _ensure_accounts(db, tenant_id, organization.id)
+        admin = next((account for account in accounts if account.email == "admin@demo.com"), None)
+        if admin is None:
+            raise RuntimeError("Durable demo admin is unavailable")
+        admin_id = admin.id
+        account_count = len(accounts)
+        await db.commit()
+        return admin_id, account_count
+
+
 @app.command()
 def generate(
     target: str = typer.Option(..., "--target", help="必须显式确认目标租户 slug"),
@@ -2110,10 +2159,20 @@ def generate(
             tenant_id = tenant.id
             await db.commit()
 
+        admin_id, account_count = await _ensure_committed_lifecycle_admin(tenant_id)
+        p = Progress(10)
+
         # ── 阶段 A：基础数据（租户/品牌/码/渠道/扫码）──
-        async with async_session() as db:
+        async with AsyncExitStack() as stack:
+            await stack.enter_async_context(
+                cli_lifecycle_auth_context(
+                    control_session,
+                    tenant_id=tenant_id,
+                    account_id=admin_id,
+                )
+            )
+            db = await stack.enter_async_context(async_session())
             await set_session_tenant_context(db, tenant_id)
-            p = Progress(10)
 
             await lock_quota_rollout_state(db)
             scoped_tenant = await require_active_plan(db, tenant_id, lock_tenant=True)
@@ -2129,12 +2188,9 @@ def generate(
                 "max_codes": max(int((scoped_tenant.quota or {}).get("max_codes", 0)), required_codes),
             }
 
-            # 1. 租户与账号
-            org = await _ensure_org(db, tenant_id)
-            accounts = await _ensure_accounts(db, tenant_id, org.id)
-            admin_account = next((a for a in accounts if a.email == "admin@demo.com"), accounts[0])
-            admin_id = admin_account.id
-            p.step("租户与账号", f"({len(accounts)} 个账号)")
+            # 1. 租户与账号已在独立 durable identity 阶段提交。
+            accounts = list((await db.scalars(select(Account).where(Account.tenant_id == tenant_id))).all())
+            p.step("租户与账号", f"({account_count} 个账号)")
 
             # 2. 品牌与产品
             brand_records = await _ensure_brands_products(db, tenant_id)

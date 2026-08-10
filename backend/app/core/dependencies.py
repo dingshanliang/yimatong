@@ -1,4 +1,5 @@
 import uuid
+from typing import Literal
 
 from fastapi import Depends, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -37,12 +38,16 @@ async def get_redis_cache() -> AsyncRedisCache:
     return AsyncRedisCache()
 
 
-def require_tenant_feature(feature_key: str):
+def require_tenant_feature(
+    feature_key: str,
+    *,
+    db_scope: Literal["function", "request"] | None = None,
+):
     """Build a cached FastAPI dependency for one server-side feature gate."""
 
     async def dependency(
         tenant_id: uuid.UUID = Depends(get_current_tenant),
-        db: AsyncSession = Depends(get_db),
+        db: AsyncSession = Depends(get_db, scope=db_scope),
     ) -> None:
         from app.services.entitlement import (
             TenantFeatureDisabledError,

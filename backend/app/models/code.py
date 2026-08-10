@@ -291,6 +291,18 @@ class CodeItem(Base):
             ["code_batches.tenant_id", "code_batches.id"],
             name="fk_code_items_tenant_code_batch",
         ),
+        UniqueConstraint("tenant_id", "id", name="uq_code_items_tenant_id_id"),
+        CheckConstraint(
+            "(status = 'frozen' AND frozen_from_status IS NOT NULL "
+            "AND frozen_from_status IN ('activated', 'bound') AND frozen_at IS NOT NULL "
+            "AND freeze_provenance_version IS NOT NULL AND freeze_provenance_version IN (0, 1) "
+            "AND ((freeze_provenance_version = 0 AND frozen_by IS NULL AND freeze_reason IS NULL) OR "
+            "(freeze_provenance_version = 1 AND NULLIF(trim(frozen_by), '') IS NOT NULL "
+            "AND NULLIF(trim(freeze_reason), '') IS NOT NULL))) OR "
+            "(status <> 'frozen' AND frozen_from_status IS NULL AND frozen_at IS NULL "
+            "AND frozen_by IS NULL AND freeze_reason IS NULL AND freeze_provenance_version IS NULL)",
+            name="ck_code_items_frozen_provenance",
+        ),
         Index("ix_code_items_tenant_batch", "tenant_id", "code_batch_id"),
         Index("ix_code_items_tenant_status", "tenant_id", "status"),
         Index("ix_code_items_pair", "pair_id"),
@@ -306,6 +318,11 @@ class CodeItem(Base):
     activated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     bound_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    frozen_from_status: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    frozen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    frozen_by: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    freeze_reason: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    freeze_provenance_version: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
     first_scanned_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[DateTime] = mapped_column(

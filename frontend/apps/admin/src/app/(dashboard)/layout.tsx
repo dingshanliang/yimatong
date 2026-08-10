@@ -687,6 +687,7 @@ function DashboardInner({ children }: { children: React.ReactNode }) {
           <Content className="admin-content my-4 rounded-lg p-5 max-w-360 mx-auto w-full flex-1">
             <TenantPlanReadOnly
               active={planExpired}
+              enabledFeatures={currentTenant?.enabled_features}
               refreshing={refreshingPlan}
               onRefresh={() => void refreshCurrentTenant()}
             >

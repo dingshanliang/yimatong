@@ -27,6 +27,7 @@ from app.services.code import (
     list_code_batches,
     list_code_items,
     map_code_batch_db_error,
+    map_code_lifecycle_db_error,
     mark_delivered,
     mark_printing,
     resolve_code_by_public_id,
@@ -44,6 +45,13 @@ code_item_router = APIRouter(prefix="/api/v1/code-items", tags=["code-items"])
 
 def _raise_mapped_code_batch_db_error(exc: DBAPIError) -> None:
     mapped = map_code_batch_db_error(exc)
+    if mapped is not None:
+        raise mapped from exc
+    raise exc
+
+
+def _raise_mapped_code_lifecycle_db_error(exc: DBAPIError) -> None:
+    mapped = map_code_lifecycle_db_error(exc)
     if mapped is not None:
         raise mapped from exc
     raise exc
@@ -127,6 +135,20 @@ class CodeItemRead(BaseModel):
     created_at: datetime | None = None
 
     model_config = {"from_attributes": True}
+
+
+class CodeItemVoidRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    reason: str = Field(min_length=1, max_length=200)
+    confirm: Literal["void"]
+
+
+class CodeBatchFreezeRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    reason: str = Field(min_length=1, max_length=200)
+    confirm: Literal["freeze"]
 
 
 @code_batch_router.post("", status_code=201, summary="创建 码批次")
@@ -220,7 +242,7 @@ async def activate_batch_endpoint(
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e)) from e
     except DBAPIError as exc:
-        _raise_mapped_code_batch_db_error(exc)
+        _raise_mapped_code_lifecycle_db_error(exc)
 
 
 @code_batch_router.post("/{batch_id}/export", summary="导出 码批次")
@@ -292,12 +314,22 @@ async def update_code_batch_endpoint(
 @code_batch_router.post("/{batch_id}/freeze")
 async def freeze_batch_endpoint(
     batch_id: uuid.UUID,
+    body: CodeBatchFreezeRequest,
     db: AsyncSession = Depends(get_db, scope="function"),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
     account_id: uuid.UUID = Depends(get_current_account_id),
     _: None = Depends(require_permission("code:manage")),
 ):
-    return await freeze_batch(db, tenant_id, batch_id, actor_id=str(account_id))
+    try:
+        return await freeze_batch(
+            db,
+            tenant_id,
+            batch_id,
+            actor_id=str(account_id),
+            reason=body.reason,
+        )
+    except DBAPIError as exc:
+        _raise_mapped_code_lifecycle_db_error(exc)
 
 
 @code_batch_router.post("/{batch_id}/void")
@@ -305,14 +337,15 @@ async def void_batch_endpoint(
     batch_id: uuid.UUID,
     # yimatong-zgb1.8 AC2：作废是受保护的不可逆动作，必须 reason + 二次确认（User Story 28）
     reason: str = "",
-    confirm: str = "",
+    confirm: Literal["void"] | None = None,
     db: AsyncSession = Depends(get_db, scope="function"),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
     account_id: uuid.UUID = Depends(get_current_account_id),
     _: None = Depends(require_permission("code:manage")),
 ):
     # yimatong-zgb1.8：作废必须提供原因
-    if not reason or not reason.strip():
+    reason = reason.strip()
+    if not reason or len(reason) > 200:
         raise HTTPException(status_code=422, detail="作废必须提供原因（reason 参数）")
     # 二次确认：confirm 必须等于 "void"（防止误操作）
     if confirm != "void":
@@ -320,7 +353,10 @@ async def void_batch_endpoint(
             status_code=422,
             detail="作废是不可逆操作，必须传 confirm=void 进行二次确认",
         )
-    return await void_batch(db, tenant_id, batch_id, actor_id=str(account_id), reason=reason)
+    try:
+        return await void_batch(db, tenant_id, batch_id, actor_id=str(account_id), reason=reason)
+    except DBAPIError as exc:
+        _raise_mapped_code_lifecycle_db_error(exc)
 
 
 @code_batch_router.post("/{batch_id}/mark-printing", summary="标记印刷中")
@@ -452,6 +488,7 @@ async def get_pair_endpoint(
 @code_item_router.post("/{item_id}/revoke", response_model=CodeItemRead)
 async def revoke_code_item_endpoint(
     item_id: uuid.UUID,
+    body: CodeItemVoidRequest,
     db: AsyncSession = Depends(get_db, scope="function"),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
     account_id: uuid.UUID = Depends(get_current_account_id),
@@ -460,9 +497,17 @@ async def revoke_code_item_endpoint(
     from app.services.code_state import InvalidStateTransitionError
 
     try:
-        return await revoke_code_item(db, tenant_id, item_id, actor_id=str(account_id))
+        return await revoke_code_item(
+            db,
+            tenant_id,
+            item_id,
+            actor_id=str(account_id),
+            reason=body.reason,
+        )
     except InvalidStateTransitionError as e:
         raise HTTPException(status_code=409, detail=str(e))
+    except DBAPIError as exc:
+        _raise_mapped_code_lifecycle_db_error(exc)
 
 
 @code_item_router.post("/{item_id}/bind", response_model=CodeItemRead)
@@ -479,6 +524,8 @@ async def bind_code_item_endpoint(
         return await bind_code_item(db, tenant_id, item_id, actor_id=str(account_id))
     except InvalidStateTransitionError as e:
         raise HTTPException(status_code=409, detail=str(e))
+    except DBAPIError as exc:
+        _raise_mapped_code_lifecycle_db_error(exc)
 
 
 @code_item_router.get("", summary="码项 列表")

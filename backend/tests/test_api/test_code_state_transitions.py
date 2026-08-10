@@ -94,9 +94,21 @@ async def batch_with_codes(client: AsyncClient):
             "production_batch_id": production_batch.json()["id"],
             "quantity": 5,
         },
+        headers={
+            **headers,
+            "Idempotency-Key": str(uuid.uuid5(uuid.NAMESPACE_URL, f"code-state:{tid}")),
+        },
+    )
+    assert batch.status_code == 201, batch.text
+    batch_id = batch.json()["id"]
+    exported = await client.post(f"/api/v1/code-batches/{batch_id}/export", headers=headers)
+    printing = await client.post(f"/api/v1/code-batches/{batch_id}/mark-printing", headers=headers)
+    delivered = await client.post(
+        f"/api/v1/code-batches/{batch_id}/mark-delivered",
+        json={"reason": "state transition fixture", "recipient": "state tests", "confirm": "deliver"},
         headers=headers,
     )
-    batch_id = batch.json()["id"]
+    assert exported.status_code == printing.status_code == delivered.status_code == 200
     return tid, headers, batch_id
 
 
@@ -147,6 +159,7 @@ class TestCodeStateTransitions:
 
         resp = await client.post(
             f"/api/v1/code-items/{item_id}/revoke",
+            json={"reason": "confirmed test incident", "confirm": "void"},
             headers=headers,
         )
         assert resp.status_code == 200

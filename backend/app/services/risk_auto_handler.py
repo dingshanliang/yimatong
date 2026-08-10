@@ -264,8 +264,9 @@ async def _handle_scan_created(event_type: str, data: dict, tenant_id: str) -> N
 
             await db.commit()
         except Exception:
-            logger.exception("Risk auto-handler error for public_id=%s", public_id)
             await db.rollback()
+            logger.warning("Risk auto-handler transaction rolled back for public_id=%s", public_id)
+            raise RuntimeError("Risk auto-handler transaction failed") from None
 
 
 def init_risk_auto_handler() -> None:

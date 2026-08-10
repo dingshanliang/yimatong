@@ -11,7 +11,9 @@ import pytest
 from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
+from app.cli.lifecycle_auth import cli_lifecycle_auth_context
 from app.models.audit import PlatformAuditLog
+from app.models.auth_security import AuthSession
 from app.models.plan import TenantQuotaUsage
 from app.models.tenant import Account, AgencyAuthorization, Role, Tenant, TenantType, account_roles
 from scripts.seed_demo import (
@@ -213,13 +215,59 @@ async def test_demo_agency_authorization_uses_control_path_and_runtime_stays_rea
 
 
 async def test_official_demo_seed_is_idempotent_on_the_same_database(migrated_pg_url: str) -> None:
-    await asyncio.to_thread(_run_official_demo_seed, migrated_pg_url)
     owner_engine = create_async_engine(migrated_pg_url)
+    control_engine = create_async_engine(
+        migrated_pg_url.replace("yimatong:yimatong@", "acceptance_control:control_pwd@")
+    )
     owner_factory = async_sessionmaker(owner_engine, class_=AsyncSession, expire_on_commit=False)
+    control_factory = async_sessionmaker(control_engine, class_=AsyncSession, expire_on_commit=False)
     try:
+        async with owner_factory() as db:
+            for privilege in ("INSERT", "UPDATE", "DELETE"):
+                assert not await db.scalar(
+                    text("SELECT has_table_privilege('yimatong_app','public.auth_sessions',:privilege)"),
+                    {"privilege": privilege},
+                )
+
+        async with control_factory() as db:
+            assert await db.scalar(text("SELECT rolbypassrls FROM pg_roles WHERE rolname=current_user")) is False
+            for privilege in ("SELECT", "INSERT", "DELETE"):
+                assert await db.scalar(
+                    text("SELECT has_table_privilege(current_user,'public.auth_sessions',:privilege)"),
+                    {"privilege": privilege},
+                )
+
+        await asyncio.to_thread(_run_official_demo_seed, migrated_pg_url)
+
         async with owner_factory() as db:
             agency_id = await db.scalar(select(Tenant.id).where(Tenant.slug == "demo-agency"))
             client_id = await db.scalar(select(Tenant.id).where(Tenant.slug == "demo"))
+            admin = await db.scalar(
+                select(Account).where(Account.tenant_id == client_id, Account.email == "admin@demo.com")
+            )
+            assert admin is not None
+            assert (
+                await db.scalar(
+                    select(func.count())
+                    .select_from(AuthSession)
+                    .where(
+                        AuthSession.tenant_id == client_id,
+                        AuthSession.current_refresh_jti.like("cli-%"),
+                    )
+                )
+                == 0
+            )
+            lifecycle_operators = set(
+                (
+                    await db.scalars(
+                        select(PlatformAuditLog.operator_id).where(
+                            PlatformAuditLog.target_tenant_id == str(client_id),
+                            PlatformAuditLog.action == "code_activate",
+                        )
+                    )
+                ).all()
+            )
+            assert lifecycle_operators == {str(admin.id)}
             authorization = await db.scalar(
                 select(AgencyAuthorization).where(
                     AgencyAuthorization.agency_tenant_id == agency_id,
@@ -229,6 +277,60 @@ async def test_official_demo_seed_is_idempotent_on_the_same_database(migrated_pg
             assert authorization is not None
             authorization_id = authorization.id
             created_at = authorization.created_at
+
+        async with control_factory() as db:
+            assert (
+                await db.scalar(
+                    select(Account.id).where(
+                        Account.tenant_id == client_id,
+                        Account.email == "admin@demo.com",
+                    )
+                )
+                is None
+            )
+            await db.execute(
+                text("SELECT set_config('app.tenant_id', :tenant_id, true)"), {"tenant_id": str(client_id)}
+            )
+            assert (
+                await db.scalar(
+                    select(func.count())
+                    .select_from(Account)
+                    .join(
+                        account_roles,
+                        (account_roles.c.tenant_id == Account.tenant_id) & (account_roles.c.account_id == Account.id),
+                    )
+                    .join(
+                        Role,
+                        (Role.tenant_id == account_roles.c.tenant_id) & (Role.id == account_roles.c.role_id),
+                    )
+                    .where(
+                        Account.tenant_id == client_id,
+                        Account.id == admin.id,
+                        Account.is_active.is_(True),
+                        Role.name == "admin",
+                    )
+                )
+                == 1
+            )
+            await db.rollback()
+
+        failed_session_id: uuid.UUID | None = None
+        with pytest.raises(RuntimeError, match="official seed failure path"):
+            async with cli_lifecycle_auth_context(
+                control_factory,
+                tenant_id=client_id,
+                account_id=admin.id,
+            ) as session_id:
+                failed_session_id = session_id
+                raise RuntimeError("official seed failure path")
+        assert failed_session_id is not None
+        async with owner_factory() as db:
+            assert (
+                await db.scalar(
+                    select(func.count()).select_from(AuthSession).where(AuthSession.id == failed_session_id)
+                )
+                == 0
+            )
 
         await asyncio.to_thread(_run_official_demo_seed, migrated_pg_url)
 
@@ -254,5 +356,17 @@ async def test_official_demo_seed_is_idempotent_on_the_same_database(migrated_pg
                 )
                 == 1
             )
+            assert (
+                await db.scalar(
+                    select(func.count())
+                    .select_from(AuthSession)
+                    .where(
+                        AuthSession.tenant_id == client_id,
+                        AuthSession.current_refresh_jti.like("cli-%"),
+                    )
+                )
+                == 0
+            )
     finally:
+        await control_engine.dispose()
         await owner_engine.dispose()

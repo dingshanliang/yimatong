@@ -24,6 +24,7 @@ pytestmark = [pytest.mark.acceptance, pytest.mark.asyncio]
 PARENT_REVISION = "2ed1cb06d0ca"
 EXPAND_REVISION = "3f91c0d2e4a6"
 FINALIZE_REVISION = "4a92d1e3f5b7"
+HEAD_REVISION = "d297eb0518da"
 C7_REVISION = "c7d8e9f0a1b2"
 C7_PARENT_REVISION = "f8b1b3069972"
 
@@ -341,6 +342,7 @@ async def _purge_owned_delivery_fixture(conn: asyncpg.Connection, tenant_id: uui
         try:
             for table in tables:
                 await conn.execute(f"ALTER TABLE public.{table} DISABLE TRIGGER USER")
+            await conn.execute("DELETE FROM code_allocations WHERE tenant_id=$1", tenant_id)
             await conn.execute("DELETE FROM code_items WHERE tenant_id=$1", tenant_id)
             await conn.execute("UPDATE code_batches SET export_manifest_id=NULL WHERE tenant_id=$1", tenant_id)
             await conn.execute("DELETE FROM code_batch_generation_receipts WHERE tenant_id=$1", tenant_id)
@@ -473,7 +475,7 @@ async def test_expand_drain_finalize_runtime_compatibility(migrated_pg_url: str)
             legacy_export_id,
         )
         assert legacy_export_created_at is not None
-        assert await owner.fetchval("SELECT version_num FROM alembic_version") == FINALIZE_REVISION
+        assert await owner.fetchval("SELECT version_num FROM alembic_version") == HEAD_REVISION
         marker = await owner.fetchrow(
             "SELECT phase,finalized_at,finalized_by FROM code_delivery_contract_rollout_state WHERE id=1"
         )
@@ -555,8 +557,49 @@ async def test_expand_drain_finalize_runtime_compatibility(migrated_pg_url: str)
         )
         assert await owner.fetchval("SELECT contract_version FROM code_batches WHERE id=$1", export_legacy_batch) == 1
 
+        protected_counts = tuple(
+            await owner.fetchrow(
+                "SELECT "
+                "(SELECT count(*) FROM code_batches WHERE tenant_id=$1 AND contract_version=1) batches,"
+                "(SELECT count(*) FROM code_batch_generation_receipts WHERE tenant_id=$1) receipts,"
+                "(SELECT count(*) FROM export_logs WHERE tenant_id=$1 AND manifest_version IS NOT NULL) manifests",
+                ids["tenant"],
+            )
+        )
+        assert all(count > 0 for count in protected_counts)
+
+        # U03B staged downgrades do not cross the U03A contract owner and must
+        # preserve its durable rows at both the finalize and expand revisions.
+        _alembic(migrated_pg_url, "downgrade", FINALIZE_REVISION)
+        assert await owner.fetchval("SELECT version_num FROM alembic_version") == FINALIZE_REVISION
+        assert (
+            tuple(
+                await owner.fetchrow(
+                    "SELECT "
+                    "(SELECT count(*) FROM code_batches WHERE tenant_id=$1 AND contract_version=1) batches,"
+                    "(SELECT count(*) FROM code_batch_generation_receipts WHERE tenant_id=$1) receipts,"
+                    "(SELECT count(*) FROM export_logs WHERE tenant_id=$1 AND manifest_version IS NOT NULL) manifests",
+                    ids["tenant"],
+                )
+            )
+            == protected_counts
+        )
+        _alembic(migrated_pg_url, "upgrade", "head")
+
         # Finalize downgrade restores expand behavior without discarding rows.
         _alembic(migrated_pg_url, "downgrade", EXPAND_REVISION)
+        assert (
+            tuple(
+                await owner.fetchrow(
+                    "SELECT "
+                    "(SELECT count(*) FROM code_batches WHERE tenant_id=$1 AND contract_version=1) batches,"
+                    "(SELECT count(*) FROM code_batch_generation_receipts WHERE tenant_id=$1) receipts,"
+                    "(SELECT count(*) FROM export_logs WHERE tenant_id=$1 AND manifest_version IS NOT NULL) manifests",
+                    ids["tenant"],
+                )
+            )
+            == protected_counts
+        )
         restored_legacy = await _insert_legacy_batch(runtime, ids, quantity=1)
         await _insert_items(runtime, ids["tenant"], restored_legacy, 1)
         await runtime.execute("UPDATE code_batches SET status='completed' WHERE id=$1", restored_legacy)
@@ -635,15 +678,35 @@ async def test_c7_downgrade_blocks_delivery_rows_before_enum_ddl(migrated_pg_url
     finally:
         await conn.close()
 
+    _alembic(migrated_pg_url, "upgrade", "head")
+    # Delivery enum values are still owned at 2ed1, so a shallower downgrade
+    # must retain the legacy delivered row instead of applying the c7 blocker.
+    _alembic(migrated_pg_url, "downgrade", PARENT_REVISION)
+    conn = await asyncpg.connect(dsn)
+    try:
+        assert await conn.fetchval("SELECT version_num FROM alembic_version") == PARENT_REVISION
+        assert await conn.fetchval("SELECT status::text FROM code_batches WHERE id=$1", ids["batch"]) == "delivered"
+    finally:
+        await conn.close()
+    _alembic(migrated_pg_url, "upgrade", "head")
+
     blocked = _alembic(migrated_pg_url, "downgrade", C7_PARENT_REVISION, succeeds=False)
     assert "Cannot discard code batch delivery state" in f"{blocked.stdout}\n{blocked.stderr}"
 
     conn = await asyncpg.connect(dsn)
     try:
-        assert await conn.fetchval("SELECT version_num FROM alembic_version") == C7_REVISION
+        assert await conn.fetchval("SELECT version_num FROM alembic_version") == HEAD_REVISION
         assert await conn.fetchval(
             "SELECT EXISTS (SELECT 1 FROM pg_enum e JOIN pg_type t ON t.oid=e.enumtypid "
             "WHERE t.typname='codebatchstatus' AND e.enumlabel='delivered')"
+        )
+        assert not await conn.fetchval("SELECT has_table_privilege('yimatong_app','code_items','UPDATE')")
+        assert await conn.fetchval(
+            "SELECT to_regprocedure('public.transition_code_item_lifecycle(uuid,uuid,uuid,uuid,text,text)') IS NOT NULL"
+        )
+        assert await conn.fetchval(
+            "SELECT EXISTS(SELECT 1 FROM information_schema.columns "
+            "WHERE table_schema='public' AND table_name='interception_records' AND column_name='code_item_id')"
         )
         await conn.execute("DELETE FROM code_batches WHERE id=$1", ids["batch"])
     finally:
@@ -751,7 +814,7 @@ async def test_runtime_activation_requires_final_batch_state_and_artifact_getter
         await _insert_items(owner, ids["tenant"], batch_id, 1)
         await owner.execute("UPDATE code_batches SET status='completed' WHERE id=$1", batch_id)
         await runtime_pg_conn.execute("SELECT set_config('app.tenant_id',$1,true)", str(ids["tenant"]))
-        with pytest.raises(asyncpg.CheckViolationError):
+        with pytest.raises(asyncpg.InsufficientPrivilegeError):
             async with runtime_pg_conn.transaction():
                 await runtime_pg_conn.execute(
                     "UPDATE code_items SET status='activated',activated_at=now() "
@@ -761,7 +824,7 @@ async def test_runtime_activation_requires_final_batch_state_and_artifact_getter
                 )
         manifest_id, ciphertext, nonce = await _insert_manifest_and_deliver(owner, ids, batch_id, row_count=1)
 
-        with pytest.raises(asyncpg.CheckViolationError):
+        with pytest.raises(asyncpg.InsufficientPrivilegeError):
             async with runtime_pg_conn.transaction():
                 await runtime_pg_conn.execute(
                     "UPDATE code_items SET status='activated',activated_at=now() "
@@ -769,8 +832,6 @@ async def test_runtime_activation_requires_final_batch_state_and_artifact_getter
                     ids["tenant"],
                     batch_id,
                 )
-                await runtime_pg_conn.execute("SET CONSTRAINTS trg_enforce_code_item_parent_final_state IMMEDIATE")
-
         assert (
             await owner.fetchval(
                 "SELECT status::text FROM code_items WHERE tenant_id=$1 AND code_batch_id=$2",
@@ -780,19 +841,27 @@ async def test_runtime_activation_requires_final_batch_state_and_artifact_getter
             == "created"
         )
 
+        auth_session_id = uuid.uuid4()
+        await owner.execute(
+            "INSERT INTO auth_sessions "
+            "(id,account_id,tenant_id,auth_version,current_refresh_jti,expires_at,created_at,updated_at) "
+            "VALUES($1,$2,$3,0,$4,now()+interval '1 hour',now(),now())",
+            auth_session_id,
+            ids["account"],
+            ids["tenant"],
+            uuid.uuid4().hex,
+        )
         async with runtime_pg_conn.transaction():
-            await runtime_pg_conn.execute("SET CONSTRAINTS trg_enforce_code_item_parent_final_state DEFERRED")
-            await runtime_pg_conn.execute(
-                "UPDATE code_items SET status='activated',activated_at=now() WHERE tenant_id=$1 AND code_batch_id=$2",
+            await runtime_pg_conn.execute("SELECT set_config('app.tenant_id',$1,true)", str(ids["tenant"]))
+            activated = await runtime_pg_conn.fetchrow(
+                "SELECT * FROM transition_code_batch_lifecycle($1,$2,$3,$4,'activate',NULL)",
                 ids["tenant"],
+                auth_session_id,
+                uuid.uuid4(),
                 batch_id,
             )
-            await runtime_pg_conn.execute(
-                "UPDATE code_batches SET status='activated' WHERE tenant_id=$1 AND id=$2",
-                ids["tenant"],
-                batch_id,
-            )
-            await runtime_pg_conn.execute("SET CONSTRAINTS trg_enforce_code_item_parent_final_state IMMEDIATE")
+        assert activated["current_status"] == "activated"
+        assert activated["affected_item_count"] == 1
 
         with pytest.raises(asyncpg.InsufficientPrivilegeError):
             async with runtime_pg_conn.transaction():
@@ -836,7 +905,7 @@ async def test_direct_item_update_fails_fast_when_batch_is_locked(
         await transaction.start()
         try:
             await owner.execute("SELECT id FROM code_batches WHERE id=$1 FOR UPDATE", batch_id)
-            with pytest.raises(asyncpg.LockNotAvailableError):
+            with pytest.raises(asyncpg.InsufficientPrivilegeError):
                 await runtime_pg_conn.execute(
                     "UPDATE code_items SET status='revoked',revoked_at=now() WHERE tenant_id=$1 AND code_batch_id=$2",
                     ids["tenant"],
@@ -971,8 +1040,20 @@ async def test_downgrade_fails_before_discarding_v1_contract(migrated_pg_url: st
 
     owner = await asyncpg.connect(migrated_pg_url.replace("postgresql+asyncpg://", "postgresql://"))
     try:
-        assert await owner.fetchval("SELECT version_num FROM alembic_version") == FINALIZE_REVISION
+        assert await owner.fetchval("SELECT version_num FROM alembic_version") == HEAD_REVISION
         assert await owner.fetchval("SELECT to_regclass('public.code_batch_generation_receipts') IS NOT NULL")
+        assert not await owner.fetchval("SELECT has_table_privilege('yimatong_app','code_items','UPDATE')")
+        assert await owner.fetchval(
+            "SELECT to_regprocedure('public.transition_code_item_lifecycle(uuid,uuid,uuid,uuid,text,text)') IS NOT NULL"
+        )
+        assert await owner.fetchval(
+            "SELECT EXISTS(SELECT 1 FROM information_schema.columns "
+            "WHERE table_schema='public' AND table_name='interception_records' AND column_name='code_item_id')"
+        )
+        assert await owner.fetchval(
+            "SELECT EXISTS(SELECT 1 FROM information_schema.columns "
+            "WHERE table_schema='public' AND table_name='code_items' AND column_name='frozen_from_status')"
+        )
     finally:
         await owner.close()
 
@@ -1004,10 +1085,38 @@ async def test_official_cli_seeds_complete_encrypted_delivery_chains(migrated_pg
     _app_cli(migrated_pg_url, "baseline", "build", "--target", "baseline-base")
 
     owner = await asyncpg.connect(migrated_pg_url.replace("postgresql+asyncpg://", "postgresql://"))
+    owned_tenant_ids: list[uuid.UUID] = []
     try:
         for tenant_slug in ("demo", "baseline-base"):
             tenant_id = await owner.fetchval("SELECT id FROM tenants WHERE slug=$1", tenant_slug)
             assert tenant_id is not None
+            owned_tenant_ids.append(tenant_id)
+            assert (
+                await owner.fetchval(
+                    "SELECT count(*) FROM auth_sessions WHERE tenant_id=$1 AND current_refresh_jti LIKE 'cli-%'",
+                    tenant_id,
+                )
+                == 0
+            )
+            lifecycle_operators = {
+                row["operator_id"]
+                for row in await owner.fetch(
+                    "SELECT DISTINCT operator_id FROM platform_audit_log "
+                    "WHERE target_tenant_id=$1 AND action='code_activate'",
+                    str(tenant_id),
+                )
+            }
+            admin_operators = {
+                str(row["account_id"])
+                for row in await owner.fetch(
+                    "SELECT DISTINCT ar.account_id FROM account_roles ar "
+                    "JOIN roles r ON r.tenant_id=ar.tenant_id AND r.id=ar.role_id "
+                    "WHERE ar.tenant_id=$1 AND r.name='admin'",
+                    tenant_id,
+                )
+            }
+            assert lifecycle_operators
+            assert lifecycle_operators <= admin_operators
             batches = await owner.fetch(
                 "SELECT id,product_id,sku_id,production_batch_id,expected_item_count,export_manifest_id "
                 "FROM code_batches "
@@ -1089,4 +1198,6 @@ async def test_official_cli_seeds_complete_encrypted_delivery_chains(migrated_pg
             finally:
                 await runtime_engine.dispose()
     finally:
+        for tenant_id in owned_tenant_ids:
+            await _purge_owned_delivery_fixture(owner, tenant_id)
         await owner.close()

@@ -82,14 +82,19 @@ export function ResolveContent({
   const scanInfo = jsonPayload?.scan_info as
     Record<string, unknown> | undefined;
   const batchStatus = batch?.status as string | undefined;
+  const codeStatus = codeData?.status as string | undefined;
+  // yimatong-zgb1.6：用权威 lifecycle 判断状态（互不混淆）
+  const lifecycle = codeData?.lifecycle as string | undefined;
+  const resultCode = codeData?.result as string | undefined;
   const batchBlocksBenefits =
     batchStatus === "recalled" || batchStatus === "expired";
+  const benefitsBlocked = batchBlocksBenefits || lifecycle === "frozen";
 
   useScanEvent({
     publicId,
     scanToken,
     pageVersionId: undefined,
-    enabled: !batchBlocksBenefits,
+    enabled: !benefitsBlocked,
   });
 
   if (mode === "html") {
@@ -103,11 +108,6 @@ export function ResolveContent({
   }
 
   if (!jsonPayload) return <FallbackError />;
-
-  const codeStatus = codeData?.status as string | undefined;
-  // yimatong-zgb1.6：用权威 lifecycle 判断状态（互不混淆）
-  const lifecycle = codeData?.lifecycle as string | undefined;
-  const resultCode = codeData?.result as string | undefined;
 
   // yimatong-zgb1.6 AC3：frozen 码保留溯源（不再跳错误页），只在顶部显示审核中提示。
   // voided（revoked/expired）仍跳错误页（终止性，不返回溯源）。
@@ -145,7 +145,7 @@ export function ResolveContent({
 
   const modules = (pageConfig?.modules as ModuleConfig[] | undefined) || [];
   const enabledModules = modules.filter((m) => m.enabled !== false);
-  const visibleModules = batchBlocksBenefits
+  const visibleModules = benefitsBlocked
     ? enabledModules.filter(
         (module) => !BATCH_BLOCKED_MODULE_TYPES.has(module.type)
       )
@@ -176,6 +176,7 @@ export function ResolveContent({
           productImage={productImages?.[0]}
           codeData={codeData || {}}
           batchStatus={batchStatus}
+          benefitsBlocked={benefitsBlocked}
           recallWarning={scanInfo?.recall_warning}
         />
       </BrandStyle>
@@ -796,6 +797,7 @@ function DefaultRender({
   productImage,
   codeData,
   batchStatus,
+  benefitsBlocked,
   recallWarning,
 }: {
   publicId: string;
@@ -808,12 +810,11 @@ function DefaultRender({
   productImage?: string;
   codeData: Record<string, unknown>;
   batchStatus?: string;
+  benefitsBlocked: boolean;
   recallWarning?: unknown;
 }) {
   const _product = codeData.product as Record<string, unknown> | undefined;
   const batch = codeData.batch as Record<string, unknown> | undefined;
-  const batchBlocksBenefits =
-    batchStatus === "recalled" || batchStatus === "expired";
   return (
     <div className="mx-auto max-w-md min-h-screen bg-canvas">
       <BatchStatusNotice
@@ -834,7 +835,7 @@ function DefaultRender({
         showBadge
       />
       <TraceabilitySection codeData={codeData} />
-      {!batchBlocksBenefits && (
+      {!benefitsBlocked && (
         <div className="px-4 pb-6">
           <LeadForm publicId={publicId} scanToken={scanToken} />
         </div>

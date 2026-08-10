@@ -24,3 +24,10 @@ def test_spreadsheet_safe_neutralizes_formula_prefixes(value, expected):
 
 def test_authoritative_export_query_has_no_silent_row_limit():
     assert ".limit(" not in inspect.getsource(generate_code_csv)
+
+
+def test_authoritative_export_query_does_not_lock_runtime_code_items():
+    source = inspect.getsource(generate_code_csv)
+    item_query = source[source.index("items = list(") : source.index("_validate_item_contract")]
+
+    assert ".with_for_update()" not in item_query

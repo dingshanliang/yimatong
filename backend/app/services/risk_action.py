@@ -14,18 +14,18 @@ import uuid
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from uuid6 import uuid7
 
 from app.core.event_bus import event_bus
+from app.core.exceptions import NotFoundError
 from app.models.campaign import Campaign
-from app.models.code import CodeItem, CodeItemStatus
+from app.models.code import CodeItem
 from app.models.risk import (
     InterceptionRecord,
     RiskAlert,
-    RiskAlertType,
     RiskNotification,
     RiskRule,
 )
-from app.services.code_state import can_transition
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +45,7 @@ async def execute_risk_action(
     interception = InterceptionRecord(
         tenant_id=tenant_id,
         risk_rule_id=rule.id,
+        code_item_id=code_item.id if code_item is not None else None,
         action=rule.action,
         context=context,
         auto_triggered=True,
@@ -53,12 +54,13 @@ async def execute_risk_action(
     await db.flush()
 
     if rule.action == "block":
-        action_detail = await _execute_block(db, tenant_id, public_id, code_item, context, rule)
+        action_detail = await _execute_block(db, tenant_id, code_item, rule, interception)
     elif rule.action == "warn":
         action_detail = await _execute_warn(db, tenant_id, public_id, code_item, rule, context)
 
     # 更新拦截记录
-    interception.action_taken = rule.action
+    if rule.action != "block":
+        interception.action_taken = rule.action
     interception.action_detail = action_detail
     await db.flush()
 
@@ -109,38 +111,37 @@ async def execute_risk_action(
 async def _execute_block(
     db: AsyncSession,
     tenant_id: uuid.UUID,
-    public_id: str,
     code_item: CodeItem | None,
-    context: dict,
-    rule: RiskRule | None = None,
+    rule: RiskRule,
+    interception: InterceptionRecord,
 ) -> dict:
     """block 动作：冻结码项 + 暂停关联活动。"""
-    steps: list[dict] = []
+    if code_item is None:
+        raise NotFoundError("Risk code item not found")
 
-    # 1. 冻结码项
-    if code_item and code_item.status in (CodeItemStatus.activated, CodeItemStatus.bound):
-        try:
-            can_transition(code_item.status, CodeItemStatus.frozen, raise_on_invalid=True)
-            code_item.status = CodeItemStatus.frozen
-            steps.append({"action": "freeze_code", "status": "success", "code_item_id": str(code_item.id)})
+    from app.services.code import freeze_code_item_for_risk
 
-            alert = RiskAlert(
-                tenant_id=tenant_id,
-                alert_type=RiskAlertType.risk_frozen,
-                public_id=public_id,
-                code_item_id=code_item.id,
-                detail="风控规则自动触发：码已被冻结",
-                # yimatong-zgb1.7 Decision 17：风险证据链
-                risk_level="high",
-                rule_name=rule.name if rule else None,
-                rule_version=str(rule.config.get("version", "v1")) if rule and rule.config else "v1",
-                evidence_quality="strong",
-            )
-            db.add(alert)
-        except Exception as e:
-            steps.append({"action": "freeze_code", "status": "failed", "error": str(e)})
-    else:
-        steps.append({"action": "freeze_code", "status": "skipped", "reason": "code_not_found_or_not_freezable"})
+    result = await freeze_code_item_for_risk(
+        db,
+        tenant_id,
+        interception.id,
+        code_item.id,
+        uuid7(),
+        uuid7(),
+    )
+    steps: list[dict] = [
+        {
+            "action": "freeze_code",
+            "status": "success",
+            "code_item_id": str(result["code_item_id"]),
+            "before": {"status": result["prior_status"]},
+            "after": {"status": result["current_status"]},
+            "risk_alert_id": str(result["risk_alert_id"]),
+            "audit_id": str(result["audit_id"]),
+            "rule_id": str(rule.id),
+            "interception_id": str(interception.id),
+        }
+    ]
 
     # 2. 查找并暂停关联活动（通过码的码批次 → 产品 → 关联活动）
     paused_campaigns = await _pause_related_campaigns(db, tenant_id, code_item)
@@ -163,11 +164,14 @@ async def _execute_warn(
     """warn 动作：创建风险预警（yimatong-zgb1.7：不冻结码，但 risk_level=medium 阻断权益）。"""
     steps: list[dict] = []
 
+    if code_item is None:
+        raise NotFoundError("Risk code item not found")
+
     alert = RiskAlert(
         tenant_id=tenant_id,
         alert_type="auto_warn",
         public_id=public_id,
-        code_item_id=code_item.id if code_item else uuid.uuid4(),
+        code_item_id=code_item.id,
         detail=f"风控规则 [{rule.name}] 自动触发预警",
         # yimatong-zgb1.7 Decision 16+17：warn 级不冻结码（保留溯源），
         # 但 risk_level=medium 会被 claim_benefit 门禁拦截（AC3）。

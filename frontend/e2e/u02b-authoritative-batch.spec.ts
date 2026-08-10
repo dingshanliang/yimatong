@@ -203,7 +203,7 @@ async function createCodeBatch(
   });
 }
 
-test("U02B/U03A keeps one authoritative batch through code delivery, recall, Admin, and H5", async ({
+test("U02B/U03A/U03B keeps one authoritative batch through code delivery, lifecycle controls, recall, Admin, and H5", async ({
   page,
   request,
 }) => {
@@ -504,7 +504,9 @@ test("U02B/U03A keeps one authoritative batch through code delivery, recall, Adm
     200,
     "activate first code batch"
   );
-  const codeItems = await expectJson<{ items: Array<{ public_id: string }> }>(
+  const codeItems = await expectJson<{
+    items: Array<{ id: string; public_id: string }>;
+  }>(
     await request.get(`${API_BASE}/api/v1/code-items`, {
       headers: authorization(admin.accessToken),
       params: { code_batch_id: activeCodeBatch.id, page_size: 100 },
@@ -512,7 +514,9 @@ test("U02B/U03A keeps one authoritative batch through code delivery, recall, Adm
     200,
     "read generated code"
   );
+  const codeItemId = codeItems.items[0]?.id;
   const publicId = codeItems.items[0]?.public_id;
+  expect(codeItemId).toBeTruthy();
   expect(publicId).toBeTruthy();
 
   await page.goto(`${H5_BASE}/c/${publicId}`);
@@ -521,6 +525,67 @@ test("U02B/U03A keeps one authoritative batch through code delivery, recall, Adm
   await expect(
     page.getByText("U02B 可领取权益", { exact: true })
   ).toBeVisible();
+  await expect(page.getByRole("button", { name: "立即领取" })).toBeVisible();
+
+  await page.goto(`${ADMIN_BASE}/codes/${activeCodeBatch.id}`);
+  const itemRow = page.getByRole("row").filter({ hasText: String(publicId) });
+  await expect(itemRow).toBeVisible();
+  const freezeResponse = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      response.url() ===
+        `${API_BASE}/api/v1/risk-alerts/code-items/${codeItemId}/freeze`
+  );
+  await itemRow.getByRole("button", { name: /^冻\s*结$/ }).click();
+  const freezeReason = "U03B 单码流向异常，暂停核查";
+  const itemFreezeDialog = page.getByRole("dialog", { name: "冻结该码" });
+  await expect(itemFreezeDialog).toBeVisible();
+  await itemFreezeDialog
+    .getByLabel("冻结原因", { exact: true })
+    .fill(freezeReason);
+  await itemFreezeDialog.getByRole("button", { name: "确认冻结" }).click();
+  expect((await freezeResponse).status()).toBe(200);
+
+  const frozenBenefitRequests: string[] = [];
+  const frozenRequestListener = (outgoing: { url(): string }) => {
+    if (
+      /\/api\/v1\/(benefits|benefit-claims|claims|points|leads)(?:[/?]|$)/.test(
+        outgoing.url()
+      )
+    ) {
+      frozenBenefitRequests.push(outgoing.url());
+    }
+  };
+  page.on("request", frozenRequestListener);
+  await page.goto(`${H5_BASE}/c/${publicId}`);
+  await expect(
+    page.getByRole("status", { name: "该码正在审核中，权益暂时暂停" })
+  ).toBeVisible();
+  await expect(page.getByText(batchOrigin, { exact: true })).toBeVisible();
+  await expect(page.getByText("U02B 可领取权益", { exact: true })).toHaveCount(
+    0
+  );
+  await expect(page.getByRole("button", { name: "立即领取" })).toHaveCount(0);
+  await page.waitForTimeout(300);
+  page.off("request", frozenRequestListener);
+  expect(frozenBenefitRequests).toEqual([]);
+
+  await page.goto(`${ADMIN_BASE}/codes/${activeCodeBatch.id}`);
+  const frozenItemRow = page
+    .getByRole("row")
+    .filter({ hasText: String(publicId) });
+  await expect(frozenItemRow).toBeVisible();
+  const recoverResponse = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      response.url() ===
+        `${API_BASE}/api/v1/risk-alerts/code-items/${codeItemId}/unfreeze`
+  );
+  await frozenItemRow.getByRole("button", { name: /恢\s*复/ }).click();
+  await page.getByRole("button", { name: "确认恢复" }).click();
+  expect((await recoverResponse).status()).toBe(200);
+
+  await page.goto(`${H5_BASE}/c/${publicId}`);
   await expect(page.getByRole("button", { name: "立即领取" })).toBeVisible();
 
   await page.goto(`${ADMIN_BASE}/batches`);
@@ -719,4 +784,28 @@ test("U02B/U03A keeps one authoritative batch through code delivery, recall, Adm
   );
   expect(audits.every((audit) => audit.result === "success")).toBe(true);
   expect(audits.at(-1)?.reason).toBe(recallReason);
+
+  const itemAuditRaw = await psql(
+    `SELECT json_agg(json_build_object(
+       'action', action,
+       'operator_id', operator_id,
+       'reason', details->>'reason'
+     ) ORDER BY timestamp, id)::text
+       FROM platform_audit_log
+      WHERE resource = 'code_item:${publicId}'
+        AND action IN ('code_freeze', 'code_recover');`
+  );
+  const itemAudits = JSON.parse(itemAuditRaw) as Array<{
+    action: string;
+    operator_id: string;
+    reason: string | null;
+  }>;
+  expect(itemAudits.map((audit) => audit.action)).toEqual([
+    "code_freeze",
+    "code_recover",
+  ]);
+  expect(
+    itemAudits.every((audit) => audit.operator_id === admin.accountId)
+  ).toBe(true);
+  expect(itemAudits[0]?.reason).toBe(freezeReason);
 });

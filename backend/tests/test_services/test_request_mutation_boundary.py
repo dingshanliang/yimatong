@@ -548,6 +548,9 @@ def test_only_expected_business_mutations_use_function_scoped_get_db():
         ("PATCH", "/api/v1/code-items/{item_id}", "function"),
         ("POST", "/api/v1/code-items/{item_id}/revoke", "function"),
         ("POST", "/api/v1/code-items/{item_id}/bind", "function"),
+        ("POST", "/api/v1/risk-alerts/{alert_id}/resolve", "function"),
+        ("POST", "/api/v1/risk-alerts/code-items/{item_id}/freeze", "function"),
+        ("POST", "/api/v1/risk-alerts/code-items/{item_id}/unfreeze", "function"),
         ("POST", "/api/v1/imports/excel", "function"),
         ("POST", "/api/v1/imports/products", "function"),
         ("POST", "/api/v1/imports/existing-codes", "function"),
@@ -563,6 +566,29 @@ def test_only_expected_business_mutations_use_function_scoped_get_db():
         ("PATCH", "/open/v1/skus/{sku_id}", "function"),
         ("POST", "/open/v1/batches", "function"),
     }
+
+
+def test_business_mutations_do_not_mix_request_and_function_scoped_get_db():
+    mixed_scope_routes = set()
+
+    def collect_get_db_scopes(dependency) -> list[str]:
+        scopes = []
+        if dependency.call is database.get_db:
+            scopes.append(dependency.scope or "request")
+        for child in dependency.dependencies:
+            scopes.extend(collect_get_db_scopes(child))
+        return scopes
+
+    for route in app.routes:
+        mutation_methods = set(getattr(route, "methods", ()) or ()) - {"GET", "HEAD", "OPTIONS"}
+        if not mutation_methods:
+            continue
+        scopes = collect_get_db_scopes(route.dependant)
+        if len(set(scopes)) > 1:
+            for method in mutation_methods:
+                mixed_scope_routes.add((method, route.path, tuple(scopes)))
+
+    assert mixed_scope_routes == set()
 
 
 def test_existing_code_import_uses_authoritative_parent_first_lock_order():

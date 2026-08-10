@@ -257,7 +257,9 @@ class TenantScopeMiddleware(BaseHTTPMiddleware):
         else:
             request.state.acting_tenant_id = None
             request.state.original_tenant_id = None
-            if request.state.tenant_type == "agency" and self._is_brand_write_surface(request.url.path, request.method):
+            if request.state.tenant_type == "agency" and self._requires_client_workspace(
+                request.url.path, request.method
+            ):
                 return JSONResponse(
                     status_code=403,
                     content={"detail": "代运营服务商必须先进入已授权的客户工作区才能修改品牌数据"},
@@ -659,10 +661,18 @@ class TenantScopeMiddleware(BaseHTTPMiddleware):
             "/api/v1/benefits",
             "/api/v1/code-batches",
             "/api/v1/code-items",
+            "/api/v1/risk-alerts",
         )
         return path == "/api/v1/files/upload" or any(
             path == prefix or path.startswith(f"{prefix}/") for prefix in brand_prefixes
         )
+
+    @classmethod
+    def _requires_client_workspace(cls, path: str, method: str) -> bool:
+        """Keep agency-owned data separate from client risk data and brand mutations."""
+        if path == "/api/v1/risk-alerts" or path.startswith("/api/v1/risk-alerts/"):
+            return True
+        return cls._is_brand_write_surface(path, method)
 
     @staticmethod
     def _acting_path_is_explicitly_supported(path: str, scopes: list[str], method: str = "GET") -> bool:
@@ -689,6 +699,17 @@ class TenantScopeMiddleware(BaseHTTPMiddleware):
                 "/api/v1/imports/existing-codes": "codes",
             }.get(path)
             return method == "POST" and required_scope is not None and required_scope in scopes
+        if path.startswith("/api/v1/risk-alerts"):
+            if "codes" not in scopes:
+                return False
+            if path == "/api/v1/risk-alerts":
+                return method == "GET"
+            parts = path.split("/")
+            if len(parts) == 6 and parts[4] and parts[5] == "resolve":
+                return method == "POST"
+            if len(parts) == 7 and parts[4] == "code-items" and parts[5] and parts[6] in {"freeze", "unfreeze"}:
+                return method == "POST"
+            return False
         scope_prefixes = {
             "products": (
                 "/api/v1/brands",
