@@ -3,17 +3,26 @@
 import io
 import uuid
 from datetime import date
+from unittest.mock import AsyncMock
 
 import pytest
+from fastapi import HTTPException
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import select
 
 from app.core.database import get_db, get_db_with_bypass
 from app.main import app
+from app.models.audit import PlatformAuditLog
 from app.models.code import CodeBatch, CodeBatchStatus, CodeItem, CodeItemStatus
 from app.models.product import SKU, Brand, Product, ProductionBatch
 from app.models.takeover import TakeoverMode, TakeoverProject, TakeoverProjectStatus
-from app.services.takeover import build_takeover_launch_gate_check
+from app.services.redis_cache import SharedSecurityCacheUnavailable
+from app.services.takeover import (
+    MAX_IMPORT_BYTES,
+    _resolve_public_addresses,
+    build_takeover_launch_gate_check,
+)
+from app.services.takeover_admission import _takeover_probe_rate_cache
 from app.utils.security import create_access_token
 
 
@@ -31,6 +40,15 @@ async def client(db):
     async with AsyncClient(transport=transport, base_url="http://test") as test_client:
         yield test_client
     app.dependency_overrides.clear()
+
+
+@pytest.fixture(autouse=True)
+def allow_takeover_probe_admission(monkeypatch):
+    monkeypatch.setattr(
+        _takeover_probe_rate_cache,
+        "rate_limit_check_shared",
+        AsyncMock(return_value=(True, 0)),
+    )
 
 
 def _headers(tenant_id: uuid.UUID, account_id: uuid.UUID, role: str = "admin"):
@@ -76,6 +94,263 @@ async def test_create_takeover_returns_fact_based_assessment(client):
     assert body["assessment"]["recommended_mode"] == "legacy_redirect"
     assert body["assessment"]["capabilities"]["marketing"]["level"] == "full"
     assert body["assessment"]["capabilities"]["diversion"]["level"] == "degraded"
+
+
+@pytest.mark.anyio
+async def test_takeover_collection_endpoints_are_bounded_and_report_total(client):
+    tenant_id = uuid.uuid4()
+    account_id = uuid.uuid4()
+    for index in range(3):
+        response = await _create_project(client, tenant_id, account_id, name=f"接管项目 {index}")
+        assert response.status_code == 201
+
+    projects = await client.get(
+        "/api/v1/takeovers",
+        params={"page": 2, "page_size": 1},
+        headers=_headers(tenant_id, account_id),
+    )
+
+    assert projects.status_code == 200
+    assert projects.json()["total"] == 3
+    assert projects.json()["page"] == 2
+    assert projects.json()["page_size"] == 1
+    assert len(projects.json()["items"]) == 1
+
+
+@pytest.mark.anyio
+async def test_takeover_backend_role_matrix_denies_viewer_and_operator_lifecycle_actions(client):
+    tenant_id = uuid.uuid4()
+    account_id = uuid.uuid4()
+    project = await _create_project(client, tenant_id, account_id)
+    project_id = project.json()["id"]
+
+    viewer_list = await client.get(
+        "/api/v1/takeovers",
+        headers=_headers(tenant_id, uuid.uuid4(), "viewer"),
+    )
+    operator_approve = await client.post(
+        f"/api/v1/takeovers/{project_id}/confirm",
+        headers=_headers(tenant_id, uuid.uuid4(), "operator"),
+    )
+    operator_execute = await client.post(
+        f"/api/v1/takeovers/{project_id}/routes/{uuid.uuid4()}/cutover",
+        params={"idempotency_key": "operator-cutover"},
+        headers=_headers(tenant_id, uuid.uuid4(), "operator"),
+    )
+    operator_rollback = await client.post(
+        f"/api/v1/takeovers/{project_id}/routes/{uuid.uuid4()}/rollback",
+        json={"reason": "operator rollback", "idempotency_key": "operator-rollback"},
+        headers=_headers(tenant_id, uuid.uuid4(), "operator"),
+    )
+
+    assert viewer_list.status_code == 403
+    assert operator_approve.status_code == 403
+    assert operator_execute.status_code == 403
+    assert operator_rollback.status_code == 403
+
+
+@pytest.mark.anyio
+async def test_takeover_import_rejects_non_csv_before_parsing(client):
+    tenant_id = uuid.uuid4()
+    account_id = uuid.uuid4()
+    project = await _create_project(client, tenant_id, account_id)
+
+    response = await client.post(
+        f"/api/v1/takeovers/{project.json()['id']}/imports/dry-run",
+        files={"file": ("legacy.txt", io.BytesIO(b"legacy_code,internal_public_id\n"), "text/plain")},
+        headers=_headers(tenant_id, account_id),
+    )
+
+    assert response.status_code == 415
+    assert response.json()["detail"] == "Unsupported import file type"
+
+
+@pytest.mark.anyio
+async def test_takeover_import_rejects_empty_csv_without_creating_job(client):
+    tenant_id = uuid.uuid4()
+    account_id = uuid.uuid4()
+    project = await _create_project(client, tenant_id, account_id)
+    project_id = project.json()["id"]
+
+    response = await client.post(
+        f"/api/v1/takeovers/{project_id}/imports/dry-run",
+        files={"file": ("legacy.csv", io.BytesIO(b" \r\n"), "text/csv")},
+        headers=_headers(tenant_id, account_id),
+    )
+    imports = await client.get(
+        f"/api/v1/takeovers/{project_id}/imports",
+        headers=_headers(tenant_id, account_id),
+    )
+
+    assert response.status_code == 400
+    assert imports.json()["total"] == 0
+    assert imports.json()["page"] == 1
+    assert imports.json()["page_size"] == 50
+
+
+def test_takeover_probe_rejects_unbounded_dns_fanout(monkeypatch):
+    monkeypatch.setattr(
+        "app.services.takeover.socket.getaddrinfo",
+        lambda *_args, **_kwargs: [(None, None, None, None, (f"8.8.8.{index}", 443)) for index in range(1, 10)],
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        _resolve_public_addresses("legacy.example.com", 443)
+
+    assert exc_info.value.status_code == 422
+    assert exc_info.value.detail == "Domain resolves to too many addresses"
+
+
+@pytest.mark.anyio
+async def test_public_gateway_rejects_malformed_hosts_without_server_error(client):
+    for host in ("127.0.0.1", "bad_host.example.com", "not-a-domain"):
+        response = await client.get(
+            "/api/v1/takeover/gateway/scan/OLD-001",
+            headers={"host": host},
+        )
+        assert response.status_code == 404
+
+
+@pytest.mark.anyio
+async def test_takeover_error_export_neutralizes_formulas_and_audits_actor(client, db):
+    tenant_id = uuid.uuid4()
+    account_id = uuid.uuid4()
+    project = await _create_project(client, tenant_id, account_id)
+    project_id = project.json()["id"]
+    dry_run = await client.post(
+        f"/api/v1/takeovers/{project_id}/imports/dry-run",
+        files={
+            "file": (
+                "legacy.csv",
+                io.BytesIO(b"legacy_code,internal_public_id\n=1+1,\n"),
+                "text/csv",
+            )
+        },
+        headers=_headers(tenant_id, account_id),
+    )
+    job_id = dry_run.json()["id"]
+
+    response = await client.get(
+        f"/api/v1/takeovers/{project_id}/imports/{job_id}/errors.csv",
+        headers=_headers(tenant_id, account_id),
+    )
+    audit = await db.scalar(
+        select(PlatformAuditLog).where(
+            PlatformAuditLog.target_tenant_id == str(tenant_id),
+            PlatformAuditLog.action == "takeover_import_errors_exported",
+            PlatformAuditLog.resource == f"takeover_import:{job_id}",
+        )
+    )
+
+    assert response.status_code == 200
+    assert "'=1+1" in response.content.decode("utf-8-sig")
+    assert audit is not None
+    assert audit.operator_id == str(account_id)
+    assert audit.details == {"project_id": project_id, "row_count": 1}
+
+
+@pytest.mark.anyio
+async def test_takeover_import_rejects_oversized_csv_before_parsing(client):
+    tenant_id = uuid.uuid4()
+    account_id = uuid.uuid4()
+    project = await _create_project(client, tenant_id, account_id)
+
+    response = await client.post(
+        f"/api/v1/takeovers/{project.json()['id']}/imports/dry-run",
+        files={"file": ("legacy.csv", io.BytesIO(b"x" * (MAX_IMPORT_BYTES + 1)), "text/csv")},
+        headers=_headers(tenant_id, account_id),
+    )
+
+    assert response.status_code == 413
+    assert response.json()["detail"] == "Import file is too large"
+
+
+@pytest.mark.anyio
+async def test_takeover_import_rejects_missing_mime_type(client):
+    tenant_id = uuid.uuid4()
+    account_id = uuid.uuid4()
+    project = await _create_project(client, tenant_id, account_id)
+
+    response = await client.post(
+        f"/api/v1/takeovers/{project.json()['id']}/imports/dry-run",
+        files={"file": ("legacy.csv", io.BytesIO(b"legacy_code,internal_public_id\n"), "")},
+        headers=_headers(tenant_id, account_id),
+    )
+
+    assert response.status_code == 415
+
+
+@pytest.mark.anyio
+async def test_takeover_import_accepts_browser_csv_mime_type(client):
+    tenant_id = uuid.uuid4()
+    account_id = uuid.uuid4()
+    project = await _create_project(client, tenant_id, account_id)
+
+    response = await client.post(
+        f"/api/v1/takeovers/{project.json()['id']}/imports/dry-run",
+        files={
+            "file": (
+                "legacy.csv",
+                io.BytesIO(b"legacy_code,internal_public_id\nOLD-1,YM-NOT-FOUND\n"),
+                "application/vnd.ms-excel",
+            )
+        },
+        headers=_headers(tenant_id, account_id),
+    )
+
+    assert response.status_code == 201
+
+
+@pytest.mark.anyio
+async def test_takeover_probe_admission_is_rate_limited_before_network(client, monkeypatch):
+    tenant_id = uuid.uuid4()
+    account_id = uuid.uuid4()
+    project = await _create_project(
+        client,
+        tenant_id,
+        account_id,
+        mode="cname",
+        consumer_domain="scan.rate-limit.example",
+    )
+    monkeypatch.setattr(
+        _takeover_probe_rate_cache,
+        "rate_limit_check_shared",
+        AsyncMock(return_value=(False, 10)),
+    )
+
+    response = await client.post(
+        f"/api/v1/takeovers/{project.json()['id']}/domains/check",
+        headers=_headers(tenant_id, account_id),
+    )
+
+    assert response.status_code == 429
+    assert response.headers["Retry-After"] == "60"
+
+
+@pytest.mark.anyio
+async def test_takeover_probe_admission_fails_closed_when_shared_cache_is_unavailable(client, monkeypatch):
+    tenant_id = uuid.uuid4()
+    account_id = uuid.uuid4()
+    project = await _create_project(
+        client,
+        tenant_id,
+        account_id,
+        mode="cname",
+        consumer_domain="scan.cache-down.example",
+    )
+    monkeypatch.setattr(
+        _takeover_probe_rate_cache,
+        "rate_limit_check_shared",
+        AsyncMock(side_effect=SharedSecurityCacheUnavailable("unavailable")),
+    )
+
+    response = await client.post(
+        f"/api/v1/takeovers/{project.json()['id']}/domains/check",
+        headers=_headers(tenant_id, account_id),
+    )
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == "Takeover probe service is temporarily unavailable"
 
 
 @pytest.mark.anyio
@@ -139,6 +414,17 @@ async def test_dry_run_submit_and_preview_keep_alias_staged_until_cutover(client
     assert submitted.status_code == 200
     assert submitted.json()["status"] == "completed"
 
+    aliases = await client.get(
+        f"/api/v1/takeovers/{project_id}/aliases",
+        params={"page": 1, "page_size": 1},
+        headers=_headers(tenant_id, account_id),
+    )
+    assert aliases.status_code == 200
+    assert aliases.json()["total"] == 1
+    assert aliases.json()["page"] == 1
+    assert aliases.json()["page_size"] == 1
+    assert len(aliases.json()["items"]) == 1
+
     preview = await client.get(
         f"/api/v1/takeovers/{project_id}/aliases/preview",
         params={"url": "https://legacy.example.com/scan/OLD-001"},
@@ -186,7 +472,57 @@ async def test_takeover_isolation_and_cname_readiness_gate(client):
 
 
 @pytest.mark.anyio
-async def test_legacy_redirect_waits_for_external_execution_then_observes_and_rolls_back(client, db):
+async def test_domain_check_rejects_private_resolution_without_opening_a_socket(client, monkeypatch):
+    from app.services import takeover as takeover_service
+
+    tenant_id = uuid.uuid4()
+    account_id = uuid.uuid4()
+    created = await _create_project(
+        client,
+        tenant_id,
+        account_id,
+        mode="cname",
+        consumer_domain="scan.internal.example",
+        control_facts={"domain_control": True, "old_system_control": False},
+    )
+    socket_attempts: list[tuple] = []
+    monkeypatch.setattr(
+        takeover_service.socket,
+        "getaddrinfo",
+        lambda *_args, **_kwargs: [(2, 1, 6, "", ("127.0.0.1", 443))],
+    )
+    monkeypatch.setattr(
+        takeover_service.socket,
+        "create_connection",
+        lambda *args, **kwargs: socket_attempts.append((args, kwargs)),
+    )
+
+    response = await client.post(
+        f"/api/v1/takeovers/{created.json()['id']}/domains/check",
+        headers=_headers(tenant_id, account_id),
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == "Domain must resolve only to public IP addresses"
+    assert socket_attempts == []
+
+
+@pytest.mark.anyio
+async def test_takeover_project_rejects_ip_literal_domain(client):
+    response = await _create_project(
+        client,
+        uuid.uuid4(),
+        uuid.uuid4(),
+        mode="cname",
+        consumer_domain="127.0.0.1",
+        control_facts={"domain_control": True},
+    )
+
+    assert response.status_code == 422
+
+
+@pytest.mark.anyio
+async def test_legacy_redirect_waits_for_external_execution_then_observes_and_rolls_back(client, db, monkeypatch):
     tenant_id = uuid.uuid4()
     account_id = uuid.uuid4()
     brand = Brand(tenant_id=tenant_id, name="基准品牌")
@@ -271,6 +607,7 @@ async def test_legacy_redirect_waits_for_external_execution_then_observes_and_ro
     route_id = route.json()["id"]
     confirmed_route = await client.post(
         f"/api/v1/takeovers/{project_id}/routes/{route_id}/confirm",
+        params={"idempotency_key": "confirm-001"},
         headers=_headers(tenant_id, account_id),
     )
     assert confirmed_route.status_code == 200
@@ -282,11 +619,32 @@ async def test_legacy_redirect_waits_for_external_execution_then_observes_and_ro
     assert blocked.status_code == 409
     external = await client.post(
         f"/api/v1/takeovers/{project_id}/routes/{route_id}/external-execution",
-        json={"execution_reference": "legacy-change-001"},
+        json={"execution_reference": "legacy-change-001", "idempotency_key": "external-001"},
         headers=_headers(tenant_id, account_id),
     )
     assert external.status_code == 200
-    probe = await client.post(
+    monkeypatch.setattr(
+        "app.services.takeover._probe_https_redirect_sync",
+        lambda _url: {
+            "status_code": 307,
+            "observed_target": "https://h5.example.com/c/YMTEST002",
+            "latency_ms": 12.0,
+        },
+    )
+    probe_before_cutover = await client.post(
+        f"/api/v1/takeovers/{project_id}/routes/{route_id}/probe",
+        json={"checked_url": "https://legacy.example.com/scan/OLD-001"},
+        headers=_headers(tenant_id, account_id),
+    )
+    assert probe_before_cutover.status_code == 200
+    assert probe_before_cutover.json()["observation"]["evidence_purpose"] == "pre_cutover"
+    cutover = await client.post(
+        f"/api/v1/takeovers/{project_id}/routes/{route_id}/cutover",
+        params={"idempotency_key": "cutover-after-external"},
+        headers=_headers(tenant_id, account_id),
+    )
+    assert cutover.status_code == 200
+    forged = await client.post(
         f"/api/v1/takeovers/{project_id}/routes/{route_id}/probe",
         json={
             "checked_url": "https://legacy.example.com/scan/OLD-001",
@@ -297,11 +655,17 @@ async def test_legacy_redirect_waits_for_external_execution_then_observes_and_ro
         },
         headers=_headers(tenant_id, account_id),
     )
+    assert forged.status_code == 422
+    probe = await client.post(
+        f"/api/v1/takeovers/{project_id}/routes/{route_id}/probe",
+        json={"checked_url": "https://legacy.example.com/scan/OLD-001"},
+        headers=_headers(tenant_id, account_id),
+    )
     assert probe.status_code == 200
     assert probe.json()["observation"]["recommendation"] == "continue"
     gateway = await client.get(
         "/api/v1/takeover/gateway",
-        params={"project_id": project_id, "legacy_url": "https://legacy.example.com/scan/OLD-001"},
+        params={"legacy_url": "https://legacy.example.com/scan/OLD-001"},
         headers={"host": "legacy.example.com"},
     )
     assert gateway.status_code == 200
@@ -314,17 +678,65 @@ async def test_legacy_redirect_waits_for_external_execution_then_observes_and_ro
     assert redirect.headers["location"] == "https://h5.example.com/c/YMTEST002"
     cross_tenant = await client.get(
         "/api/v1/takeover/gateway",
-        params={"project_id": project_id, "legacy_url": "https://legacy.example.com/scan/OLD-001"},
+        params={"legacy_url": "https://legacy.example.com/scan/OLD-001"},
         headers={"host": "other-brand.example.com"},
     )
     assert cross_tenant.status_code == 404
+    blank_rollback = await client.post(
+        f"/api/v1/takeovers/{project_id}/routes/{route_id}/rollback",
+        json={"reason": "   ", "idempotency_key": "rollback-blank"},
+        headers=_headers(tenant_id, account_id),
+    )
+    extra_rollback = await client.post(
+        f"/api/v1/takeovers/{project_id}/routes/{route_id}/rollback",
+        json={"reason": "旧系统异常", "idempotency_key": "rollback-extra", "force": True},
+        headers=_headers(tenant_id, account_id),
+    )
+    assert blank_rollback.status_code == 422
+    assert extra_rollback.status_code == 422
     rollback = await client.post(
         f"/api/v1/takeovers/{project_id}/routes/{route_id}/rollback",
         json={"reason": "旧系统异常", "idempotency_key": "rollback-001"},
         headers=_headers(tenant_id, account_id),
     )
     assert rollback.status_code == 200
-    assert rollback.json()["status"] == "rolled_back"
+    assert rollback.json()["status"] == "rolling_back"
+    monkeypatch.setattr(
+        "app.services.takeover._probe_https_redirect_sync",
+        lambda _url: {
+            "status_code": 307,
+            "observed_target": "https://attacker.example.com/not-fallback",
+            "latency_ms": 12.0,
+        },
+    )
+    failed_verification = await client.post(
+        f"/api/v1/takeovers/{project_id}/routes/{route_id}/rollback/verify",
+        params={"idempotency_key": "rollback-001"},
+        headers=_headers(tenant_id, account_id),
+    )
+    assert failed_verification.status_code == 200
+    assert failed_verification.json()["route"]["status"] == "rolling_back"
+    assert failed_verification.json()["observation"]["status"] == "failed"
+    durable_rollback = await client.get(
+        f"/api/v1/takeovers/{project_id}/routes",
+        headers=_headers(tenant_id, account_id),
+    )
+    assert durable_rollback.json()["items"][0]["status"] == "rolling_back"
+    monkeypatch.setattr(
+        "app.services.takeover._probe_https_redirect_sync",
+        lambda _url: {
+            "status_code": 307,
+            "observed_target": "https://legacy.example.com/fallback",
+            "latency_ms": 12.0,
+        },
+    )
+    verified = await client.post(
+        f"/api/v1/takeovers/{project_id}/routes/{route_id}/rollback/verify",
+        params={"idempotency_key": "rollback-001"},
+        headers=_headers(tenant_id, account_id),
+    )
+    assert verified.status_code == 200
+    assert verified.json()["route"]["status"] == "rolled_back"
     fallback = await client.get(
         "/api/v1/takeover/gateway/scan/OLD-001",
         headers={"host": "legacy.example.com"},
@@ -359,10 +771,12 @@ async def test_cname_domain_check_and_deterministic_gateway(client, db, monkeypa
     monkeypatch.setattr(
         takeover_service,
         "_inspect_dns_and_tls_sync",
-        lambda domain, expected: {
+        lambda domain, expected, token: {
             "status": "passed",
             "observed_cnames": [expected],
             "observed_ips": ["203.0.113.10"],
+            "observed_ownership_tokens": [f"yimatong-verification={token}"],
+            "ownership_verified": True,
             "ttl": 60,
             "tls_status": "active",
             "certificate_expires_at": None,
@@ -377,6 +791,7 @@ async def test_cname_domain_check_and_deterministic_gateway(client, db, monkeypa
     assert checked.status_code == 200
     assert checked.json()["status"] == "passed"
     assert checked.json()["observed_cnames"] == ["cname.yimatong.cn"]
+    assert checked.json()["ownership_verified"] is True
 
     fixed = await _create_project(
         client,

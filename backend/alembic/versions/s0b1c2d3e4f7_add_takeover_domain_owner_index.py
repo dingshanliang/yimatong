@@ -26,4 +26,4 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.drop_index("uq_takeover_project_domain_owner", table_name="takeover_projects")
+    op.execute("DROP INDEX IF EXISTS public.uq_takeover_project_domain_owner")

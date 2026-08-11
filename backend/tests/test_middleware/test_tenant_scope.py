@@ -50,6 +50,22 @@ class TestPublicRoutes:
 
 
 class TestProtectedRoutes:
+    def test_takeover_requires_client_workspace_for_base_agency(self):
+        assert TenantScopeMiddleware._requires_client_workspace("/api/v1/takeovers", "GET") is True
+        assert (
+            TenantScopeMiddleware._requires_client_workspace(
+                "/api/v1/takeovers/11111111-1111-1111-1111-111111111111/routes", "POST"
+            )
+            is True
+        )
+
+    def test_takeover_is_exactly_available_to_acting_codes_scope(self):
+        route = "/api/v1/takeovers/11111111-1111-1111-1111-111111111111/routes"
+
+        assert TenantScopeMiddleware._acting_path_is_explicitly_supported(route, ["codes"], "GET") is True
+        assert TenantScopeMiddleware._acting_path_is_explicitly_supported(route, ["codes"], "POST") is True
+        assert TenantScopeMiddleware._acting_path_is_explicitly_supported(route, ["products"], "GET") is False
+
     def test_no_token_returns_401(self):
         resp = client.get("/api/v1/test")
         assert resp.status_code == 401

@@ -200,6 +200,54 @@ BEGIN
             uuid, uuid, uuid, uuid, uuid
         ) TO yimatong_app;
     END IF;
+    IF to_regprocedure('public.enqueue_takeover_import_job(uuid,uuid)') IS NOT NULL THEN
+        REVOKE ALL ON FUNCTION public.enqueue_takeover_import_job(uuid,uuid) FROM PUBLIC;
+        GRANT EXECUTE ON FUNCTION public.enqueue_takeover_import_job(uuid,uuid) TO yimatong_app;
+    END IF;
+    IF to_regprocedure('public.claim_takeover_import_job(uuid,uuid,uuid)') IS NOT NULL THEN
+        REVOKE ALL ON FUNCTION public.claim_takeover_import_job(uuid,uuid,uuid) FROM PUBLIC;
+        GRANT EXECUTE ON FUNCTION public.claim_takeover_import_job(uuid,uuid,uuid) TO yimatong_app;
+    END IF;
+    IF to_regprocedure('public.fail_takeover_import_job(uuid,uuid,uuid,text)') IS NOT NULL THEN
+        REVOKE ALL ON FUNCTION public.fail_takeover_import_job(uuid,uuid,uuid,text) FROM PUBLIC;
+        GRANT EXECUTE ON FUNCTION public.fail_takeover_import_job(uuid,uuid,uuid,text) TO yimatong_app;
+    END IF;
+    IF to_regprocedure('public.complete_takeover_import_job(uuid,uuid,uuid,text,jsonb)') IS NOT NULL THEN
+        REVOKE ALL ON FUNCTION public.complete_takeover_import_job(uuid,uuid,uuid,text,jsonb) FROM PUBLIC;
+        GRANT EXECUTE ON FUNCTION public.complete_takeover_import_job(uuid,uuid,uuid,text,jsonb) TO yimatong_app;
+    END IF;
+    IF to_regprocedure(
+        'public.record_takeover_server_probe(uuid,uuid,uuid,uuid,uuid,uuid,text,text,text,double precision,jsonb,text)'
+    ) IS NOT NULL THEN
+        REVOKE ALL ON FUNCTION public.record_takeover_server_probe(
+            uuid,uuid,uuid,uuid,uuid,uuid,text,text,text,double precision,jsonb,text
+        ) FROM PUBLIC;
+        GRANT EXECUTE ON FUNCTION public.record_takeover_server_probe(
+            uuid,uuid,uuid,uuid,uuid,uuid,text,text,text,double precision,jsonb,text
+        ) TO yimatong_app;
+    END IF;
+    IF to_regprocedure(
+        'public.record_takeover_domain_check(uuid,uuid,uuid,uuid,text,jsonb,jsonb,jsonb,integer,text,timestamp with time zone,text,text,jsonb)'
+    ) IS NOT NULL THEN
+        REVOKE ALL ON FUNCTION public.record_takeover_domain_check(
+            uuid,uuid,uuid,uuid,text,jsonb,jsonb,jsonb,integer,text,timestamp with time zone,text,text,jsonb
+        ) FROM PUBLIC;
+        GRANT EXECUTE ON FUNCTION public.record_takeover_domain_check(
+            uuid,uuid,uuid,uuid,text,jsonb,jsonb,jsonb,integer,text,timestamp with time zone,text,text,jsonb
+        ) TO yimatong_app;
+    END IF;
+    IF to_regprocedure('public.transition_takeover_route(uuid,uuid,uuid,uuid,uuid,text,text,text)') IS NOT NULL THEN
+        REVOKE ALL ON FUNCTION public.transition_takeover_route(
+            uuid,uuid,uuid,uuid,uuid,text,text,text
+        ) FROM PUBLIC;
+        GRANT EXECUTE ON FUNCTION public.transition_takeover_route(
+            uuid,uuid,uuid,uuid,uuid,text,text,text
+        ) TO yimatong_app;
+    END IF;
+    IF to_regprocedure('public.resolve_takeover_public_route(text)') IS NOT NULL THEN
+        REVOKE ALL ON FUNCTION public.resolve_takeover_public_route(text) FROM PUBLIC;
+        GRANT EXECUTE ON FUNCTION public.resolve_takeover_public_route(text) TO yimatong_app;
+    END IF;
     IF to_regprocedure(
         'public.append_api_key_catalog_audit_event(uuid,uuid,uuid,text,uuid,jsonb)'
     ) IS NOT NULL THEN
@@ -271,6 +319,9 @@ SELECT unnest(ARRAY[
     'role_template_backups', 'tenant_invite_codes',
     'tenant_platform_role_assignment_backups'
 ]::name[]);
+INSERT INTO runtime_control_relation_allowlist (table_name)
+SELECT 'takeover_domain_claims'::name
+WHERE to_regclass('public.takeover_domain_claims') IS NOT NULL;
 
 CREATE TEMP TABLE runtime_public_relation_allowlist (
     table_name name PRIMARY KEY
@@ -316,8 +367,9 @@ BEGIN
         UNION ALL SELECT table_name FROM runtime_public_relation_allowlist
         UNION ALL SELECT table_name FROM runtime_read_only_global_relation_allowlist
     ) AS orm_registry;
-    IF registry_count <> 98 THEN
-        RAISE EXCEPTION 'Runtime ORM registry must classify exactly 98 relations, got %', registry_count;
+    IF registry_count <> 98 + (CASE
+        WHEN to_regclass('public.takeover_domain_claims') IS NULL THEN 0 ELSE 1 END) THEN
+        RAISE EXCEPTION 'Runtime ORM registry count is inconsistent, got %', registry_count;
     END IF;
 
     SELECT string_agg(table_name::text, ', ' ORDER BY table_name) INTO missing
@@ -571,6 +623,25 @@ $$;
 -- tenant-readable for scan resolution, but lifecycle mutation is function-only.
 REVOKE UPDATE ON TABLE public.code_items FROM yimatong_app;
 
+-- Takeover delivery evidence and state transitions are function-controlled.
+-- Runtime may insert immutable route candidates, staged aliases, and import
+-- evidence; domain checks and lifecycle evidence use actor-bound functions. It cannot retarget live aliases, forge lifecycle
+-- events, or forge authoritative server probes.
+REVOKE UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER
+    ON TABLE public.takeover_route_versions FROM yimatong_app;
+REVOKE UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER
+    ON TABLE public.takeover_aliases FROM yimatong_app;
+REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER
+    ON TABLE public.takeover_observations FROM yimatong_app;
+REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER
+    ON TABLE public.takeover_domain_checks FROM yimatong_app;
+REVOKE UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER
+    ON TABLE public.takeover_import_errors,
+             public.takeover_import_jobs
+    FROM yimatong_app;
+REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER
+    ON TABLE public.takeover_cutover_events FROM yimatong_app;
+
 -- CSV artifacts contain the complete code list. The runtime role may read
 -- ordinary export-log metadata, but encrypted envelope columns are available
 -- only through the tenant-bound SECURITY DEFINER getter installed by Alembic.
@@ -608,6 +679,7 @@ BEGIN
         'platform_configs',
         'tenant_invite_codes',
         'operator_campaign_manage_grants',
+        'takeover_domain_claims',
         'agency_authorization_integrity_backups',
         'api_key_catalog_audit_context_secrets',
         'api_key_legacy_secret_backups',

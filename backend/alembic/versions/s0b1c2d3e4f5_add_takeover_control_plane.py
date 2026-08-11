@@ -281,6 +281,25 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    op.execute(
+        """
+        DO $block$
+        BEGIN
+            IF EXISTS (SELECT 1 FROM public.takeover_projects)
+               OR EXISTS (SELECT 1 FROM public.takeover_import_jobs)
+               OR EXISTS (SELECT 1 FROM public.takeover_import_errors)
+               OR EXISTS (SELECT 1 FROM public.takeover_aliases)
+               OR EXISTS (SELECT 1 FROM public.takeover_domain_checks)
+               OR EXISTS (SELECT 1 FROM public.takeover_route_versions)
+               OR EXISTS (SELECT 1 FROM public.takeover_cutover_events)
+               OR EXISTS (SELECT 1 FROM public.takeover_observations) THEN
+                RAISE EXCEPTION USING ERRCODE='55000',
+                    MESSAGE='takeover control-plane downgrade blocked: durable takeover data exists';
+            END IF;
+        END
+        $block$
+        """
+    )
     for table in reversed(TABLES):
         op.execute(f"DROP POLICY IF EXISTS tenant_isolation ON {table}")
         op.execute(f"ALTER TABLE {table} DISABLE ROW LEVEL SECURITY")

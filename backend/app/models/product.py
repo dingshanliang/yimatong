@@ -236,6 +236,7 @@ class ProductionBatch(Base, ExternalRefMixin):
             name="ck_production_batches_recall_metadata",
         ),
         UniqueConstraint("tenant_id", "batch_code", name="uq_production_batches_tenant_batch_code"),
+        UniqueConstraint("tenant_id", "id", name="uq_production_batches_tenant_id_id"),
         UniqueConstraint(
             "tenant_id",
             "product_id",

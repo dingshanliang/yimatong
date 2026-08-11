@@ -66,6 +66,7 @@ from app.models.sync_mapping import SyncMapping  # noqa: F401
 from app.models.takeover import (  # noqa: F401
     TakeoverAlias,
     TakeoverCutoverEvent,
+    TakeoverDomainClaim,
     TakeoverDomainCheck,
     TakeoverImportError,
     TakeoverImportJob,

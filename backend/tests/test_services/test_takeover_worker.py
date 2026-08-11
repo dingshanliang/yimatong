@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 import uuid
 from datetime import UTC, datetime, timedelta
 
@@ -18,12 +19,15 @@ from app.models.takeover import (
     TakeoverProjectStatus,
 )
 from app.models.tenant import Tenant
+from app.services import takeover as takeover_service
 from app.services.takeover import (
     TAKEOVER_IMPORT_PLAN_EXPIRED_ERROR,
+    poll_pending_takeover_imports,
     process_import_job,
     queue_import,
     serialize_import,
 )
+from app.tasks.worker import worker_loop
 from tests.conftest import TestSessionLocal
 
 
@@ -123,3 +127,36 @@ async def test_queue_import_does_not_reopen_unrelated_failed_job() -> None:
 
     assert exc_info.value.status_code == 409
     assert exc_info.value.detail == "当前导入任务不能提交"
+
+
+def test_takeover_import_delivery_uses_durable_database_polling_only() -> None:
+    queue_source = inspect.getsource(queue_import)
+    worker_source = inspect.getsource(worker_loop)
+
+    assert "redis" not in queue_source
+    assert "lpush" not in queue_source
+    assert "TAKEOVER_IMPORT_QUEUE_KEY" not in worker_source
+    assert "poll_pending_takeover_imports" in worker_source
+
+
+@pytest.mark.anyio
+async def test_durable_poll_rediscovers_stale_processing_claim(monkeypatch) -> None:
+    _, _, job_id = await _seed_job(expired=False)
+    async with TestSessionLocal() as db, db.begin():
+        job = await db.get(TakeoverImportJob, job_id)
+        assert job is not None
+        job.status = TakeoverImportStatus.processing
+        job.attempt_count = 1
+        job.claim_token = uuid.uuid4()
+        job.claimed_at = datetime.now(UTC) - timedelta(minutes=6)
+
+    observed: list[uuid.UUID] = []
+
+    async def fake_process(candidate_id: uuid.UUID) -> None:
+        observed.append(candidate_id)
+
+    monkeypatch.setattr(database, "control_session_factory", TestSessionLocal)
+    monkeypatch.setattr(takeover_service, "process_import_job", fake_process)
+
+    assert await poll_pending_takeover_imports() == 1
+    assert observed == [job_id]

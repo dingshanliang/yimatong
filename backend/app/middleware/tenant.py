@@ -670,6 +670,8 @@ class TenantScopeMiddleware(BaseHTTPMiddleware):
     @classmethod
     def _requires_client_workspace(cls, path: str, method: str) -> bool:
         """Keep agency-owned data separate from client risk data and brand mutations."""
+        if path == "/api/v1/takeovers" or path.startswith("/api/v1/takeovers/"):
+            return True
         if path == "/api/v1/risk-alerts" or path.startswith("/api/v1/risk-alerts/"):
             return True
         return cls._is_brand_write_surface(path, method)
@@ -710,6 +712,8 @@ class TenantScopeMiddleware(BaseHTTPMiddleware):
             if len(parts) == 7 and parts[4] == "code-items" and parts[5] and parts[6] in {"freeze", "unfreeze"}:
                 return method == "POST"
             return False
+        if path == "/api/v1/takeovers" or path.startswith("/api/v1/takeovers/"):
+            return "codes" in scopes
         scope_prefixes = {
             "products": (
                 "/api/v1/brands",

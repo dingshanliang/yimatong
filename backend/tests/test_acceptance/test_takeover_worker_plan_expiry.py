@@ -23,7 +23,6 @@ from app.models.takeover import (
 )
 from app.models.tenant import Account, Tenant, TenantPlan
 from app.services import takeover as takeover_service
-from app.services.takeover import TAKEOVER_IMPORT_PLAN_EXPIRED_ERROR
 from tests.test_acceptance.conftest import seed_baseline
 
 pytestmark = [pytest.mark.acceptance, pytest.mark.anyio]
@@ -196,7 +195,8 @@ async def test_expiry_first_blocks_worker_without_partial_writes_and_can_retry(
             expected_project_status=TakeoverProjectStatus.needs_fix,
             expected_aliases=0,
         )
-        assert failed_job.error_detail == TAKEOVER_IMPORT_PLAN_EXPIRED_ERROR
+        assert failed_job.last_error_code == "tenant_plan_expired"
+        assert failed_job.error_detail == "background import failed: tenant_plan_expired"
         assert failed_job.counts == {"total": 1, "valid": 1, "failed": 0, "succeeded": 0}
 
         async with owner_factory() as db, db.begin():

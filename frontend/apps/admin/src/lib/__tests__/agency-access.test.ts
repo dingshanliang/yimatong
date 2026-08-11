@@ -3,6 +3,7 @@ import {
   canManageAgencyAuthorizations,
   firstAgencyScopedRoute,
   isAgencyScopedRouteAllowed,
+  takeoverAccessForPrincipal,
 } from "../agency-access";
 
 describe("canManageAgencyAuthorizations", () => {
@@ -35,5 +36,82 @@ describe("canManageAgencyAuthorizations", () => {
     expect(firstAgencyScopedRoute(["pages", "products"])).toBe("/products");
     expect(firstAgencyScopedRoute(["analytics", "products"])).toBe("/");
     expect(firstAgencyScopedRoute([])).toBe("/agency");
+  });
+});
+
+describe("takeoverAccessForPrincipal", () => {
+  it("grants the exact brand role matrix", () => {
+    expect(
+      takeoverAccessForPrincipal({
+        tenant_type: "brand",
+        role: "admin",
+        acting_tenant_id: null,
+        agency_scope: null,
+      })
+    ).toEqual({
+      canRead: true,
+      canPrepare: true,
+      canApprove: true,
+      canExecute: true,
+      canRollback: true,
+      canAudit: true,
+    });
+    expect(
+      takeoverAccessForPrincipal({
+        tenant_type: "brand",
+        role: "operator",
+        acting_tenant_id: null,
+        agency_scope: null,
+      })
+    ).toEqual({
+      canRead: true,
+      canPrepare: true,
+      canApprove: false,
+      canExecute: false,
+      canRollback: false,
+      canAudit: true,
+    });
+    expect(
+      takeoverAccessForPrincipal({
+        tenant_type: "brand",
+        role: "viewer",
+        acting_tenant_id: null,
+        agency_scope: null,
+      }).canRead
+    ).toBe(false);
+  });
+
+  it("allows acting codes roles but rejects base agencies", () => {
+    expect(
+      takeoverAccessForPrincipal({
+        tenant_type: "agency",
+        role: "admin",
+        acting_tenant_id: "client-1",
+        agency_scope: ["codes"],
+      }).canRollback
+    ).toBe(true);
+    expect(
+      takeoverAccessForPrincipal({
+        tenant_type: "agency",
+        role: "operator",
+        acting_tenant_id: "client-1",
+        agency_scope: ["codes"],
+      })
+    ).toMatchObject({
+      canRead: true,
+      canPrepare: true,
+      canApprove: false,
+      canExecute: false,
+      canRollback: false,
+      canAudit: true,
+    });
+    expect(
+      takeoverAccessForPrincipal({
+        tenant_type: "agency",
+        role: "admin",
+        acting_tenant_id: null,
+        agency_scope: null,
+      }).canRead
+    ).toBe(false);
   });
 });

@@ -10,18 +10,22 @@ import asyncio
 import csv
 import hashlib
 import io
+import ipaddress
 import json
 import logging
 import socket
 import ssl
+import time
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from email.utils import parsedate_to_datetime
-from urllib.parse import parse_qs, unquote, urlparse
+from urllib.parse import parse_qs, unquote, urljoin, urlparse, urlunparse
 
 from fastapi import HTTPException, status
-from sqlalchemy import func, select, text, update
+from sqlalchemy import func, select, text
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
+from uuid6 import uuid7
 
 from app.models.code import CodeBatch, CodeItem
 from app.models.product import SKU, ProductionBatch
@@ -31,6 +35,7 @@ from app.models.takeover import (
     TakeoverAliasType,
     TakeoverCutoverEvent,
     TakeoverDomainCheck,
+    TakeoverDomainClaim,
     TakeoverImportError,
     TakeoverImportJob,
     TakeoverImportStatus,
@@ -42,13 +47,21 @@ from app.models.takeover import (
     TakeoverRouteVersion,
 )
 from app.services.audit import write_audit_log
-from app.services.entitlement import PLAN_EXPIRED_CODE, PLAN_EXPIRED_DETAIL, TenantPlanExpiredError
+from app.services.entitlement import (
+    PLAN_EXPIRED_CODE,
+    PLAN_EXPIRED_DETAIL,
+    TenantPlanExpiredError,
+)
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_CNAME_TARGET = "cname.yimatong.cn"
-TAKEOVER_IMPORT_QUEUE_KEY = "ymt:takeover_import:queue"
 TAKEOVER_IMPORT_PLAN_EXPIRED_ERROR = f"{PLAN_EXPIRED_CODE}: {PLAN_EXPIRED_DETAIL}"
+TAKEOVER_IMPORT_MAX_ATTEMPTS = 20
+TAKEOVER_PROBE_MAX_ADDRESSES = 8
+TAKEOVER_PROBE_DEADLINE_SECONDS = 8.0
+TAKEOVER_PROBE_MAX_CONCURRENCY = 4
+_takeover_probe_slots = asyncio.Semaphore(TAKEOVER_PROBE_MAX_CONCURRENCY)
 MAX_IMPORT_ROWS = 100_000
 MAX_IMPORT_BYTES = 10 * 1024 * 1024
 SUPPORTED_IMPORT_COLUMNS = {
@@ -94,6 +107,98 @@ def _safe_url(url: str, *, allow_query: bool = True) -> str:
     if not allow_query and parsed.query:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="该链接不允许携带 query 参数")
     return url
+
+
+def _canonical_https_url(url: str) -> str:
+    parsed = urlparse(_safe_url(url))
+    if parsed.scheme.lower() != "https" or not parsed.hostname:
+        raise HTTPException(status_code=422, detail="Probe URL must use HTTPS")
+    host = parsed.hostname.encode("idna").decode("ascii").lower().rstrip(".")
+    port = parsed.port
+    netloc = host if port in {None, 443} else f"{host}:{port}"
+    return urlunparse(("https", netloc, parsed.path or "/", "", parsed.query, ""))
+
+
+def _resolve_public_addresses(host: str, port: int) -> list[str]:
+    """Resolve once and return only addresses safe for an outbound takeover probe."""
+    try:
+        literal = ipaddress.ip_address(host)
+    except ValueError:
+        literal = None
+    if literal is not None:
+        raise HTTPException(status_code=422, detail="Domain must be a hostname, not an IP address")
+    try:
+        infos = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+    except OSError as exc:
+        raise HTTPException(status_code=422, detail="Domain could not be resolved") from exc
+    addresses = sorted({str(info[4][0]) for info in infos})
+    if not addresses:
+        raise HTTPException(status_code=422, detail="Domain could not be resolved")
+    if any(not ipaddress.ip_address(address).is_global for address in addresses):
+        raise HTTPException(status_code=422, detail="Domain must resolve only to public IP addresses")
+    if len(addresses) > TAKEOVER_PROBE_MAX_ADDRESSES:
+        raise HTTPException(status_code=422, detail="Domain resolves to too many addresses")
+    return addresses
+
+
+def _probe_https_redirect_sync(url: str) -> dict:
+    """Request an old HTTPS entry over one prevalidated address and observe its target."""
+    parsed = urlparse(url)
+    if parsed.scheme != "https" or not parsed.hostname:
+        raise HTTPException(status_code=422, detail="Probe URL must use HTTPS")
+    port = parsed.port or 443
+    addresses = _resolve_public_addresses(parsed.hostname, port)
+    path = parsed.path or "/"
+    if parsed.query:
+        path = f"{path}?{parsed.query}"
+    host_header = parsed.hostname if port == 443 else f"{parsed.hostname}:{port}"
+    request = (
+        f"GET {path} HTTP/1.1\r\nHost: {host_header}\r\n"
+        "User-Agent: Yimatong-Takeover-Probe/1.0\r\nConnection: close\r\n\r\n"
+    ).encode("ascii")
+    started = time.monotonic()
+    deadline = started + TAKEOVER_PROBE_DEADLINE_SECONDS
+    response_head = b""
+    for address in addresses:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
+        try:
+            context = ssl.create_default_context()
+            with socket.create_connection((address, port), timeout=min(2.0, remaining)) as raw_socket:
+                with context.wrap_socket(raw_socket, server_hostname=parsed.hostname) as tls_socket:
+                    tls_socket.settimeout(max(0.1, deadline - time.monotonic()))
+                    tls_socket.sendall(request)
+                    while b"\r\n\r\n" not in response_head and len(response_head) <= 64 * 1024:
+                        if time.monotonic() >= deadline:
+                            raise TimeoutError
+                        chunk = tls_socket.recv(4096)
+                        if not chunk:
+                            break
+                        response_head += chunk
+            break
+        except (OSError, ssl.SSLError):
+            response_head = b""
+    if not response_head or b"\r\n" not in response_head:
+        raise HTTPException(status_code=502, detail="HTTPS probe failed")
+    lines = response_head.split(b"\r\n")
+    try:
+        status_code = int(lines[0].split()[1])
+    except (IndexError, ValueError) as exc:
+        raise HTTPException(status_code=502, detail="HTTPS probe returned an invalid response") from exc
+    headers: dict[str, str] = {}
+    for line in lines[1:]:
+        if not line or b":" not in line:
+            continue
+        name, value = line.split(b":", 1)
+        headers[name.decode("ascii", errors="ignore").lower()] = value.decode("latin-1").strip()
+    location = headers.get("location")
+    observed_target = urljoin(url, location) if location else url
+    return {
+        "status_code": status_code,
+        "observed_target": observed_target,
+        "latency_ms": round((time.monotonic() - started) * 1000, 3),
+    }
 
 
 def _check(key: str, label: str, passed: bool, detail: str, *, blocking: bool = True) -> dict:
@@ -194,6 +299,7 @@ def assess_project_inputs(
 
 
 def serialize_project(project: TakeoverProject) -> dict:
+    verification_record_name = f"_yimatong.{project.consumer_domain}" if project.consumer_domain else None
     return {
         "id": project.id,
         "tenant_id": project.tenant_id,
@@ -203,6 +309,8 @@ def serialize_project(project: TakeoverProject) -> dict:
         "source_domain": project.source_domain,
         "consumer_domain": project.consumer_domain,
         "expected_cname": project.expected_cname,
+        "domain_verification_record_name": verification_record_name,
+        "domain_verification_record_value": f"yimatong-verification={project.domain_verification_token}",
         "sample_url": project.sample_url,
         "url_rule": project.url_rule,
         "code_scope": project.code_scope,
@@ -249,6 +357,7 @@ async def create_project(
         source_domain=source_domain,
         consumer_domain=consumer_domain,
         expected_cname=data.get("expected_cname", DEFAULT_CNAME_TARGET),
+        domain_verification_token=str(uuid7()),
         sample_url=sample_url,
         url_rule=data.get("url_rule") or {"kind": "path_tail"},
         code_scope=data.get("code_scope") or {},
@@ -642,9 +751,7 @@ async def queue_import(
         raise HTTPException(status_code=404, detail="导入任务不存在")
     if job.status in {TakeoverImportStatus.completed, TakeoverImportStatus.partial_failed}:
         return job
-    retrying_after_renewal = (
-        job.status == TakeoverImportStatus.failed and job.error_detail == TAKEOVER_IMPORT_PLAN_EXPIRED_ERROR
-    )
+    retrying_after_renewal = job.status == TakeoverImportStatus.failed and job.last_error_code == "tenant_plan_expired"
     if job.status not in {
         TakeoverImportStatus.dry_run,
         TakeoverImportStatus.pending,
@@ -654,26 +761,18 @@ async def queue_import(
     if job.status == TakeoverImportStatus.dry_run and job.counts.get("failed", 0):
         raise HTTPException(status_code=409, detail="Dry-run 仍有失败项，请修复后重试")
 
-    job.status = TakeoverImportStatus.pending
-    job.error_detail = None
-    job.submitted_at = _now() if retrying_after_renewal else job.submitted_at or _now()
     bind = db.get_bind()
     if bind.dialect.name == "sqlite":
+        job.status = TakeoverImportStatus.pending
+        job.error_detail = None
+        job.submitted_at = _now() if retrying_after_renewal else job.submitted_at or _now()
         return await submit_import(db, project, job, account_id)
 
-    await db.flush()
-    try:
-        import redis.asyncio as aioredis
-
-        from app.core.config import settings
-
-        async with aioredis.from_url(settings.redis_url) as redis:
-            await redis.lpush(TAKEOVER_IMPORT_QUEUE_KEY, str(job.id))
-    except Exception as exc:
-        job.status = TakeoverImportStatus.failed
-        job.error_detail = f"后台导入队列不可用：{exc}"
-        await db.flush()
-        raise HTTPException(status_code=503, detail="后台导入队列暂不可用，请稍后重试") from exc
+    await db.execute(
+        text("SELECT public.enqueue_takeover_import_job(:tenant_id, :job_id)"),
+        {"tenant_id": project.tenant_id, "job_id": job.id},
+    )
+    await db.refresh(job)
     await write_audit_log(
         db,
         str(account_id),
@@ -685,6 +784,53 @@ async def queue_import(
     return job
 
 
+async def poll_pending_takeover_imports(*, limit: int = 10) -> int:
+    """Discover durable pending jobs; Redis is never authoritative for takeover imports."""
+    from app.core.database import control_session_factory
+
+    async with control_session_factory() as control_db:
+        if control_db.get_bind().dialect.name == "postgresql":
+            await control_db.execute(text("SET LOCAL app.bypass_rls = 'true'"))
+        now = _now()
+        job_ids = list(
+            (
+                await control_db.scalars(
+                    select(TakeoverImportJob.id)
+                    .where(
+                        TakeoverImportJob.attempt_count < TAKEOVER_IMPORT_MAX_ATTEMPTS,
+                        (
+                            (
+                                TakeoverImportJob.status.in_(
+                                    {TakeoverImportStatus.pending, TakeoverImportStatus.failed}
+                                )
+                                & (
+                                    (TakeoverImportJob.next_attempt_at.is_(None))
+                                    | (TakeoverImportJob.next_attempt_at <= now)
+                                )
+                            )
+                            | (
+                                (TakeoverImportJob.status == TakeoverImportStatus.processing)
+                                & (TakeoverImportJob.claimed_at < now - timedelta(minutes=5))
+                            )
+                        ),
+                    )
+                    .order_by(TakeoverImportJob.next_attempt_at, TakeoverImportJob.created_at)
+                    .limit(limit)
+                )
+            ).all()
+        )
+    for job_id in job_ids:
+        try:
+            await process_import_job(job_id)
+        except Exception as exc:
+            logger.error(
+                "Takeover import attempt aborted job_id=%s error_code=worker_boundary_failure exception_type=%s",
+                job_id,
+                type(exc).__name__,
+            )
+    return len(job_ids)
+
+
 async def submit_import(
     db: AsyncSession,
     project: TakeoverProject,
@@ -692,6 +838,7 @@ async def submit_import(
     account_id: uuid.UUID,
     *,
     write_audit: bool = True,
+    finalize_job: bool = True,
 ) -> TakeoverImportJob:
     if job.project_id != project.id or job.tenant_id != project.tenant_id:
         raise HTTPException(status_code=404, detail="导入任务不存在")
@@ -699,8 +846,9 @@ async def submit_import(
         return job
     if job.status not in {TakeoverImportStatus.dry_run, TakeoverImportStatus.pending, TakeoverImportStatus.processing}:
         raise HTTPException(status_code=409, detail="当前导入任务不能提交")
-    job.status = TakeoverImportStatus.processing
-    job.submitted_at = _now()
+    if finalize_job:
+        job.status = TakeoverImportStatus.processing
+        job.submitted_at = _now()
     errors = await _job_errors(db, job.id)
     failed = len(errors)
     succeeded = 0
@@ -747,9 +895,18 @@ async def submit_import(
             )
         )
         succeeded += 1
-    job.counts = {**job.counts, "succeeded": succeeded, "failed": failed, "valid": succeeded}
-    job.status = TakeoverImportStatus.completed if failed == 0 else TakeoverImportStatus.partial_failed
-    job.completed_at = _now()
+    result_counts = {**job.counts, "succeeded": succeeded, "failed": failed, "valid": succeeded}
+    result_status = TakeoverImportStatus.completed if failed == 0 else TakeoverImportStatus.partial_failed
+    if finalize_job:
+        job.counts = result_counts
+        job.status = result_status
+        job.completed_at = _now()
+        job.claim_token = None
+        job.claimed_at = None
+        job.next_attempt_at = None
+        job.last_error_code = None
+    job._takeover_result_counts = result_counts
+    job._takeover_result_status = result_status
     project.status = TakeoverProjectStatus.needs_fix if failed else TakeoverProjectStatus.draft
     await db.flush()
     if write_audit:
@@ -759,7 +916,7 @@ async def submit_import(
             str(project.tenant_id),
             "takeover_import_submitted",
             f"takeover_import:{job.id}",
-            {"project_id": str(project.id), "counts": job.counts},
+            {"project_id": str(project.id), "counts": result_counts},
         )
     return job
 
@@ -769,7 +926,6 @@ async def process_import_job(job_id: uuid.UUID | str) -> None:
     from app.core.database import (
         async_session_factory,
         bootstrap_tenant_keys,
-        control_session_factory,
         lock_active_tenant_context,
         set_session_tenant_context,
     )
@@ -786,6 +942,57 @@ async def process_import_job(job_id: uuid.UUID | str) -> None:
         return
     _, tenant_id = work_keys[0]
 
+    claim_token = uuid.uuid4()
+    async with async_session_factory() as claim_db:
+        await set_session_tenant_context(claim_db, tenant_id)
+        if claim_db.get_bind().dialect.name == "postgresql":
+            claimed = (
+                (
+                    await claim_db.execute(
+                        text("SELECT * FROM public.claim_takeover_import_job(:tenant_id, :job_id, :claim_token)"),
+                        {"tenant_id": tenant_id, "job_id": parsed_job_id, "claim_token": claim_token},
+                    )
+                )
+                .mappings()
+                .first()
+            )
+            await claim_db.commit()
+            if claimed is None:
+                return
+        else:
+            job = await claim_db.scalar(
+                select(TakeoverImportJob)
+                .where(TakeoverImportJob.id == parsed_job_id, TakeoverImportJob.tenant_id == tenant_id)
+                .with_for_update()
+            )
+            now = _now()
+            due = bool(
+                job
+                and job.attempt_count < TAKEOVER_IMPORT_MAX_ATTEMPTS
+                and (
+                    (
+                        job.status in {TakeoverImportStatus.pending, TakeoverImportStatus.failed}
+                        and (job.next_attempt_at is None or job.next_attempt_at <= now)
+                    )
+                    or (
+                        job.status == TakeoverImportStatus.processing
+                        and job.claimed_at is not None
+                        and job.claimed_at < now - timedelta(minutes=5)
+                    )
+                )
+            )
+            if not due or job is None:
+                await claim_db.rollback()
+                return
+            job.status = TakeoverImportStatus.processing
+            job.attempt_count += 1
+            job.claim_token = claim_token
+            job.claimed_at = now
+            job.next_attempt_at = None
+            job.last_error_code = None
+            job.error_detail = None
+            await claim_db.commit()
+
     async with async_session_factory() as db:
         try:
             # The tenant lock linearizes the complete import transaction with a
@@ -793,93 +1000,102 @@ async def process_import_job(job_id: uuid.UUID | str) -> None:
             # the job, project, errors, or aliases and held through commit.
             await lock_active_tenant_context(db, tenant_id)
         except TenantPlanExpiredError:
-            # Expiry is a control-plane lifecycle outcome, not a tenant
-            # business write.  Persist it through the trusted bootstrap pair so
-            # the job has a stable, recoverable state before releasing the
-            # tenant lock to a concurrent renewal.  The exact bootstrap pair
-            # prevents opening RLS to a caller-supplied tenant id.
-            try:
-                async with control_session_factory() as status_db:
-                    if status_db.get_bind().dialect.name == "postgresql":
-                        await status_db.execute(text("SET LOCAL app.bypass_rls = 'true'"))
-                    await status_db.execute(
-                        update(TakeoverImportJob)
-                        .where(
-                            TakeoverImportJob.id == parsed_job_id,
-                            TakeoverImportJob.tenant_id == tenant_id,
-                            TakeoverImportJob.status.in_({TakeoverImportStatus.dry_run, TakeoverImportStatus.pending}),
-                        )
-                        .values(
-                            status=TakeoverImportStatus.failed,
-                            error_detail=TAKEOVER_IMPORT_PLAN_EXPIRED_ERROR,
-                            completed_at=None,
-                        )
-                    )
-                    await status_db.commit()
-            finally:
+            await db.rollback()
+            error_code = "tenant_plan_expired"
+        else:
+            error_code = "import_execution_failed"
+        if error_code != "tenant_plan_expired":
+            is_postgresql = db.get_bind().dialect.name == "postgresql"
+            job_query = select(TakeoverImportJob).where(
+                TakeoverImportJob.id == parsed_job_id,
+                TakeoverImportJob.tenant_id == tenant_id,
+            )
+            if not is_postgresql:
+                job_query = job_query.with_for_update()
+            job = await db.scalar(job_query)
+            if not job or job.status != TakeoverImportStatus.processing or job.claim_token != claim_token:
+                return
+            project = await db.scalar(
+                select(TakeoverProject).where(
+                    TakeoverProject.id == job.project_id,
+                    TakeoverProject.tenant_id == job.tenant_id,
+                )
+            )
+            if project is None:
                 await db.rollback()
+                error_code = "project_not_found"
+            else:
+                try:
+                    await submit_import(
+                        db,
+                        project,
+                        job,
+                        job.created_by,
+                        write_audit=True,
+                        finalize_job=not is_postgresql,
+                    )
+                    if is_postgresql:
+                        result_status = job._takeover_result_status
+                        await db.execute(
+                            text(
+                                "SELECT public.complete_takeover_import_job("
+                                ":tenant_id, :job_id, :claim_token, :result_status, "
+                                "CAST(:counts AS jsonb))"
+                            ),
+                            {
+                                "tenant_id": tenant_id,
+                                "job_id": parsed_job_id,
+                                "claim_token": claim_token,
+                                "result_status": result_status.value,
+                                "counts": json.dumps(job._takeover_result_counts),
+                            },
+                        )
+                    await db.commit()
+                    return
+                except Exception:
+                    await db.rollback()
+                    error_code = "import_execution_failed"
+
+    async with async_session_factory() as failed_db:
+        await set_session_tenant_context(failed_db, tenant_id)
+        if failed_db.get_bind().dialect.name == "postgresql":
+            await failed_db.execute(
+                text("SELECT public.fail_takeover_import_job(:tenant_id, :job_id, :claim_token, :error_code)"),
+                {
+                    "tenant_id": tenant_id,
+                    "job_id": parsed_job_id,
+                    "claim_token": claim_token,
+                    "error_code": error_code,
+                },
+            )
+            await failed_db.commit()
             return
-        job = await db.scalar(
-            select(TakeoverImportJob)
-            .where(TakeoverImportJob.id == parsed_job_id, TakeoverImportJob.tenant_id == tenant_id)
-            .with_for_update()
-        )
-        if not job or job.status not in {TakeoverImportStatus.dry_run, TakeoverImportStatus.pending}:
-            return
-        project = await db.scalar(
-            select(TakeoverProject).where(
-                TakeoverProject.id == job.project_id,
-                TakeoverProject.tenant_id == job.tenant_id,
+        failed_job = await failed_db.scalar(
+            select(TakeoverImportJob).where(
+                TakeoverImportJob.id == parsed_job_id,
+                TakeoverImportJob.tenant_id == tenant_id,
+                TakeoverImportJob.status == TakeoverImportStatus.processing,
+                TakeoverImportJob.claim_token == claim_token,
             )
         )
-        if not project:
-            job.status = TakeoverImportStatus.failed
-            job.error_detail = "接管项目不存在"
-            await db.commit()
+        if failed_job is None:
             return
-        job.status = TakeoverImportStatus.processing
-        await db.flush()
-        try:
-            await submit_import(db, project, job, job.created_by, write_audit=False)
-            audit_payload = {
-                "operator_id": str(job.created_by),
-                "tenant_id": tenant_id,
-                "resource": f"takeover_import:{job.id}",
-                "details": {"project_id": str(project.id), "counts": job.counts},
-            }
-            await db.commit()
-            try:
-                async with control_session_factory() as audit_db:
-                    await audit_db.execute(text("SET LOCAL app.bypass_rls = 'true'"))
-                    await write_audit_log(
-                        audit_db,
-                        audit_payload["operator_id"],
-                        str(audit_payload["tenant_id"]),
-                        "takeover_import_submitted",
-                        audit_payload["resource"],
-                        audit_payload["details"],
-                    )
-                    await audit_db.commit()
-            except Exception:
-                # The business transaction is already durable.  Do not turn a
-                # successful import into a retryable failed job (which could
-                # duplicate aliases); surface the independent audit failure.
-                logger.exception("Failed to persist takeover import audit for job %s", parsed_job_id)
-        except Exception:
-            await db.rollback()
-            async with async_session_factory() as failed_db:
-                await set_session_tenant_context(failed_db, tenant_id)
-                failed_job = await failed_db.scalar(
-                    select(TakeoverImportJob).where(
-                        TakeoverImportJob.id == parsed_job_id,
-                        TakeoverImportJob.tenant_id == tenant_id,
-                    )
-                )
-                if failed_job:
-                    failed_job.status = TakeoverImportStatus.failed
-                    failed_job.error_detail = "后台导入任务执行失败，请查看逐行错误后重试"
-                    await failed_db.commit()
-            raise
+        exhausted = failed_job.attempt_count >= TAKEOVER_IMPORT_MAX_ATTEMPTS
+        failed_job.status = TakeoverImportStatus.dead_letter if exhausted else TakeoverImportStatus.failed
+        failed_job.error_detail = (
+            "后台导入任务已进入人工处理队列"
+            if exhausted
+            else TAKEOVER_IMPORT_PLAN_EXPIRED_ERROR
+            if error_code == "tenant_plan_expired"
+            else "后台导入任务执行失败，将自动重试"
+        )
+        failed_job.last_error_code = error_code
+        failed_job.claim_token = None
+        failed_job.claimed_at = None
+        failed_job.next_attempt_at = (
+            None if exhausted else _now() + timedelta(seconds=min(3600, 5 * (2 ** (failed_job.attempt_count - 1))))
+        )
+        await failed_db.commit()
 
 
 async def retry_failed_import(
@@ -1074,14 +1290,15 @@ def _parse_certificate_expiry(value: str | None) -> datetime | None:
             return None
 
 
-def _inspect_dns_and_tls_sync(domain: str, expected_cname: str) -> dict:
+def _inspect_dns_and_tls_sync(domain: str, expected_cname: str, domain_verification_token: str) -> dict:
     from app.core.config import settings
 
     observed_cnames: list[str] = []
-    observed_ips: list[str] = []
+    observed_ips = _resolve_public_addresses(domain, settings.takeover_tls_port)
     ttl: int | None = None
-    dns_error = None
+    dns_error_code = None
     resolver = None
+    observed_ownership_tokens: list[str] = []
     try:
         import dns.resolver
 
@@ -1092,71 +1309,151 @@ def _inspect_dns_and_tls_sync(domain: str, expected_cname: str) -> dict:
         answer = resolver.resolve(domain, "CNAME", lifetime=5)
         observed_cnames = [_normalize_domain(str(item.target)) or "" for item in answer]
         ttl = int(answer.rrset.ttl) if answer.rrset else None
-    except Exception as exc:  # pragma: no cover - actual network is covered by deployment smoke
-        dns_error = str(exc)
+    except Exception:  # pragma: no cover - actual network is covered by deployment smoke
+        dns_error_code = "cname_lookup_failed"
+    ownership_error_code = None
     try:
-        if resolver:
-            answer = resolver.resolve(domain, "A", lifetime=5)
-            observed_ips = sorted({str(item) for item in answer})
-        else:
-            infos = socket.getaddrinfo(domain, settings.takeover_tls_port, type=socket.SOCK_STREAM)
-            observed_ips = sorted({info[4][0] for info in infos})
-    except Exception as exc:  # pragma: no cover - actual network is covered by deployment smoke
-        if not dns_error:
-            dns_error = str(exc)
+        if resolver is None:
+            raise RuntimeError("resolver unavailable")
+        ownership_answer = resolver.resolve(f"_yimatong.{domain}", "TXT", lifetime=5)
+        for item in ownership_answer:
+            strings = getattr(item, "strings", ())
+            observed_ownership_tokens.append(
+                "".join(part.decode("utf-8") if isinstance(part, bytes) else str(part) for part in strings)
+                if strings
+                else str(item).strip('"')
+            )
+    except Exception:  # pragma: no cover - actual network is covered by deployment smoke
+        ownership_error_code = "ownership_lookup_failed"
     tls_status = "invalid"
     certificate_expires_at = None
-    tls_error = None
+    tls_error_code = None
     try:
         context = ssl.create_default_context(cafile=settings.takeover_tls_ca_file or None)
-        tls_host = observed_ips[0] if observed_ips else domain
+        tls_host = observed_ips[0]
         with socket.create_connection((tls_host, settings.takeover_tls_port), timeout=5) as raw_socket:
             with context.wrap_socket(raw_socket, server_hostname=domain) as tls_socket:
                 certificate = tls_socket.getpeercert()
                 certificate_expires_at = _parse_certificate_expiry(certificate.get("notAfter"))
                 tls_status = "active"
-    except Exception as exc:  # pragma: no cover - actual network is covered by deployment smoke
-        tls_error = str(exc)
+    except Exception:  # pragma: no cover - actual network is covered by deployment smoke
+        tls_error_code = "tls_handshake_failed"
     cname_passed = _normalize_domain(expected_cname) in set(observed_cnames)
-    passed = cname_passed and tls_status == "active"
+    expected_ownership_token = f"yimatong-verification={domain_verification_token}"
+    ownership_verified = expected_ownership_token in set(observed_ownership_tokens)
+    passed = cname_passed and ownership_verified and tls_status == "active"
     return {
         "status": "passed" if passed else ("failed" if observed_cnames or observed_ips else "pending_external"),
         "observed_cnames": observed_cnames,
         "observed_ips": observed_ips,
+        "observed_ownership_tokens": observed_ownership_tokens,
+        "ownership_verified": ownership_verified,
         "ttl": ttl,
         "tls_status": tls_status,
         "certificate_expires_at": certificate_expires_at,
         "failure_reason": None
         if passed
         else "; ".join(
-            item for item in [dns_error, tls_error, "CNAME 目标不匹配" if not cname_passed else None] if item
+            item
+            for item in [
+                "CNAME 查询失败" if dns_error_code else None,
+                "域名所有权 TXT 记录缺失或不匹配" if not ownership_verified else None,
+                "HTTPS 握手失败" if tls_error_code else None,
+                "CNAME 目标不匹配" if not cname_passed else None,
+            ]
+            if item
         ),
-        "raw_observation": {"dns_error": dns_error, "tls_error": tls_error},
+        "raw_observation": {
+            "dns_error_code": dns_error_code,
+            "ownership_error_code": ownership_error_code,
+            "tls_error_code": tls_error_code,
+        },
     }
 
 
-async def inspect_domain(db: AsyncSession, project: TakeoverProject, account_id: uuid.UUID) -> TakeoverDomainCheck:
+async def inspect_domain(
+    db: AsyncSession,
+    project: TakeoverProject,
+    account_id: uuid.UUID,
+    auth_session_id: uuid.UUID | None = None,
+) -> TakeoverDomainCheck:
     if not project.consumer_domain:
         raise HTTPException(status_code=409, detail="项目尚未配置消费者扫码域名")
-    observation = await asyncio.to_thread(_inspect_dns_and_tls_sync, project.consumer_domain, project.expected_cname)
-    check = TakeoverDomainCheck(
-        tenant_id=project.tenant_id,
-        project_id=project.id,
-        domain=project.consumer_domain,
-        expected_cname=project.expected_cname,
-        **observation,
-    )
-    db.add(check)
-    await db.flush()
+    async with _takeover_probe_slots:
+        observation = await asyncio.to_thread(
+            _inspect_dns_and_tls_sync,
+            project.consumer_domain,
+            project.expected_cname,
+            project.domain_verification_token,
+        )
+    check_id = uuid7()
+    if db.get_bind().dialect.name == "postgresql":
+        if auth_session_id is None:
+            raise HTTPException(status_code=401, detail="登录会话已失效，请重新登录")
+        try:
+            await db.execute(
+                text(
+                    "SELECT * FROM public.record_takeover_domain_check("
+                    ":tenant_id,:auth_session_id,:check_id,:project_id,:domain,"
+                    "CAST(:observed_cnames AS jsonb),CAST(:observed_ips AS jsonb),"
+                    "CAST(:observed_tokens AS jsonb),:ttl,:tls_status,:certificate_expires_at,"
+                    ":status,:failure_reason,CAST(:raw_observation AS jsonb))"
+                ),
+                {
+                    "tenant_id": project.tenant_id,
+                    "auth_session_id": auth_session_id,
+                    "check_id": check_id,
+                    "project_id": project.id,
+                    "domain": project.consumer_domain,
+                    "observed_cnames": json.dumps(observation["observed_cnames"]),
+                    "observed_ips": json.dumps(observation["observed_ips"]),
+                    "observed_tokens": json.dumps(observation["observed_ownership_tokens"]),
+                    "ttl": observation["ttl"],
+                    "tls_status": observation["tls_status"],
+                    "certificate_expires_at": observation["certificate_expires_at"],
+                    "status": observation["status"],
+                    "failure_reason": observation["failure_reason"],
+                    "raw_observation": json.dumps(observation["raw_observation"]),
+                },
+            )
+        except DBAPIError as exc:
+            sqlstate = getattr(exc.orig, "sqlstate", None)
+            if sqlstate not in {"42501", "23503", "23514", "55P03", "22023"}:
+                raise
+            raise HTTPException(
+                status_code=403 if sqlstate == "42501" else 404 if sqlstate == "23503" else 409,
+                detail=(
+                    "当前会话无权记录域名核验"
+                    if sqlstate == "42501"
+                    else "CNAME 接管项目不存在"
+                    if sqlstate == "23503"
+                    else "当前项目不接受该域名核验"
+                ),
+            ) from exc
+        check = await db.get(TakeoverDomainCheck, check_id)
+        if check is None:
+            raise HTTPException(status_code=409, detail="域名核验事实未持久化")
+    else:
+        check = TakeoverDomainCheck(
+            id=check_id,
+            tenant_id=project.tenant_id,
+            project_id=project.id,
+            domain=project.consumer_domain,
+            expected_cname=project.expected_cname,
+            **observation,
+        )
+        db.add(check)
+        await db.flush()
     await refresh_takeover_readiness(db, project)
-    await write_audit_log(
-        db,
-        str(account_id),
-        str(project.tenant_id),
-        "takeover_domain_checked",
-        f"takeover_project:{project.id}",
-        {"domain": project.consumer_domain, "status": check.status, "tls_status": check.tls_status},
-    )
+    if db.get_bind().dialect.name != "postgresql":
+        await write_audit_log(
+            db,
+            str(account_id),
+            str(project.tenant_id),
+            "takeover_domain_checked",
+            f"takeover_project:{project.id}",
+            {"domain": project.consumer_domain, "status": check.status, "tls_status": check.tls_status},
+        )
     return check
 
 
@@ -1167,6 +1464,7 @@ def serialize_domain_check(check: TakeoverDomainCheck) -> dict:
         "expected_cname": check.expected_cname,
         "observed_cnames": check.observed_cnames,
         "observed_ips": check.observed_ips,
+        "ownership_verified": check.ownership_verified,
         "ttl": check.ttl,
         "tls_status": check.tls_status,
         "certificate_expires_at": check.certificate_expires_at,
@@ -1212,6 +1510,7 @@ def serialize_route(route: TakeoverRouteVersion) -> dict:
         "content_digest": route.content_digest,
         "readiness_snapshot": route.readiness_snapshot,
         "executed_at": route.executed_at,
+        "current_event_id": route.current_event_id,
     }
 
 
@@ -1295,17 +1594,25 @@ async def _write_event(
 
 
 async def confirm_route(
-    db: AsyncSession, project: TakeoverProject, route: TakeoverRouteVersion, account_id: uuid.UUID
+    db: AsyncSession,
+    project: TakeoverProject,
+    route: TakeoverRouteVersion,
+    account_id: uuid.UUID,
+    idempotency_key: str,
+    auth_session_id: uuid.UUID | None = None,
 ) -> TakeoverRouteVersion:
     await refresh_takeover_readiness(db, project)
     if not project.readiness_snapshot.get("ready"):
         raise HTTPException(status_code=409, detail="路由候选版本的接管准备度未通过")
-    if not project.brand_confirmation_digest:
-        await confirm_project(db, project, account_id)
-    route.status = TakeoverRouteStatus.confirmed
-    route.brand_confirmation_digest = project.brand_confirmation_digest
-    route.readiness_snapshot = project.readiness_snapshot
-    await db.flush()
+    await _transition_route_authority(
+        db,
+        project,
+        route,
+        account_id,
+        auth_session_id,
+        action="confirm",
+        idempotency_key=idempotency_key,
+    )
     return route
 
 
@@ -1333,126 +1640,467 @@ async def _activate_route_aliases(db: AsyncSession, project: TakeoverProject, ro
             alias.status = TakeoverAliasStatus.active
 
 
-async def cutover_route(
-    db: AsyncSession, project: TakeoverProject, route: TakeoverRouteVersion, account_id: uuid.UUID, idempotency_key: str
-) -> TakeoverRouteVersion:
-    existing = await _event_exists(db, project, idempotency_key)
-    if existing and existing.route_version_id == route.id:
-        return route
-    if route.status == TakeoverRouteStatus.active:
-        return route
-    await refresh_takeover_readiness(db, project)
-    if project.brand_confirmation_digest != project.readiness_digest:
-        raise HTTPException(status_code=409, detail="准备度已变化，需要重新确认")
-    if route.status != TakeoverRouteStatus.confirmed:
-        raise HTTPException(status_code=409, detail="路由版本尚未由品牌管理员确认")
-    active = await db.scalar(
-        select(TakeoverRouteVersion).where(
-            TakeoverRouteVersion.project_id == project.id,
-            TakeoverRouteVersion.status.in_((TakeoverRouteStatus.active, TakeoverRouteStatus.paused)),
-            TakeoverRouteVersion.id != route.id,
+async def _transition_route_authority(
+    db: AsyncSession,
+    project: TakeoverProject,
+    route: TakeoverRouteVersion,
+    account_id: uuid.UUID,
+    auth_session_id: uuid.UUID | None,
+    *,
+    action: str,
+    idempotency_key: str,
+    reason: str | None = None,
+) -> TakeoverCutoverEvent:
+    event_action = {
+        "record_external_execution": "external_execution",
+        "begin_rollback": "rollback_begin",
+        "finish_rollback": "rollback_finish",
+    }.get(action, action)
+    is_postgresql = db.get_bind().dialect.name == "postgresql"
+    existing = None if is_postgresql else await _event_exists(db, project, idempotency_key)
+    if existing is not None:
+        existing_reason = existing.details.get(
+            "execution_reference" if action == "record_external_execution" else "reason"
         )
-    )
-    if active:
-        raise HTTPException(status_code=409, detail="同一项目已有进行中的切换或观察，请先完成或回退")
-    if str(project.mode) == TakeoverMode.legacy_redirect:
-        external = await db.scalar(
-            select(TakeoverCutoverEvent).where(
-                TakeoverCutoverEvent.route_version_id == route.id,
-                TakeoverCutoverEvent.action == "external_execution",
-                TakeoverCutoverEvent.state == "recorded",
+        if (
+            existing.tenant_id != project.tenant_id
+            or existing.route_version_id != route.id
+            or existing.action != event_action
+            or (reason is not None and existing_reason != reason.strip())
+        ):
+            raise HTTPException(status_code=409, detail="幂等键已用于不同的接管动作或参数")
+        return existing
+
+    if is_postgresql:
+        if auth_session_id is None:
+            raise HTTPException(status_code=401, detail="登录会话已失效，请重新登录")
+        event_id = uuid7()
+        try:
+            await db.execute(
+                text(
+                    "SELECT * FROM public.transition_takeover_route("
+                    ":tenant_id, :auth_session_id, :event_id, :project_id, :route_id, "
+                    ":action, :idempotency_key, :reason)"
+                ),
+                {
+                    "tenant_id": project.tenant_id,
+                    "auth_session_id": auth_session_id,
+                    "event_id": event_id,
+                    "project_id": project.id,
+                    "route_id": route.id,
+                    "action": action,
+                    "idempotency_key": idempotency_key,
+                    "reason": reason,
+                },
+            )
+        except DBAPIError as exc:
+            sqlstate = getattr(exc.orig, "sqlstate", None)
+            if sqlstate not in {"42501", "23503", "23514", "55P03", "22023", "23505"}:
+                raise
+            raise HTTPException(
+                status_code=403 if sqlstate == "42501" else 404 if sqlstate == "23503" else 409,
+                detail=(
+                    "当前会话无权执行该接管动作"
+                    if sqlstate == "42501"
+                    else "接管项目或路由不存在"
+                    if sqlstate == "23503"
+                    else "当前状态不能执行该接管动作"
+                ),
+            ) from exc
+        await db.refresh(project)
+        await db.refresh(route)
+        event = await _event_exists(db, project, idempotency_key)
+        if event is None:
+            raise HTTPException(status_code=409, detail="接管动作未生成可审计事件")
+        return event
+
+    if action == "confirm":
+        if route.status != TakeoverRouteStatus.candidate:
+            raise HTTPException(status_code=409, detail="当前路由候选不能确认")
+        event = await _write_event(
+            db,
+            project,
+            route,
+            account_id,
+            event_action,
+            "confirmed",
+            key=idempotency_key,
+            details={"readiness_digest": project.readiness_digest},
+        )
+        project.brand_confirmed_by = account_id
+        project.brand_confirmed_at = _now()
+        project.brand_confirmation_digest = project.readiness_digest
+        project.status = TakeoverProjectStatus.cutover_ready
+        route.status = TakeoverRouteStatus.confirmed
+        route.brand_confirmation_digest = project.readiness_digest
+        route.readiness_snapshot = project.readiness_snapshot
+        route.current_event_id = event.id
+    elif action == "record_external_execution":
+        if route.status != TakeoverRouteStatus.confirmed:
+            raise HTTPException(status_code=409, detail="当前路由版本不能上报外部执行")
+        event = await _write_event(
+            db,
+            project,
+            route,
+            account_id,
+            event_action,
+            "pending_probe",
+            key=idempotency_key,
+            details={"execution_reference": reason},
+        )
+        route.current_event_id = event.id
+        project.status = TakeoverProjectStatus.pending_external
+    elif action == "cutover":
+        if route.status != TakeoverRouteStatus.confirmed:
+            raise HTTPException(status_code=409, detail="路由版本尚未由品牌管理员确认")
+        if project.brand_confirmation_digest != project.readiness_digest:
+            raise HTTPException(status_code=409, detail="准备度已变化，需要重新确认")
+        verification_event_id = route.current_event_id
+        domain_check = None
+        if project.mode == TakeoverMode.legacy_redirect:
+            evidence = await db.scalar(
+                select(TakeoverObservation).where(
+                    TakeoverObservation.tenant_id == project.tenant_id,
+                    TakeoverObservation.project_id == project.id,
+                    TakeoverObservation.route_version_id == route.id,
+                    TakeoverObservation.transition_event_id == route.current_event_id,
+                    TakeoverObservation.evidence_source == "server_probe",
+                    TakeoverObservation.evidence_purpose == "pre_cutover",
+                    TakeoverObservation.status == "passed",
+                    TakeoverObservation.target_match.is_(True),
+                )
+            )
+            if evidence is None:
+                raise HTTPException(status_code=409, detail="旧系统入口尚未通过服务端跳转所有权验证")
+        else:
+            domain_check = await db.scalar(
+                select(TakeoverDomainCheck)
+                .where(
+                    TakeoverDomainCheck.tenant_id == project.tenant_id,
+                    TakeoverDomainCheck.project_id == project.id,
+                    TakeoverDomainCheck.domain == route.domain,
+                    TakeoverDomainCheck.status == "passed",
+                    TakeoverDomainCheck.tls_status == "active",
+                )
+                .order_by(TakeoverDomainCheck.checked_at.desc())
+            )
+            if domain_check is None:
+                raise HTTPException(status_code=409, detail="接管域名尚未通过精确 CNAME 与 HTTPS 验证")
+        domain_key = _normalize_domain(route.domain)
+        existing_claim = await db.get(TakeoverDomainClaim, domain_key)
+        if existing_claim is not None and (
+            existing_claim.tenant_id != project.tenant_id or existing_claim.project_id != project.id
+        ):
+            raise HTTPException(status_code=409, detail="该公网域名已被其他接管项目占用")
+        event = await _write_event(db, project, route, account_id, event_action, "observing", key=idempotency_key)
+        route.status = TakeoverRouteStatus.active
+        route.executed_by = account_id
+        route.executed_at = _now()
+        route.current_event_id = event.id
+        project.active_route_version_id = route.id
+        project.status = TakeoverProjectStatus.observing
+        await _activate_route_aliases(db, project, route)
+        if existing_claim is None:
+            db.add(
+                TakeoverDomainClaim(
+                    domain_key=domain_key,
+                    tenant_id=project.tenant_id,
+                    project_id=project.id,
+                    route_version_id=route.id,
+                    verification_kind=(
+                        "cname_dns_tls" if project.mode == TakeoverMode.cname else "legacy_server_redirect"
+                    ),
+                    domain_check_id=domain_check.id if domain_check else None,
+                    verification_event_id=(
+                        verification_event_id if project.mode == TakeoverMode.legacy_redirect else None
+                    ),
+                    current_event_id=event.id,
+                    state="active",
+                    verified_at=domain_check.checked_at if domain_check else _now(),
+                )
+            )
+        else:
+            existing_claim.route_version_id = route.id
+            existing_claim.current_event_id = event.id
+            existing_claim.state = "active"
+    elif action == "complete":
+        evidence = await db.scalar(
+            select(TakeoverObservation).where(
+                TakeoverObservation.tenant_id == project.tenant_id,
+                TakeoverObservation.project_id == project.id,
+                TakeoverObservation.route_version_id == route.id,
+                TakeoverObservation.transition_event_id == route.current_event_id,
+                TakeoverObservation.evidence_source == "server_probe",
+                TakeoverObservation.evidence_purpose == "cutover",
+                TakeoverObservation.status == "passed",
+                TakeoverObservation.target_match.is_(True),
             )
         )
-        if not external:
-            project.status = TakeoverProjectStatus.pending_external
-            await db.flush()
-            raise HTTPException(status_code=409, detail="等待旧系统负责人完成外部跳转并回报证据")
-    route.status = TakeoverRouteStatus.active
-    route.executed_by = account_id
-    route.executed_at = _now()
-    project.active_route_version_id = route.id
-    project.status = TakeoverProjectStatus.observing
-    await _activate_route_aliases(db, project, route)
-    await _write_event(
-        db, project, route, account_id, "cutover", "observing", key=idempotency_key, details={"mode": str(project.mode)}
-    )
-    await db.flush()
-    return route
-
-
-async def record_external_execution(
-    db: AsyncSession, project: TakeoverProject, route: TakeoverRouteVersion, account_id: uuid.UUID, data: dict
-) -> TakeoverCutoverEvent:
-    if route.status not in {TakeoverRouteStatus.candidate, TakeoverRouteStatus.confirmed}:
-        raise HTTPException(status_code=409, detail="当前路由版本不能上报外部执行")
-    event = await _write_event(db, project, route, account_id, "external_execution", "recorded", details=data)
-    project.status = TakeoverProjectStatus.pending_external
+        if (
+            route.status != TakeoverRouteStatus.active
+            or project.status != TakeoverProjectStatus.observing
+            or not evidence
+        ):
+            raise HTTPException(status_code=409, detail="当前切换轮次尚无通过的服务端探测，不能完成接管")
+        event = await _write_event(db, project, route, account_id, event_action, "completed", key=idempotency_key)
+        project.status = TakeoverProjectStatus.completed
+    elif action == "begin_rollback":
+        if route.status not in {TakeoverRouteStatus.active, TakeoverRouteStatus.paused}:
+            raise HTTPException(status_code=409, detail="当前路由版本不能开始回退")
+        event = await _write_event(
+            db,
+            project,
+            route,
+            account_id,
+            event_action,
+            "rolling_back",
+            key=idempotency_key,
+            details={"reason": reason},
+        )
+        route.status = TakeoverRouteStatus.rolling_back
+        route.rollback_reason = reason
+        route.current_event_id = event.id
+        project.status = TakeoverProjectStatus.rolling_back
+        claim = await db.get(TakeoverDomainClaim, _normalize_domain(route.domain))
+        if claim is not None and claim.tenant_id == project.tenant_id and claim.project_id == project.id:
+            claim.current_event_id = event.id
+            claim.state = "rolling_back"
+    else:
+        evidence = await db.scalar(
+            select(TakeoverObservation).where(
+                TakeoverObservation.tenant_id == project.tenant_id,
+                TakeoverObservation.project_id == project.id,
+                TakeoverObservation.route_version_id == route.id,
+                TakeoverObservation.transition_event_id == route.current_event_id,
+                TakeoverObservation.evidence_source == "server_probe",
+                TakeoverObservation.evidence_purpose == "rollback",
+                TakeoverObservation.status == "passed",
+                TakeoverObservation.target_match.is_(True),
+            )
+        )
+        if route.status != TakeoverRouteStatus.rolling_back or project.status != TakeoverProjectStatus.rolling_back:
+            raise HTTPException(status_code=409, detail="当前路由不在回退验证阶段")
+        if evidence is None:
+            raise HTTPException(status_code=409, detail="旧入口尚未通过回退目标服务端探测")
+        event = await _write_event(db, project, route, account_id, event_action, "rolled_back", key=idempotency_key)
+        route.status = TakeoverRouteStatus.rolled_back
+        project.active_route_version_id = None
+        project.status = TakeoverProjectStatus.rolled_back
+        aliases = list(
+            (
+                await db.scalars(
+                    select(TakeoverAlias).where(
+                        TakeoverAlias.tenant_id == project.tenant_id,
+                        TakeoverAlias.project_id == project.id,
+                        TakeoverAlias.status == TakeoverAliasStatus.active,
+                    )
+                )
+            ).all()
+        )
+        for alias in aliases:
+            alias.status = TakeoverAliasStatus.staged
+        claim = await db.get(TakeoverDomainClaim, _normalize_domain(route.domain))
+        if claim is not None and claim.tenant_id == project.tenant_id and claim.project_id == project.id:
+            claim.state = "rolled_back"
     await db.flush()
     return event
 
 
-async def record_observation(
-    db: AsyncSession, project: TakeoverProject, route: TakeoverRouteVersion, account_id: uuid.UUID, data: dict
-) -> TakeoverObservation:
-    if route.status != TakeoverRouteStatus.active:
-        raise HTTPException(status_code=409, detail="只有已进入观察中的路由可以上报指标")
-    success_rate = float(data["success_rate"])
-    error_rate = float(data["error_rate"])
-    target_match = bool(data.get("target_match"))
-    if success_rate >= 0.99 and error_rate <= 0.01 and target_match and float(data.get("h5_reach_rate", 0)) >= 0.99:
-        recommendation = "continue"
-        observation_status = "passed"
-    elif success_rate < 0.9 or error_rate > 0.05:
-        recommendation = "rollback"
-        observation_status = "failed"
-    else:
-        recommendation = "pause"
-        observation_status = "warning"
-    observation = TakeoverObservation(
-        tenant_id=project.tenant_id,
-        project_id=project.id,
-        route_version_id=route.id,
-        checked_url=str(data["checked_url"]),
-        status=observation_status,
-        success_rate=success_rate,
-        error_rate=error_rate,
-        latency_ms=data.get("latency_ms"),
-        h5_reach_rate=float(data.get("h5_reach_rate", 0)),
-        target_match=target_match,
-        metrics=data.get("metrics") or {},
-        recommendation=recommendation,
+async def cutover_route(
+    db: AsyncSession,
+    project: TakeoverProject,
+    route: TakeoverRouteVersion,
+    account_id: uuid.UUID,
+    idempotency_key: str,
+    auth_session_id: uuid.UUID | None = None,
+) -> TakeoverRouteVersion:
+    await _transition_route_authority(
+        db,
+        project,
+        route,
+        account_id,
+        auth_session_id,
+        action="cutover",
+        idempotency_key=idempotency_key,
     )
-    db.add(observation)
-    await db.flush()
-    project.status = TakeoverProjectStatus.observing
+    return route
+
+
+async def record_external_execution(
+    db: AsyncSession,
+    project: TakeoverProject,
+    route: TakeoverRouteVersion,
+    account_id: uuid.UUID,
+    data: dict,
+    auth_session_id: uuid.UUID | None = None,
+) -> TakeoverCutoverEvent:
+    if route.status != TakeoverRouteStatus.confirmed:
+        raise HTTPException(status_code=409, detail="只有已确认的旧系统路由可以记录外部执行")
+    return await _transition_route_authority(
+        db,
+        project,
+        route,
+        account_id,
+        auth_session_id,
+        action="record_external_execution",
+        idempotency_key=data["idempotency_key"],
+        reason=data["execution_reference"],
+    )
+
+
+async def probe_route_observation(
+    db: AsyncSession,
+    project: TakeoverProject,
+    route: TakeoverRouteVersion,
+    account_id: uuid.UUID,
+    checked_url: str,
+    auth_session_id: uuid.UUID | None = None,
+) -> TakeoverObservation:
+    """Collect actor-bound server evidence from the old entry for the current route epoch."""
+    transition_event = await db.scalar(
+        select(TakeoverCutoverEvent).where(
+            TakeoverCutoverEvent.tenant_id == project.tenant_id,
+            TakeoverCutoverEvent.project_id == project.id,
+            TakeoverCutoverEvent.route_version_id == route.id,
+            TakeoverCutoverEvent.id == route.current_event_id,
+        )
+    )
+    purpose = {
+        "external_execution": "pre_cutover",
+        "cutover": "cutover",
+        "rollback_begin": "rollback",
+    }.get(transition_event.action if transition_event else "")
+    if transition_event is None or purpose is None:
+        raise HTTPException(status_code=409, detail="当前路由缺少可绑定的接管轮次")
+    canonical_checked = _canonical_https_url(checked_url)
+    allowed_checked = {_canonical_https_url(route.source_url), _canonical_https_url(project.sample_url)}
+    if canonical_checked not in allowed_checked:
+        raise HTTPException(status_code=422, detail="探测地址必须是当前路由绑定的旧入口")
+    if purpose == "rollback":
+        expected_target = _canonical_https_url(project.fallback_url)
+    else:
+        alias = await resolve_alias(db, project, canonical_checked, include_staged=purpose == "pre_cutover")
+        if not alias:
+            raise HTTPException(status_code=409, detail="旧入口尚未绑定当前阶段可用的旧码映射")
+        rendered = _render_route_target(route, alias, extract_legacy_code(project, canonical_checked))
+        if not rendered:
+            raise HTTPException(status_code=409, detail="当前路由无法生成规范目标")
+        expected_target = _canonical_https_url(rendered)
+    async with _takeover_probe_slots:
+        evidence = await asyncio.to_thread(_probe_https_redirect_sync, canonical_checked)
+    observed_target = _canonical_https_url(str(evidence["observed_target"]))
+    target_match = observed_target == expected_target
+    status_code = int(evidence["status_code"])
+    passed = 200 <= status_code < 400 and target_match
+    evidence_payload = {
+        "evidence_source": "server_probe",
+        "evidence_purpose": purpose,
+        "transition_event_id": str(transition_event.id),
+        "status_code": status_code,
+        "checked_url": canonical_checked,
+        "observed_target": observed_target,
+        "expected_target": expected_target,
+        "target_match": target_match,
+    }
+    evidence_digest = _digest(evidence_payload)
+    observation_id = uuid7()
+    latency_ms = float(evidence.get("latency_ms") or 0)
+    metrics = {**evidence_payload, "evidence_digest": evidence_digest}
+    if db.get_bind().dialect.name == "postgresql":
+        if auth_session_id is None:
+            raise HTTPException(status_code=401, detail="登录会话已失效，请重新登录")
+        try:
+            await db.execute(
+                text(
+                    "SELECT * FROM public.record_takeover_server_probe("
+                    ":tenant_id, :auth_session_id, :observation_id, :project_id, :route_id, "
+                    ":event_id, :checked_url, :observed_target, :status, :latency_ms, "
+                    "CAST(:metrics AS jsonb), :evidence_digest)"
+                ),
+                {
+                    "tenant_id": project.tenant_id,
+                    "auth_session_id": auth_session_id,
+                    "observation_id": observation_id,
+                    "project_id": project.id,
+                    "route_id": route.id,
+                    "event_id": transition_event.id,
+                    "checked_url": canonical_checked,
+                    "observed_target": observed_target,
+                    "status": "passed" if passed else "failed",
+                    "latency_ms": latency_ms,
+                    "metrics": json.dumps(metrics),
+                    "evidence_digest": evidence_digest,
+                },
+            )
+        except DBAPIError as exc:
+            sqlstate = getattr(exc.orig, "sqlstate", None)
+            if sqlstate not in {"42501", "23503", "23514", "55P03", "22023", "23505"}:
+                raise
+            raise HTTPException(
+                status_code=403 if sqlstate == "42501" else 404 if sqlstate == "23503" else 409,
+                detail=(
+                    "当前会话无权记录接管探测"
+                    if sqlstate == "42501"
+                    else "接管项目或路由不存在"
+                    if sqlstate == "23503"
+                    else "当前接管轮次不接受该探测"
+                ),
+            ) from exc
+        observation = await db.get(TakeoverObservation, observation_id)
+        if observation is None:
+            raise HTTPException(status_code=409, detail="服务端探测证据未持久化")
+    else:
+        recommendation = "continue" if passed else "retry" if purpose == "rollback" else "rollback"
+        observation = TakeoverObservation(
+            id=observation_id,
+            tenant_id=project.tenant_id,
+            project_id=project.id,
+            route_version_id=route.id,
+            transition_event_id=transition_event.id,
+            checked_url=canonical_checked,
+            observed_target_url=observed_target,
+            evidence_source="server_probe",
+            evidence_purpose=purpose,
+            evidence_digest=evidence_digest,
+            status="passed" if passed else "failed",
+            success_rate=1.0 if passed else 0.0,
+            error_rate=0.0 if passed else 1.0,
+            latency_ms=latency_ms,
+            h5_reach_rate=1.0 if passed else 0.0,
+            target_match=target_match,
+            metrics=metrics,
+            recommendation=recommendation,
+        )
+        db.add(observation)
+        await db.flush()
     await write_audit_log(
         db,
         str(account_id),
         str(project.tenant_id),
         "takeover_observation_recorded",
         f"takeover_route:{route.id}",
-        {"recommendation": recommendation},
+        {"observation_id": str(observation.id), "purpose": purpose, "status": observation.status},
     )
     return observation
 
 
 async def complete_route(
-    db: AsyncSession, project: TakeoverProject, route: TakeoverRouteVersion, account_id: uuid.UUID
+    db: AsyncSession,
+    project: TakeoverProject,
+    route: TakeoverRouteVersion,
+    account_id: uuid.UUID,
+    idempotency_key: str,
+    auth_session_id: uuid.UUID | None = None,
 ) -> TakeoverRouteVersion:
-    latest = await db.scalar(
-        select(TakeoverObservation)
-        .where(TakeoverObservation.route_version_id == route.id)
-        .order_by(TakeoverObservation.created_at.desc())
-        .limit(1)
+    await _transition_route_authority(
+        db,
+        project,
+        route,
+        account_id,
+        auth_session_id,
+        action="complete",
+        idempotency_key=idempotency_key,
     )
-    if not latest or latest.recommendation != "continue":
-        raise HTTPException(status_code=409, detail="尚无通过的观察结果，不能完成接管")
-    project.status = TakeoverProjectStatus.completed
-    route.status = TakeoverRouteStatus.active
-    await _write_event(
-        db, project, route, account_id, "complete", "completed", details={"observation_id": str(latest.id)}
-    )
-    await db.flush()
     return route
 
 
@@ -1462,40 +2110,49 @@ async def rollback_route(
     route: TakeoverRouteVersion,
     account_id: uuid.UUID,
     reason: str,
-    idempotency_key: str | None,
+    idempotency_key: str,
+    auth_session_id: uuid.UUID | None = None,
 ) -> TakeoverRouteVersion:
-    existing = await _event_exists(db, project, idempotency_key)
-    if existing and existing.route_version_id == route.id:
-        return route
-    if route.status not in {TakeoverRouteStatus.active, TakeoverRouteStatus.paused, TakeoverRouteStatus.confirmed}:
-        raise HTTPException(status_code=409, detail="当前路由版本不能回退")
-    route.status = TakeoverRouteStatus.rolled_back
-    route.rollback_reason = reason
-    project.active_route_version_id = None
-    project.status = TakeoverProjectStatus.rolled_back
-    aliases = list(
-        (
-            await db.scalars(
-                select(TakeoverAlias).where(
-                    TakeoverAlias.project_id == project.id, TakeoverAlias.status == TakeoverAliasStatus.active
-                )
-            )
-        ).all()
-    )
-    for alias in aliases:
-        alias.status = TakeoverAliasStatus.staged
-    await _write_event(
+    await _transition_route_authority(
         db,
         project,
         route,
         account_id,
-        "rollback",
-        "rolled_back",
-        key=idempotency_key,
-        details={"reason": reason, "fallback_url": project.fallback_url},
+        auth_session_id,
+        action="begin_rollback",
+        idempotency_key=f"{idempotency_key}:begin",
+        reason=reason,
     )
-    await db.flush()
     return route
+
+
+async def verify_rollback_route(
+    db: AsyncSession,
+    project: TakeoverProject,
+    route: TakeoverRouteVersion,
+    account_id: uuid.UUID,
+    idempotency_key: str,
+    auth_session_id: uuid.UUID | None = None,
+) -> tuple[TakeoverRouteVersion, TakeoverObservation]:
+    observation = await probe_route_observation(
+        db,
+        project,
+        route,
+        account_id,
+        route.source_url,
+        auth_session_id,
+    )
+    if observation.status == "passed" and observation.target_match:
+        await _transition_route_authority(
+            db,
+            project,
+            route,
+            account_id,
+            auth_session_id,
+            action="finish_rollback",
+            idempotency_key=f"{idempotency_key}:finish",
+        )
+    return route, observation
 
 
 def _render_route_target(route: TakeoverRouteVersion, alias: TakeoverAlias, code: str) -> str | None:
@@ -1507,16 +2164,32 @@ def _render_route_target(route: TakeoverRouteVersion, alias: TakeoverAlias, code
     return target.replace("{public_id}", str(public_id or "")).replace("{legacy_code}", code)
 
 
-async def gateway_resolve(db: AsyncSession, project: TakeoverProject, raw_url: str, *, preview: bool = False) -> dict:
-    route = await db.scalar(
-        select(TakeoverRouteVersion).where(
-            TakeoverRouteVersion.project_id == project.id,
-            TakeoverRouteVersion.tenant_id == project.tenant_id,
-            TakeoverRouteVersion.status == TakeoverRouteStatus.active,
+async def gateway_resolve(
+    db: AsyncSession,
+    project: TakeoverProject,
+    raw_url: str,
+    *,
+    route: TakeoverRouteVersion | None = None,
+    preview: bool = False,
+) -> dict:
+    if route is None:
+        route = await db.scalar(
+            select(TakeoverRouteVersion).where(
+                TakeoverRouteVersion.project_id == project.id,
+                TakeoverRouteVersion.tenant_id == project.tenant_id,
+                TakeoverRouteVersion.status == TakeoverRouteStatus.active,
+            )
         )
-    )
-    if not route:
-        return {"action": "fallback", "status": "pending_external", "redirect_to": project.fallback_url}
+    if route is None or route.status in {TakeoverRouteStatus.rolling_back, TakeoverRouteStatus.rolled_back}:
+        return {
+            "action": "fallback",
+            "status": (route.status.value if route is not None and hasattr(route.status, "value") else route.status)
+            if route is not None
+            else "pending_external",
+            "redirect_to": project.fallback_url,
+        }
+    if route.status != TakeoverRouteStatus.active:
+        raise HTTPException(status_code=404, detail="当前请求域名没有可用接管路由")
     alias = await resolve_alias(db, project, raw_url, include_staged=preview)
     code = extract_legacy_code(project, raw_url)
     selected = not route.sample_codes and not route.code_prefix

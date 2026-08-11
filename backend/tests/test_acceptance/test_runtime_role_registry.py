@@ -241,7 +241,7 @@ async def test_registry_catalog_acl_and_control_boundary(
             "AND c.relname <> ALL($1::text[])",
             list(MIGRATION_ONLY_TABLES),
         )
-        assert orm_root_count == 98
+        assert orm_root_count == 99
         migration_only = await owner.fetch(
             "SELECT c.relname FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace "
             "WHERE n.nspname='public' AND c.relkind='r' AND c.relname=ANY($1::text[])",

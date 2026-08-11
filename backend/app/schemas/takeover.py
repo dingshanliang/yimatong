@@ -1,10 +1,36 @@
 """既有码接管 API 的输入输出契约。"""
 
+import ipaddress
 import uuid
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, Field, HttpUrl, model_validator
+from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_validator, model_validator
+
+
+def validate_takeover_domain_name(value: str | None) -> str | None:
+    if value is None:
+        return None
+    candidate = value.strip().lower().rstrip(".")
+    try:
+        ipaddress.ip_address(candidate)
+    except ValueError:
+        pass
+    else:
+        raise ValueError("domain must be a hostname, not an IP address")
+    try:
+        ascii_domain = candidate.encode("idna").decode("ascii")
+    except UnicodeError as exc:
+        raise ValueError("invalid domain name") from exc
+    labels = ascii_domain.split(".")
+    if (
+        len(labels) < 2
+        or len(ascii_domain) > 253
+        or any(not label or len(label) > 63 or label.startswith("-") or label.endswith("-") for label in labels)
+        or any(not all(character.isalnum() or character == "-" for character in label) for label in labels)
+    ):
+        raise ValueError("invalid domain name")
+    return ascii_domain
 
 
 class TakeoverProjectCreate(BaseModel):
@@ -21,6 +47,11 @@ class TakeoverProjectCreate(BaseModel):
     technical_owner: str | None = Field(default=None, max_length=100)
     rollback_contact: str = Field(..., min_length=1, max_length=100)
     fallback_url: HttpUrl
+
+    @field_validator("source_domain", "consumer_domain")
+    @classmethod
+    def validate_domains(cls, value: str | None) -> str | None:
+        return validate_takeover_domain_name(value)
 
     @model_validator(mode="after")
     def validate_mode_inputs(self) -> "TakeoverProjectCreate":
@@ -45,6 +76,11 @@ class TakeoverProjectUpdate(BaseModel):
     rollback_contact: str | None = Field(default=None, min_length=1, max_length=100)
     fallback_url: HttpUrl | None = None
 
+    @field_validator("consumer_domain")
+    @classmethod
+    def validate_consumer_domain(cls, value: str | None) -> str | None:
+        return validate_takeover_domain_name(value)
+
 
 class TakeoverRouteCreate(BaseModel):
     source_url: HttpUrl
@@ -55,24 +91,37 @@ class TakeoverRouteCreate(BaseModel):
 
 
 class ExternalExecutionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    idempotency_key: str = Field(..., min_length=1, max_length=100)
     execution_reference: str = Field(..., min_length=1, max_length=200)
-    executed_at: datetime | None = None
-    notes: str | None = Field(default=None, max_length=500)
+
+    @field_validator("idempotency_key", "execution_reference")
+    @classmethod
+    def validate_nonblank_external_evidence(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("value must not be blank")
+        return value.strip()
 
 
 class ObservationRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     checked_url: HttpUrl
-    success_rate: float = Field(..., ge=0, le=1)
-    error_rate: float = Field(..., ge=0, le=1)
-    latency_ms: float | None = Field(default=None, ge=0)
-    h5_reach_rate: float = Field(default=0, ge=0, le=1)
-    target_match: bool = False
-    metrics: dict = Field(default_factory=dict)
 
 
 class RollbackRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     reason: str = Field(..., min_length=1, max_length=500)
-    idempotency_key: str | None = Field(default=None, max_length=100)
+    idempotency_key: str = Field(..., min_length=1, max_length=80)
+
+    @field_validator("reason", "idempotency_key")
+    @classmethod
+    def validate_nonblank_rollback_input(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("value must not be blank")
+        return value.strip()
 
 
 class TakeoverResponse(BaseModel):
@@ -84,6 +133,8 @@ class TakeoverResponse(BaseModel):
     source_domain: str | None = None
     consumer_domain: str | None = None
     expected_cname: str
+    domain_verification_record_name: str | None = None
+    domain_verification_record_value: str
     sample_url: str
     url_rule: dict
     code_scope: dict

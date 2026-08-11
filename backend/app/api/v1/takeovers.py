@@ -8,19 +8,21 @@ import uuid
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile, status
 from fastapi.responses import RedirectResponse, StreamingResponse
-from sqlalchemy import select
+from sqlalchemy import func, select, text
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import load_only
 
 from app.core.database import get_db
 from app.core.dependencies import get_current_account_id, get_current_tenant
 from app.models.takeover import (
     TakeoverCutoverEvent,
     TakeoverDomainCheck,
+    TakeoverDomainClaim,
     TakeoverImportError,
     TakeoverImportJob,
     TakeoverObservation,
     TakeoverProject,
-    TakeoverRouteStatus,
     TakeoverRouteVersion,
 )
 from app.schemas.takeover import (
@@ -30,8 +32,12 @@ from app.schemas.takeover import (
     TakeoverProjectCreate,
     TakeoverProjectUpdate,
     TakeoverRouteCreate,
+    validate_takeover_domain_name,
 )
+from app.services.audit import write_audit_log
+from app.services.code_export import spreadsheet_safe
 from app.services.takeover import (
+    MAX_IMPORT_BYTES,
     complete_route,
     confirm_project,
     confirm_route,
@@ -44,9 +50,9 @@ from app.services.takeover import (
     get_route,
     inspect_domain,
     preview_alias,
+    probe_route_observation,
     queue_import,
     record_external_execution,
-    record_observation,
     refresh_takeover_readiness,
     retry_failed_import,
     rollback_route,
@@ -55,16 +61,34 @@ from app.services.takeover import (
     serialize_project,
     serialize_route,
     update_project,
+    verify_rollback_route,
 )
+from app.services.takeover_admission import enforce_takeover_probe_rate_limit
 from app.utils.auth_rbac import require_permission
 
 router = APIRouter(prefix="/api/v1/takeovers", tags=["takeovers"])
 gateway_router = APIRouter(tags=["takeover-gateway"])
-PUBLIC_ROUTE_STATUSES = (
-    TakeoverRouteStatus.active,
-    TakeoverRouteStatus.paused,
-    TakeoverRouteStatus.rolled_back,
-)
+
+
+async def read_takeover_csv_upload(file: UploadFile) -> bytes:
+    """Read one bounded CSV upload without trusting a caller-controlled MIME alone."""
+    filename = (file.filename or "").lower()
+    allowed_content_types = {"text/csv", "application/csv", "application/vnd.ms-excel"}
+    if not filename.endswith(".csv") or file.content_type not in allowed_content_types:
+        raise HTTPException(status_code=415, detail="Unsupported import file type")
+    content = await file.read(MAX_IMPORT_BYTES + 1)
+    if len(content) > MAX_IMPORT_BYTES:
+        raise HTTPException(status_code=413, detail="Import file is too large")
+    if not content.strip():
+        raise HTTPException(status_code=400, detail="Import file is empty")
+    return content
+
+
+def _auth_session_id(request: Request) -> uuid.UUID | None:
+    try:
+        return uuid.UUID(str(request.state.session_id))
+    except (AttributeError, TypeError, ValueError):
+        return None
 
 
 async def _require_project(
@@ -81,7 +105,7 @@ async def _require_project(
 @router.post("", status_code=status.HTTP_201_CREATED)
 async def create_takeover_project(
     body: TakeoverProjectCreate,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
     account_id: uuid.UUID = Depends(get_current_account_id),
     _: None = Depends(require_permission("takeover:prepare")),
@@ -92,20 +116,31 @@ async def create_takeover_project(
 
 @router.get("")
 async def list_takeover_projects(
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=50, ge=1, le=200),
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
     _: None = Depends(require_permission("takeover:prepare")),
 ):
+    project_filter = TakeoverProject.tenant_id == tenant_id
+    total = int(await db.scalar(select(func.count()).select_from(TakeoverProject).where(project_filter)) or 0)
     projects = list(
         (
             await db.scalars(
                 select(TakeoverProject)
-                .where(TakeoverProject.tenant_id == tenant_id)
+                .where(project_filter)
                 .order_by(TakeoverProject.created_at.desc())
+                .offset((page - 1) * page_size)
+                .limit(page_size)
             )
         ).all()
     )
-    return {"items": [serialize_project(project) for project in projects], "total": len(projects)}
+    return {
+        "items": [serialize_project(project) for project in projects],
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+    }
 
 
 @router.get("/{project_id}")
@@ -122,7 +157,7 @@ async def get_takeover_project(
 async def update_takeover_project(
     project_id: uuid.UUID,
     body: TakeoverProjectUpdate,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
     account_id: uuid.UUID = Depends(get_current_account_id),
     _: None = Depends(require_permission("takeover:prepare")),
@@ -134,7 +169,7 @@ async def update_takeover_project(
 @router.post("/{project_id}/assess")
 async def assess_takeover_project(
     project_id: uuid.UUID,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
     _: None = Depends(require_permission("takeover:prepare")),
 ):
@@ -146,13 +181,13 @@ async def assess_takeover_project(
 async def dry_run_takeover_import(
     project_id: uuid.UUID,
     file: UploadFile = File(...),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
     account_id: uuid.UUID = Depends(get_current_account_id),
     _: None = Depends(require_permission("takeover:prepare")),
 ):
     project = await _require_project(db, tenant_id, project_id)
-    content = await file.read()
+    content = await read_takeover_csv_upload(file)
     job = await dry_run_import(db, project, account_id, file.filename or "takeover.csv", content)
     errors = list((await db.scalars(select(TakeoverImportError).where(TakeoverImportError.job_id == job.id))).all())
     return serialize_import(job, errors)
@@ -161,28 +196,52 @@ async def dry_run_takeover_import(
 @router.get("/{project_id}/imports")
 async def list_takeover_imports(
     project_id: uuid.UUID,
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=50, ge=1, le=200),
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
     _: None = Depends(require_permission("takeover:prepare")),
 ):
     project = await _require_project(db, tenant_id, project_id)
+    job_filter = (TakeoverImportJob.project_id == project.id, TakeoverImportJob.tenant_id == tenant_id)
+    total = int(await db.scalar(select(func.count()).select_from(TakeoverImportJob).where(*job_filter)) or 0)
     jobs = list(
         (
             await db.scalars(
                 select(TakeoverImportJob)
-                .where(TakeoverImportJob.project_id == project.id, TakeoverImportJob.tenant_id == tenant_id)
+                .options(
+                    load_only(
+                        TakeoverImportJob.id,
+                        TakeoverImportJob.project_id,
+                        TakeoverImportJob.status,
+                        TakeoverImportJob.file_name,
+                        TakeoverImportJob.file_sha256,
+                        TakeoverImportJob.counts,
+                        TakeoverImportJob.error_detail,
+                        TakeoverImportJob.created_at,
+                        TakeoverImportJob.completed_at,
+                    )
+                )
+                .where(*job_filter)
                 .order_by(TakeoverImportJob.created_at.desc())
+                .offset((page - 1) * page_size)
+                .limit(page_size)
             )
         ).all()
     )
-    return {"items": [serialize_import(job, []) for job in jobs], "total": len(jobs)}
+    return {
+        "items": [serialize_import(job, []) for job in jobs],
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+    }
 
 
 @router.post("/{project_id}/imports/{job_id}/submit")
 async def submit_takeover_import(
     project_id: uuid.UUID,
     job_id: uuid.UUID,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
     account_id: uuid.UUID = Depends(get_current_account_id),
     _: None = Depends(require_permission("takeover:prepare")),
@@ -204,7 +263,7 @@ async def submit_takeover_import(
 async def retry_takeover_import(
     project_id: uuid.UUID,
     job_id: uuid.UUID,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
     account_id: uuid.UUID = Depends(get_current_account_id),
     _: None = Depends(require_permission("takeover:prepare")),
@@ -223,8 +282,9 @@ async def retry_takeover_import(
 async def download_takeover_import_errors(
     project_id: uuid.UUID,
     job_id: uuid.UUID,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
+    account_id: uuid.UUID = Depends(get_current_account_id),
     _: None = Depends(require_permission("takeover:prepare")),
 ):
     project = await _require_project(db, tenant_id, project_id)
@@ -248,7 +308,23 @@ async def download_takeover_import_errors(
     writer = csv.writer(output)
     writer.writerow(["row_number", "legacy_code", "error_code", "message", "retryable"])
     for error in errors:
-        writer.writerow([error.row_number, error.legacy_code or "", error.error_code, error.message, error.retryable])
+        writer.writerow(
+            [
+                error.row_number,
+                spreadsheet_safe(error.legacy_code),
+                spreadsheet_safe(error.error_code),
+                spreadsheet_safe(error.message),
+                error.retryable,
+            ]
+        )
+    await write_audit_log(
+        db,
+        str(account_id),
+        str(tenant_id),
+        "takeover_import_errors_exported",
+        f"takeover_import:{job.id}",
+        {"project_id": str(project.id), "row_count": len(errors)},
+    )
     return StreamingResponse(
         iter([output.getvalue().encode("utf-8-sig")]),
         media_type="text/csv; charset=utf-8",
@@ -260,6 +336,8 @@ async def download_takeover_import_errors(
 async def list_takeover_aliases(
     project_id: uuid.UUID,
     status_filter: str | None = Query(default=None, alias="status"),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=50, ge=1, le=200),
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
     _: None = Depends(require_permission("takeover:prepare")),
@@ -271,10 +349,19 @@ async def list_takeover_aliases(
     query = select(TakeoverAlias).where(TakeoverAlias.project_id == project.id, TakeoverAlias.tenant_id == tenant_id)
     if status_filter:
         query = query.where(TakeoverAlias.status == status_filter)
-    aliases = list((await db.scalars(query.order_by(TakeoverAlias.created_at.desc()))).all())
+    total = int(await db.scalar(select(func.count()).select_from(query.subquery())) or 0)
+    aliases = list(
+        (
+            await db.scalars(
+                query.order_by(TakeoverAlias.created_at.desc()).offset((page - 1) * page_size).limit(page_size)
+            )
+        ).all()
+    )
     return {
         "items": [serialize_alias(await _attach_alias_target(db, alias)) for alias in aliases],
-        "total": len(aliases),
+        "total": total,
+        "page": page,
+        "page_size": page_size,
     }
 
 
@@ -293,33 +380,49 @@ async def preview_takeover_alias(
 @router.post("/{project_id}/domains/check")
 async def check_takeover_domain(
     project_id: uuid.UUID,
-    db: AsyncSession = Depends(get_db),
+    request: Request,
+    db: AsyncSession = Depends(get_db, scope="function"),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
     account_id: uuid.UUID = Depends(get_current_account_id),
     _: None = Depends(require_permission("takeover:prepare")),
+    admission: None = Depends(enforce_takeover_probe_rate_limit),
 ):
     project = await _require_project(db, tenant_id, project_id)
-    return serialize_domain_check(await inspect_domain(db, project, account_id))
+    return serialize_domain_check(await inspect_domain(db, project, account_id, _auth_session_id(request)))
 
 
 @router.get("/{project_id}/domains/checks")
 async def list_takeover_domain_checks(
     project_id: uuid.UUID,
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=50, ge=1, le=200),
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
     _: None = Depends(require_permission("takeover:prepare")),
 ):
     project = await _require_project(db, tenant_id, project_id)
+    check_filter = (
+        TakeoverDomainCheck.project_id == project.id,
+        TakeoverDomainCheck.tenant_id == tenant_id,
+    )
+    total = int(await db.scalar(select(func.count()).select_from(TakeoverDomainCheck).where(*check_filter)) or 0)
     checks = list(
         (
             await db.scalars(
                 select(TakeoverDomainCheck)
-                .where(TakeoverDomainCheck.project_id == project.id)
+                .where(*check_filter)
                 .order_by(TakeoverDomainCheck.checked_at.desc())
+                .offset((page - 1) * page_size)
+                .limit(page_size)
             )
         ).all()
     )
-    return {"items": [serialize_domain_check(check) for check in checks], "total": len(checks)}
+    return {
+        "items": [serialize_domain_check(check) for check in checks],
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+    }
 
 
 @router.get("/{project_id}/readiness")
@@ -337,7 +440,7 @@ async def get_takeover_readiness(
 @router.post("/{project_id}/confirm")
 async def confirm_takeover_project(
     project_id: uuid.UUID,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
     account_id: uuid.UUID = Depends(get_current_account_id),
     _: None = Depends(require_permission("takeover:approve")),
@@ -350,7 +453,7 @@ async def confirm_takeover_project(
 async def create_takeover_route(
     project_id: uuid.UUID,
     body: TakeoverRouteCreate,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
     account_id: uuid.UUID = Depends(get_current_account_id),
     _: None = Depends(require_permission("takeover:prepare")),
@@ -362,28 +465,44 @@ async def create_takeover_route(
 @router.get("/{project_id}/routes")
 async def list_takeover_routes(
     project_id: uuid.UUID,
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=50, ge=1, le=200),
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
     _: None = Depends(require_permission("takeover:prepare")),
 ):
     project = await _require_project(db, tenant_id, project_id)
+    route_filter = (
+        TakeoverRouteVersion.project_id == project.id,
+        TakeoverRouteVersion.tenant_id == tenant_id,
+    )
+    total = int(await db.scalar(select(func.count()).select_from(TakeoverRouteVersion).where(*route_filter)) or 0)
     routes = list(
         (
             await db.scalars(
                 select(TakeoverRouteVersion)
-                .where(TakeoverRouteVersion.project_id == project.id)
+                .where(*route_filter)
                 .order_by(TakeoverRouteVersion.version.desc())
+                .offset((page - 1) * page_size)
+                .limit(page_size)
             )
         ).all()
     )
-    return {"items": [serialize_route(route) for route in routes], "total": len(routes)}
+    return {
+        "items": [serialize_route(route) for route in routes],
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+    }
 
 
 @router.post("/{project_id}/routes/{route_id}/confirm")
 async def confirm_takeover_route(
     project_id: uuid.UUID,
     route_id: uuid.UUID,
-    db: AsyncSession = Depends(get_db),
+    request: Request,
+    idempotency_key: str = Query(..., min_length=1, max_length=100),
+    db: AsyncSession = Depends(get_db, scope="function"),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
     account_id: uuid.UUID = Depends(get_current_account_id),
     _: None = Depends(require_permission("takeover:approve")),
@@ -392,15 +511,18 @@ async def confirm_takeover_route(
     route = await get_route(db, project, route_id)
     if not route:
         raise HTTPException(status_code=404, detail="路由版本不存在")
-    return serialize_route(await confirm_route(db, project, route, account_id))
+    return serialize_route(
+        await confirm_route(db, project, route, account_id, idempotency_key, _auth_session_id(request))
+    )
 
 
 @router.post("/{project_id}/routes/{route_id}/cutover")
 async def cutover_takeover_route(
     project_id: uuid.UUID,
     route_id: uuid.UUID,
+    request: Request,
     idempotency_key: str = Query(..., min_length=1, max_length=100),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
     account_id: uuid.UUID = Depends(get_current_account_id),
     _: None = Depends(require_permission("takeover:execute")),
@@ -409,15 +531,18 @@ async def cutover_takeover_route(
     route = await get_route(db, project, route_id)
     if not route:
         raise HTTPException(status_code=404, detail="路由版本不存在")
-    return serialize_route(await cutover_route(db, project, route, account_id, idempotency_key))
+    return serialize_route(
+        await cutover_route(db, project, route, account_id, idempotency_key, _auth_session_id(request))
+    )
 
 
 @router.post("/{project_id}/routes/{route_id}/external-execution")
 async def report_takeover_external_execution(
     project_id: uuid.UUID,
     route_id: uuid.UUID,
+    request: Request,
     body: ExternalExecutionRequest,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
     account_id: uuid.UUID = Depends(get_current_account_id),
     _: None = Depends(require_permission("takeover:execute")),
@@ -426,7 +551,9 @@ async def report_takeover_external_execution(
     route = await get_route(db, project, route_id)
     if not route:
         raise HTTPException(status_code=404, detail="路由版本不存在")
-    event = await record_external_execution(db, project, route, account_id, body.model_dump())
+    event = await record_external_execution(
+        db, project, route, account_id, body.model_dump(), _auth_session_id(request)
+    )
     return {"id": event.id, "status": event.state, "message": "已记录外部执行，等待真实链接探测验证"}
 
 
@@ -434,19 +561,21 @@ async def report_takeover_external_execution(
 async def probe_takeover_route(
     project_id: uuid.UUID,
     route_id: uuid.UUID,
+    request: Request,
     body: ObservationRequest,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
     account_id: uuid.UUID = Depends(get_current_account_id),
     _: None = Depends(require_permission("takeover:execute")),
+    admission: None = Depends(enforce_takeover_probe_rate_limit),
 ):
     project = await _require_project(db, tenant_id, project_id)
     route = await get_route(db, project, route_id)
     if not route:
         raise HTTPException(status_code=404, detail="路由版本不存在")
-    if route.status != "active":
-        route = await cutover_route(db, project, route, account_id, f"probe-{route.id}")
-    observation = await record_observation(db, project, route, account_id, body.model_dump())
+    observation = await probe_route_observation(
+        db, project, route, account_id, str(body.checked_url), _auth_session_id(request)
+    )
     return {"route": serialize_route(route), "observation": _serialize_observation(observation)}
 
 
@@ -454,24 +583,30 @@ async def probe_takeover_route(
 async def observe_takeover_route(
     project_id: uuid.UUID,
     route_id: uuid.UUID,
+    request: Request,
     body: ObservationRequest,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
     account_id: uuid.UUID = Depends(get_current_account_id),
     _: None = Depends(require_permission("takeover:execute")),
+    admission: None = Depends(enforce_takeover_probe_rate_limit),
 ):
     project = await _require_project(db, tenant_id, project_id)
     route = await get_route(db, project, route_id)
     if not route:
         raise HTTPException(status_code=404, detail="路由版本不存在")
-    return _serialize_observation(await record_observation(db, project, route, account_id, body.model_dump()))
+    return _serialize_observation(
+        await probe_route_observation(db, project, route, account_id, str(body.checked_url), _auth_session_id(request))
+    )
 
 
 @router.post("/{project_id}/routes/{route_id}/complete")
 async def complete_takeover_route(
     project_id: uuid.UUID,
     route_id: uuid.UUID,
-    db: AsyncSession = Depends(get_db),
+    request: Request,
+    idempotency_key: str = Query(..., min_length=1, max_length=100),
+    db: AsyncSession = Depends(get_db, scope="function"),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
     account_id: uuid.UUID = Depends(get_current_account_id),
     _: None = Depends(require_permission("takeover:execute")),
@@ -480,15 +615,18 @@ async def complete_takeover_route(
     route = await get_route(db, project, route_id)
     if not route:
         raise HTTPException(status_code=404, detail="路由版本不存在")
-    return serialize_route(await complete_route(db, project, route, account_id))
+    return serialize_route(
+        await complete_route(db, project, route, account_id, idempotency_key, _auth_session_id(request))
+    )
 
 
 @router.post("/{project_id}/routes/{route_id}/rollback")
 async def rollback_takeover_route(
     project_id: uuid.UUID,
     route_id: uuid.UUID,
+    request: Request,
     body: RollbackRequest,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
     account_id: uuid.UUID = Depends(get_current_account_id),
     _: None = Depends(require_permission("takeover:rollback")),
@@ -497,13 +635,55 @@ async def rollback_takeover_route(
     route = await get_route(db, project, route_id)
     if not route:
         raise HTTPException(status_code=404, detail="路由版本不存在")
-    return serialize_route(await rollback_route(db, project, route, account_id, body.reason, body.idempotency_key))
+    return serialize_route(
+        await rollback_route(
+            db,
+            project,
+            route,
+            account_id,
+            body.reason,
+            body.idempotency_key,
+            _auth_session_id(request),
+        )
+    )
+
+
+@router.post("/{project_id}/routes/{route_id}/rollback/verify")
+async def verify_takeover_route_rollback(
+    project_id: uuid.UUID,
+    route_id: uuid.UUID,
+    request: Request,
+    idempotency_key: str = Query(..., min_length=1, max_length=80),
+    db: AsyncSession = Depends(get_db, scope="function"),
+    tenant_id: uuid.UUID = Depends(get_current_tenant),
+    account_id: uuid.UUID = Depends(get_current_account_id),
+    _: None = Depends(require_permission("takeover:rollback")),
+    admission: None = Depends(enforce_takeover_probe_rate_limit),
+):
+    project = await _require_project(db, tenant_id, project_id)
+    route = await get_route(db, project, route_id)
+    if not route:
+        raise HTTPException(status_code=404, detail="路由版本不存在")
+    verified_route, observation = await verify_rollback_route(
+        db,
+        project,
+        route,
+        account_id,
+        idempotency_key,
+        _auth_session_id(request),
+    )
+    return {"route": serialize_route(verified_route), "observation": _serialize_observation(observation)}
 
 
 def _serialize_observation(observation: TakeoverObservation) -> dict:
     return {
         "id": observation.id,
+        "transition_event_id": observation.transition_event_id,
         "checked_url": observation.checked_url,
+        "observed_target_url": observation.observed_target_url,
+        "evidence_source": observation.evidence_source,
+        "evidence_purpose": observation.evidence_purpose,
+        "evidence_digest": observation.evidence_digest,
         "status": observation.status,
         "success_rate": observation.success_rate,
         "error_rate": observation.error_rate,
@@ -519,17 +699,28 @@ def _serialize_observation(observation: TakeoverObservation) -> dict:
 @router.get("/{project_id}/events")
 async def list_takeover_events(
     project_id: uuid.UUID,
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=50, ge=1, le=200),
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
     _: None = Depends(require_permission("takeover:audit")),
 ):
     project = await _require_project(db, tenant_id, project_id)
+    event_filter = TakeoverCutoverEvent.project_id == project.id
+    observation_filter = TakeoverObservation.project_id == project.id
+    events_total = int(await db.scalar(select(func.count()).where(event_filter).select_from(TakeoverCutoverEvent)) or 0)
+    observations_total = int(
+        await db.scalar(select(func.count()).where(observation_filter).select_from(TakeoverObservation)) or 0
+    )
+    offset = (page - 1) * page_size
     events = list(
         (
             await db.scalars(
                 select(TakeoverCutoverEvent)
-                .where(TakeoverCutoverEvent.project_id == project.id)
+                .where(event_filter)
                 .order_by(TakeoverCutoverEvent.created_at.desc())
+                .offset(offset)
+                .limit(page_size)
             )
         ).all()
     )
@@ -537,8 +728,10 @@ async def list_takeover_events(
         (
             await db.scalars(
                 select(TakeoverObservation)
-                .where(TakeoverObservation.project_id == project.id)
+                .where(observation_filter)
                 .order_by(TakeoverObservation.created_at.desc())
+                .offset(offset)
+                .limit(page_size)
             )
         ).all()
     )
@@ -554,54 +747,82 @@ async def list_takeover_events(
             for event in events
         ],
         "observations": [_serialize_observation(observation) for observation in observations],
+        "events_total": events_total,
+        "observations_total": observations_total,
+        "page": page,
+        "page_size": page_size,
     }
+
+
+async def _load_public_gateway_authority(db: AsyncSession, host: str) -> tuple[TakeoverProject, TakeoverRouteVersion]:
+    from app.core.database import set_session_tenant_context
+
+    try:
+        canonical_host = validate_takeover_domain_name(host)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail="未找到已激活的接管域名") from exc
+    if not canonical_host:
+        raise HTTPException(status_code=404, detail="未找到已激活的接管域名")
+    if db.get_bind().dialect.name == "postgresql":
+        try:
+            authority = (
+                (
+                    await db.execute(
+                        text("SELECT * FROM public.resolve_takeover_public_route(:domain)"),
+                        {"domain": canonical_host},
+                    )
+                )
+                .mappings()
+                .one_or_none()
+            )
+        except DBAPIError as exc:
+            if getattr(exc.orig, "sqlstate", None) != "22023":
+                raise
+            raise HTTPException(status_code=404, detail="未找到已激活的接管域名") from exc
+    else:
+        claim = await db.get(TakeoverDomainClaim, canonical_host)
+        authority = (
+            {
+                "tenant_id": claim.tenant_id,
+                "project_id": claim.project_id,
+                "route_version_id": claim.route_version_id,
+            }
+            if claim is not None
+            else None
+        )
+    if authority is None:
+        raise HTTPException(status_code=404, detail="未找到已激活的接管域名")
+    await set_session_tenant_context(db, authority["tenant_id"])
+    project = await db.scalar(
+        select(TakeoverProject).where(
+            TakeoverProject.tenant_id == authority["tenant_id"],
+            TakeoverProject.id == authority["project_id"],
+        )
+    )
+    active_route = await db.scalar(
+        select(TakeoverRouteVersion).where(
+            TakeoverRouteVersion.project_id == authority["project_id"],
+            TakeoverRouteVersion.tenant_id == authority["tenant_id"],
+            TakeoverRouteVersion.id == authority["route_version_id"],
+            TakeoverRouteVersion.domain == canonical_host,
+        )
+    )
+    if project is None or active_route is None:
+        raise HTTPException(status_code=404, detail="当前请求域名未绑定该接管项目")
+    return project, active_route
 
 
 @gateway_router.get("/api/v1/takeover/gateway")
 async def resolve_takeover_gateway(
     request: Request,
-    project_id: uuid.UUID | None = Query(default=None),
     legacy_url: str | None = Query(default=None),
     response_mode: str = Query(default="json", pattern="^(json|redirect)$"),
     db: AsyncSession = Depends(get_db),
 ):
-    from app.core.database import bootstrap_tenant_row
-
-    project = None
     host = (request.headers.get("host") or "").split(":", 1)[0].lower().rstrip(".")
-    if project_id:
-        project = await bootstrap_tenant_row(
-            db,
-            select(TakeoverProject).where(TakeoverProject.id == project_id).limit(1),
-        )
-    else:
-        project = await bootstrap_tenant_row(
-            db,
-            select(TakeoverProject)
-            .join(TakeoverRouteVersion, TakeoverRouteVersion.project_id == TakeoverProject.id)
-            .where(
-                TakeoverRouteVersion.domain == host,
-                TakeoverRouteVersion.status.in_(PUBLIC_ROUTE_STATUSES),
-            )
-            .order_by(TakeoverRouteVersion.created_at.desc())
-            .limit(1),
-        )
-    if not project:
-        raise HTTPException(status_code=404, detail="未找到已激活的接管域名")
-    active_route = await db.scalar(
-        select(TakeoverRouteVersion)
-        .where(
-            TakeoverRouteVersion.project_id == project.id,
-            TakeoverRouteVersion.tenant_id == project.tenant_id,
-            TakeoverRouteVersion.domain == host,
-            TakeoverRouteVersion.status.in_(PUBLIC_ROUTE_STATUSES),
-        )
-        .order_by(TakeoverRouteVersion.version.desc(), TakeoverRouteVersion.created_at.desc())
-    )
-    if not active_route:
-        raise HTTPException(status_code=404, detail="当前请求域名未绑定该接管项目")
+    project, route = await _load_public_gateway_authority(db, host)
     raw_url = legacy_url or str(request.url)
-    result = await gateway_resolve(db, project, raw_url)
+    result = await gateway_resolve(db, project, raw_url, route=route)
     if response_mode == "redirect":
         return RedirectResponse(url=result["redirect_to"], status_code=307)
     return result
@@ -614,23 +835,9 @@ async def redirect_takeover_gateway_path(
     db: AsyncSession = Depends(get_db),
 ):
     """域名网关转发到的真实旧路径；浏览器请求直接得到 307。"""
-    from app.core.database import bootstrap_tenant_row
-
     host = (request.headers.get("host") or "").split(":", 1)[0].lower().rstrip(".")
-    project = await bootstrap_tenant_row(
-        db,
-        select(TakeoverProject)
-        .join(TakeoverRouteVersion, TakeoverRouteVersion.project_id == TakeoverProject.id)
-        .where(
-            TakeoverRouteVersion.domain == host,
-            TakeoverRouteVersion.status.in_(PUBLIC_ROUTE_STATUSES),
-        )
-        .order_by(TakeoverRouteVersion.created_at.desc())
-        .limit(1),
-    )
-    if not project:
-        raise HTTPException(status_code=404, detail="未找到已激活的接管域名")
+    project, route = await _load_public_gateway_authority(db, host)
     query = f"?{request.url.query}" if request.url.query else ""
     raw_url = f"https://{host}/{legacy_path.lstrip('/')}{query}"
-    result = await gateway_resolve(db, project, raw_url)
+    result = await gateway_resolve(db, project, raw_url, route=route)
     return RedirectResponse(url=result["redirect_to"], status_code=307)

@@ -33,9 +33,20 @@ import {
 import type { ColumnsType } from "antd/es/table";
 import type { RcFile } from "antd/es/upload";
 import api, { extractErrorMessage } from "@/lib/api";
+import { takeoverAccessForPrincipal } from "@/lib/agency-access";
+import { useAuthStore } from "@/lib/auth";
 import { STATUS_COLORS } from "@/lib/status-colors";
+import { useTenantPlanReadOnly } from "../../_components/TenantPlanReadOnly";
 
 const { Title, Paragraph, Text } = Typography;
+const TAKEOVER_PAGE_SIZE = 20;
+
+interface PageEnvelope<T> {
+  items: T[];
+  total: number;
+  page: number;
+  page_size: number;
+}
 
 interface TakeoverProject {
   id: string;
@@ -44,6 +55,8 @@ interface TakeoverProject {
   mode: "legacy_redirect" | "cname";
   source_domain?: string | null;
   consumer_domain?: string | null;
+  domain_verification_record_name?: string | null;
+  domain_verification_record_value?: string;
   status: string;
   assessment: {
     code_type: "unique" | "shared";
@@ -83,6 +96,27 @@ interface RouteVersion {
   status: string;
   content_digest: string;
   sample_codes: string[];
+  source_url: string;
+  target_url: string;
+  current_event_id?: string | null;
+}
+
+interface TakeoverEvent {
+  id: string;
+  action: string;
+  state: string;
+  created_at: string;
+}
+
+interface TakeoverObservation {
+  id: string;
+  transition_event_id?: string | null;
+  evidence_purpose: string;
+  checked_url: string;
+  observed_target_url?: string | null;
+  status: string;
+  target_match: boolean;
+  created_at: string;
 }
 
 const STATUS_LABELS: Record<string, string> = {
@@ -93,6 +127,7 @@ const STATUS_LABELS: Record<string, string> = {
   pending_external: "待外部执行",
   observing: "观察中",
   completed: "已完成",
+  rolling_back: "回退验证中",
   rolled_back: "已回退",
   failed: "失败",
 };
@@ -117,11 +152,25 @@ function statusColor(status: string) {
 
 export default function TakeoverPage() {
   const { message } = App.useApp();
+  const user = useAuthStore((state) => state.user);
+  const access = takeoverAccessForPrincipal(user);
+  const planReadOnly = useTenantPlanReadOnly();
   const [projects, setProjects] = useState<TakeoverProject[]>([]);
   const [selected, setSelected] = useState<TakeoverProject | null>(null);
   const [readiness, setReadiness] = useState<ReadinessSnapshot | null>(null);
   const [imports, setImports] = useState<ImportJob[]>([]);
   const [routes, setRoutes] = useState<RouteVersion[]>([]);
+  const [events, setEvents] = useState<TakeoverEvent[]>([]);
+  const [observations, setObservations] = useState<TakeoverObservation[]>([]);
+  const [projectPage, setProjectPage] = useState(1);
+  const [projectTotal, setProjectTotal] = useState(0);
+  const [importPage, setImportPage] = useState(1);
+  const [importTotal, setImportTotal] = useState(0);
+  const [routePage, setRoutePage] = useState(1);
+  const [routeTotal, setRouteTotal] = useState(0);
+  const [auditPage, setAuditPage] = useState(1);
+  const [eventTotal, setEventTotal] = useState(0);
+  const [observationTotal, setObservationTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
@@ -135,18 +184,30 @@ export default function TakeoverPage() {
   const [probeForm] = Form.useForm();
   const [rollbackForm] = Form.useForm();
 
+  const selectProject = (project: TakeoverProject) => {
+    setSelected(project);
+    setImportPage(1);
+    setRoutePage(1);
+    setAuditPage(1);
+  };
+
   const loadProjects = async () => {
     setLoading(true);
     try {
-      const { data } = await api.get<{ items: TakeoverProject[] }>(
-        "/takeovers"
+      const { data } = await api.get<PageEnvelope<TakeoverProject>>(
+        "/takeovers",
+        {
+          params: { page: projectPage, page_size: TAKEOVER_PAGE_SIZE },
+        }
       );
       setProjects(data.items || []);
+      setProjectTotal(data.total || 0);
       if (selected) {
         const current = data.items.find((item) => item.id === selected.id);
         if (current) setSelected(current);
+        else if (data.items?.length) selectProject(data.items[0]);
       } else if (data.items?.length) {
-        setSelected(data.items[0]);
+        selectProject(data.items[0]);
       }
     } catch (error) {
       message.error(extractErrorMessage(error, "接管项目加载失败"));
@@ -160,29 +221,53 @@ export default function TakeoverPage() {
       const [readinessResponse, importsResponse, routesResponse] =
         await Promise.all([
           api.get<ReadinessSnapshot>(`/takeovers/${project.id}/readiness`),
-          api.get<{ items: ImportJob[] }>(`/takeovers/${project.id}/imports`),
-          api.get<{ items: RouteVersion[] }>(`/takeovers/${project.id}/routes`),
+          api.get<PageEnvelope<ImportJob>>(`/takeovers/${project.id}/imports`, {
+            params: { page: importPage, page_size: TAKEOVER_PAGE_SIZE },
+          }),
+          api.get<PageEnvelope<RouteVersion>>(
+            `/takeovers/${project.id}/routes`,
+            {
+              params: { page: routePage, page_size: TAKEOVER_PAGE_SIZE },
+            }
+          ),
         ]);
       setReadiness(readinessResponse.data);
       setImports(importsResponse.data.items || []);
+      setImportTotal(importsResponse.data.total || 0);
       setRoutes(routesResponse.data.items || []);
+      setRouteTotal(routesResponse.data.total || 0);
+      if (access.canAudit) {
+        const { data } = await api.get<{
+          events: TakeoverEvent[];
+          observations: TakeoverObservation[];
+          events_total: number;
+          observations_total: number;
+        }>(`/takeovers/${project.id}/events`, {
+          params: { page: auditPage, page_size: TAKEOVER_PAGE_SIZE },
+        });
+        setEvents(data.events || []);
+        setObservations(data.observations || []);
+        setEventTotal(data.events_total || 0);
+        setObservationTotal(data.observations_total || 0);
+      }
     } catch (error) {
       message.error(extractErrorMessage(error, "接管项目详情加载失败"));
     }
   };
 
   useEffect(() => {
-    void loadProjects();
+    if (access.canRead) void loadProjects();
     // 项目切换由下方 effect 负责详情加载。
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [access.canRead, projectPage]);
 
   useEffect(() => {
-    if (selected) void loadProjectDetails(selected);
+    if (access.canRead && selected) void loadProjectDetails(selected);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selected?.id]);
+  }, [access.canRead, selected?.id, importPage, routePage, auditPage]);
 
   const createProject = async (values: Record<string, unknown>) => {
+    if (!access.canPrepare || planReadOnly) return;
     setActionLoading(true);
     try {
       const { data } = await api.post<TakeoverProject>("/takeovers", {
@@ -199,7 +284,7 @@ export default function TakeoverPage() {
       setCreateOpen(false);
       createForm.resetFields();
       setProjects((current) => [data, ...current]);
-      setSelected(data);
+      selectProject(data);
       message.success("接管项目已创建，下一步请先做旧码导入预检");
     } catch (error) {
       message.error(extractErrorMessage(error, "接管项目创建失败"));
@@ -209,7 +294,7 @@ export default function TakeoverPage() {
   };
 
   const dryRun = async (file: RcFile) => {
-    if (!selected) return false;
+    if (!selected || !access.canPrepare || planReadOnly) return false;
     setActionLoading(true);
     try {
       const formData = new FormData();
@@ -234,7 +319,7 @@ export default function TakeoverPage() {
   };
 
   const submitImport = async (job: ImportJob) => {
-    if (!selected) return;
+    if (!selected || !access.canPrepare || planReadOnly) return;
     setActionLoading(true);
     try {
       const { data } = await api.post<ImportJob>(
@@ -254,7 +339,7 @@ export default function TakeoverPage() {
   };
 
   const checkDomain = async () => {
-    if (!selected) return;
+    if (!selected || !access.canPrepare || planReadOnly) return;
     setActionLoading(true);
     try {
       const { data } = await api.post(
@@ -274,13 +359,13 @@ export default function TakeoverPage() {
   };
 
   const confirmProject = async () => {
-    if (!selected) return;
+    if (!selected || !access.canApprove || planReadOnly) return;
     setActionLoading(true);
     try {
       const { data } = await api.post<TakeoverProject>(
         `/takeovers/${selected.id}/confirm`
       );
-      setSelected(data);
+      selectProject(data);
       message.success("品牌确认已记录，内容摘要已冻结");
       await loadProjects();
       await loadProjectDetails(data);
@@ -292,7 +377,7 @@ export default function TakeoverPage() {
   };
 
   const createRoute = async (values: Record<string, unknown>) => {
-    if (!selected) return;
+    if (!selected || !access.canPrepare || planReadOnly) return;
     setActionLoading(true);
     try {
       await api.post(`/takeovers/${selected.id}/routes`, {
@@ -321,10 +406,14 @@ export default function TakeoverPage() {
   };
 
   const confirmRouteVersion = async (route: RouteVersion) => {
-    if (!selected) return;
+    if (!selected || !access.canApprove || planReadOnly) return;
     setActionLoading(true);
     try {
-      await api.post(`/takeovers/${selected.id}/routes/${route.id}/confirm`);
+      await api.post(
+        `/takeovers/${selected.id}/routes/${route.id}/confirm`,
+        null,
+        { params: { idempotency_key: crypto.randomUUID() } }
+      );
       message.success(`路由 v${route.version} 已确认`);
       await refreshRouteState();
     } catch (error) {
@@ -335,7 +424,7 @@ export default function TakeoverPage() {
   };
 
   const cutoverRouteVersion = (route: RouteVersion) => {
-    if (!selected) return;
+    if (!selected || !access.canExecute || planReadOnly) return;
     Modal.confirm({
       title: `执行路由 v${route.version} 切换？`,
       content: "仅在品牌确认和外部执行证据均满足后继续；系统会保留幂等记录。",
@@ -360,12 +449,13 @@ export default function TakeoverPage() {
   };
 
   const submitExternalExecution = async (values: Record<string, unknown>) => {
-    if (!selected || !externalRoute) return;
+    if (!selected || !externalRoute || !access.canExecute || planReadOnly)
+      return;
     setActionLoading(true);
     try {
       await api.post(
         `/takeovers/${selected.id}/routes/${externalRoute.id}/external-execution`,
-        values
+        { ...values, idempotency_key: crypto.randomUUID() }
       );
       setExternalRoute(null);
       externalForm.resetFields();
@@ -379,18 +469,12 @@ export default function TakeoverPage() {
   };
 
   const submitProbe = async (values: Record<string, unknown>) => {
-    if (!selected || !probeRoute) return;
+    if (!selected || !probeRoute || !access.canExecute || planReadOnly) return;
     setActionLoading(true);
     try {
       await api.post(
         `/takeovers/${selected.id}/routes/${probeRoute.id}/probe`,
-        {
-          ...values,
-          success_rate: Number(values.success_rate),
-          error_rate: Number(values.error_rate),
-          h5_reach_rate: Number(values.h5_reach_rate),
-          target_match: values.target_match === true,
-        }
+        { checked_url: values.checked_url }
       );
       setProbeRoute(null);
       probeForm.resetFields();
@@ -404,7 +488,8 @@ export default function TakeoverPage() {
   };
 
   const submitRollback = async (values: Record<string, unknown>) => {
-    if (!selected || !rollbackRoute) return;
+    if (!selected || !rollbackRoute || !access.canRollback || planReadOnly)
+      return;
     setActionLoading(true);
     try {
       await api.post(
@@ -420,6 +505,47 @@ export default function TakeoverPage() {
       await refreshRouteState();
     } catch (error) {
       message.error(extractErrorMessage(error, "路由回退失败"));
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const completeRouteVersion = async (route: RouteVersion) => {
+    if (!selected || !access.canExecute || planReadOnly) return;
+    setActionLoading(true);
+    try {
+      await api.post(
+        `/takeovers/${selected.id}/routes/${route.id}/complete`,
+        null,
+        { params: { idempotency_key: crypto.randomUUID() } }
+      );
+      message.success("当前切换轮次已完成");
+      await refreshRouteState();
+    } catch (error) {
+      message.error(extractErrorMessage(error, "完成接管失败"));
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const verifyRollback = async (route: RouteVersion) => {
+    if (!selected || !access.canRollback || planReadOnly) return;
+    setActionLoading(true);
+    try {
+      const { data } = await api.post<{
+        route: RouteVersion;
+        observation: TakeoverObservation;
+      }>(`/takeovers/${selected.id}/routes/${route.id}/rollback/verify`, null, {
+        params: { idempotency_key: crypto.randomUUID() },
+      });
+      message[data.observation.status === "passed" ? "success" : "warning"](
+        data.observation.status === "passed"
+          ? "旧入口已验证回到回退目标"
+          : "旧入口尚未回到回退目标，请修复后重试验证"
+      );
+      await refreshRouteState();
+    } catch (error) {
+      message.error(extractErrorMessage(error, "回退验证失败"));
     } finally {
       setActionLoading(false);
     }
@@ -457,58 +583,106 @@ export default function TakeoverPage() {
       key: "action",
       render: (_, record) => (
         <Space wrap size={0}>
-          {record.status === "candidate" && (
+          {access.canApprove && record.status === "candidate" && (
             <Button
               type="link"
               size="small"
               loading={actionLoading}
+              disabled={planReadOnly}
               onClick={() => void confirmRouteVersion(record)}
             >
               确认版本
             </Button>
           )}
-          {selected?.mode === "legacy_redirect" &&
-            ["candidate", "confirmed"].includes(record.status) && (
+          {access.canExecute &&
+            selected?.mode === "legacy_redirect" &&
+            record.status === "confirmed" && (
               <Button
                 type="link"
                 size="small"
+                disabled={planReadOnly}
                 onClick={() => setExternalRoute(record)}
               >
                 记录外部执行
               </Button>
             )}
-          {record.status === "confirmed" && (
+          {access.canExecute && record.status === "confirmed" && (
             <Button
               type="link"
               size="small"
+              disabled={
+                planReadOnly ||
+                (selected?.mode === "legacy_redirect" &&
+                  !(
+                    selected.status === "pending_external" &&
+                    observations.some(
+                      (observation) =>
+                        observation.evidence_purpose === "pre_cutover" &&
+                        observation.status === "passed" &&
+                        observation.target_match &&
+                        observation.transition_event_id ===
+                          record.current_event_id
+                    )
+                  ))
+              }
               onClick={() => cutoverRouteVersion(record)}
             >
               执行切换
             </Button>
           )}
-          {record.status === "active" && (
+          {access.canExecute &&
+            (record.status === "active" ||
+              (record.status === "confirmed" &&
+                selected?.status === "pending_external")) && (
+              <Button
+                type="link"
+                size="small"
+                disabled={planReadOnly}
+                onClick={() => setProbeRoute(record)}
+              >
+                记录探测
+              </Button>
+            )}
+          {access.canExecute && record.status === "active" && (
             <Button
               type="link"
               size="small"
-              onClick={() => setProbeRoute(record)}
+              disabled={planReadOnly}
+              onClick={() => void completeRouteVersion(record)}
             >
-              记录探测
+              完成接管
             </Button>
           )}
-          {["active", "paused", "confirmed"].includes(record.status) && (
+          {access.canRollback &&
+            ["active", "paused"].includes(record.status) && (
+              <Button
+                type="link"
+                size="small"
+                danger
+                disabled={planReadOnly}
+                onClick={() => setRollbackRoute(record)}
+              >
+                回退
+              </Button>
+            )}
+          {access.canRollback && record.status === "rolling_back" && (
             <Button
               type="link"
               size="small"
-              danger
-              onClick={() => setRollbackRoute(record)}
+              disabled={planReadOnly}
+              onClick={() => void verifyRollback(record)}
             >
-              回退
+              验证回退
             </Button>
           )}
         </Space>
       ),
     },
   ];
+
+  if (!access.canRead) {
+    return <Alert type="info" showIcon message="当前账户不能访问既有码接管" />;
+  }
 
   if (loading)
     return (
@@ -532,13 +706,16 @@ export default function TakeoverPage() {
           <Button icon={<ReloadOutlined />} onClick={() => void loadProjects()}>
             刷新
           </Button>
-          <Button
-            type="primary"
-            icon={<PlusOutlined />}
-            onClick={() => setCreateOpen(true)}
-          >
-            新建接管项目
-          </Button>
+          {access.canPrepare && (
+            <Button
+              type="primary"
+              icon={<PlusOutlined />}
+              disabled={planReadOnly}
+              onClick={() => setCreateOpen(true)}
+            >
+              新建接管项目
+            </Button>
+          )}
         </Space>
       </div>
 
@@ -553,14 +730,20 @@ export default function TakeoverPage() {
               <Table
                 size="small"
                 showHeader={false}
-                pagination={false}
+                pagination={{
+                  current: projectPage,
+                  pageSize: TAKEOVER_PAGE_SIZE,
+                  total: projectTotal,
+                  showSizeChanger: false,
+                  onChange: setProjectPage,
+                }}
                 rowKey="id"
                 dataSource={projects}
                 rowClassName={(record) =>
                   record.id === selected?.id ? "bg-blue-50" : ""
                 }
                 onRow={(record) => ({
-                  onClick: () => setSelected(record),
+                  onClick: () => selectProject(record),
                   style: { cursor: "pointer" },
                 })}
                 columns={[
@@ -615,6 +798,26 @@ export default function TakeoverPage() {
                   <Paragraph className="mt-3">
                     {selected.assessment.recommendation_reason}
                   </Paragraph>
+                  {selected.mode === "cname" &&
+                    selected.domain_verification_record_name && (
+                      <Alert
+                        className="mt-3"
+                        type="info"
+                        showIcon
+                        message="域名所有权验证"
+                        description={
+                          <Space direction="vertical" size={2}>
+                            <Text>请添加 TXT 记录后再核验：</Text>
+                            <Text code>
+                              {selected.domain_verification_record_name}
+                            </Text>
+                            <Text code>
+                              {selected.domain_verification_record_value}
+                            </Text>
+                          </Space>
+                        }
+                      />
+                    )}
                   <Space wrap>
                     {Object.entries(selected.assessment.capabilities).map(
                       ([key, value]) => (
@@ -644,23 +847,26 @@ export default function TakeoverPage() {
                   title="切换准备度"
                   extra={
                     <Space>
-                      {selected.mode === "cname" && (
+                      {access.canPrepare && selected.mode === "cname" && (
                         <Button
                           icon={<GlobalOutlined />}
                           loading={actionLoading}
+                          disabled={planReadOnly}
                           onClick={() => void checkDomain()}
                         >
                           重新核验域名
                         </Button>
                       )}
-                      <Button
-                        icon={<SafetyCertificateOutlined />}
-                        loading={actionLoading}
-                        disabled={!readiness?.ready}
-                        onClick={() => void confirmProject()}
-                      >
-                        品牌确认
-                      </Button>
+                      {access.canApprove && (
+                        <Button
+                          icon={<SafetyCertificateOutlined />}
+                          loading={actionLoading}
+                          disabled={planReadOnly || !readiness?.ready}
+                          onClick={() => void confirmProject()}
+                        >
+                          品牌确认
+                        </Button>
+                      )}
                     </Space>
                   }
                 >
@@ -701,18 +907,21 @@ export default function TakeoverPage() {
                 <Card
                   title="旧码导入"
                   extra={
-                    <Upload
-                      beforeUpload={dryRun}
-                      showUploadList={false}
-                      accept=".csv"
-                    >
-                      <Button
-                        icon={<CloudUploadOutlined />}
-                        loading={actionLoading}
+                    access.canPrepare ? (
+                      <Upload
+                        beforeUpload={dryRun}
+                        showUploadList={false}
+                        accept=".csv"
                       >
-                        上传 CSV 做 Dry-run
-                      </Button>
-                    </Upload>
+                        <Button
+                          icon={<CloudUploadOutlined />}
+                          loading={actionLoading}
+                          disabled={planReadOnly}
+                        >
+                          上传 CSV 做 Dry-run
+                        </Button>
+                      </Upload>
+                    ) : null
                   }
                 >
                   <Paragraph type="secondary">
@@ -722,7 +931,13 @@ export default function TakeoverPage() {
                   <Table
                     size="small"
                     rowKey="id"
-                    pagination={false}
+                    pagination={{
+                      current: importPage,
+                      pageSize: TAKEOVER_PAGE_SIZE,
+                      total: importTotal,
+                      showSizeChanger: false,
+                      onChange: setImportPage,
+                    }}
                     dataSource={imports}
                     columns={[
                       {
@@ -757,10 +972,12 @@ export default function TakeoverPage() {
                         title: "操作",
                         key: "action",
                         render: (_, record) =>
+                          access.canPrepare &&
                           record.status === "dry_run" &&
                           record.counts.failed === 0 ? (
                             <Button
                               type="link"
+                              disabled={planReadOnly}
                               onClick={() => void submitImport(record)}
                             >
                               确认正式导入
@@ -774,12 +991,15 @@ export default function TakeoverPage() {
                 <Card
                   title="路由版本"
                   extra={
-                    <Button
-                      icon={<PlusOutlined />}
-                      onClick={() => setRouteOpen(true)}
-                    >
-                      创建候选版本
-                    </Button>
+                    access.canPrepare ? (
+                      <Button
+                        icon={<PlusOutlined />}
+                        disabled={planReadOnly}
+                        onClick={() => setRouteOpen(true)}
+                      >
+                        创建候选版本
+                      </Button>
+                    ) : null
                   }
                 >
                   {selected.mode === "legacy_redirect" && (
@@ -792,11 +1012,82 @@ export default function TakeoverPage() {
                   <Table
                     size="small"
                     rowKey="id"
-                    pagination={false}
+                    pagination={{
+                      current: routePage,
+                      pageSize: TAKEOVER_PAGE_SIZE,
+                      total: routeTotal,
+                      showSizeChanger: false,
+                      onChange: setRoutePage,
+                    }}
                     dataSource={routes}
                     columns={routeColumns}
                   />
                 </Card>
+                {access.canAudit && (
+                  <Card title="切换事件与服务端探测">
+                    <Table
+                      size="small"
+                      rowKey="id"
+                      pagination={{
+                        current: auditPage,
+                        pageSize: TAKEOVER_PAGE_SIZE,
+                        total: eventTotal,
+                        showSizeChanger: false,
+                        onChange: setAuditPage,
+                      }}
+                      dataSource={events}
+                      columns={[
+                        { title: "动作", dataIndex: "action", key: "action" },
+                        { title: "状态", dataIndex: "state", key: "state" },
+                        {
+                          title: "时间",
+                          dataIndex: "created_at",
+                          key: "created_at",
+                        },
+                      ]}
+                    />
+                    <Divider />
+                    <Table
+                      size="small"
+                      rowKey="id"
+                      pagination={{
+                        current: auditPage,
+                        pageSize: TAKEOVER_PAGE_SIZE,
+                        total: observationTotal,
+                        showSizeChanger: false,
+                        onChange: setAuditPage,
+                      }}
+                      dataSource={observations}
+                      columns={[
+                        {
+                          title: "阶段",
+                          dataIndex: "evidence_purpose",
+                          key: "purpose",
+                        },
+                        {
+                          title: "旧入口",
+                          dataIndex: "checked_url",
+                          key: "checked_url",
+                        },
+                        {
+                          title: "结果",
+                          key: "status",
+                          render: (_, record) => (
+                            <Tag
+                              color={
+                                record.target_match
+                                  ? STATUS_COLORS.success
+                                  : STATUS_COLORS.error
+                              }
+                            >
+                              {record.status}
+                            </Tag>
+                          ),
+                        },
+                      ]}
+                    />
+                  </Card>
+                )}
               </Space>
             )}
           </Col>
@@ -965,12 +1256,6 @@ export default function TakeoverPage() {
           >
             <Input placeholder="例如：legacy-change-20260801-001" />
           </Form.Item>
-          <Form.Item name="notes" label="执行说明">
-            <Input.TextArea
-              rows={3}
-              placeholder="记录由谁、何时、按哪个灰度范围执行"
-            />
-          </Form.Item>
         </Form>
       </Modal>
 
@@ -982,60 +1267,13 @@ export default function TakeoverPage() {
         onOk={() => void probeForm.submit()}
         okText="保存探测结果"
       >
-        <Form
-          form={probeForm}
-          layout="vertical"
-          onFinish={submitProbe}
-          initialValues={{
-            success_rate: 1,
-            error_rate: 0,
-            h5_reach_rate: 1,
-            target_match: false,
-          }}
-        >
+        <Form form={probeForm} layout="vertical" onFinish={submitProbe}>
           <Form.Item
             name="checked_url"
             label="实际探测 URL"
             rules={[{ required: true, type: "url" }]}
           >
             <Input placeholder="https://legacy.example.com/scan/OLD-001" />
-          </Form.Item>
-          <Row gutter={12}>
-            <Col span={8}>
-              <Form.Item
-                name="success_rate"
-                label="成功率"
-                rules={[{ required: true }]}
-              >
-                <Input type="number" min={0} max={1} step={0.01} />
-              </Form.Item>
-            </Col>
-            <Col span={8}>
-              <Form.Item
-                name="error_rate"
-                label="错误率"
-                rules={[{ required: true }]}
-              >
-                <Input type="number" min={0} max={1} step={0.01} />
-              </Form.Item>
-            </Col>
-            <Col span={8}>
-              <Form.Item
-                name="h5_reach_rate"
-                label="H5 到达率"
-                rules={[{ required: true }]}
-              >
-                <Input type="number" min={0} max={1} step={0.01} />
-              </Form.Item>
-            </Col>
-          </Row>
-          <Form.Item name="target_match" label="目标页面与预期一致">
-            <Select
-              options={[
-                { value: true, label: "是，已核对" },
-                { value: false, label: "否或尚未核对" },
-              ]}
-            />
           </Form.Item>
         </Form>
       </Modal>

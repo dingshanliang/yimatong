@@ -16,7 +16,7 @@ from sqlalchemy import select, update
 
 from app.core.config import settings
 from app.models.webhook import WebhookDelivery, WebhookEndpoint
-from app.services.takeover import TAKEOVER_IMPORT_QUEUE_KEY, process_import_job
+from app.services.takeover import poll_pending_takeover_imports
 from app.services.webhook_sender import deliver, should_retry
 
 logger = logging.getLogger(__name__)
@@ -309,16 +309,21 @@ async def worker_loop() -> None:
         try:
             async with aioredis.from_url(settings.redis_url) as r:
                 # BRPOP with 1s timeout
-                result = await r.brpop([REDIS_QUEUE_KEY, TAKEOVER_IMPORT_QUEUE_KEY], timeout=1)
+                result = await r.brpop([REDIS_QUEUE_KEY], timeout=1)
                 if result:
-                    queue_key, item_id = result
-                    if queue_key.decode() == TAKEOVER_IMPORT_QUEUE_KEY:
-                        await process_import_job(item_id.decode())
-                    else:
-                        await process_single_delivery(item_id.decode())
+                    _queue_key, item_id = result
+                    await process_single_delivery(item_id.decode())
         except Exception:
             logger.exception("Worker loop error, sleeping before retry")
             await asyncio.sleep(POLL_INTERVAL)
+
+        try:
+            await poll_pending_takeover_imports()
+        except Exception as exc:
+            logger.error(
+                "Takeover import poll aborted error_code=worker_poll_failure exception_type=%s",
+                type(exc).__name__,
+            )
 
         cleanup_counter += 1
         # 每 ~60 次循环（约 1 分钟）执行一次重试轮询
