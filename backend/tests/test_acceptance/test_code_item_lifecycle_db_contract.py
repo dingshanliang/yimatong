@@ -569,7 +569,7 @@ async def test_function_only_lifecycle_risk_replay_first_scan_and_roundtrip(migr
     try:
         assert not await owner.fetchval("SELECT has_table_privilege('yimatong_app','code_items','UPDATE')")
         for signature in (
-            "mark_code_item_first_scanned(uuid,text)",
+            "record_public_code_scan(uuid,text,uuid,text,text,text,text)",
             "transition_code_item_lifecycle(uuid,uuid,uuid,uuid,text,text)",
             "transition_code_batch_lifecycle(uuid,uuid,uuid,uuid,text,text)",
             "freeze_code_item_for_risk(uuid,uuid,uuid,uuid,uuid)",
@@ -579,6 +579,10 @@ async def test_function_only_lifecycle_risk_replay_first_scan_and_roundtrip(migr
                 signature,
             )
             assert not await owner.fetchval("SELECT has_function_privilege('public',$1,'EXECUTE')", signature)
+        assert not await owner.fetchval(
+            "SELECT has_function_privilege('yimatong_app',$1,'EXECUTE')",
+            "mark_code_item_first_scanned(uuid,text)",
+        )
 
         invalid_provenance = (
             (None, True, "actor", "reason", 1),
@@ -830,9 +834,10 @@ async def test_function_only_lifecycle_risk_replay_first_scan_and_roundtrip(migr
                 _runtime_call(
                     runtime,
                     ids["tenant"],
-                    "SELECT * FROM mark_code_item_first_scanned($1,$2)",
+                    "SELECT * FROM record_public_code_scan($1,$2,$3,NULL,'Mozilla/5.0','browser',NULL)",
                     ids["tenant"],
                     items[0]["public_id"],
+                    uuid.uuid4(),
                 ),
                 _first_scan_on_new_connection(runtime_dsn, ids["tenant"], items[1]["public_id"]),
             ),
@@ -1337,9 +1342,10 @@ async def _first_scan_on_new_connection(
         return await _runtime_call(
             conn,
             tenant_id,
-            "SELECT * FROM mark_code_item_first_scanned($1,$2)",
+            "SELECT * FROM record_public_code_scan($1,$2,$3,NULL,'Mozilla/5.0','browser',NULL)",
             tenant_id,
             public_id,
+            uuid.uuid4(),
         )
     finally:
         await conn.close()

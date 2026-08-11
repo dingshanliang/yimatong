@@ -565,6 +565,8 @@ def test_only_expected_business_mutations_use_function_scoped_get_db():
         ("POST", "/open/v1/skus", "function"),
         ("PATCH", "/open/v1/skus/{sku_id}", "function"),
         ("POST", "/open/v1/batches", "function"),
+        ("GET", "/c/{public_id}", "function"),
+        ("POST", "/api/v1/scan-events", "function"),
         ("POST", "/api/v1/takeovers", "function"),
         ("PATCH", "/api/v1/takeovers/{project_id}", "function"),
         ("POST", "/api/v1/takeovers/{project_id}/assess", "function"),

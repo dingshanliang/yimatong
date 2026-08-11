@@ -3,7 +3,7 @@
 import uuid
 from collections.abc import AsyncGenerator
 from datetime import date, timedelta
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -189,11 +189,29 @@ class TestScanTokenTenantId:
         assert payload["tenant_id"] == tid, f"tenant_id 应为 {tid}，实际 {payload.get('tenant_id')}"
 
 
+class TestVerificationAvailability:
+    @pytest.mark.anyio
+    async def test_scan_authority_failure_never_returns_a_repeat_scan_result(self, client: AsyncClient):
+        public_id, _, _ = await _create_code_chain(client, "UNAVAILABLE")
+
+        with patch("app.api.v1.resolver.record_scan_event", side_effect=RuntimeError("database unavailable")):
+            response = await client.get(f"/c/{public_id}", headers={"Accept": "application/json"})
+
+        assert response.status_code == 503
+        assert response.json() == {
+            "detail": "verification_unavailable",
+            "code_data": {"result": "unavailable"},
+        }
+        assert "scan_token" not in response.json()
+        assert "is_first_scan" not in response.text
+        assert "verification_count" not in response.text
+
+
 class TestClientIpExtraction:
     """验证 IP 提取逻辑"""
 
-    def test_x_real_ip_takes_priority(self):
-        """X-Real-IP 应优先于 X-Forwarded-For"""
+    def test_trusted_proxy_uses_first_untrusted_xff_hop(self):
+        """可信代理链从右向左剥离，忽略 X-Real-IP。"""
         from app.utils.client_ip import get_client_ip
 
         request = MagicMock()
@@ -201,10 +219,10 @@ class TestClientIpExtraction:
         request.client = MagicMock()
         request.client.host = "127.0.0.1"
 
-        assert get_client_ip(request) == "1.2.3.4"
+        assert get_client_ip(request) == "9.10.11.12"
 
     def test_xff_fallback(self):
-        """无 X-Real-IP 时回退到 XFF 首个"""
+        """只移除可信代理，返回最靠近服务端的首个不可信 hop。"""
         from app.utils.client_ip import get_client_ip
 
         request = MagicMock()
@@ -212,7 +230,27 @@ class TestClientIpExtraction:
         request.client = MagicMock()
         request.client.host = "127.0.0.1"
 
-        assert get_client_ip(request) == "5.6.7.8"
+        assert get_client_ip(request) == "9.10.11.12"
+
+    def test_untrusted_peer_cannot_spoof_forwarding_headers(self):
+        from app.utils.client_ip import get_client_ip
+
+        request = MagicMock()
+        request.headers = {"X-Forwarded-For": "1.2.3.4", "X-Real-IP": "5.6.7.8"}
+        request.client = MagicMock()
+        request.client.host = "198.51.100.8"
+
+        assert get_client_ip(request) == "198.51.100.8"
+
+    def test_invalid_forwarded_chain_fails_closed_to_peer(self):
+        from app.utils.client_ip import get_client_ip
+
+        request = MagicMock()
+        request.headers = {"X-Forwarded-For": "not-an-ip"}
+        request.client = MagicMock()
+        request.client.host = "127.0.0.1"
+
+        assert get_client_ip(request) == "127.0.0.1"
 
     def test_direct_connection_fallback(self):
         """无代理头时回退到直连 IP"""

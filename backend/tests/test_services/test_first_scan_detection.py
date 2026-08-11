@@ -22,12 +22,18 @@ class TestRecordScanEvent:
         first_scanned_at = datetime(2026, 8, 11, 4, 20, tzinfo=UTC)
         result = MagicMock()
         result.mappings.return_value.one.return_value = {
+            "scan_event_id": uuid.uuid4(),
             "code_item_id": uuid.uuid4(),
             "first_scan": True,
             "first_scanned_at": first_scanned_at,
+            "valid_visit": True,
         }
+        event = MagicMock()
+        event.is_first_scan = True
+        event.scan_time = first_scanned_at
         db = AsyncMock()
         db.execute = AsyncMock(return_value=result)
+        db.scalar = AsyncMock(return_value=event)
         db.add = MagicMock()
         db.flush = AsyncMock()
         db.refresh = AsyncMock()
@@ -39,9 +45,11 @@ class TestRecordScanEvent:
         ):
             event = await record_scan_event(db, tenant_id, "PGFIRSTSCAN01")
 
-        statement, parameters = db.execute.await_args.args
-        assert "public.mark_code_item_first_scanned" in str(statement)
-        assert parameters == {"tenant_id": tenant_id, "public_id": "PGFIRSTSCAN01"}
+        statement, parameters = db.execute.await_args_list[0].args
+        assert "public.record_public_code_scan" in str(statement)
+        assert parameters["tenant_id"] == tenant_id
+        assert parameters["public_id"] == "PGFIRSTSCAN01"
+        assert parameters["event_id"] is not None
         assert event.is_first_scan is True
         assert event.scan_time == first_scanned_at
 

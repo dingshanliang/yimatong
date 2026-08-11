@@ -21,7 +21,7 @@ def _request(token: str, client_ip: str = "198.51.100.42") -> Request:
         {
             "type": "http",
             "method": "POST",
-            "path": "/scan-events",
+            "path": "/api/v1/scan-events",
             "headers": [(b"authorization", f"Bearer {token}".encode())],
             "client": (client_ip, 443),
         }

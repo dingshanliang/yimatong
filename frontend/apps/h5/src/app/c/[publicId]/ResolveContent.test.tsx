@@ -157,4 +157,24 @@ describe("ResolveContent recalled production batch", () => {
     expect(markup).not.toContain("产品默认产地");
     expect(markup).toContain("未提供批次产地");
   });
+
+  it("renders verification unavailable without presenting a repeat-scan result", () => {
+    const markup = renderToStaticMarkup(
+      <ResolveContent
+        mode="json"
+        publicId="PUBLIC-UNAVAILABLE"
+        jsonPayload={{
+          detail: "verification_unavailable",
+          code_data: { result: "unavailable" },
+        }}
+        htmlContent={null}
+      />
+    );
+
+    expect(markup).toContain("暂时无法加载");
+    expect(markup).not.toContain("重复查验");
+    expect(useScanEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ enabled: false })
+    );
+  });
 });

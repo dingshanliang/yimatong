@@ -19,10 +19,12 @@ import asyncio
 import uuid
 from collections.abc import AsyncGenerator
 from datetime import datetime
+from unittest.mock import patch
 
 import pytest
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import text
+from sqlalchemy.exc import DBAPIError
 
 from app.core.database import get_db, get_db_with_bypass
 from app.main import app
@@ -43,6 +45,8 @@ async def client(migrated_pg_url: str) -> AsyncGenerator[AsyncClient, None]:
     rate_limiter._cache._mem_store.clear()  # type: ignore[attr-defined]
 
     engine = create_async_engine(migrated_pg_url)
+    control_engine = create_async_engine(migrated_pg_url)
+    control_factory = async_sessionmaker(control_engine, expire_on_commit=False)
 
     async def override_get_db():
         async with async_sessionmaker(engine, expire_on_commit=False)() as session:
@@ -58,10 +62,12 @@ async def client(migrated_pg_url: str) -> AsyncGenerator[AsyncClient, None]:
     app.dependency_overrides[get_db] = override_get_db
     app.dependency_overrides[get_db_with_bypass] = override_get_bypass
     transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as c:
-        yield c
+    with patch("app.core.database.control_session_factory", control_factory):
+        async with AsyncClient(transport=transport, base_url="http://test") as c:
+            yield c
     app.dependency_overrides.clear()
     await engine.dispose()
+    await control_engine.dispose()
 
 
 async def _reset_first_scan(bypass_session, tenant_id: str, public_id: str) -> None:
@@ -232,19 +238,19 @@ class TestRefreshDoesNotDoubleCountFirst:
         tenant_id = summary["baseline_tenant"]["id"]
         await _reset_first_scan(bypass_session, tenant_id, public_id)
 
-        # 显式固定 IP（X-Real-IP），确保 resolve 与 telemetry 的 ip_hash 一致，
+        # 显式固定 IP（X-Forwarded-For），确保 resolve 与 telemetry 的 ip_hash 一致，
         # 避免 ASGITransport 下 client.host 不稳导致 scan_token 校验失败。
-        # 生产 Nginx 同样通过 X-Real-IP 提供稳定 IP。
-        fixed_headers = {"X-Real-IP": "203.0.113.7", "Accept": "application/json"}
+        # 生产 Nginx 同样通过 X-Forwarded-For 提供稳定 IP。
+        fixed_headers = {"X-Forwarded-For": "203.0.113.7", "Accept": "application/json"}
 
         resolve_resp = await client.get(f"/c/{public_id}", headers=fixed_headers)
         token = resolve_resp.json()["scan_token"]
 
         # 模拟 H5 触发 telemetry（此前会插第 2 条）
         tele = await client.post(
-            "/scan-events",
+            "/api/v1/scan-events",
             json={"event_type": "view", "public_id": public_id, "client_event_id": "first-verification-view"},
-            headers={"Authorization": f"Bearer {token}", "X-Real-IP": "203.0.113.7"},
+            headers={"Authorization": f"Bearer {token}", "X-Forwarded-For": "203.0.113.7"},
         )
         assert tele.status_code == 201, f"telemetry 应 201，实际 {tele.status_code}: {tele.text}"
         assert tele.json()["status"] == "ok"
@@ -281,7 +287,9 @@ class TestCrossTenantCannotReassignFirstScan:
 
         # baseline 自己首查一次（正常）
         async with factory() as db:
-            await db.execute(text("SET LOCAL app.bypass_rls = 'true'"))
+            await db.execute(
+                text("SELECT set_config('app.tenant_id', :tenant_id, true)"), {"tenant_id": baseline_tenant}
+            )
             baseline_event = await record_scan_event(db, uuid.UUID(baseline_tenant), public_id=baseline_public_id)
             await db.commit()
         assert baseline_event.is_first_scan is True
@@ -300,11 +308,13 @@ class TestCrossTenantCannotReassignFirstScan:
         # control tenant 试图用 baseline 的 public_id + 自己的 tenant_id 调用
         # （模拟异常/恶意请求：public_id 在 baseline 租户下，但调用方声明属于 control）
         async with factory() as db:
-            control_event = await record_scan_event(db, uuid.UUID(control_tenant), public_id=baseline_public_id)
-            await db.commit()
-        # control 视角：没有匹配的 CodeItem（public_id 全局唯一但属于 baseline），
-        # is_first_scan 走 fallback 路径；关键是 baseline 的 first_scanned_at 不变。
-        assert control_event.tenant_id == uuid.UUID(control_tenant)
+            await db.execute(
+                text("SELECT set_config('app.tenant_id', :tenant_id, true)"), {"tenant_id": control_tenant}
+            )
+            with pytest.raises(DBAPIError) as raised:
+                await record_scan_event(db, uuid.UUID(control_tenant), public_id=baseline_public_id)
+            assert getattr(getattr(raised.value, "orig", None), "sqlstate", None) == "23503"
+            await db.rollback()
 
         # 验证 baseline 的 first_scanned_at 未被 control 调用污染
         async with factory() as db:
@@ -342,8 +352,15 @@ class TestConcurrentFirstVerificationSingleWinner:
 
         async def _one_scan():
             async with factory() as db:
+                await db.execute(
+                    text("SELECT set_config('app.tenant_id', :tenant_id, true)"),
+                    {"tenant_id": tenant_id},
+                )
                 await record_scan_event(
-                    db, uuid.UUID(tenant_id), public_id=public_id, ip_hash=f"ip-{uuid.uuid4().hex[:8]}"
+                    db,
+                    uuid.UUID(tenant_id),
+                    public_id=public_id,
+                    ip_hash=uuid.uuid4().hex * 2,
                 )
                 await db.commit()
 

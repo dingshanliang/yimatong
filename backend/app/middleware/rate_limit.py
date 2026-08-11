@@ -1,7 +1,10 @@
-"""限流策略实现（Redis 优先，内存降级）"""
+"""限流策略实现；公开解析使用共享 Redis fail-closed admission。"""
 
+import hashlib
+import hmac
 from dataclasses import dataclass
 
+from app.core.config import settings
 from app.services.redis_cache import AsyncRedisCache
 
 
@@ -12,7 +15,7 @@ class RateLimitResult:
 
 
 class RateLimiter:
-    """码解析限流器（统一使用 AsyncRedisCache，自带 Redis + 内存降级）"""
+    """Public resolver admission backed by the shared atomic Redis boundary."""
 
     def __init__(
         self,
@@ -26,11 +29,14 @@ class RateLimiter:
         self._cache = AsyncRedisCache(prefix="rate_limit", default_ttl=window_seconds)
 
     async def check_resolver(self, ip: str, public_id: str) -> RateLimitResult:
-        ip_key = f"resolver:ip:{ip}"
-        code_key = f"resolver:code:{public_id}"
+        key = (settings.hmac_pepper or settings.secret_key).encode()
+        ip_digest = hmac.new(key, ip.encode(), hashlib.sha256).hexdigest()
+        code_digest = hmac.new(key, public_id.encode(), hashlib.sha256).hexdigest()
+        ip_key = f"resolver:ip:{ip_digest}"
+        code_key = f"resolver:code:{code_digest}"
 
         # IP 级限流
-        ip_allowed, _ = await self._cache.rate_limit_check(ip_key, self.ip_limit, self.window_seconds)
+        ip_allowed, _ = await self._cache.rate_limit_check_shared(ip_key, self.ip_limit, self.window_seconds)
         if not ip_allowed:
             return RateLimitResult(
                 allowed=False,
@@ -38,7 +44,7 @@ class RateLimiter:
             )
 
         # 码级限流
-        code_allowed, _ = await self._cache.rate_limit_check(code_key, self.code_limit, self.window_seconds)
+        code_allowed, _ = await self._cache.rate_limit_check_shared(code_key, self.code_limit, self.window_seconds)
         if not code_allowed:
             return RateLimitResult(
                 allowed=False,

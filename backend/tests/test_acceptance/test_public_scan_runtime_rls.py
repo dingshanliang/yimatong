@@ -364,6 +364,50 @@ async def _owned_scan_fact_sentinel(
     return int(row[0]), int(row[1]), int(row[2]), int(row[3])
 
 
+async def _insert_owned_activated_item(
+    migrated_pg_url: str,
+    *,
+    item_id: uuid.UUID,
+    tenant_id: str,
+    code_batch_id: uuid.UUID,
+    public_id: str,
+) -> None:
+    owner = await asyncpg.connect(migrated_pg_url.replace("postgresql+asyncpg://", "postgresql://"))
+    try:
+        async with owner.transaction():
+            await owner.execute("ALTER TABLE code_items DISABLE TRIGGER USER")
+            await owner.execute(
+                "INSERT INTO code_items "
+                "(id,tenant_id,code_batch_id,public_id,status,code_type,activated_at) "
+                "VALUES($1,$2,$3,$4,'activated','single',now())",
+                item_id,
+                uuid.UUID(tenant_id),
+                code_batch_id,
+                public_id,
+            )
+            await owner.execute("ALTER TABLE code_items ENABLE TRIGGER USER")
+    finally:
+        await owner.close()
+
+
+async def _delete_owned_code_item(migrated_pg_url: str, tenant_id: str, item_id: uuid.UUID) -> None:
+    owner = await asyncpg.connect(migrated_pg_url.replace("postgresql+asyncpg://", "postgresql://"))
+    try:
+        async with owner.transaction():
+            await owner.execute("ALTER TABLE code_items DISABLE TRIGGER USER")
+            assert (
+                await owner.execute(
+                    "DELETE FROM code_items WHERE tenant_id=$1 AND id=$2",
+                    uuid.UUID(tenant_id),
+                    item_id,
+                )
+                == "DELETE 1"
+            )
+            await owner.execute("ALTER TABLE code_items ENABLE TRIGGER USER")
+    finally:
+        await owner.close()
+
+
 class TestPublicScanRuntimeRLS:
     @pytest.mark.parametrize("_repeat", (0, 1), ids=("first-pass", "same-db-repeat"))
     async def test_public_benefit_claim_uses_scan_token_tenant_rls(
@@ -421,7 +465,7 @@ class TestPublicScanRuntimeRLS:
             success = await runtime_client.post(
                 "/api/v1/benefit-claims",
                 json={"benefit_id": str(benefit_id), "scan_token": scan_token(for_tenant=str(tenant_id))},
-                headers={"X-Real-IP": fixed_ip},
+                headers={"X-Forwarded-For": fixed_ip},
             )
             assert success.status_code == 201, success.text
             assert success.json() == {"status": "claimed", "benefit_id": str(benefit_id)}
@@ -449,7 +493,7 @@ class TestPublicScanRuntimeRLS:
                     "benefit_id": str(benefit_id),
                     "scan_token": scan_token(for_tenant=str(tenant_id), expires_in=-1),
                 },
-                headers={"X-Real-IP": fixed_ip},
+                headers={"X-Forwarded-For": fixed_ip},
             )
             assert expired.status_code == 401
 
@@ -459,7 +503,7 @@ class TestPublicScanRuntimeRLS:
             forged = await runtime_client.post(
                 "/api/v1/benefit-claims",
                 json={"benefit_id": str(benefit_id), "scan_token": ".".join(parts)},
-                headers={"X-Real-IP": fixed_ip},
+                headers={"X-Forwarded-For": fixed_ip},
             )
             assert forged.status_code == 401
 
@@ -469,7 +513,7 @@ class TestPublicScanRuntimeRLS:
                     "benefit_id": str(benefit_id),
                     "scan_token": scan_token(for_tenant=str(control_tenant_id)),
                 },
-                headers={"X-Real-IP": fixed_ip},
+                headers={"X-Forwarded-For": fixed_ip},
             )
             assert cross_tenant.status_code == 404
             await bypass_session.execute(text("SET LOCAL app.bypass_rls = 'true'"))
@@ -561,14 +605,18 @@ class TestPublicScanRuntimeRLS:
             {"tenant_id": tenant_id, "public_id": source_public_id},
         )
         assert code_batch_id is not None
-        await bypass_session.execute(
-            text(
-                "INSERT INTO code_items "
-                "(id, tenant_id, code_batch_id, public_id, status, code_type, activated_at) "
-                "VALUES (:id, :tenant_id, :code_batch_id, :public_id, 'activated', 'single', now())"
-            ),
-            {"id": code_item_id, "tenant_id": tenant_id, "code_batch_id": code_batch_id, "public_id": public_id},
+        await bypass_session.commit()
+        # This node owns only the public resolver/RLS boundary. Build one extra
+        # activated item in the already-authoritative baseline batch without
+        # pretending it traversed the delivery lifecycle (covered separately).
+        await _insert_owned_activated_item(
+            migrated_pg_url,
+            item_id=code_item_id,
+            tenant_id=tenant_id,
+            code_batch_id=code_batch_id,
+            public_id=public_id,
         )
+        await bypass_session.execute(text("SET LOCAL app.bypass_rls = 'true'"))
         await bypass_session.execute(
             text(
                 "INSERT INTO anonymous_visitors (id, tenant_id, visitor_id, first_environment) "
@@ -592,7 +640,7 @@ class TestPublicScanRuntimeRLS:
                 headers={
                     "Accept": "application/json",
                     "User-Agent": "Mozilla/5.0",
-                    "X-Real-IP": fixed_ip,
+                    "X-Forwarded-For": fixed_ip,
                     "X-Visitor-ID": visitor_id,
                 },
             )
@@ -603,12 +651,12 @@ class TestPublicScanRuntimeRLS:
             scan_token = payload["scan_token"]
 
             telemetry = await runtime_client.post(
-                "/scan-events",
+                "/api/v1/scan-events",
                 json={"event_type": "view", "public_id": public_id, "client_event_id": primary_event_id},
                 headers={
                     "Authorization": f"Bearer {scan_token}",
                     "X-Visitor-ID": visitor_id,
-                    "X-Real-IP": fixed_ip,
+                    "X-Forwarded-For": fixed_ip,
                 },
             )
             assert telemetry.status_code == 201, telemetry.text
@@ -616,12 +664,12 @@ class TestPublicScanRuntimeRLS:
 
             async def post_duplicate():
                 return await runtime_client.post(
-                    "/scan-events",
+                    "/api/v1/scan-events",
                     json={"event_type": "view", "public_id": public_id, "client_event_id": concurrent_event_id},
                     headers={
                         "Authorization": f"Bearer {scan_token}",
                         "X-Visitor-ID": visitor_id,
-                        "X-Real-IP": fixed_ip,
+                        "X-Forwarded-For": fixed_ip,
                     },
                 )
 
@@ -630,9 +678,9 @@ class TestPublicScanRuntimeRLS:
             assert sorted(response.json()["deduplicated"] for response in duplicate_responses) == [False, True]
 
             cross_tenant = await runtime_client.post(
-                "/scan-events",
+                "/api/v1/scan-events",
                 json={"event_type": "view", "public_id": control_public_id, "client_event_id": cross_event_id},
-                headers={"Authorization": f"Bearer {scan_token}", "X-Real-IP": fixed_ip},
+                headers={"Authorization": f"Bearer {scan_token}", "X-Forwarded-For": fixed_ip},
             )
             assert cross_tenant.status_code == 201
             assert cross_tenant.json() == {"status": "ignored", "reason": "invalid_token"}
@@ -640,9 +688,9 @@ class TestPublicScanRuntimeRLS:
             token_parts = scan_token.split(".")
             token_parts[2] = f"{'a' if token_parts[2][0] != 'a' else 'b'}{token_parts[2][1:]}"
             forged = await runtime_client.post(
-                "/scan-events",
+                "/api/v1/scan-events",
                 json={"event_type": "view", "public_id": public_id, "client_event_id": forged_event_id},
-                headers={"Authorization": f"Bearer {'.'.join(token_parts)}", "X-Real-IP": fixed_ip},
+                headers={"Authorization": f"Bearer {'.'.join(token_parts)}", "X-Forwarded-For": fixed_ip},
             )
             assert forged.status_code == 201
             assert forged.json() == {"status": "ignored", "reason": "invalid_token"}
@@ -690,11 +738,9 @@ class TestPublicScanRuntimeRLS:
                 {"tenant_id": tenant_id, "visitor_pk": visitor_pk, "visitor_id": visitor_id},
             )
             assert deleted_visitor.rowcount == 1
-            deleted_code = await bypass_session.execute(
-                text("DELETE FROM code_items WHERE tenant_id=:tenant_id AND id=:code_item_id"),
-                {"tenant_id": tenant_id, "code_item_id": code_item_id},
-            )
-            assert deleted_code.rowcount == 1
+            await bypass_session.commit()
+            await _delete_owned_code_item(migrated_pg_url, tenant_id, code_item_id)
+            await bypass_session.execute(text("SET LOCAL app.bypass_rls = 'true'"))
             assert (
                 await _owned_scan_fact_sentinel(
                     bypass_session,
@@ -753,19 +799,15 @@ class TestPublicScanRuntimeRLS:
             {"tenant_id": tenant_id, "public_id": source_public_id},
         )
         assert code_batch_id is not None
-        await bypass_session.execute(
-            text(
-                "INSERT INTO code_items "
-                "(id, tenant_id, code_batch_id, public_id, status, code_type, activated_at) "
-                "VALUES (:id, :tenant_id, :code_batch_id, :public_id, 'activated', 'single', now())"
-            ),
-            {
-                "id": code_item_id,
-                "tenant_id": tenant_id,
-                "code_batch_id": code_batch_id,
-                "public_id": public_id,
-            },
+        await bypass_session.commit()
+        await _insert_owned_activated_item(
+            migrated_pg_url,
+            item_id=code_item_id,
+            tenant_id=tenant_id,
+            code_batch_id=code_batch_id,
+            public_id=public_id,
         )
+        await bypass_session.execute(text("SET LOCAL app.bypass_rls = 'true'"))
         await bypass_session.execute(
             text(
                 "INSERT INTO anonymous_visitors (id, tenant_id, visitor_id, first_environment) "
@@ -881,11 +923,9 @@ class TestPublicScanRuntimeRLS:
                 {"tenant_id": tenant_id, "visitor_pk": visitor_pk, "visitor_id": visitor_id},
             )
             assert deleted_visitor.rowcount == 1
-            deleted_code = await bypass_session.execute(
-                text("DELETE FROM code_items WHERE tenant_id=:tenant_id AND id=:code_item_id"),
-                {"tenant_id": tenant_id, "code_item_id": code_item_id},
-            )
-            assert deleted_code.rowcount == 1
+            await bypass_session.commit()
+            await _delete_owned_code_item(migrated_pg_url, tenant_id, code_item_id)
+            await bypass_session.execute(text("SET LOCAL app.bypass_rls = 'true'"))
             assert (
                 await _owned_scan_fact_sentinel(
                     bypass_session,

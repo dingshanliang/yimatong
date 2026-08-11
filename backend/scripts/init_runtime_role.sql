@@ -164,7 +164,15 @@ BEGIN
     END IF;
     IF to_regprocedure('public.mark_code_item_first_scanned(uuid,text)') IS NOT NULL THEN
         REVOKE ALL ON FUNCTION public.mark_code_item_first_scanned(uuid, text) FROM PUBLIC;
-        GRANT EXECUTE ON FUNCTION public.mark_code_item_first_scanned(uuid, text) TO yimatong_app;
+        REVOKE EXECUTE ON FUNCTION public.mark_code_item_first_scanned(uuid, text) FROM yimatong_app;
+    END IF;
+    IF to_regprocedure('public.record_public_code_scan(uuid,text,uuid,text,text,text,text)') IS NOT NULL THEN
+        REVOKE ALL ON FUNCTION public.record_public_code_scan(
+            uuid, text, uuid, text, text, text, text
+        ) FROM PUBLIC;
+        GRANT EXECUTE ON FUNCTION public.record_public_code_scan(
+            uuid, text, uuid, text, text, text, text
+        ) TO yimatong_app;
     END IF;
     IF to_regprocedure('public.authorize_code_lifecycle_actor(uuid,uuid)') IS NOT NULL THEN
         REVOKE ALL ON FUNCTION public.authorize_code_lifecycle_actor(uuid, uuid) FROM PUBLIC;
@@ -622,6 +630,11 @@ $$;
 -- Code items remain runtime-insertable for authoritative generation and
 -- tenant-readable for scan resolution, but lifecycle mutation is function-only.
 REVOKE UPDATE ON TABLE public.code_items FROM yimatong_app;
+
+-- Public scan history is append-only and can only be created together with
+-- first-scan authority through record_public_code_scan().
+REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER
+    ON TABLE public.scan_events FROM yimatong_app;
 
 -- Takeover delivery evidence and state transitions are function-controlled.
 -- Runtime may insert immutable route candidates, staged aliases, and import

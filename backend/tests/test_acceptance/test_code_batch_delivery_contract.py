@@ -333,6 +333,7 @@ async def _purge_owned_delivery_fixture(conn: asyncpg.Connection, tenant_id: uui
     """Remove this test's durable delivery rows without weakening production ACL."""
 
     tables = (
+        "scan_events",
         "code_items",
         "code_batches",
         "code_batch_generation_receipts",
@@ -343,6 +344,7 @@ async def _purge_owned_delivery_fixture(conn: asyncpg.Connection, tenant_id: uui
             for table in tables:
                 await conn.execute(f"ALTER TABLE public.{table} DISABLE TRIGGER USER")
             await conn.execute("DELETE FROM code_allocations WHERE tenant_id=$1", tenant_id)
+            await conn.execute("DELETE FROM scan_events WHERE tenant_id=$1", tenant_id)
             await conn.execute("DELETE FROM code_items WHERE tenant_id=$1", tenant_id)
             await conn.execute("UPDATE code_batches SET export_manifest_id=NULL WHERE tenant_id=$1", tenant_id)
             await conn.execute("DELETE FROM code_batch_generation_receipts WHERE tenant_id=$1", tenant_id)

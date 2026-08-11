@@ -94,7 +94,8 @@ export function ResolveContent({
     publicId,
     scanToken,
     pageVersionId: undefined,
-    enabled: !benefitsBlocked,
+    enabled:
+      Boolean(jsonPayload) && !benefitsBlocked && resultCode !== "unavailable",
   });
 
   if (mode === "html") {
@@ -108,6 +109,7 @@ export function ResolveContent({
   }
 
   if (!jsonPayload) return <FallbackError />;
+  if (resultCode === "unavailable") return <FallbackError />;
 
   // yimatong-zgb1.6 AC3：frozen 码保留溯源（不再跳错误页），只在顶部显示审核中提示。
   // voided（revoked/expired）仍跳错误页（终止性，不返回溯源）。

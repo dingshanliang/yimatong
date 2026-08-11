@@ -25,6 +25,7 @@ from app.services.page_templates import (
 )
 from app.services.public_id import validate_public_id
 from app.services.quota import QuotaExceededError
+from app.services.redis_cache import SharedSecurityCacheUnavailable
 from app.services.resolve_cache import resolve_cache
 from app.services.resolver import resolve_public_code
 from app.services.resolver_response import build_json_response
@@ -35,6 +36,11 @@ from app.utils.client_ip import compute_ip_hash, get_client_ip
 logger = logging.getLogger(__name__)
 
 resolver_router = APIRouter(tags=["resolver"])
+
+
+class ScanVerificationUnavailableError(RuntimeError):
+    """The authoritative scan fact could not be committed or read back."""
+
 
 # 终止性状态：不颁发 scan_token、不记录扫码、不返回溯源资料。
 # yimatong-zgb1.6：frozen 从此集合移除——frozen 保留溯源（AC3），只暂停权益。
@@ -52,14 +58,17 @@ _TERMINAL_STATUSES = frozenset(
 async def resolve_code_endpoint(
     public_id: str,
     request: Request,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ):
     accept = request.headers.get("accept", "")
     want_json = "application/json" in accept
 
     # 1. 限流 + 格式校验
     client_ip = get_client_ip(request)
-    rate_result = await rate_limiter.check_resolver(client_ip, public_id)
+    try:
+        rate_result = await rate_limiter.check_resolver(client_ip, public_id)
+    except SharedSecurityCacheUnavailable:
+        return _verification_unavailable(want_json)
     if not rate_result.allowed:
         return JSONResponse(
             status_code=429,
@@ -130,7 +139,9 @@ async def resolve_code_endpoint(
     # yimatong-zgb1.10 Decision 20：有效访问判断（4 条规则）
     is_robot = _is_robot_traffic(user_agent, request)
     is_valid_visit = (
-        status in (CodeItemStatus.activated, CodeItemStatus.frozen) and not production_batch_blocked and not is_robot
+        status in (CodeItemStatus.activated, CodeItemStatus.bound, CodeItemStatus.frozen)
+        and not production_batch_blocked
+        and not is_robot
     )
     # frozen 仍记录扫码事实（消费者查看了溯源），但不颁发 scan_token
     try:
@@ -146,6 +157,9 @@ async def resolve_code_endpoint(
         )
     except QuotaExceededError:
         return _quota_exceeded(want_json)
+    except ScanVerificationUnavailableError:
+        await db.rollback()
+        return _verification_unavailable(want_json)
     # 把签发的 visitor_id 放进 scan_info，H5 存 localStorage
     scan_info["visitor_id"] = visitor_id
 
@@ -259,6 +273,18 @@ def _quota_exceeded(want_json: bool):
     )
 
 
+def _verification_unavailable(want_json: bool):
+    if not want_json:
+        return _browser_service_unavailable("当前查验结果暂不可用。", 503)
+    return JSONResponse(
+        status_code=503,
+        content={
+            "detail": "verification_unavailable",
+            "code_data": {"result": "unavailable"},
+        },
+    )
+
+
 # 终止状态映射：(HTTP 状态码, HTML 模板)
 _ERROR_MAP: dict[str, tuple[int, str]] = {
     CodeItemStatus.revoked: (410, REVOKED_PAGE),
@@ -292,21 +318,17 @@ def _error_status(status: str, public_id: str, want_json: bool):
     return HTMLResponse(content=html_page, status_code=http_code)
 
 
-def _is_robot_traffic(user_agent: str, request: Request) -> bool:
+def _is_robot_traffic(user_agent: str, _request: Request) -> bool:
     """yimatong-zgb1.10 Decision 20：识别 robot/internal test 流量（不计入有效访问）。
 
     判断依据（保守，宁可漏判不可误判真实消费者）：
     - UA 含明显爬虫标识（bot/crawler/spider/curl/wget/python-requests）
-    - 请求头 X-Internal-Test 标记（内部测试流量）
     """
     if not user_agent:
         return False
     ua_lower = user_agent.lower()
     robot_markers = ("bot", "crawler", "spider", "curl", "wget", "python-requests", "scrapy")
     if any(marker in ua_lower for marker in robot_markers):
-        return True
-    # 内部测试标记头
-    if request.headers.get("X-Internal-Test"):
         return True
     return False
 
@@ -331,7 +353,7 @@ async def _record_scan(
       （由 record_scan_event 内部原子 UPDATE 维护，rowcount==1 即首查赢家）。
     - ``verification_time`` = 本次查验时间（ISO8601）。
 
-    失败不阻断主流程（与历史行为一致）：扫码解析即使记录失败仍可继续，只记日志。
+    失败必须阻断权威结果：不能把默认 0 次误报为重复查验。
     """
     scan_info: dict = {
         "is_first_scan": False,
@@ -343,10 +365,10 @@ async def _record_scan(
         # 但契约字段名更清晰——消费者侧"最近一次查验"语义）。
         "last_scan_time": None,
     }
-    if status != CodeItemStatus.activated:
-        # yimatong-zgb1.6：frozen 码仍记录查验事实（消费者查看了溯源），其他非 activated 状态不记录。
-        if status != CodeItemStatus.frozen:
-            return scan_info
+    # bound 是兼容状态，统一生命周期与 activated 一样归为 active；frozen
+    # 仍记录查验事实（消费者查看了溯源），只暂停权益。
+    if status not in (CodeItemStatus.activated, CodeItemStatus.bound, CodeItemStatus.frozen):
+        return scan_info
 
     tenant_id = uuid.UUID(data["tenant_id"])
     try:
@@ -384,8 +406,9 @@ async def _record_scan(
         scan_info["last_scan_time"] = event.scan_time.isoformat()
     except QuotaExceededError:
         raise
-    except Exception:
-        logger.exception("Failed to record scan event for public_id=%s", public_id)
+    except Exception as exc:
+        logger.warning("Authoritative scan recording failed: %s", type(exc).__name__)
+        raise ScanVerificationUnavailableError from exc
     return scan_info
 
 

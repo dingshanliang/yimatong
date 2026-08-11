@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 from collections.abc import AsyncGenerator
+from unittest.mock import patch
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -31,6 +32,8 @@ async def client(migrated_pg_url: str) -> AsyncGenerator[AsyncClient, None]:
     rate_limiter._cache._mem_store.clear()  # type: ignore[attr-defined]
 
     engine = create_async_engine(migrated_pg_url)
+    control_engine = create_async_engine(migrated_pg_url)
+    control_factory = async_sessionmaker(control_engine, expire_on_commit=False)
 
     async def override_get_db():
         async with async_sessionmaker(engine, expire_on_commit=False)() as session:
@@ -46,10 +49,12 @@ async def client(migrated_pg_url: str) -> AsyncGenerator[AsyncClient, None]:
     app.dependency_overrides[get_db] = override_get_db
     app.dependency_overrides[get_db_with_bypass] = override_get_bypass
     transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as c:
-        yield c
+    with patch("app.core.database.control_session_factory", control_factory):
+        async with AsyncClient(transport=transport, base_url="http://test") as c:
+            yield c
     app.dependency_overrides.clear()
     await engine.dispose()
+    await control_engine.dispose()
 
 
 async def _reset_code(bypass_session, tenant_id: str, public_id: str) -> None:
@@ -151,7 +156,7 @@ class TestValidVisitFiltering:
         # 改为 revoked
         await bypass_session.execute(text("SET LOCAL app.bypass_rls = 'true'"))
         await bypass_session.execute(
-            text("UPDATE code_items SET status='revoked' WHERE tenant_id=:t AND public_id=:p"),
+            text("UPDATE code_items SET status='revoked',revoked_at=now() WHERE tenant_id=:t AND public_id=:p"),
             {"t": tenant_id, "p": public_id},
         )
         await bypass_session.commit()
@@ -286,7 +291,7 @@ class TestSeparateEventRecording:
         fixed_headers = {
             "Accept": "application/json",
             "User-Agent": "Mozilla/5.0",
-            "X-Real-IP": fixed_ip,
+            "X-Forwarded-For": fixed_ip,
         }
 
         # 1. 查验（resolve）
@@ -296,7 +301,7 @@ class TestSeparateEventRecording:
 
         # 2. 意图事件（page_view）
         intent_resp = await client.post(
-            "/scan-events",
+            "/api/v1/scan-events",
             json={
                 "event_type": "view",
                 "public_id": public_id,
@@ -305,7 +310,7 @@ class TestSeparateEventRecording:
             headers={
                 "Authorization": f"Bearer {scan_token}",
                 "X-Visitor-ID": visitor_id,
-                "X-Real-IP": fixed_ip,
+                "X-Forwarded-For": fixed_ip,
             },
         )
         assert intent_resp.status_code == 201, f"intent 上报失败: {intent_resp.text}"
@@ -351,7 +356,7 @@ class TestEventEvidenceAndIdempotency:
             headers={
                 "Accept": "application/json",
                 "User-Agent": "Mozilla/5.0",
-                "X-Real-IP": fixed_ip,
+                "X-Forwarded-For": fixed_ip,
             },
         )
         scan_token = r.json()["scan_token"]
@@ -359,7 +364,7 @@ class TestEventEvidenceAndIdempotency:
 
         # 上报意图事件
         intent_resp = await client.post(
-            "/scan-events",
+            "/api/v1/scan-events",
             json={
                 "event_type": "view",
                 "public_id": public_id,
@@ -369,7 +374,7 @@ class TestEventEvidenceAndIdempotency:
             headers={
                 "Authorization": f"Bearer {scan_token}",
                 "X-Visitor-ID": visitor_id,
-                "X-Real-IP": fixed_ip,
+                "X-Forwarded-For": fixed_ip,
             },
         )
         assert intent_resp.status_code == 201, f"intent 上报失败: {intent_resp.text}"
@@ -410,7 +415,7 @@ class TestEventEvidenceAndIdempotency:
             headers={
                 "Accept": "application/json",
                 "User-Agent": "Mozilla/5.0",
-                "X-Real-IP": fixed_ip,
+                "X-Forwarded-For": fixed_ip,
             },
         )
         scan_token = r.json()["scan_token"]
@@ -419,12 +424,12 @@ class TestEventEvidenceAndIdempotency:
         headers = {
             "Authorization": f"Bearer {scan_token}",
             "X-Visitor-ID": visitor_id,
-            "X-Real-IP": fixed_ip,
+            "X-Forwarded-For": fixed_ip,
         }
         # 同一 client_event_id 上报两次
         for _ in range(2):
             await client.post(
-                "/scan-events",
+                "/api/v1/scan-events",
                 json={
                     "event_type": "view",
                     "public_id": public_id,

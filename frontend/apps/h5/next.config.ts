@@ -45,17 +45,6 @@ const nextConfig: NextConfig = {
   async headers() {
     return [{ source: "/(.*)", headers: securityHeaders }];
   },
-  async rewrites() {
-    const backendUrl = process.env.BACKEND_URL || "http://localhost:8000";
-    return [
-      {
-        source: "/api/v1/:path*",
-        destination: `${backendUrl}/api/v1/:path*`,
-      },
-      // /c/:publicId 由 Next.js page.tsx SSR 处理
-      // page.tsx 内部通过 API_BASE 直接 fetch 后端获取数据并渲染 React 组件
-    ];
-  },
 };
 
 export default withBundleAnalyzer({ enabled: process.env.ANALYZE === "true" })(

@@ -70,11 +70,11 @@ async def _check_shared_rate_limit(key: str, max_events: int) -> JSONResponse | 
     )
 
 
-@scan_event_router.post("/scan-events", status_code=201)
+@scan_event_router.post("/api/v1/scan-events", status_code=201)
 async def report_scan_event(
     request: Request,
     body: ScanEventRequest,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ):
     """H5 前端 view/click 行为埋点端点。
 
@@ -88,17 +88,16 @@ async def report_scan_event(
         return {"status": "ignored", "reason": "missing_token"}
     token = auth_header[7:]
 
-    # request.client is the trusted peer after the ASGI server's trusted-proxy
-    # processing. Caller-controlled forwarding headers are not rate-limit keys.
-    trusted_client_ip = request.client.host if request.client else "unknown"
+    # Resolver token binding and telemetry admission must use the same trusted
+    # proxy boundary. Untrusted forwarding headers are ignored by get_client_ip.
+    client_ip = get_client_ip(request)
     limited = await _check_shared_rate_limit(
-        f"ip:{_keyed_rate_digest(trusted_client_ip)}",
+        f"ip:{_keyed_rate_digest(client_ip)}",
         _IP_MAX_EVENTS,
     )
     if limited is not None:
         return limited
 
-    client_ip = get_client_ip(request)
     ip_hash = compute_ip_hash(client_ip)
     user_agent = request.headers.get("user-agent")
 

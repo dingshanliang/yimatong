@@ -181,7 +181,7 @@ async def test_expiry_commit_blocks_lead_exchange_and_benefit_delivery(
             lambda: runtime_client.post(
                 "/api/v1/consumers/lead-capture",
                 json={"public_id": public_id, "name": "不得写入", "phone": phone},
-                headers={"Authorization": f"Bearer {lead_token}", "X-Real-IP": fixed_ip},
+                headers={"Authorization": f"Bearer {lead_token}", "X-Forwarded-For": fixed_ip},
             ),
         )
         async with owner_factory() as db:
@@ -205,7 +205,7 @@ async def test_expiry_commit_blocks_lead_exchange_and_benefit_delivery(
             lambda: runtime_client.post(
                 "/api/v1/consumers/points/exchanges",
                 json={"consumer_id": str(consumer_id), "product_id": str(point_product_id)},
-                headers={"Authorization": f"Bearer {exchange_token}", "X-Real-IP": fixed_ip},
+                headers={"Authorization": f"Bearer {exchange_token}", "X-Forwarded-For": fixed_ip},
             ),
         )
         async with owner_factory() as db:
@@ -235,7 +235,7 @@ async def test_expiry_commit_blocks_lead_exchange_and_benefit_delivery(
             lambda: runtime_client.post(
                 "/api/v1/benefit-claims",
                 json={"benefit_id": str(benefit_id), "scan_token": claim_token},
-                headers={"X-Real-IP": fixed_ip},
+                headers={"X-Forwarded-For": fixed_ip},
             ),
         )
         async with owner_factory() as db:
@@ -263,7 +263,7 @@ async def test_expiry_commit_blocks_lead_exchange_and_benefit_delivery(
 
         withdrawal = await runtime_client.post(
             f"/api/v1/public/consents/{consent_id}/withdraw",
-            headers={"Authorization": f"Bearer {exchange_token}", "X-Real-IP": fixed_ip},
+            headers={"Authorization": f"Bearer {exchange_token}", "X-Forwarded-For": fixed_ip},
         )
         assert withdrawal.status_code == 200, withdrawal.text
         assert withdrawal.json()["status"] == "withdrawn"
@@ -359,7 +359,7 @@ async def test_expiry_commit_blocks_scan_contact_and_external_preparation(
             tenant_id,
             lambda: runtime_client.get(
                 f"/c/{public_id}",
-                headers={"Accept": "application/json", "X-Real-IP": fixed_ip},
+                headers={"Accept": "application/json", "X-Forwarded-For": fixed_ip},
             ),
         )
         async with owner_factory() as db:
@@ -383,9 +383,9 @@ async def test_expiry_commit_blocks_scan_contact_and_external_preparation(
             owner_factory,
             tenant_id,
             lambda: runtime_client.post(
-                "/scan-events",
+                "/api/v1/scan-events",
                 json={"event_type": "view", "public_id": public_id, "client_event_id": intent_id},
-                headers={"Authorization": f"Bearer {token}", "X-Real-IP": fixed_ip},
+                headers={"Authorization": f"Bearer {token}", "X-Forwarded-For": fixed_ip},
             ),
         )
         async with owner_factory() as db:
@@ -418,7 +418,7 @@ async def test_expiry_commit_blocks_scan_contact_and_external_preparation(
             lambda: runtime_client.post(
                 "/api/v1/benefit-claims",
                 json={"benefit_id": str(benefit_id), "scan_token": token},
-                headers={"X-Real-IP": fixed_ip},
+                headers={"X-Forwarded-For": fixed_ip},
             ),
         )
         assert cash_preparations == 0
@@ -438,7 +438,7 @@ async def test_expiry_commit_blocks_scan_contact_and_external_preparation(
             lambda: runtime_client.post(
                 "/api/v1/benefit-claims",
                 json={"benefit_id": str(benefit_id), "scan_token": token},
-                headers={"X-Real-IP": fixed_ip},
+                headers={"X-Forwarded-For": fixed_ip},
             ),
         )
         assert wecom_preparations == 0
@@ -513,9 +513,9 @@ async def test_public_writer_first_holds_expiry_until_scan_intent_commit(
 
         request_task = asyncio.create_task(
             runtime_client.post(
-                "/scan-events",
+                "/api/v1/scan-events",
                 json={"event_type": "view", "public_id": public_id, "client_event_id": event_id},
-                headers={"Authorization": f"Bearer {token}", "X-Real-IP": fixed_ip},
+                headers={"Authorization": f"Bearer {token}", "X-Forwarded-For": fixed_ip},
             )
         )
         await asyncio.wait_for(effect_prepared.wait(), timeout=10)

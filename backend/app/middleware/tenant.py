@@ -48,9 +48,9 @@ class TenantScopeMiddleware(BaseHTTPMiddleware):
         # scan-events / public consents 使用 scan_token 自校验（与 /c/ 同语义），不走 admin JWT。
         # yimatong-zgb1.4：scan-events 之前未放行导致 H5 telemetry 真实场景必 401。
         # yimatong-zgb1.5：public/consents 同样用 scan_token 自校验，需放行（否则 grant/withdraw 必 401）。
-        # 注意：scan_event_router 注册时无 prefix，实际路径是 /scan-events（不是 /api/v1/scan-events）。
+        # scan_event_router uses the canonical API prefix and self-validates scan_token.
         # consents withdraw 路径含 {consent_id} 路径参数，用前缀匹配 is_public_consent。
-        scan_token_paths = {"/scan-events"}
+        scan_token_paths = {"/api/v1/scan-events"}
         # SSE 端点使用 query-param 认证，不走 middleware JWT
         query_auth_paths = {"/api/v1/risk-dashboard/alerts/stream"}
         if (

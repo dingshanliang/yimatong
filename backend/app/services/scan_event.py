@@ -7,6 +7,7 @@ from sqlalchemy import update as sa_update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.event_bus import event_bus
+from app.models.base import uuid7
 from app.models.code import CodeItem
 from app.models.scan import ScanEvent
 from app.services.quota import check_quota_incremental_locked
@@ -23,13 +24,7 @@ async def record_scan_event(
     visitor_id: str | None = None,
     is_valid_visit: bool = False,
 ) -> ScanEvent:
-    """记录扫码事件。优先使用 CodeItem.first_scanned_at 原子更新消除首扫竞态条件；
-    CodeItem 不存在时回退到查询方式。
-
-    yimatong-zgb1.4 跨租户防御：首查 UPDATE 的 WHERE 加 ``tenant_id`` 过滤，
-    防止 control tenant 用错 tenant_id 调用时污染 baseline 的 first_scanned_at
-    （public_id 全局 unique 已兜底，应用层显式过滤是 defense-in-depth）。
-    """
+    """记录扫码事件；PostgreSQL 由受控函数原子写首扫时间和权威事件。"""
     # 每一条成功落库的权威扫码事实（包括重复扫码）计一次 max_scans；
     # 无效码、终止状态和写入失败不会产生 ScanEvent，因此不计费。
     await check_quota_incremental_locked(db, tenant_id, "max_scans", ScanEvent)
@@ -37,21 +32,35 @@ async def record_scan_event(
     from app.core.database import _session_uses_postgresql
 
     if _session_uses_postgresql(db):
-        first_scan_row = (
+        event_id = uuid7()
+        scan_row = (
             (
                 await db.execute(
-                    text("SELECT * FROM public.mark_code_item_first_scanned(:tenant_id, :public_id)"),
-                    {"tenant_id": tenant_id, "public_id": public_id},
+                    text(
+                        "SELECT * FROM public.record_public_code_scan("
+                        ":tenant_id,:public_id,:event_id,:ip_hash,:user_agent,:environment,:visitor_id)"
+                    ),
+                    {
+                        "tenant_id": tenant_id,
+                        "public_id": public_id,
+                        "event_id": event_id,
+                        "ip_hash": ip_hash,
+                        "user_agent": user_agent[:500] if user_agent else None,
+                        "environment": environment or "browser",
+                        "visitor_id": visitor_id,
+                    },
                 )
             )
             .mappings()
             .one()
         )
-        is_first = bool(first_scan_row["first_scan"])
-        first_scanned_at = first_scan_row["first_scanned_at"]
+        is_first = bool(scan_row["first_scan"])
+        first_scanned_at = scan_row["first_scanned_at"]
         if first_scanned_at is None:
             raise RuntimeError("First-scan authority returned no timestamp")
-        scan_time = first_scanned_at if is_first else utcnow()
+        event = await db.scalar(select(ScanEvent).where(ScanEvent.tenant_id == tenant_id, ScanEvent.id == event_id))
+        if event is None:
+            raise RuntimeError("Scan authority returned no event")
     else:
         # SQLite test adapter mirrors the PostgreSQL authority with one
         # tenant-scoped conditional update.
@@ -78,23 +87,22 @@ async def record_scan_event(
             else:
                 # CodeItem 不存在（如测试环境直接调用），回退到查询方式
                 is_first = await _check_first_scan(db, public_id)
-        scan_time = utcnow()
-
-    event = ScanEvent(
-        tenant_id=tenant_id,
-        public_id=public_id,
-        scan_time=scan_time,
-        ip_hash=ip_hash,
-        user_agent=user_agent,
-        is_first_scan=is_first,
-        environment=environment,
-        # yimatong-zgb1.10：有效访问标记 + 匿名访客关联
-        is_valid_visit=is_valid_visit,
-        visitor_id=visitor_id,
-    )
-    db.add(event)
-    await db.flush()
-    await db.refresh(event)
+        event = ScanEvent(
+            tenant_id=tenant_id,
+            public_id=public_id,
+            scan_time=utcnow(),
+            ip_hash=ip_hash,
+            user_agent=user_agent,
+            is_first_scan=is_first,
+            environment=environment,
+            # SQLite test adapter receives the same application classification;
+            # PostgreSQL derives validity inside the restricted function.
+            is_valid_visit=is_valid_visit,
+            visitor_id=visitor_id,
+        )
+        db.add(event)
+        await db.flush()
+        await db.refresh(event)
 
     await event_bus.emit(
         "scan.created",

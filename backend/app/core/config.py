@@ -74,10 +74,13 @@ class Settings(BaseSettings):
     takeover_tls_port: int = 443
     takeover_tls_ca_file: str = ""
 
+    # Only direct peers in these networks may supply X-Forwarded-For.
+    trusted_proxy_cidrs: str = "127.0.0.1/32,::1/128"
+
     # CORS 配置（逗号分隔的前端域名）
     cors_origins: str = (
-        "http://localhost:3000,http://localhost:3001,http://localhost:3002,"
-        "http://127.0.0.1:3000,http://127.0.0.1:3001,http://127.0.0.1:3002"
+        "http://localhost:3000,http://localhost:3001,http://localhost:3002,http://localhost:3003,"
+        "http://127.0.0.1:3000,http://127.0.0.1:3001,http://127.0.0.1:3002,http://127.0.0.1:3003"
     )
 
     # 平台管理员凭据

@@ -1,14 +1,8 @@
-"""客户端 IP 提取工具（支持反向代理）
-
-优先级：X-Real-IP > X-Forwarded-For 首个 > request.client.host
-
-注意：生产环境需在 Nginx 配置 real_ip 模块：
-  set_real_ip_from 10.0.0.0/8;
-  real_ip_header X-Forwarded-For;
-"""
+"""客户端 IP 提取工具（仅信任显式配置的反向代理）。"""
 
 import hashlib
 import hmac
+import ipaddress
 import os
 
 from fastapi import Request
@@ -17,20 +11,35 @@ from app.core.config import settings
 
 
 def get_client_ip(request: Request) -> str:
-    """获取真实客户端 IP。
+    """Return the first untrusted hop behind an explicitly trusted proxy.
 
-    优先使用 Nginx 设置的 X-Real-IP（不可被客户端伪造），
-    回退到 X-Forwarded-For 第一个 IP，最后回退到直连 IP。
+    Forwarding headers from ordinary clients are ignored. Walking XFF from
+    right to left prevents caller-prepended addresses from changing identity.
     """
-    real_ip = request.headers.get("X-Real-IP")
-    if real_ip:
-        return real_ip.strip()
+    peer = request.client.host if request.client else "unknown"
+    try:
+        peer_ip = ipaddress.ip_address(peer)
+        trusted_networks = tuple(
+            ipaddress.ip_network(value.strip(), strict=False)
+            for value in settings.trusted_proxy_cidrs.split(",")
+            if value.strip()
+        )
+    except ValueError:
+        return peer
+    if not any(peer_ip in network for network in trusted_networks):
+        return peer
 
-    xff = request.headers.get("X-Forwarded-For")
-    if xff:
-        return xff.split(",")[0].strip()
-
-    return request.client.host if request.client else "unknown"
+    forwarded = request.headers.get("X-Forwarded-For")
+    if not forwarded:
+        return peer
+    try:
+        hops = [ipaddress.ip_address(value.strip()) for value in forwarded.split(",") if value.strip()]
+    except ValueError:
+        return peer
+    for hop in reversed(hops):
+        if not any(hop in network for network in trusted_networks):
+            return str(hop)
+    return str(hops[0]) if hops else peer
 
 
 def compute_ip_hash(client_ip: str) -> str | None:

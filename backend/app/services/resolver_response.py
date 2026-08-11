@@ -1,7 +1,6 @@
 """构建 H5 前端所需的 JSON 响应（从 resolver 模块提取）"""
 
 import uuid
-from datetime import date
 
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -21,6 +20,7 @@ from app.models.risk import RiskAlert
 from app.models.tenant import Tenant
 from app.services.product import effective_production_batch_status
 from app.services.redis_cache import AsyncRedisCache
+from app.utils import china_business_date
 from app.utils.public_url import normalize_public_url
 
 _product_cache = AsyncRedisCache(prefix="product", default_ttl=600)
@@ -64,7 +64,7 @@ async def _fetch_public_assets(
             ProductAsset.product_id == product_id,
             ProductAsset.status == ProductAssetStatus.active,
             ProductAsset.asset_type.in_((ProductAssetType.test_report, ProductAssetType.certificate)),
-            or_(ProductAsset.valid_until.is_(None), ProductAsset.valid_until >= date.today()),
+            or_(ProductAsset.valid_until.is_(None), ProductAsset.valid_until >= china_business_date()),
         )
         .order_by(ProductAsset.created_at.desc())
     )

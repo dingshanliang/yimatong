@@ -292,6 +292,7 @@ class CodeItem(Base):
             name="fk_code_items_tenant_code_batch",
         ),
         UniqueConstraint("tenant_id", "id", name="uq_code_items_tenant_id_id"),
+        UniqueConstraint("tenant_id", "public_id", name="uq_code_items_tenant_public_id"),
         CheckConstraint(
             "(status = 'frozen' AND frozen_from_status IS NOT NULL "
             "AND frozen_from_status IN ('activated', 'bound') AND frozen_at IS NOT NULL "

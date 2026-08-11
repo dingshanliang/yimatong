@@ -456,7 +456,7 @@ async def test_registry_catalog_acl_and_control_boundary(
         "public.renew_agency_authorization(uuid,uuid,uuid,jsonb,uuid,uuid,timestamptz)",
         "public.revoke_agency_authorization(uuid,uuid,uuid,uuid)",
         "public.append_authenticated_audit_event(uuid,uuid,text,text,text,jsonb)",
-        "public.mark_code_item_first_scanned(uuid,text)",
+        "public.record_public_code_scan(uuid,text,uuid,text,text,text,text)",
         "public.transition_code_item_lifecycle(uuid,uuid,uuid,uuid,text,text)",
         "public.transition_code_batch_lifecycle(uuid,uuid,uuid,uuid,text,text)",
         "public.freeze_code_item_for_risk(uuid,uuid,uuid,uuid,uuid)",
@@ -467,6 +467,9 @@ async def test_registry_catalog_acl_and_control_boundary(
         assert not await runtime_pg_conn.fetchval(
             "SELECT has_function_privilege('public', $1, 'EXECUTE')", function_signature
         )
+    assert not await runtime_pg_conn.fetchval(
+        "SELECT has_function_privilege('yimatong_app','public.mark_code_item_first_scanned(uuid,text)','EXECUTE')"
+    )
     assert not await runtime_pg_conn.fetchval(
         "SELECT has_function_privilege("
         "'yimatong_app','public.append_authenticated_audit_event_lifecycle_internal"
@@ -1177,13 +1180,16 @@ async def test_scan_partition_lifecycle_and_replay_keep_child_acl_closed(
         await owner.close()
     await runtime_pg_conn.execute("SELECT set_config('app.bypass_rls', 'false', true)")
     await runtime_pg_conn.execute("SELECT set_config('app.tenant_id', $1, true)", str(tenant_id))
-    event_id = uuid.uuid4()
-    await runtime_pg_conn.execute(
-        "INSERT INTO scan_events (id,tenant_id,public_id,scan_time,is_first_scan,is_valid_visit) "
-        "VALUES ($1,$2,'PARTITION-TEST','2099-01-15T00:00:00Z',false,false)",
-        event_id,
-        tenant_id,
-    )
-    assert await runtime_pg_conn.fetchval("SELECT count(*) FROM scan_events WHERE id=$1", event_id) == 1
+    for privilege in ("INSERT", "UPDATE", "DELETE", "TRUNCATE", "REFERENCES", "TRIGGER"):
+        assert not await runtime_pg_conn.fetchval(
+            "SELECT has_table_privilege('yimatong_app','public.scan_events',$1)", privilege
+        )
     with pytest.raises(asyncpg.InsufficientPrivilegeError):
-        await runtime_pg_conn.fetchval(f"SELECT count(*) FROM public.{partition_name} WHERE id=$1", event_id)
+        await runtime_pg_conn.execute(
+            "INSERT INTO scan_events (id,tenant_id,public_id,scan_time,is_first_scan,is_valid_visit) "
+            "VALUES ($1,$2,'PARTITION-TEST','2099-01-15T00:00:00Z',false,false)",
+            uuid.uuid4(),
+            tenant_id,
+        )
+    with pytest.raises(asyncpg.InsufficientPrivilegeError):
+        await runtime_pg_conn.fetchval(f"SELECT count(*) FROM public.{partition_name}")

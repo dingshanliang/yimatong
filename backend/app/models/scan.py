@@ -3,16 +3,16 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, Index, String, func
+from sqlalchemy import DateTime, ForeignKeyConstraint, Index, String, func
 from sqlalchemy.orm import Mapped, mapped_column
 
-from app.models.base import Base
+from app.models.base import Base, uuid7
 
 
 class ScanEvent(Base):
     __tablename__ = "scan_events"
 
-    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid7)
     tenant_id: Mapped[uuid.UUID] = mapped_column(nullable=False)
     public_id: Mapped[str] = mapped_column(String(20), nullable=False)
     scan_time: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
@@ -37,6 +37,11 @@ class ScanEvent(Base):
     )
 
     __table_args__ = (
+        ForeignKeyConstraint(
+            ["tenant_id", "public_id"],
+            ["code_items.tenant_id", "code_items.public_id"],
+            name="fk_scan_events_tenant_public_id",
+        ),
         Index("ix_scan_events_ip", "ip_hash"),
         Index("ix_scan_events_environment", "environment"),
         Index("ix_scan_events_public_id", "public_id"),
