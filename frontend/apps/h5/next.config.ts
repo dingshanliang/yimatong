@@ -1,11 +1,12 @@
 import type { NextConfig } from "next";
 import path from "node:path";
 import withBundleAnalyzer from "@next/bundle-analyzer";
+import { buildConnectSrc } from "./src/lib/csp";
 
-const connectSrc =
-  process.env.NODE_ENV !== "production"
-    ? "'self' http://localhost:* http://127.0.0.1:*"
-    : "'self'";
+const connectSrc = buildConnectSrc(
+  process.env.NODE_ENV,
+  process.env.NEXT_PUBLIC_API_URL
+);
 
 const frameAncestors =
   process.env.H5_FRAME_ANCESTORS ||

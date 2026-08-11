@@ -155,7 +155,7 @@ async def report_scan_event(
     except Exception:
         await db.rollback()
         logger.warning("Failed to persist intent event", exc_info=True)
-        return {"status": "ok", "persisted": False}
+        raise HTTPException(status_code=503, detail="扫码事件服务暂时不可用，请稍后重试") from None
 
     if event_id is None:
         return {"status": "ok", "persisted": True, "deduplicated": True}

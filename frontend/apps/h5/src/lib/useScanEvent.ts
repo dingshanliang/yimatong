@@ -25,6 +25,7 @@ interface ScanEventPayload {
 interface ReportScanEventOptions {
   url: string;
   scanToken?: string;
+  visitorId?: string;
   payload: ScanEventPayload;
   fetchImpl?: typeof fetch;
   maxAttempts?: number;
@@ -33,6 +34,7 @@ interface ReportScanEventOptions {
 export async function reportScanEventWithRetry({
   url,
   scanToken,
+  visitorId,
   payload,
   fetchImpl = fetch,
   maxAttempts = 2,
@@ -47,6 +49,7 @@ export async function reportScanEventWithRetry({
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${scanToken}`,
+          ...(visitorId ? { "X-Visitor-ID": visitorId } : {}),
         },
         body,
         keepalive: true,
@@ -92,6 +95,7 @@ export function useScanEvent({
     void reportScanEventWithRetry({
       url: `${apiClient.defaults.baseURL}/scan-events`,
       scanToken,
+      visitorId: localStorage.getItem("visitor_id") || undefined,
       payload,
     });
   }, [enabled, publicId, pageVersionId, scanToken]);

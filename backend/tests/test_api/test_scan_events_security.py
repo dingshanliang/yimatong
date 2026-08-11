@@ -102,3 +102,35 @@ async def test_token_tenant_rate_limit_is_shared_hashed_and_precedes_database(mo
     second_key = limiter.await_args_list[1].args[0]
     assert token not in second_key
     assert tenant_id not in second_key
+
+
+@pytest.mark.anyio
+async def test_persistence_failure_returns_retryable_503_and_rolls_back(monkeypatch):
+    tenant_id = uuid.uuid4()
+    public_id = "valid-public-id"
+    client_ip = "198.51.100.45"
+    token = create_scan_token(public_id, compute_ip_hash(client_ip), tenant_id=str(tenant_id))
+    db = AsyncMock()
+
+    monkeypatch.setattr(
+        scan_events._security_cache,
+        "rate_limit_check_shared",
+        AsyncMock(return_value=(True, 119)),
+    )
+    monkeypatch.setattr(scan_events, "lock_active_tenant_context", AsyncMock(return_value=tenant_id))
+    monkeypatch.setattr(
+        scan_events,
+        "insert_intent_event_idempotent",
+        AsyncMock(side_effect=RuntimeError("database unavailable")),
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        await scan_events.report_scan_event(
+            _request(token, client_ip),
+            _body(public_id=public_id),
+            db,
+        )
+
+    assert exc_info.value.status_code == 503
+    db.rollback.assert_awaited_once()
+    db.commit.assert_not_awaited()

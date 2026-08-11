@@ -20,6 +20,7 @@ describe("reportScanEventWithRetry", () => {
     const reported = await reportScanEventWithRetry({
       url: "https://api.example.test/scan-events",
       scanToken: token,
+      visitorId: "visitor-stable",
       payload,
       fetchImpl,
     });
@@ -29,7 +30,10 @@ describe("reportScanEventWithRetry", () => {
     for (const [url, init] of fetchImpl.mock.calls) {
       expect(url).toBe("https://api.example.test/scan-events");
       expect(String(url)).not.toContain(token);
-      expect(init?.headers).toMatchObject({ Authorization: `Bearer ${token}` });
+      expect(init?.headers).toMatchObject({
+        Authorization: `Bearer ${token}`,
+        "X-Visitor-ID": "visitor-stable",
+      });
       expect(JSON.parse(String(init?.body))).toMatchObject({
         client_event_id: payload.client_event_id,
       });
@@ -50,5 +54,25 @@ describe("reportScanEventWithRetry", () => {
 
     expect(reported).toBe(false);
     expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it("retries a 503 with the exact same authenticated visitor event", async () => {
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response(null, { status: 503 }))
+      .mockResolvedValueOnce(new Response(null, { status: 201 }));
+
+    expect(
+      await reportScanEventWithRetry({
+        url: "https://api.example.test/scan-events",
+        scanToken: "signed.scan.token",
+        visitorId: "visitor-stable",
+        payload,
+        fetchImpl,
+      })
+    ).toBe(true);
+
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    expect(fetchImpl.mock.calls[0]?.[1]).toEqual(fetchImpl.mock.calls[1]?.[1]);
   });
 });
