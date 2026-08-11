@@ -12,6 +12,10 @@ export function CouponPoolsTab() {
   const { message } = App.useApp();
   const {
     items: pools,
+    total: poolsTotal,
+    page: poolsPage,
+    pageSize: poolsPageSize,
+    setPage: setPoolsPage,
     loading: poolsLoading,
     mutate: mutatePools,
   } = useCrud<Pool>("/connectors/coupon-pools");
@@ -51,6 +55,18 @@ export function CouponPoolsTab() {
         .filter(Boolean);
       if (codes.length === 0) {
         message.error("请输入至少一个券码");
+        return;
+      }
+      if (codes.length > 5_000) {
+        message.error("单次最多导入 5000 个券码");
+        return;
+      }
+      if (codes.some((code: string) => code.length > 100)) {
+        message.error("每个券码最多 100 个字符");
+        return;
+      }
+      if (new Set(codes).size !== codes.length) {
+        message.error("券码不能重复");
         return;
       }
       await api.post("/connectors/coupon-pools", { name: values.name, codes });
@@ -169,7 +185,13 @@ export function CouponPoolsTab() {
         columns={poolColumns}
         rowKey="id"
         loading={poolsLoading}
-        pagination={false}
+        pagination={{
+          current: poolsPage,
+          total: poolsTotal,
+          pageSize: poolsPageSize,
+          onChange: setPoolsPage,
+          showTotal: (total) => `共 ${total} 个券码池`,
+        }}
       />
 
       <Modal
@@ -183,7 +205,10 @@ export function CouponPoolsTab() {
           <Form.Item
             name="name"
             label="池名称"
-            rules={[{ required: true, message: "请输入池名称" }]}
+            rules={[
+              { required: true, message: "请输入池名称" },
+              { max: 200, message: "池名称最多 200 个字符" },
+            ]}
           >
             <Input placeholder="如：2026年6月优惠券" />
           </Form.Item>
@@ -195,6 +220,7 @@ export function CouponPoolsTab() {
           >
             <Input.TextArea
               rows={10}
+              maxLength={505_000}
               placeholder={"COUPON001\nCOUPON002\nCOUPON003"}
             />
           </Form.Item>

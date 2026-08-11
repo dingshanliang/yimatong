@@ -196,18 +196,34 @@ async def create_live_scan_token(
             "batch_code": f"WECOM-CB-{label}",
             "quantity": 1,
         },
-        headers=headers,
+        headers={
+            **headers,
+            "Idempotency-Key": str(uuid.uuid5(uuid.NAMESPACE_URL, f"wecom-claim:{tenant_id}:{label}")),
+        },
     )
     assert code_batch.status_code == 201
-    activated = await client.post(f"/api/v1/code-batches/{code_batch.json()['id']}/activate", headers=headers)
-    assert activated.status_code == 200
+    batch_id = code_batch.json()["id"]
+    exported = await client.post(f"/api/v1/code-batches/{batch_id}/export", headers=headers)
+    printing = await client.post(f"/api/v1/code-batches/{batch_id}/mark-printing", headers=headers)
+    delivered = await client.post(
+        f"/api/v1/code-batches/{batch_id}/mark-delivered",
+        json={"reason": "wecom claim fixture", "recipient": "wecom tests", "confirm": "deliver"},
+        headers=headers,
+    )
+    activated = await client.post(f"/api/v1/code-batches/{batch_id}/activate", headers=headers)
+    assert [exported.status_code, printing.status_code, delivered.status_code, activated.status_code] == [200] * 4
     items = await client.get(
         "/api/v1/code-items",
-        params={"code_batch_id": code_batch.json()["id"]},
+        params={"code_batch_id": batch_id},
         headers=headers,
     )
     assert items.status_code == 200
-    return _scan_token(tenant_id, items.json()["items"][0]["public_id"])
+    resolved = await client.get(
+        f"/c/{items.json()['items'][0]['public_id']}",
+        headers={"Accept": "application/json"},
+    )
+    assert resolved.status_code == 200
+    return resolved.json()["scan_token"]
 
 
 @pytest.mark.anyio
@@ -262,6 +278,12 @@ async def test_wecom_required_claim_rejects_public_and_mock_confirmation(client:
         headers=headers,
     )
     benefit_id = benefit.json()["id"]
+    activated_campaign = await client.post(
+        f"/api/v1/campaigns/{campaign.json()['id']}/status",
+        json={"status": "active"},
+        headers=headers,
+    )
+    assert activated_campaign.status_code == 200
     scan_token = await create_live_scan_token(client, headers, tenant_id, product_id, "REQUIRED")
 
     blocked = await client.post(
@@ -333,6 +355,12 @@ async def test_wecom_guide_mode_does_not_block_claim(client: AsyncClient, auth_s
         },
         headers=headers,
     )
+    activated_campaign = await client.post(
+        f"/api/v1/campaigns/{campaign.json()['id']}/status",
+        json={"status": "active"},
+        headers=headers,
+    )
+    assert activated_campaign.status_code == 200
     scan_token = await create_live_scan_token(client, headers, tenant_id, product_id, "GUIDE")
     claimed = await client.post(
         "/api/v1/benefit-claims",

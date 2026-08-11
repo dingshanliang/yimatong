@@ -3,9 +3,11 @@
 import logging
 import uuid
 from datetime import UTC, datetime
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import and_, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
+from uuid6 import uuid7
 
 from app.constants.campaign import (
     ALLOWED_CAMPAIGN_TRANSITIONS,
@@ -31,8 +33,8 @@ async def create_campaign(
     tenant_id: uuid.UUID,
     name: str,
     campaign_type: str,
-    start_at: str,
-    end_at: str,
+    start_at: str | datetime,
+    end_at: str | datetime,
     rules_json: dict,
     description: str | None = None,
     product_id: uuid.UUID | None = None,
@@ -42,13 +44,40 @@ async def create_campaign(
         raise ValueError("Product not found")
     await check_quota_for_tenant(db, tenant_id, CumulativeQuotaKey.MAX_CAMPAIGNS, Campaign)
     rules_json = _rules_with_product_id(rules_json, product_id)
+    from app.core.database import _session_uses_postgresql
+
+    parsed_start = _parse_campaign_datetime(start_at)
+    parsed_end = _parse_campaign_datetime(end_at)
+    if parsed_start is None or parsed_end is None:
+        raise ValueError("Campaign dates must be valid datetimes")
+
+    if _session_uses_postgresql(db):
+        from app.services.campaign_authority import create_campaign_authority
+
+        campaign_id = uuid7()
+        await create_campaign_authority(
+            db,
+            tenant_id,
+            campaign_id,
+            product_id,
+            name,
+            campaign_type,
+            parsed_start,
+            parsed_end,
+            rules_json,
+            description,
+        )
+        created = await get_campaign(db, tenant_id, campaign_id)
+        if created is None:
+            raise RuntimeError("Campaign authority returned no campaign")
+        return created
     c = Campaign(
         tenant_id=tenant_id,
         name=name,
         campaign_type=campaign_type,
         product_id=product_id,
-        start_at=start_at,
-        end_at=end_at,
+        start_at=parsed_start,
+        end_at=parsed_end,
         rules_json=rules_json,
         description=description,
     )
@@ -168,6 +197,21 @@ async def update_campaign(
     campaign_id: uuid.UUID,
     **fields,
 ) -> dict | None:
+    from app.core.database import _session_uses_postgresql
+
+    if _session_uses_postgresql(db):
+        from app.services.campaign_authority import update_campaign_authority
+
+        authority_fields = dict(fields)
+        for field_name in ("start_at", "end_at"):
+            if field_name in authority_fields:
+                parsed = _parse_campaign_datetime(authority_fields[field_name])
+                if parsed is None:
+                    raise ValueError(f"{field_name} must be a valid datetime")
+                authority_fields[field_name] = parsed
+        await update_campaign_authority(db, tenant_id, campaign_id, authority_fields)
+        return await get_campaign(db, tenant_id, campaign_id)
+
     result = await db.execute(
         select(Campaign).where(Campaign.id == campaign_id, Campaign.tenant_id == tenant_id),
     )
@@ -182,6 +226,10 @@ async def update_campaign(
             continue
         if k == "rules_json" and isinstance(v, dict):
             v = _rules_with_product_id(v, fields.get("product_id", c.product_id))
+        if k in {"start_at", "end_at"}:
+            v = _parse_campaign_datetime(v)
+            if v is None:
+                raise ValueError(f"{k} must be a valid datetime")
         if v is not None:
             setattr(c, k, v)
     if "product_id" in fields:
@@ -199,6 +247,20 @@ async def change_campaign_status(
     campaign_id: uuid.UUID,
     new_status: str,
 ) -> dict | None:
+    from app.core.database import _session_uses_postgresql
+
+    if _session_uses_postgresql(db):
+        from app.services.campaign_authority import transition_campaign_authority
+
+        await transition_campaign_authority(db, tenant_id, campaign_id, new_status)
+        return await get_campaign(db, tenant_id, campaign_id)
+
+    if new_status == CampaignStatus.ACTIVE:
+        blockers = await get_campaign_activation_blockers(db, tenant_id, campaign_id)
+        if blockers is None:
+            return None
+        if blockers:
+            raise ValueError("；".join(blockers))
     result = await db.execute(
         select(Campaign).where(Campaign.id == campaign_id, Campaign.tenant_id == tenant_id),
     )
@@ -277,6 +339,15 @@ async def delete_campaign(
     tenant_id: uuid.UUID,
     campaign_id: uuid.UUID,
 ) -> bool:
+    from app.core.database import _session_uses_postgresql
+
+    if _session_uses_postgresql(db):
+        from app.services.campaign_authority import delete_campaign_authority
+
+        await delete_campaign_authority(db, tenant_id, campaign_id)
+        await release_quota(db, tenant_id, CumulativeQuotaKey.MAX_CAMPAIGNS)
+        return True
+
     result = await db.execute(
         select(Campaign)
         .where(
@@ -318,6 +389,28 @@ async def create_benefit(
         await require_tenant_feature(db, tenant_id, "cash_red_packet")
     # 验证 config_json 与 benefit_type 匹配
     validate_benefit_config_shape(config_json, benefit_type)
+    from app.core.database import _session_uses_postgresql
+
+    if _session_uses_postgresql(db):
+        from app.services.campaign_authority import create_benefit_authority
+
+        benefit_id = uuid7()
+        await create_benefit_authority(
+            db,
+            tenant_id,
+            benefit_id,
+            campaign_id,
+            name,
+            benefit_type,
+            config_json,
+            stock_total,
+            per_person_limit,
+            connector_id,
+        )
+        created = await get_benefit(db, tenant_id, benefit_id)
+        if created is None:
+            raise RuntimeError("Benefit authority returned no benefit")
+        return created
     # 验证 campaign_id 存在且属于当前租户
     if campaign_id is not None:
         camp_result = await db.execute(
@@ -360,6 +453,14 @@ async def attach_benefit_to_campaign(
     campaign_id: uuid.UUID,
     benefit_id: uuid.UUID,
 ) -> dict | None:
+    from app.core.database import _session_uses_postgresql
+
+    if _session_uses_postgresql(db):
+        from app.services.campaign_authority import relate_benefit_authority
+
+        await relate_benefit_authority(db, tenant_id, campaign_id, benefit_id, attach=True)
+        return await get_benefit(db, tenant_id, benefit_id)
+
     campaign_result = await db.execute(
         select(Campaign).where(Campaign.id == campaign_id, Campaign.tenant_id == tenant_id),
     )
@@ -391,6 +492,14 @@ async def detach_benefit_from_campaign(
     campaign_id: uuid.UUID,
     benefit_id: uuid.UUID,
 ) -> dict | None:
+    from app.core.database import _session_uses_postgresql
+
+    if _session_uses_postgresql(db):
+        from app.services.campaign_authority import relate_benefit_authority
+
+        await relate_benefit_authority(db, tenant_id, campaign_id, benefit_id, attach=False)
+        return await get_benefit(db, tenant_id, benefit_id)
+
     result = await db.execute(
         select(Benefit).where(
             Benefit.id == benefit_id,
@@ -416,16 +525,18 @@ async def list_benefits(
     db: AsyncSession,
     tenant_id: uuid.UUID,
     campaign_id: uuid.UUID,
-) -> list[dict]:
-    result = await db.execute(
-        select(Benefit)
-        .where(
-            Benefit.tenant_id == tenant_id,
-            Benefit.campaign_id == campaign_id,
-        )
-        .order_by(Benefit.id.desc())
+    page: int = 1,
+    page_size: int = 20,
+) -> tuple[list[dict], int]:
+    predicate = (
+        Benefit.tenant_id == tenant_id,
+        Benefit.campaign_id == campaign_id,
     )
-    return [_benefit_to_dict(b) for b in result.scalars().all()]
+    total = int(await db.scalar(select(func.count()).select_from(Benefit).where(*predicate)) or 0)
+    result = await db.execute(
+        select(Benefit).where(*predicate).order_by(Benefit.id.desc()).offset((page - 1) * page_size).limit(page_size)
+    )
+    return [_benefit_to_dict(b) for b in result.scalars().all()], total
 
 
 async def list_all_benefits(
@@ -524,6 +635,14 @@ async def update_benefit(
     benefit_id: uuid.UUID,
     **fields,
 ) -> dict | None:
+    from app.core.database import _session_uses_postgresql
+
+    if _session_uses_postgresql(db):
+        from app.services.campaign_authority import update_benefit_authority
+
+        await update_benefit_authority(db, tenant_id, benefit_id, fields)
+        return await get_benefit(db, tenant_id, benefit_id)
+
     result = await db.execute(
         select(Benefit).where(Benefit.id == benefit_id, Benefit.tenant_id == tenant_id),
     )
@@ -556,6 +675,14 @@ async def delete_benefit(
     tenant_id: uuid.UUID,
     benefit_id: uuid.UUID,
 ) -> str | None:
+    from app.core.database import _session_uses_postgresql
+
+    if _session_uses_postgresql(db):
+        from app.services.campaign_authority import delete_benefit_authority
+
+        await delete_benefit_authority(db, tenant_id, benefit_id)
+        return "deleted"
+
     result = await db.execute(
         select(Benefit).where(Benefit.id == benefit_id, Benefit.tenant_id == tenant_id),
     )
@@ -694,6 +821,8 @@ async def claim_benefit(
     consumer_id: str,
     idempotency_key: str,
     public_id: str | None = None,
+    scan_event_id: uuid.UUID | None = None,
+    scanned_product_id: uuid.UUID | None = None,
 ) -> dict:
     """领取权益，带幂等控制和库存校验。
 
@@ -705,6 +834,24 @@ async def claim_benefit(
     yimatong-zgb1.7 AC3：风险门禁——若 public_id 存在 active 的 medium/high RiskAlert，
     服务端阻断权益领取（前端绕过无效，因为检查在 service 层）。
     """
+    from app.core.database import _session_uses_postgresql
+
+    if _session_uses_postgresql(db):
+        if public_id is None or scan_event_id is None or scanned_product_id is None:
+            raise ValueError("Authoritative scan context is required")
+        from app.services.campaign_authority import claim_campaign_benefit_authority
+
+        return await claim_campaign_benefit_authority(
+            db,
+            tenant_id,
+            benefit_id,
+            scan_event_id,
+            scanned_product_id,
+            public_id,
+            consumer_id,
+            idempotency_key,
+        )
+
     # yimatong-zgb1.7：风险门禁（在幂等检查之后，权益查询之前）
     if public_id:
         from app.models.risk import RiskAlert
@@ -980,11 +1127,14 @@ async def _load_campaign_stats(
     return stats
 
 
-def _parse_campaign_datetime(value: str | None) -> datetime | None:
+def _parse_campaign_datetime(value: str | datetime | None) -> datetime | None:
     if not value:
         return None
+    if isinstance(value, datetime):
+        return value if value.tzinfo is not None else value.replace(tzinfo=ZoneInfo("Asia/Shanghai"))
     try:
-        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=ZoneInfo("Asia/Shanghai"))
     except ValueError:
         logger.warning("Failed to parse datetime: %r", value)
         return None

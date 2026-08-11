@@ -3,7 +3,7 @@ import uuid
 import pytest
 from starlette.applications import Starlette
 
-from app.middleware.tenant import TenantScopeMiddleware
+from app.middleware.tenant import TenantScopeMiddleware, _api_key_metadata_is_invalid
 
 
 class FailingSessionContext:
@@ -97,6 +97,17 @@ def test_acting_context_routes_are_mapped_to_live_scope():
     assert middleware._acting_path_is_explicitly_supported("/api/v1/products", ["pages"], "GET")
     assert not middleware._acting_path_is_explicitly_supported("/api/v1/products", ["pages"], "POST")
     assert middleware._acting_path_is_explicitly_supported("/api/v1/integrations/wecom", ["campaigns"], "GET")
+    assert middleware._acting_path_is_explicitly_supported("/api/v1/connectors/connectors", ["campaigns"], "GET")
+    assert middleware._acting_path_is_explicitly_supported(
+        "/api/v1/connectors/connectors/00000000-0000-0000-0000-000000000001/sync-stock",
+        ["campaigns"],
+        "POST",
+    )
+    assert not middleware._acting_path_is_explicitly_supported(
+        "/api/v1/connectors/connectors",
+        ["analytics"],
+        "GET",
+    )
     assert not middleware._acting_path_is_explicitly_supported("/api/v1/analytics/dashboard", ["products"])
     assert not middleware._acting_path_is_explicitly_supported("/api/v1/tenants/me", ["products", "pages"])
 
@@ -178,3 +189,14 @@ def test_agency_without_acting_context_cannot_mutate_risk_alerts_or_codes():
     assert middleware._requires_client_workspace("/api/v1/risk-alerts", "GET")
     assert middleware._requires_client_workspace(f"/api/v1/risk-alerts/{alert_id}/resolve", "POST")
     assert not middleware._requires_client_workspace("/api/v1/agency/projects", "GET")
+
+
+class _DatabaseError(Exception):
+    def __init__(self, sqlstate: str):
+        self.orig = type("Original", (), {"sqlstate": sqlstate})()
+
+
+def test_api_key_catalog_drift_maps_only_invalid_metadata_to_auth_failure():
+    assert _api_key_metadata_is_invalid(_DatabaseError("22023")) is True
+    assert _api_key_metadata_is_invalid(_DatabaseError("42501")) is False
+    assert _api_key_metadata_is_invalid(RuntimeError("database unavailable")) is False

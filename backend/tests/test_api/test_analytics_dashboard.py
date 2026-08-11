@@ -254,8 +254,8 @@ class TestDashboardExport:
             name="测试活动",
             campaign_type="coupon",
             status="active",
-            start_at="2024-01-01",
-            end_at="2024-12-31",
+            start_at=datetime(2024, 1, 1, tzinfo=UTC),
+            end_at=datetime(2024, 12, 31, tzinfo=UTC),
         )
         db_session.add(campaign)
         await db_session.commit()

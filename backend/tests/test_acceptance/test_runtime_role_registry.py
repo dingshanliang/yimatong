@@ -66,6 +66,7 @@ MIGRATION_ONLY_TABLES = (
     "api_key_catalog_audit_context_secrets",
     "api_key_legacy_secret_backups",
     "code_delivery_contract_rollout_state",
+    "connector_secret_migration_backups",
     "rls_force_remediation_backups",
     "runtime_privilege_remediation_backup",
 )
@@ -104,11 +105,11 @@ async def _assert_association_insert_denied(conn: asyncpg.Connection, query: str
     await savepoint.rollback()
 
 
-async def _assert_statement_privilege_denied(conn: asyncpg.Connection, query: str) -> None:
+async def _assert_statement_privilege_denied(conn: asyncpg.Connection, query: str, *args: object) -> None:
     savepoint = conn.transaction()
     await savepoint.start()
     with pytest.raises(asyncpg.InsufficientPrivilegeError):
-        await conn.execute(query)
+        await conn.execute(query, *args)
     await savepoint.rollback()
 
 
@@ -241,7 +242,10 @@ async def test_registry_catalog_acl_and_control_boundary(
             "AND c.relname <> ALL($1::text[])",
             list(MIGRATION_ONLY_TABLES),
         )
-        assert orm_root_count == 99
+        takeover_relation_count = int(
+            await owner.fetchval("SELECT (to_regclass('public.takeover_domain_claims') IS NOT NULL)::integer")
+        )
+        assert orm_root_count == 99 + takeover_relation_count
         migration_only = await owner.fetch(
             "SELECT c.relname FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace "
             "WHERE n.nspname='public' AND c.relkind='r' AND c.relname=ANY($1::text[])",
@@ -377,9 +381,10 @@ async def test_registry_catalog_acl_and_control_boundary(
 
     for table in BUSINESS_GAP_TABLES:
         for privilege in ("SELECT", "INSERT", "UPDATE", "DELETE"):
-            assert await runtime_pg_conn.fetchval(
+            granted = await runtime_pg_conn.fetchval(
                 "SELECT has_table_privilege('yimatong_app', $1, $2)", f"public.{table}", privilege
             )
+            assert granted is (table != "coupon_codes" or privilege in {"SELECT", "INSERT"})
     for table in NO_DELETE_RUNTIME_TABLES:
         direct_write_privileges = ("SELECT", "INSERT") if table == "code_items" else ("SELECT", "INSERT", "UPDATE")
         for privilege in direct_write_privileges:
@@ -460,12 +465,46 @@ async def test_registry_catalog_acl_and_control_boundary(
         "public.transition_code_item_lifecycle(uuid,uuid,uuid,uuid,text,text)",
         "public.transition_code_batch_lifecycle(uuid,uuid,uuid,uuid,text,text)",
         "public.freeze_code_item_for_risk(uuid,uuid,uuid,uuid,uuid)",
+        "public.recall_production_batch(uuid,uuid,uuid,uuid,text)",
     ):
         assert await runtime_pg_conn.fetchval(
             "SELECT has_function_privilege('yimatong_app', $1, 'EXECUTE')", function_signature
         )
         assert not await runtime_pg_conn.fetchval(
             "SELECT has_function_privilege('public', $1, 'EXECUTE')", function_signature
+        )
+    assert await runtime_pg_conn.fetchval(
+        "SELECT has_table_privilege('yimatong_app','public.production_batches','SELECT')"
+    )
+    for privilege in ("INSERT", "DELETE"):
+        assert await runtime_pg_conn.fetchval(
+            "SELECT has_table_privilege('yimatong_app','public.production_batches',$1)",
+            privilege,
+        )
+    for privilege in ("UPDATE", "TRUNCATE", "REFERENCES", "TRIGGER"):
+        assert not await runtime_pg_conn.fetchval(
+            "SELECT has_table_privilege('yimatong_app','public.production_batches',$1)",
+            privilege,
+        )
+    for column in (
+        "product_id",
+        "sku_id",
+        "batch_code",
+        "production_date",
+        "expiry_date",
+        "origin",
+        "updated_at",
+        "external_id",
+        "source_system",
+    ):
+        assert await runtime_pg_conn.fetchval(
+            "SELECT has_column_privilege('yimatong_app','public.production_batches',$1,'UPDATE')",
+            column,
+        )
+    for column in ("tenant_id", "status", "recall_reason", "recalled_at", "recalled_by"):
+        assert not await runtime_pg_conn.fetchval(
+            "SELECT has_column_privilege('yimatong_app','public.production_batches',$1,'UPDATE')",
+            column,
         )
     assert not await runtime_pg_conn.fetchval(
         "SELECT has_function_privilege('yimatong_app','public.mark_code_item_first_scanned(uuid,text)','EXECUTE')"
@@ -942,15 +981,6 @@ async def test_repaired_business_relations_runtime_crud_and_isolation(
                 "quantity=2",
             ),
             (
-                "coupon_codes",
-                "id",
-                (uuid.uuid4(),),
-                "INSERT INTO coupon_codes (id,pool_id,code,distributed) VALUES ($1,$2,$3,false)",
-                (uuid.uuid4(), pool_a, f"A-{uuid.uuid4()}"),
-                (uuid.uuid4(), pool_b1, f"B-{uuid.uuid4()}"),
-                "distributed=true",
-            ),
-            (
                 "diversion_evidence",
                 "id",
                 (uuid.uuid4(),),
@@ -1036,6 +1066,37 @@ async def test_repaired_business_relations_runtime_crud_and_isolation(
 
         await runtime_pg_conn.execute("SELECT set_config('app.bypass_rls', 'false', true)")
         await runtime_pg_conn.execute("SELECT set_config('app.tenant_id', $1, true)", str(tenant_a))
+        own_coupon_code = uuid.uuid4()
+        foreign_coupon_code = uuid.uuid4()
+        await owner.execute(
+            "INSERT INTO coupon_codes(id,tenant_id,pool_id,code,distributed) VALUES($1,$2,$3,$4,false)",
+            foreign_coupon_code,
+            tenant_b,
+            pool_b1,
+            f"B-{foreign_coupon_code}",
+        )
+        assert await runtime_pg_conn.fetchval("SELECT count(*) FROM coupon_codes WHERE id=$1", foreign_coupon_code) == 0
+        await _assert_insert_denied(
+            runtime_pg_conn,
+            "INSERT INTO coupon_codes(id,tenant_id,pool_id,code,distributed) VALUES($1,$2,$3,$4,false)",
+            uuid.uuid4(),
+            tenant_b,
+            pool_b1,
+            f"CROSS-{uuid.uuid4()}",
+        )
+        await runtime_pg_conn.execute(
+            "INSERT INTO coupon_codes(id,tenant_id,pool_id,code,distributed) VALUES($1,$2,$3,$4,false)",
+            own_coupon_code,
+            tenant_a,
+            pool_a,
+            f"A-{own_coupon_code}",
+        )
+        await _assert_statement_privilege_denied(
+            runtime_pg_conn, "UPDATE coupon_codes SET distributed=true WHERE id=$1", own_coupon_code
+        )
+        await _assert_statement_privilege_denied(
+            runtime_pg_conn, "DELETE FROM coupon_codes WHERE id=$1", own_coupon_code
+        )
         for table, key_col, _unused, insert_sql, own_args, foreign_args, update_clause in cases:
             foreign_id = foreign_keys[table]
             assert await runtime_pg_conn.fetchval(f"SELECT count(*) FROM {table} WHERE {key_col}=$1", foreign_id) == 0

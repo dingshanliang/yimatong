@@ -35,6 +35,8 @@ import {
 import type { ColumnsType } from "antd/es/table";
 import dayjs, { type Dayjs } from "dayjs";
 import api, { extractErrorMessage } from "@/lib/api";
+import { useAuthStore } from "@/lib/auth";
+import { resolveCampaignAccess } from "@/lib/campaign-access";
 import { useCrud } from "@/lib/hooks";
 import { STATUS_COLORS } from "@/lib/status-colors";
 import type {
@@ -572,6 +574,8 @@ function getActivationIssues(
 export default function CampaignsPage() {
   const router = useRouter();
   const { message, modal } = App.useApp();
+  const user = useAuthStore((state) => state.user);
+  const access = resolveCampaignAccess(user);
   const [modalOpen, setModalOpen] = useState(false);
   const [editItem, setEditItem] = useState<Campaign | null>(null);
   const [detailItem, setDetailItem] = useState<Campaign | null>(null);
@@ -593,7 +597,7 @@ export default function CampaignsPage() {
     mutate,
     update,
     remove,
-  } = useCrud<Campaign>("/campaigns");
+  } = useCrud<Campaign>("/campaigns", { enabled: access.canView });
 
   const productOptions = useMemo(
     () =>
@@ -605,6 +609,7 @@ export default function CampaignsPage() {
   );
 
   const fetchProducts = useCallback(async () => {
+    if (!access.canView) return;
     try {
       const { data } = await api.get("/products", {
         params: { page_size: 100 },
@@ -613,9 +618,10 @@ export default function CampaignsPage() {
     } catch {
       setProducts([]);
     }
-  }, []);
+  }, [access.canView]);
 
   const fetchWecomStatus = useCallback(async () => {
+    if (!access.canView) return;
     try {
       const { data } = await api.get<WeComIntegrationStatus>(
         "/integrations/wecom"
@@ -624,12 +630,14 @@ export default function CampaignsPage() {
     } catch {
       setWecomStatus({ connected: false, status: "error" });
     }
-  }, []);
+  }, [access.canView]);
 
   useEffect(() => {
-    fetchProducts();
-    fetchWecomStatus();
-  }, [fetchProducts, fetchWecomStatus]);
+    if (access.canView) {
+      void fetchProducts();
+      void fetchWecomStatus();
+    }
+  }, [access.canView, fetchProducts, fetchWecomStatus]);
 
   const openCreate = () => {
     const validityDefaults = buildBenefitValidityDefaults(
@@ -1218,6 +1226,10 @@ export default function CampaignsPage() {
       ),
     },
   ];
+
+  if (!access.canView) {
+    return <Empty description="当前账号无权查看活动" />;
+  }
 
   return (
     <div>

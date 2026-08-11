@@ -25,6 +25,11 @@ from app.models.tenant import Account, Organization, Permission, Role, Tenant, a
 from app.services.analytics import aggregate_daily_stats
 from app.services.audit import write_audit_log
 from app.services.auth import revoke_current_tenant_account_sessions
+from app.services.campaign import (
+    change_campaign_status,
+    create_benefit,
+    create_campaign,
+)
 from app.services.channel import create_account_scope
 from app.services.code import activate_batch, create_code_batch, mark_delivered, mark_printing, revoke_code_item
 from app.services.code_export import generate_code_csv
@@ -468,45 +473,57 @@ async def _ensure_page(
     return template
 
 
-async def _ensure_campaign(db: AsyncSession, tenant_id: uuid.UUID) -> Campaign:
+async def _ensure_campaign(db: AsyncSession, tenant_id: uuid.UUID, product_id: uuid.UUID) -> Campaign:
     now = utcnow()
     result = await db.execute(
         select(Campaign).where(Campaign.tenant_id == tenant_id, Campaign.name == "首扫领券加企微复购活动")
     )
     campaign = result.scalar_one_or_none()
     if not campaign:
-        campaign = Campaign(
-            tenant_id=tenant_id,
-            name="首扫领券加企微复购活动",
-            campaign_type="coupon",
-            status=CampaignStatus.ACTIVE,
-            start_at=(now - timedelta(days=3)).strftime("%Y-%m-%dT%H:%M:%SZ"),
-            end_at=(now + timedelta(days=30)).strftime("%Y-%m-%dT%H:%M:%SZ"),
-            rules_json={"first_scan_only": True, "per_person_limit": 1, "channels": ["wechat", "h5"]},
-            description="客户演示活动：首扫领券，引导加企微和商城复购。",
+        created = await create_campaign(
+            db,
+            tenant_id,
+            "首扫领券加企微复购活动",
+            "coupon",
+            now - timedelta(days=3),
+            now + timedelta(days=30),
+            {
+                "participation_conditions": "首次扫码",
+                "participation_condition_type": "first_scan",
+                "claim_limits": "每人限领1次",
+                "claim_limit_count": 1,
+                "validity_period": "活动期内有效",
+                "disclaimer": "最终解释权归品牌方所有",
+                "minor_notice": "未成年人请在监护人陪同下参与",
+                "customer_service_contact": "400-123-4567",
+                "channels": ["wechat", "h5"],
+            },
+            "客户演示活动：首扫领券，引导加企微和商城复购。",
+            product_id,
         )
-        db.add(campaign)
-        await db.flush()
+        campaign = await db.get(Campaign, uuid.UUID(created["id"]), populate_existing=True)
+        if campaign is None:  # pragma: no cover - authority returned the created row
+            raise RuntimeError("Campaign creation lost its authority row")
     result = await db.execute(select(Benefit).where(Benefit.tenant_id == tenant_id, Benefit.campaign_id == campaign.id))
     benefit = result.scalar_one_or_none()
-    if benefit:
-        benefit.stock_total = 1000
-        benefit.stock_used = max(benefit.stock_used, 36)
-    else:
-        db.add(
-            Benefit(
-                tenant_id=tenant_id,
-                campaign_id=campaign.id,
-                name="20 元复购券",
-                benefit_type=BenefitType.EXTERNAL_LINK,
-                config_json={"url": "https://shop.example.com/demo-rice", "amount": 20, "threshold": 99},
-                stock_total=1000,
-                stock_used=36,
-                per_person_limit=1,
-                status="active",
-            )
+    if benefit is None:
+        await create_benefit(
+            db,
+            tenant_id,
+            campaign.id,
+            "20 元复购券",
+            BenefitType.EXTERNAL_LINK,
+            {
+                "url": "https://shop.example.com/demo-rice",
+                "amount": 20,
+                "threshold": 99,
+                "validity_type": "campaign_period",
+            },
+            1000,
+            1,
         )
-    await db.flush()
+    if campaign.status == CampaignStatus.DRAFT:
+        await change_campaign_status(db, tenant_id, campaign.id, CampaignStatus.ACTIVE)
     await db.refresh(campaign)
     return campaign
 
@@ -988,7 +1005,7 @@ def all(
 
             production_batch = await _ensure_production_batch(db, t.id, p.id, s.id)
             await _ensure_page(db, t.id, p.id, admin_id)
-            await _ensure_campaign(db, t.id)
+            await _ensure_campaign(db, t.id, p.id)
             code_items = await _ensure_demo_codes(
                 db,
                 t.id,

@@ -65,6 +65,7 @@ from app.core.config import settings
 from app.core.error_handlers import register_exception_handlers
 from app.core.logging import setup_logging
 from app.middleware.logging import LoggingMiddleware
+from app.middleware.request_body_limit import ConnectorRequestBodyLimitMiddleware
 from app.middleware.request_id import RequestIDMiddleware
 from app.middleware.tenant import TenantScopeMiddleware
 
@@ -297,6 +298,7 @@ else:
 # Otherwise, inner middlewares (e.g., TenantScopeMiddleware returning 401) bypass
 # CORS header injection, causing browsers to block responses as CORS failures.
 app.add_middleware(LoggingMiddleware)
+app.add_middleware(ConnectorRequestBodyLimitMiddleware)
 app.add_middleware(TenantScopeMiddleware)
 app.add_middleware(RequestIDMiddleware)
 app.add_middleware(

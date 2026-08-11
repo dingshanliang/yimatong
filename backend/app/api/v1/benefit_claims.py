@@ -10,20 +10,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db, lock_active_tenant_context
 from app.middleware.rate_limit import rate_limiter
 from app.schemas.benefit_claim import BenefitClaimRequest
-from app.services.redis_cache import AsyncRedisCache
 from app.services.scan_token import verify_scan_token
 from app.utils.client_ip import compute_ip_hash, get_client_ip
 
 benefit_claim_router = APIRouter(prefix="/api/v1", tags=["benefit-claims"])
-
-_claim_cache = AsyncRedisCache(prefix="claim", default_ttl=300)
 
 
 @benefit_claim_router.post("/benefit-claims", status_code=201)
 async def claim_benefit_h5(
     request: Request,
     body: BenefitClaimRequest,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ):
     """H5 端权益领取（scan_token 鉴权，无需 admin token）"""
     # 0. IP 级速率限制
@@ -109,28 +106,22 @@ async def claim_benefit_h5(
     code_item_id, code_batch_id, production_batch_id = locator
 
     production_batch = await db.scalar(
-        select(ProductionBatch)
-        .where(
+        select(ProductionBatch).where(
             ProductionBatch.id == production_batch_id,
             ProductionBatch.tenant_id == tid,
         )
-        .with_for_update()
     )
     code_batch = await db.scalar(
-        select(CodeBatch)
-        .where(
+        select(CodeBatch).where(
             CodeBatch.id == code_batch_id,
             CodeBatch.tenant_id == tid,
         )
-        .with_for_update()
     )
     live_code = await db.scalar(
-        select(CodeItem)
-        .where(
+        select(CodeItem).where(
             CodeItem.id == code_item_id,
             CodeItem.tenant_id == tid,
         )
-        .with_for_update()
     )
     chain_is_available = (
         production_batch is not None
@@ -159,12 +150,37 @@ async def claim_benefit_h5(
     if benefit.status != "active":
         raise HTTPException(status_code=409, detail="权益已停用")
 
-    # 4. 红包类权益特殊处理：需要走 OAuth 获取 OpenID
-    if benefit.benefit_type == "cash_red_packet":
-        return await _handle_cash_red_packet_claim(benefit, token, payload, db)
+    from app.services.benefit_claim_admission import build_claim_consumer_id, build_claim_idempotency_key
+    from app.services.benefit_claim_eligibility import ClaimEligibilityError, validate_claim_eligibility
 
-    # 5. 企业微信添加门槛：只以后端收到的企业微信事件为准
-    from app.models.campaign import Campaign
+    try:
+        idempotency_key = build_claim_idempotency_key(payload, benefit_id)
+        consumer_id = build_claim_consumer_id(payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=401, detail="invalid scan authority") from exc
+
+    try:
+        campaign = await validate_claim_eligibility(
+            db,
+            tenant_id=tid,
+            benefit=benefit,
+            scanned_product_id=code_batch.product_id,
+            public_id=token_public_id,
+            scan_event_id=uuid.UUID(payload["scan_event_id"]),
+            consumer_id=consumer_id,
+        )
+    except (ClaimEligibilityError, ValueError) as exc:
+        raise HTTPException(status_code=409, detail="活动或权益当前不可领取") from exc
+
+    # 5. 红包类权益只解析 OAuth/connector 前置条件。实际扣减与发放同样先走
+    # claim+outbox，HTTP 请求内绝不调用外部支付。
+    if benefit.benefit_type == "cash_red_packet":
+        cash_context = await _prepare_cash_red_packet_claim(benefit, token, payload, db)
+        if cash_context.get("status") == "require_wechat_auth":
+            return cash_context
+        consumer_id = cash_context["consumer_id"]
+
+    # 6. 企业微信添加门槛：只以后端收到的企业微信事件为准
     from app.services.wecom_integration import (
         WeComIntegrationError,
         get_or_create_claim_contact_way,
@@ -172,10 +188,6 @@ async def claim_benefit_h5(
         is_wecom_required,
     )
 
-    campaign_result = await db.execute(
-        select(Campaign).where(Campaign.id == benefit.campaign_id, Campaign.tenant_id == benefit.tenant_id)
-    )
-    campaign = campaign_result.scalar_one_or_none()
     if campaign and is_wecom_required(campaign.rules_json):
         if not await has_confirmed_wecom_contact(
             db,
@@ -190,37 +202,33 @@ async def claim_benefit_h5(
                     benefit=benefit,
                     scan_token=token,
                 )
-                await db.commit()
             except WeComIntegrationError as exc:
                 raise HTTPException(
                     status_code=403,
                     detail={"code": "require_wecom_contact", "message": str(exc)},
                 ) from exc
-            raise HTTPException(
+            return JSONResponse(
                 status_code=403,
-                detail={
+                content={
                     "code": "require_wecom_contact",
-                    "message": "请先添加企业微信，再继续领取权益",
-                    "qr_code": contact_way.qr_code,
-                    "state": contact_way.state,
+                    "detail": {
+                        "code": "require_wecom_contact",
+                        "message": "请先添加企业微信，再继续领取权益",
+                        "qr_code": contact_way.qr_code,
+                        "state": contact_way.state,
+                    },
                 },
             )
 
-    # 6. 如果需要手机号，先提示补全，避免提前占用幂等 key
+    # 7. 如果需要手机号，先提示补全，避免提前占用幂等 key
     if benefit.config_json.get("require_phone") and not body.phone:
         raise HTTPException(
             status_code=403,
             detail={"code": "require_auth", "message": "需要授权手机号"},
         )
 
-    # 7. 双层幂等：Redis 缓存层 + DB 唯一约束
-    idempotency_key = f"claim:{token[:16]}:{benefit_id}"
-    if not await _claim_cache.set_idempotent(idempotency_key, ttl=300):
-        raise HTTPException(status_code=409, detail="already claimed")
-
     from app.services.campaign import claim_benefit
 
-    consumer_id = str(payload.get("consumer_id") or idempotency_key)
     # yimatong-zgb1.7：透传 public_id 用于风险门禁（scan_token payload 已校验 public_id）
     claim_public_id = payload.get("public_id") if isinstance(payload.get("public_id"), str) else None
     result = await claim_benefit(
@@ -230,10 +238,16 @@ async def claim_benefit_h5(
         consumer_id,
         idempotency_key,
         public_id=claim_public_id,
+        scan_event_id=uuid.UUID(payload["scan_event_id"]),
+        scanned_product_id=code_batch.product_id,
     )
-    if result["status"] in {"idempotent", "success"}:
-        await db.commit()
-        return {"status": "claimed", "benefit_id": str(benefit_id)}
+    outcome = result.get("outcome", result.get("status"))
+    if _is_successful_claim_outcome(outcome):
+        return {
+            "status": "pending" if benefit.connector_id else "claimed",
+            "benefit_id": str(benefit_id),
+            "claim_id": str(result.get("claim_id") or result.get("claim", {}).get("id", "")),
+        }
     if result["status"] == "risk_paused":
         # yimatong-zgb1.7 AC3：风险状态下服务端阻断权益领取
         raise HTTPException(
@@ -251,7 +265,13 @@ async def claim_benefit_h5(
     raise HTTPException(status_code=404, detail="benefit not found")
 
 
-async def _handle_cash_red_packet_claim(
+def _is_successful_claim_outcome(outcome: object) -> bool:
+    """Treat an authoritative replay as the same successful claim, without re-mutating inventory."""
+
+    return outcome in {"idempotent", "replayed", "success"}
+
+
+async def _prepare_cash_red_packet_claim(
     benefit,
     token: str,
     payload: dict,
@@ -304,89 +324,27 @@ async def _handle_cash_red_packet_claim(
         except ValueError:
             pass
 
-    if not consumer or not consumer.wechat_openid:
+    from app.models.consent import ConsentRecord, ConsentStatus, ConsentType
+
+    consent_status = None
+    if consumer is not None:
+        consent_status = await db.scalar(
+            select(ConsentRecord.status)
+            .where(
+                ConsentRecord.tenant_id == tenant_id,
+                ConsentRecord.consumer_id == consumer.id,
+                ConsentRecord.consent_type == ConsentType.privacy,
+                ConsentRecord.scenario == "wechat_cash_payout",
+            )
+            .order_by(ConsentRecord.granted_at.desc())
+            .limit(1)
+        )
+    if not consumer or not consumer.wechat_openid_hash or consent_status != ConsentStatus.granted:
         # 没有 OpenID，返回需要 OAuth 的信号
         return {
             "status": "require_wechat_auth",
             "benefit_id": str(benefit.id),
-            "auth_url_path": f"/api/v1/wechat/auth-url?benefit_id={benefit.id}&scan_token={token}",
+            "auth_url_path": "/wechat/auth-url",
         }
 
-    # 有 OpenID，直接执行红包领取
-    # 检查限领（在调用 claim_red_packet 前完成）
-    from sqlalchemy import func
-
-    from app.models.campaign import BenefitClaim
-    from app.services.redpacket import RedPacketTransferFailed, claim_red_packet
-
-    rp_config = benefit.config_json
-    daily_limit = rp_config.get("daily_limit_per_user", 3)
-    total_limit = rp_config.get("total_limit_per_user", 10)
-
-    # 1.2 原子化限额检查：使用 SELECT FOR UPDATE 锁定权益行
-    # 确保同一用户的并发领取请求串行化，防止限额绕过
-    from app.models.campaign import Benefit as BenefitModel
-
-    # 锁定权益行，防止并发读取到相同的 claimed_count
-    locked_benefit = await db.execute(
-        select(BenefitModel).where(BenefitModel.id == benefit.id, BenefitModel.tenant_id == tenant_id).with_for_update()
-    )
-    _locked = locked_benefit.scalar_one_or_none()
-
-    total_count_result = await db.execute(
-        select(func.count())
-        .select_from(BenefitClaim)
-        .where(
-            BenefitClaim.benefit_id == benefit.id,
-            BenefitClaim.tenant_id == tenant_id,
-            BenefitClaim.consumer_id == str(consumer.id),
-        )
-    )
-    total_count = total_count_result.scalar() or 0
-    if total_count >= total_limit:
-        raise HTTPException(status_code=429, detail="已达到总领取上限")
-
-    from datetime import UTC, datetime
-
-    today_start = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
-    daily_count_result = await db.execute(
-        select(func.count())
-        .select_from(BenefitClaim)
-        .where(
-            BenefitClaim.benefit_id == benefit.id,
-            BenefitClaim.tenant_id == tenant_id,
-            BenefitClaim.consumer_id == str(consumer.id),
-            BenefitClaim.created_at >= today_start,
-        )
-    )
-    daily_count = daily_count_result.scalar() or 0
-    if daily_count >= daily_limit:
-        raise HTTPException(status_code=429, detail="已达到今日领取上限")
-
-    try:
-        result = await claim_red_packet(
-            db=db,
-            benefit_id=benefit.id,
-            tenant_id=tenant_id,
-            connector_id=connector.id,
-            consumer_id=str(consumer.id),
-            openid=consumer.wechat_openid,
-            total_count=total_count,
-        )
-    except RedPacketTransferFailed as e:
-        # 转账明确失败：服务层已把预算/库存加回去并写入 failed claim。必须 commit
-        # 持久化这次补偿与审计，再向用户返回失败；回滚会撤销补偿，等于没退。
-        await db.commit()
-        raise HTTPException(status_code=410, detail=str(e)) from e
-    except (RuntimeError, ValueError) as e:
-        status_code = 400 if isinstance(e, ValueError) else 410
-        raise HTTPException(status_code=status_code, detail=str(e)) from e
-
-    await db.commit()
-
-    return {
-        "status": result["status"],
-        "benefit_id": str(benefit.id),
-        "amount": result["amount"],
-        "claim_id": str(result["claim_id"]),
-    }
+    return {"status": "ready", "consumer_id": str(consumer.id), "connector_id": str(connector.id)}

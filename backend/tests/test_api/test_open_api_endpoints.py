@@ -91,8 +91,8 @@ def _seed(
             tenant_id=tenant_id,
             name="测试活动",
             campaign_type="coupon",
-            start_at="2026-01-01T00:00:00",
-            end_at="2027-12-31T23:59:59",
+            start_at=datetime(2026, 1, 1, tzinfo=UTC),
+            end_at=datetime(2027, 12, 31, 23, 59, 59, tzinfo=UTC),
             rules_json={},
         )
         db.add(campaign)
@@ -123,6 +123,7 @@ def _seed(
         return {
             "tenant_id": tenant_id,
             "claim_id": claim.id,
+            "campaign_id": campaign.id,
             "brand_id": brand.id,
             "product_id": product.id,
         }
@@ -393,6 +394,26 @@ async def test_redeem_coupon_cross_tenant_returns_404(open_api_app):
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         resp = await client.post(f"/open/v1/coupons/{ids_b['claim_id']}/redeem", headers={"X-Api-Key": key_a})
         assert resp.status_code == 404
+
+
+@pytest.mark.anyio
+async def test_open_api_campaign_status_is_explicitly_admin_only(open_api_app):
+    api_key = f"legacy-campaign-status-{uuid.uuid4()}"
+    async with TestSessionLocal() as db:
+        ids = await _seed(api_key, "full_access", ["campaign:status"])(db)
+
+    async with AsyncClient(transport=ASGITransport(app=open_api_app), base_url="http://test") as client:
+        response = await client.patch(
+            f"/open/v1/campaigns/{ids['campaign_id']}/status",
+            headers={"X-Api-Key": api_key},
+            json={"status": "active"},
+        )
+
+    assert response.status_code == 403
+    assert response.json()["detail"] == "Campaign lifecycle changes require an Admin login session"
+    async with TestSessionLocal() as db:
+        campaign = await db.get(Campaign, ids["campaign_id"])
+        assert campaign.status == "draft"
 
 
 @pytest.mark.anyio

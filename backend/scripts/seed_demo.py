@@ -15,6 +15,7 @@ import typer
 from sqlalchemy import delete, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import selectinload
+from uuid6 import uuid7
 
 # 确保可以 import app 模块
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -64,6 +65,7 @@ from app.modules.brand_tenant_initialization import (
 from app.services.analytics import aggregate_daily_stats
 from app.services.audit import write_audit_log
 from app.services.auth import revoke_current_tenant_account_sessions
+from app.services.campaign import change_campaign_status, create_benefit, create_campaign
 from app.services.channel import create_account_scope
 from app.services.code import activate_batch, create_code_batch, mark_delivered, mark_printing, revoke_code_item
 from app.services.code_export import generate_code_csv
@@ -74,7 +76,7 @@ from app.services.quota import lock_quota_rollout_state, refresh_quota_usage_fro
 from app.services.risk import freeze_code_item
 from app.services.tenant import create_tenant
 from app.utils import utcnow
-from app.utils.crypto import EnvKeyProvider, init_crypto
+from app.utils.crypto import EnvKeyProvider, encrypt_wechat_openid, hash_wechat_openid, init_crypto
 from app.utils.security import hash_password, verify_password
 
 app = typer.Typer(help="一码通演示数据生成器")
@@ -1524,8 +1526,36 @@ CAMPAIGNS_DATA = [
 ]
 
 
-async def _ensure_campaigns(db: AsyncSession, tenant_id: uuid.UUID, consumer_ids: list[str]) -> list[Campaign]:
-    """创建活动与权益，含领取记录"""
+def _demo_campaign_rules(camp_data: dict) -> dict:
+    first_scan = bool(camp_data["rules"].get("first_scan_only"))
+    return {
+        **camp_data["rules"],
+        "participation_conditions": "首次扫码" if first_scan else "扫码即可参与",
+        "participation_condition_type": "first_scan" if first_scan else "any_scan",
+        "claim_limits": f"每人限领{camp_data['rules'].get('per_person_limit', 1)}次",
+        "claim_limit_count": camp_data["rules"].get("per_person_limit", 1),
+        "validity_period": "活动期内有效",
+        "disclaimer": "最终解释权归品牌方所有",
+        "minor_notice": "未成年人请在监护人陪同下参与",
+        "customer_service_contact": "400-123-4567",
+    }
+
+
+def _demo_benefit_config(camp_data: dict) -> dict:
+    config = {**camp_data["benefit_config"], "validity_type": "campaign_period"}
+    if camp_data["benefit_type"] == "form_benefit":
+        config = {
+            "form_url": "https://example.com/forms/demo-trial",
+            "require_phone": True,
+            "validity_type": "campaign_period",
+        }
+    elif camp_data["benefit_type"] == "private_domain":
+        config["qr_image_url"] = config.pop("qr_code_url")
+    return config
+
+
+async def _ensure_campaigns(db: AsyncSession, tenant_id: uuid.UUID, product_id: uuid.UUID) -> list[Campaign]:
+    """通过权威接口幂等创建活动与权益。"""
     now = utcnow()
     campaigns = []
 
@@ -1535,73 +1565,53 @@ async def _ensure_campaigns(db: AsyncSession, tenant_id: uuid.UUID, consumer_ids
         )
         campaign = result.scalar_one_or_none()
         if not campaign:
-            campaign = Campaign(
-                tenant_id=tenant_id,
-                name=camp_data["name"],
-                campaign_type=camp_data["campaign_type"],
-                status=camp_data["status"],
-                start_at=(now + timedelta(days=camp_data["start_offset"])).strftime("%Y-%m-%dT%H:%M:%SZ"),
-                end_at=(now + timedelta(days=camp_data["end_offset"])).strftime("%Y-%m-%dT%H:%M:%SZ"),
-                rules_json=camp_data["rules"],
-                description=camp_data["description"],
+            end_at = now + timedelta(days=camp_data["end_offset"])
+            if camp_data["status"] == CampaignStatus.ENDED and end_at <= now:
+                end_at = now + timedelta(days=1)
+            created = await create_campaign(
+                db,
+                tenant_id,
+                camp_data["name"],
+                camp_data["campaign_type"],
+                now + timedelta(days=camp_data["start_offset"]),
+                end_at,
+                _demo_campaign_rules(camp_data),
+                camp_data["description"],
+                product_id,
             )
-            db.add(campaign)
-            await db.flush()
-            await db.refresh(campaign)
+            campaign = await db.get(Campaign, uuid.UUID(created["id"]), populate_existing=True)
+            if campaign is None:  # pragma: no cover - authority returned the created row
+                raise RuntimeError("Campaign creation lost its authority row")
 
         # 权益
         result = await db.execute(
             select(Benefit).where(Benefit.tenant_id == tenant_id, Benefit.campaign_id == campaign.id)
         )
         benefit = result.scalar_one_or_none()
-        if benefit:
-            benefit.stock_total = camp_data["stock_total"]
-            benefit.stock_used = max(benefit.stock_used, camp_data["stock_used"])
-        else:
-            benefit = Benefit(
-                tenant_id=tenant_id,
-                campaign_id=campaign.id,
-                name=camp_data["benefit_name"],
-                benefit_type=camp_data["benefit_type"],
-                config_json=camp_data["benefit_config"],
-                stock_total=camp_data["stock_total"],
-                stock_used=camp_data["stock_used"],
-                per_person_limit=1,
-                status="active",
+        if benefit is None:
+            created_benefit = await create_benefit(
+                db,
+                tenant_id,
+                campaign.id,
+                camp_data["benefit_name"],
+                camp_data["benefit_type"],
+                _demo_benefit_config(camp_data),
+                camp_data["stock_total"],
+                camp_data["rules"].get("per_person_limit", 1),
             )
-            db.add(benefit)
-            await db.flush()
-            await db.refresh(benefit)
+            benefit = await db.get(Benefit, uuid.UUID(created_benefit["id"]), populate_existing=True)
+            if benefit is None:  # pragma: no cover - authority returned the created row
+                raise RuntimeError("Benefit creation lost its authority row")
 
-        # 为已领取的权益创建 BenefitClaim 记录
-        if camp_data["stock_used"] > 0 and consumer_ids:
-            existing_claims = (
-                await db.execute(
-                    select(func.count())
-                    .select_from(BenefitClaim)
-                    .where(
-                        BenefitClaim.tenant_id == tenant_id,
-                        BenefitClaim.benefit_id == benefit.id,
-                    )
-                )
-            ).scalar_one()
-            claims_to_create = max(0, camp_data["stock_used"] - existing_claims)
-            if claims_to_create > 0:
-                for i in range(claims_to_create):
-                    consumer_id = random.choice(consumer_ids)
-                    db.add(
-                        BenefitClaim(
-                            tenant_id=tenant_id,
-                            benefit_id=benefit.id,
-                            campaign_id=campaign.id,
-                            consumer_id=consumer_id,
-                            idempotency_key=f"demo-claim-{benefit.id}-{i}",
-                            claim_type="claim",
-                            status="success",
-                            delivery_status="not_required",
-                        )
-                    )
-                await db.flush()
+        if campaign.status == CampaignStatus.DRAFT and camp_data["status"] in {
+            CampaignStatus.ACTIVE,
+            CampaignStatus.ENDED,
+        }:
+            await change_campaign_status(db, tenant_id, campaign.id, CampaignStatus.ACTIVE)
+            await db.refresh(campaign)
+        if campaign.status == CampaignStatus.ACTIVE and camp_data["status"] == CampaignStatus.ENDED:
+            await change_campaign_status(db, tenant_id, campaign.id, CampaignStatus.ENDED)
+            await db.refresh(campaign)
 
         campaigns.append(campaign)
 
@@ -1650,16 +1660,30 @@ async def _ensure_consumers(db: AsyncSession, tenant_id: uuid.UUID) -> tuple[lis
     consumers = []
     for i in range(target_count):
         nickname = random.choice(NICKNAME_POOL)
-
         level, points = _assign_member_level()
+        consumer_id = uuid7()
+        openid = f"demo_o{hashlib.md5(f'consumer-{i}'.encode()).hexdigest()[:24]}" if random.random() < 0.6 else None
+        openid_hash = None
+        openid_ciphertext = None
+        openid_nonce = None
+        openid_key_id = None
+        if openid is not None:
+            openid_hash = hash_wechat_openid(tenant_id, openid)
+            openid_ciphertext, openid_nonce, openid_key_id = encrypt_wechat_openid(
+                tenant_id,
+                consumer_id,
+                openid,
+            )
         consumer = ConsumerProfile(
+            id=consumer_id,
             tenant_id=tenant_id,
             nickname=f"{nickname}{random.randint(1, 999) if random.random() < 0.3 else ''}",
             member_level=level,
             total_points=points,
-            wechat_openid=f"demo_o{hashlib.md5(f'consumer-{i}'.encode()).hexdigest()[:24]}"
-            if random.random() < 0.6
-            else None,
+            wechat_openid_hash=openid_hash,
+            wechat_openid_ciphertext=openid_ciphertext,
+            wechat_openid_nonce=openid_nonce,
+            wechat_openid_key_id=openid_key_id,
             tags=random.choice(["扫码用户", "会员", "高活跃", None]),
             extra_data={
                 "source": "demo",
@@ -2235,11 +2259,12 @@ def generate(
             db = await stack.enter_async_context(async_session())
             await set_session_tenant_context(db, tenant_id)
             # 6. 消费者
-            consumers, consumer_ids = await _ensure_consumers(db, tenant_id)
+            consumers, _consumer_ids = await _ensure_consumers(db, tenant_id)
             p.step("消费者与积分", f"({len(consumers)} 人)")
 
             # 7. 活动与权益
-            campaigns = await _ensure_campaigns(db, tenant_id, consumer_ids)
+            campaign_product_id = brand_records[0]["products"][0]["product"].id
+            campaigns = await _ensure_campaigns(db, tenant_id, campaign_product_id)
             p.step("活动与权益", f"({len(campaigns)} 活动)")
 
             # 8. 风控（需要重新查询 code_items）

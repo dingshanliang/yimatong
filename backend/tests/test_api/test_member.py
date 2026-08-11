@@ -70,6 +70,7 @@ async def setup_tenant(client: AsyncClient):
 
 async def create_scan_context(db_session: AsyncSession, tenant_id: str, consumer_id: str = "") -> str:
     batch_id = uuid.uuid4()
+    production_batch_id = uuid.uuid4()
     public_id = f"TEST{uuid.uuid4().hex[:10]}"
     db_session.add(
         CodeBatch(
@@ -77,6 +78,7 @@ async def create_scan_context(db_session: AsyncSession, tenant_id: str, consumer
             tenant_id=uuid.UUID(tenant_id),
             product_id=uuid.uuid4(),
             sku_id=uuid.uuid4(),
+            production_batch_id=production_batch_id,
             batch_code=f"B-{public_id}",
             quantity=1,
             status="activated",
@@ -94,7 +96,14 @@ async def create_scan_context(db_session: AsyncSession, tenant_id: str, consumer
         )
     )
     await db_session.flush()
-    return create_scan_token(public_id, "test-ip", tenant_id=tenant_id, consumer_id=consumer_id)
+    return create_scan_token(
+        public_id,
+        "test-ip",
+        tenant_id=tenant_id,
+        consumer_id=consumer_id,
+        scan_event_id=str(uuid.uuid4()),
+        visitor_id=str(uuid.uuid4()),
+    )
 
 
 class TestConsumerProfile:

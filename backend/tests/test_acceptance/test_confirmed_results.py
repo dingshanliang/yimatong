@@ -88,10 +88,6 @@ async def _reset_code(bypass_session, tenant_id: str, public_id: str) -> None:
     from app.services.resolve_cache import resolve_cache
 
     await resolve_cache.invalidate(f"resolve:{public_id}")
-    # yimatong-zgb1.11：清 claim idempotency Redis 缓存（跨测试累积会导致 409 already claimed）
-    from app.api.v1.benefit_claims import _claim_cache
-
-    _claim_cache._mem_store.clear()  # type: ignore[attr-defined]
 
 
 async def _resolve_with_token(client, public_id, ip="203.0.113.90"):

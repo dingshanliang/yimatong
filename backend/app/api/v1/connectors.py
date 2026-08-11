@@ -5,11 +5,14 @@ L3: API 发券 + 回调接收
 L4: 失败重试
 """
 
+import json
 import uuid
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from pydantic import BaseModel
-from sqlalchemy import select
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import app.services.connectors.coupon_pool  # noqa: F401
@@ -20,7 +23,15 @@ from app.core.database import bootstrap_tenant_row, get_db
 from app.core.dependencies import get_current_tenant
 from app.models.connector import BenefitDelivery, Connector
 from app.services.connectors import get_adapter
-from app.services.connectors.secrets import decrypt_secrets, encrypt_secrets, mask_secrets
+from app.services.connectors.secrets import (
+    connector_with_runtime_secrets,
+    decrypt_secrets,
+    encrypt_secrets,
+    mask_secrets,
+    public_connector_config,
+    sensitive_config_keys,
+)
+from app.utils.auth_rbac import require_durable_session, require_permission
 
 connector_router = APIRouter(prefix="/api/v1/connectors", tags=["connectors"])
 
@@ -30,33 +41,95 @@ connector_router = APIRouter(prefix="/api/v1/connectors", tags=["connectors"])
 # ---------------------------------------------------------------------------
 
 
-class CouponPoolCreate(BaseModel):
-    name: str
-    codes: list[str]
+ConnectorName = Annotated[str, Field(min_length=1, max_length=200)]
+ConnectorType = Annotated[str, Field(min_length=1, max_length=50)]
+ConsumerReference = Annotated[str, Field(min_length=1, max_length=100)]
+CouponCodeValue = Annotated[str, Field(min_length=1, max_length=100)]
 
 
-class DistributeRequest(BaseModel):
-    consumer_id: str
+def _bounded_json(value: dict[str, object] | None, *, label: str) -> dict[str, object] | None:
+    if value is None:
+        return None
+    nodes = 0
+
+    def walk(item: object, depth: int) -> None:
+        nonlocal nodes
+        nodes += 1
+        if depth > 6 or nodes > 512:
+            raise ValueError(f"{label} is too deeply nested or complex")
+        if isinstance(item, dict):
+            if len(item) > 100:
+                raise ValueError(f"{label} contains too many keys")
+            for key, nested in item.items():
+                if not isinstance(key, str) or not key or len(key) > 100:
+                    raise ValueError(f"{label} contains an invalid key")
+                walk(nested, depth + 1)
+        elif isinstance(item, list):
+            if len(item) > 200:
+                raise ValueError(f"{label} contains too many items")
+            for nested in item:
+                walk(nested, depth + 1)
+        elif isinstance(item, str) and len(item) > 32_768:
+            raise ValueError(f"{label} contains an oversized value")
+        elif item is not None and not isinstance(item, (str, int, float, bool)):
+            raise ValueError(f"{label} contains a non-JSON value")
+
+    walk(value, 0)
+    encoded = json.dumps(value, ensure_ascii=False, separators=(",", ":"), allow_nan=False).encode()
+    if len(encoded) > 65_536:
+        raise ValueError(f"{label} exceeds 65536 bytes")
+    return value
 
 
-class ConnectorCreate(BaseModel):
-    name: str
-    connector_type: str
-    config: dict = {}
-    secrets: dict | None = None
+class ConnectorRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
 
-class ConnectorUpdate(BaseModel):
-    name: str | None = None
-    config: dict | None = None
-    secrets: dict | None = None
+class CouponPoolCreate(ConnectorRequest):
+    name: ConnectorName
+    codes: list[CouponCodeValue] = Field(min_length=1, max_length=5_000)
+
+    @field_validator("codes")
+    @classmethod
+    def validate_codes(cls, values: list[str]) -> list[str]:
+        normalized = [value.strip() for value in values]
+        if len(set(normalized)) != len(normalized):
+            raise ValueError("Coupon codes must be unique")
+        if sum(len(value.encode()) for value in normalized) > 500_000:
+            raise ValueError("Coupon codes exceed the request character budget")
+        return normalized
+
+
+class DistributeRequest(ConnectorRequest):
+    consumer_id: ConsumerReference
+
+
+class ConnectorCreate(ConnectorRequest):
+    name: ConnectorName
+    connector_type: ConnectorType
+    config: dict[str, object] = Field(default_factory=dict)
+    secrets: dict[str, object] | None = None
+
+    _config_bounds = field_validator("config")(lambda value: _bounded_json(value, label="config"))
+    _secret_bounds = field_validator("secrets")(lambda value: _bounded_json(value, label="secrets"))
+
+
+class ConnectorUpdate(ConnectorRequest):
+    name: ConnectorName | None = None
+    config: dict[str, object] | None = None
+    secrets: dict[str, object] | None = None
     enabled: bool | None = None
 
+    _config_bounds = field_validator("config")(lambda value: _bounded_json(value, label="config"))
+    _secret_bounds = field_validator("secrets")(lambda value: _bounded_json(value, label="secrets"))
 
-class DeliverBenefitRequest(BaseModel):
-    consumer_id: str
-    benefit_type: str
-    benefit_config: dict = {}
+
+class DeliverBenefitRequest(ConnectorRequest):
+    consumer_id: ConsumerReference
+    benefit_type: ConnectorType
+    benefit_config: dict[str, object] = Field(default_factory=dict)
+
+    _config_bounds = field_validator("benefit_config")(lambda value: _bounded_json(value, label="benefit_config"))
 
 
 # ---------------------------------------------------------------------------
@@ -78,7 +151,7 @@ def _connector_to_dict(connector: Connector, include_secrets: bool = False) -> d
         "tenant_id": str(connector.tenant_id),
         "name": connector.name,
         "connector_type": connector.connector_type,
-        "config": connector.config,
+        "config": public_connector_config(connector.config),
         "enabled": connector.enabled,
         "created_at": connector.created_at.isoformat() if connector.created_at else None,
         "updated_at": connector.updated_at.isoformat() if connector.updated_at else None,
@@ -92,11 +165,14 @@ def _connector_to_dict(connector: Connector, include_secrets: bool = False) -> d
     return data
 
 
-def _inject_secrets(connector: Connector) -> None:
-    """将加密凭证解密后注入 connector.config。"""
-    if connector.secrets_encrypted:
-        secrets = decrypt_secrets(connector.secrets_encrypted)
-        connector.config = {**connector.config, **secrets}
+def _validated_connector_inputs(config: dict, secrets: dict | None) -> tuple[dict, dict]:
+    leaked = sensitive_config_keys(config)
+    if leaked:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Credentials must be supplied via secrets: {', '.join(sorted(leaked))}",
+        )
+    return public_connector_config(config), dict(secrets or {})
 
 
 def _delivery_to_dict(delivery) -> dict:
@@ -125,12 +201,15 @@ def _delivery_to_dict(delivery) -> dict:
 
 @connector_router.get("/coupon-pools", summary="券码池列表")
 async def list_pools_endpoint(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
+    _: None = Depends(require_permission("campaign:manage")),
 ):
     from app.services.connector import list_coupon_pools
 
-    pools = await list_coupon_pools(db, tenant_id)
+    pools, total = await list_coupon_pools(db, tenant_id, page=page, page_size=page_size)
     return {
         "items": [
             {
@@ -141,19 +220,27 @@ async def list_pools_endpoint(
             }
             for p in pools
         ],
-        "total": len(pools),
+        "total": total,
+        "page": page,
+        "page_size": page_size,
     }
 
 
 @connector_router.post("/coupon-pools", status_code=201, summary="创建 pool")
 async def create_pool_endpoint(
     body: CouponPoolCreate,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
+    _: None = Depends(require_durable_session),
+    __: None = Depends(require_permission("campaign:manage")),
 ):
     from app.services.connector import create_coupon_pool
 
-    pool = await create_coupon_pool(db, tenant_id, body.name, body.codes)
+    try:
+        async with db.begin_nested():
+            pool = await create_coupon_pool(db, tenant_id, body.name, body.codes)
+    except IntegrityError:
+        raise HTTPException(status_code=409, detail="Coupon code already exists")
     return {
         "id": str(pool.id),
         "name": pool.name,
@@ -169,10 +256,11 @@ async def list_pool_codes_endpoint(
     page_size: int = Query(50, ge=1, le=200),
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
+    _: None = Depends(require_permission("campaign:manage")),
 ):
     from app.services.connector import list_pool_codes
 
-    codes, total = await list_pool_codes(db, pool_id, page=page, page_size=page_size)
+    codes, total = await list_pool_codes(db, tenant_id, pool_id, page=page, page_size=page_size)
     return {
         "items": [
             {
@@ -193,12 +281,14 @@ async def list_pool_codes_endpoint(
 async def distribute_endpoint(
     pool_id: uuid.UUID,
     body: DistributeRequest,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
+    _: None = Depends(require_durable_session),
+    __: None = Depends(require_permission("campaign:manage")),
 ):
     from app.services.connector import distribute_coupon
 
-    code = await distribute_coupon(db, pool_id, body.consumer_id)
+    code = await distribute_coupon(db, tenant_id, pool_id, body.consumer_id)
     if not code:
         raise HTTPException(status_code=400, detail="No available codes in pool")
     return {
@@ -216,26 +306,29 @@ async def distribute_endpoint(
 @connector_router.post("/connectors", status_code=201, summary="创建 连接器")
 async def create_connector_endpoint(
     body: ConnectorCreate,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
+    _: None = Depends(require_durable_session),
+    __: None = Depends(require_permission("campaign:manage")),
 ):
     from app.services.connector import create_connector as _create
 
     # 验证适配器类型和配置
+    public_config, supplied_secrets = _validated_connector_inputs(body.config, body.secrets)
     stub = Connector(
         tenant_id=tenant_id,
         name=body.name,
         connector_type=body.connector_type,
-        config=body.config,
+        config=public_config,
         enabled=True,
     )
     adapter = get_adapter(stub)
-    is_valid, error = await adapter.validate_config(body.config)
+    is_valid, error = await adapter.validate_config({**public_config, **supplied_secrets})
     if not is_valid:
         raise HTTPException(status_code=400, detail=f"Invalid config: {error}")
 
-    secrets_encrypted = encrypt_secrets(body.secrets) if body.secrets else None
-    conn = await _create(db, tenant_id, body.name, body.connector_type, body.config)
+    secrets_encrypted = encrypt_secrets(supplied_secrets) if supplied_secrets else None
+    conn = await _create(db, tenant_id, body.name, body.connector_type, public_config)
     if secrets_encrypted:
         conn.secrets_encrypted = secrets_encrypted
         await db.flush()
@@ -246,17 +339,32 @@ async def create_connector_endpoint(
 
 @connector_router.get("/connectors", summary="连接器 列表")
 async def list_connectors_endpoint(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    connector_type: str | None = Query(None, min_length=1, max_length=50),
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
+    _: None = Depends(require_permission("campaign:manage")),
 ):
     from app.services.connector import list_connectors
 
-    conns = await list_connectors(db, tenant_id)
-    return [_connector_to_dict(c, include_secrets=True) for c in conns]
+    conns, total = await list_connectors(
+        db,
+        tenant_id,
+        page=page,
+        page_size=page_size,
+        connector_type=connector_type,
+    )
+    return {
+        "items": [_connector_to_dict(c, include_secrets=True) for c in conns],
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+    }
 
 
 @connector_router.get("/connectors/types", summary="connector types 列表")
-async def list_connector_types_endpoint():
+async def list_connector_types_endpoint(_: None = Depends(require_permission("campaign:manage"))):
     """返回系统支持的所有连接器类型。"""
     from app.services.connectors.registry import list_adapter_types
 
@@ -268,6 +376,7 @@ async def get_connector_endpoint(
     conn_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
+    _: None = Depends(require_permission("campaign:manage")),
 ):
     connector = await _get_connector_or_404(db, tenant_id, conn_id)
     return _connector_to_dict(connector, include_secrets=True)
@@ -276,8 +385,10 @@ async def get_connector_endpoint(
 @connector_router.post("/connectors/{conn_id}/test")
 async def test_connection_endpoint(
     conn_id: uuid.UUID,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
+    _: None = Depends(require_durable_session),
+    __: None = Depends(require_permission("campaign:manage")),
 ):
     from app.services.connector import test_connection
 
@@ -289,21 +400,32 @@ async def test_connection_endpoint(
 async def update_connector_endpoint(
     conn_id: uuid.UUID,
     body: ConnectorUpdate,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
+    _: None = Depends(require_durable_session),
+    __: None = Depends(require_permission("campaign:manage")),
 ):
     from app.services.connector import update_connector
 
+    conn = await _get_connector_or_404(db, tenant_id, conn_id)
     updates = {}
     if body.name is not None:
         updates["name"] = body.name
     if body.config is not None:
-        updates["config"] = body.config
+        public_config, _ = _validated_connector_inputs(body.config, body.secrets)
+        updates["config"] = public_config
     if body.enabled is not None:
         updates["enabled"] = body.enabled
 
+    existing_secrets = decrypt_secrets(conn.secrets_encrypted) if conn.secrets_encrypted else {}
+    supplied_secrets = {**existing_secrets, **dict(body.secrets)} if body.secrets is not None else existing_secrets
+    candidate_config = updates.get("config", public_connector_config(conn.config))
+    adapter = get_adapter(conn)
+    is_valid, error = await adapter.validate_config({**candidate_config, **supplied_secrets})
+    if not is_valid:
+        raise HTTPException(status_code=400, detail=f"Invalid config: {error}")
     if body.secrets is not None:
-        updates["secrets_encrypted"] = encrypt_secrets(body.secrets)
+        updates["secrets_encrypted"] = encrypt_secrets(supplied_secrets)
 
     try:
         conn = await update_connector(db, tenant_id, conn_id, **updates)
@@ -320,18 +442,20 @@ async def update_connector_endpoint(
 @connector_router.post("/connectors/{conn_id}/sync-stock")
 async def sync_stock_endpoint(
     conn_id: uuid.UUID,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
+    _: None = Depends(require_durable_session),
+    __: None = Depends(require_permission("campaign:manage")),
 ):
     connector = await _get_connector_or_404(db, tenant_id, conn_id)
     if not connector.enabled:
         raise HTTPException(status_code=400, detail="Connector is disabled")
 
-    adapter = get_adapter(connector)
+    runtime_connector = connector_with_runtime_secrets(connector)
+    adapter = get_adapter(runtime_connector)
     try:
-        _inject_secrets(connector)
-        available = await adapter.sync_stock(connector)
-        connector.config = {**connector.config, "stock": {"available": available}}
+        available = await adapter.sync_stock(runtime_connector)
+        connector.config = {**public_connector_config(connector.config), "stock": {"available": available}}
         await db.flush()
         await db.refresh(connector)
         return {"connector_id": str(connector.id), "available": available}
@@ -348,18 +472,21 @@ async def sync_stock_endpoint(
 async def deliver_benefit_endpoint(
     conn_id: uuid.UUID,
     body: DeliverBenefitRequest,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
+    _: None = Depends(require_permission("campaign:manage")),
 ):
     from app.services.benefit_delivery_handler import _do_deliver
 
     connector = await _get_connector_or_404(db, tenant_id, conn_id)
     if not connector.enabled:
         raise HTTPException(status_code=400, detail="Connector is disabled")
+    if db.get_bind().dialect.name == "postgresql":
+        raise HTTPException(status_code=409, detail="Benefit delivery requires an authoritative campaign claim")
 
-    _inject_secrets(connector)
+    runtime_connector = connector_with_runtime_secrets(connector)
     try:
-        await _do_deliver(db, tenant_id, connector, body.consumer_id, body.benefit_config)
+        await _do_deliver(db, tenant_id, runtime_connector, body.consumer_id, body.benefit_config)
         return {"status": "processing"}
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f"Deliver failed: {exc}")
@@ -374,7 +501,7 @@ async def deliver_benefit_endpoint(
 async def delivery_callback_endpoint(
     conn_id: uuid.UUID,
     request: Request,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ):
     """外部系统回调端点 — 不走 JWT 认证，由适配器签名验证保护。"""
     connector = await bootstrap_tenant_row(
@@ -387,6 +514,8 @@ async def delivery_callback_endpoint(
     adapter = get_adapter(connector)
 
     body = await request.body()
+    if len(body) > 1_048_576:
+        raise HTTPException(status_code=413, detail="Callback payload too large")
     headers = dict(request.headers)
 
     # 验证回调签名（必须由适配器实现）
@@ -396,65 +525,53 @@ async def delivery_callback_endpoint(
     # 解析回调
     result = await adapter.parse_callback(connector, body, headers)
 
-    # 查找匹配的 BenefitDelivery 并更新状态
-    if result.external_id:
-        from sqlalchemy import func as sa_func
+    if not result.external_id or result.status not in {"success", "failed"}:
+        raise HTTPException(status_code=422, detail="Callback result is not settleable")
 
-        from app.models.connector import BenefitDelivery
-
-        # 优先按 out_bill_no 精确匹配（适用于微信转账等带唯一单号的场景）
-        delivery = None
-        delivery_stmt = select(BenefitDelivery).where(
-            BenefitDelivery.tenant_id == connector.tenant_id,
-            BenefitDelivery.connector_id == conn_id,
-            BenefitDelivery.status == "pending",
-            sa_func.jsonb_extract_path_text(BenefitDelivery.benefit_config, "out_bill_no") == result.external_id,
-        )
-        delivery_row = await db.execute(delivery_stmt.with_for_update())
-        delivery = delivery_row.scalar_one_or_none()
-
-        # 回退：按最新 pending 匹配
-        if not delivery:
-            delivery_stmt = (
+    deliveries = list(
+        (
+            await db.execute(
                 select(BenefitDelivery)
                 .where(
                     BenefitDelivery.tenant_id == connector.tenant_id,
                     BenefitDelivery.connector_id == conn_id,
-                    BenefitDelivery.status == "pending",
+                    BenefitDelivery.external_id == result.external_id,
                 )
-                .order_by(BenefitDelivery.created_at.desc())
-                .limit(1)
+                .order_by(BenefitDelivery.id)
+                .limit(2)
             )
-            delivery_row = await db.execute(delivery_stmt.with_for_update())
-            delivery = delivery_row.scalar_one_or_none()
+        )
+        .scalars()
+        .all()
+    )
+    if len(deliveries) != 1 or deliveries[0].claim_id is None:
+        raise HTTPException(status_code=404, detail="Callback delivery not found")
+    delivery = deliveries[0]
 
-        if delivery:
-            delivery.status = result.status
-            delivery.external_data = result.external_data
-            if result.status == "success":
-                delivery.next_retry_at = None
+    if db.get_bind().dialect.name == "postgresql":
+        from app.services.campaign_callback_authority import settle_campaign_claim_callback
 
-                # 同步更新关联 BenefitClaim 状态
-                from sqlalchemy import update as sa_update
-
-                from app.models.campaign import BenefitClaim
-
-                out_bill_no = delivery.benefit_config.get("out_bill_no") if delivery.benefit_config else None
-                if out_bill_no:
-                    try:
-                        claim_id = uuid.UUID(out_bill_no)
-                        await db.execute(
-                            sa_update(BenefitClaim)
-                            .where(
-                                BenefitClaim.id == claim_id,
-                                BenefitClaim.tenant_id == connector.tenant_id,
-                            )
-                            .values(status="delivered")
-                        )
-                    except ValueError:
-                        pass
-
-            await db.flush()
+        await settle_campaign_claim_callback(
+            connector.tenant_id,
+            conn_id,
+            delivery.id,
+            delivery.claim_id,
+            result.external_id,
+            result.status,
+            result.external_data,
+        )
+    else:
+        # SQLite-only contract adapter. PostgreSQL never grants direct mutation.
+        delivery.status = result.status
+        delivery.external_data = {
+            **(delivery.external_data or {}),
+            **result.external_data,
+            "_callback_external_id": result.external_id,
+            "_callback_status": result.status,
+        }
+        if result.status == "success":
+            delivery.next_retry_at = None
+        await db.flush()
 
     return {"status": "ok"}
 
@@ -467,8 +584,9 @@ async def delivery_callback_endpoint(
 @connector_router.post("/deliveries/{delivery_id}/retry")
 async def retry_delivery_endpoint(
     delivery_id: uuid.UUID,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
+    _: None = Depends(require_permission("campaign:manage")),
 ):
     from app.services.benefit_delivery_handler import _do_deliver
 
@@ -484,6 +602,8 @@ async def retry_delivery_endpoint(
 
     if delivery.status == "success":
         return _delivery_to_dict(delivery)
+    if db.get_bind().dialect.name == "postgresql":
+        raise HTTPException(status_code=409, detail="Campaign claim delivery retries are managed automatically")
 
     conn_result = await db.execute(
         select(Connector).where(
@@ -497,11 +617,11 @@ async def retry_delivery_endpoint(
         await db.flush()
         return _delivery_to_dict(delivery)
 
-    _inject_secrets(connector)
+    runtime_connector = connector_with_runtime_secrets(connector)
     next_delivery = await _do_deliver(
         db,
         tenant_id,
-        connector,
+        runtime_connector,
         delivery.consumer_id,
         delivery.benefit_config,
         benefit_id=delivery.benefit_id,
@@ -512,23 +632,35 @@ async def retry_delivery_endpoint(
 
 @connector_router.get("/deliveries/pending-retries")
 async def pending_retries_endpoint(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
+    _: None = Depends(require_permission("campaign:manage")),
 ):
     from datetime import UTC, datetime
 
     now = datetime.now(UTC)
+    filters = (
+        BenefitDelivery.tenant_id == tenant_id,
+        BenefitDelivery.status == "pending",
+        BenefitDelivery.retry_count < BenefitDelivery.max_retries,
+        BenefitDelivery.next_retry_at <= now,
+    )
+    total_result = await db.execute(select(func.count()).select_from(BenefitDelivery).where(*filters))
     result = await db.execute(
         select(BenefitDelivery)
-        .where(
-            BenefitDelivery.tenant_id == tenant_id,
-            BenefitDelivery.status == "pending",
-            BenefitDelivery.retry_count < BenefitDelivery.max_retries,
-            BenefitDelivery.next_retry_at <= now,
-        )
-        .order_by(BenefitDelivery.created_at)
+        .where(*filters)
+        .order_by(BenefitDelivery.created_at, BenefitDelivery.id)
+        .offset((page - 1) * page_size)
+        .limit(page_size)
     )
-    return [_delivery_to_dict(d) for d in result.scalars().all()]
+    return {
+        "items": [_delivery_to_dict(d) for d in result.scalars().all()],
+        "total": total_result.scalar_one(),
+        "page": page,
+        "page_size": page_size,
+    }
 
 
 @connector_router.get("/deliveries/{delivery_id}")
@@ -536,6 +668,7 @@ async def get_benefit_delivery_endpoint(
     delivery_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
+    _: None = Depends(require_permission("campaign:manage")),
 ):
     result = await db.execute(
         select(BenefitDelivery).where(

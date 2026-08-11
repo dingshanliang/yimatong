@@ -13,6 +13,8 @@ def create_scan_token(
     ip_hash: str | None,
     tenant_id: str = "",
     consumer_id: str = "",
+    scan_event_id: str = "",
+    visitor_id: str = "",
     expires_in: int = 1800,
 ) -> str:
     """颁发 scan_token（短期 JWT，默认 30 分钟）。
@@ -29,11 +31,29 @@ def create_scan_token(
         "ip_hash": ip_hash,
         "tenant_id": tenant_id,
         "consumer_id": consumer_id,
+        "scan_event_id": scan_event_id,
+        "visitor_id": visitor_id,
         "exp": int(time.time()) + expires_in,
         "type": "scan_token",
         "jti": str(uuid.uuid4()),
     }
     return jwt.encode(payload, settings.secret_key, algorithm="HS256")
+
+
+def bind_scan_token_consumer(payload: dict, consumer_id: uuid.UUID, ip_hash: str | None) -> str:
+    """Reissue a scan credential for a verified member without losing claim authority."""
+
+    required = ("public_id", "tenant_id", "scan_event_id", "visitor_id")
+    if any(not isinstance(payload.get(field), str) or not payload[field].strip() for field in required):
+        raise ValueError("scan token missing consumer binding authority")
+    return create_scan_token(
+        public_id=payload["public_id"],
+        ip_hash=ip_hash,
+        tenant_id=payload["tenant_id"],
+        consumer_id=str(consumer_id),
+        scan_event_id=payload["scan_event_id"],
+        visitor_id=payload["visitor_id"],
+    )
 
 
 def verify_scan_token(

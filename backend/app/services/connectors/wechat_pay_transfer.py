@@ -190,7 +190,7 @@ class WeChatPayTransferAdapter(BaseConnectorAdapter):
             return CallbackResult(status="failed", external_data={"error": str(e)})
 
     async def validate_config(self, config: dict) -> tuple[bool, str]:
-        required = ["oa_appid", "mch_id", "cert_serial_no", "cert_private_key"]
+        required = ["oa_appid", "oa_appsecret", "mch_id", "cert_serial_no", "cert_private_key"]
         missing = [k for k in required if not config.get(k)]
         if missing:
             return False, f"Missing required fields: {', '.join(missing)}"

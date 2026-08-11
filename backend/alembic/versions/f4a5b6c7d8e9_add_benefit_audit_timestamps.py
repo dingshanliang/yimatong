@@ -39,7 +39,19 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.execute("DELETE FROM benefit_claims WHERE campaign_id IS NULL")
+    op.execute(
+        """
+        DO $block$
+        BEGIN
+            IF EXISTS(SELECT 1 FROM public.benefit_claims WHERE campaign_id IS NULL) THEN
+                RAISE EXCEPTION USING ERRCODE='23514',
+                    MESSAGE='standalone benefit claim facts block downgrade',
+                    HINT='Retain standalone claim history or abort downgrade; downgrade never deletes claim facts.';
+            END IF;
+        END
+        $block$
+        """
+    )
     op.alter_column("benefit_claims", "campaign_id", existing_type=sa.Uuid(), nullable=False)
     op.drop_column("benefit_claims", "updated_at")
     op.drop_column("benefit_claims", "created_at")

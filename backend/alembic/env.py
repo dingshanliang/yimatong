@@ -144,6 +144,7 @@ MIGRATION_ONLY_TABLES = {
     "api_key_catalog_audit_context_secrets",
     "api_key_legacy_secret_backups",
     "code_delivery_contract_rollout_state",
+    "connector_secret_migration_backups",
     "rls_force_remediation_backups",
     "runtime_privilege_remediation_backup",
 }

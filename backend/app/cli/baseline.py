@@ -54,6 +54,7 @@ from app.models.tenant import (
 )
 from app.services.audit import write_audit_log
 from app.services.auth import revoke_current_tenant_account_sessions
+from app.services.campaign import create_benefit, create_campaign
 from app.services.code import activate_batch, create_code_batch, mark_delivered, mark_printing
 from app.services.code_export import generate_code_csv
 from app.services.entitlement import TenantPlanExpiredError, require_active_plan, validate_feature_flags
@@ -656,6 +657,7 @@ async def _ensure_page(
 async def _ensure_campaign_and_benefit(
     db: AsyncSession,
     tenant_id: uuid.UUID,
+    product_id: uuid.UUID,
     campaign_name: str,
     benefit_name: str,
 ) -> tuple[Campaign, Benefit]:
@@ -663,8 +665,8 @@ async def _ensure_campaign_and_benefit(
     result = await db.execute(select(Campaign).where(Campaign.tenant_id == tenant_id, Campaign.name == campaign_name))
     campaign = result.scalar_one_or_none()
     now = utcnow()
-    start_at = (now - timedelta(days=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
-    end_at = (now + timedelta(days=365)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    start_at = now - timedelta(days=1)
+    end_at = now + timedelta(days=365)
     rules_json = {
         "participation_conditions": "不限",
         "claim_limits": "每人限领1次",
@@ -674,37 +676,37 @@ async def _ensure_campaign_and_benefit(
         "customer_service_contact": "400-000-0000",
     }
     if campaign is None:
-        campaign = Campaign(
-            tenant_id=tenant_id,
-            name=campaign_name,
-            campaign_type="coupon",
-            status="draft",
-            start_at=start_at,
-            end_at=end_at,
-            rules_json=rules_json,
-            description="基准验收活动：可幂等领取的复购权益。",
+        created = await create_campaign(
+            db,
+            tenant_id,
+            campaign_name,
+            "coupon",
+            start_at,
+            end_at,
+            rules_json,
+            "基准验收活动：可幂等领取的复购权益。",
+            product_id,
         )
-        db.add(campaign)
-        await db.flush()
-        await db.refresh(campaign)
+        campaign = await db.get(Campaign, uuid.UUID(created["id"]), populate_existing=True)
+        if campaign is None:  # pragma: no cover - authority returned the created row
+            raise RuntimeError("Campaign creation lost its authority row")
 
     result = await db.execute(select(Benefit).where(Benefit.tenant_id == tenant_id, Benefit.name == benefit_name))
     benefit = result.scalar_one_or_none()
     if benefit is None:
-        benefit = Benefit(
-            tenant_id=tenant_id,
-            campaign_id=campaign.id,
-            name=benefit_name,
-            benefit_type="platform_coupon",
-            config_json={"amount": 10, "min_order": 50},
-            stock_total=100,
-            stock_used=0,
-            per_person_limit=1,
-            status="active",
+        created_benefit = await create_benefit(
+            db,
+            tenant_id,
+            campaign.id,
+            benefit_name,
+            "platform_coupon",
+            {"amount": 10, "min_order": 50, "validity_type": "campaign_period"},
+            100,
+            1,
         )
-        db.add(benefit)
-        await db.flush()
-        await db.refresh(benefit)
+        benefit = await db.get(Benefit, uuid.UUID(created_benefit["id"]), populate_existing=True)
+        if benefit is None:  # pragma: no cover - authority returned the created row
+            raise RuntimeError("Benefit creation lost its authority row")
     return campaign, benefit
 
 
@@ -892,6 +894,7 @@ async def _build_baseline_tenant(
             campaign, benefit = await _ensure_campaign_and_benefit(
                 db,
                 tenant.id,
+                product.id,
                 CAMPAIGN_NAME,
                 BENEFIT_NAME,
             )

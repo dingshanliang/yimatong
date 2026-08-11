@@ -1712,7 +1712,6 @@ async def test_old_scan_token_benefit_claim_and_recall_linearize_at_commit(
     from httpx import ASGITransport, AsyncClient
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-    from app.api.v1 import benefit_claims
     from app.core import database
     from app.core.database import get_db
     from app.main import app
@@ -1745,6 +1744,17 @@ async def test_old_scan_token_benefit_claim_and_recall_linearize_at_commit(
             status="activated",
         )
         public_id = f"AUTH{code_item_id.hex[:16]}"
+        scan_event_id = uuid.uuid4()
+        visitor_id = f"visitor-{label}"
+        await owner.execute(
+            "INSERT INTO scan_events "
+            "(id,tenant_id,public_id,scan_time,is_first_scan,is_valid_visit,visitor_id,created_at,updated_at) "
+            "VALUES($1,$2,$3,now(),true,true,$4,now(),now())",
+            scan_event_id,
+            ids["tenant"],
+            public_id,
+            visitor_id,
+        )
         benefit_id = uuid.uuid4()
         consumer_id = uuid.uuid4()
         initial_points = 11 if label == "recall-first" else 22
@@ -1770,6 +1780,8 @@ async def test_old_scan_token_benefit_claim_and_recall_linearize_at_commit(
             "code_batch": code_batch_id,
             "code_item": code_item_id,
             "public_id": public_id,
+            "scan_event": scan_event_id,
+            "visitor_id": visitor_id,
             "benefit": benefit_id,
             "consumer": consumer_id,
             "initial_points": str(initial_points),
@@ -1850,9 +1862,6 @@ async def test_old_scan_token_benefit_claim_and_recall_linearize_at_commit(
     async def cache_is_not_revoked(self, key: str) -> bool:
         return False
 
-    async def allow_claim_once(key: str, ttl: int | None = None) -> bool:
-        return True
-
     async def allow_rate_limit(key: str, limit: int, window: int) -> RateLimitResult:
         return RateLimitResult(allowed=True)
 
@@ -1860,7 +1869,6 @@ async def test_old_scan_token_benefit_claim_and_recall_linearize_at_commit(
         return None
 
     monkeypatch.setattr(AsyncRedisCache, "is_token_revoked", cache_is_not_revoked)
-    monkeypatch.setattr(benefit_claims._claim_cache, "set_idempotent", allow_claim_once)
     monkeypatch.setattr(rate_limiter, "check", allow_rate_limit)
     monkeypatch.setattr("app.services.resolver_response.invalidate_product_cache", no_cache_invalidation)
     prior_overrides = app.dependency_overrides.copy()
@@ -1881,6 +1889,8 @@ async def test_old_scan_token_benefit_claim_and_recall_linearize_at_commit(
             ip_hash=compute_ip_hash(fixed_ip),
             tenant_id=str(ids["tenant"]),
             consumer_id=str(scenario["consumer"]),
+            scan_event_id=str(scenario["scan_event"]),
+            visitor_id=str(scenario["visitor_id"]),
         )
 
     request_tasks: list[asyncio.Task] = []
@@ -1896,7 +1906,7 @@ async def test_old_scan_token_benefit_claim_and_recall_linearize_at_commit(
 
     def claim_request(client: AsyncClient, label: str, *, pause: bool = False):
         scenario = scenarios[label]
-        headers = {"X-Real-IP": fixed_ip}
+        headers = {"X-Forwarded-For": fixed_ip}
         if pause:
             headers["X-U02B-Claim-Recall-Pause"] = label
         return client.post(
@@ -1995,10 +2005,10 @@ async def test_old_scan_token_benefit_claim_and_recall_linearize_at_commit(
                 timeout=10,
             )
             assert claim_response.status_code == 201, claim_response.text
-            assert claim_response.json() == {
-                "status": "claimed",
-                "benefit_id": str(scenarios["claim-first"]["benefit"]),
-            }
+            claim_payload = claim_response.json()
+            assert claim_payload["status"] == "claimed"
+            assert claim_payload["benefit_id"] == str(scenarios["claim-first"]["benefit"])
+            assert uuid.UUID(claim_payload["claim_id"])
             assert recall_response.status_code == 200, recall_response.text
             assert "40P01" not in claim_response.text + recall_response.text
             assert (
@@ -2051,6 +2061,12 @@ async def test_old_scan_token_benefit_claim_and_recall_linearize_at_commit(
             [scenario["benefit"] for scenario in scenarios.values()],
         )
         await owner.execute(
+            "DELETE FROM campaign_claim_outbox WHERE tenant_id=$1 AND claim_id IN "
+            "(SELECT id FROM benefit_claims WHERE tenant_id=$1 AND benefit_id=ANY($2::uuid[]))",
+            ids["tenant"],
+            [scenario["benefit"] for scenario in scenarios.values()],
+        )
+        await owner.execute(
             "DELETE FROM benefit_claims WHERE tenant_id=$1 AND benefit_id=ANY($2::uuid[])",
             ids["tenant"],
             [scenario["benefit"] for scenario in scenarios.values()],
@@ -2069,6 +2085,11 @@ async def test_old_scan_token_benefit_claim_and_recall_linearize_at_commit(
             "DELETE FROM consumer_profiles WHERE tenant_id=$1 AND id=ANY($2::uuid[])",
             ids["tenant"],
             [scenario["consumer"] for scenario in scenarios.values()],
+        )
+        await owner.execute(
+            "DELETE FROM scan_events WHERE tenant_id=$1 AND id=ANY($2::uuid[])",
+            ids["tenant"],
+            [scenario["scan_event"] for scenario in scenarios.values()],
         )
         await owner.execute(
             "DELETE FROM code_items WHERE tenant_id=$1 AND id=ANY($2::uuid[])",
@@ -2315,8 +2336,11 @@ async def test_catalog_audit_contract_and_clean_roundtrip(migrated_pg_url: str) 
 
         signature = "public.append_authenticated_audit_event(uuid,uuid,text,text,text,jsonb)"
         definition = await owner.fetchval("SELECT pg_get_functiondef($1::regprocedure)", signature)
+        internal_signature = (
+            "public.append_authenticated_audit_event_lifecycle_internal(uuid,uuid,text,text,text,jsonb)"
+        )
+        internal_definition = await owner.fetchval("SELECT pg_get_functiondef($1::regprocedure)", internal_signature)
         for action in (
-            "production_batch_recalled",
             "code_batch_created",
             "code_batch_updated",
             "code_import_completed",
@@ -2325,7 +2349,20 @@ async def test_catalog_audit_contract_and_clean_roundtrip(migrated_pg_url: str) 
             "code_mark_delivered",
             "catalog_import_completed",
         ):
-            assert f"WHEN '{action}'" in definition
+            assert f"WHEN '{action}'" in internal_definition
+        assert "production_batch_recalled" not in definition
+        assert not await owner.fetchval("SELECT has_function_privilege('public',$1,'EXECUTE')", internal_signature)
+        assert not await owner.fetchval(
+            "SELECT has_function_privilege('yimatong_app',$1,'EXECUTE')", internal_signature
+        )
+        recall_definition = await owner.fetchval(
+            "SELECT pg_get_functiondef('public.recall_production_batch(uuid,uuid,uuid,uuid,text)'::regprocedure)"
+        )
+        assert "FROM public.authorize_code_lifecycle_actor(" in recall_definition
+        assert "INSERT INTO public.platform_audit_log(" in recall_definition
+        assert "'production_batch_recalled'" in recall_definition
+        assert "'production_batch:'||requested_production_batch_id::text" in recall_definition
+        assert "resolved_actor" in recall_definition
         assert await owner.fetchval(
             "SELECT proconfig @> ARRAY['search_path=pg_catalog, public'] FROM pg_proc WHERE oid=$1::regprocedure",
             signature,

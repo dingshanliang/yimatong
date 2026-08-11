@@ -27,6 +27,8 @@ describe("canManageAgencyAuthorizations", () => {
     expect(isAgencyScopedRouteAllowed("/imports", ["products"])).toBe(true);
     expect(isAgencyScopedRouteAllowed("/imports", ["codes"])).toBe(false);
     expect(isAgencyScopedRouteAllowed("/campaigns", ["products"])).toBe(false);
+    expect(isAgencyScopedRouteAllowed("/connectors", ["campaigns"])).toBe(true);
+    expect(isAgencyScopedRouteAllowed("/connectors", ["codes"])).toBe(false);
     expect(isAgencyScopedRouteAllowed("/settings/tenant", ["products"])).toBe(
       false
     );

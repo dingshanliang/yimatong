@@ -18,7 +18,7 @@ from app.services.campaign import (
     list_benefit_claims_admin,
     update_benefit,
 )
-from app.utils.auth_rbac import require_permission
+from app.utils.auth_rbac import require_durable_session, require_permission
 
 benefit_router = APIRouter(prefix="/api/v1/benefits", tags=["benefits"])
 
@@ -26,9 +26,10 @@ benefit_router = APIRouter(prefix="/api/v1/benefits", tags=["benefits"])
 @benefit_router.post("", status_code=201, summary="创建权益")
 async def create_benefit_endpoint(
     body: BenefitCreateRequest,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
     _permission: None = Depends(require_permission("campaign:create")),
+    _session: None = Depends(require_durable_session),
 ):
     return await create_benefit(
         db,
@@ -126,9 +127,10 @@ async def get_benefit_endpoint(
 async def update_benefit_endpoint(
     benefit_id: uuid.UUID,
     body: BenefitUpdateRequest,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
     _permission: None = Depends(require_permission("campaign:manage")),
+    _session: None = Depends(require_durable_session),
 ):
     try:
         data = await update_benefit(
@@ -147,9 +149,10 @@ async def update_benefit_endpoint(
 @benefit_router.delete("/{benefit_id}", summary="删除 权益")
 async def delete_benefit_endpoint(
     benefit_id: uuid.UUID,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
     _permission: None = Depends(require_permission("campaign:manage")),
+    _session: None = Depends(require_durable_session),
 ):
     deleted = await delete_benefit(db, tenant_id, benefit_id)
     if deleted is None:

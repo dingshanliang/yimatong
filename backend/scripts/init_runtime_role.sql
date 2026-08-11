@@ -29,10 +29,24 @@ $$;
 
 DO $$
 BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'yimatong_callback') THEN
+        CREATE ROLE yimatong_callback
+            LOGIN PASSWORD 'yimatong_callback' NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS;
+    ELSE
+        ALTER ROLE yimatong_callback
+            WITH LOGIN PASSWORD 'yimatong_callback' NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS;
+    END IF;
+END
+$$;
+
+DO $$
+BEGIN
     EXECUTE format('GRANT CONNECT ON DATABASE %I TO yimatong_app', current_database());
+    EXECUTE format('GRANT CONNECT ON DATABASE %I TO yimatong_callback', current_database());
 END
 $$;
 GRANT USAGE ON SCHEMA public TO yimatong_app;
+GRANT USAGE ON SCHEMA public TO yimatong_callback;
 
 -- Replays start from a closed privilege set.  This script intentionally has
 -- no ALL TABLES/ALL SEQUENCES grant and no runtime default table privilege:
@@ -40,10 +54,16 @@ GRANT USAGE ON SCHEMA public TO yimatong_app;
 -- hardens and authorizes them.
 REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA public FROM yimatong_app;
 REVOKE ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public FROM yimatong_app;
+REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA public FROM yimatong_callback;
+REVOKE ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public FROM yimatong_callback;
 ALTER DEFAULT PRIVILEGES FOR ROLE yimatong IN SCHEMA public
     REVOKE ALL ON TABLES FROM yimatong_app;
 ALTER DEFAULT PRIVILEGES FOR ROLE yimatong IN SCHEMA public
     REVOKE ALL ON SEQUENCES FROM yimatong_app;
+ALTER DEFAULT PRIVILEGES FOR ROLE yimatong IN SCHEMA public
+    REVOKE ALL ON TABLES FROM yimatong_callback;
+ALTER DEFAULT PRIVILEGES FOR ROLE yimatong IN SCHEMA public
+    REVOKE ALL ON SEQUENCES FROM yimatong_callback;
 
 -- This is the reviewed business-relation registry.  A listed relation is not
 -- sufficient by itself: it receives DML only when the live catalog proves
@@ -57,9 +77,9 @@ CREATE TEMP TABLE runtime_business_relation_allowlist (
 INSERT INTO runtime_business_relation_allowlist (table_name)
 SELECT unnest(ARRAY[
     'account_channel_scopes', 'account_roles', 'accounts',
-    'ai_generations', 'anonymous_visitors', 'benefit_claims',
-    'benefit_deliveries', 'benefits', 'brands', 'campaign_risk_rules',
-    'campaigns', 'code_allocations', 'code_batch_generation_receipts', 'code_batches', 'code_items',
+    'ai_generations', 'anonymous_visitors',
+    'brands', 'campaign_risk_rules',
+    'code_allocations', 'code_batch_generation_receipts', 'code_batches', 'code_items',
     'connectors', 'consent_records', 'consumer_profiles', 'coupon_codes',
     'coupon_pools', 'daily_scan_stats', 'distributors', 'diversion_clues',
     'diversion_evidence', 'diversion_investigation_history', 'export_logs',
@@ -111,6 +131,11 @@ CREATE TEMP TABLE runtime_restricted_mutation_relation_allowlist (
 ) ON COMMIT DROP;
 INSERT INTO runtime_restricted_mutation_relation_allowlist (table_name)
 VALUES ('agency_authorizations'),
+       ('benefit_deliveries'),
+       ('benefit_claims'),
+       ('benefits'),
+       ('campaign_claim_outbox'),
+       ('campaigns'),
        ('page_templates'),
        ('page_versions');
 INSERT INTO runtime_restricted_mutation_relation_allowlist (table_name)
@@ -399,6 +424,7 @@ VALUES ('alembic_version'),
        ('api_key_catalog_audit_context_secrets'),
        ('api_key_legacy_secret_backups'),
        ('code_delivery_contract_rollout_state'),
+       ('connector_secret_migration_backups'),
        ('rls_force_remediation_backups'),
        ('runtime_privilege_remediation_backup');
 
@@ -421,7 +447,7 @@ BEGIN
         UNION ALL SELECT table_name FROM runtime_public_relation_allowlist
         UNION ALL SELECT table_name FROM runtime_read_only_global_relation_allowlist
     ) AS orm_registry;
-    IF registry_count <> 98 + (CASE
+    IF registry_count <> 99 + (CASE
         WHEN to_regclass('public.takeover_domain_claims') IS NULL THEN 0 ELSE 1 END) THEN
         RAISE EXCEPTION 'Runtime ORM registry count is inconsistent, got %', registry_count;
     END IF;
@@ -793,6 +819,85 @@ BEGIN
                 partition_row.schema_name, partition_row.table_name;
         END IF;
     END LOOP;
+END
+$$;
+
+-- Campaign mutation and claim delivery are function-only authorities. Keep a
+-- replay from reopening direct DML after the final U06A cutover.
+DO $$
+DECLARE
+    signature text;
+BEGIN
+    IF to_regclass('public.campaigns') IS NOT NULL THEN
+        REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON public.campaigns FROM yimatong_app;
+        GRANT SELECT ON public.campaigns TO yimatong_app;
+    END IF;
+    IF to_regclass('public.benefits') IS NOT NULL THEN
+        REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON public.benefits FROM yimatong_app;
+        GRANT SELECT ON public.benefits TO yimatong_app;
+    END IF;
+    IF to_regclass('public.benefit_claims') IS NOT NULL THEN
+        REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON public.benefit_claims FROM yimatong_app;
+        GRANT SELECT ON public.benefit_claims TO yimatong_app;
+    END IF;
+    IF to_regclass('public.benefit_deliveries') IS NOT NULL THEN
+        REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON public.benefit_deliveries FROM yimatong_app;
+        GRANT SELECT ON public.benefit_deliveries TO yimatong_app;
+    END IF;
+    IF to_regclass('public.campaign_claim_outbox') IS NOT NULL THEN
+        REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON public.campaign_claim_outbox FROM yimatong_app;
+        GRANT SELECT ON public.campaign_claim_outbox TO yimatong_app;
+    END IF;
+    IF to_regclass('public.production_batches') IS NOT NULL
+       AND to_regprocedure('public.recall_production_batch(uuid,uuid,uuid,uuid,text)') IS NOT NULL THEN
+        REVOKE UPDATE ON public.production_batches FROM yimatong_app;
+        GRANT UPDATE(product_id,sku_id,batch_code,production_date,expiry_date,origin,
+            updated_at,external_id,source_system) ON public.production_batches TO yimatong_app;
+    END IF;
+    IF to_regprocedure('public.allocate_coupon_code(uuid,uuid,text,uuid)') IS NOT NULL THEN
+        REVOKE UPDATE, DELETE ON public.coupon_codes FROM yimatong_app;
+        REVOKE UPDATE ON public.coupon_pools FROM yimatong_app;
+        GRANT UPDATE(name,updated_at) ON public.coupon_pools TO yimatong_app;
+    END IF;
+    FOREACH signature IN ARRAY ARRAY[
+        'recall_production_batch(uuid,uuid,uuid,uuid,text)',
+        'create_production_batch(uuid,uuid,uuid,uuid,uuid,uuid,text,date,date,text)',
+        'update_production_batch(uuid,uuid,uuid,uuid,text,date,date,text,boolean)',
+        'delete_production_batch(uuid,uuid,uuid,uuid)',
+        'allocate_coupon_code(uuid,uuid,text,uuid)',
+        'create_campaign(uuid,uuid,uuid,uuid,uuid,text,text,timestamptz,timestamptz,jsonb,text)',
+        'update_campaign(uuid,uuid,uuid,uuid,boolean,uuid,text,text,timestamptz,timestamptz,jsonb,text)',
+        'transition_campaign(uuid,uuid,uuid,uuid,text)',
+        'create_benefit(uuid,uuid,uuid,uuid,uuid,text,text,jsonb,integer,integer,uuid)',
+        'update_benefit(uuid,uuid,uuid,uuid,text,text,jsonb,integer,integer,boolean,uuid,text)',
+        'attach_benefit(uuid,uuid,uuid,uuid,uuid)',
+        'detach_benefit(uuid,uuid,uuid,uuid,uuid)',
+        'delete_campaign(uuid,uuid,uuid,uuid)',
+        'delete_benefit(uuid,uuid,uuid,uuid)',
+        'claim_campaign_benefit(uuid,uuid,uuid,uuid,uuid,text,text,text)',
+        'lease_campaign_claim_outbox(uuid,text,integer,integer)',
+        'record_campaign_claim_delivery_result(uuid,uuid,uuid,uuid,uuid,text,text,jsonb,integer)',
+        'complete_campaign_claim_outbox(uuid,uuid,uuid)',
+        'fail_campaign_claim_outbox(uuid,uuid,uuid,text,integer)',
+        'redeem_campaign_benefit_claim(uuid,uuid,uuid,uuid)'
+    ] LOOP
+        IF to_regprocedure('public.' || signature) IS NOT NULL THEN
+            EXECUTE format('GRANT EXECUTE ON FUNCTION public.%s TO yimatong_app', signature);
+        END IF;
+    END LOOP;
+END
+$$;
+
+DO $$
+DECLARE
+    callback_signature text :=
+        'settle_campaign_claim_callback(uuid,uuid,uuid,uuid,uuid,text,text,jsonb)';
+BEGIN
+    IF to_regprocedure('public.' || callback_signature) IS NOT NULL THEN
+        EXECUTE format('REVOKE ALL ON FUNCTION public.%s FROM PUBLIC', callback_signature);
+        EXECUTE format('REVOKE ALL ON FUNCTION public.%s FROM yimatong_app', callback_signature);
+        EXECUTE format('GRANT EXECUTE ON FUNCTION public.%s TO yimatong_callback', callback_signature);
+    END IF;
 END
 $$;
 

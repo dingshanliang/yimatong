@@ -8,6 +8,7 @@ import {
   Card,
   Col,
   Descriptions,
+  Pagination,
   Progress,
   Row,
   Space,
@@ -18,6 +19,8 @@ import {
 } from "antd";
 import { ArrowLeftOutlined } from "@ant-design/icons";
 import api, { extractErrorMessage } from "@/lib/api";
+import { useAuthStore } from "@/lib/auth";
+import { resolveCampaignAccess } from "@/lib/campaign-access";
 import { formatDateTime } from "@/lib/format";
 import { STATUS_COLORS } from "@/lib/status-colors";
 import type { Campaign, Benefit } from "@yimatong/shared";
@@ -44,39 +47,57 @@ const BENEFIT_TYPE_MAP: Record<string, string> = {
   lottery_chance: "抽奖机会",
 };
 
+const BENEFIT_PAGE_SIZE = 20;
+
 export default function CampaignDetailPage() {
   const params = useParams<{ id: string }>();
   const router = useRouter();
   const { message } = App.useApp();
+  const user = useAuthStore((state) => state.user);
+  const access = resolveCampaignAccess(user);
 
   const [campaign, setCampaign] = useState<Campaign | null>(null);
   const [benefits, setBenefits] = useState<Benefit[]>([]);
+  const [benefitPage, setBenefitPage] = useState(1);
+  const [benefitTotal, setBenefitTotal] = useState(0);
   const [loading, setLoading] = useState(true);
 
   const load = useCallback(async () => {
+    if (!access.canView) return;
     setLoading(true);
     try {
       const [campaignResp, benefitsResp] = await Promise.all([
         api.get(`/campaigns/${params.id}`),
         api
           .get(`/campaigns/${params.id}/benefits`, {
-            params: { page_size: 100 },
+            params: { page: benefitPage, page_size: BENEFIT_PAGE_SIZE },
           })
-          .catch(() => ({ data: { items: [] } })),
+          .catch(() => ({ data: { items: [], total: 0 } })),
       ]);
       setCampaign(campaignResp.data);
       setBenefits(benefitsResp.data.items || []);
+      setBenefitTotal(benefitsResp.data.total || 0);
     } catch (err) {
       setCampaign(null);
       message.error(extractErrorMessage(err, "加载活动详情失败"));
     } finally {
       setLoading(false);
     }
-  }, [params.id, message]);
+  }, [params.id, message, benefitPage, access.canView]);
 
   useEffect(() => {
-    load();
-  }, [load]);
+    if (access.canView) void load();
+  }, [access.canView, load]);
+
+  if (!access.canView) {
+    return (
+      <div className="py-10 text-center">
+        <Title level={4} type="secondary">
+          当前账号无权查看活动
+        </Title>
+      </div>
+    );
+  }
 
   if (loading) {
     return (
@@ -154,7 +175,7 @@ export default function CampaignDetailPage() {
 
           {benefits.length > 0 && (
             <Card
-              title={`权益列表（${benefits.length}）`}
+              title={`权益列表（${benefitTotal}）`}
               size="small"
               style={{ marginTop: 16 }}
             >
@@ -193,6 +214,17 @@ export default function CampaignDetailPage() {
                   );
                 })}
               </Descriptions>
+              {benefitTotal > BENEFIT_PAGE_SIZE && (
+                <div className="mt-4 flex justify-end">
+                  <Pagination
+                    current={benefitPage}
+                    pageSize={BENEFIT_PAGE_SIZE}
+                    total={benefitTotal}
+                    showSizeChanger={false}
+                    onChange={setBenefitPage}
+                  />
+                </div>
+              )}
             </Card>
           )}
         </Col>

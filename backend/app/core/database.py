@@ -30,6 +30,14 @@ if _control_is_pg:
 control_engine = create_async_engine(_control_database_url, **_control_engine_kwargs)
 control_session_factory = async_sessionmaker(control_engine, class_=AsyncSession, expire_on_commit=False)
 
+_callback_database_url = settings.callback_database_url or settings.database_url
+_callback_is_pg = _callback_database_url.startswith("postgresql")
+_callback_engine_kwargs: dict = {"echo": False}
+if _callback_is_pg:
+    _callback_engine_kwargs.update(pool_size=5, max_overflow=5, pool_pre_ping=True, pool_recycle=1800)
+callback_engine = create_async_engine(_callback_database_url, **_callback_engine_kwargs)
+callback_session_factory = async_sessionmaker(callback_engine, class_=AsyncSession, expire_on_commit=False)
+
 
 def _session_uses_postgresql(session: AsyncSession) -> bool:
     """Return whether the concrete session bind uses PostgreSQL.

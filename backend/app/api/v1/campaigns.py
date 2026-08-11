@@ -25,13 +25,12 @@ from app.services.campaign import (
     delete_campaign,
     detach_benefit_from_campaign,
     get_campaign,
-    get_campaign_activation_blockers,
     list_benefits,
     list_campaigns,
     update_campaign,
 )
 from app.services.campaign_analytics import get_campaign_comparison, get_campaign_funnel
-from app.utils.auth_rbac import require_permission
+from app.utils.auth_rbac import require_durable_session, require_permission
 
 campaign_router = APIRouter(prefix="/api/v1/campaigns", tags=["campaigns"])
 
@@ -51,9 +50,10 @@ def _request_product_id(product_id: uuid.UUID | None, rules_json: dict | None) -
 @campaign_router.post("", status_code=201, summary="创建活动")
 async def create_campaign_endpoint(
     body: CampaignCreateRequest,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
     _permission: None = Depends(require_permission("campaign:create")),
+    _session: None = Depends(require_durable_session),
 ):
     product_id = _request_product_id(body.product_id, body.rules_json)
     if product_id and not await campaign_product_exists(db, tenant_id, product_id):
@@ -115,9 +115,10 @@ async def get_campaign_endpoint(
 async def update_campaign_endpoint(
     campaign_id: uuid.UUID,
     body: CampaignUpdateRequest,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
     _permission: None = Depends(require_permission("campaign:manage")),
+    _session: None = Depends(require_durable_session),
 ):
     product_id = _request_product_id(body.product_id, body.rules_json)
     if product_id is not None and not await campaign_product_exists(db, tenant_id, product_id):
@@ -137,16 +138,11 @@ async def update_campaign_endpoint(
 async def change_campaign_status_endpoint(
     campaign_id: uuid.UUID,
     body: CampaignStatusRequest,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
     _permission: None = Depends(require_permission("campaign:manage")),
+    _session: None = Depends(require_durable_session),
 ):
-    if body.status == "active":
-        blockers = await get_campaign_activation_blockers(db, tenant_id, campaign_id)
-        if blockers is None:
-            raise HTTPException(status_code=404, detail="Campaign not found")
-        if blockers:
-            raise HTTPException(status_code=400, detail="；".join(blockers))
     try:
         data = await change_campaign_status(db, tenant_id, campaign_id, body.status)
     except ValueError as e:
@@ -159,9 +155,10 @@ async def change_campaign_status_endpoint(
 @campaign_router.delete("/{campaign_id}", summary="删除活动")
 async def delete_campaign_endpoint(
     campaign_id: uuid.UUID,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
     _permission: None = Depends(require_permission("campaign:manage")),
+    _session: None = Depends(require_durable_session),
 ):
     deleted = await delete_campaign(db, tenant_id, campaign_id)
     if not deleted:
@@ -176,9 +173,10 @@ async def delete_campaign_endpoint(
 async def create_benefit_endpoint(
     campaign_id: uuid.UUID,
     body: BenefitCreateRequest,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
     _permission: None = Depends(require_permission("campaign:create")),
+    _session: None = Depends(require_durable_session),
 ):
     try:
         return await create_benefit(
@@ -200,9 +198,10 @@ async def create_benefit_endpoint(
 async def attach_benefit_endpoint(
     campaign_id: uuid.UUID,
     benefit_id: uuid.UUID,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
     _permission: None = Depends(require_permission("campaign:manage")),
+    _session: None = Depends(require_durable_session),
 ):
     try:
         data = await attach_benefit_to_campaign(db, tenant_id, campaign_id, benefit_id)
@@ -217,9 +216,10 @@ async def attach_benefit_endpoint(
 async def detach_benefit_endpoint(
     campaign_id: uuid.UUID,
     benefit_id: uuid.UUID,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
     _permission: None = Depends(require_permission("campaign:manage")),
+    _session: None = Depends(require_durable_session),
 ):
     try:
         data = await detach_benefit_from_campaign(db, tenant_id, campaign_id, benefit_id)
@@ -233,11 +233,14 @@ async def detach_benefit_endpoint(
 @campaign_router.get("/{campaign_id}/benefits", summary="权益列表")
 async def list_benefits_endpoint(
     campaign_id: uuid.UUID,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
     _permission: None = Depends(require_permission("analytics:view")),
 ):
-    return await list_benefits(db, tenant_id, campaign_id)
+    items, total = await list_benefits(db, tenant_id, campaign_id, page=page, page_size=page_size)
+    return PaginatedResponse(items=items, total=total, page=page, page_size=page_size)
 
 
 # --- Claim ---
@@ -247,10 +250,15 @@ async def list_benefits_endpoint(
 async def claim_benefit_endpoint(
     benefit_id: uuid.UUID,
     body: ClaimRequest,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
     _permission: None = Depends(require_permission("campaign:create")),
+    _session: None = Depends(require_durable_session),
 ):
+    from app.core.database import _session_uses_postgresql
+
+    if _session_uses_postgresql(db):
+        raise HTTPException(status_code=403, detail="Benefit claims require authoritative consumer scan evidence")
     result = await claim_benefit(
         db,
         tenant_id,

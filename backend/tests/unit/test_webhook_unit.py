@@ -28,6 +28,7 @@ class TestPermissions:
     def test_data_reader_cannot_write(self):
         assert not role_has_permission("data_reader", "coupon:issue")
         assert not role_has_permission("data_reader", "campaign:status")
+        assert not role_has_permission("full_access", "campaign:status")
 
     def test_coupon_operator_can_issue(self):
         assert role_has_permission("coupon_operator", "coupon:issue")

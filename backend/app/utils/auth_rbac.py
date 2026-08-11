@@ -132,7 +132,6 @@ API_KEY_ROLE_PERMISSIONS: dict[str, list[str]] = {
         "coupon:detail",
         "coupon:delete",
         "campaign:update",
-        "campaign:status",
         "code:batch_create",
         "code:batch_update",
         # 产品目录同步（ERP 集成）；full_access 保持所有 API Key 权限的超集约定。
@@ -234,3 +233,15 @@ async def require_api_key_admin(request: Request) -> None:
         or "tenant:manage" not in (getattr(request.state, "permissions", []) or [])
     ):
         raise HTTPException(status_code=403, detail="Only a brand administrator may manage API keys")
+
+
+async def require_durable_session(request: Request) -> None:
+    """Reject API keys and legacy JWTs for actor-bound business mutations."""
+
+    from app.core.config import settings
+
+    is_sqlite_adapter = settings.database_url.startswith("sqlite")
+    if getattr(request.state, "auth_method", None) != "jwt" or (
+        not getattr(request.state, "session_id", None) and not is_sqlite_adapter
+    ):
+        raise HTTPException(status_code=403, detail="A live login session is required")

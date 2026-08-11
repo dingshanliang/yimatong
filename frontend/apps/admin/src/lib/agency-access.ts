@@ -27,7 +27,7 @@ const NO_TAKEOVER_ACCESS: TakeoverAccess = {
 const AGENCY_SCOPE_ROUTES: Record<string, readonly string[]> = {
   products: ["/brands", "/products", "/skus", "/batches", "/imports"],
   pages: ["/pages"],
-  campaigns: ["/campaigns", "/benefits"],
+  campaigns: ["/campaigns", "/benefits", "/connectors"],
   codes: ["/codes"],
   analytics: ["/", "/analytics"],
 };

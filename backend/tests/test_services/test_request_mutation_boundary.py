@@ -579,6 +579,27 @@ def test_only_expected_business_mutations_use_function_scoped_get_db():
         ("POST", "/api/v1/risk-alerts/{alert_id}/resolve", "function"),
         ("POST", "/api/v1/risk-alerts/code-items/{item_id}/freeze", "function"),
         ("POST", "/api/v1/risk-alerts/code-items/{item_id}/unfreeze", "function"),
+        ("POST", "/api/v1/campaigns", "function"),
+        ("PATCH", "/api/v1/campaigns/{campaign_id}", "function"),
+        ("POST", "/api/v1/campaigns/{campaign_id}/status", "function"),
+        ("DELETE", "/api/v1/campaigns/{campaign_id}", "function"),
+        ("POST", "/api/v1/campaigns/{campaign_id}/benefits", "function"),
+        ("POST", "/api/v1/campaigns/{campaign_id}/benefits/{benefit_id}/attach", "function"),
+        ("DELETE", "/api/v1/campaigns/{campaign_id}/benefits/{benefit_id}/attach", "function"),
+        ("POST", "/api/v1/campaigns/benefits/{benefit_id}/claim", "function"),
+        ("POST", "/api/v1/benefits", "function"),
+        ("PATCH", "/api/v1/benefits/{benefit_id}", "function"),
+        ("DELETE", "/api/v1/benefits/{benefit_id}", "function"),
+        ("POST", "/api/v1/benefit-claims", "function"),
+        ("POST", "/api/v1/connectors/connectors/{conn_id}/deliver", "function"),
+        ("POST", "/api/v1/connectors/coupon-pools", "function"),
+        ("POST", "/api/v1/connectors/coupon-pools/{pool_id}/distribute", "function"),
+        ("POST", "/api/v1/connectors/connectors", "function"),
+        ("PATCH", "/api/v1/connectors/connectors/{conn_id}", "function"),
+        ("POST", "/api/v1/connectors/connectors/{conn_id}/test", "function"),
+        ("POST", "/api/v1/connectors/connectors/{conn_id}/sync-stock", "function"),
+        ("POST", "/api/v1/connectors/connectors/{conn_id}/callback", "function"),
+        ("POST", "/api/v1/connectors/deliveries/{delivery_id}/retry", "function"),
         ("POST", "/api/v1/imports/excel", "function"),
         ("POST", "/api/v1/imports/products", "function"),
         ("POST", "/api/v1/imports/existing-codes", "function"),
@@ -600,6 +621,7 @@ def test_only_expected_business_mutations_use_function_scoped_get_db():
         ("POST", "/open/v1/skus", "function"),
         ("PATCH", "/open/v1/skus/{sku_id}", "function"),
         ("POST", "/open/v1/batches", "function"),
+        ("POST", "/open/v1/coupons/{coupon_id}/redeem", "function"),
         ("GET", "/c/{public_id}", "function"),
         ("POST", "/api/v1/scan-events", "function"),
         ("POST", "/api/v1/takeovers", "function"),
@@ -646,6 +668,41 @@ def test_business_mutations_do_not_mix_request_and_function_scoped_get_db():
     assert mixed_scope_routes == set()
 
 
+def test_campaign_and_benefit_mutations_commit_before_response():
+    def collect_get_db_scopes(dependency) -> list[str]:
+        scopes = []
+        if dependency.call is database.get_db:
+            scopes.append(dependency.scope or "request")
+        for child in dependency.dependencies:
+            scopes.extend(collect_get_db_scopes(child))
+        return scopes
+
+    expected = {
+        ("POST", "/api/v1/campaigns"),
+        ("PATCH", "/api/v1/campaigns/{campaign_id}"),
+        ("POST", "/api/v1/campaigns/{campaign_id}/status"),
+        ("DELETE", "/api/v1/campaigns/{campaign_id}"),
+        ("POST", "/api/v1/campaigns/{campaign_id}/benefits"),
+        ("POST", "/api/v1/campaigns/{campaign_id}/benefits/{benefit_id}/attach"),
+        ("DELETE", "/api/v1/campaigns/{campaign_id}/benefits/{benefit_id}/attach"),
+        ("POST", "/api/v1/campaigns/benefits/{benefit_id}/claim"),
+        ("POST", "/api/v1/benefits"),
+        ("PATCH", "/api/v1/benefits/{benefit_id}"),
+        ("DELETE", "/api/v1/benefits/{benefit_id}"),
+        ("POST", "/api/v1/benefit-claims"),
+    }
+    actual = {}
+    for route in app.routes:
+        route_key = next(
+            ((method, route.path) for method in route.methods or () if (method, route.path) in expected), None
+        )
+        if route_key is not None:
+            actual[route_key] = collect_get_db_scopes(route.dependant)
+
+    assert set(actual) == expected
+    assert all(scopes and set(scopes) == {"function"} for scopes in actual.values())
+
+
 def test_existing_code_import_uses_authoritative_parent_first_lock_order():
     from app.api.v1 import imports
 
@@ -663,8 +720,9 @@ def test_existing_code_import_uses_authoritative_parent_first_lock_order():
     assert "map_code_batch_db_error(exc)" in source
 
 
-def test_old_token_claim_locks_authoritative_chain_before_benefit_access():
+def test_old_token_claim_uses_plain_pre_reads_before_database_authority():
     from app.api.v1 import benefit_claims
+    from app.services import campaign
 
     source = inspect.getsource(benefit_claims.claim_benefit_h5)
     tenant_lock = source.index("lock_active_tenant_context")
@@ -676,10 +734,11 @@ def test_old_token_claim_locks_authoritative_chain_before_benefit_access():
 
     assert tenant_lock < chain_locator < production_batch_lock < code_batch_lock < code_item_lock < benefit_access
     assert ".with_for_update()" not in source[chain_locator:production_batch_lock]
-    assert ".with_for_update()" in source[production_batch_lock:code_batch_lock]
-    assert ".with_for_update()" in source[code_batch_lock:code_item_lock]
-    assert ".with_for_update()" in source[code_item_lock:benefit_access]
+    assert ".with_for_update()" not in source[production_batch_lock:code_batch_lock]
+    assert ".with_for_update()" not in source[code_batch_lock:code_item_lock]
+    assert ".with_for_update()" not in source[code_item_lock:benefit_access]
     assert "select(CodeItem).join(" not in source
+    assert "claim_campaign_benefit" in inspect.getsource(campaign.claim_benefit)
 
 
 def test_excel_import_row_error_payload_exposes_only_safe_diagnostics():

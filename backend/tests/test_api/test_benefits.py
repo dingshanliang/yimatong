@@ -241,6 +241,22 @@ class TestBenefitsList:
         assert data["page_size"] == 10
 
     @pytest.mark.anyio
+    async def test_campaign_benefits_are_bounded_and_paginated(self, client: AsyncClient, campaign_and_benefit):
+        campaign_id, _, headers = campaign_and_benefit
+
+        resp = await client.get(
+            f"/api/v1/campaigns/{campaign_id}/benefits",
+            params={"page": 1, "page_size": 1},
+            headers=headers,
+        )
+
+        assert resp.status_code == 200
+        assert resp.json()["page"] == 1
+        assert resp.json()["page_size"] == 1
+        assert resp.json()["total"] >= 1
+        assert len(resp.json()["items"]) == 1
+
+    @pytest.mark.anyio
     async def test_list_benefits_filters_and_summary(self, client: AsyncClient, campaign_and_benefit):
         _, _, headers = campaign_and_benefit
         filtered = await client.get("/api/v1/benefits?benefit_type=platform_coupon&status=active", headers=headers)

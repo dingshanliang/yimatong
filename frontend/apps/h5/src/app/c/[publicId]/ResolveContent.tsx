@@ -457,6 +457,7 @@ function ModuleRenderer({
               {}
             }
             scanToken={scanToken}
+            publicId={publicId}
             wecomMode={
               (campaignRules?.wecom_mode as "none" | "guide" | "required") ||
               "none"

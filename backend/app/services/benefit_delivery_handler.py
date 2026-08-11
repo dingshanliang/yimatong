@@ -20,7 +20,7 @@ from app.models.connector import BenefitDelivery, Connector
 from app.services.circuit_breaker import CircuitBreaker
 from app.services.connectors import get_adapter
 from app.services.connectors.coupon_pool import CouponPoolAdapter
-from app.services.connectors.secrets import decrypt_secrets
+from app.services.connectors.secrets import connector_with_runtime_secrets
 
 logger = logging.getLogger(__name__)
 
@@ -115,6 +115,7 @@ async def _do_deliver(
     benefit_config: dict,
     benefit_id: uuid.UUID | None = None,
     claim_id: uuid.UUID | None = None,
+    update_claim_status: bool = False,
 ) -> BenefitDelivery:
     """执行外部发放，写入 BenefitDelivery 记录。"""
     if connector.tenant_id != tenant_id:
@@ -160,17 +161,14 @@ async def _do_deliver(
         return delivery
 
     try:
-        adapter = get_adapter(connector)
+        runtime_connector = connector_with_runtime_secrets(connector)
+        adapter = get_adapter(runtime_connector)
 
         if isinstance(adapter, CouponPoolAdapter):
-            result = await adapter.deliver_from_pool(db, connector, consumer_id)
+            result = await adapter.deliver_from_pool(db, connector, consumer_id, claim_id)
         else:
             # 注入解密后的凭证到 connector.config（适配器内部使用）
-            if connector.secrets_encrypted:
-                secrets = decrypt_secrets(connector.secrets_encrypted)
-                connector.config = {**connector.config, **secrets}
-
-            result = await adapter.deliver(connector, consumer_id, benefit_config)
+            result = await adapter.deliver(runtime_connector, consumer_id, benefit_config)
 
         cb.record_success()
         delivery.status = DeliveryStatus.SUCCESS if result.status == "success" else DeliveryStatus.PENDING
@@ -179,7 +177,7 @@ async def _do_deliver(
             delivery.next_retry_at = None
 
         # 更新 claim delivery_status
-        if delivery.status == DeliveryStatus.SUCCESS:
+        if delivery.status == DeliveryStatus.SUCCESS and update_claim_status:
             await _update_claim_delivery_status(
                 db,
                 tenant_id,

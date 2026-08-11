@@ -358,6 +358,13 @@ def _prepare_runtime_role() -> None:
                         ALTER ROLE acceptance_tester WITH LOGIN PASSWORD 'tester_pwd'
                             NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS;
                     END IF;
+                    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'yimatong_callback') THEN
+                        CREATE ROLE yimatong_callback LOGIN PASSWORD 'yimatong_callback'
+                            NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS;
+                    ELSE
+                        ALTER ROLE yimatong_callback WITH LOGIN PASSWORD 'yimatong_callback'
+                            NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS;
+                    END IF;
                     IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'acceptance_control') THEN
                         CREATE ROLE acceptance_control LOGIN PASSWORD 'control_pwd'
                             NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS;
@@ -370,6 +377,8 @@ def _prepare_runtime_role() -> None:
             )
             await conn.execute("GRANT CONNECT ON DATABASE " + ACCEPTANCE_DB + " TO yimatong_app")
             await conn.execute("GRANT USAGE ON SCHEMA public TO yimatong_app")
+            await conn.execute("GRANT CONNECT ON DATABASE " + ACCEPTANCE_DB + " TO yimatong_callback")
+            await conn.execute("GRANT USAGE ON SCHEMA public TO yimatong_callback")
             await conn.execute("GRANT CONNECT ON DATABASE " + ACCEPTANCE_DB + " TO acceptance_tester")
             await conn.execute("GRANT USAGE ON SCHEMA public TO acceptance_tester")
             await conn.execute("GRANT CONNECT ON DATABASE " + ACCEPTANCE_DB + " TO acceptance_control")

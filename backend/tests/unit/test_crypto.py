@@ -1,6 +1,7 @@
 """AES-GCM 加密 + HMAC-SHA256 哈希 单元测试"""
 
 import os
+import uuid
 
 import pytest
 
@@ -13,9 +14,12 @@ from app.utils.crypto import (
     EnvKeyProvider,
     decrypt_bytes,
     decrypt_phone,
+    decrypt_wechat_openid,
     encrypt_bytes,
     encrypt_phone,
+    encrypt_wechat_openid,
     hash_phone,
+    hash_wechat_openid,
     init_crypto,
     mask_phone,
 )
@@ -123,6 +127,33 @@ class TestHmacHash:
         h = hash_phone("13800138000")
         assert len(h) == 64
         assert all(c in "0123456789abcdef" for c in h)
+
+
+class TestWechatOpenidProtection:
+    def test_lookup_hash_is_tenant_scoped(self):
+        tenant_a = uuid.uuid4()
+        tenant_b = uuid.uuid4()
+
+        assert hash_wechat_openid(tenant_a, "openid-sensitive") == hash_wechat_openid(tenant_a, "openid-sensitive")
+        assert hash_wechat_openid(tenant_a, "openid-sensitive") != hash_wechat_openid(tenant_b, "openid-sensitive")
+
+    def test_envelope_roundtrip_is_bound_to_tenant_and_consumer(self):
+        tenant_id = uuid.uuid4()
+        consumer_id = uuid.uuid4()
+        ciphertext, nonce, key_id = encrypt_wechat_openid(tenant_id, consumer_id, "openid-sensitive")
+
+        assert b"openid-sensitive" not in ciphertext
+        assert decrypt_wechat_openid(tenant_id, consumer_id, ciphertext, nonce, key_id) == "openid-sensitive"
+        with pytest.raises(CryptoError, match="Decryption failed"):
+            decrypt_wechat_openid(tenant_id, uuid.uuid4(), ciphertext, nonce, key_id)
+
+    @pytest.mark.parametrize("openid", ["", "   ", "x" * 129])
+    def test_invalid_openid_fails_without_echoing_value(self, openid):
+        tenant_id = uuid.uuid4()
+
+        with pytest.raises(CryptoError) as error:
+            hash_wechat_openid(tenant_id, openid)
+        assert str(error.value) == "Invalid WeChat OpenID"
 
 
 class TestMaskPhone:

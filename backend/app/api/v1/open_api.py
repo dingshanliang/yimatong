@@ -13,7 +13,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.core.dependencies import get_current_tenant
-from app.core.event_bus import event_bus
 from app.schemas.campaign import CampaignStatusRequest
 from app.schemas.common import PaginatedResponse
 from app.services.audit import write_audit_log
@@ -243,21 +242,29 @@ class CouponRedeemRequest(BaseModel):
 async def redeem_coupon(
     coupon_id: str,
     request: Request,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
     _: None = Depends(require_permission("coupon:redeem")),
 ):
-    """核销一张券：把 BenefitClaim 标记为已使用，记审计并发 claim.used 事件。
-
-    之前这里是空操作（只返回 status=redeemed，不改任何状态），外部系统会误以为
-    已核销。改为真正写入 used 状态；重复核销同一张券返回 409。
-    """
+    """核销一张券；PostgreSQL 由 API-key-bound DB authority 原子写状态和审计。"""
     from app.models.campaign import BenefitClaim
+
+    try:
+        claim_id = uuid.UUID(coupon_id)
+        api_key_id = uuid.UUID(str(request.state.api_key_id))
+    except (AttributeError, TypeError, ValueError) as exc:
+        raise HTTPException(status_code=404, detail="Coupon claim not found") from exc
+
+    if db.get_bind().dialect.name == "postgresql":
+        from app.services.campaign_authority import redeem_campaign_benefit_claim_authority
+
+        result = await redeem_campaign_benefit_claim_authority(db, tenant_id, api_key_id, claim_id)
+        return {"id": str(result["claim_id"]), "status": result["current_status"]}
 
     claim = (
         await db.execute(
             select(BenefitClaim)
-            .where(BenefitClaim.id == uuid.UUID(coupon_id), BenefitClaim.tenant_id == tenant_id)
+            .where(BenefitClaim.id == claim_id, BenefitClaim.tenant_id == tenant_id)
             .with_for_update()
         )
     ).scalar_one_or_none()
@@ -268,21 +275,14 @@ async def redeem_coupon(
 
     claim.status = "used"
     # Open API 使用 API Key 鉴权，account_id 为 None；用 api_key_id 作为操作人追溯。
-    operator = getattr(request.state, "api_key_id", None) or "open_api"
     await write_audit_log(
         db,
-        operator_id=str(operator),
+        operator_id=str(api_key_id),
         target_tenant_id=str(tenant_id),
         action="coupon_redeemed",
         resource=f"claim:{claim.id}",
     )
     await db.flush()
-    await event_bus.emit(
-        "claim.used",
-        {"claim_id": str(claim.id), "benefit_id": str(claim.benefit_id), "consumer_id": claim.consumer_id},
-        str(tenant_id),
-    )
-    await db.commit()
     return {"id": str(claim.id), "status": "used"}
 
 
@@ -293,23 +293,9 @@ async def redeem_coupon(
 async def update_campaign_status(
     campaign_id: uuid.UUID,
     body: CampaignStatusRequest,
-    db: AsyncSession = Depends(get_db),
-    tenant_id: uuid.UUID = Depends(get_current_tenant),
-    _: None = Depends(require_permission("campaign:status")),
 ):
-    from app.services.campaign import change_campaign_status, get_campaign_activation_blockers
-
-    if body.status == "active":
-        blockers = await get_campaign_activation_blockers(db, tenant_id, campaign_id)
-        if blockers is None:
-            raise HTTPException(status_code=404, detail="Campaign not found")
-        if blockers:
-            raise HTTPException(status_code=400, detail="；".join(blockers))
-
-    result = await change_campaign_status(db, tenant_id, campaign_id, body.status)
-    if not result:
-        raise HTTPException(status_code=404, detail="Campaign not found")
-    return result
+    del campaign_id, body
+    raise HTTPException(status_code=403, detail="Campaign lifecycle changes require an Admin login session")
 
 
 # --- Products / SKU / Batch CRUD (ERP integration) ---

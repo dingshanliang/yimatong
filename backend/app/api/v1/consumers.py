@@ -16,7 +16,7 @@ from app.schemas.member import LeadCaptureRequest
 from app.services.member import get_consumer_profile, list_point_transactions
 from app.services.point_shop import exchange_product, list_consumer_point_products
 from app.services.resolver import resolve_public_code
-from app.services.scan_token import create_scan_token, verify_scan_token
+from app.services.scan_token import bind_scan_token_consumer, verify_scan_token
 from app.utils.client_ip import compute_ip_hash, get_client_ip
 from app.utils.crypto import encrypt_phone, hash_phone
 
@@ -88,7 +88,7 @@ def _verify_consumer_ownership(bound_consumer_id: uuid.UUID, requested_consumer_
 async def lead_capture(
     request: Request,
     body: LeadCaptureRequest,
-    db: AsyncSession = Depends(get_db_for_consumer),
+    db: AsyncSession = Depends(get_db_for_consumer, scope="function"),
 ):
     """消费者留资（姓名+手机号），需要 scan_token 鉴权。
 
@@ -105,6 +105,11 @@ async def lead_capture(
     payload = verify_scan_token(token, body.public_id, expected_ip_hash=ip_hash)
     if payload is None:
         raise HTTPException(status_code=401, detail="invalid_token")
+    claim_authority_fields = ("scan_event_id", "visitor_id")
+    if body.phone and any(
+        not isinstance(payload.get(field), str) or not payload[field] for field in claim_authority_fields
+    ):
+        raise HTTPException(status_code=401, detail="scan credential lacks claim authority")
 
     token_tenant_id = payload.get("tenant_id")
     if token_tenant_id:
@@ -199,16 +204,9 @@ async def lead_capture(
                 existing = profile.extra_data or {}
                 existing.update(extra)
                 profile.extra_data = existing
-        await db.commit()
-
     bound_token = None
     if phone_hash and profile:
-        bound_token = create_scan_token(
-            public_id=body.public_id,
-            ip_hash=ip_hash,
-            tenant_id=str(tenant_id),
-            consumer_id=str(profile.id),
-        )
+        bound_token = bind_scan_token_consumer(payload, profile.id, ip_hash)
     return {
         "status": "ok",
         "consumer_id": str(profile.id) if phone_hash and profile else None,

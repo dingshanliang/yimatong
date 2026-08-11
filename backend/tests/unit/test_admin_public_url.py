@@ -11,6 +11,9 @@ from app.services.auth import generate_password_reset
 
 def _settings(**overrides) -> Settings:
     defaults = {
+        "database_url": "postgresql+asyncpg://yimatong_app:runtime-only@db:5432/yimatong",
+        "control_database_url": "postgresql+asyncpg://yimatong_control:control-only@db:5432/yimatong",
+        "callback_database_url": "postgresql+asyncpg://yimatong_callback:callback-only@db:5432/yimatong",
         "secret_key": "prod-secret-key-8YQ2jZ6xF4mN9pR7sT5vW3kL1cB0dA",
         "hmac_pepper": "prod-hmac-pepper-1Kx9Qm4Vt7Za2Nc8Wd5Yp3Rf6Bs0Gj",
         "ip_hash_secret": "prod-ip-hash-secret-6Tp2Mz8Qa4Wn9Yc1Rk7Vf5Bj3Hs0Ld",
@@ -68,6 +71,7 @@ def test_production_accepts_public_https_admin_url():
     configured = _settings(
         environment="production",
         admin_public_url="https://admin.example.com/",
+        h5_public_url="https://h5.example.com/",
         platform_public_url="https://platform.example.com/",
         cookie_secure=True,
     )
@@ -79,6 +83,7 @@ def test_production_platform_cookie_security_fails_fast():
     base = {
         "environment": "production",
         "admin_public_url": "https://admin.example.com",
+        "h5_public_url": "https://h5.example.com",
         "platform_public_url": "https://platform.example.com",
     }
     with pytest.raises(ValidationError, match="COOKIE_SECURE"):
@@ -92,7 +97,19 @@ def test_production_requires_public_https_platform_origin():
         _settings(
             environment="production",
             admin_public_url="https://admin.example.com",
+            h5_public_url="https://h5.example.com",
             platform_public_url="http://localhost:3002",
+            cookie_secure=True,
+        )
+
+
+def test_production_requires_public_https_h5_origin():
+    with pytest.raises(ValidationError, match="H5_PUBLIC_URL"):
+        _settings(
+            environment="production",
+            admin_public_url="https://admin.example.com",
+            h5_public_url="http://localhost:3001",
+            platform_public_url="https://platform.example.com",
             cookie_secure=True,
         )
 

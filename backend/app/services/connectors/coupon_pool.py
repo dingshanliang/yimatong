@@ -11,10 +11,9 @@ from __future__ import annotations
 import logging
 import uuid
 
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.connector import Connector, CouponCode, CouponPool
+from app.models.connector import Connector
 from app.services.connectors.base import BaseConnectorAdapter, CallbackResult, DeliveryResult
 from app.services.connectors.registry import register_adapter
 
@@ -29,10 +28,6 @@ class CouponPoolAdapter(BaseConnectorAdapter):
         if not pool_id_str:
             return None
         return uuid.UUID(pool_id_str)
-
-    async def _get_pool(self, db: AsyncSession, pool_id: uuid.UUID) -> CouponPool | None:
-        result = await db.execute(select(CouponPool).where(CouponPool.id == pool_id))
-        return result.scalar_one_or_none()
 
     async def sync_stock(self, connector: Connector) -> int:
         # 券码池不需要外部同步，但可以通过 db session 查询 remaining
@@ -56,33 +51,24 @@ class CouponPoolAdapter(BaseConnectorAdapter):
         db: AsyncSession,
         connector: Connector,
         consumer_id: str,
+        claim_id: uuid.UUID | None = None,
     ) -> DeliveryResult:
         """从券码池分配券码。"""
         pool_id = self._get_pool_id(connector)
         if not pool_id:
             return DeliveryResult(status="failed", message="pool_id not configured")
 
-        # 获取一个未分配的券码
-        result = await db.execute(
-            select(CouponCode)
-            .where(CouponCode.pool_id == pool_id, CouponCode.distributed.is_(False))
-            .order_by(CouponCode.id)
-            .limit(1)
+        from app.services.connector import distribute_coupon
+
+        code = await distribute_coupon(
+            db,
+            connector.tenant_id,
+            pool_id,
+            consumer_id,
+            claim_id=claim_id,
         )
-        code = result.scalar_one_or_none()
         if not code:
             return DeliveryResult(status="failed", message="No available codes in pool")
-
-        # 分配
-        code.consumer_id = consumer_id
-        code.distributed = True
-
-        # 更新池库存
-        pool = await self._get_pool(db, pool_id)
-        if pool:
-            pool.remaining -= 1
-
-        await db.flush()
 
         return DeliveryResult(
             status="success",

@@ -275,6 +275,7 @@ class TestResolverJsonResponse:
         # 新增首查时间字段，读自 code_items.first_scanned_at
         assert data["scan_info"]["first_scan_time"] is not None
         assert data["scan_info"]["verification_time"] is not None
+        assert uuid.UUID(data["scan_info"]["scan_event_id"])
 
     @pytest.mark.anyio
     async def test_tenant_brand_profile_logo_injected(self, client, traceability_setup, db_session):

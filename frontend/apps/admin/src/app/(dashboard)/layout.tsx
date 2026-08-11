@@ -48,6 +48,7 @@ import { useAuthStore } from "@/lib/auth";
 import { canViewRoleDirectory } from "@/lib/account-access";
 import { catalogAccessForPrincipal } from "@/lib/catalog-access";
 import { codeAccessForPrincipal } from "@/lib/code-access";
+import { resolveCampaignAccess } from "@/lib/campaign-access";
 import {
   agencyScopeMenuRoutes,
   canManageAgencyAuthorizations,
@@ -249,6 +250,7 @@ function DashboardInner({ children }: { children: React.ReactNode }) {
   ).map(({ key }) => key);
   const catalogAccess = catalogAccessForPrincipal(user);
   const codeAccess = codeAccessForPrincipal(user);
+  const campaignAccess = resolveCampaignAccess(user);
 
   const channelMenuChildren: MenuProps["items"] = [
     { key: "/channels", icon: <ShopOutlined />, label: t("menu.channels") },
@@ -372,11 +374,15 @@ function DashboardInner({ children }: { children: React.ReactNode }) {
           icon: <DatabaseOutlined />,
           label: t("menu.integrations"),
         },
-        {
-          key: "/connectors",
-          icon: <DatabaseOutlined />,
-          label: t("menu.connectors"),
-        },
+        ...(campaignAccess.canView
+          ? [
+              {
+                key: "/connectors",
+                icon: <DatabaseOutlined />,
+                label: t("menu.connectors"),
+              },
+            ]
+          : []),
       ],
     },
     {

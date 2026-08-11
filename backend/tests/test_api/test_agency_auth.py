@@ -1120,8 +1120,8 @@ class TestViewerAndCampaignAuthorizationBoundary:
             tenant_id=other_tenant.id,
             name="其他租户活动",
             campaign_type="coupon",
-            start_at="2026-08-01T00:00:00",
-            end_at="2026-08-31T23:59:59",
+            start_at=datetime(2026, 8, 1, tzinfo=UTC),
+            end_at=datetime(2026, 8, 31, 23, 59, 59, tzinfo=UTC),
             rules_json={},
         )
         db_session.add_all(

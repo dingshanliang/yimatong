@@ -297,8 +297,8 @@ async def test_controlled_reconciliation_matches_all_authoritative_fact_tables()
                     tenant_id=tenant_id,
                     name="重算活动",
                     campaign_type="coupon",
-                    start_at="2026-08-01T00:00:00Z",
-                    end_at="2026-08-31T00:00:00Z",
+                    start_at=datetime(2026, 8, 1, tzinfo=UTC),
+                    end_at=datetime(2026, 8, 31, tzinfo=UTC),
                     rules_json={},
                 ),
                 Account(

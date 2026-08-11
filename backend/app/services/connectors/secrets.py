@@ -9,12 +9,56 @@ from __future__ import annotations
 import json
 import os
 import struct
+from collections.abc import Mapping
 
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 
 class SecretsError(Exception):
     """凭证加密/解密错误"""
+
+
+SENSITIVE_CONFIG_KEYS = frozenset(
+    {
+        "api_key",
+        "api_secret",
+        "api_v3_key",
+        "callback_secret",
+        "cert_private_key",
+        "mch_key",
+        "oa_appsecret",
+        "secret",
+    }
+)
+
+
+def sensitive_config_keys(config: Mapping[str, object]) -> set[str]:
+    """Return credential-like top-level keys that must never live in public config."""
+
+    return {key for key in config if key.lower() in SENSITIVE_CONFIG_KEYS}
+
+
+def public_connector_config(config: Mapping[str, object] | None) -> dict:
+    """Strip legacy plaintext credentials before persistence or serialization."""
+
+    return {key: value for key, value in dict(config or {}).items() if key.lower() not in SENSITIVE_CONFIG_KEYS}
+
+
+def connector_with_runtime_secrets(connector):
+    """Build a transient adapter view without dirtying the persisted ORM config."""
+
+    from app.models.connector import Connector
+
+    secrets = decrypt_secrets(connector.secrets_encrypted) if connector.secrets_encrypted else {}
+    return Connector(
+        id=connector.id,
+        tenant_id=connector.tenant_id,
+        name=connector.name,
+        connector_type=connector.connector_type,
+        config={**public_connector_config(connector.config), **secrets},
+        secrets_encrypted=connector.secrets_encrypted,
+        enabled=connector.enabled,
+    )
 
 
 def _get_key() -> tuple[int, bytes]:

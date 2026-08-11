@@ -33,6 +33,16 @@ export function CodePageClient({
         );
         if (!response.ok) throw new Error("Resolver rejected the public code");
         const data = (await response.json()) as Record<string, unknown>;
+        const fragment = new URLSearchParams(window.location.hash.slice(1));
+        const oauthScanToken = fragment.get("scan_token");
+        const oauthConsentId = fragment.get("consent_id");
+        if (fragment.get("oauth") === "success" && oauthScanToken) {
+          data.scan_token = oauthScanToken;
+          if (oauthConsentId) {
+            localStorage.setItem(`consent_id:${publicId}`, oauthConsentId);
+          }
+          window.history.replaceState(null, "", window.location.pathname);
+        }
         const scanInfo = data.scan_info as { visitor_id?: string } | undefined;
         if (scanInfo?.visitor_id)
           localStorage.setItem("visitor_id", scanInfo.visitor_id);

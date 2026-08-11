@@ -61,7 +61,7 @@ from app.services.product import (
     update_production_batch,
     update_sku,
 )
-from app.utils.auth_rbac import require_permission, require_role, require_tenant_type
+from app.utils.auth_rbac import require_durable_session, require_permission, require_role, require_tenant_type
 
 brand_router = APIRouter(prefix="/api/v1/brands", tags=["brands"])
 product_router = APIRouter(prefix="/api/v1/products", tags=["products"])
@@ -629,6 +629,8 @@ async def create_batch_endpoint(
     tenant_id: uuid.UUID = Depends(get_current_tenant),
     actor_id: uuid.UUID = Depends(get_current_account_id),
     _role: str = Depends(require_role("admin", "operator")),
+    _permission: None = Depends(require_permission("product:create")),
+    _session: None = Depends(require_durable_session),
 ):
     batch = await create_production_batch(
         db,
@@ -639,14 +641,7 @@ async def create_batch_endpoint(
         body.production_date,
         body.expiry_date,
         origin=body.origin,
-    )
-    await write_audit_log(
-        db,
-        str(actor_id),
-        str(tenant_id),
-        "production_batch_created",
-        f"production_batch:{batch.id}",
-        {"resource_name": batch.batch_code, "product_id": str(batch.product_id), "result": "success"},
+        actor_id=actor_id,
     )
     return batch
 
@@ -685,6 +680,8 @@ async def update_batch_endpoint(
     tenant_id: uuid.UUID = Depends(get_current_tenant),
     actor_id: uuid.UUID = Depends(get_current_account_id),
     _role: str = Depends(require_role("admin", "operator")),
+    _permission: None = Depends(require_permission("product:update")),
+    _session: None = Depends(require_durable_session),
 ):
     batch = await update_production_batch(
         db,
@@ -695,17 +692,10 @@ async def update_batch_endpoint(
         expiry_date=body.expiry_date,
         origin=body.origin,
         fields_to_update=body.model_fields_set,
+        actor_id=actor_id,
     )
     if not batch:
         raise HTTPException(status_code=404, detail="Batch not found")
-    await write_audit_log(
-        db,
-        str(actor_id),
-        str(tenant_id),
-        "production_batch_updated",
-        f"production_batch:{batch.id}",
-        {"resource_name": batch.batch_code, "changed_fields": sorted(body.model_fields_set), "result": "success"},
-    )
     return batch
 
 
@@ -719,6 +709,7 @@ async def recall_batch_endpoint(
     _tenant_type: str = Depends(require_tenant_type("brand")),
     _role: str = Depends(require_role("admin")),
     _permission: None = Depends(require_permission("code:manage")),
+    _session: None = Depends(require_durable_session),
 ):
     batch = await recall_production_batch(
         db,
@@ -782,20 +773,14 @@ async def delete_batch_endpoint(
     tenant_id: uuid.UUID = Depends(get_current_tenant),
     actor_id: uuid.UUID = Depends(get_current_account_id),
     _role: str = Depends(require_role("admin")),
+    _permission: None = Depends(require_permission("product:delete")),
+    _session: None = Depends(require_durable_session),
 ):
-    deleted, conflict = await delete_production_batch(db, tenant_id, batch_id)
+    deleted, conflict = await delete_production_batch(db, tenant_id, batch_id, actor_id=actor_id)
     if conflict:
         raise HTTPException(status_code=409, detail=conflict)
     if not deleted:
         raise HTTPException(status_code=404, detail="Batch not found")
-    await write_audit_log(
-        db,
-        str(actor_id),
-        str(tenant_id),
-        "production_batch_deleted",
-        f"production_batch:{batch_id}",
-        {"result": "success"},
-    )
 
 
 @asset_router.patch("/{asset_id}", response_model=ProductAssetRead, summary="更新 产品资料")

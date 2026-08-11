@@ -46,6 +46,7 @@ class Settings(BaseSettings):
     database_url: str = "postgresql+asyncpg://yimatong:yimatong@localhost:5432/yimatong_dev?ssl=disable"
     migration_database_url: str | None = None
     control_database_url: str | None = None
+    callback_database_url: str | None = None
     redis_url: str = "redis://localhost:6379/0"
     secret_key: str = ""  # 必须通过环境变量 SECRET_KEY 设置
     access_token_expire_minutes: int = 15
@@ -66,6 +67,7 @@ class Settings(BaseSettings):
 
     # 品牌方 Admin 的唯一公网基址（注册链接、激活链接、密码重置链接）
     admin_public_url: str = "http://localhost:3000"
+    h5_public_url: str = "http://localhost:3001"
     platform_public_url: str = "http://localhost:3002"
 
     # 接管域名真实核验：默认使用系统 DNS 和公网 443；本地/受控验收可指定独立解析器。
@@ -155,6 +157,28 @@ class Settings(BaseSettings):
             raise ValueError("PLATFORM_PUBLIC_URL 必须是无路径、查询参数或凭据的完整 http(s) 基址")
         return urlunsplit((parsed.scheme, parsed.netloc, "", "", ""))
 
+    @field_validator("h5_public_url")
+    @classmethod
+    def _validate_h5_public_url(cls, value: str) -> str:
+        candidate = value.strip()
+        parsed = urlsplit(candidate)
+        try:
+            parsed.port
+        except ValueError as exc:
+            raise ValueError("H5_PUBLIC_URL 端口格式无效") from exc
+        if (
+            any(character.isspace() for character in candidate)
+            or parsed.scheme not in {"http", "https"}
+            or not parsed.hostname
+            or parsed.username is not None
+            or parsed.password is not None
+            or parsed.query
+            or parsed.fragment
+            or parsed.path not in {"", "/"}
+        ):
+            raise ValueError("H5_PUBLIC_URL 必须是无路径、查询参数或凭据的完整 http(s) 基址")
+        return urlunsplit((parsed.scheme, parsed.netloc, "", "", ""))
+
     @model_validator(mode="after")
     def _validate_auth_config(self) -> "Settings":
         if not self.secret_key:
@@ -166,6 +190,14 @@ class Settings(BaseSettings):
                 raise ValueError("生产环境必须显式配置独立的 CONTROL_DATABASE_URL")
             if self.control_database_url == self.database_url:
                 raise ValueError("生产环境 CONTROL_DATABASE_URL 必须与普通 DATABASE_URL 使用不同凭据")
+            if not self.callback_database_url:
+                raise ValueError("生产环境必须显式配置独立的 CALLBACK_DATABASE_URL")
+            if self.callback_database_url in {
+                self.database_url,
+                self.control_database_url,
+                self.migration_database_url,
+            }:
+                raise ValueError("生产环境 CALLBACK_DATABASE_URL 必须使用独立的最小权限凭据")
             if not _has_production_secret_strength(self.secret_key):
                 raise ValueError("生产环境 SECRET_KEY 必须使用至少 32 字节的高熵随机值，且不能使用示例或默认值")
             if not _has_production_secret_strength(self.hmac_pepper):
@@ -182,6 +214,9 @@ class Settings(BaseSettings):
             platform = urlsplit(self.platform_public_url)
             if platform.scheme != "https" or platform.hostname in {"localhost", "127.0.0.1", "::1"}:
                 raise ValueError("生产环境必须显式配置公网 HTTPS PLATFORM_PUBLIC_URL")
+            h5 = urlsplit(self.h5_public_url)
+            if h5.scheme != "https" or h5.hostname in {"localhost", "127.0.0.1", "::1"}:
+                raise ValueError("生产环境必须显式配置公网 HTTPS H5_PUBLIC_URL")
             if not self.cookie_secure:
                 raise ValueError("生产环境平台认证 Cookie 必须启用 COOKIE_SECURE")
             if self.cookie_samesite.lower() == "none":

@@ -9,6 +9,8 @@
 """
 
 import os
+import socket
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -21,6 +23,7 @@ from app.services.circuit_breaker import CircuitBreaker
 from app.services.connectors import get_adapter
 from app.services.connectors.registry import list_adapter_types
 from app.services.connectors.secrets import (
+    connector_with_runtime_secrets,
     decrypt_secrets,
     encrypt_secrets,
     mask_secrets,
@@ -245,6 +248,52 @@ class TestSSRFProtection:
 
         assert _is_url_safe("") is False
 
+    @pytest.mark.asyncio
+    async def test_rejects_hostname_when_any_dns_answer_is_not_public(self, monkeypatch):
+        from app.services.connectors import generic_http
+
+        loop = MagicMock()
+        loop.getaddrinfo = AsyncMock(
+            return_value=[
+                (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 443)),
+                (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("127.0.0.1", 443)),
+            ]
+        )
+        monkeypatch.setattr(generic_http.asyncio, "get_running_loop", lambda: loop)
+
+        with pytest.raises(ValueError, match="public addresses"):
+            await generic_http._resolve_public_addresses("rebind.example")
+
+    @pytest.mark.asyncio
+    async def test_request_connects_to_the_prevalidated_address_with_tls_hostname(self, monkeypatch):
+        from app.services.connectors import generic_http
+
+        loop = MagicMock()
+        loop.getaddrinfo = AsyncMock(return_value=[(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 443))])
+        monkeypatch.setattr(generic_http.asyncio, "get_running_loop", lambda: loop)
+        response = b'HTTP/1.1 200 OK\r\nContent-Length: 15\r\nConnection: close\r\n\r\n{"available":7}'
+        reader = AsyncMock()
+        reader.read = AsyncMock(side_effect=[response, b""])
+        writer = MagicMock()
+        writer.drain = AsyncMock()
+        writer.wait_closed = AsyncMock()
+        open_connection = AsyncMock(return_value=(reader, writer))
+        monkeypatch.setattr(generic_http.asyncio, "open_connection", open_connection)
+
+        result = await generic_http._request_json(
+            "GET",
+            "https://api.example.com/v1",
+            "stock",
+            headers={"Authorization": "Bearer secret"},
+        )
+
+        assert result == {"available": 7}
+        assert open_connection.await_args.kwargs["host"] == "93.184.216.34"
+        assert open_connection.await_args.kwargs["server_hostname"] == "api.example.com"
+        raw_request = b"".join(call.args[0] for call in writer.write.call_args_list)
+        assert b"Host: api.example.com" in raw_request
+        assert b"GET /v1/stock HTTP/1.1" in raw_request
+
 
 # ---------------------------------------------------------------------------
 # 4. CouponPoolAdapter
@@ -320,6 +369,22 @@ class TestSecretsEncryption:
         assert "678" in masked["api_key"]
         assert "***" in masked["api_key"]
         assert masked["short"] == "***"
+
+    def test_runtime_secret_view_never_dirties_persisted_config(self, tenant_id):
+        connector = Connector(
+            id=uuid7(),
+            tenant_id=tenant_id,
+            name="safe-runtime-view",
+            connector_type="generic_http",
+            config={"api_url": "https://api.example.com"},
+            secrets_encrypted=encrypt_secrets({"api_key": "runtime-only"}),
+            enabled=True,
+        )
+
+        runtime = connector_with_runtime_secrets(connector)
+
+        assert runtime.config["api_key"] == "runtime-only"
+        assert connector.config == {"api_url": "https://api.example.com"}
 
 
 # ---------------------------------------------------------------------------

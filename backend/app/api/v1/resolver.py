@@ -170,6 +170,8 @@ async def resolve_code_endpoint(
             public_id=public_id,
             ip_hash=ip_hash,
             tenant_id=data["tenant_id"],
+            scan_event_id=str(scan_info["scan_event_id"]),
+            visitor_id=visitor_id,
         )
     elif is_frozen:
         # frozen：标记权益暂停（H5 据此隐藏领取入口）
@@ -398,6 +400,7 @@ async def _record_scan(
         verification_count = int(count_after.scalar() or 0)
 
         scan_info["is_first_scan"] = event.is_first_scan
+        scan_info["scan_event_id"] = str(event.id)
         scan_info["verification_count"] = verification_count
         scan_info["scan_count"] = verification_count  # 兼容别名
         scan_info["first_scan_time"] = first_scanned_at.isoformat() if first_scanned_at else None

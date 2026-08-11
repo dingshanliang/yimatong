@@ -187,6 +187,7 @@ class TestScanTokenTenantId:
         payload = verify_scan_token(scan_token, public_id)
         assert payload is not None
         assert payload["tenant_id"] == tid, f"tenant_id 应为 {tid}，实际 {payload.get('tenant_id')}"
+        assert uuid.UUID(payload["scan_event_id"])
 
 
 class TestVerificationAvailability:

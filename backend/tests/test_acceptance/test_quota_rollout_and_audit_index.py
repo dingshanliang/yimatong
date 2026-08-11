@@ -99,8 +99,8 @@ def _campaign(tenant_id: uuid.UUID, name: str) -> Campaign:
         tenant_id=tenant_id,
         name=name,
         campaign_type="coupon",
-        start_at="2026-08-01T00:00:00Z",
-        end_at="2026-08-31T00:00:00Z",
+        start_at=datetime(2026, 8, 1, tzinfo=UTC),
+        end_at=datetime(2026, 8, 31, tzinfo=UTC),
         rules_json={},
     )
 

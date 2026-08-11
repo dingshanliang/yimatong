@@ -251,8 +251,8 @@ async def launch_facts(db):
         name="首发活动",
         campaign_type="scan",
         status=CampaignStatus.ACTIVE,
-        start_at="2026-07-01T00:00:00Z",
-        end_at="2026-12-31T00:00:00Z",
+        start_at=datetime(2026, 7, 1, tzinfo=UTC),
+        end_at=datetime(2026, 12, 31, tzinfo=UTC),
         rules_json={},
     )
     sku_id = uuid.uuid4()

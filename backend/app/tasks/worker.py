@@ -16,6 +16,7 @@ from sqlalchemy import select, update
 
 from app.core.config import settings
 from app.models.webhook import WebhookDelivery, WebhookEndpoint
+from app.services.campaign_claim_worker import poll_campaign_claim_outbox
 from app.services.takeover import poll_pending_takeover_imports
 from app.services.webhook_sender import deliver, should_retry
 
@@ -322,6 +323,14 @@ async def worker_loop() -> None:
         except Exception as exc:
             logger.error(
                 "Takeover import poll aborted error_code=worker_poll_failure exception_type=%s",
+                type(exc).__name__,
+            )
+
+        try:
+            await poll_campaign_claim_outbox()
+        except Exception as exc:
+            logger.error(
+                "Campaign claim outbox poll aborted error_code=worker_poll_failure exception_type=%s",
                 type(exc).__name__,
             )
 

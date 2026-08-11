@@ -1,13 +1,12 @@
 "use client";
 
-import { useState, useCallback, useEffect } from "react";
+import { useState } from "react";
 import {
   App,
   Button,
   Form,
   Input,
   Modal,
-  Popconfirm,
   Select,
   Space,
   Switch,
@@ -28,6 +27,10 @@ interface ConnectorsTabProps {
   connectors: Connector[];
   loading: boolean;
   connectorTypes: string[];
+  page: number;
+  pageSize: number;
+  total: number;
+  onPageChange: (page: number) => void;
   onRefresh: () => void;
 }
 
@@ -35,6 +38,10 @@ export function ConnectorsTab({
   connectors,
   loading,
   connectorTypes,
+  page,
+  pageSize,
+  total,
+  onPageChange,
   onRefresh,
 }: ConnectorsTabProps) {
   const { message } = App.useApp();
@@ -90,9 +97,11 @@ export function ConnectorsTab({
       const { data } = await api.post(
         `/connectors/connectors/${record.id}/test`
       );
-      data.success
-        ? message.success("连接测试成功")
-        : message.warning(`连接测试: ${data.message}`);
+      if (data.success) {
+        message.success("连接测试成功");
+      } else {
+        message.warning(`连接测试: ${data.message}`);
+      }
     } catch (err) {
       message.error(extractErrorMessage(err, "连接测试失败"));
     }
@@ -198,7 +207,13 @@ export function ConnectorsTab({
         columns={columns}
         rowKey="id"
         loading={loading}
-        pagination={false}
+        pagination={{
+          current: page,
+          pageSize,
+          total,
+          onChange: onPageChange,
+          showTotal: (count) => `共 ${count} 个连接器`,
+        }}
       />
       <Modal
         title={editing ? "编辑连接器" : "新建连接器"}
@@ -211,7 +226,10 @@ export function ConnectorsTab({
           <Form.Item
             name="name"
             label="连接器名称"
-            rules={[{ required: true, message: "请输入名称" }]}
+            rules={[
+              { required: true, message: "请输入名称" },
+              { max: 200, message: "名称最多 200 个字符" },
+            ]}
           >
             <Input placeholder="如：微信支付商家券" />
           </Form.Item>

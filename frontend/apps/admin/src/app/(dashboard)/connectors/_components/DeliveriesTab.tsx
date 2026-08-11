@@ -10,19 +10,25 @@ import type { Delivery } from "./types";
 export function DeliveriesTab() {
   const { message } = App.useApp();
   const [deliveries, setDeliveries] = useState<Delivery[]>([]);
+  const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(1);
+  const pageSize = 20;
   const [loading, setLoading] = useState(false);
 
   const fetchDeliveries = useCallback(async () => {
     setLoading(true);
     try {
-      const { data } = await api.get("/connectors/deliveries/pending-retries");
-      setDeliveries(data);
+      const { data } = await api.get("/connectors/deliveries/pending-retries", {
+        params: { page, page_size: pageSize },
+      });
+      setDeliveries(data.items || []);
+      setTotal(data.total || 0);
     } catch {
       message.error("加载发放记录失败");
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [message, page]);
 
   useEffect(() => {
     fetchDeliveries();
@@ -102,7 +108,13 @@ export function DeliveriesTab() {
         columns={columns}
         rowKey="id"
         loading={loading}
-        pagination={false}
+        pagination={{
+          current: page,
+          pageSize,
+          total,
+          onChange: setPage,
+          showTotal: (count) => `共 ${count} 条待处理记录`,
+        }}
       />
     </>
   );

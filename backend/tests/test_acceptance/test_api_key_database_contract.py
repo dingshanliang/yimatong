@@ -1256,6 +1256,69 @@ async def test_http_mutation_credential_transition_serialization_and_audit_rollb
             transport=ASGITransport(app=app, raise_app_exceptions=False),
             base_url="http://test",
         ) as client:
+            legacy_key_id, legacy_secret = await issue_key(client, "legacy campaign status")
+            legacy_campaign_id = uuid.uuid4()
+            await owner.execute(
+                "INSERT INTO campaigns "
+                "(id,tenant_id,name,campaign_type,status,start_at,end_at,rules_json) "
+                "VALUES($1,$2,$3,'coupon','draft',now()-interval '1 day',now()+interval '1 day','{}'::json)",
+                legacy_campaign_id,
+                principal.tenant_id,
+                f"Legacy API-key campaign {legacy_campaign_id}",
+            )
+            current_key_status = await client.patch(
+                f"/open/v1/campaigns/{legacy_campaign_id}/status",
+                headers={"X-Api-Key": legacy_secret},
+                json={"status": "active"},
+            )
+            assert current_key_status.status_code == 403, current_key_status.text
+            await owner.execute("ALTER TABLE api_keys DROP CONSTRAINT ck_api_keys_role_permissions")
+            try:
+                async with owner.transaction():
+                    # Simulate a row persisted before the current metadata guard;
+                    # the runtime path below must still reject this legacy scope.
+                    await owner.execute("ALTER TABLE api_keys DISABLE TRIGGER USER")
+                    await owner.execute(
+                        "UPDATE api_keys SET permissions='[\"campaign:status\"]'::json WHERE tenant_id=$1 AND id=$2",
+                        principal.tenant_id,
+                        legacy_key_id,
+                    )
+                    await owner.execute("ALTER TABLE api_keys ENABLE TRIGGER USER")
+                forbidden_campaign_status = await client.patch(
+                    f"/open/v1/campaigns/{legacy_campaign_id}/status",
+                    headers={"X-Api-Key": legacy_secret},
+                    json={"status": "active"},
+                )
+                assert forbidden_campaign_status.status_code == 401, forbidden_campaign_status.text
+                assert (
+                    await owner.fetchval(
+                        "SELECT status FROM campaigns WHERE tenant_id=$1 AND id=$2",
+                        principal.tenant_id,
+                        legacy_campaign_id,
+                    )
+                    == "draft"
+                )
+                assert (
+                    await owner.fetchval(
+                        "SELECT count(*) FROM platform_audit_log WHERE target_tenant_id=$1 "
+                        "AND resource=$2 AND action='campaign_status_changed'",
+                        str(principal.tenant_id),
+                        f"campaign:{legacy_campaign_id}",
+                    )
+                    == 0
+                )
+            finally:
+                async with owner.transaction():
+                    await owner.execute(
+                        "DELETE FROM api_keys WHERE tenant_id=$1 AND id=$2",
+                        principal.tenant_id,
+                        legacy_key_id,
+                    )
+                    await owner.execute(
+                        "ALTER TABLE api_keys ADD CONSTRAINT ck_api_keys_role_permissions "
+                        "CHECK (permissions::jsonb = public.api_key_permissions_for_role(role)::jsonb)"
+                    )
+
             for operation in ("revoke", "rotate"):
                 key_id, secret = await issue_key(client, f"{operation} change-first")
                 claim_id = await _seed_coupon_claim(owner, principal.tenant_id)

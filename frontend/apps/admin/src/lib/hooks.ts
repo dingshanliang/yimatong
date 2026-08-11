@@ -72,9 +72,9 @@ interface PaginatedResponse<T> {
  */
 export function useCrud<T extends { id: string }>(
   basePath: string,
-  opts: { pageSize?: number } = {}
+  opts: { pageSize?: number; enabled?: boolean } = {}
 ) {
-  const { pageSize = 20 } = opts;
+  const { pageSize = 20, enabled = true } = opts;
   const [page, setPage] = useState(1);
   const [filters, setFilters] = useState<Record<string, string | number>>({});
 
@@ -83,7 +83,9 @@ export function useCrud<T extends { id: string }>(
       .sort()
       .map(([k, v]) => [k, String(v)])
   ).toString();
-  const swrKey = `${basePath}?page=${page}&page_size=${pageSize}${filterStr ? `&${filterStr}` : ""}`;
+  const swrKey = enabled
+    ? `${basePath}?page=${page}&page_size=${pageSize}${filterStr ? `&${filterStr}` : ""}`
+    : null;
 
   const { data, error, isLoading, mutate } = useSWR<PaginatedResponse<T> | T[]>(
     swrKey

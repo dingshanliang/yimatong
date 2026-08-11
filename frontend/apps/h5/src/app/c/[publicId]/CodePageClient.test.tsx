@@ -92,6 +92,43 @@ describe("CodePageClient", () => {
     await act(async () => root.unmount());
   });
 
+  it("uses the member-bound OAuth credential once and removes it from the address bar", async () => {
+    window.history.replaceState(
+      null,
+      "",
+      "/c/CODE-OAUTH#oauth=success&scan_token=member-token&consent_id=consent-1"
+    );
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>().mockResolvedValue(
+        new Response(
+          JSON.stringify({ scan_token: "anonymous-token", code_data: {} }),
+          {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          }
+        )
+      )
+    );
+    const root = createRoot(container);
+
+    await act(async () => {
+      root.render(
+        <CodePageClient publicId="CODE-OAUTH" apiBase="https://api.example" />
+      );
+    });
+
+    expect(resolveContent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        jsonPayload: expect.objectContaining({ scan_token: "member-token" }),
+      }),
+      undefined
+    );
+    expect(window.location.hash).toBe("");
+    expect(localStorage.getItem("consent_id:CODE-OAUTH")).toBe("consent-1");
+    await act(async () => root.unmount());
+  });
+
   it("never renders a non-success resolver JSON as a verified product", async () => {
     const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
       new Response(JSON.stringify({ result: "not_found" }), {

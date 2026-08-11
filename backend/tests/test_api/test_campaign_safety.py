@@ -2,7 +2,7 @@
 
 import uuid
 from collections.abc import AsyncGenerator
-from datetime import date, timedelta
+from datetime import UTC, date, datetime, timedelta
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -11,8 +11,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
 from app.main import app
 from app.models.tenant import Tenant
-from app.services.scan_token import create_scan_token
-from app.utils.client_ip import compute_ip_hash
 from app.utils.security import create_access_token
 from tests.conftest import TestSessionLocal
 
@@ -89,22 +87,34 @@ async def create_live_scan_token(
             "batch_code": f"CLAIM-CB-{label}",
             "quantity": 1,
         },
-        headers=headers,
+        headers={
+            **headers,
+            "Idempotency-Key": str(uuid.uuid5(uuid.NAMESPACE_URL, f"campaign-safety:{tenant_id}:{label}")),
+        },
     )
     assert code_batch.status_code == 201
-    activated = await client.post(f"/api/v1/code-batches/{code_batch.json()['id']}/activate", headers=headers)
-    assert activated.status_code == 200
+    batch_id = code_batch.json()["id"]
+    exported = await client.post(f"/api/v1/code-batches/{batch_id}/export", headers=headers)
+    printing = await client.post(f"/api/v1/code-batches/{batch_id}/mark-printing", headers=headers)
+    delivered = await client.post(
+        f"/api/v1/code-batches/{batch_id}/mark-delivered",
+        json={"reason": "campaign claim fixture", "recipient": "campaign tests", "confirm": "deliver"},
+        headers=headers,
+    )
+    activated = await client.post(f"/api/v1/code-batches/{batch_id}/activate", headers=headers)
+    assert [exported.status_code, printing.status_code, delivered.status_code, activated.status_code] == [200] * 4
     items = await client.get(
         "/api/v1/code-items",
-        params={"code_batch_id": code_batch.json()["id"]},
+        params={"code_batch_id": batch_id},
         headers=headers,
     )
     assert items.status_code == 200
-    return create_scan_token(
-        items.json()["items"][0]["public_id"],
-        compute_ip_hash("127.0.0.1"),
-        tenant_id=tenant_id,
+    resolved = await client.get(
+        f"/c/{items.json()['items'][0]['public_id']}",
+        headers={"Accept": "application/json"},
     )
+    assert resolved.status_code == 200
+    return resolved.json()["scan_token"]
 
 
 @pytest.fixture
@@ -517,7 +527,7 @@ class TestBenefitAttach:
         # 验证权益已在活动 A 的列表中
         list_resp = await client.get(f"/api/v1/campaigns/{cid_a}/benefits", headers=headers)
         assert list_resp.status_code == 200
-        benefits = list_resp.json()
+        benefits = list_resp.json()["items"]
         assert any(b["id"] == bid for b in benefits)
 
     @pytest.mark.anyio
@@ -799,8 +809,8 @@ class TestCrossTenantIsolation:
                 name="待删除草稿",
                 campaign_type="coupon",
                 status="draft",
-                start_at="2026-01-01",
-                end_at="2027-01-01",
+                start_at=datetime(2026, 1, 1, tzinfo=UTC),
+                end_at=datetime(2027, 1, 1, tzinfo=UTC),
                 rules_json={},
             )
         )

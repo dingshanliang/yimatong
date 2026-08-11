@@ -14,6 +14,7 @@ _REFUND 两条 raw SQL 替换成等价的 Python 内存扣减（monkeypatch）�
 """
 
 import uuid
+from datetime import UTC, datetime
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -67,14 +68,14 @@ async def _make_world(db: AsyncSession, *, budget=1000, claimed=0, stock_total=1
     tenant_id = uuid.uuid4()
     db.add(Tenant(id=tenant_id, name="红包测试租户", slug=f"rp-{tenant_id.hex[:8]}"))
     await db.flush()
-    consumer = ConsumerProfile(tenant_id=tenant_id, wechat_openid="openid_x")
+    consumer = ConsumerProfile(tenant_id=tenant_id)
     db.add(consumer)
     campaign = Campaign(
         tenant_id=tenant_id,
         name="红包活动",
         campaign_type="cash_red_packet",
-        start_at="2026-01-01T00:00:00",
-        end_at="2027-12-31T23:59:59",
+        start_at=datetime(2026, 1, 1, tzinfo=UTC),
+        end_at=datetime(2027, 12, 31, 23, 59, 59, tzinfo=UTC),
         rules_json={},
     )
     db.add(campaign)

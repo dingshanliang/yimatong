@@ -24,6 +24,8 @@ interface BenefitClaimCardProps {
   configJson?: Record<string, unknown>;
   /** 扫码令牌，用于鉴权 */
   scanToken?: string;
+  /** 当前扫码 public_id，用于展示授权上下文。 */
+  publicId?: string;
   /** 企业微信转化模式 */
   wecomMode?: "none" | "guide" | "required";
   /** 领取成功回调 */
@@ -121,11 +123,13 @@ export function BenefitClaimCard({
   description,
   configJson = {},
   scanToken,
+  publicId,
   wecomMode = "none",
   onClaimed,
 }: BenefitClaimCardProps) {
   const [loading, setLoading] = useState(false);
   const [claimed, setClaimed] = useState(false);
+  const [deliveryPending, setDeliveryPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showPhoneModal, setShowPhoneModal] = useState(false);
   const [phone, setPhone] = useState("");
@@ -135,6 +139,7 @@ export function BenefitClaimCard({
   } | null>(null);
   // 红包领取成功后的金额展示（分）
   const [redPacketAmount, setRedPacketAmount] = useState<number | null>(null);
+  const [wechatConsentGranted, setWechatConsentGranted] = useState(false);
   const lastClickRef = useRef(0);
 
   const normalizedBenefitType = normalizeBenefitType(benefitType);
@@ -164,11 +169,21 @@ export function BenefitClaimCard({
         auth_url_path?: string;
       };
 
+      if (data.status === "pending") {
+        setDeliveryPending(true);
+        onClaimed?.();
+        return;
+      }
+
       // 现金红包需要微信 OAuth 授权
       if (data.status === "require_wechat_auth" && data.auth_url_path) {
         try {
           // 获取微信 OAuth 跳转地址
-          const authRes = await apiClient.get(data.auth_url_path);
+          const authRes = await apiClient.post(data.auth_url_path, {
+            benefit_id: benefitId,
+            scan_token: scanToken,
+            consent_granted: true,
+          });
           const authData = authRes.data as { auth_url: string };
           if (authData.auth_url && /^https:\/\//i.test(authData.auth_url)) {
             // 跳转到微信 OAuth 页面，授权后回调会重定向到结果页
@@ -247,6 +262,7 @@ export function BenefitClaimCard({
     scanToken,
     loading,
     claimed,
+    wechatConsentGranted,
     onClaimed,
   ]);
 
@@ -370,12 +386,34 @@ export function BenefitClaimCard({
               </p>
             </div>
           )}
+          {normalizedBenefitType === "cash_red_packet" && !claimed && (
+            <label className="mb-3 flex items-start gap-2 rounded-xl bg-muted px-3 py-2 text-xs text-foreground-secondary">
+              <input
+                type="checkbox"
+                checked={wechatConsentGranted}
+                onChange={(event) =>
+                  setWechatConsentGranted(event.target.checked)
+                }
+                className="mt-0.5"
+              />
+              <span>
+                我同意为领取本次红包绑定微信身份，并按隐私政策记录授权。
+                {publicId ? `（查验码 ${publicId}）` : ""}
+              </span>
+            </label>
+          )}
           <button
             type="button"
-            disabled={loading || claimed}
+            disabled={
+              loading ||
+              claimed ||
+              deliveryPending ||
+              (normalizedBenefitType === "cash_red_packet" &&
+                !wechatConsentGranted)
+            }
             onClick={handleClaim}
             className={`w-full rounded-xl py-2.5 text-sm font-semibold transition-colors ${
-              claimed
+              claimed || deliveryPending
                 ? "cursor-default bg-muted text-foreground-tertiary"
                 : loading
                   ? "cursor-wait bg-action/60 text-white"
@@ -384,13 +422,15 @@ export function BenefitClaimCard({
                     : "bg-action text-white active:bg-action-active"
             }`}
           >
-            {claimed
-              ? "已领取"
-              : loading
-                ? "领取中..."
-                : wecomPrompt
-                  ? "我已添加，继续领取"
-                  : buttonText}
+            {deliveryPending
+              ? "发放处理中"
+              : claimed
+                ? "已领取"
+                : loading
+                  ? "领取中..."
+                  : wecomPrompt
+                    ? "我已添加，继续领取"
+                    : buttonText}
           </button>
           {claimed && normalizedBenefitType === "platform_coupon" && (
             <div className="mt-3 rounded-xl bg-info-bg px-3 py-2 text-center text-sm text-info">

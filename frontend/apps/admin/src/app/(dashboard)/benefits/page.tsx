@@ -10,6 +10,7 @@ import {
   Descriptions,
   Divider,
   Drawer,
+  Empty,
   Form,
   Input,
   InputNumber,
@@ -38,6 +39,8 @@ import {
 } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
 import api from "@/lib/api";
+import { useAuthStore } from "@/lib/auth";
+import { resolveCampaignAccess } from "@/lib/campaign-access";
 import { useCrud } from "@/lib/hooks";
 import { STATUS_COLORS } from "@/lib/status-colors";
 import { BenefitConfigFields } from "./_components/BenefitConfigFields";
@@ -140,6 +143,8 @@ function benefitNameSuggestion(benefitType: string, campaignName?: string) {
 export default function BenefitsPage() {
   const searchParams = useSearchParams();
   const { message } = App.useApp();
+  const user = useAuthStore((state) => state.user);
+  const access = resolveCampaignAccess(user);
   const {
     items: benefits,
     total: benefitsTotal,
@@ -151,7 +156,7 @@ export default function BenefitsPage() {
     update: updateBenefit,
     remove: removeBenefit,
     mutate: mutateBenefits,
-  } = useCrud<Benefit>("/benefits");
+  } = useCrud<Benefit>("/benefits", { enabled: access.canView });
 
   const {
     items: claims,
@@ -162,7 +167,9 @@ export default function BenefitsPage() {
     setFilter: setClaimFilter,
     resetFilters: resetClaimFilters,
     mutate: mutateClaims,
-  } = useCrud<BenefitClaim>("/benefits/admin/claims");
+  } = useCrud<BenefitClaim>("/benefits/admin/claims", {
+    enabled: access.canView,
+  });
 
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [allConnectors, setAllConnectors] = useState<Connector[]>([]);
@@ -223,6 +230,7 @@ export default function BenefitsPage() {
   );
 
   const fetchSummary = useCallback(async () => {
+    if (!access.canView) return;
     try {
       const { data } = await api.get("/benefits/summary");
       setSummary({ ...DEFAULT_SUMMARY, ...(data || {}) });
@@ -230,7 +238,7 @@ export default function BenefitsPage() {
     } catch {
       setSummaryUnavailable(true);
     }
-  }, []);
+  }, [access.canView]);
 
   const refreshAll = useCallback(() => {
     mutateBenefits();
@@ -239,6 +247,7 @@ export default function BenefitsPage() {
   }, [fetchSummary, mutateBenefits, mutateClaims]);
 
   const fetchCampaigns = useCallback(async () => {
+    if (!access.canView) return;
     try {
       const { data } = await api.get("/campaigns", {
         params: { page_size: 100 },
@@ -247,22 +256,27 @@ export default function BenefitsPage() {
     } catch {
       /* ignore */
     }
-  }, []);
+  }, [access.canView]);
 
   const fetchConnectors = useCallback(async () => {
+    if (!access.canView) return;
     try {
-      const { data } = await api.get("/connectors/connectors");
-      setAllConnectors(Array.isArray(data) ? data : []);
+      const { data } = await api.get("/connectors/connectors", {
+        params: { page: 1, page_size: 100 },
+      });
+      setAllConnectors(Array.isArray(data) ? data : data.items || []);
     } catch {
       /* ignore */
     }
-  }, []);
+  }, [access.canView]);
 
   useEffect(() => {
-    fetchCampaigns();
-    fetchConnectors();
-    fetchSummary();
-  }, [fetchCampaigns, fetchConnectors, fetchSummary]);
+    if (access.canView) {
+      void fetchCampaigns();
+      void fetchConnectors();
+      void fetchSummary();
+    }
+  }, [access.canView, fetchCampaigns, fetchConnectors, fetchSummary]);
 
   useEffect(() => {
     const campaignId = searchParams.get("campaign_id");
@@ -449,17 +463,6 @@ export default function BenefitsPage() {
     } catch (e: unknown) {
       const err = e as { response?: { data?: { detail?: string } } };
       message.error(err.response?.data?.detail || "删除失败");
-    }
-  };
-
-  const handleToggleStatus = async (record: Benefit) => {
-    const newStatus = record.status === "active" ? "inactive" : "active";
-    try {
-      await updateBenefit(record.id, { status: newStatus });
-      message.success(newStatus === "active" ? "权益已启用" : "权益已停用");
-      refreshAll();
-    } catch {
-      message.error("操作失败");
     }
   };
 
@@ -737,6 +740,10 @@ export default function BenefitsPage() {
       ),
     },
   ];
+
+  if (!access.canView) {
+    return <Empty description="当前账号无权查看权益" />;
+  }
 
   return (
     <div className="space-y-4">

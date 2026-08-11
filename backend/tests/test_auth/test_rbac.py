@@ -4,7 +4,7 @@ import pytest
 from fastapi import HTTPException
 from starlette.requests import Request
 
-from app.utils.auth_rbac import WEB_ROLE_PERMISSIONS, require_permission, require_role
+from app.utils.auth_rbac import WEB_ROLE_PERMISSIONS, require_durable_session, require_permission, require_role
 
 
 class TestRBAC:
@@ -37,5 +37,16 @@ class TestRBAC:
 
         with pytest.raises(HTTPException) as exc_info:
             await require_permission("campaign:create")(request)
+
+        assert exc_info.value.status_code == 403
+
+    @pytest.mark.anyio
+    async def test_api_key_cannot_mutate_actor_bound_campaign_resources(self):
+        request = Request({"type": "http", "method": "POST", "path": "/api/v1/campaigns", "headers": []})
+        request.state.auth_method = "api_key"
+        request.state.session_id = None
+
+        with pytest.raises(HTTPException) as exc_info:
+            await require_durable_session(request)
 
         assert exc_info.value.status_code == 403

@@ -1,10 +1,13 @@
 import uuid
 from datetime import date
 
+from fastapi import HTTPException
 from pydantic import ValidationError
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
+from uuid6 import uuid7
 
 from app.core.exceptions import BadRequestError, ConflictError, NotFoundError
 from app.models.campaign import Campaign
@@ -26,6 +29,35 @@ from app.schemas.product import ProductionBatchCSVRow
 from app.services.quota import CumulativeQuotaKey, check_quota_for_tenant, release_quota
 from app.utils import china_business_date, escape_like_pattern
 from app.utils.public_url import normalize_public_url
+
+
+def _production_lifecycle_auth_session_id() -> uuid.UUID:
+    from app.core.database import get_request_security_credential
+
+    credential = get_request_security_credential()
+    if credential is None or credential[0] != "auth_session":
+        raise HTTPException(status_code=401, detail="Live login session required for production batch mutation")
+    try:
+        return uuid.UUID(credential[1])
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=401, detail="Invalid login session") from exc
+
+
+def _raise_production_batch_db_error(exc: DBAPIError, *, operation: str) -> None:
+    sqlstate = getattr(getattr(exc, "orig", None), "sqlstate", None)
+    if sqlstate == "42501":
+        raise HTTPException(status_code=403, detail=f"Production batch {operation} authority denied") from exc
+    if sqlstate == "23503":
+        raise HTTPException(status_code=404, detail="Production batch not found") from exc
+    if sqlstate in {"22023", "23514", "23505"}:
+        raise HTTPException(status_code=409, detail=f"Production batch {operation} conflict") from exc
+    if sqlstate == "55P03":
+        raise HTTPException(
+            status_code=409,
+            detail="Production batch is busy; retry",
+            headers={"Retry-After": "1"},
+        ) from exc
+    raise exc
 
 
 def effective_production_batch_status(
@@ -486,7 +518,40 @@ async def create_production_batch(
     production_date,
     expiry_date,
     origin: str | None = None,
+    *,
+    actor_id: uuid.UUID,
 ) -> ProductionBatch:
+    if db.get_bind().dialect.name == "postgresql":
+        batch_id = uuid7()
+        try:
+            await db.execute(
+                text(
+                    "SELECT * FROM public.create_production_batch("
+                    ":tenant_id,:auth_session_id,:audit_id,:production_batch_id,:product_id,:sku_id,"
+                    ":batch_code,:production_date,:expiry_date,:origin)"
+                ),
+                {
+                    "tenant_id": tenant_id,
+                    "auth_session_id": _production_lifecycle_auth_session_id(),
+                    "audit_id": uuid7(),
+                    "production_batch_id": batch_id,
+                    "product_id": product_id,
+                    "sku_id": sku_id,
+                    "batch_code": batch_code,
+                    "production_date": production_date,
+                    "expiry_date": expiry_date,
+                    "origin": origin,
+                },
+            )
+        except DBAPIError as exc:
+            _raise_production_batch_db_error(exc, operation="create")
+        result = await db.execute(
+            select(ProductionBatch)
+            .options(selectinload(ProductionBatch.product), selectinload(ProductionBatch.sku))
+            .where(ProductionBatch.id == batch_id, ProductionBatch.tenant_id == tenant_id)
+        )
+        return result.scalar_one()
+
     if expiry_date < production_date:
         raise BadRequestError("Expiry date cannot be earlier than production date")
 
@@ -523,6 +588,16 @@ async def create_production_batch(
     await db.flush()
     await db.refresh(batch)
     await db.refresh(batch, ["product", "sku"])
+    from app.services.audit import write_audit_log
+
+    await write_audit_log(
+        db,
+        str(actor_id),
+        str(tenant_id),
+        "production_batch_created",
+        f"production_batch:{batch.id}",
+        {"resource_name": batch.batch_code, "product_id": str(batch.product_id), "result": "success"},
+    )
     return batch
 
 
@@ -535,8 +610,44 @@ async def update_production_batch(
     expiry_date=None,
     origin: str | None = None,
     fields_to_update: set[str] | None = None,
+    *,
+    actor_id: uuid.UUID,
 ) -> ProductionBatch | None:
     fields_to_update = fields_to_update or set()
+    if db.get_bind().dialect.name == "postgresql":
+        try:
+            await db.execute(
+                text(
+                    "SELECT * FROM public.update_production_batch("
+                    ":tenant_id,:auth_session_id,:audit_id,:production_batch_id,:batch_code,"
+                    ":production_date,:expiry_date,:origin,:origin_present)"
+                ),
+                {
+                    "tenant_id": tenant_id,
+                    "auth_session_id": _production_lifecycle_auth_session_id(),
+                    "audit_id": uuid7(),
+                    "production_batch_id": batch_id,
+                    "batch_code": batch_code,
+                    "production_date": production_date,
+                    "expiry_date": expiry_date,
+                    "origin": origin,
+                    "origin_present": "origin" in fields_to_update,
+                },
+            )
+        except DBAPIError as exc:
+            _raise_production_batch_db_error(exc, operation="update")
+        result = await db.execute(
+            select(ProductionBatch)
+            .options(selectinload(ProductionBatch.product), selectinload(ProductionBatch.sku))
+            .where(ProductionBatch.id == batch_id, ProductionBatch.tenant_id == tenant_id)
+        )
+        batch = result.scalar_one_or_none()
+        if batch is not None:
+            from app.services.resolver_response import invalidate_product_cache
+
+            await invalidate_product_cache(batch.product_id)
+        return batch
+
     result = await db.execute(
         select(ProductionBatch)
         .options(selectinload(ProductionBatch.product), selectinload(ProductionBatch.sku))
@@ -571,6 +682,16 @@ async def update_production_batch(
 
     await db.flush()
     await db.refresh(batch)
+    from app.services.audit import write_audit_log
+
+    await write_audit_log(
+        db,
+        str(actor_id),
+        str(tenant_id),
+        "production_batch_updated",
+        f"production_batch:{batch.id}",
+        {"resource_name": batch.batch_code, "changed_fields": sorted(fields_to_update), "result": "success"},
+    )
     # 失效公共解析缓存：生产批次字段被消费者页直接渲染（yimatong-zgb1.2 AC1）。
     # 注意批次变更影响所有引用该批次的码 → 失效其 product 的缓存条目。
     from app.services.resolver_response import invalidate_product_cache
@@ -587,6 +708,35 @@ async def recall_production_batch(
     reason: str,
     actor_id: uuid.UUID,
 ) -> ProductionBatch | None:
+    if db.get_bind().dialect.name == "postgresql":
+        try:
+            await db.execute(
+                text(
+                    "SELECT * FROM public.recall_production_batch("
+                    ":tenant_id,:auth_session_id,:audit_id,:production_batch_id,:reason)"
+                ),
+                {
+                    "tenant_id": tenant_id,
+                    "auth_session_id": _production_lifecycle_auth_session_id(),
+                    "audit_id": uuid7(),
+                    "production_batch_id": batch_id,
+                    "reason": reason,
+                },
+            )
+        except DBAPIError as exc:
+            _raise_production_batch_db_error(exc, operation="recall")
+        result = await db.execute(
+            select(ProductionBatch)
+            .options(selectinload(ProductionBatch.product), selectinload(ProductionBatch.sku))
+            .where(ProductionBatch.id == batch_id, ProductionBatch.tenant_id == tenant_id)
+        )
+        batch = result.scalar_one_or_none()
+        if batch is not None:
+            from app.services.resolver_response import invalidate_product_cache
+
+            await invalidate_product_cache(batch.product_id)
+        return batch
+
     from app.services.audit import write_audit_log
     from app.utils import utcnow
 
@@ -942,9 +1092,37 @@ async def delete_sku(db: AsyncSession, tenant_id: uuid.UUID, sku_id: uuid.UUID) 
 
 
 async def delete_production_batch(
-    db: AsyncSession, tenant_id: uuid.UUID, batch_id: uuid.UUID
+    db: AsyncSession, tenant_id: uuid.UUID, batch_id: uuid.UUID, *, actor_id: uuid.UUID
 ) -> tuple[bool, str | None]:
     """删除生产批次。返回 (是否成功, 冲突原因)。"""
+    if db.get_bind().dialect.name == "postgresql":
+        product_result = await db.execute(
+            select(ProductionBatch.product_id).where(
+                ProductionBatch.id == batch_id, ProductionBatch.tenant_id == tenant_id
+            )
+        )
+        product_id = product_result.scalar_one_or_none()
+        try:
+            await db.execute(
+                text(
+                    "SELECT * FROM public.delete_production_batch("
+                    ":tenant_id,:auth_session_id,:audit_id,:production_batch_id)"
+                ),
+                {
+                    "tenant_id": tenant_id,
+                    "auth_session_id": _production_lifecycle_auth_session_id(),
+                    "audit_id": uuid7(),
+                    "production_batch_id": batch_id,
+                },
+            )
+        except DBAPIError as exc:
+            _raise_production_batch_db_error(exc, operation="delete")
+        if product_id is not None:
+            from app.services.resolver_response import invalidate_product_cache
+
+            await invalidate_product_cache(product_id)
+        return True, None
+
     result = await db.execute(
         select(ProductionBatch).where(ProductionBatch.id == batch_id, ProductionBatch.tenant_id == tenant_id)
     )
@@ -962,6 +1140,16 @@ async def delete_production_batch(
 
     await db.delete(batch)
     await db.flush()
+    from app.services.audit import write_audit_log
+
+    await write_audit_log(
+        db,
+        str(actor_id),
+        str(tenant_id),
+        "production_batch_deleted",
+        f"production_batch:{batch_id}",
+        {"result": "success"},
+    )
     return True, None
 
 

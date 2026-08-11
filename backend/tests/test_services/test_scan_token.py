@@ -1,8 +1,11 @@
 """A6-007: scan_token 防伪机制测试"""
 
 import time
+import uuid
 
-from app.services.scan_token import create_scan_token, verify_scan_token
+import pytest
+
+from app.services.scan_token import bind_scan_token_consumer, create_scan_token, verify_scan_token
 
 
 class TestScanToken:
@@ -49,6 +52,50 @@ class TestScanToken:
         result = verify_scan_token(token, "ABC123")
         assert result is not None
         assert result["tenant_id"] == "tenant-001"
+
+    def test_token_binds_authoritative_scan_event(self):
+        scan_event_id = uuid.uuid4()
+        token = create_scan_token(
+            public_id="ABC123",
+            ip_hash="abc123hash",
+            tenant_id="tenant-001",
+            scan_event_id=str(scan_event_id),
+        )
+
+        result = verify_scan_token(token, "ABC123")
+
+        assert result is not None
+        assert result["scan_event_id"] == str(scan_event_id)
+
+    def test_consumer_binding_preserves_claim_authority(self):
+        consumer_id = uuid.uuid4()
+        scan_event_id = uuid.uuid4()
+        visitor_id = uuid.uuid4()
+        original = verify_scan_token(
+            create_scan_token(
+                public_id="ABC123",
+                ip_hash="old-ip",
+                tenant_id=str(uuid.uuid4()),
+                scan_event_id=str(scan_event_id),
+                visitor_id=str(visitor_id),
+            )
+        )
+
+        rebound = verify_scan_token(bind_scan_token_consumer(original, consumer_id, "new-ip"))
+
+        assert rebound is not None
+        assert rebound["consumer_id"] == str(consumer_id)
+        assert rebound["scan_event_id"] == str(scan_event_id)
+        assert rebound["visitor_id"] == str(visitor_id)
+        assert rebound["public_id"] == original["public_id"]
+        assert rebound["tenant_id"] == original["tenant_id"]
+        assert rebound["ip_hash"] == "new-ip"
+
+    def test_consumer_binding_rejects_token_without_claim_authority(self):
+        original = verify_scan_token(create_scan_token("ABC123", "ip", tenant_id=str(uuid.uuid4())))
+
+        with pytest.raises(ValueError, match="scan token missing consumer binding authority"):
+            bind_scan_token_consumer(original, uuid.uuid4(), "ip")
 
     def test_verify_with_expected_tenant_id(self):
         token = create_scan_token(

@@ -40,6 +40,14 @@ IDENTITY_BEARING_PRODUCTION_COMMANDS = [
 ]
 
 
+def test_rich_demo_seed_never_persists_raw_wechat_openid():
+    source = (BACKEND_DIR / "scripts" / "seed_demo.py").read_text()
+
+    assert "wechat_openid=" not in source
+    assert "hash_wechat_openid(tenant_id, openid)" in source
+    assert "encrypt_wechat_openid(" in source
+
+
 @pytest.mark.parametrize("arguments", MUTATING_COMMANDS, ids=lambda arguments: arguments[0])
 def test_every_mutating_seed_command_rejects_production_before_db(
     arguments: list[str],
@@ -162,16 +170,19 @@ def test_subprocess_production_rejection_creates_no_database(
 ):
     runtime_db = tmp_path / "runtime.sqlite"
     control_db = tmp_path / "control.sqlite"
+    callback_db = tmp_path / "callback.sqlite"
     environment = os.environ.copy()
     environment.update(
         {
             "ENVIRONMENT": "production",
             "DATABASE_URL": f"sqlite+aiosqlite:///{runtime_db}",
             "CONTROL_DATABASE_URL": f"sqlite+aiosqlite:///{control_db}",
+            "CALLBACK_DATABASE_URL": f"sqlite+aiosqlite:///{callback_db}",
             "SECRET_KEY": "production-secret-key-9dd2177f7d104205a14b93e6",
             "HMAC_PEPPER": "production-hmac-pepper-901bc458e0644e728b3d1475",
             "IP_HASH_SECRET": "production-ip-secret-f0ee260ac501437990b78ec1",
             "ADMIN_PUBLIC_URL": "https://admin.example.test",
+            "H5_PUBLIC_URL": "https://h5.example.test",
             "PLATFORM_PUBLIC_URL": "https://platform.example.test",
             "COOKIE_SECURE": "true",
         }
@@ -190,6 +201,7 @@ def test_subprocess_production_rejection_creates_no_database(
     assert "production" in result.stdout + result.stderr
     assert not runtime_db.exists()
     assert not control_db.exists()
+    assert not callback_db.exists()
 
 
 @pytest.mark.parametrize(
@@ -203,16 +215,19 @@ def test_identity_bearing_seed_subprocesses_reject_production_authority_with_zer
 ):
     runtime_db = tmp_path / "runtime.sqlite"
     control_db = tmp_path / "control.sqlite"
+    callback_db = tmp_path / "callback.sqlite"
     environment = os.environ.copy()
     environment.update(
         {
             "ENVIRONMENT": "production",
             "DATABASE_URL": f"sqlite+aiosqlite:///{runtime_db}",
             "CONTROL_DATABASE_URL": f"sqlite+aiosqlite:///{control_db}",
+            "CALLBACK_DATABASE_URL": f"sqlite+aiosqlite:///{callback_db}",
             "SECRET_KEY": "production-secret-key-9dd2177f7d104205a14b93e6",
             "HMAC_PEPPER": "production-hmac-pepper-901bc458e0644e728b3d1475",
             "IP_HASH_SECRET": "production-ip-secret-f0ee260ac501437990b78ec1",
             "ADMIN_PUBLIC_URL": "https://admin.example.test",
+            "H5_PUBLIC_URL": "https://h5.example.test",
             "PLATFORM_PUBLIC_URL": "https://platform.example.test",
             "COOKIE_SECURE": "true",
         }
@@ -231,6 +246,7 @@ def test_identity_bearing_seed_subprocesses_reject_production_authority_with_zer
     assert "production" in result.stdout + result.stderr
     assert not runtime_db.exists()
     assert not control_db.exists()
+    assert not callback_db.exists()
 
 
 @pytest.mark.parametrize("admin_email", [" ADMIN@EXAMPLE.COM ", "\tAdmin@Example.Com\n"])
@@ -240,16 +256,19 @@ def test_tenant_seed_subprocess_rejects_canonical_default_email_before_database(
 ):
     runtime_db = tmp_path / "runtime.sqlite"
     control_db = tmp_path / "control.sqlite"
+    callback_db = tmp_path / "callback.sqlite"
     environment = os.environ.copy()
     environment.update(
         {
             "ENVIRONMENT": "production",
             "DATABASE_URL": f"sqlite+aiosqlite:///{runtime_db}",
             "CONTROL_DATABASE_URL": f"sqlite+aiosqlite:///{control_db}",
+            "CALLBACK_DATABASE_URL": f"sqlite+aiosqlite:///{callback_db}",
             "SECRET_KEY": "production-secret-key-9dd2177f7d104205a14b93e6",
             "HMAC_PEPPER": "production-hmac-pepper-901bc458e0644e728b3d1475",
             "IP_HASH_SECRET": "production-ip-secret-f0ee260ac501437990b78ec1",
             "ADMIN_PUBLIC_URL": "https://admin.example.test",
+            "H5_PUBLIC_URL": "https://h5.example.test",
             "PLATFORM_PUBLIC_URL": "https://platform.example.test",
             "COOKIE_SECURE": "true",
         }
@@ -282,3 +301,4 @@ def test_tenant_seed_subprocess_rejects_canonical_default_email_before_database(
     assert "默认管理员" in result.stdout + result.stderr
     assert not runtime_db.exists()
     assert not control_db.exists()
+    assert not callback_db.exists()

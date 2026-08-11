@@ -18,6 +18,13 @@ _OPEN_API_IP_RATE_LIMIT = 300
 _OPEN_API_KEY_RATE_LIMIT = 600
 _open_api_security_cache = AsyncRedisCache(prefix="open_api_security", default_ttl=_OPEN_API_RATE_WINDOW_SECONDS)
 
+
+def _api_key_metadata_is_invalid(exc: Exception) -> bool:
+    """Recognize fail-closed catalog drift from the DB credential resolver."""
+
+    return getattr(getattr(exc, "orig", None), "sqlstate", None) == "22023"
+
+
 _AGENCY_AUTHORIZATION_DETAIL_PATH = re.compile(
     r"/api/v1/ops/authorizations/"
     r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
@@ -309,16 +316,21 @@ class TenantScopeMiddleware(BaseHTTPMiddleware):
             from sqlalchemy import or_, select, text
 
             if _session_uses_postgresql(db):
-                resolved = (
-                    (
-                        await db.execute(
-                            text("SELECT * FROM public.resolve_active_api_key(:requested_digest)"),
-                            {"requested_digest": api_key_digest},
+                try:
+                    resolved = (
+                        (
+                            await db.execute(
+                                text("SELECT * FROM public.resolve_active_api_key(:requested_digest)"),
+                                {"requested_digest": api_key_digest},
+                            )
                         )
+                        .mappings()
+                        .one_or_none()
                     )
-                    .mappings()
-                    .one_or_none()
-                )
+                except Exception as exc:
+                    if _api_key_metadata_is_invalid(exc):
+                        return JSONResponse(status_code=401, content={"detail": "Invalid API key"})
+                    raise
                 if resolved is None:
                     return JSONResponse(status_code=401, content={"detail": "Invalid API key"})
                 key_id = resolved["api_key_id"]
@@ -659,6 +671,7 @@ class TenantScopeMiddleware(BaseHTTPMiddleware):
             "/api/v1/page-versions",
             "/api/v1/campaigns",
             "/api/v1/benefits",
+            "/api/v1/connectors",
             "/api/v1/code-batches",
             "/api/v1/code-items",
             "/api/v1/risk-alerts",
@@ -722,7 +735,7 @@ class TenantScopeMiddleware(BaseHTTPMiddleware):
                 "/api/v1/production-batches",
             ),
             "pages": ("/api/v1/page-templates", "/api/v1/page-versions"),
-            "campaigns": ("/api/v1/campaigns", "/api/v1/benefits"),
+            "campaigns": ("/api/v1/campaigns", "/api/v1/benefits", "/api/v1/connectors"),
             "codes": ("/api/v1/code-batches", "/api/v1/code-items"),
             "analytics": ("/api/v1/analytics",),
         }

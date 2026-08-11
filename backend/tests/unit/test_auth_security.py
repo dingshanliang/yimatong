@@ -12,7 +12,9 @@ _PRODUCTION_SETTINGS = {
     "environment": "production",
     "database_url": "postgresql+asyncpg://yimatong_app:runtime-only@db:5432/yimatong",
     "control_database_url": "postgresql+asyncpg://yimatong_control:control-only@db:5432/yimatong",
+    "callback_database_url": "postgresql+asyncpg://yimatong_callback:callback-only@db:5432/yimatong",
     "admin_public_url": "https://admin.example.com",
+    "h5_public_url": "https://h5.example.com",
     "platform_public_url": "https://platform.example.com",
     "cookie_secure": True,
     "secret_key": "prod-secret-key-8YQ2jZ6xF4mN9pR7sT5vW3kL1cB0dA",
@@ -75,6 +77,18 @@ def test_config_rejects_empty_secret_key():
             os.environ["SECRET_KEY"] = original
         else:
             os.environ.pop("SECRET_KEY", None)
+
+
+def test_production_requires_distinct_callback_database_principal():
+    from app.core.config import Settings
+
+    missing = _PRODUCTION_SETTINGS | {"callback_database_url": None}
+    with pytest.raises(ValidationError, match="CALLBACK_DATABASE_URL"):
+        Settings(_env_file=None, **missing)
+
+    shared = _PRODUCTION_SETTINGS | {"callback_database_url": _PRODUCTION_SETTINGS["database_url"]}
+    with pytest.raises(ValidationError, match="CALLBACK_DATABASE_URL"):
+        Settings(_env_file=None, **shared)
 
 
 @pytest.mark.parametrize(

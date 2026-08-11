@@ -1,6 +1,40 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent, waitFor, within } from "@testing-library/react";
+import {
+  render,
+  screen,
+  fireEvent,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import BenefitsPage from "../page";
+
+const mockAuth = vi.hoisted(() => ({
+  role: "admin",
+  tenantType: "brand",
+  actingTenantId: null as string | null,
+  agencyScope: null as string[] | null,
+}));
+
+vi.mock("@/lib/auth", () => ({
+  useAuthStore: (
+    selector: (state: {
+      user: {
+        role: string;
+        tenant_type: string;
+        acting_tenant_id: string | null;
+        agency_scope: string[] | null;
+      };
+    }) => unknown
+  ) =>
+    selector({
+      user: {
+        role: mockAuth.role,
+        tenant_type: mockAuth.tenantType,
+        acting_tenant_id: mockAuth.actingTenantId,
+        agency_scope: mockAuth.agencyScope,
+      },
+    }),
+}));
 
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: vi.fn() }),
@@ -90,7 +124,11 @@ vi.mock("@/lib/hooks", () => ({
           connector_id: null,
           status: "active",
           created_at: "2026-05-29T10:00:00Z",
-          config_json: { amount: 10, min_order: 50, validity_type: "campaign_period" },
+          config_json: {
+            amount: 10,
+            min_order: 50,
+            validity_type: "campaign_period",
+          },
         },
       ],
       total: 1,
@@ -112,6 +150,10 @@ vi.mock("@/lib/hooks", () => ({
 describe("BenefitsPage", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockAuth.role = "admin";
+    mockAuth.tenantType = "brand";
+    mockAuth.actingTenantId = null;
+    mockAuth.agencyScope = null;
     mockGet.mockImplementation((url: string) => {
       if (url === "/benefits/summary") {
         return Promise.resolve({
@@ -127,8 +169,12 @@ describe("BenefitsPage", () => {
           },
         });
       }
-      if (url === "/campaigns") return Promise.resolve({ data: { items: [{ id: "c1", name: "活动1" }], total: 1 } });
-      if (url === "/connectors/connectors") return Promise.resolve({ data: [] });
+      if (url === "/campaigns")
+        return Promise.resolve({
+          data: { items: [{ id: "c1", name: "活动1" }], total: 1 },
+        });
+      if (url === "/connectors/connectors")
+        return Promise.resolve({ data: [] });
       if (url === "/connectors/deliveries/d1") {
         return Promise.resolve({
           data: {
@@ -149,19 +195,39 @@ describe("BenefitsPage", () => {
     mockPost.mockResolvedValue({ data: { status: "success" } });
   });
 
+  it("does not mount benefit requests for a viewer", () => {
+    mockAuth.role = "viewer";
+
+    render(<BenefitsPage />);
+
+    expect(mockGet).not.toHaveBeenCalled();
+    expect(mockPost).not.toHaveBeenCalled();
+    expect(mockPatch).not.toHaveBeenCalled();
+    expect(mockDelete).not.toHaveBeenCalled();
+  });
+
   it("renders benefit workbench summary and list", async () => {
     render(<BenefitsPage />);
     expect(screen.getByText("权益管理")).toBeInTheDocument();
-    expect(screen.getByText("管理可复用权益、活动使用关系、库存与消费者领取记录。")).toBeInTheDocument();
+    expect(
+      screen.getByText("管理可复用权益、活动使用关系、库存与消费者领取记录。")
+    ).toBeInTheDocument();
     expect(screen.getByText("测试权益")).toBeInTheDocument();
-    await waitFor(() => expect(screen.getByText("剩余库存")).toBeInTheDocument());
+    await waitFor(() =>
+      expect(screen.getByText("剩余库存")).toBeInTheDocument()
+    );
   });
 
   it("falls back to visible list data when summary is unavailable", async () => {
     mockGet.mockImplementation((url: string) => {
-      if (url === "/benefits/summary") return Promise.reject(new Error("summary route unavailable"));
-      if (url === "/campaigns") return Promise.resolve({ data: { items: [{ id: "c1", name: "活动1" }], total: 1 } });
-      if (url === "/connectors/connectors") return Promise.resolve({ data: [] });
+      if (url === "/benefits/summary")
+        return Promise.reject(new Error("summary route unavailable"));
+      if (url === "/campaigns")
+        return Promise.resolve({
+          data: { items: [{ id: "c1", name: "活动1" }], total: 1 },
+        });
+      if (url === "/connectors/connectors")
+        return Promise.resolve({ data: [] });
       return Promise.resolve({ data: { items: [], total: 0 } });
     });
 
@@ -169,7 +235,11 @@ describe("BenefitsPage", () => {
 
     const activeCard = screen.getByText("启用中").closest(".ant-card");
     expect(activeCard).not.toBeNull();
-    await waitFor(() => expect(within(activeCard as HTMLElement).getByText("1")).toBeInTheDocument());
+    await waitFor(() =>
+      expect(
+        within(activeCard as HTMLElement).getByText("1")
+      ).toBeInTheDocument()
+    );
   });
 
   it("opens create modal with business-oriented fields", () => {
@@ -180,7 +250,9 @@ describe("BenefitsPage", () => {
     expect(screen.getByText("发放规则")).toBeInTheDocument();
     expect(screen.getAllByText("权益类型").length).toBeGreaterThan(0);
     expect(screen.getByText("每位消费者限领")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /创建权益/ })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /创建权益/ })
+    ).toBeInTheDocument();
   });
 
   it("displays stock as total, used, and remaining", () => {
@@ -225,10 +297,14 @@ describe("BenefitsPage", () => {
     fireEvent.click(await screen.findByRole("button", { name: /查看详情/ }));
 
     expect(await screen.findByText("领取详情")).toBeInTheDocument();
-    await waitFor(() => expect(document.body.textContent).toContain("invalid receiver"));
+    await waitFor(() =>
+      expect(document.body.textContent).toContain("invalid receiver")
+    );
 
     fireEvent.click(screen.getByRole("button", { name: /重试发放/ }));
 
-    await waitFor(() => expect(mockPost).toHaveBeenCalledWith("/connectors/deliveries/d1/retry"));
+    await waitFor(() =>
+      expect(mockPost).toHaveBeenCalledWith("/connectors/deliveries/d1/retry")
+    );
   });
 });

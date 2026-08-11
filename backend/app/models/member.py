@@ -4,7 +4,20 @@ import uuid
 from datetime import datetime
 from enum import StrEnum
 
-from sqlalchemy import JSON, CheckConstraint, DateTime, ForeignKey, Index, String, Text, UniqueConstraint, func
+from sqlalchemy import (
+    JSON,
+    CheckConstraint,
+    DateTime,
+    ForeignKey,
+    ForeignKeyConstraint,
+    Index,
+    LargeBinary,
+    String,
+    Text,
+    UniqueConstraint,
+    func,
+    text,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 from uuid6 import uuid7
 
@@ -23,7 +36,10 @@ class ConsumerProfile(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid7)
     tenant_id: Mapped[uuid.UUID] = mapped_column(nullable=False)
-    wechat_openid: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    wechat_openid_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    wechat_openid_ciphertext: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
+    wechat_openid_nonce: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
+    wechat_openid_key_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
     phone_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     phone_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
     nickname: Mapped[str | None] = mapped_column(String(100), nullable=True)
@@ -41,9 +57,30 @@ class ConsumerProfile(Base):
     )
 
     __table_args__ = (
-        UniqueConstraint("tenant_id", "wechat_openid", name="uq_consumer_tenant_openid"),
+        ForeignKeyConstraint(["tenant_id"], ["tenants.id"], name="fk_consumer_profiles_tenant"),
         UniqueConstraint("tenant_id", "phone_hash", name="uq_consumer_tenant_phone"),
+        CheckConstraint(
+            "(wechat_openid_hash IS NULL AND wechat_openid_ciphertext IS NULL "
+            "AND wechat_openid_nonce IS NULL AND wechat_openid_key_id IS NULL) OR "
+            "(length(wechat_openid_hash)=64 AND wechat_openid_ciphertext IS NOT NULL "
+            "AND length(wechat_openid_nonce)=12 AND NULLIF(trim(wechat_openid_key_id),'') IS NOT NULL)",
+            name="ck_consumer_profiles_wechat_openid_envelope",
+        ),
+        CheckConstraint(
+            "wechat_openid_hash IS NULL OR (wechat_openid_hash ~ '^[0-9a-f]{64}$' "
+            "AND octet_length(wechat_openid_ciphertext)>=16 "
+            "AND wechat_openid_key_id ~ '^aes-master-v[1-9][0-9]*$')",
+            name="ck_consumer_profiles_wechat_openid_envelope_format",
+        ).ddl_if(dialect="postgresql"),
         Index("ix_consumer_profiles_tenant_id", "tenant_id"),
+        Index(
+            "uq_consumer_profiles_tenant_wechat_openid_hash",
+            "tenant_id",
+            "wechat_openid_hash",
+            unique=True,
+            postgresql_where=text("wechat_openid_hash IS NOT NULL"),
+            sqlite_where=text("wechat_openid_hash IS NOT NULL"),
+        ),
         Index("ix_consumer_profiles_tenant_phone", "tenant_id", "phone_hash"),
     )
 

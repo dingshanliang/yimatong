@@ -12,6 +12,7 @@ import hmac
 import os
 import re
 import struct
+import uuid
 from typing import Protocol
 
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
@@ -171,6 +172,59 @@ def hash_phone(phone: str) -> str:
         phone.encode("utf-8"),
         hashlib.sha256,
     ).hexdigest()
+
+
+def _wechat_openid_lookup_material(tenant_id: uuid.UUID, openid: str) -> bytes:
+    if not isinstance(openid, str) or not openid or openid.isspace() or len(openid) > 128:
+        raise CryptoError("Invalid WeChat OpenID")
+    return b"wechat-openid-v1\0" + tenant_id.bytes + b"\0" + openid.encode("utf-8")
+
+
+def _wechat_openid_aad(tenant_id: uuid.UUID, consumer_id: uuid.UUID) -> bytes:
+    return b"wechat-openid-v1\0" + tenant_id.bytes + b"\0" + consumer_id.bytes
+
+
+def hash_wechat_openid(tenant_id: uuid.UUID, openid: str) -> str:
+    """Return a tenant-scoped lookup digest without persisting the OpenID."""
+
+    return hmac.new(
+        _get_provider().get_pepper(),
+        _wechat_openid_lookup_material(tenant_id, openid),
+        hashlib.sha256,
+    ).hexdigest()
+
+
+def encrypt_wechat_openid(
+    tenant_id: uuid.UUID,
+    consumer_id: uuid.UUID,
+    openid: str,
+) -> tuple[bytes, bytes, str]:
+    """Encrypt an OpenID with tenant and consumer identity bound as AEAD AAD."""
+
+    _wechat_openid_lookup_material(tenant_id, openid)
+    return encrypt_bytes(openid.encode("utf-8"), aad=_wechat_openid_aad(tenant_id, consumer_id))
+
+
+def decrypt_wechat_openid(
+    tenant_id: uuid.UUID,
+    consumer_id: uuid.UUID,
+    ciphertext: bytes,
+    nonce: bytes,
+    key_id: str,
+) -> str:
+    """Decrypt a tenant/consumer-bound OpenID and fail closed on envelope drift."""
+
+    try:
+        openid = decrypt_bytes(
+            ciphertext,
+            nonce=nonce,
+            key_id=key_id,
+            aad=_wechat_openid_aad(tenant_id, consumer_id),
+        ).decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise CryptoError("Invalid WeChat OpenID envelope") from exc
+    _wechat_openid_lookup_material(tenant_id, openid)
+    return openid
 
 
 def mask_phone(phone: str) -> str:
