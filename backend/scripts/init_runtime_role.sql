@@ -65,7 +65,7 @@ SELECT unnest(ARRAY[
     'diversion_evidence', 'diversion_investigation_history', 'export_logs',
     'external_orders', 'gmv_attributions', 'gmv_daily_stats', 'intent_events',
     'interception_records', 'launch_releases', 'ops_tasks', 'organizations',
-    'page_templates', 'page_versions', 'permissions', 'point_products',
+    'permissions', 'point_products',
     'pilot_milestone_corrections', 'pilot_milestones',
     'point_redemptions', 'point_rules', 'point_transactions',
     'private_domain_configs', 'product_assets', 'production_batches',
@@ -110,7 +110,9 @@ CREATE TEMP TABLE runtime_restricted_mutation_relation_allowlist (
     table_name name PRIMARY KEY
 ) ON COMMIT DROP;
 INSERT INTO runtime_restricted_mutation_relation_allowlist (table_name)
-VALUES ('agency_authorizations');
+VALUES ('agency_authorizations'),
+       ('page_templates'),
+       ('page_versions');
 INSERT INTO runtime_restricted_mutation_relation_allowlist (table_name)
 SELECT 'api_keys'::name
 WHERE NOT EXISTS (
@@ -132,6 +134,50 @@ BEGIN
     IF to_regprocedure('public.revoke_current_tenant_account_sessions(uuid)') IS NOT NULL THEN
         REVOKE ALL ON FUNCTION public.revoke_current_tenant_account_sessions(uuid) FROM PUBLIC;
         GRANT EXECUTE ON FUNCTION public.revoke_current_tenant_account_sessions(uuid) TO yimatong_app;
+    END IF;
+    IF to_regprocedure('public.mutate_page_template(uuid,uuid,uuid,text,uuid,uuid,text,text,text)') IS NOT NULL THEN
+        REVOKE ALL ON FUNCTION public.mutate_page_template(
+            uuid, uuid, uuid, text, uuid, uuid, text, text, text
+        ) FROM PUBLIC;
+        GRANT EXECUTE ON FUNCTION public.mutate_page_template(
+            uuid, uuid, uuid, text, uuid, uuid, text, text, text
+        ) TO yimatong_app;
+    END IF;
+    IF to_regprocedure('public.create_page_version(uuid,uuid,uuid,uuid,uuid,jsonb)') IS NOT NULL THEN
+        REVOKE ALL ON FUNCTION public.create_page_version(uuid, uuid, uuid, uuid, uuid, jsonb) FROM PUBLIC;
+        GRANT EXECUTE ON FUNCTION public.create_page_version(uuid, uuid, uuid, uuid, uuid, jsonb)
+            TO yimatong_app;
+    END IF;
+    IF to_regprocedure('public.update_page_version(uuid,uuid,uuid,uuid,jsonb)') IS NOT NULL THEN
+        REVOKE ALL ON FUNCTION public.update_page_version(uuid, uuid, uuid, uuid, jsonb) FROM PUBLIC;
+        GRANT EXECUTE ON FUNCTION public.update_page_version(uuid, uuid, uuid, uuid, jsonb) TO yimatong_app;
+    END IF;
+    IF to_regprocedure('public.publish_page_version(uuid,uuid,uuid,uuid)') IS NOT NULL THEN
+        REVOKE ALL ON FUNCTION public.publish_page_version(uuid, uuid, uuid, uuid) FROM PUBLIC;
+        GRANT EXECUTE ON FUNCTION public.publish_page_version(uuid, uuid, uuid, uuid) TO yimatong_app;
+    END IF;
+    IF to_regprocedure('public.archive_page_version(uuid,uuid,uuid,uuid)') IS NOT NULL THEN
+        REVOKE ALL ON FUNCTION public.archive_page_version(uuid, uuid, uuid, uuid) FROM PUBLIC;
+        GRANT EXECUTE ON FUNCTION public.archive_page_version(uuid, uuid, uuid, uuid) TO yimatong_app;
+    END IF;
+    IF to_regprocedure('public.rollback_page_version(uuid,uuid,uuid,uuid,uuid,uuid)') IS NOT NULL THEN
+        REVOKE ALL ON FUNCTION public.rollback_page_version(uuid, uuid, uuid, uuid, uuid, uuid) FROM PUBLIC;
+        GRANT EXECUTE ON FUNCTION public.rollback_page_version(uuid, uuid, uuid, uuid, uuid, uuid)
+            TO yimatong_app;
+    END IF;
+    IF to_regprocedure('public.authorize_page_actor(uuid,uuid,text)') IS NOT NULL THEN
+        REVOKE ALL ON FUNCTION public.authorize_page_actor(uuid, uuid, text) FROM PUBLIC;
+        REVOKE ALL ON FUNCTION public.authorize_page_actor(uuid, uuid, text) FROM yimatong_app;
+    END IF;
+    IF to_regprocedure(
+        'public.mutate_page_version_authority(uuid,uuid,uuid,text,uuid,uuid,uuid,jsonb)'
+    ) IS NOT NULL THEN
+        REVOKE ALL ON FUNCTION public.mutate_page_version_authority(
+            uuid, uuid, uuid, text, uuid, uuid, uuid, jsonb
+        ) FROM PUBLIC;
+        REVOKE ALL ON FUNCTION public.mutate_page_version_authority(
+            uuid, uuid, uuid, text, uuid, uuid, uuid, jsonb
+        ) FROM yimatong_app;
     END IF;
 END
 $$;

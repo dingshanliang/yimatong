@@ -1,5 +1,6 @@
 """A6-002: 码解析对接页面引擎测试"""
 
+import uuid
 from collections.abc import AsyncGenerator
 
 import pytest
@@ -10,6 +11,23 @@ from app.core.database import get_db
 from app.main import app
 from app.utils.security import create_access_token
 from tests.conftest import TestSessionLocal
+
+
+async def _deliver_and_activate_batch(client: AsyncClient, headers: dict, batch_id: str) -> None:
+    exported = await client.post(f"/api/v1/code-batches/{batch_id}/export", headers=headers)
+    printing = await client.post(f"/api/v1/code-batches/{batch_id}/mark-printing", headers=headers)
+    delivered = await client.post(
+        f"/api/v1/code-batches/{batch_id}/mark-delivered",
+        json={"reason": "page resolver fixture", "recipient": "page resolver tests", "confirm": "deliver"},
+        headers=headers,
+    )
+    activated = await client.post(f"/api/v1/code-batches/{batch_id}/activate", headers=headers)
+    assert [exported.status_code, printing.status_code, delivered.status_code, activated.status_code] == [
+        200,
+        200,
+        200,
+        200,
+    ]
 
 
 def _platform_admin_headers() -> dict:
@@ -95,8 +113,12 @@ async def full_setup(client: AsyncClient):
             "production_batch_id": production_batch_id,
             "quantity": 2,
         },
-        headers=headers,
+        headers={
+            **headers,
+            "Idempotency-Key": str(uuid.uuid5(uuid.NAMESPACE_URL, f"page-engine:{tid}")),
+        },
     )
+    assert batch.status_code == 201, batch.text
     batch_id = batch.json()["id"]
 
     # 创建页面模板（关联产品）
@@ -125,8 +147,8 @@ async def full_setup(client: AsyncClient):
     vid = ver.json()["id"]
     await client.post(f"/api/v1/page-versions/{vid}/publish", headers=headers)
 
-    # 激活码
-    await client.post(f"/api/v1/code-batches/{batch_id}/activate", headers=headers)
+    # 完成权威交付链后激活码
+    await _deliver_and_activate_batch(client, headers, batch_id)
 
     # 获取第一个码的 public_id
     items = await client.get(
@@ -195,12 +217,13 @@ class TestResolvePageEngine:
                 "batch_code": "NT-001",
                 "quantity": 1,
             },
-            headers=headers,
+            headers={
+                **headers,
+                "Idempotency-Key": str(uuid.uuid5(uuid.NAMESPACE_URL, f"page-engine-default:{tid}")),
+            },
         )
-        await client.post(
-            f"/api/v1/code-batches/{batch.json()['id']}/activate",
-            headers=headers,
-        )
+        assert batch.status_code == 201, batch.text
+        await _deliver_and_activate_batch(client, headers, batch.json()["id"])
         items = await client.get(
             f"/api/v1/code-items?code_batch_id={batch.json()['id']}",
             headers=headers,

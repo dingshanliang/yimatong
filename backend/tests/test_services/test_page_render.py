@@ -1,6 +1,7 @@
 """A5-005: 模板渲染引擎测试"""
 
 import uuid
+from datetime import UTC, datetime
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -33,6 +34,8 @@ async def _setup_published_template(db: AsyncSession, template_type: str, config
         version=1,
         config_json=config,
         status=PageVersionStatus.published,
+        published_at=datetime.now(UTC),
+        created_by_tenant_id=tid,
         created_by=uuid.uuid4(),
     )
     db.add(version)

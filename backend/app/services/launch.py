@@ -40,8 +40,15 @@ async def build_launch_readiness(
     """重新计算上线事实，不读取 onboarding_progress，也不接受前端勾选结果。"""
     page_result = await db.execute(
         select(PageVersion, PageTemplate)
-        .join(PageTemplate, PageVersion.page_template_id == PageTemplate.id)
-        .where(PageVersion.id == page_version_id, PageVersion.tenant_id == tenant_id)
+        .join(
+            PageTemplate,
+            (PageVersion.tenant_id == PageTemplate.tenant_id) & (PageVersion.page_template_id == PageTemplate.id),
+        )
+        .where(
+            PageVersion.id == page_version_id,
+            PageVersion.tenant_id == tenant_id,
+            PageTemplate.tenant_id == tenant_id,
+        )
     )
     page_row = page_result.first()
     page_version = page_row[0] if page_row else None

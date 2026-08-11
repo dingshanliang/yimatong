@@ -94,6 +94,34 @@ async def test_locked_mutation_rejects_revoked_durable_session(monkeypatch):
 
 
 @pytest.mark.anyio
+async def test_page_legacy_context_binds_only_durable_jwt_session_after_revalidation():
+    session_id = uuid.uuid4()
+    request = _request("/api/v1/pages")
+    request.state.auth_method = "jwt"
+    request.state.session_id = str(session_id)
+    db = AsyncMock()
+
+    await database._bind_page_legacy_auth_session_context(db, request)
+
+    statement, parameters = db.execute.await_args.args
+    assert str(statement) == "SELECT set_config('app.auth_session_id', :session_id, true)"
+    assert parameters == {"session_id": str(session_id)}
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(("auth_method", "session_id"), [("api_key", uuid.uuid4()), ("jwt", None)])
+async def test_page_legacy_context_rejects_non_durable_principal(auth_method, session_id):
+    request = _request("/api/v1/pages")
+    request.state.auth_method = auth_method
+    request.state.session_id = session_id
+    db = AsyncMock()
+
+    await database._bind_page_legacy_auth_session_context(db, request)
+
+    db.execute.assert_not_awaited()
+
+
+@pytest.mark.anyio
 async def test_locked_mutation_rejects_current_database_role_demotion(db: AsyncSession):
     tenant = Tenant(name="角色边界租户", slug=f"role-boundary-{uuid.uuid4().hex[:8]}")
     db.add(tenant)
@@ -555,7 +583,14 @@ def test_only_expected_business_mutations_use_function_scoped_get_db():
         ("POST", "/api/v1/imports/products", "function"),
         ("POST", "/api/v1/imports/existing-codes", "function"),
         ("POST", "/api/v1/page-templates/industry-templates/{index}/clone", "function"),
+        ("POST", "/api/v1/industry-templates/{template_id}/apply", "function"),
+        ("POST", "/api/v1/page-templates", "function"),
+        ("PATCH", "/api/v1/page-templates/{template_id}", "function"),
+        ("DELETE", "/api/v1/page-templates/{template_id}", "function"),
         ("POST", "/api/v1/page-templates/{template_id}/versions", "function"),
+        ("PATCH", "/api/v1/page-versions/{version_id}", "function"),
+        ("POST", "/api/v1/page-versions/{version_id}/publish", "function"),
+        ("POST", "/api/v1/page-versions/{version_id}/archive", "function"),
         ("POST", "/api/v1/page-templates/{template_id}/versions/{version_id}/rollback", "function"),
         ("POST", "/api/v1/webhooks/api-keys", "function"),
         ("POST", "/api/v1/webhooks/api-keys/{key_id}/rotate", "function"),

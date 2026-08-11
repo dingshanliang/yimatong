@@ -75,7 +75,14 @@ export interface PreviewBatch {
 
 export interface PreviewAsset {
   id: string;
-  asset_type: "image" | "video" | "test_report" | "certificate" | "story" | "other" | string;
+  asset_type:
+    | "image"
+    | "video"
+    | "test_report"
+    | "certificate"
+    | "story"
+    | "other"
+    | string;
   name: string;
   description?: string;
   issuer?: string;
@@ -134,7 +141,7 @@ export const MODULE_TYPE_LABELS: Record<ModuleType, string> = {
 };
 
 export const MODULE_TYPES = Object.entries(MODULE_TYPE_LABELS).map(
-  ([value, label]) => ({ value, label }),
+  ([value, label]) => ({ value, label })
 );
 
 const MODULE_STATUS_PRIORITY: Record<ModuleReadinessStatus, number> = {
@@ -147,13 +154,18 @@ function normalizeStringArray(value: unknown): string[] {
   return Array.isArray(value) ? value.map(String).filter(Boolean) : [];
 }
 
-function hasAnyAsset(context: PagePreviewContext | undefined, assetTypes: string[]) {
-  return Boolean(context?.assets?.some((asset) => assetTypes.includes(asset.asset_type)));
+function hasAnyAsset(
+  context: PagePreviewContext | undefined,
+  assetTypes: string[]
+) {
+  return Boolean(
+    context?.assets?.some((asset) => assetTypes.includes(asset.asset_type))
+  );
 }
 
 function buildModuleReadiness(
   module: ModuleConfig,
-  context?: PagePreviewContext,
+  context?: PagePreviewContext
 ): ModuleReadiness {
   const label = MODULE_TYPE_LABELS[module.type] || module.type;
   const config = module.config || {};
@@ -163,7 +175,11 @@ function buildModuleReadiness(
   let status: ModuleReadinessStatus = "configured";
   let message = "已配置";
 
-  const setStatus = (nextStatus: ModuleReadinessStatus, nextMessage: string, issue?: string) => {
+  const setStatus = (
+    nextStatus: ModuleReadinessStatus,
+    nextMessage: string,
+    issue?: string
+  ) => {
     if (MODULE_STATUS_PRIORITY[nextStatus] < MODULE_STATUS_PRIORITY[status]) {
       status = nextStatus;
       message = nextMessage;
@@ -185,7 +201,11 @@ function buildModuleReadiness(
     case "light_traceability": {
       const fields = normalizeStringArray(config.fields);
       if (fields.length === 0) {
-        setStatus("incomplete", "未选择字段", "溯源信息需要选择至少一个展示字段");
+        setStatus(
+          "incomplete",
+          "未选择字段",
+          "溯源信息需要选择至少一个展示字段"
+        );
       }
       if (batches.length === 0) {
         setStatus("example", "使用示例批次", "溯源信息暂无真实生产批次数据");
@@ -196,14 +216,22 @@ function buildModuleReadiness(
       if (normalizeStringArray(config.report_ids).length === 0) {
         setStatus("incomplete", "未关联报告", "检测报告模块未关联产品资料");
       } else if (!hasAnyAsset(context, ["test_report"])) {
-        setStatus("example", "报告不可预览", "当前产品资料库中没有可预览的检测报告");
+        setStatus(
+          "example",
+          "报告不可预览",
+          "当前产品资料库中没有可预览的检测报告"
+        );
       }
       break;
     case "certificates":
       if (normalizeStringArray(config.certificate_ids).length === 0) {
         setStatus("incomplete", "未关联证书", "资质证书模块未关联产品资料");
       } else if (!hasAnyAsset(context, ["certificate"])) {
-        setStatus("example", "证书不可预览", "当前产品资料库中没有可预览的资质证书");
+        setStatus(
+          "example",
+          "证书不可预览",
+          "当前产品资料库中没有可预览的资质证书"
+        );
       }
       break;
     case "media_section":
@@ -213,17 +241,29 @@ function buildModuleReadiness(
       break;
     case "cta_group":
       if (!Array.isArray(config.buttons) || config.buttons.length === 0) {
-        setStatus("incomplete", "未配置按钮", "私域/跳转按钮模块需要配置至少一个按钮");
+        setStatus(
+          "incomplete",
+          "未配置按钮",
+          "私域/跳转按钮模块需要配置至少一个按钮"
+        );
       }
       break;
     case "shop_redirect":
       if (!Array.isArray(config.shops) || config.shops.length === 0) {
-        setStatus("incomplete", "未配置渠道", "购买渠道模块需要配置至少一个渠道");
+        setStatus(
+          "incomplete",
+          "未配置渠道",
+          "购买渠道模块需要配置至少一个渠道"
+        );
       }
       break;
     case "lead_form":
       if (normalizeStringArray(config.fields).length === 0) {
-        setStatus("incomplete", "未配置字段", "留资表单需要选择至少一个收集字段");
+        setStatus(
+          "incomplete",
+          "未配置字段",
+          "留资表单需要选择至少一个收集字段"
+        );
       }
       break;
     case "benefit_card":
@@ -262,7 +302,7 @@ function buildModuleReadiness(
 /** 页面发布前完整度检查，供编辑器、发布确认和测试复用 */
 export function inspectPageReadiness(
   dsl: PageDSL,
-  context: PagePreviewContext = {},
+  context: PagePreviewContext = {}
 ): PageReadiness {
   const blockingIssues = [...validateDSL(dsl)];
   const warnings: string[] = [];
@@ -277,13 +317,19 @@ export function inspectPageReadiness(
     blockingIssues.push("页面没有启用模块");
   }
 
-  const moduleStatuses = enabledModules.map((module) => buildModuleReadiness(module, context));
+  const moduleStatuses = enabledModules.map((module) =>
+    buildModuleReadiness(module, context)
+  );
   moduleStatuses.forEach((moduleStatus) => {
     if (moduleStatus.status === "incomplete") {
-      warnings.push(`${moduleStatus.label}：${moduleStatus.issues[0] || moduleStatus.message}`);
+      warnings.push(
+        `${moduleStatus.label}：${moduleStatus.issues[0] || moduleStatus.message}`
+      );
     }
     if (moduleStatus.status === "example") {
-      warnings.push(`${moduleStatus.label}：${moduleStatus.issues[0] || moduleStatus.message}`);
+      warnings.push(
+        `${moduleStatus.label}：${moduleStatus.issues[0] || moduleStatus.message}`
+      );
     }
   });
 
@@ -291,7 +337,9 @@ export function inspectPageReadiness(
     blockingIssues,
     warnings,
     moduleStatuses,
-    usesExampleData: moduleStatuses.some((moduleStatus) => moduleStatus.status === "example"),
+    usesExampleData: moduleStatuses.some(
+      (moduleStatus) => moduleStatus.status === "example"
+    ),
   };
 }
 
@@ -319,7 +367,22 @@ export function validateDSL(dsl: unknown): string[] {
         if (!m.id) errors.push(`modules[${i}].id 不能为空`);
         if (!m.type) errors.push(`modules[${i}].type 不能为空`);
         if (m.type && !MODULE_TYPE_LABELS[m.type as ModuleType]) {
-          errors.push(`modules[${i}].type "${String(m.type)}" 不是有效的模块类型`);
+          errors.push(
+            `modules[${i}].type "${String(m.type)}" 不是有效的模块类型`
+          );
+        }
+        const config =
+          m.config && typeof m.config === "object"
+            ? (m.config as Record<string, unknown>)
+            : {};
+        const forbidden =
+          m.type === "risk_alert"
+            ? ["alert_type", "detail", "scan_count", "detected_city"]
+            : m.type === "dual_code_verify"
+              ? ["product_verified"]
+              : [];
+        if (forbidden.some((key) => key in config)) {
+          errors.push(`modules[${i}].config 不能包含验真或风险权威事实`);
         }
       });
     }
@@ -338,7 +401,9 @@ export function validateDSL(dsl: unknown): string[] {
             if (!p || typeof p !== "object") return;
             const period = p as Record<string, unknown>;
             if (period.start_at && isNaN(Date.parse(String(period.start_at)))) {
-              errors.push(`routing.campaign_periods[${i}].start_at 日期格式无效`);
+              errors.push(
+                `routing.campaign_periods[${i}].start_at 日期格式无效`
+              );
             }
             if (period.end_at && isNaN(Date.parse(String(period.end_at)))) {
               errors.push(`routing.campaign_periods[${i}].end_at 日期格式无效`);
@@ -363,9 +428,24 @@ export function createEmptyDSL(): PageDSL {
 /** 生成默认模块（从模板库复制时使用） */
 export function createDefaultModules(): ModuleConfig[] {
   return [
-    { id: "hero", type: "product_hero", enabled: true, config: { show_verify_badge: true } },
+    {
+      id: "hero",
+      type: "product_hero",
+      enabled: true,
+      config: { show_verify_badge: true },
+    },
     { id: "verify", type: "verification_status", enabled: true },
-    { id: "trace", type: "light_traceability", enabled: true, config: { fields: ["origin", "production_date", "batch_no"] } },
-    { id: "legal", type: "legal_terms", enabled: true, config: { show_privacy_policy: true } },
+    {
+      id: "trace",
+      type: "light_traceability",
+      enabled: true,
+      config: { fields: ["origin", "production_date", "batch_no"] },
+    },
+    {
+      id: "legal",
+      type: "legal_terms",
+      enabled: true,
+      config: { show_privacy_policy: true },
+    },
   ];
 }

@@ -46,6 +46,7 @@ async def render_page(
             select(PageVersion).where(
                 PageVersion.id == version_id,
                 PageVersion.tenant_id == tenant_id,
+                PageVersion.page_template_id == template_id,
             )
         )
     else:

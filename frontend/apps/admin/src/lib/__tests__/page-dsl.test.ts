@@ -54,6 +54,19 @@ describe("page-dsl utilities", () => {
       );
     });
 
+    it.each([
+      ["risk_alert", { detail: "伪造风险", scan_count: 99 }],
+      ["dual_code_verify", { product_verified: true }],
+    ])("rejects authoritative facts in %s config", (type, config) => {
+      const dsl = {
+        modules: [{ id: "authority", type, enabled: true, config }],
+      };
+
+      expect(validateDSL(dsl)).toContain(
+        "modules[0].config 不能包含验真或风险权威事实"
+      );
+    });
+
     it("returns error when DSL is not an object", () => {
       expect(validateDSL(null)).toContain("DSL 必须是一个对象");
       expect(validateDSL("string")).toContain("DSL 必须是一个对象");
@@ -63,9 +76,7 @@ describe("page-dsl utilities", () => {
     it("validates routing campaign_periods date format", () => {
       const dsl = {
         routing: {
-          campaign_periods: [
-            { mode: "campaign", start_at: "invalid-date" },
-          ],
+          campaign_periods: [{ mode: "campaign", start_at: "invalid-date" }],
         },
       };
       expect(validateDSL(dsl)).toContain(
@@ -78,7 +89,11 @@ describe("page-dsl utilities", () => {
         routing: {
           default_page: true,
           campaign_periods: [
-            { mode: "campaign", start_at: "2026-06-01T00:00:00+08:00", end_at: "2026-06-30T23:59:59+08:00" },
+            {
+              mode: "campaign",
+              start_at: "2026-06-01T00:00:00+08:00",
+              end_at: "2026-06-30T23:59:59+08:00",
+            },
             { mode: "evergreen" },
           ],
         },
@@ -146,12 +161,16 @@ describe("page-dsl utilities", () => {
   describe("inspectPageReadiness", () => {
     it("blocks publish when page has no product", () => {
       const dsl: PageDSL = {
-        modules: [{ id: "hero", type: "product_hero", enabled: true, config: {} }],
+        modules: [
+          { id: "hero", type: "product_hero", enabled: true, config: {} },
+        ],
       };
 
       const readiness = inspectPageReadiness(dsl, {});
 
-      expect(readiness.blockingIssues).toContain("页面未关联产品，消费者扫码不会自动命中该页面");
+      expect(readiness.blockingIssues).toContain(
+        "页面未关联产品，消费者扫码不会自动命中该页面"
+      );
       expect(readiness.usesExampleData).toBe(true);
       expect(readiness.moduleStatuses[0]).toMatchObject({
         moduleId: "hero",
@@ -161,7 +180,9 @@ describe("page-dsl utilities", () => {
 
     it("blocks publish when no module is enabled", () => {
       const dsl: PageDSL = {
-        modules: [{ id: "hero", type: "product_hero", enabled: false, config: {} }],
+        modules: [
+          { id: "hero", type: "product_hero", enabled: false, config: {} },
+        ],
       };
 
       const readiness = inspectPageReadiness(dsl, {
@@ -188,7 +209,7 @@ describe("page-dsl utilities", () => {
         expect.arrayContaining([
           "检测报告：检测报告模块未关联产品资料",
           "资质证书：资质证书模块未关联产品资料",
-        ]),
+        ])
       );
     });
 
@@ -210,7 +231,9 @@ describe("page-dsl utilities", () => {
       });
 
       expect(readiness.usesExampleData).toBe(true);
-      expect(readiness.warnings).toContain("溯源信息：溯源信息暂无真实生产批次数据");
+      expect(readiness.warnings).toContain(
+        "溯源信息：溯源信息暂无真实生产批次数据"
+      );
     });
 
     it("passes configured product hero and traceability with real product and batch", () => {

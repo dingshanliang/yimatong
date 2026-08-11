@@ -7,8 +7,10 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
+from app.core.dependencies import get_current_tenant
 from app.models.launch import LaunchRelease, LaunchReleaseStatus
 from app.models.page import PageVersion, PageVersionStatus
+from app.utils.auth_rbac import require_role
 
 public_page_router = APIRouter(tags=["public-pages"])
 
@@ -17,15 +19,18 @@ public_page_router = APIRouter(tags=["public-pages"])
 async def get_public_page(
     version_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
+    tenant_id: uuid.UUID = Depends(get_current_tenant),
+    _role: str = Depends(require_role("admin", "operator")),
 ):
-    """H5 获取页面配置 DSL（公开端点，无需认证）
+    """Admin preview client reads a published page DSL in its tenant context.
 
     安全约束：
-    - 仅返回 published 状态的版本
+    - requires tenant authentication and only returns that tenant's published version
     - 不暴露 tenant_id 等内部信息
     """
     suspended = await db.scalar(
         select(LaunchRelease.id).where(
+            LaunchRelease.tenant_id == tenant_id,
             LaunchRelease.page_version_id == version_id,
             LaunchRelease.status == LaunchReleaseStatus.suspended,
         )
@@ -35,6 +40,7 @@ async def get_public_page(
     result = await db.execute(
         select(PageVersion).where(
             PageVersion.id == version_id,
+            PageVersion.tenant_id == tenant_id,
             PageVersion.status == PageVersionStatus.published,
         )
     )

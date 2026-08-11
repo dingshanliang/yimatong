@@ -41,7 +41,7 @@ from app.models.member import (
     PointTransaction,
     PointTransactionType,
 )
-from app.models.page import PageTemplate, PageTemplateStatus, PageVersion, PageVersionStatus
+from app.models.page import PageTemplate, PageVersion, PageVersionStatus
 from app.models.product import SKU, Brand, Product, ProductionBatch
 from app.models.risk import InterceptionRecord, RiskAlert, RiskAlertType, RiskNotification, RiskRule
 from app.models.scan import ScanEvent
@@ -68,6 +68,7 @@ from app.services.channel import create_account_scope
 from app.services.code import activate_batch, create_code_batch, mark_delivered, mark_printing, revoke_code_item
 from app.services.code_export import generate_code_csv
 from app.services.entitlement import require_active_plan
+from app.services.page import create_page_template, create_page_version, publish_page_version
 from app.services.product import create_brand, create_product, create_sku
 from app.services.quota import lock_quota_rollout_state, refresh_quota_usage_from_authoritative_rows
 from app.services.risk import freeze_code_item
@@ -1389,20 +1390,18 @@ async def _ensure_channels(
 async def _ensure_scan_events(
     db: AsyncSession,
     tenant_id: uuid.UUID,
-    code_items: list[CodeItem],
+    activated_public_ids: list[str],
 ) -> int:
-    """批量生成 60 天的扫码事件，返回总条数"""
+    """通过 control-plane session 批量生成 60 天的演示扫码事实。"""
     # 检查是否已有扫码事件
     result = await db.execute(select(func.count()).select_from(ScanEvent).where(ScanEvent.tenant_id == tenant_id))
     existing_count = result.scalar_one()
     if existing_count > 1000:
         return existing_count  # 已有足够数据，跳过
 
-    activated_items = [item for item in code_items if item.status == CodeItemStatus.activated]
-    if not activated_items:
+    if not activated_public_ids:
         return 0
 
-    public_ids = [item.public_id for item in activated_items]
     # 扩展 public_id 池：每个码可以被扫多次
     total_events = 0
     batch_size = 1000
@@ -1411,7 +1410,7 @@ async def _ensure_scan_events(
     for day_idx in range(TOTAL_DAYS):
         day_count = _scan_count_for_day(day_idx)
         for _ in range(day_count):
-            public_id = random.choice(public_ids)
+            public_id = random.choice(activated_public_ids)
             env, ua = _pick_env()
             scan_time = _random_scan_time(day_idx)
             ip_hash = hashlib.sha256(f"demo-ip-{random.randint(1, 5000)}".encode()).hexdigest()[:32]
@@ -2003,17 +2002,23 @@ async def _ensure_page_templates(
         )
         template = result.scalar_one_or_none()
         if not template:
-            template = PageTemplate(
-                tenant_id=tenant_id,
-                product_id=product_id,
-                name=tmpl_data["name"],
-                template_type=tmpl_data["template_type"],
-                status=PageTemplateStatus.active,
-                description=f"演示用{tmpl_data['template_type']}页面模板",
+            created_template = await create_page_template(
+                db,
+                tenant_id,
+                tmpl_data["name"],
+                tmpl_data["template_type"],
+                f"演示用{tmpl_data['template_type']}页面模板",
+                product_id,
+                created_by,
             )
-            db.add(template)
-            await db.flush()
-            await db.refresh(template)
+            template = await db.scalar(
+                select(PageTemplate).where(
+                    PageTemplate.tenant_id == tenant_id,
+                    PageTemplate.id == uuid.UUID(created_template["id"]),
+                )
+            )
+            if template is None:  # pragma: no cover - authoritative function returned an impossible reference
+                raise RuntimeError("Page template creation did not persist its authority row")
 
         # 确保有已发布版本
         result = await db.execute(
@@ -2025,20 +2030,11 @@ async def _ensure_page_templates(
         )
         version = result.scalar_one_or_none()
         config = tmpl_data["config"](tmpl_data["product_name"] or "")
-        if version:
-            version.config_json = config
-        else:
-            db.add(
-                PageVersion(
-                    tenant_id=tenant_id,
-                    page_template_id=template.id,
-                    version=1,
-                    config_json=config,
-                    status=PageVersionStatus.published,
-                    created_by=created_by,
-                )
-            )
-        await db.flush()
+        if version is None or version.config_json != config:
+            created_version = await create_page_version(db, tenant_id, template.id, config, created_by)
+            if created_version is None:  # pragma: no cover - template is locked by the authority function
+                raise RuntimeError("Page version creation lost its template authority")
+            await publish_page_version(db, tenant_id, uuid.UUID(created_version["id"]), created_by)
         templates.append(template)
 
     return templates
@@ -2213,17 +2209,30 @@ def generate(
                 f"({len(channels['distributors'])}经销商/{len(channels['regions'])}区域/{len(channels['stores'])}门店)",
             )
 
-            # 5. 扫码事件
-            event_count = await _ensure_scan_events(db, tenant_id, code_items)
-            p.step("扫码事件", f"({event_count:,} 次)")
+            activated_public_ids = [item.public_id for item in code_items if item.status == CodeItemStatus.activated]
 
-            # 提交阶段 A，关闭 session 释放 identity map
+            # 先提交权威码生命周期，再由隔离的 control-plane session 写入
+            # demo-only 历史扫码样本；runtime 始终没有 scan_events 表写权限。
             await db.commit()
+
+            async with control_session() as scan_db:
+                await set_session_tenant_context(scan_db, tenant_id)
+                event_count = await _ensure_scan_events(scan_db, tenant_id, activated_public_ids)
+                await scan_db.commit()
+            p.step("扫码事件", f"({event_count:,} 次)")
 
         await _ensure_demo_agency(tenant_id)
 
         # ── 阶段 B：业务数据（消费者/活动/风控/页面/统计）── 新 session，干净的 identity map
-        async with async_session() as db:
+        async with AsyncExitStack() as stack:
+            await stack.enter_async_context(
+                cli_lifecycle_auth_context(
+                    control_session,
+                    tenant_id=tenant_id,
+                    account_id=admin_id,
+                )
+            )
+            db = await stack.enter_async_context(async_session())
             await set_session_tenant_context(db, tenant_id)
             # 6. 消费者
             consumers, consumer_ids = await _ensure_consumers(db, tenant_id)

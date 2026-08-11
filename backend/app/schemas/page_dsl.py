@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import enum
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 # ── 模块类型枚举（与前端 ModuleType 一一对应）───────────────
@@ -41,6 +41,19 @@ class ModuleConfigSchema(BaseModel):
     type: ModuleType
     enabled: bool = True
     config: dict | None = None
+
+    @model_validator(mode="after")
+    def reject_authoritative_facts(self) -> ModuleConfigSchema:
+        """Page DSL owns presentation only; verification and risk facts come from the resolver."""
+        config = self.config or {}
+        forbidden_by_type = {
+            ModuleType.risk_alert: {"alert_type", "detail", "scan_count", "detected_city"},
+            ModuleType.dual_code_verify: {"product_verified"},
+        }
+        forbidden = forbidden_by_type.get(self.type, set()).intersection(config)
+        if forbidden:
+            raise ValueError(f"authoritative fields are not allowed in page DSL: {', '.join(sorted(forbidden))}")
+        return self
 
 
 class CampaignPeriodSchema(BaseModel):

@@ -29,7 +29,7 @@ from app.core.config import settings
 from app.core.database import set_session_tenant_context
 from app.models.campaign import Benefit, Campaign
 from app.models.code import CodeBatch, CodeItem, CodeItemStatus
-from app.models.page import PageTemplate, PageTemplateStatus, PageVersion, PageVersionStatus, TemplateType
+from app.models.page import PageTemplate, PageVersion, PageVersionStatus, TemplateType
 from app.models.plan import PlanDefinition
 from app.models.product import (
     SKU,
@@ -43,24 +43,28 @@ from app.models.product import (
 from app.models.tenant import (
     Account,
     Organization,
+    Permission,
     Role,
     Tenant,
     TenantPlan,
     TenantStatus,
     TenantType,
     account_roles,
+    role_permissions,
 )
 from app.services.audit import write_audit_log
 from app.services.auth import revoke_current_tenant_account_sessions
 from app.services.code import activate_batch, create_code_batch, mark_delivered, mark_printing
 from app.services.code_export import generate_code_csv
 from app.services.entitlement import TenantPlanExpiredError, require_active_plan, validate_feature_flags
+from app.services.page import create_page_template, create_page_version, publish_page_version
 from app.services.quota import (
     lock_quota_rollout_state,
     refresh_quota_usage_from_authoritative_rows,
     validate_quota_config,
 )
 from app.utils import utcnow
+from app.utils.auth_rbac import WEB_ROLE_PERMISSIONS
 from app.utils.crypto import EnvKeyProvider, init_crypto
 from app.utils.security import hash_password, verify_password
 
@@ -293,6 +297,29 @@ async def _ensure_runtime_admin(
         role = Role(tenant_id=tenant.id, name="admin", description="品牌管理员")
         db.add(role)
         await db.flush()
+
+    for code in WEB_ROLE_PERMISSIONS["admin"]:
+        permission = await db.scalar(
+            select(Permission).where(Permission.tenant_id == tenant.id, Permission.code == code)
+        )
+        if permission is None:
+            permission = Permission(tenant_id=tenant.id, code=code, description=f"默认权限：{code}")
+            db.add(permission)
+            await db.flush()
+        linked = await db.scalar(
+            select(role_permissions.c.role_id).where(
+                role_permissions.c.role_id == role.id,
+                role_permissions.c.permission_id == permission.id,
+            )
+        )
+        if linked is None:
+            await db.execute(
+                role_permissions.insert().values(
+                    tenant_id=tenant.id,
+                    role_id=role.id,
+                    permission_id=permission.id,
+                )
+            )
 
     if account_created:
         current_role_ids = set()
@@ -556,17 +583,23 @@ async def _ensure_page(
     )
     template = result.scalar_one_or_none()
     if template is None:
-        template = PageTemplate(
-            tenant_id=tenant_id,
-            product_id=product_id,
-            name=name,
-            template_type=TemplateType.traceability,
-            status=PageTemplateStatus.active,
-            description="基准验收页面：引用权威产品与生产批次模块。",
+        created_template = await create_page_template(
+            db,
+            tenant_id,
+            name,
+            TemplateType.traceability,
+            "基准验收页面：引用权威产品与生产批次模块。",
+            product_id,
+            created_by,
         )
-        db.add(template)
-        await db.flush()
-        await db.refresh(template)
+        template = await db.scalar(
+            select(PageTemplate).where(
+                PageTemplate.tenant_id == tenant_id,
+                PageTemplate.id == uuid.UUID(created_template["id"]),
+            )
+        )
+        if template is None:  # pragma: no cover - authoritative function returned an impossible reference
+            raise RuntimeError("Page template creation did not persist its authority row")
 
     result = await db.execute(
         select(PageVersion).where(
@@ -603,17 +636,20 @@ async def _ensure_page(
     }
 
     if version is None:
-        version = PageVersion(
-            tenant_id=tenant_id,
-            page_template_id=template.id,
-            version=1,
-            config_json=config_json,
-            status=PageVersionStatus.published,
-            created_by=created_by,
+        created_version = await create_page_version(db, tenant_id, template.id, config_json, created_by)
+        if created_version is None:  # pragma: no cover - template is locked by the authority function
+            raise RuntimeError("Page version creation lost its template authority")
+        published = await publish_page_version(db, tenant_id, uuid.UUID(created_version["id"]), created_by)
+        if published is None:  # pragma: no cover - newly created version must remain addressable
+            raise RuntimeError("Page version publication lost its authority row")
+        version = await db.scalar(
+            select(PageVersion).where(
+                PageVersion.tenant_id == tenant_id,
+                PageVersion.id == uuid.UUID(published["id"]),
+            )
         )
-        db.add(version)
-        await db.flush()
-        await db.refresh(version)
+        if version is None:  # pragma: no cover - authoritative function returned an impossible reference
+            raise RuntimeError("Published page version is unavailable")
     return template, version
 
 

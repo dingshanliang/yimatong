@@ -27,7 +27,7 @@ from app.services.page import (
     update_page_version,
 )
 from app.services.page_render import render_page
-from app.utils.auth_rbac import require_role
+from app.utils.auth_rbac import require_permission, require_role
 
 page_template_router = APIRouter(prefix="/api/v1/page-templates", tags=["page-templates"])
 page_version_router = APIRouter(prefix="/api/v1/page-versions", tags=["page-versions"])
@@ -92,7 +92,7 @@ class PageVersionUpdateRequest(BaseModel):
 
 @page_template_router.get("/industry-templates")
 async def list_industry_templates(
-    _role: str = Depends(require_role("admin", "operator")),
+    _permission: None = Depends(require_permission("page:create")),
 ):
     """获取行业模板库"""
     return ALL_TEMPLATES
@@ -105,7 +105,7 @@ async def clone_industry_template(
     db: AsyncSession = Depends(get_db, scope="function"),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
     account_id: uuid.UUID = Depends(get_current_account_id),
-    _role: str = Depends(require_role("admin", "operator")),
+    _permission: None = Depends(require_permission("page:create")),
 ):
     """从行业模板库一键复制创建新页面"""
     if index < 0 or index >= len(ALL_TEMPLATES):
@@ -118,6 +118,7 @@ async def clone_industry_template(
         tpl["template_type"],
         tpl["description"],
         body.product_id if body else None,
+        account_id,
     )
     version = await create_page_version(
         db,
@@ -126,24 +127,29 @@ async def clone_industry_template(
         tpl["config_json"],
         account_id,
     )
+    await db.commit()
     return {"template": template, "version": version}
 
 
 @page_template_router.post("", status_code=201, summary="创建 页面模板")
 async def create_page_template_endpoint(
     body: PageTemplateCreateRequest,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
-    _role: str = Depends(require_role("admin")),
+    account_id: uuid.UUID = Depends(get_current_account_id),
+    _permission: None = Depends(require_permission("page:create")),
 ):
-    return await create_page_template(
+    data = await create_page_template(
         db,
         tenant_id,
         body.name,
         body.template_type,
         body.description,
         body.product_id,
+        account_id,
     )
+    await db.commit()
+    return data
 
 
 @page_template_router.get("", summary="页面模板 列表")
@@ -186,9 +192,10 @@ async def get_page_template_endpoint(
 async def update_page_template_endpoint(
     template_id: uuid.UUID,
     body: PageTemplateUpdateRequest,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
-    _role: str = Depends(require_role("admin")),
+    account_id: uuid.UUID = Depends(get_current_account_id),
+    _permission: None = Depends(require_permission("page:create")),
 ):
     data = await update_page_template(
         db,
@@ -196,22 +203,36 @@ async def update_page_template_endpoint(
         template_id,
         name=body.name,
         description=body.description,
+        actor_id=account_id,
     )
     if not data:
         raise HTTPException(status_code=404, detail="Page template not found")
+    from app.services.page_render import invalidate_cache
+    from app.services.resolver_response import invalidate_page_config_cache
+
+    await invalidate_page_config_cache(str(template_id))
+    await invalidate_cache(tenant_id, template_id)
+    await db.commit()
     return data
 
 
 @page_template_router.delete("/{template_id}", summary="删除 页面模板")
 async def delete_page_template_endpoint(
     template_id: uuid.UUID,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
-    _role: str = Depends(require_role("admin")),
+    account_id: uuid.UUID = Depends(get_current_account_id),
+    _permission: None = Depends(require_permission("page:create")),
 ):
-    deleted = await delete_page_template(db, tenant_id, template_id)
+    deleted = await delete_page_template(db, tenant_id, template_id, account_id)
     if not deleted:
         raise HTTPException(status_code=404, detail="Page template not found")
+    from app.services.page_render import invalidate_cache
+    from app.services.resolver_response import invalidate_page_config_cache
+
+    await invalidate_page_config_cache(str(template_id))
+    await invalidate_cache(tenant_id, template_id)
+    await db.commit()
     return {"status": "archived"}
 
 
@@ -247,7 +268,7 @@ async def create_page_version_endpoint(
     db: AsyncSession = Depends(get_db, scope="function"),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
     account_id: uuid.UUID = Depends(get_current_account_id),
-    _role: str = Depends(require_role("admin")),
+    _permission: None = Depends(require_permission("page:create")),
 ):
     try:
         data = await create_page_version(
@@ -258,9 +279,10 @@ async def create_page_version_endpoint(
             account_id,
         )
     except ValidationError as e:
-        raise HTTPException(status_code=422, detail=e.errors()) from e
+        raise HTTPException(status_code=422, detail=e.errors(include_url=False, include_context=False)) from e
     if data is None:
         raise HTTPException(status_code=404, detail="Page template not found")
+    await db.commit()
     return data
 
 
@@ -278,72 +300,71 @@ async def list_page_versions_endpoint(
 async def update_page_version_endpoint(
     version_id: uuid.UUID,
     body: PageVersionUpdateRequest,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
-    _role: str = Depends(require_role("admin")),
+    account_id: uuid.UUID = Depends(get_current_account_id),
+    _permission: None = Depends(require_permission("page:create")),
 ):
     try:
-        data = await update_page_version(db, tenant_id, version_id, body.config_json)
+        data = await update_page_version(db, tenant_id, version_id, body.config_json, account_id)
     except VersionImmutableError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
     except ValidationError as e:
-        raise HTTPException(status_code=422, detail=e.errors()) from e
+        raise HTTPException(status_code=422, detail=e.errors(include_url=False, include_context=False)) from e
     if not data:
         raise HTTPException(status_code=404, detail="Page version not found")
+    from app.services.page_render import invalidate_cache
+    from app.services.resolver_response import invalidate_page_config_cache
+
+    await invalidate_page_config_cache(data["page_template_id"])
+    await invalidate_cache(tenant_id, uuid.UUID(data["page_template_id"]))
+    await db.commit()
     return data
 
 
 @page_version_router.post("/{version_id}/publish")
 async def publish_page_version_endpoint(
     version_id: uuid.UUID,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
     actor_id: uuid.UUID = Depends(get_current_account_id),
-    _role: str = Depends(require_role("admin")),
+    _permission: None = Depends(require_permission("page:publish")),
 ):
     try:
-        data = await publish_page_version(db, tenant_id, version_id)
+        data = await publish_page_version(db, tenant_id, version_id, actor_id)
     except VersionStateError as e:
         raise HTTPException(status_code=409, detail=str(e)) from e
     if not data:
         raise HTTPException(status_code=404, detail="Page version not found")
     from app.services.page_render import invalidate_cache
+    from app.services.resolver_response import invalidate_page_config_cache
 
+    await invalidate_page_config_cache(data["page_template_id"])
     await invalidate_cache(tenant_id, uuid.UUID(data["page_template_id"]))
-    from app.services.audit import write_audit_log
-
-    await write_audit_log(
-        db,
-        str(actor_id),
-        str(tenant_id),
-        "page_published",
-        f"page_template:{data['page_template_id']}",
-        {
-            "version_id": str(version_id),
-            "before": "draft",
-            "after": "published",
-            "result": "success",
-        },
-    )
+    await db.commit()
     return data
 
 
 @page_version_router.post("/{version_id}/archive")
 async def archive_page_version_endpoint(
     version_id: uuid.UUID,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
-    _role: str = Depends(require_role("admin")),
+    actor_id: uuid.UUID = Depends(get_current_account_id),
+    _permission: None = Depends(require_permission("page:create")),
 ):
     try:
-        data = await archive_page_version(db, tenant_id, version_id)
+        data = await archive_page_version(db, tenant_id, version_id, actor_id)
     except VersionStateError as e:
         raise HTTPException(status_code=409, detail=str(e)) from e
     if not data:
         raise HTTPException(status_code=404, detail="Page version not found")
     from app.services.page_render import invalidate_cache
+    from app.services.resolver_response import invalidate_page_config_cache
 
+    await invalidate_page_config_cache(data["page_template_id"])
     await invalidate_cache(tenant_id, uuid.UUID(data["page_template_id"]))
+    await db.commit()
     return data
 
 
@@ -354,7 +375,7 @@ async def rollback_page_version_endpoint(
     db: AsyncSession = Depends(get_db, scope="function"),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
     account_id: uuid.UUID = Depends(get_current_account_id),
-    _role: str = Depends(require_role("admin")),
+    _permission: None = Depends(require_permission("page:create")),
 ):
     data = await rollback_page_version(
         db,
@@ -366,6 +387,9 @@ async def rollback_page_version_endpoint(
     if not data:
         raise HTTPException(status_code=404, detail="Target version not found")
     from app.services.page_render import invalidate_cache
+    from app.services.resolver_response import invalidate_page_config_cache
 
+    await invalidate_page_config_cache(str(template_id))
     await invalidate_cache(tenant_id, template_id)
+    await db.commit()
     return data

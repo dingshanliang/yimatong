@@ -9,7 +9,7 @@ from typer.testing import CliRunner
 
 from app.cli.baseline import _ensure_runtime_admin, _TenantSeedRef, app, build_sync, settings
 from app.models.audit import PlatformAuditLog
-from app.models.tenant import Account, Organization, Role, Tenant, account_roles
+from app.models.tenant import Account, Organization, Permission, Role, Tenant, account_roles, role_permissions
 from app.utils.security import hash_password, verify_password
 
 runner = CliRunner()
@@ -84,6 +84,15 @@ async def test_baseline_new_admin_does_not_lazy_load_unpersisted_roles(db: Async
         await db.scalar(select(func.count()).select_from(account_roles).where(account_roles.c.account_id == account.id))
         == 1
     )
+    granted_codes = set(
+        await db.scalars(
+            select(Permission.code)
+            .join(role_permissions, role_permissions.c.permission_id == Permission.id)
+            .join(Role, Role.id == role_permissions.c.role_id)
+            .where(Role.tenant_id == tenant.id, Role.name == "admin")
+        )
+    )
+    assert {"page:create", "page:publish"} <= granted_codes
 
 
 @pytest.mark.anyio

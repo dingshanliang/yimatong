@@ -18,7 +18,7 @@ from app.models.campaign import Benefit, Campaign, CampaignStatus
 from app.models.channel import CodeAllocation, Distributor, DiversionClue, Region, Store
 from app.models.code import CodeItem, CodeItemStatus
 from app.models.connector import Connector  # noqa: F401 - register connector tables for Benefit FK sorting
-from app.models.page import PageTemplate, PageTemplateStatus, PageVersion, PageVersionStatus, TemplateType
+from app.models.page import PageTemplate, PageVersion, PageVersionStatus, TemplateType
 from app.models.product import SKU, Brand, Product, ProductionBatch
 from app.models.scan import ScanEvent
 from app.models.tenant import Account, Organization, Permission, Role, Tenant, account_roles, role_permissions
@@ -28,6 +28,7 @@ from app.services.auth import revoke_current_tenant_account_sessions
 from app.services.channel import create_account_scope
 from app.services.code import activate_batch, create_code_batch, mark_delivered, mark_printing, revoke_code_item
 from app.services.code_export import generate_code_csv
+from app.services.page import create_page_template, create_page_version, publish_page_version
 from app.services.quota import lock_quota_rollout_state, refresh_quota_usage_from_authoritative_rows
 from app.services.risk import freeze_code_item
 from app.services.tenant import create_tenant
@@ -419,16 +420,23 @@ async def _ensure_page(
     )
     template = result.scalar_one_or_none()
     if not template:
-        template = PageTemplate(
-            tenant_id=tenant_id,
-            product_id=product_id,
-            name="五常稻花香扫码信任页",
-            template_type=TemplateType.traceability,
-            status=PageTemplateStatus.active,
-            description="客户演示用 H5：溯源、检测报告、首扫福利、私域承接。",
+        created_template = await create_page_template(
+            db,
+            tenant_id,
+            "五常稻花香扫码信任页",
+            TemplateType.traceability,
+            "客户演示用 H5：溯源、检测报告、首扫福利、私域承接。",
+            product_id,
+            created_by,
         )
-        db.add(template)
-        await db.flush()
+        template = await db.scalar(
+            select(PageTemplate).where(
+                PageTemplate.tenant_id == tenant_id,
+                PageTemplate.id == uuid.UUID(created_template["id"]),
+            )
+        )
+        if template is None:  # pragma: no cover - authoritative function returned an impossible reference
+            raise RuntimeError("Page template creation did not persist its authority row")
 
     result = await db.execute(
         select(PageVersion).where(
@@ -451,20 +459,11 @@ async def _ensure_page(
         "benefit": "首扫领取 20 元复购券",
         "private_domain": "企业微信客服 / 小程序商城",
     }
-    if version:
-        version.config_json = config
-    else:
-        db.add(
-            PageVersion(
-                tenant_id=tenant_id,
-                page_template_id=template.id,
-                version=1,
-                config_json=config,
-                status=PageVersionStatus.published,
-                created_by=created_by,
-            )
-        )
-    await db.flush()
+    if version is None or version.config_json != config:
+        created_version = await create_page_version(db, tenant_id, template.id, config, created_by)
+        if created_version is None:  # pragma: no cover - template is locked by the authority function
+            raise RuntimeError("Page version creation lost its template authority")
+        await publish_page_version(db, tenant_id, uuid.UUID(created_version["id"]), created_by)
     await db.refresh(template)
     return template
 
@@ -620,14 +619,13 @@ async def _ensure_demo_codes(
     )
 
 
-async def _ensure_scan_events(db: AsyncSession, tenant_id: uuid.UUID, items: list[CodeItem]) -> None:
+async def _ensure_scan_events(db: AsyncSession, tenant_id: uuid.UUID, activated_public_ids: list[str]) -> None:
     result = await db.execute(select(func.count()).select_from(ScanEvent).where(ScanEvent.tenant_id == tenant_id))
     now = utcnow()
     if result.scalar_one() == 0:
-        active_ids = [item.public_id for item in items if item.status == CodeItemStatus.activated][:4]
         events = []
         for day in range(7):
-            for index, public_id in enumerate(active_ids):
+            for index, public_id in enumerate(activated_public_ids[:4]):
                 events.append(
                     ScanEvent(
                         tenant_id=tenant_id,
@@ -999,11 +997,19 @@ def all(
                 production_batch.id,
                 admin_id,
             )
-            await _ensure_scan_events(db, t.id, code_items)
+            activated_public_ids = [item.public_id for item in code_items if item.status == CodeItemStatus.activated]
             accounts = list((await db.scalars(select(Account).where(Account.tenant_id == t.id))).all())
             await _ensure_demo_channels(db, t.id, accounts, code_items)
             await refresh_quota_usage_from_authoritative_rows(db, t.id)
             await db.commit()
+
+            # Historical demo scans are synthetic control-plane fixtures, not
+            # resolver-authoritative runtime writes. Keep runtime table DML
+            # revoked and bind the control session to the exact tenant.
+            async with control_session() as scan_db:
+                await set_session_tenant_context(scan_db, t.id)
+                await _ensure_scan_events(scan_db, t.id, activated_public_ids)
+                await scan_db.commit()
 
         typer.echo("\nDemo seed complete. Quick login accounts:")
         for account in DEMO_ACCOUNTS:

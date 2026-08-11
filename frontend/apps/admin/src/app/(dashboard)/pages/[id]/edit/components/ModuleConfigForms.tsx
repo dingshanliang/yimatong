@@ -31,33 +31,49 @@ export function ModuleConfigForm({
   const [assets, setAssets] = useState<ProductAssetOption[]>([]);
 
   useEffect(() => {
-    const needsAssets = ["test_reports", "certificates", "media_section"].includes(moduleType);
+    const needsAssets = [
+      "test_reports",
+      "certificates",
+      "media_section",
+    ].includes(moduleType);
     if (!productId || !needsAssets) {
       setAssets([]);
       return;
     }
-    api.get(`/products/${productId}/assets`, { params: { page_size: 100 } })
+    api
+      .get(`/products/${productId}/assets`, { params: { page_size: 100 } })
       .then(({ data }) => setAssets(data.items || []))
       .catch(() => setAssets([]));
   }, [moduleType, productId]);
 
   const reportOptions = useMemo(
-    () => assets
-      .filter((asset) => asset.asset_type === "test_report")
-      .map((asset) => ({ value: asset.id, label: `${asset.name}${asset.issuer ? ` · ${asset.issuer}` : ""}` })),
-    [assets],
+    () =>
+      assets
+        .filter((asset) => asset.asset_type === "test_report")
+        .map((asset) => ({
+          value: asset.id,
+          label: `${asset.name}${asset.issuer ? ` · ${asset.issuer}` : ""}`,
+        })),
+    [assets]
   );
   const certificateOptions = useMemo(
-    () => assets
-      .filter((asset) => asset.asset_type === "certificate")
-      .map((asset) => ({ value: asset.id, label: `${asset.name}${asset.valid_until ? ` · 有效期至 ${asset.valid_until}` : ""}` })),
-    [assets],
+    () =>
+      assets
+        .filter((asset) => asset.asset_type === "certificate")
+        .map((asset) => ({
+          value: asset.id,
+          label: `${asset.name}${asset.valid_until ? ` · 有效期至 ${asset.valid_until}` : ""}`,
+        })),
+    [assets]
   );
   const mediaOptions = useMemo(
-    () => assets
-      .filter((asset) => ["image", "video", "story"].includes(asset.asset_type))
-      .map((asset) => ({ value: asset.id, label: asset.name })),
-    [assets],
+    () =>
+      assets
+        .filter((asset) =>
+          ["image", "video", "story"].includes(asset.asset_type)
+        )
+        .map((asset) => ({ value: asset.id, label: asset.name })),
+    [assets]
   );
 
   const update = (key: string, value: unknown) => {
@@ -70,8 +86,14 @@ export function ModuleConfigForm({
       return (
         <div className="space-y-2">
           <div className="flex items-center gap-2">
-            <Switch size="small" checked={!!config.show_verify_badge} onChange={(v) => update("show_verify_badge", v)} />
-            <Text type="secondary" className="text-xs">显示验真徽章</Text>
+            <Switch
+              size="small"
+              checked={!!config.show_verify_badge}
+              onChange={(v) => update("show_verify_badge", v)}
+            />
+            <Text type="secondary" className="text-xs">
+              显示验真徽章
+            </Text>
           </div>
           <ImageUploadInput
             size="small"
@@ -82,7 +104,12 @@ export function ModuleConfigForm({
             value={String(config.image_url || "") || undefined}
             onChange={(value) => update("image_url", value || "")}
           />
-          <Input size="small" placeholder="标题模板，如 {{product.name}}" value={String(config.title_template || "")} onChange={(e) => update("title_template", e.target.value)} />
+          <Input
+            size="small"
+            placeholder="标题模板，如 {{product.name}}"
+            value={String(config.title_template || "")}
+            onChange={(e) => update("title_template", e.target.value)}
+          />
         </div>
       );
 
@@ -90,9 +117,24 @@ export function ModuleConfigForm({
     case "verification_status":
       return (
         <div className="space-y-2">
-          <Input size="small" placeholder="首次扫码提示语" value={String(config.first_scan_text || "")} onChange={(e) => update("first_scan_text", e.target.value)} />
-          <Input size="small" placeholder="重复扫码提示语" value={String(config.repeat_scan_text || "")} onChange={(e) => update("repeat_scan_text", e.target.value)} />
-          <Input size="small" placeholder="无效码提示语" value={String(config.invalid_text || "")} onChange={(e) => update("invalid_text", e.target.value)} />
+          <Input
+            size="small"
+            placeholder="首次扫码提示语"
+            value={String(config.first_scan_text || "")}
+            onChange={(e) => update("first_scan_text", e.target.value)}
+          />
+          <Input
+            size="small"
+            placeholder="重复扫码提示语"
+            value={String(config.repeat_scan_text || "")}
+            onChange={(e) => update("repeat_scan_text", e.target.value)}
+          />
+          <Input
+            size="small"
+            placeholder="无效码提示语"
+            value={String(config.invalid_text || "")}
+            onChange={(e) => update("invalid_text", e.target.value)}
+          />
         </div>
       );
 
@@ -106,7 +148,9 @@ export function ModuleConfigForm({
       ];
       return (
         <div className="space-y-2">
-          <Text type="secondary" className="text-xs">显示字段</Text>
+          <Text type="secondary" className="text-xs">
+            显示字段
+          </Text>
           <Select
             mode="multiple"
             size="small"
@@ -124,11 +168,17 @@ export function ModuleConfigForm({
     case "test_reports":
       return (
         <div className="space-y-2">
-          <Text type="secondary" className="text-xs">检测报告</Text>
+          <Text type="secondary" className="text-xs">
+            检测报告
+          </Text>
           <Select
             mode={productId ? "multiple" : "tags"}
             size="small"
-            placeholder={productId ? "选择产品资料库中的检测报告" : "输入报告 ID 后回车添加"}
+            placeholder={
+              productId
+                ? "选择产品资料库中的检测报告"
+                : "输入报告 ID 后回车添加"
+            }
             value={((config.report_ids as string[]) || []).map(String)}
             onChange={(v) => update("report_ids", v)}
             options={reportOptions}
@@ -142,11 +192,17 @@ export function ModuleConfigForm({
     case "certificates":
       return (
         <div className="space-y-2">
-          <Text type="secondary" className="text-xs">资质证书</Text>
+          <Text type="secondary" className="text-xs">
+            资质证书
+          </Text>
           <Select
             mode={productId ? "multiple" : "tags"}
             size="small"
-            placeholder={productId ? "选择产品资料库中的资质证书" : "输入证书 ID 后回车添加"}
+            placeholder={
+              productId
+                ? "选择产品资料库中的资质证书"
+                : "输入证书 ID 后回车添加"
+            }
             value={((config.certificate_ids as string[]) || []).map(String)}
             onChange={(v) => update("certificate_ids", v)}
             options={certificateOptions}
@@ -160,15 +216,46 @@ export function ModuleConfigForm({
     case "benefit_card":
       return (
         <div className="space-y-2">
-          <Input size="small" placeholder="权益 ID" value={String(config.benefit_id || "")} onChange={(e) => update("benefit_id", e.target.value)} />
-          <Select size="small" placeholder="权益类型" value={config.benefit_type || undefined} onChange={(v) => update("benefit_type", v)}
-            options={[{ value: "coupon", label: "优惠券" }, { value: "points", label: "积分" }, { value: "lottery", label: "抽奖" }, { value: "gift", label: "礼品" }]}
-            style={{ width: 120 }} />
-          <Input size="small" placeholder="标题" value={String(config.title || "")} onChange={(e) => update("title", e.target.value)} />
-          <Input size="small" placeholder="描述" value={String(config.description || "")} onChange={(e) => update("description", e.target.value)} />
+          <Input
+            size="small"
+            placeholder="权益 ID"
+            value={String(config.benefit_id || "")}
+            onChange={(e) => update("benefit_id", e.target.value)}
+          />
+          <Select
+            size="small"
+            placeholder="权益类型"
+            value={config.benefit_type || undefined}
+            onChange={(v) => update("benefit_type", v)}
+            options={[
+              { value: "coupon", label: "优惠券" },
+              { value: "points", label: "积分" },
+              { value: "lottery", label: "抽奖" },
+              { value: "gift", label: "礼品" },
+            ]}
+            style={{ width: 120 }}
+          />
+          <Input
+            size="small"
+            placeholder="标题"
+            value={String(config.title || "")}
+            onChange={(e) => update("title", e.target.value)}
+          />
+          <Input
+            size="small"
+            placeholder="描述"
+            value={String(config.description || "")}
+            onChange={(e) => update("description", e.target.value)}
+          />
           <div className="flex items-center gap-2">
-            <Switch size="small" checked={!!config.require_consent} onChange={(v) => update("require_consent", v)} />
-            <Text type="secondary" className="text-xs">需要隐私授权</Text>
+            <Switch
+              size="small"
+              checked={!!config.require_consent}
+              onChange={(v) => update("require_consent", v)}
+            />
+            <Text type="secondary" className="text-xs">
+              需要隐私授权
+            </Text>
           </div>
         </div>
       );
@@ -177,30 +264,61 @@ export function ModuleConfigForm({
     case "cta_group":
       return (
         <div className="space-y-1">
-          <Text type="secondary" className="text-xs">按钮配置（JSON）</Text>
-          <TextArea size="small" rows={3} value={JSON.stringify(config.buttons || [], null, 0)}
-            onChange={(e) => { try { update("buttons", JSON.parse(e.target.value)); } catch { /* ignore */ } }} />
+          <Text type="secondary" className="text-xs">
+            按钮配置（JSON）
+          </Text>
+          <TextArea
+            size="small"
+            rows={3}
+            value={JSON.stringify(config.buttons || [], null, 0)}
+            onChange={(e) => {
+              try {
+                update("buttons", JSON.parse(e.target.value));
+              } catch {
+                /* ignore */
+              }
+            }}
+          />
         </div>
       );
 
     /* ─── 购买渠道 ────────────────────────────── */
     case "shop_redirect": {
-      const shops = (config.shops as Array<{ platform: string; name: string; url: string }>) || [];
-      const addShop = () => update("shops", [{ platform: "taobao", name: "", url: "" }, ...shops]);
+      const shops =
+        (config.shops as Array<{
+          platform: string;
+          name: string;
+          url: string;
+        }>) || [];
+      const addShop = () =>
+        update("shops", [{ platform: "taobao", name: "", url: "" }, ...shops]);
       const updateShop = (i: number, field: string, val: string) => {
-        const updated = shops.map((s, idx) => idx === i ? { ...s, [field]: val } : s);
+        const updated = shops.map((s, idx) =>
+          idx === i ? { ...s, [field]: val } : s
+        );
         update("shops", updated);
       };
-      const removeShop = (i: number) => update("shops", shops.filter((_, idx) => idx !== i));
+      const removeShop = (i: number) =>
+        update(
+          "shops",
+          shops.filter((_, idx) => idx !== i)
+        );
       return (
         <div className="space-y-2">
           <div className="flex items-center justify-between">
-            <Text type="secondary" className="text-xs">购买渠道列表</Text>
-            <Button size="small" icon={<PlusOutlined />} onClick={addShop}>添加渠道</Button>
+            <Text type="secondary" className="text-xs">
+              购买渠道列表
+            </Text>
+            <Button size="small" icon={<PlusOutlined />} onClick={addShop}>
+              添加渠道
+            </Button>
           </div>
           {shops.map((shop, i) => (
             <div key={i} className="flex items-center gap-1">
-              <Select size="small" value={shop.platform} onChange={(v) => updateShop(i, "platform", v)}
+              <Select
+                size="small"
+                value={shop.platform}
+                onChange={(v) => updateShop(i, "platform", v)}
                 options={[
                   { value: "taobao", label: "淘宝" },
                   { value: "jd", label: "京东" },
@@ -210,12 +328,30 @@ export function ModuleConfigForm({
                 ]}
                 style={{ width: 80 }}
               />
-              <Input size="small" placeholder="渠道名称" value={shop.name} onChange={(e) => updateShop(i, "name", e.target.value)} style={{ flex: 1 }} />
-              <Input size="small" placeholder="链接" value={shop.url} onChange={(e) => updateShop(i, "url", e.target.value)} style={{ flex: 1 }} />
-              <Button size="small" danger onClick={() => removeShop(i)}>×</Button>
+              <Input
+                size="small"
+                placeholder="渠道名称"
+                value={shop.name}
+                onChange={(e) => updateShop(i, "name", e.target.value)}
+                style={{ flex: 1 }}
+              />
+              <Input
+                size="small"
+                placeholder="链接"
+                value={shop.url}
+                onChange={(e) => updateShop(i, "url", e.target.value)}
+                style={{ flex: 1 }}
+              />
+              <Button size="small" danger onClick={() => removeShop(i)}>
+                ×
+              </Button>
             </div>
           ))}
-          {shops.length === 0 && <Text type="secondary" className="text-xs">暂未配置渠道</Text>}
+          {shops.length === 0 && (
+            <Text type="secondary" className="text-xs">
+              暂未配置渠道
+            </Text>
+          )}
         </div>
       );
     }
@@ -231,10 +367,27 @@ export function ModuleConfigForm({
       ];
       return (
         <div className="space-y-2">
-          <Input size="small" placeholder="表单标题" value={String(config.title || "")} onChange={(e) => update("title", e.target.value)} />
-          <Input size="small" placeholder="副标题" value={String(config.subtitle || "")} onChange={(e) => update("subtitle", e.target.value)} />
-          <Input size="small" placeholder="提交按钮文案" value={String(config.submit_label || "")} onChange={(e) => update("submit_label", e.target.value)} />
-          <Text type="secondary" className="text-xs">表单字段</Text>
+          <Input
+            size="small"
+            placeholder="表单标题"
+            value={String(config.title || "")}
+            onChange={(e) => update("title", e.target.value)}
+          />
+          <Input
+            size="small"
+            placeholder="副标题"
+            value={String(config.subtitle || "")}
+            onChange={(e) => update("subtitle", e.target.value)}
+          />
+          <Input
+            size="small"
+            placeholder="提交按钮文案"
+            value={String(config.submit_label || "")}
+            onChange={(e) => update("submit_label", e.target.value)}
+          />
+          <Text type="secondary" className="text-xs">
+            表单字段
+          </Text>
           <Select
             mode="multiple"
             size="small"
@@ -252,11 +405,17 @@ export function ModuleConfigForm({
     case "media_section":
       return (
         <div className="space-y-2">
-          <Text type="secondary" className="text-xs">图文/视频素材</Text>
+          <Text type="secondary" className="text-xs">
+            图文/视频素材
+          </Text>
           <Select
             mode={productId ? "multiple" : "tags"}
             size="small"
-            placeholder={productId ? "选择产品资料库中的图片、视频或故事" : "输入素材 ID 后回车添加"}
+            placeholder={
+              productId
+                ? "选择产品资料库中的图片、视频或故事"
+                : "输入素材 ID 后回车添加"
+            }
             value={((config.asset_ids as string[]) || []).map(String)}
             onChange={(v) => update("asset_ids", v)}
             options={mediaOptions}
@@ -271,14 +430,31 @@ export function ModuleConfigForm({
       return (
         <div className="space-y-2">
           <div className="flex items-center gap-2">
-            <Switch size="small" checked={!!config.show_privacy_policy} onChange={(v) => update("show_privacy_policy", v)} />
-            <Text type="secondary" className="text-xs">显示隐私政策</Text>
+            <Switch
+              size="small"
+              checked={!!config.show_privacy_policy}
+              onChange={(v) => update("show_privacy_policy", v)}
+            />
+            <Text type="secondary" className="text-xs">
+              显示隐私政策
+            </Text>
           </div>
           <div className="flex items-center gap-2">
-            <Switch size="small" checked={!!config.show_campaign_rules} onChange={(v) => update("show_campaign_rules", v)} />
-            <Text type="secondary" className="text-xs">显示活动规则</Text>
+            <Switch
+              size="small"
+              checked={!!config.show_campaign_rules}
+              onChange={(v) => update("show_campaign_rules", v)}
+            />
+            <Text type="secondary" className="text-xs">
+              显示活动规则
+            </Text>
           </div>
-          <Input size="small" placeholder="隐私政策内容（可选，留空使用默认）" value={String(config.privacy_content || "")} onChange={(e) => update("privacy_content", e.target.value)} />
+          <Input
+            size="small"
+            placeholder="隐私政策内容（可选，留空使用默认）"
+            value={String(config.privacy_content || "")}
+            onChange={(e) => update("privacy_content", e.target.value)}
+          />
         </div>
       );
 
@@ -286,7 +462,9 @@ export function ModuleConfigForm({
     case "custom_html":
       return (
         <div className="space-y-2">
-          <Text type="secondary" className="text-xs">自定义 HTML 内容</Text>
+          <Text type="secondary" className="text-xs">
+            自定义 HTML 内容
+          </Text>
           <TextArea
             size="small"
             rows={5}
@@ -302,10 +480,25 @@ export function ModuleConfigForm({
     case "member_card":
       return (
         <div className="space-y-2">
-          <Input size="small" placeholder="消费者 ID" value={String(config.consumer_id || "")} onChange={(e) => update("consumer_id", e.target.value)} />
-          <Select size="small" placeholder="会员等级" value={config.member_level || undefined} onChange={(v) => update("member_level", v)}
-            options={[{ value: "bronze", label: "青铜" }, { value: "silver", label: "白银" }, { value: "gold", label: "黄金" }, { value: "diamond", label: "钻石" }]}
-            style={{ width: 120 }} />
+          <Input
+            size="small"
+            placeholder="消费者 ID"
+            value={String(config.consumer_id || "")}
+            onChange={(e) => update("consumer_id", e.target.value)}
+          />
+          <Select
+            size="small"
+            placeholder="会员等级"
+            value={config.member_level || undefined}
+            onChange={(v) => update("member_level", v)}
+            options={[
+              { value: "bronze", label: "青铜" },
+              { value: "silver", label: "白银" },
+              { value: "gold", label: "黄金" },
+              { value: "diamond", label: "钻石" },
+            ]}
+            style={{ width: 120 }}
+          />
         </div>
       );
 
@@ -313,8 +506,19 @@ export function ModuleConfigForm({
     case "points_balance":
       return (
         <div className="space-y-2">
-          <Input size="small" placeholder="消费者 ID（可选）" value={String(config.consumer_id || "")} onChange={(e) => update("consumer_id", e.target.value)} />
-          <InputNumber size="small" placeholder="初始积分" min={0} value={Number(config.points) || undefined} onChange={(v) => update("points", v)} />
+          <Input
+            size="small"
+            placeholder="消费者 ID（可选）"
+            value={String(config.consumer_id || "")}
+            onChange={(e) => update("consumer_id", e.target.value)}
+          />
+          <InputNumber
+            size="small"
+            placeholder="初始积分"
+            min={0}
+            value={Number(config.points) || undefined}
+            onChange={(v) => update("points", v)}
+          />
         </div>
       );
 
@@ -322,18 +526,46 @@ export function ModuleConfigForm({
     case "points_exchange":
       return (
         <div className="space-y-2">
-          <Input size="small" placeholder="权益 ID" value={String(config.benefit_id || "")} onChange={(e) => update("benefit_id", e.target.value)} />
-          <Input size="small" placeholder="标题" value={String(config.title || "")} onChange={(e) => update("title", e.target.value)} />
-          <InputNumber size="small" placeholder="所需积分" min={0} value={Number(config.points_cost) || undefined} onChange={(v) => update("points_cost", v)} />
-          <Input size="small" placeholder="描述" value={String(config.description || "")} onChange={(e) => update("description", e.target.value)} />
+          <Input
+            size="small"
+            placeholder="权益 ID"
+            value={String(config.benefit_id || "")}
+            onChange={(e) => update("benefit_id", e.target.value)}
+          />
+          <Input
+            size="small"
+            placeholder="标题"
+            value={String(config.title || "")}
+            onChange={(e) => update("title", e.target.value)}
+          />
+          <InputNumber
+            size="small"
+            placeholder="所需积分"
+            min={0}
+            value={Number(config.points_cost) || undefined}
+            onChange={(v) => update("points_cost", v)}
+          />
+          <Input
+            size="small"
+            placeholder="描述"
+            value={String(config.description || "")}
+            onChange={(e) => update("description", e.target.value)}
+          />
         </div>
       );
 
     case "points_shop":
       return (
         <div className="space-y-2">
-          <Input size="small" placeholder="消费者 ID（可选）" value={String(config.consumer_id || "")} onChange={(e) => update("consumer_id", e.target.value)} />
-          <p className="text-xs text-text-muted">展示已上架的积分商品，消费者完成留资后可兑换。</p>
+          <Input
+            size="small"
+            placeholder="消费者 ID（可选）"
+            value={String(config.consumer_id || "")}
+            onChange={(e) => update("consumer_id", e.target.value)}
+          />
+          <p className="text-xs text-text-muted">
+            展示已上架的积分商品，消费者完成留资后可兑换。
+          </p>
         </div>
       );
 
@@ -341,9 +573,24 @@ export function ModuleConfigForm({
     case "outer_code_guide":
       return (
         <div className="space-y-2">
-          <Input size="small" placeholder="品牌名称" value={String(config.brand_name || "")} onChange={(e) => update("brand_name", e.target.value)} />
-          <Input size="small" placeholder="产品名称" value={String(config.product_name || "")} onChange={(e) => update("product_name", e.target.value)} />
-          <Input size="small" placeholder="内码提示文案" value={String(config.inner_code_hint || "")} onChange={(e) => update("inner_code_hint", e.target.value)} />
+          <Input
+            size="small"
+            placeholder="品牌名称"
+            value={String(config.brand_name || "")}
+            onChange={(e) => update("brand_name", e.target.value)}
+          />
+          <Input
+            size="small"
+            placeholder="产品名称"
+            value={String(config.product_name || "")}
+            onChange={(e) => update("product_name", e.target.value)}
+          />
+          <Input
+            size="small"
+            placeholder="内码提示文案"
+            value={String(config.inner_code_hint || "")}
+            onChange={(e) => update("inner_code_hint", e.target.value)}
+          />
           <ImageUploadInput
             size="small"
             module="page-image"
@@ -359,23 +606,17 @@ export function ModuleConfigForm({
     /* ─── 风险预警 ────────────────────────────── */
     case "risk_alert":
       return (
-        <div className="space-y-2">
-          <Select size="small" placeholder="预警类型" value={config.alert_type || undefined} onChange={(v) => update("alert_type", v)}
-            options={[{ value: "frequency", label: "频率限制" }, { value: "multi_location", label: "多地扫码" }, { value: "suspected_copy", label: "疑似复制码" }]}
-            style={{ width: 140 }} />
-          <Input size="small" placeholder="详情" value={String(config.detail || "")} onChange={(e) => update("detail", e.target.value)} />
-        </div>
+        <Text type="secondary" className="text-xs">
+          仅在风控系统产生有效预警时展示，风险事实不可在页面中编辑。
+        </Text>
       );
 
     /* ─── 双码验真 ────────────────────────────── */
     case "dual_code_verify":
       return (
-        <div className="space-y-2">
-          <div className="flex items-center gap-2">
-            <Switch size="small" checked={!!config.product_verified} onChange={(v) => update("product_verified", v)} />
-            <Text type="secondary" className="text-xs">标记产品已验证</Text>
-          </div>
-        </div>
+        <Text type="secondary" className="text-xs">
+          验真结果由扫码服务实时提供，不可在页面中手工标记。
+        </Text>
       );
 
     default:

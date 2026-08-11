@@ -4,6 +4,7 @@ import uuid
 from collections.abc import AsyncGenerator
 
 import pytest
+from fastapi import HTTPException, Request
 from fastapi.routing import APIRoute
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.dialects import postgresql
@@ -74,20 +75,53 @@ async def create_product(client: AsyncClient, headers: dict[str, str], name: str
 
 
 @pytest.mark.parametrize(
-    "path",
+    ("method", "path"),
     [
-        "/api/v1/page-templates/industry-templates/{index}/clone",
-        "/api/v1/page-templates/{template_id}/versions",
-        "/api/v1/page-templates/{template_id}/versions/{version_id}/rollback",
+        ("POST", "/api/v1/page-templates/industry-templates/{index}/clone"),
+        ("POST", "/api/v1/industry-templates/{template_id}/apply"),
+        ("POST", "/api/v1/page-templates"),
+        ("PATCH", "/api/v1/page-templates/{template_id}"),
+        ("DELETE", "/api/v1/page-templates/{template_id}"),
+        ("POST", "/api/v1/page-templates/{template_id}/versions"),
+        ("PATCH", "/api/v1/page-versions/{version_id}"),
+        ("POST", "/api/v1/page-versions/{version_id}/publish"),
+        ("POST", "/api/v1/page-versions/{version_id}/archive"),
+        ("POST", "/api/v1/page-templates/{template_id}/versions/{version_id}/rollback"),
     ],
 )
-def test_page_version_mutations_commit_before_success_response(path: str):
+def test_page_version_mutations_commit_before_success_response(method: str, path: str):
     route = next(
-        route for route in app.routes if isinstance(route, APIRoute) and route.path == path and "POST" in route.methods
+        route for route in app.routes if isinstance(route, APIRoute) and route.path == path and method in route.methods
     )
     db_dependency = next(dependency for dependency in route.dependant.dependencies if dependency.call is get_db)
 
     assert db_dependency.scope == "function"
+
+
+@pytest.mark.anyio
+async def test_industry_template_clone_uses_live_page_create_permission():
+    route = next(
+        route
+        for route in app.routes
+        if isinstance(route, APIRoute)
+        and route.path == "/api/v1/page-templates/industry-templates/{index}/clone"
+        and "POST" in route.methods
+    )
+    permission_dependency = next(
+        dependency for dependency in route.dependant.dependencies if dependency.name == "_permission"
+    )
+    request = Request({"type": "http", "headers": []})
+    request.state.role = "operator"
+    request.state.permissions = []
+
+    with pytest.raises(HTTPException) as exc_info:
+        await permission_dependency.call(request)
+
+    assert exc_info.value.status_code == 403
+    assert exc_info.value.detail == "Missing permission: page:create"
+
+    request.state.permissions = ["page:create"]
+    assert await permission_dependency.call(request) is None
 
 
 class TestPageTemplateCRUD:
@@ -497,6 +531,27 @@ class TestPageVersionManagement:
         template = resp.json()["template"]
         assert template["name"] == "礼盒扫码页"
         assert template["product_id"] == product_id
+
+    @pytest.mark.anyio
+    async def test_legacy_industry_apply_uses_authoritative_page_mutations(self, client: AsyncClient, auth_setup):
+        product_id = await create_product(client, auth_setup, "兼容模板产品")
+
+        response = await client.post(
+            "/api/v1/industry-templates/0/apply",
+            json={"product_id": product_id},
+            headers=auth_setup,
+        )
+
+        assert response.status_code == 201
+        assert response.json()["status"] == "active"
+        assert response.json()["version_id"]
+        detail = await client.get(
+            f"/api/v1/page-templates/{response.json()['template_id']}",
+            headers=auth_setup,
+        )
+        assert detail.status_code == 200
+        assert detail.json()["product_id"] == product_id
+        assert detail.json()["draft_version"]["id"] == response.json()["version_id"]
 
     @pytest.mark.anyio
     async def test_list_versions(self, client: AsyncClient, auth_setup):

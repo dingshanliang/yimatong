@@ -608,13 +608,17 @@ function ModuleRenderer({
       );
 
     case "risk_alert":
+      if (!scanInfo.risk_warning) return null;
+      const riskWarning = scanInfo.risk_warning as Record<string, unknown>;
       return (
         <div className="px-4 mt-3">
           <RiskAlert
-            alertType={(config.alert_type as string) || "frequency"}
-            detail={config.detail as string}
-            scanCount={config.scan_count as number}
-            detectedCity={config.detected_city as string}
+            alertType={(riskWarning.alert_type as string) || "frequency"}
+            detail={riskWarning.message as string}
+            scanCount={
+              (scanInfo.verification_count as number) ??
+              (scanInfo.scan_count as number)
+            }
           />
         </div>
       );
@@ -632,7 +636,7 @@ function ModuleRenderer({
               (scanInfo.scan_count as number)
             }
             firstScanTime={scanInfo.first_scan_time as string}
-            productVerified={config.product_verified as boolean}
+            productVerified={codeData.lifecycle === "active"}
           />
         </div>
       );
@@ -733,7 +737,7 @@ function MediaRenderer({
   codeData: Record<string, unknown>;
   config: Record<string, unknown>;
 }) {
-  const items = (codeData.media_items || config.items) as
+  const rawItems = (codeData.media_items || config.items) as
     | Array<{
         type: "video" | "image";
         url: string;
@@ -741,6 +745,14 @@ function MediaRenderer({
         caption?: string;
       }>
     | undefined;
+
+  const items = rawItems
+    ?.map((item) => ({
+      ...item,
+      url: safePublicUrl(item.url),
+      poster_url: safePublicUrl(item.poster_url) || undefined,
+    }))
+    .filter((item): item is typeof item & { url: string } => Boolean(item.url));
 
   if (!items?.length) return null;
 

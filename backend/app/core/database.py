@@ -399,6 +399,31 @@ async def _revalidate_mutating_principal(session: AsyncSession, request: Request
     await _apply_tenant_context(session, tenant_id)
 
 
+async def _bind_page_legacy_auth_session_context(session: AsyncSession, request: Request) -> None:
+    """Expose a revalidated durable JWT family to rollout-only DB triggers.
+
+    The setting is transaction-local and is populated only after the request
+    mutation boundary has revalidated the principal and any acting grant. The
+    migration trigger treats it only as a hint and independently verifies the
+    live session, actor, permission, and tenant relationship.
+    """
+
+    if getattr(request.state, "auth_method", None) != "jwt":
+        return
+    session_id = getattr(request.state, "session_id", None)
+    if session_id is None:
+        # A legacy token has no durable session that PostgreSQL can revalidate.
+        return
+    try:
+        validated_session_id = uuid.UUID(str(session_id))
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=401, detail="Invalid login session") from exc
+    await session.execute(
+        text("SELECT set_config('app.auth_session_id', :session_id, true)"),
+        {"session_id": str(validated_session_id)},
+    )
+
+
 async def _revalidate_api_key_mutation(session: AsyncSession, request: Request, tenant_id: uuid.UUID) -> None:
     """Serialize an Open API mutation with revoke/rotate and reject stale keys."""
 
@@ -467,6 +492,8 @@ async def get_db(request: Request) -> AsyncGenerator[AsyncSession, None]:
                     await _revalidate_api_key_mutation(session, request, validated_tenant_id)
                     await _revalidate_mutating_principal(session, request, validated_tenant_id)
                     await _revalidate_acting_authorization(session, request)
+                    if is_mutation:
+                        await _bind_page_legacy_auth_session_context(session, request)
                 if is_mutation and not is_plan_recovery_write(request):
                     from app.services.entitlement import require_active_plan
 

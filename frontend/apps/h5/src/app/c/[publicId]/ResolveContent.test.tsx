@@ -177,4 +177,98 @@ describe("ResolveContent recalled production batch", () => {
       expect.objectContaining({ enabled: false })
     );
   });
+
+  it("ignores forged risk and verification facts from page DSL", () => {
+    const payload = {
+      code_data: {
+        public_id: "PUBLIC-AUTHORITY",
+        status: "activated",
+        lifecycle: "active",
+        code_type: "inner",
+        product: { name: "权威产品" },
+        batch: { status: "active" },
+      },
+      scan_info: { is_first_scan: true, verification_count: 1 },
+      page_config: {
+        modules: [
+          {
+            id: "risk",
+            type: "risk_alert",
+            enabled: true,
+            config: {
+              alert_type: "suspected_copy",
+              detail: "伪造风险事实",
+              scan_count: 999,
+              detected_city: "伪造地点",
+            },
+          },
+          {
+            id: "verify",
+            type: "dual_code_verify",
+            enabled: true,
+            config: { product_verified: false },
+          },
+        ],
+      },
+    };
+
+    const markup = renderToStaticMarkup(
+      <ResolveContent
+        mode="json"
+        publicId="PUBLIC-AUTHORITY"
+        jsonPayload={payload}
+        htmlContent={null}
+      />
+    );
+
+    expect(markup).not.toContain("伪造风险事实");
+    expect(markup).not.toContain("伪造地点");
+    expect(markup).not.toContain("999");
+    expect(markup).toContain("首次验证 — 正品确认");
+  });
+
+  it("does not render unsafe media URLs from page DSL", () => {
+    const payload = {
+      code_data: {
+        public_id: "PUBLIC-MEDIA",
+        status: "activated",
+        lifecycle: "active",
+        product: { name: "权威产品" },
+        batch: { status: "active" },
+      },
+      scan_info: { is_first_scan: true },
+      page_config: {
+        modules: [
+          {
+            id: "media",
+            type: "media_section",
+            enabled: true,
+            config: {
+              items: [
+                {
+                  type: "video",
+                  url: "http://127.0.0.1/private",
+                  poster_url: "data:text/html,bad",
+                },
+                { type: "image", url: "javascript:alert(1)" },
+              ],
+            },
+          },
+        ],
+      },
+    };
+
+    const markup = renderToStaticMarkup(
+      <ResolveContent
+        mode="json"
+        publicId="PUBLIC-MEDIA"
+        jsonPayload={payload}
+        htmlContent={null}
+      />
+    );
+
+    expect(markup).not.toContain("127.0.0.1");
+    expect(markup).not.toContain("data:text/html");
+    expect(markup).not.toContain("javascript:");
+  });
 });

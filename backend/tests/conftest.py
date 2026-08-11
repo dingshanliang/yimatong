@@ -241,6 +241,8 @@ async def launch_facts(db):
         version=1,
         config_json={"dsl_version": "1.0", "title": "正式页"},
         status=PageVersionStatus.published,
+        published_at=datetime.now(UTC),
+        created_by_tenant_id=tenant_id,
         created_by=account_id,
     )
     campaign = Campaign(

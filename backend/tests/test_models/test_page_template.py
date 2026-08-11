@@ -58,6 +58,7 @@ class TestPageVersion:
             page_template_id=template.id,
             version=1,
             config_json={"brand_name": "测试品牌"},
+            created_by_tenant_id=template.tenant_id,
             created_by=uuid.uuid4(),
         )
         db.add(v)

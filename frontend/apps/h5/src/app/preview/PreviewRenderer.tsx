@@ -401,8 +401,8 @@ function PreviewModule({
       return (
         <div className="px-4 mt-3">
           <RiskAlert
-            alertType={(config.alert_type as string) || "frequency"}
-            detail={config.detail as string}
+            alertType="frequency"
+            detail="示例预警：正式页面仅展示风控系统生成的真实异常信号。"
           />
         </div>
       );

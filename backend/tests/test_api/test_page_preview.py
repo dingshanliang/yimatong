@@ -137,6 +137,31 @@ class TestPagePreview:
         )
         assert resp.status_code == 200
 
+    @pytest.mark.anyio
+    async def test_preview_rejects_version_from_another_template(self, client: AsyncClient, auth_setup):
+        first = await client.post(
+            "/api/v1/page-templates",
+            json={"name": "模板甲", "template_type": "product_info"},
+            headers=auth_setup,
+        )
+        second = await client.post(
+            "/api/v1/page-templates",
+            json={"name": "模板乙", "template_type": "brand_story"},
+            headers=auth_setup,
+        )
+        version = await client.post(
+            f"/api/v1/page-templates/{second.json()['id']}/versions",
+            json={"config_json": {"brand_name": "不应跨模板渲染"}},
+            headers=auth_setup,
+        )
+
+        response = await client.get(
+            f"/api/v1/page-templates/{first.json()['id']}/preview?version_id={version.json()['id']}",
+            headers=auth_setup,
+        )
+
+        assert response.status_code == 404
+
 
 class TestPagePublishFlow:
     @pytest.mark.anyio

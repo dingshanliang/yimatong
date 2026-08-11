@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime
 from enum import StrEnum
 
-from sqlalchemy import JSON, DateTime, ForeignKey, Index, String, UniqueConstraint, func
+from sqlalchemy import JSON, DateTime, ForeignKey, ForeignKeyConstraint, Index, String, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column
 from uuid6 import uuid7
 
@@ -28,8 +28,8 @@ class LaunchRelease(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid7)
     tenant_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("tenants.id"), nullable=False, index=True)
-    page_template_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("page_templates.id"), nullable=False, index=True)
-    page_version_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("page_versions.id"), nullable=False, index=True)
+    page_template_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
+    page_version_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
     campaign_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("campaigns.id"), nullable=False, index=True)
     code_batch_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("code_batches.id"), nullable=False, index=True)
     status: Mapped[LaunchReleaseStatus] = mapped_column(
@@ -54,6 +54,22 @@ class LaunchRelease(Base):
     )
 
     __table_args__ = (
+        ForeignKeyConstraint(
+            ["tenant_id", "page_template_id"],
+            ["page_templates.tenant_id", "page_templates.id"],
+            name="fk_launch_releases_tenant_page_template",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "page_template_id", "page_version_id"],
+            ["page_versions.tenant_id", "page_versions.page_template_id", "page_versions.id"],
+            name="fk_launch_releases_tenant_page_version",
+        ),
+        Index(
+            "ix_launch_releases_tenant_page_version",
+            "tenant_id",
+            "page_template_id",
+            "page_version_id",
+        ),
         Index("ix_launch_releases_tenant_status", "tenant_id", "status"),
         UniqueConstraint("tenant_id", "idempotency_key", name="uq_launch_releases_tenant_idempotency"),
     )

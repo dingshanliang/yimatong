@@ -7,10 +7,12 @@ from collections.abc import AsyncGenerator
 
 import pytest
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.main import app
+from app.models.audit import PlatformAuditLog
 from app.utils.security import create_access_token
 from tests.conftest import TestSessionLocal
 
@@ -64,6 +66,12 @@ async def auth_setup(client: AsyncClient):
 
 class TestPublicEndpointSecurity:
     @pytest.mark.anyio
+    async def test_public_page_endpoint_requires_tenant_authentication(self, client: AsyncClient):
+        response = await client.get("/api/v1/public/pages/00000000-0000-0000-0000-000000000001")
+
+        assert response.status_code == 401
+
+    @pytest.mark.anyio
     async def test_public_endpoint_only_returns_published(self, client: AsyncClient, auth_setup):
         """草稿版本不可通过公开端点访问"""
         tmpl = await client.post(
@@ -103,6 +111,39 @@ class TestPublicEndpointSecurity:
         resp = await client.get(f"/api/v1/public/pages/{vid}", headers=auth_setup)
         assert resp.status_code == 200
         assert resp.json()["config_json"]["modules"][0]["type"] == "product_hero"
+
+    @pytest.mark.anyio
+    async def test_authenticated_page_config_is_not_cross_tenant_enumerable(self, client: AsyncClient, auth_setup):
+        other = await client.post(
+            "/api/v1/tenants",
+            json={
+                "name": "其他页面租户",
+                "admin_email": "other-page@test.com",
+                "admin_name": "Other Admin",
+                "admin_password": "Pass1234",
+            },
+            headers=_platform_admin_headers(),
+        )
+        other_tenant_id = other.json()["id"]
+        other_headers = {
+            "Authorization": f"Bearer {create_access_token(other_tenant_id, '00000000-0000-0000-0000-000000000002', 'admin')}"
+        }
+        template = await client.post(
+            "/api/v1/page-templates",
+            json={"name": "其他租户配置", "template_type": "product_info"},
+            headers=other_headers,
+        )
+        version = await client.post(
+            f"/api/v1/page-templates/{template.json()['id']}/versions",
+            json={"config_json": {"modules": []}},
+            headers=other_headers,
+        )
+        version_id = version.json()["id"]
+        await client.post(f"/api/v1/page-versions/{version_id}/publish", headers=other_headers)
+
+        response = await client.get(f"/api/v1/public/pages/{version_id}", headers=auth_setup)
+
+        assert response.status_code == 404
 
     @pytest.mark.anyio
     async def test_public_endpoint_archived_returns_404(self, client: AsyncClient, auth_setup):
@@ -268,6 +309,55 @@ class TestVersionStateMachine:
         assert resp.json()["status"] == "published"
 
 
+class TestPageMutationAudit:
+    @pytest.mark.anyio
+    async def test_page_mutations_are_actor_bound_and_audited(
+        self, client: AsyncClient, db_session: AsyncSession, auth_setup
+    ):
+        template = await client.post(
+            "/api/v1/page-templates",
+            json={"name": "审计页面", "template_type": "traceability"},
+            headers=auth_setup,
+        )
+        template_id = template.json()["id"]
+        await client.patch(
+            f"/api/v1/page-templates/{template_id}",
+            json={"name": "审计页面更新"},
+            headers=auth_setup,
+        )
+        version = await client.post(
+            f"/api/v1/page-templates/{template_id}/versions",
+            json={"config_json": {"modules": []}},
+            headers=auth_setup,
+        )
+        version_id = version.json()["id"]
+        await client.patch(
+            f"/api/v1/page-versions/{version_id}",
+            json={"config_json": {"modules": [], "routing": {"default_page": True}}},
+            headers=auth_setup,
+        )
+        await client.post(f"/api/v1/page-versions/{version_id}/publish", headers=auth_setup)
+        await client.post(f"/api/v1/page-versions/{version_id}/archive", headers=auth_setup)
+        await client.post(
+            f"/api/v1/page-templates/{template_id}/versions/{version_id}/rollback",
+            headers=auth_setup,
+        )
+        await client.delete(f"/api/v1/page-templates/{template_id}", headers=auth_setup)
+
+        actions = list((await db_session.scalars(select(PlatformAuditLog.action))).all())
+
+        assert set(actions) >= {
+            "page_template_created",
+            "page_template_updated",
+            "page_template_archived",
+            "page_version_created",
+            "page_version_updated",
+            "page_version_published",
+            "page_version_archived",
+            "page_version_rolled_back",
+        }
+
+
 # ── XSS 消毒测试 ──────────────────────────────────────
 
 
@@ -373,6 +463,41 @@ class TestXSSSanitization:
 
 
 class TestDSLValidation:
+    @pytest.mark.anyio
+    @pytest.mark.parametrize(
+        "module",
+        [
+            {
+                "id": "risk",
+                "type": "risk_alert",
+                "enabled": True,
+                "config": {"alert_type": "suspected_copy", "detail": "伪造风险事实", "scan_count": 999},
+            },
+            {
+                "id": "verify",
+                "type": "dual_code_verify",
+                "enabled": True,
+                "config": {"product_verified": True},
+            },
+        ],
+    )
+    async def test_authoritative_facts_cannot_be_persisted_in_page_dsl(
+        self, client: AsyncClient, auth_setup, module: dict
+    ):
+        tmpl = await client.post(
+            "/api/v1/page-templates",
+            json={"name": "权威事实边界", "template_type": "traceability"},
+            headers=auth_setup,
+        )
+
+        response = await client.post(
+            f"/api/v1/page-templates/{tmpl.json()['id']}/versions",
+            json={"config_json": {"modules": [module]}},
+            headers=auth_setup,
+        )
+
+        assert response.status_code == 422
+
     @pytest.mark.anyio
     async def test_invalid_module_type_rejected(self, client: AsyncClient, auth_setup):
         """非法模块类型被后端拒绝"""

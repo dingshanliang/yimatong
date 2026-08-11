@@ -514,8 +514,8 @@ function PreviewModule({
     case "risk_alert":
       return (
         <SimpleCard
-          title="风险预警"
-          body={(config.detail as string) || "频繁扫码等异常情况将在这里提示。"}
+          title="风险预警 · 示例"
+          body="仅在风控系统产生真实异常信号时展示，页面配置不能编辑预警事实。"
         />
       );
     case "dual_code_verify":
