@@ -13,6 +13,8 @@ import { WeChatIcon } from "@/components/icons/WeChatGlyphs";
 import {
   DEFAULT_SUPPORT_PHONE,
   DEFAULT_SUPPORT_WECOM_URL,
+  safeHttpsHref,
+  safeTelHref,
 } from "@/lib/brand-theme";
 
 /** 错误码类型 */
@@ -32,16 +34,6 @@ interface ErrorPageProps {
   supportPhone?: string;
   /** 企微客服链接（品牌定制槽位；空值不渲染链接） */
   supportWecomUrl?: string;
-}
-
-/** 仅接受 tel: 安全字符，防止注入。 */
-function safeTelHref(phone: string): string {
-  return `tel:${phone.replace(/[^0-9+\-*()]/g, "")}`;
-}
-
-/** 仅接受 https 链接。 */
-function safeHttpsHref(url: string): string | null {
-  return /^https:\/\/[^\s]+$/i.test(url) ? url : null;
 }
 
 /** 错误类型对应的视觉配置 */

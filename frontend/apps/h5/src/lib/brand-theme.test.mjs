@@ -115,3 +115,29 @@ test("客服槽位回退：租户配置生效，非法值回落平台默认", ()
   assert.equal(unsafe.supportPhone, "400-000-0000");
   assert.equal(unsafe.supportWecomUrl, "");
 });
+
+test("客服电话规则与后端 _validate_support_phone 对齐", () => {
+  // 前导 + 与 - * ( ) 空格分隔合法；剔除分隔符后 5-20 位数字
+  assert.equal(
+    resolveBrandSlots({ support_phone: "+86 400-123*4567" }).supportPhone,
+    "+86 400-123*4567"
+  );
+  assert.equal(
+    resolveBrandSlots({ support_phone: "(0571) 8888 8888" }).supportPhone,
+    "(0571) 8888 8888"
+  );
+  // 过短/过长/多前导 + 均回落
+  assert.equal(
+    resolveBrandSlots({ support_phone: "123" }).supportPhone,
+    "400-000-0000"
+  );
+  assert.equal(
+    resolveBrandSlots({ support_phone: "+86+4012345678" }).supportPhone,
+    "400-000-0000"
+  );
+  assert.equal(
+    resolveBrandSlots({ support_phone: "01234567890123456789012" })
+      .supportPhone,
+    "400-000-0000"
+  );
+});

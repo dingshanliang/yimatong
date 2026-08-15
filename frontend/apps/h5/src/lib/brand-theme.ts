@@ -41,10 +41,34 @@ const DEFAULT_PRIMARY = "#15803d";
 
 /**
  * 平台默认客服联系方式（三层回退的第三层）。
- * 电话为占位号，待平台运营配置真实号码后更新；企微默认无（不渲染链接）。
+ * 电话可由部署配置 NEXT_PUBLIC_SUPPORT_PHONE_FALLBACK 覆盖；未配置时使用
+ * 文档化占位号（docs/02_tech/design-system/h5-branding.md）。企微默认无
+ * （不渲染链接）。
  */
-export const DEFAULT_SUPPORT_PHONE = "400-000-0000";
+export const DEFAULT_SUPPORT_PHONE =
+  process.env.NEXT_PUBLIC_SUPPORT_PHONE_FALLBACK || "400-000-0000";
 export const DEFAULT_SUPPORT_WECOM_URL = "";
+
+/**
+ * 客服电话合法性：与后端 app/utils/brand_color.py._validate_support_phone
+ * 同规则——剔除分隔符 " -*()" 后为数字（至多一个前导 +）、长度 5-20。
+ */
+export function isValidSupportPhone(value: string): boolean {
+  const stripped = value.replace(/[ \-*()]/g, "");
+  return (
+    stripped.length >= 5 && stripped.length <= 20 && /^\+?\d+$/.test(stripped)
+  );
+}
+
+/** 仅保留 tel: 安全字符，防止注入。 */
+export function safeTelHref(phone: string): string {
+  return `tel:${phone.replace(/[^0-9+\-*()]/g, "")}`;
+}
+
+/** 仅接受 https 链接。 */
+export function safeHttpsHref(url: string): string | null {
+  return /^https:\/\/[^\s]+$/i.test(url) ? url : null;
+}
 
 const HEX_RE = /^#[0-9a-f]{6}$/i;
 
@@ -195,21 +219,13 @@ export function resolveBrandSlots(
   };
   const pickPhone = (...candidates: unknown[]): string => {
     for (const c of candidates) {
-      if (typeof c === "string") {
-        const stripped = c.replace(/[^0-9+\-*()\s]/g, "");
-        if (
-          stripped.replace(/[^0-9+]/g, "").length >= 5 &&
-          stripped.length === c.length
-        ) {
-          return c;
-        }
-      }
+      if (typeof c === "string" && isValidSupportPhone(c)) return c;
     }
     return DEFAULT_SUPPORT_PHONE;
   };
   const pickSecureUrl = (...candidates: unknown[]): string => {
     for (const c of candidates) {
-      if (typeof c === "string" && /^https:\/\/[^\s]+$/i.test(c)) return c;
+      if (typeof c === "string" && safeHttpsHref(c) !== null) return c;
     }
     return DEFAULT_SUPPORT_WECOM_URL;
   };
