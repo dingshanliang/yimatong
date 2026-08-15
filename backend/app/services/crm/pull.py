@@ -100,6 +100,9 @@ async def _sync_single_contact(
 
     remote_data = _extract_consumer_data(external_contact)
 
+    if existing and existing.consumer and existing.consumer.lead_contact_suppressed:
+        return
+
     if existing and existing.consumer:
         # 已有映射，执行冲突处理后更新
         consumer = existing.consumer

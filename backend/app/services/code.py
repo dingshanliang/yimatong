@@ -273,6 +273,8 @@ def map_code_lifecycle_db_error(exc: DBAPIError) -> HTTPException | ConflictErro
         return NotFoundError("Code lifecycle target not found")
     if sqlstate == "42501":
         return HTTPException(status_code=401, detail="Code lifecycle authorization is no longer valid")
+    if sqlstate == "23505":
+        return ConflictError("Code lifecycle idempotency conflict", error_code="CODE_LIFECYCLE_CONFLICT")
     if sqlstate in {"22023", "23514", "55000"}:
         return ConflictError("Code lifecycle state conflict", error_code="CODE_LIFECYCLE_CONFLICT")
     if sqlstate in {"55P03", "40001"}:

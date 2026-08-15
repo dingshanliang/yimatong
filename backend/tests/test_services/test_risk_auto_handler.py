@@ -1,7 +1,7 @@
 """EPIC-13 风控自动触发闭环测试"""
 
 import uuid
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -112,52 +112,24 @@ class TestEvaluateRule:
         assert _evaluate_rule(rule, context) is False
 
 
-class TestRiskAutoHandlerDedup:
-    """测试 Redis 去重逻辑"""
+class TestDiversionObservationOwnership:
+    def test_non_resolver_events_keep_handler_fallback(self):
+        from app.services.risk_auto_handler import _event_handler_owns_diversion_observation
 
-    @pytest.mark.asyncio
-    async def test_dedup_first_call_passes(self):
-        from app.services.risk_auto_handler import _check_dedup
+        assert _event_handler_owns_diversion_observation({}) is True
+        assert _event_handler_owns_diversion_observation({"diversion_observation_owner": "risk_auto_handler"}) is True
 
-        mock_redis = AsyncMock()
-        mock_redis.exists = AsyncMock(return_value=0)
-        mock_redis.setex = AsyncMock()
-        mock_redis.__aenter__ = AsyncMock(return_value=mock_redis)
-        mock_redis.__aexit__ = AsyncMock(return_value=False)
+    def test_resolver_event_uses_same_transaction_authority_only(self):
+        from app.services.risk_auto_handler import _event_handler_owns_diversion_observation
 
-        mock_mod = MagicMock()
-        mock_mod.from_url = MagicMock(return_value=mock_redis)
-
-        with patch("redis.asyncio.from_url", mock_mod.from_url):
-            with patch("app.core.config.settings") as mock_settings:
-                mock_settings.redis_url = "redis://localhost:6379"
-                result = await _check_dedup("t1", "r1", "p1")
-                assert result is False
-
-    @pytest.mark.asyncio
-    async def test_dedup_duplicate_blocked(self):
-        from app.services.risk_auto_handler import _check_dedup
-
-        mock_redis = AsyncMock()
-        mock_redis.exists = AsyncMock(return_value=1)
-        mock_redis.__aenter__ = AsyncMock(return_value=mock_redis)
-        mock_redis.__aexit__ = AsyncMock(return_value=False)
-
-        mock_mod = MagicMock()
-        mock_mod.from_url = MagicMock(return_value=mock_redis)
-
-        with patch("redis.asyncio.from_url", mock_mod.from_url):
-            with patch("app.core.config.settings") as mock_settings:
-                mock_settings.redis_url = "redis://localhost:6379"
-                result = await _check_dedup("t1", "r1", "p1")
-                assert result is True
+        assert _event_handler_owns_diversion_observation({"diversion_observation_owner": "resolver"}) is False
 
 
 class TestRiskActionExecutor:
-    """测试处置动作执行器"""
+    """DB authority owns deduplication and all action side effects."""
 
     @pytest.mark.asyncio
-    async def test_execute_block_uses_worker_authority_and_records_structured_result(
+    async def test_execute_uses_exact_scan_rule_and_deterministic_receipt(
         self,
         sample_rule,
         tenant_id,
@@ -165,169 +137,51 @@ class TestRiskActionExecutor:
         from app.services.risk_action import execute_risk_action
 
         mock_db = AsyncMock()
-        mock_db.add = MagicMock()
-        mock_db.flush = AsyncMock()
-        code_item = MagicMock()
-        code_item.id = uuid.uuid4()
-        code_item.code_batch_id = uuid.uuid4()
-        controlled_result = {
-            "code_item_id": code_item.id,
-            "prior_status": "bound",
-            "current_status": "frozen",
-            "risk_alert_id": uuid.uuid4(),
-            "audit_id": uuid.uuid4(),
-        }
+        scan_event_id = uuid.uuid4()
+        result = {"triggered": True, "action": "block", "replayed": False}
+        authority = AsyncMock(return_value=result)
 
-        with (
-            patch(
-                "app.services.code.freeze_code_item_for_risk",
-                AsyncMock(return_value=controlled_result),
-            ) as freeze_authority,
-            patch("app.services.risk_action._pause_related_campaigns", AsyncMock(return_value=[])),
-            patch("app.services.risk_action._create_notification", AsyncMock()),
-            patch("app.services.risk_action.event_bus.emit", AsyncMock()),
-            patch("app.api.v1.risk_dashboard._broadcast_alert"),
-        ):
-            await execute_risk_action(
-                db=mock_db,
-                tenant_id=tenant_id,
+        with patch("app.services.risk_action.evaluate_execute_scan", authority):
+            first = await execute_risk_action(
+                mock_db,
+                tenant_id,
+                scan_event_id=scan_event_id,
                 rule=sample_rule,
-                public_id="REALCODE001",
-                code_item=code_item,
                 context={"request_count": 20},
+                idempotency_key=f"scan-risk:{scan_event_id}:{sample_rule.id}",
+            )
+            second = await execute_risk_action(
+                mock_db,
+                tenant_id,
+                scan_event_id=scan_event_id,
+                rule=sample_rule,
+                context={"request_count": 20},
+                idempotency_key=f"scan-risk:{scan_event_id}:{sample_rule.id}",
             )
 
-        interception = mock_db.add.call_args_list[0].args[0]
-        assert interception.code_item_id == code_item.id
-        freeze_authority.assert_awaited_once()
-        authority_args = freeze_authority.await_args.args
-        assert authority_args[:4] == (mock_db, tenant_id, interception.id, code_item.id)
-        assert authority_args[4].version == 7
-        assert authority_args[5].version == 7
-        assert interception.action_taken is None
-        assert interception.action_detail == {
-            "steps": [
-                {
-                    "action": "freeze_code",
-                    "status": "success",
-                    "code_item_id": str(code_item.id),
-                    "before": {"status": "bound"},
-                    "after": {"status": "frozen"},
-                    "risk_alert_id": str(controlled_result["risk_alert_id"]),
-                    "audit_id": str(controlled_result["audit_id"]),
-                    "rule_id": str(sample_rule.id),
-                    "interception_id": str(interception.id),
-                },
-                {"action": "pause_campaigns", "status": "skipped", "reason": "no_active_campaigns_found"},
-            ]
-        }
+        assert first == second == result
+        assert authority.await_count == 2
+        first_kwargs = authority.await_args_list[0].kwargs
+        second_kwargs = authority.await_args_list[1].kwargs
+        assert first_kwargs["scan_event_id"] == scan_event_id
+        assert first_kwargs["rule_id"] == sample_rule.id
+        assert first_kwargs["receipt_id"] == second_kwargs["receipt_id"]
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize("binding", [None, "different-item"])
-    async def test_worker_authority_rejects_unbound_or_different_interception_without_writes(
-        self,
-        sample_rule,
-        tenant_id,
-        binding,
-    ):
-        from app.core.exceptions import ConflictError
-        from app.models.risk import InterceptionRecord
-        from app.services.code import freeze_code_item_for_risk
-
-        requested_item_id = uuid.uuid4()
-        interception = InterceptionRecord(
-            id=uuid.uuid4(),
-            tenant_id=tenant_id,
-            risk_rule_id=sample_rule.id,
-            code_item_id=None if binding is None else uuid.uuid4(),
-            action="block",
-            auto_triggered=True,
-        )
-        db = AsyncMock()
-        db.scalar = AsyncMock(side_effect=[interception, sample_rule])
-        db.add = MagicMock()
-        db.flush = AsyncMock()
-
-        with patch("app.core.database._session_uses_postgresql", return_value=False):
-            with pytest.raises(ConflictError) as raised:
-                await freeze_code_item_for_risk(
-                    db,
-                    tenant_id,
-                    interception.id,
-                    requested_item_id,
-                    uuid.uuid4(),
-                    uuid.uuid4(),
-                )
-
-        assert raised.value.error_code == "RISK_INTERCEPTION_CONFLICT"
-        assert db.scalar.await_count == 2
-        db.add.assert_not_called()
-        db.flush.assert_not_awaited()
-        assert interception.action_taken is None
-        assert interception.action_detail is None
-
-    @pytest.mark.asyncio
-    async def test_execute_block_propagates_authority_failure_without_false_success_or_error_detail(
-        self,
-        sample_rule,
-        tenant_id,
-    ):
+    async def test_execute_propagates_authority_failure_without_fallback(self, sample_rule, tenant_id):
         from app.services.risk_action import execute_risk_action
 
         mock_db = AsyncMock()
-        mock_db.add = MagicMock()
-        mock_db.flush = AsyncMock()
-        code_item = MagicMock()
-        code_item.id = uuid.uuid4()
-        code_item.code_batch_id = uuid.uuid4()
-
-        with (
-            patch(
-                "app.services.code.freeze_code_item_for_risk",
-                AsyncMock(side_effect=RuntimeError("sensitive database detail")),
-            ),
-            patch("app.services.risk_action._pause_related_campaigns", AsyncMock()) as pause_campaigns,
-            patch("app.services.risk_action._create_notification", AsyncMock()) as create_notification,
-            patch("app.services.risk_action.event_bus.emit", AsyncMock()) as emit,
-        ):
-            with pytest.raises(RuntimeError, match="sensitive database detail"):
+        authority = AsyncMock(side_effect=RuntimeError("authority unavailable"))
+        with patch("app.services.risk_action.evaluate_execute_scan", authority):
+            with pytest.raises(RuntimeError, match="authority unavailable"):
                 await execute_risk_action(
-                    db=mock_db,
-                    tenant_id=tenant_id,
+                    mock_db,
+                    tenant_id,
+                    scan_event_id=uuid.uuid4(),
                     rule=sample_rule,
-                    public_id="REALCODE002",
-                    code_item=code_item,
                     context={"request_count": 20},
+                    idempotency_key="scan-risk:test",
                 )
-
-        interception = mock_db.add.call_args_list[0].args[0]
-        assert interception.action_taken is None
-        assert interception.action_detail is None
-        pause_campaigns.assert_not_awaited()
-        create_notification.assert_not_awaited()
-        emit.assert_not_awaited()
-
-    @pytest.mark.asyncio
-    async def test_execute_warn_creates_alert_and_notification(self, sample_rule_warn):
-        from app.services.risk_action import _execute_warn
-
-        mock_db = AsyncMock()
-        mock_db.add = MagicMock()
-        mock_db.flush = AsyncMock()
-
-        mock_code_item = MagicMock()
-        mock_code_item.id = uuid.uuid4()
-
-        result = await _execute_warn(
-            db=mock_db,
-            tenant_id=uuid.uuid4(),
-            public_id="ABC123",
-            code_item=mock_code_item,
-            rule=sample_rule_warn,
-            context={"current_hour": 3},
-        )
-
-        assert result["steps"][0]["action"] == "create_alert"
-        assert result["steps"][0]["status"] == "success"
-        # add should be called for alert + notification
-        assert mock_db.add.call_count >= 1
+        mock_db.add.assert_not_called()
+        mock_db.flush.assert_not_awaited()

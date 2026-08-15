@@ -1,9 +1,9 @@
 """试点里程碑 API schema（beads: yimatong-bgag.1 / bgag.7）。"""
 
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 
-from pydantic import BaseModel, Field
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, field_validator
 
 from app.constants.pilot import PilotMilestoneType
 
@@ -53,7 +53,16 @@ class MilestoneTimelineResponse(BaseModel):
 class MilestoneCorrectionRequest(BaseModel):
     """里程碑更正请求（PRD §6.2：追加式，必填 reason）。仅平台管理员。"""
 
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
     milestone_type: PilotMilestoneType
-    corrected_at: datetime = Field(..., description="更正后的达成时间")
-    source: str = Field(..., description="更正后的事实来源说明")
-    reason: str = Field(..., min_length=1, description="更正原因（必填）")
+    corrected_at: AwareDatetime = Field(..., description="更正后的达成时间")
+    source: str = Field(..., min_length=1, max_length=120, description="更正后的事实来源说明")
+    reason: str = Field(..., min_length=1, max_length=2000, description="更正原因（必填）")
+
+    @field_validator("corrected_at")
+    @classmethod
+    def corrected_at_cannot_be_future(cls, value: datetime) -> datetime:
+        if value.astimezone(UTC) > datetime.now(UTC):
+            raise ValueError("更正后的达成时间不能晚于当前时间")
+        return value

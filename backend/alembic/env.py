@@ -27,11 +27,11 @@ from app.models.channel import AccountChannelScope, Distributor, Region, Store, 
 from app.models.code import CodeBatch, CodeItem  # noqa: F401
 from app.models.consent import ConsentRecord  # noqa: F401
 from app.models.connector import Connector, CouponPool, CouponCode, BenefitDelivery  # noqa: F401
-from app.models.diversion_evidence import DiversionEvidence  # noqa: F401
+from app.models.diversion_evidence import DiversionActionReceipt, DiversionEvidence, DiversionObservation  # noqa: F401
 from app.models.diversion_history import DiversionInvestigationHistory  # noqa: F401
 from app.models.ai_generation import AiGeneration  # noqa: F401
 from app.models.export_log import ExportLog  # noqa: F401
-from app.models.gmv import ExternalOrder, GmvAttribution  # noqa: F401
+from app.models.gmv import ExternalOrder, ExternalOrderValueEvent, ExternalOrderValueReceipt, GmvAttribution  # noqa: F401
 from app.models.intent_event import IntentEvent  # noqa: F401
 from app.models.private_domain import PrivateDomainConfig  # noqa: F401
 from app.models.i18n import Translation  # noqa: F401
@@ -42,7 +42,7 @@ from app.models.launch import LaunchRelease  # noqa: F401
 from app.models.member import ConsumerProfile, PointProduct, PointRedemption, PointRule, PointTransaction  # noqa: F401
 from app.models.page import PageTemplate, PageVersion  # noqa: F401
 from app.models.plan import PlanDefinition  # noqa: F401
-from app.models.pilot_milestone import PilotMilestone, PilotMilestoneCorrection  # noqa: F401
+from app.models.pilot_milestone import PilotAuthorityReceipt, PilotMilestone, PilotMilestoneCorrection  # noqa: F401
 from app.models.platform_opening import PlatformTenantOpening  # noqa: F401
 from app.models.role_template_backup import (  # noqa: F401
     OperatorCampaignManageGrant,
@@ -60,7 +60,16 @@ from app.models.regional import (  # noqa: F401
     RegionalTemplate,
     WhitelabelConfig,
 )
-from app.models.risk import CampaignRiskRule, InterceptionRecord, RiskAlert, RiskRule  # noqa: F401
+from app.models.risk import (  # noqa: F401
+    CampaignRiskRule,
+    InterceptionRecord,
+    RiskActionOutbox,
+    RiskActionReceipt,
+    RiskAlert,
+    RiskCampaignPause,
+    RiskNotification,
+    RiskRule,
+)
 from app.models.scan import ScanEvent  # noqa: F401
 from app.models.sync_mapping import SyncMapping  # noqa: F401
 from app.models.takeover import (  # noqa: F401
@@ -79,7 +88,7 @@ from app.models.tenant_health import TenantHealthMetrics  # noqa: F401
 from app.models.platform_config import PlatformConfig  # noqa: F401
 from app.models.visitor import AnonymousVisitor  # noqa: F401
 from app.models.webhook import ApiKey, WebhookDelivery, WebhookEndpoint  # noqa: F401
-from app.models.wecom import WeComContactWay, WeComExternalContact  # noqa: F401
+from app.models.wecom import WeComCallbackReceipt, WeComContactWay, WeComExternalContact  # noqa: F401
 
 target_metadata = Base.metadata
 
@@ -143,9 +152,16 @@ MIGRATION_ONLY_TABLES = {
     "alembic_version",
     "api_key_catalog_audit_context_secrets",
     "api_key_legacy_secret_backups",
+    "channel_permission_backfill",
     "code_delivery_contract_rollout_state",
     "connector_secret_migration_backups",
+    "consumer_detail_role_grant_backfills",
+    "external_order_ledger_recovery_markers",
+    "external_order_permission_backfill",
+    "webhook_permission_backfill",
+    "legacy_pii_recovery_markers",
     "rls_force_remediation_backups",
+    "risk_permission_backfill",
     "runtime_privilege_remediation_backup",
 }
 

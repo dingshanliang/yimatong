@@ -1,15 +1,17 @@
 """试点里程碑 API 测试（beads: yimatong-bgag.1）。"""
 
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from httpx import ASGITransport, AsyncClient
 
 from app.core.database import get_db
 from app.main import app
+from app.models.auth_security import AuthSession
 from app.models.launch import LaunchRelease, LaunchReleaseStatus
 from app.models.scan import ScanEvent
+from app.models.tenant import Account, Organization
 from app.utils.security import create_access_token
 from tests.conftest import seed_pilot_tenant
 
@@ -26,18 +28,47 @@ async def client(db):
     app.dependency_overrides.clear()
 
 
-def _headers(tenant_id, account_id, role="admin"):
-    token = create_access_token(str(tenant_id), str(account_id), role, tenant_type="brand")
-    return {"Authorization": f"Bearer {token}"}
+async def _durable_headers(db, tenant_id, role="admin"):
+    organization = Organization(tenant_id=tenant_id, name=f"pilot-api-{uuid.uuid4().hex[:8]}")
+    db.add(organization)
+    await db.flush()
+    account = Account(
+        tenant_id=tenant_id,
+        organization_id=organization.id,
+        email=f"pilot-api-{uuid.uuid4().hex}@example.test",
+        hashed_password="test-only",
+        name="Pilot API actor",
+        is_active=True,
+    )
+    db.add(account)
+    await db.flush()
+    session = AuthSession(
+        id=uuid.uuid4(),
+        tenant_id=tenant_id,
+        account_id=account.id,
+        auth_version=account.auth_version,
+        current_refresh_jti=uuid.uuid4().hex,
+        expires_at=datetime.now(UTC) + timedelta(hours=1),
+    )
+    db.add(session)
+    await db.flush()
+    token = create_access_token(
+        str(tenant_id),
+        str(account.id),
+        role,
+        tenant_type="brand",
+        extra={"sid": str(session.id), "auth_version": account.auth_version},
+    )
+    return {"Authorization": f"Bearer {token}"}, account.id
 
 
 @pytest.mark.asyncio
 async def test_get_timeline_200_empty(client, db):
     """已认证 admin：空租户返回 5 个里程碑 + 2 派生时长。"""
     tenant_id = await seed_pilot_tenant(db)
-    account_id = uuid.uuid4()
+    headers, _ = await _durable_headers(db, tenant_id)
 
-    resp = await client.get("/api/v1/pilot-milestones", headers=_headers(tenant_id, account_id))
+    resp = await client.get("/api/v1/pilot-milestones", headers=headers)
 
     assert resp.status_code == 200
     data = resp.json()
@@ -56,6 +87,7 @@ async def test_get_timeline_200_with_launched_facts(client, db):
     first_scan = datetime(2026, 7, 11, tzinfo=UTC)
 
     tenant_id = await seed_pilot_tenant(db, created_at=onboarding)
+    headers, account_id = await _durable_headers(db, tenant_id)
     db.add(
         LaunchRelease(
             tenant_id=tenant_id,
@@ -66,8 +98,13 @@ async def test_get_timeline_200_with_launched_facts(client, db):
             status=LaunchReleaseStatus.live,
             readiness_snapshot={},
             content_digest="d" * 64,
-            created_by=uuid.uuid4(),
+            created_by=account_id,
+            created_by_tenant_id=tenant_id,
+            brand_confirmed_by=account_id,
+            brand_confirmed_by_tenant_id=tenant_id,
             brand_confirmed_at=datetime(2026, 7, 5, tzinfo=UTC),
+            launched_by=account_id,
+            launched_by_tenant_id=tenant_id,
             launched_at=launched,
         )
     )
@@ -81,7 +118,7 @@ async def test_get_timeline_200_with_launched_facts(client, db):
     )
     await db.flush()
 
-    resp = await client.get("/api/v1/pilot-milestones", headers=_headers(tenant_id, uuid.uuid4()))
+    resp = await client.get("/api/v1/pilot-milestones", headers=headers)
 
     assert resp.status_code == 200
     by_type = {m["type"]: m for m in resp.json()["milestones"]}
@@ -108,7 +145,8 @@ async def test_get_timeline_401_without_token(client, db):
 async def test_get_timeline_403_insufficient_role(client, db):
     """viewer 角色无 analytics:view 权限：403。"""
     tenant_id = await seed_pilot_tenant(db)
-    resp = await client.get("/api/v1/pilot-milestones", headers=_headers(tenant_id, uuid.uuid4(), role="viewer"))
+    headers, _ = await _durable_headers(db, tenant_id, role="viewer")
+    resp = await client.get("/api/v1/pilot-milestones", headers=headers)
     assert resp.status_code == 403
 
 
@@ -117,6 +155,8 @@ async def test_get_timeline_tenant_isolation(client, db):
     """A 租户只看到自己的里程碑，看不到 B 租户的上线事实。"""
     a_id = await seed_pilot_tenant(db, created_at=datetime(2026, 7, 1, tzinfo=UTC))
     b_id = await seed_pilot_tenant(db, created_at=datetime(2026, 6, 1, tzinfo=UTC))
+    a_headers, _ = await _durable_headers(db, a_id)
+    _, b_account_id = await _durable_headers(db, b_id)
     # 只有 B 上线
     db.add(
         LaunchRelease(
@@ -128,14 +168,17 @@ async def test_get_timeline_tenant_isolation(client, db):
             status=LaunchReleaseStatus.live,
             readiness_snapshot={},
             content_digest="d" * 64,
-            created_by=uuid.uuid4(),
+            created_by=b_account_id,
+            created_by_tenant_id=b_id,
+            launched_by=b_account_id,
+            launched_by_tenant_id=b_id,
             launched_at=datetime(2026, 6, 10, tzinfo=UTC),
         )
     )
     await db.flush()
 
     # A 租户请求：不应看到 launched 达成
-    resp = await client.get("/api/v1/pilot-milestones", headers=_headers(a_id, uuid.uuid4()))
+    resp = await client.get("/api/v1/pilot-milestones", headers=a_headers)
     assert resp.status_code == 200
     by_type = {m["type"]: m for m in resp.json()["milestones"]}
     assert by_type["launched"]["status"] == "not_achieved"

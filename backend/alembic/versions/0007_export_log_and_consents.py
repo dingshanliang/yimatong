@@ -191,5 +191,14 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    bind = op.get_bind()
+    if bind.dialect.name == "postgresql":
+        populated = bind.execute(
+            sa.text(
+                "SELECT EXISTS(SELECT 1 FROM consent_records) OR EXISTS(SELECT 1 FROM export_logs)"
+            )
+        ).scalar_one()
+        if populated:
+            raise RuntimeError("0007 downgrade blocked: consent or export audit facts exist")
     op.drop_table("consent_records")
     op.drop_table("export_logs")

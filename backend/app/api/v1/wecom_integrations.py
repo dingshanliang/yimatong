@@ -16,11 +16,16 @@ from app.core.dependencies import get_current_tenant
 from app.models.campaign import Benefit
 from app.models.connector import Connector
 from app.models.wecom import WeComContactWay
+from app.services.connector_callback_admission import (
+    enforce_wecom_callback_identity_admission,
+    enforce_wecom_callback_ip_admission,
+)
 from app.services.entitlement import (
     PLAN_EXPIRED_CODE,
     PLAN_EXPIRED_DETAIL,
     TenantPlanExpiredError,
 )
+from app.services.wecom_callback_authority import apply_verified_wecom_contact_event
 from app.services.wecom_integration import (
     WeComIntegrationError,
     decrypt_wecom_echo,
@@ -203,6 +208,7 @@ async def verify_wecom_callback_endpoint(
     timestamp: str = Query(...),
     nonce: str = Query(...),
     echostr: str = Query(...),
+    _admission: None = Depends(enforce_wecom_callback_ip_admission),
     db: AsyncSession = Depends(get_db),
 ):
     connector = await _scope_public_connector_tenant(db, connector_id)
@@ -212,6 +218,7 @@ async def verify_wecom_callback_endpoint(
         plain = decrypt_wecom_echo(connector, msg_signature, timestamp, nonce, echostr)
     except WeComIntegrationError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    await enforce_wecom_callback_identity_admission(connector.tenant_id, connector.id)
     return PlainTextResponse(plain)
 
 
@@ -219,6 +226,7 @@ async def verify_wecom_callback_endpoint(
 async def receive_wecom_callback_endpoint(
     connector_id: uuid.UUID,
     request: Request,
+    _admission: None = Depends(enforce_wecom_callback_ip_admission),
     db: AsyncSession = Depends(get_db),
 ):
     connector = await _scope_public_connector_tenant(db, connector_id)
@@ -230,8 +238,12 @@ async def receive_wecom_callback_endpoint(
             connector,
             {k: v for k, v in request.query_params.items()},
         )
-        result = await process_wecom_callback_event(db, connector_id=connector_id, event=event)
-        await db.commit()
+        await enforce_wecom_callback_identity_admission(connector.tenant_id, connector.id)
+        result = await apply_verified_wecom_contact_event(
+            tenant_id=connector.tenant_id,
+            connector_id=connector_id,
+            event=event,
+        )
     except WeComIntegrationError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return PlainTextResponse("success" if result.get("status") in {"recorded", "duplicate", "ignored"} else "fail")

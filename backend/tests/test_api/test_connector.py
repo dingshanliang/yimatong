@@ -5,6 +5,7 @@ import hmac
 import json
 import uuid
 from collections.abc import AsyncGenerator
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -16,6 +17,12 @@ from app.main import app
 from app.models.connector import BenefitDelivery, Connector, CouponPool
 from app.utils.security import create_access_token
 from tests.conftest import TestSessionLocal
+
+GENERIC_HTTP_CONFIG = {
+    "api_url": "https://api.example.com",
+    "provider_idempotency": True,
+    "reconciliation_path": "deliveries/{idempotency_key}",
+}
 
 
 def _platform_admin_headers() -> dict:
@@ -286,7 +293,7 @@ class TestConnectorCRUD:
             json={
                 "name": "测试 HTTP 连接器",
                 "connector_type": "generic_http",
-                "config": {"api_url": "https://api.example.com"},
+                "config": GENERIC_HTTP_CONFIG,
             },
             headers=headers,
         )
@@ -345,7 +352,7 @@ class TestConnectorCRUD:
             json={
                 "name": "forbidden",
                 "connector_type": "generic_http",
-                "config": {"api_url": "https://api.example.com"},
+                "config": GENERIC_HTTP_CONFIG,
             },
             headers=headers,
         )
@@ -394,7 +401,7 @@ class TestConnectorCRUD:
             json={
                 "name": "列表测试",
                 "connector_type": "generic_http",
-                "config": {"api_url": "https://api.example.com"},
+                "config": GENERIC_HTTP_CONFIG,
             },
             headers=headers,
         )
@@ -427,7 +434,7 @@ class TestConnectorCRUD:
                 json={
                     "name": f"connector-page-{index}",
                     "connector_type": "generic_http",
-                    "config": {"api_url": "https://api.example.com"},
+                    "config": GENERIC_HTTP_CONFIG,
                 },
                 headers=headers,
             )
@@ -458,7 +465,7 @@ class TestConnectorCRUD:
             json={
                 "name": "更新测试",
                 "connector_type": "generic_http",
-                "config": {"api_url": "https://api.example.com"},
+                "config": GENERIC_HTTP_CONFIG,
             },
             headers=headers,
         )
@@ -480,7 +487,7 @@ class TestConnectorCRUD:
             json={
                 "name": "连接测试",
                 "connector_type": "generic_http",
-                "config": {"api_url": "https://api.example.com"},
+                "config": GENERIC_HTTP_CONFIG,
             },
             headers=headers,
         )
@@ -505,7 +512,7 @@ class TestConnectorSecrets:
             json={
                 "name": "带凭证连接器",
                 "connector_type": "generic_http",
-                "config": {"api_url": "https://api.example.com"},
+                "config": GENERIC_HTTP_CONFIG,
                 "secrets": {"api_key": "sk_live_12345678", "callback_secret": "cb-secret"},
             },
             headers=headers,
@@ -525,7 +532,7 @@ class TestConnectorSecrets:
             json={
                 "name": "更新凭证",
                 "connector_type": "generic_http",
-                "config": {"api_url": "https://api.example.com"},
+                "config": GENERIC_HTTP_CONFIG,
             },
             headers=headers,
         )
@@ -557,7 +564,15 @@ class TestBenefitDeliveries:
                 status="failed",
                 retry_count=2,
                 max_retries=5,
-                external_data={"error": "invalid receiver"},
+                external_id="provider-delivery-001",
+                external_data={
+                    "status": "failed",
+                    "status_code": 422,
+                    "error": "invalid receiver for 13800138000",
+                    "access_token": "provider-secret-token",
+                    "nested": {"phone": "13800138000"},
+                    "reason": "arbitrary provider prose",
+                },
             )
         )
         await db_session.flush()
@@ -571,7 +586,11 @@ class TestBenefitDeliveries:
         assert data["status"] == "failed"
         assert data["retry_count"] == 2
         assert data["max_retries"] == 5
-        assert data["external_data"] == {"error": "invalid receiver"}
+        assert data["external_reference"] == "provider-delivery-001"
+        assert data["external_data"] == {"status": "failed", "status_code": 422}
+        assert "provider-secret-token" not in resp.text
+        assert "13800138000" not in resp.text
+        assert "invalid receiver" not in resp.text
         assert data["created_at"]
         assert data["updated_at"]
 
@@ -660,11 +679,12 @@ class TestBenefitDeliveries:
         assert data["id"] != str(delivery_id)
         assert data["consumer_id"] == "consumer-retry-001"
         assert data["status"] == "success"
-        assert data["external_data"]["code"] == "RETRY001"
+        assert data["external_reference"] == "RETRY001"
+        assert data["external_data"] == {}
 
     @pytest.mark.anyio
     async def test_signed_callback_matches_exact_external_claim_identity(
-        self, client: AsyncClient, db_session: AsyncSession, setup_tenant
+        self, client: AsyncClient, db_session: AsyncSession, setup_tenant, shared_security_cache
     ):
         tenant_id, headers = setup_tenant
         callback_secret = "callback-secret-for-test"
@@ -673,7 +693,7 @@ class TestBenefitDeliveries:
             json={
                 "name": "回调测试连接器",
                 "connector_type": "generic_http",
-                "config": {"api_url": "https://api.example.com"},
+                "config": GENERIC_HTTP_CONFIG,
                 "secrets": {"callback_secret": callback_secret},
             },
             headers=headers,
@@ -706,3 +726,127 @@ class TestBenefitDeliveries:
         await db_session.refresh(delivery)
         assert delivery.status == "success"
         assert delivery.external_data["_callback_external_id"] == str(claim_id)
+        replay = await client.post(
+            f"/api/v1/connectors/connectors/{connector_id}/callback",
+            content=body,
+            headers={"Content-Type": "application/json", "X-Callback-Sig": signature},
+        )
+        assert replay.status_code == 200
+        assert sum(key.startswith("ip:") for key in shared_security_cache.rate_keys) == 2
+        assert sum(key.startswith("connector:") for key in shared_security_cache.rate_keys) == 2
+        assert str(connector_id) not in "".join(shared_security_cache.rate_keys)
+        assert tenant_id not in "".join(shared_security_cache.rate_keys)
+
+    @pytest.mark.anyio
+    async def test_callback_ip_limit_is_before_connector_bootstrap_and_distinguishes_trusted_forwarded_ip(
+        self, client: AsyncClient, monkeypatch, shared_security_cache
+    ):
+        from app.api.v1 import connectors
+        from app.services import connector_callback_admission
+
+        bootstrap = AsyncMock(return_value=None)
+        monkeypatch.setattr(connectors, "bootstrap_tenant_row", bootstrap)
+        monkeypatch.setattr(connector_callback_admission, "CONNECTOR_CALLBACK_IP_RATE_LIMIT", 1)
+        callback_path = f"/api/v1/connectors/connectors/{uuid.uuid4()}/callback"
+
+        first = await client.post(callback_path, content=b"{}", headers={"X-Forwarded-For": "203.0.113.10"})
+        limited = await client.post(callback_path, content=b"{}", headers={"X-Forwarded-For": "203.0.113.10"})
+        other_ip = await client.post(callback_path, content=b"{}", headers={"X-Forwarded-For": "203.0.113.11"})
+
+        assert first.status_code == 404
+        assert limited.status_code == 429
+        assert limited.headers["Retry-After"] == "60"
+        assert other_ip.status_code == 404
+        assert bootstrap.await_count == 2
+        assert all("203.0.113" not in key for key in shared_security_cache.rate_keys)
+
+    @pytest.mark.anyio
+    async def test_callback_ignores_spoofed_forwarding_header_from_untrusted_peer(
+        self, client: AsyncClient, monkeypatch
+    ):
+        from app.api.v1 import connectors
+        from app.core.config import settings
+        from app.services import connector_callback_admission
+
+        bootstrap = AsyncMock(return_value=None)
+        monkeypatch.setattr(connectors, "bootstrap_tenant_row", bootstrap)
+        monkeypatch.setattr(connector_callback_admission, "CONNECTOR_CALLBACK_IP_RATE_LIMIT", 1)
+        monkeypatch.setattr(settings, "trusted_proxy_cidrs", "")
+        callback_path = f"/api/v1/connectors/connectors/{uuid.uuid4()}/callback"
+
+        first = await client.post(callback_path, content=b"{}", headers={"X-Forwarded-For": "203.0.113.20"})
+        spoofed = await client.post(callback_path, content=b"{}", headers={"X-Forwarded-For": "203.0.113.21"})
+
+        assert first.status_code == 404
+        assert spoofed.status_code == 429
+        assert bootstrap.await_count == 1
+
+    @pytest.mark.anyio
+    async def test_signed_callback_enforces_connector_dimension(self, client: AsyncClient, setup_tenant, monkeypatch):
+        from app.services import connector_callback_admission
+
+        _, headers = setup_tenant
+        callback_secret = "callback-dimension-secret"
+        connector_response = await client.post(
+            "/api/v1/connectors/connectors",
+            json={
+                "name": "回调维度限流",
+                "connector_type": "generic_http",
+                "config": GENERIC_HTTP_CONFIG,
+                "secrets": {"callback_secret": callback_secret},
+            },
+            headers=headers,
+        )
+        connector_id = connector_response.json()["id"]
+        body = b'{"id":"provider-id","status":"success"}'
+        signature = hmac.new(callback_secret.encode(), body, hashlib.sha256).hexdigest()
+        monkeypatch.setattr(connector_callback_admission, "CONNECTOR_CALLBACK_IDENTITY_RATE_LIMIT", 0)
+
+        response = await client.post(
+            f"/api/v1/connectors/connectors/{connector_id}/callback",
+            content=body,
+            headers={"X-Callback-Sig": signature},
+        )
+
+        assert response.status_code == 429
+        assert response.headers["Retry-After"] == "60"
+
+    @pytest.mark.anyio
+    async def test_callback_cache_outage_and_invalid_uuid_never_bootstrap_or_decrypt(
+        self, client: AsyncClient, monkeypatch, shared_security_cache
+    ):
+        from app.api.v1 import connectors
+        from app.services.connectors import generic_http
+
+        bootstrap = AsyncMock(return_value=None)
+        decrypt = MagicMock()
+        monkeypatch.setattr(connectors, "bootstrap_tenant_row", bootstrap)
+        monkeypatch.setattr(generic_http, "decrypt_secrets", decrypt)
+        shared_security_cache.fail_rate_limits = True
+        original_db_override = app.dependency_overrides[get_db]
+        db_dependency_calls = 0
+
+        async def tracked_db_override():
+            nonlocal db_dependency_calls
+            db_dependency_calls += 1
+            async for session in original_db_override():
+                yield session
+
+        app.dependency_overrides[get_db] = tracked_db_override
+
+        try:
+            unavailable = await client.post(
+                f"/api/v1/connectors/connectors/{uuid.uuid4()}/callback",
+                content=b"{}",
+            )
+            assert db_dependency_calls == 0
+            shared_security_cache.fail_rate_limits = False
+            invalid = await client.post("/api/v1/connectors/connectors/not-a-uuid/callback", content=b"{}")
+        finally:
+            app.dependency_overrides[get_db] = original_db_override
+
+        assert unavailable.status_code == 503
+        assert unavailable.json()["detail"] == "Callback service is temporarily unavailable"
+        assert invalid.status_code == 422
+        bootstrap.assert_not_awaited()
+        decrypt.assert_not_called()

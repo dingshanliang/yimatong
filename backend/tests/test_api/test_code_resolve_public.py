@@ -112,7 +112,11 @@ async def setup_activated_code(client: AsyncClient):
     public_id = first_item["public_id"]
     item_id = first_item["id"]
 
-    await client.post(f"/api/v1/code-batches/{batch_id}/export", headers=headers)
+    await client.post(
+        f"/api/v1/code-batches/{batch_id}/export",
+        json={"reason": "Test lifecycle setup"},
+        headers={**headers, "Idempotency-Key": str(uuid.uuid4())},
+    )
     await client.post(f"/api/v1/code-batches/{batch_id}/mark-printing", headers=headers)
     await client.post(
         f"/api/v1/code-batches/{batch_id}/mark-delivered",
@@ -143,13 +147,29 @@ class TestPublicResolve:
     async def test_resolve_revoked_code(self, client: AsyncClient, setup_activated_code):
         _, headers, _, item_id, public_id = setup_activated_code
         # 作废码
-        await client.post(
+        revoked = await client.post(
             f"/api/v1/code-items/{item_id}/revoke",
+            json={"reason": "confirmed public resolver incident", "confirm": "void"},
             headers=headers,
         )
+        assert revoked.status_code == 200
+        assert revoked.json()["status"] == "revoked"
         resp = await client.get(f"/c/{public_id}")
         assert resp.status_code == 410
         assert "text/html" in resp.headers.get("content-type", "")
+
+    @pytest.mark.anyio
+    async def test_revoke_missing_body_is_zero_write(self, client: AsyncClient, setup_activated_code):
+        _, headers, _, item_id, public_id = setup_activated_code
+
+        rejected = await client.post(f"/api/v1/code-items/{item_id}/revoke", headers=headers)
+
+        assert rejected.status_code == 422
+        current = await client.get(f"/api/v1/code-items/{item_id}", headers=headers)
+        assert current.status_code == 200
+        assert current.json()["status"] == "activated"
+        resolved = await client.get(f"/c/{public_id}")
+        assert resolved.status_code == 200
 
     @pytest.mark.anyio
     async def test_resolve_created_code(self, client: AsyncClient, setup_activated_code):

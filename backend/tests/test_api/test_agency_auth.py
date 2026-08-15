@@ -1037,6 +1037,47 @@ class TestAgencyContextTokenVersion:
 
 class TestViewerAndCampaignAuthorizationBoundary:
     @pytest.mark.anyio
+    async def test_acting_agency_analytics_requires_live_scope_and_permission(
+        self,
+        client: AsyncClient,
+        db_session: AsyncSession,
+        brand_tenant,
+        agency_tenant,
+    ):
+        brand, _ = brand_tenant
+        agency, agency_account = agency_tenant
+        authorization = AgencyAuthorization(
+            agency_tenant_id=agency.id,
+            client_tenant_id=brand.id,
+            scope=["analytics"],
+            status=AgencyAuthStatus.active,
+        )
+        db_session.add(authorization)
+        await db_session.flush()
+        await _grant_fixed_role(db_session, agency_account, "admin")
+        token = await _durable_access_token(db_session, agency, agency_account, "admin")
+
+        switched = await client.post(
+            "/api/v1/agency/switch-context",
+            json={"client_tenant_id": str(brand.id)},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert switched.status_code == 200
+        acting_headers = {"Authorization": f"Bearer {switched.json()['access_token']}"}
+
+        with patch("app.core.database.async_session_factory", TestSessionLocal):
+            allowed = await client.get("/api/v1/analytics/dashboard", headers=acting_headers)
+
+        authorization.scope = ["pages"]
+        await db_session.commit()
+        with patch("app.core.database.async_session_factory", TestSessionLocal):
+            denied = await client.get("/api/v1/analytics/dashboard", headers=acting_headers)
+
+        assert allowed.status_code == 200
+        assert denied.status_code == 403
+        assert denied.json()["detail"] == "当前代运营授权不允许访问该功能"
+
+    @pytest.mark.anyio
     async def test_brand_viewer_cannot_create_campaign_even_if_account_has_admin_permissions(
         self,
         client: AsyncClient,

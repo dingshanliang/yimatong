@@ -1,105 +1,145 @@
-"""Webhook 事件调度器。
-
-订阅事件总线，查找匹配的 webhook endpoint，创建投递记录并入队 Redis。
-Worker 从 Redis 取出执行实际 HTTP 投递。
-"""
+"""Transactional webhook outbox recording and committed-event expansion."""
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
+import uuid
+from datetime import UTC, datetime
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from uuid6 import uuid7
 
-from app.core.event_bus import event_bus
-from app.models.webhook import WebhookDelivery, WebhookEndpoint
-from app.services.webhook_sender import build_envelope
+from app.models.webhook import WebhookDelivery, WebhookDomainEvent, WebhookEndpoint
 
 logger = logging.getLogger(__name__)
-
 REDIS_QUEUE_KEY = "ymt:webhook:deliver_queue"
 
 
-async def _enqueue_delivery(delivery_id: str) -> None:
-    """将投递 ID 推入 Redis List 队列。"""
+def _canonical_json(value: dict) -> bytes:
+    return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+
+
+async def record_domain_event(
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    event_type: str,
+    data: dict,
+    *,
+    event_id: uuid.UUID | None = None,
+    occurred_at: datetime | None = None,
+) -> WebhookDomainEvent:
+    """Add one immutable event fact to the caller's transaction; never commit or enqueue."""
+
+    event_id = event_id or uuid7()
+    occurred_at = occurred_at or datetime.now(UTC)
+    envelope = {
+        "id": str(event_id),
+        "type": event_type,
+        "timestamp": occurred_at.isoformat(),
+        "tenant_id": str(tenant_id),
+        "data": data,
+    }
+    payload_digest = hashlib.sha256(_canonical_json(envelope)).hexdigest()
+    event = WebhookDomainEvent(
+        id=event_id,
+        tenant_id=tenant_id,
+        event_type=event_type,
+        payload=envelope,
+        payload_digest=payload_digest,
+        occurred_at=occurred_at,
+    )
+    db.add(event)
+    await db.flush()
+    return event
+
+
+async def _enqueue_delivery(delivery_id: uuid.UUID) -> None:
+    """Best-effort accelerator. Durable database polling remains authoritative."""
+
     try:
         import redis.asyncio as aioredis
 
         from app.core.config import settings
 
-        async with aioredis.from_url(settings.redis_url) as r:
-            await r.lpush(REDIS_QUEUE_KEY, delivery_id)
+        async with aioredis.from_url(settings.redis_url) as redis:
+            await redis.lpush(REDIS_QUEUE_KEY, str(delivery_id))
     except Exception:
-        logger.warning("Failed to enqueue webhook delivery %s to Redis, will rely on DB poller", delivery_id)
+        logger.warning("Failed to enqueue webhook delivery %s; DB poller will recover it", delivery_id)
 
 
-async def _dispatch_to_endpoints(
-    db: AsyncSession,
-    event_type: str,
-    data: dict,
-    tenant_id: str,
-) -> None:
-    """查找匹配的 webhook endpoint，为每个创建投递记录。"""
-    result = await db.execute(
-        select(WebhookEndpoint).where(
-            WebhookEndpoint.tenant_id == tenant_id,
-            WebhookEndpoint.enabled.is_(True),
+async def expand_committed_events(limit: int = 100) -> int:
+    """Lease committed event facts and materialize immutable endpoint snapshots."""
+
+    from app.core.database import async_session_factory, bootstrap_tenant_keys, set_session_tenant_context
+
+    async with async_session_factory() as control_db:
+        keys = await bootstrap_tenant_keys(
+            control_db,
+            select(WebhookDomainEvent.id, WebhookDomainEvent.tenant_id)
+            .where(WebhookDomainEvent.expanded_at.is_(None))
+            .order_by(WebhookDomainEvent.created_at, WebhookDomainEvent.id)
+            .limit(limit),
         )
-    )
-    endpoints = list(result.scalars().all())
 
-    for ep in endpoints:
-        events: list[str] = ep.events if isinstance(ep.events, list) else json.loads(ep.events)
-        if event_type not in events:
-            continue
-
-        envelope = build_envelope(event_type, data, tenant_id)
-        delivery = WebhookDelivery(
-            tenant_id=tenant_id,
-            endpoint_id=ep.id,
-            event_id=envelope["id"],
-            event_type=event_type,
-            payload=envelope,
-            status="pending",
-        )
-        db.add(delivery)
-        await db.flush()
-
-        await _enqueue_delivery(str(delivery.id))
-
-
-async def _handle_event(event_type: str, data: dict, tenant_id: str) -> None:
-    """事件总线处理器入口。"""
-    import uuid
-
-    from app.core.database import async_session_factory, set_session_tenant_context
-
-    tenant_uuid = uuid.UUID(tenant_id)
-
-    async with async_session_factory() as db:
-        await set_session_tenant_context(db, tenant_uuid)
-        try:
-            await _dispatch_to_endpoints(db, event_type, data, str(tenant_uuid))
+    created_ids: list[uuid.UUID] = []
+    for event_id, tenant_id in keys:
+        async with async_session_factory() as db:
+            await set_session_tenant_context(db, tenant_id)
+            event = await db.scalar(
+                select(WebhookDomainEvent)
+                .where(
+                    WebhookDomainEvent.id == event_id,
+                    WebhookDomainEvent.tenant_id == tenant_id,
+                    WebhookDomainEvent.expanded_at.is_(None),
+                )
+                .with_for_update(skip_locked=True)
+            )
+            if event is None:
+                continue
+            endpoints = list(
+                (
+                    await db.scalars(
+                        select(WebhookEndpoint).where(
+                            WebhookEndpoint.tenant_id == tenant_id,
+                            WebhookEndpoint.enabled.is_(True),
+                        )
+                    )
+                ).all()
+            )
+            for endpoint in endpoints:
+                events = endpoint.events if isinstance(endpoint.events, list) else json.loads(endpoint.events)
+                if event.event_type not in events:
+                    continue
+                delivery = WebhookDelivery(
+                    tenant_id=tenant_id,
+                    endpoint_id=endpoint.id,
+                    event_id=str(event.id),
+                    domain_event_id=event.id,
+                    event_type=event.event_type,
+                    payload=event.payload,
+                    payload_digest=event.payload_digest,
+                    endpoint_url=endpoint.url,
+                    endpoint_secret_ciphertext=endpoint.secret_ciphertext,
+                    endpoint_secret_nonce=endpoint.secret_nonce,
+                    endpoint_secret_key_id=endpoint.secret_key_id,
+                    endpoint_config_version=endpoint.config_version,
+                    status="pending",
+                )
+                db.add(delivery)
+                await db.flush()
+                created_ids.append(delivery.id)
+            event.expanded_at = datetime.now(UTC)
             await db.commit()
-        except Exception:
-            logger.exception("Webhook dispatcher error for %s", event_type)
-            await db.rollback()
+
+    for delivery_id in created_ids:
+        await _enqueue_delivery(delivery_id)
+    return len(created_ids)
 
 
 def init_webhook_dispatcher() -> None:
-    """应用启动时调用，注册所有事件类型的 dispatcher。"""
-    event_types = [
-        "scan.created",
-        "claim.created",
-        "claim.used",
-        "claim.expired",
-        "consumer.created",
-        "consumer.profile_updated",
-        "risk.alert",
-        "campaign.started",
-        "campaign.ended",
-    ]
-    for et in event_types:
-        event_bus.add_handler(et, _handle_event)
-    logger.info("Webhook dispatcher registered for %d event types", len(event_types))
+    """Compatibility hook: durable expansion is driven by the worker poller."""
+
+    logger.info("Transactional webhook outbox enabled")

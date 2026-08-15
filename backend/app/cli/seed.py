@@ -3,7 +3,7 @@
 import asyncio
 import uuid
 from contextlib import AsyncExitStack
-from datetime import date, timedelta
+from datetime import UTC, date, datetime, timedelta
 
 import typer
 from sqlalchemy import func, select, text
@@ -15,13 +15,14 @@ from app.constants.campaign import BenefitType
 from app.core.config import settings
 from app.core.database import control_session_factory, set_session_tenant_context
 from app.models.campaign import Benefit, Campaign, CampaignStatus
-from app.models.channel import CodeAllocation, Distributor, DiversionClue, Region, Store
+from app.models.channel import AccountChannelScope, CodeAllocation, Distributor, Region, Store
 from app.models.code import CodeItem, CodeItemStatus
 from app.models.connector import Connector  # noqa: F401 - register connector tables for Benefit FK sorting
 from app.models.page import PageTemplate, PageVersion, PageVersionStatus, TemplateType
 from app.models.product import SKU, Brand, Product, ProductionBatch
 from app.models.scan import ScanEvent
 from app.models.tenant import Account, Organization, Permission, Role, Tenant, account_roles, role_permissions
+from app.services import channel_authority, diversion_authority
 from app.services.analytics import aggregate_daily_stats
 from app.services.audit import write_audit_log
 from app.services.auth import revoke_current_tenant_account_sessions
@@ -30,7 +31,6 @@ from app.services.campaign import (
     create_benefit,
     create_campaign,
 )
-from app.services.channel import create_account_scope
 from app.services.code import activate_batch, create_code_batch, mark_delivered, mark_printing, revoke_code_item
 from app.services.code_export import generate_code_csv
 from app.services.page import create_page_template, create_page_version, publish_page_version
@@ -48,6 +48,11 @@ app = typer.Typer(help="Seed data for development")
 engine = create_async_engine(str(settings.database_url))
 async_session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 control_session = control_session_factory
+if settings.migration_database_url is None:
+    seed_owner_session_factory: async_sessionmaker[AsyncSession] | None = None
+else:
+    seed_owner_engine = create_async_engine(str(settings.migration_database_url))
+    seed_owner_session_factory = async_sessionmaker(seed_owner_engine, class_=AsyncSession, expire_on_commit=False)
 
 DEMO_ACCOUNTS = [
     {
@@ -247,7 +252,28 @@ async def _ensure_role(db: AsyncSession, tenant_id: uuid.UUID, name: str, descri
     return role
 
 
-async def _ensure_demo_accounts(db: AsyncSession, tenant_id: uuid.UUID, org_id: uuid.UUID) -> list[Account]:
+def _demo_accounts_for_request(*, admin_email: str, admin_name: str, admin_password: str) -> list[dict[str, str]]:
+    return [
+        {
+            **DEMO_ACCOUNTS[0],
+            "email": normalize_email(admin_email),
+            "password": admin_password,
+            "name": admin_name,
+        },
+        *DEMO_ACCOUNTS[1:],
+    ]
+
+
+async def _ensure_demo_accounts(
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    org_id: uuid.UUID,
+    *,
+    admin_email: str = DEMO_ACCOUNTS[0]["email"],
+    admin_name: str = DEMO_ACCOUNTS[0]["name"],
+    admin_password: str = DEMO_ACCOUNTS[0]["password"],
+    include_supporting_accounts: bool = True,
+) -> list[Account]:
     roles = {
         "admin": await _ensure_role(
             db,
@@ -275,7 +301,14 @@ async def _ensure_demo_accounts(db: AsyncSession, tenant_id: uuid.UUID, org_id: 
         ),
     }
     accounts: list[Account] = []
-    for item in DEMO_ACCOUNTS:
+    account_specs = _demo_accounts_for_request(
+        admin_email=admin_email,
+        admin_name=admin_name,
+        admin_password=admin_password,
+    )
+    if not include_supporting_accounts:
+        account_specs = account_specs[:1]
+    for item in account_specs:
         result = await db.execute(
             select(Account)
             .options(selectinload(Account.roles))
@@ -361,7 +394,13 @@ async def _ensure_demo_accounts(db: AsyncSession, tenant_id: uuid.UUID, org_id: 
     return accounts
 
 
-async def _ensure_committed_demo_admin(tenant_id: uuid.UUID, admin_email: str) -> uuid.UUID:
+async def _ensure_committed_demo_admin(
+    tenant_id: uuid.UUID,
+    *,
+    admin_email: str,
+    admin_name: str,
+    admin_password: str,
+) -> uuid.UUID:
     """Commit demo identity repair before the control plane creates a CLI credential."""
 
     async with async_session() as db:
@@ -369,13 +408,58 @@ async def _ensure_committed_demo_admin(tenant_id: uuid.UUID, admin_email: str) -
         tenant = await _open_tenant_scope(db, tenant_id)
         _enable_demo_features(tenant)
         organization = await _get_default_org(db, tenant.id)
-        accounts = await _ensure_demo_accounts(db, tenant.id, organization.id)
+        accounts = await _ensure_demo_accounts(
+            db,
+            tenant.id,
+            organization.id,
+            admin_email=admin_email,
+            admin_name=admin_name,
+            admin_password=admin_password,
+            include_supporting_accounts=False,
+        )
         admin = next((account for account in accounts if account.email == admin_email), None)
         if admin is None:
             raise RuntimeError("Durable demo admin is unavailable")
         admin_id = admin.id
+        await refresh_quota_usage_from_authoritative_rows(db, tenant.id)
         await db.commit()
         return admin_id
+
+
+def _demo_diversion_uuid(tenant_id: uuid.UUID, resource: str) -> uuid.UUID:
+    return uuid.uuid5(uuid.NAMESPACE_URL, f"yimatong:official-seed:diversion:v1:{tenant_id}:{resource}")
+
+
+async def _ensure_demo_scan_history_and_quota(
+    tenant_id: uuid.UUID,
+    activated_public_ids: list[str],
+    diversion_public_id: str | None = None,
+) -> None:
+    async with control_session() as scan_db:
+        await set_session_tenant_context(scan_db, tenant_id)
+        await _ensure_scan_events(scan_db, tenant_id, activated_public_ids)
+        if diversion_public_id:
+            scan_event_id = _demo_diversion_uuid(tenant_id, "scan")
+            if await scan_db.get(ScanEvent, scan_event_id) is None:
+                scan_db.add(
+                    ScanEvent(
+                        id=scan_event_id,
+                        tenant_id=tenant_id,
+                        public_id=diversion_public_id,
+                        scan_time=datetime(2026, 1, 1, 8, tzinfo=UTC),
+                        ip_hash=f"demo-diversion-{tenant_id.hex[:32]}",
+                        user_agent="Mozilla/5.0 Demo Diversion Observation",
+                        is_first_scan=False,
+                        environment="wechat",
+                        is_valid_visit=True,
+                        location_source="ip_inference",
+                        location_accuracy="medium",
+                        location_authorized=None,
+                    )
+                )
+                await scan_db.flush()
+        await refresh_quota_usage_from_authoritative_rows(scan_db, tenant_id)
+        await scan_db.commit()
 
 
 async def _ensure_production_batch(
@@ -556,7 +640,15 @@ async def _create_and_deliver_seed_code_batch(
         idempotency_key=_seed_code_generation_idempotency_key(tenant_id, production_batch_id),
     )
     batch_id = uuid.UUID(data["id"])
-    await generate_code_csv(db, tenant_id, batch_id, created_by)
+    if seed_owner_session_factory is None:
+        raise RuntimeError("migration_database_url is required for trusted seed export authority")
+    await generate_code_csv(
+        db,
+        tenant_id,
+        batch_id,
+        created_by,
+        seed_owner_session_factory=seed_owner_session_factory,
+    )
     await mark_printing(db, tenant_id, batch_id, actor_id=str(created_by))
     await mark_delivered(
         db,
@@ -625,6 +717,7 @@ async def _ensure_demo_codes(
                 items[2].id,
                 actor_id=str(created_by),
                 reason="source=official_seed; purpose=risk_freeze_sample",
+                idempotency_key=f"official-seed-freeze:{tenant_id}:{items[2].id}",
             )
     return list(
         await db.scalars(
@@ -660,12 +753,16 @@ async def _ensure_scan_events(db: AsyncSession, tenant_id: uuid.UUID, activated_
         await aggregate_daily_stats(db, tenant_id, (now - timedelta(days=offset)).date())
 
 
+def _channel_seed_idem(tenant_id: uuid.UUID, action: str, natural_key: str) -> str:
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, f"yimatong:official-seed:{tenant_id}:{action}:{natural_key}"))
+
+
 async def _ensure_demo_channels(
     db: AsyncSession,
     tenant_id: uuid.UUID,
     accounts: list[Account],
     code_items: list[CodeItem],
-) -> None:
+) -> tuple[Distributor, Region]:
     from app.models.code import CodeBatch
 
     distributor = (
@@ -674,89 +771,152 @@ async def _ensure_demo_channels(
         )
     ).scalar_one_or_none()
     if not distributor:
-        distributor = Distributor(
-            tenant_id=tenant_id,
+        distributor = await channel_authority.create_distributor(
+            db,
+            tenant_id,
+            idempotency_key=_channel_seed_idem(tenant_id, "create-distributor", "DEMO-DIST-EAST"),
             name="华东经销商",
             code="DEMO-DIST-EAST",
             contact_name="陈经理",
+            contact_phone=None,
             status="active",
         )
-        db.add(distributor)
-        await db.flush()
+    elif distributor.name != "华东经销商" or distributor.contact_name != "陈经理" or distributor.status != "active":
+        distributor = await channel_authority.update_distributor(
+            db,
+            tenant_id,
+            distributor.id,
+            expected_version=distributor.version,
+            idempotency_key=_channel_seed_idem(
+                tenant_id, "update-distributor", f"{distributor.id}:v{distributor.version}"
+            ),
+            changes={"name": "华东经销商", "contact_name": "陈经理", "status": "active"},
+        )
 
     region = (
         await db.execute(select(Region).where(Region.tenant_id == tenant_id, Region.code == "DEMO-REG-SH"))
     ).scalar_one_or_none()
     if not region:
-        region = Region(
-            tenant_id=tenant_id,
-            name="上海区域",
-            code="DEMO-REG-SH",
-            province="上海",
-            city="上海",
-            coverage_type="city",
-            coverage_areas=[{"province": "上海", "city": "上海"}],
-            distributor_id=distributor.id,
-            status="active",
+        region = await channel_authority.create_region(
+            db,
+            tenant_id,
+            idempotency_key=_channel_seed_idem(tenant_id, "create-region", "DEMO-REG-SH"),
+            payload={
+                "name": "上海区域",
+                "code": "DEMO-REG-SH",
+                "province": "上海",
+                "city": "上海",
+                "coverage_type": "city",
+                "coverage_areas": [{"province": "上海", "city": "上海"}],
+                "distributor_id": distributor.id,
+                "status": "active",
+            },
         )
-        db.add(region)
-        await db.flush()
-    else:
-        region.coverage_type = "city"
-        region.coverage_areas = [{"province": "上海", "city": "上海"}]
-        region.distributor_id = distributor.id
-        region.status = "active"
+    elif (
+        region.coverage_type != "city"
+        or region.coverage_areas != [{"province": "上海", "city": "上海"}]
+        or region.distributor_id != distributor.id
+        or region.status != "active"
+    ):
+        region = await channel_authority.update_region(
+            db,
+            tenant_id,
+            region.id,
+            expected_version=region.version,
+            idempotency_key=_channel_seed_idem(tenant_id, "update-region", f"{region.id}:v{region.version}"),
+            changes={
+                "coverage_type": "city",
+                "coverage_areas": [{"province": "上海", "city": "上海"}],
+                "distributor_id": distributor.id,
+                "status": "active",
+            },
+        )
 
     south_region = (
         await db.execute(select(Region).where(Region.tenant_id == tenant_id, Region.code == "DEMO-REG-SU"))
     ).scalar_one_or_none()
     if not south_region:
-        south_region = Region(
-            tenant_id=tenant_id,
-            name="苏南区域",
-            code="DEMO-REG-SU",
-            province="江苏",
-            city=None,
-            coverage_type="province",
-            coverage_areas=[{"province": "江苏", "city": None}],
-            distributor_id=distributor.id,
-            status="active",
+        south_region = await channel_authority.create_region(
+            db,
+            tenant_id,
+            idempotency_key=_channel_seed_idem(tenant_id, "create-region", "DEMO-REG-SU"),
+            payload={
+                "name": "苏南区域",
+                "code": "DEMO-REG-SU",
+                "province": "江苏",
+                "city": None,
+                "coverage_type": "province",
+                "coverage_areas": [{"province": "江苏", "city": None}],
+                "distributor_id": distributor.id,
+                "status": "active",
+            },
         )
-        db.add(south_region)
-        await db.flush()
-    else:
-        south_region.city = None
-        south_region.coverage_type = "province"
-        south_region.coverage_areas = [{"province": "江苏", "city": None}]
-        south_region.distributor_id = distributor.id
-        south_region.status = "active"
+    elif (
+        south_region.city is not None
+        or south_region.coverage_type != "province"
+        or south_region.coverage_areas != [{"province": "江苏", "city": None}]
+        or south_region.distributor_id != distributor.id
+        or south_region.status != "active"
+    ):
+        south_region = await channel_authority.update_region(
+            db,
+            tenant_id,
+            south_region.id,
+            expected_version=south_region.version,
+            idempotency_key=_channel_seed_idem(
+                tenant_id, "update-region", f"{south_region.id}:v{south_region.version}"
+            ),
+            changes={
+                "city": None,
+                "coverage_type": "province",
+                "coverage_areas": [{"province": "江苏", "city": None}],
+                "distributor_id": distributor.id,
+                "status": "active",
+            },
+        )
 
     store = (
         await db.execute(select(Store).where(Store.tenant_id == tenant_id, Store.code == "DEMO-STORE-NJDL"))
     ).scalar_one_or_none()
     if not store:
-        store = Store(
-            tenant_id=tenant_id,
-            name="南京东路店",
-            code="DEMO-STORE-NJDL",
-            region_id=region.id,
-            distributor_id=distributor.id,
-            address="上海市黄浦区南京东路",
-            status="active",
+        store = await channel_authority.create_store(
+            db,
+            tenant_id,
+            idempotency_key=_channel_seed_idem(tenant_id, "create-store", "DEMO-STORE-NJDL"),
+            payload={
+                "name": "南京东路店",
+                "code": "DEMO-STORE-NJDL",
+                "region_id": region.id,
+                "distributor_id": distributor.id,
+                "address": "上海市黄浦区南京东路",
+                "status": "active",
+            },
         )
-        db.add(store)
-        await db.flush()
-    else:
-        store.region_id = region.id
-        store.distributor_id = distributor.id
-        store.status = "active"
+    elif store.region_id != region.id or store.distributor_id != distributor.id or store.status != "active":
+        store = await channel_authority.update_store(
+            db,
+            tenant_id,
+            store.id,
+            expected_version=store.version,
+            idempotency_key=_channel_seed_idem(tenant_id, "update-store", f"{store.id}:v{store.version}"),
+            changes={"region_id": region.id, "distributor_id": distributor.id, "status": "active"},
+        )
 
     batch_id = code_items[0].code_batch_id if code_items else None
     if batch_id:
         code_batch = (await db.execute(select(CodeBatch).where(CodeBatch.id == batch_id))).scalar_one_or_none()
         if code_batch:
-            code_batch.distributor_id = distributor.id
-            code_batch.region_id = region.id
+            if code_batch.distributor_id != distributor.id or code_batch.region_id != region.id:
+                await channel_authority.assign_batch(
+                    db,
+                    tenant_id,
+                    code_batch.id,
+                    idempotency_key=_channel_seed_idem(
+                        tenant_id, "assign-batch", f"{code_batch.id}:{distributor.id}:{region.id}"
+                    ),
+                    distributor_id=distributor.id,
+                    region_id=region.id,
+                )
 
         existing_alloc = (
             await db.execute(
@@ -764,24 +924,36 @@ async def _ensure_demo_channels(
                     CodeAllocation.tenant_id == tenant_id,
                     CodeAllocation.batch_id == batch_id,
                     CodeAllocation.store_id == store.id,
+                    CodeAllocation.effective_to.is_(None),
+                    CodeAllocation.status == "active",
                 )
             )
         ).scalar_one_or_none()
         if existing_alloc:
-            existing_alloc.quantity = 8
-            existing_alloc.distributor_id = distributor.id
-            existing_alloc.region_id = region.id
-        else:
-            db.add(
-                CodeAllocation(
-                    tenant_id=tenant_id,
-                    batch_id=batch_id,
-                    store_id=store.id,
-                    region_id=region.id,
-                    distributor_id=distributor.id,
+            if existing_alloc.quantity != 8:
+                await channel_authority.reassign_allocation(
+                    db,
+                    tenant_id,
+                    existing_alloc.id,
+                    expected_version=existing_alloc.version,
+                    idempotency_key=_channel_seed_idem(
+                        tenant_id, "reassign-allocation", f"{existing_alloc.allocation_root_id}:8"
+                    ),
+                    target_type="store",
+                    target_id=store.id,
                     quantity=8,
-                    allocated_at=utcnow().replace(microsecond=0).isoformat(),
+                    reason="official seed restores the store allocation",
                 )
+        else:
+            await channel_authority.allocate(
+                db,
+                tenant_id,
+                idempotency_key=_channel_seed_idem(tenant_id, "allocate-store", f"{batch_id}:{store.id}"),
+                batch_id=batch_id,
+                target_type="store",
+                target_id=store.id,
+                quantity=8,
+                reason="official seed creates the store allocation",
             )
         existing_region_alloc = (
             await db.execute(
@@ -790,53 +962,78 @@ async def _ensure_demo_channels(
                     CodeAllocation.batch_id == batch_id,
                     CodeAllocation.region_id == south_region.id,
                     CodeAllocation.store_id.is_(None),
+                    CodeAllocation.effective_to.is_(None),
+                    CodeAllocation.status == "active",
                 )
             )
         ).scalar_one_or_none()
         if existing_region_alloc:
-            existing_region_alloc.quantity = 2
-            existing_region_alloc.distributor_id = distributor.id
-        else:
-            db.add(
-                CodeAllocation(
-                    tenant_id=tenant_id,
-                    batch_id=batch_id,
-                    region_id=south_region.id,
-                    distributor_id=distributor.id,
+            if existing_region_alloc.quantity != 2:
+                await channel_authority.reassign_allocation(
+                    db,
+                    tenant_id,
+                    existing_region_alloc.id,
+                    expected_version=existing_region_alloc.version,
+                    idempotency_key=_channel_seed_idem(
+                        tenant_id, "reassign-allocation", f"{existing_region_alloc.allocation_root_id}:2"
+                    ),
+                    target_type="region",
+                    target_id=south_region.id,
                     quantity=2,
-                    allocated_at=utcnow().replace(microsecond=0).isoformat(),
+                    reason="official seed restores the regional allocation",
                 )
+        else:
+            await channel_authority.allocate(
+                db,
+                tenant_id,
+                idempotency_key=_channel_seed_idem(tenant_id, "allocate-region", f"{batch_id}:{south_region.id}"),
+                batch_id=batch_id,
+                target_type="region",
+                target_id=south_region.id,
+                quantity=2,
+                reason="official seed creates the regional allocation",
             )
-
-    pending_clue = (
-        await db.execute(
-            select(DiversionClue).where(
-                DiversionClue.tenant_id == tenant_id,
-                DiversionClue.public_id == "DEMO-DIVERSION",
-            )
-        )
-    ).scalar_one_or_none()
-    if not pending_clue and code_items:
-        db.add(
-            DiversionClue(
-                tenant_id=tenant_id,
-                public_id="DEMO-DIVERSION",
-                code_item_id=code_items[0].id,
-                expected_region="上海",
-                detected_city="北京",
-                distributor_id=distributor.id,
-                region_id=region.id,
-                ip_hash="demo-diversion-ip",
-                resolved=False,
-            )
-        )
 
     dist_account = next((account for account in accounts if account.email == "dist@demo.com"), None)
     store_account = next((account for account in accounts if account.email == "store@demo.com"), None)
     if dist_account:
-        await create_account_scope(db, tenant_id, dist_account.id, "distributor", distributor_id=distributor.id)
+        existing_scope = await db.scalar(
+            select(AccountChannelScope).where(
+                AccountChannelScope.tenant_id == tenant_id,
+                AccountChannelScope.account_id == dist_account.id,
+                AccountChannelScope.scope_type == "distributor",
+            )
+        )
+        if existing_scope is None or existing_scope.target_id != distributor.id:
+            await channel_authority.set_scope(
+                db,
+                tenant_id,
+                idempotency_key=_channel_seed_idem(
+                    tenant_id, "scope-distributor", f"{dist_account.id}:{distributor.id}"
+                ),
+                account_id=dist_account.id,
+                scope_type="distributor",
+                target_id=distributor.id,
+            )
     if store_account:
-        await create_account_scope(db, tenant_id, store_account.id, "store", store_id=store.id)
+        existing_scope = await db.scalar(
+            select(AccountChannelScope).where(
+                AccountChannelScope.tenant_id == tenant_id,
+                AccountChannelScope.account_id == store_account.id,
+                AccountChannelScope.scope_type == "store",
+            )
+        )
+        if existing_scope is None or existing_scope.target_id != store.id:
+            await channel_authority.set_scope(
+                db,
+                tenant_id,
+                idempotency_key=_channel_seed_idem(tenant_id, "scope-store", f"{store_account.id}:{store.id}"),
+                account_id=store_account.id,
+                scope_type="store",
+                target_id=store.id,
+            )
+
+    return distributor, region
 
 
 @app.command()
@@ -952,6 +1149,7 @@ def all(
 ):
     """一键创建全部演示数据（租户 + 角色账号 + 产品 + 码 + 页面 + 活动 + 扫码数据）"""
 
+    canonical_admin_email = normalize_email(admin_email)
     _guard_seed_mutation(
         command="all seed",
         target=slug,
@@ -965,7 +1163,7 @@ def all(
         tenant_id, created = await _ensure_tenant(
             name=name,
             slug=slug,
-            admin_email=admin_email,
+            admin_email=canonical_admin_email,
             admin_name=admin_name,
             admin_password=admin_password,
         )
@@ -974,7 +1172,12 @@ def all(
         else:
             typer.echo(f"Tenant '{slug}' already exists (id={tenant_id})")
 
-        admin_id = await _ensure_committed_demo_admin(tenant_id, admin_email)
+        admin_id = await _ensure_committed_demo_admin(
+            tenant_id,
+            admin_email=canonical_admin_email,
+            admin_name=admin_name,
+            admin_password=admin_password,
+        )
         async with AsyncExitStack() as stack:
             await stack.enter_async_context(
                 cli_lifecycle_auth_context(
@@ -990,6 +1193,14 @@ def all(
             await lock_quota_rollout_state(db)
             t = await _open_tenant_scope(db, tenant_id)
             _enable_demo_features(t)
+            await _ensure_demo_accounts(
+                db,
+                t.id,
+                (await _get_default_org(db, t.id)).id,
+                admin_email=canonical_admin_email,
+                admin_name=admin_name,
+                admin_password=admin_password,
+            )
 
             # 2. 创建品牌 + 产品 + SKU
             b = await create_brand_if_needed(db, t.id, brand)
@@ -1016,20 +1227,61 @@ def all(
             )
             activated_public_ids = [item.public_id for item in code_items if item.status == CodeItemStatus.activated]
             accounts = list((await db.scalars(select(Account).where(Account.tenant_id == t.id))).all())
-            await _ensure_demo_channels(db, t.id, accounts, code_items)
+            distributor, region = await _ensure_demo_channels(db, t.id, accounts, code_items)
             await refresh_quota_usage_from_authoritative_rows(db, t.id)
             await db.commit()
 
             # Historical demo scans are synthetic control-plane fixtures, not
             # resolver-authoritative runtime writes. Keep runtime table DML
             # revoked and bind the control session to the exact tenant.
-            async with control_session() as scan_db:
-                await set_session_tenant_context(scan_db, t.id)
-                await _ensure_scan_events(scan_db, t.id, activated_public_ids)
-                await scan_db.commit()
+            diversion_item = next(
+                (item for item in code_items if item.status == CodeItemStatus.activated),
+                None,
+            )
+            await _ensure_demo_scan_history_and_quota(
+                t.id,
+                activated_public_ids,
+                diversion_item.public_id if diversion_item else None,
+            )
+            if diversion_item:
+                await set_session_tenant_context(db, t.id)
+                scan_event = await db.scalar(
+                    select(ScanEvent).where(
+                        ScanEvent.tenant_id == t.id,
+                        ScanEvent.id == _demo_diversion_uuid(t.id, "scan"),
+                        ScanEvent.public_id == diversion_item.public_id,
+                    )
+                )
+                if scan_event is None:
+                    raise RuntimeError("Committed official diversion scan fact is unavailable")
+                await diversion_authority.record_observation(
+                    db,
+                    t.id,
+                    observation_id=_demo_diversion_uuid(t.id, "observation"),
+                    scan_event_id=scan_event.id,
+                    scan_time=scan_event.scan_time,
+                    idempotency_key=f"official-seed-diversion-v1-{t.id.hex}",
+                    public_id=diversion_item.public_id,
+                    code_item_id=diversion_item.id,
+                    ip_hash=scan_event.ip_hash,
+                    detected_city="北京",
+                    expected_region="上海",
+                    location_source="ip_inference",
+                    location_accuracy="medium",
+                    location_authorized=None,
+                    distributor_id=distributor.id,
+                    region_id=region.id,
+                    rule_name="cross_region_ip",
+                    confidence="high",
+                )
+                await db.commit()
 
         typer.echo("\nDemo seed complete. Quick login accounts:")
-        for account in DEMO_ACCOUNTS:
+        for account in _demo_accounts_for_request(
+            admin_email=canonical_admin_email,
+            admin_name=admin_name,
+            admin_password=admin_password,
+        ):
             typer.echo(f"  {account['title']}: {account['email']} / {account['password']} ({account['role']})")
         active_code = next((item.public_id for item in code_items if item.status == CodeItemStatus.activated), None)
         revoked_code = next((item.public_id for item in code_items if item.status == CodeItemStatus.revoked), None)

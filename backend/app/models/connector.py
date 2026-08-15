@@ -145,8 +145,9 @@ class BenefitDelivery(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
-
     __table_args__ = (
+        UniqueConstraint("tenant_id", "id", name="uq_benefit_deliveries_tenant_id_id"),
+        Index("uq_benefit_deliveries_tenant_id_id_downgrade", "tenant_id", "id", unique=True),
         ForeignKeyConstraint(
             ["tenant_id", "connector_id"],
             ["connectors.tenant_id", "connectors.id"],
@@ -180,6 +181,13 @@ class BenefitDelivery(Base):
         Index("ix_benefit_deliveries_tenant_status", "tenant_id", "status"),
         Index("ix_benefit_deliveries_retry", "status", "next_retry_at"),
         Index(
+            "ix_campaign_delivery_legacy_retry",
+            "tenant_id",
+            "next_retry_at",
+            "id",
+            postgresql_where=text("campaign_outbox_id IS NULL AND status='pending'"),
+        ),
+        Index(
             "uq_benefit_deliveries_authority_claim",
             "tenant_id",
             "claim_id",
@@ -187,4 +195,41 @@ class BenefitDelivery(Base):
             postgresql_where=text("campaign_outbox_id IS NOT NULL"),
             sqlite_where=text("campaign_outbox_id IS NOT NULL"),
         ),
+    )
+
+
+class CampaignDeliveryCallbackAttempt(Base):
+    """Immutable verified-provider callback history for a canonical campaign delivery."""
+
+    __tablename__ = "campaign_delivery_callback_attempts"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid7)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
+    delivery_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
+    claim_id: Mapped[uuid.UUID] = mapped_column(nullable=False)
+    callback_status: Mapped[str] = mapped_column(String(20), nullable=False)
+    external_id: Mapped[str] = mapped_column(String(200), nullable=False)
+    payload_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    recorded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "id", name="uq_campaign_callback_attempts_tenant_id"),
+        UniqueConstraint(
+            "tenant_id", "delivery_id", "callback_status", name="uq_campaign_callback_attempts_delivery_status"
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "delivery_id"],
+            ["benefit_deliveries.tenant_id", "benefit_deliveries.id"],
+            name="fk_campaign_callback_attempts_tenant_delivery",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "claim_id"],
+            ["benefit_claims.tenant_id", "benefit_claims.id"],
+            name="fk_campaign_callback_attempts_tenant_claim",
+            ondelete="RESTRICT",
+        ),
+        CheckConstraint("callback_status IN ('failed','success')", name="ck_campaign_callback_attempts_status"),
+        CheckConstraint("length(payload_digest) = 64", name="ck_campaign_callback_attempts_digest"),
+        Index("ix_campaign_callback_attempts_delivery_time", "tenant_id", "delivery_id", "recorded_at"),
     )

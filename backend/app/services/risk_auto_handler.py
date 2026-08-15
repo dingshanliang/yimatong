@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import logging
 import uuid
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -18,31 +18,13 @@ from app.core.event_bus import event_bus
 from app.models.code import CodeItem, CodeItemStatus
 from app.models.risk import RiskRule
 from app.models.scan import ScanEvent
-from app.services.risk_rule import _evaluate_rule
 from app.utils import utcnow
 
 logger = logging.getLogger(__name__)
 
-DEDUP_KEY_PREFIX = "ymt:risk:dedup:"
-DEDUP_TTL_SECONDS = 300  # 5 分钟冷却
-
-
-async def _check_dedup(tenant_id: str, rule_id: str, public_id: str) -> bool:
-    """Redis 去重：同一规则 + 同一码在冷却窗口内不重复触发。"""
-    try:
-        import redis.asyncio as aioredis
-
-        from app.core.config import settings
-
-        key = f"{DEDUP_KEY_PREFIX}{tenant_id}:{rule_id}:{public_id}"
-        async with aioredis.from_url(settings.redis_url) as r:
-            exists = await r.exists(key)
-            if not exists:
-                await r.setex(key, DEDUP_TTL_SECONDS, "1")
-            return bool(exists)
-    except Exception:
-        logger.warning("Redis dedup check failed, proceeding without dedup")
-        return False
+def _event_handler_owns_diversion_observation(data: dict) -> bool:
+    """Keep fallback ownership unless the producer names resolver authority."""
+    return data.get("diversion_observation_owner") != "resolver"
 
 
 async def _build_scan_context(
@@ -144,6 +126,8 @@ async def _check_and_record_diversion(
     tenant_id: uuid.UUID,
     public_id: str,
     ip_or_hash: str | None,
+    scan_event_id: str | None,
+    scan_time: str | None,
 ) -> dict | None:
     """执行跨区检测并记录线索。返回跨区信息或 None。
 
@@ -156,7 +140,15 @@ async def _check_and_record_diversion(
     from app.services.channel import check_diversion
 
     try:
-        clue = await check_diversion(db, tenant_id, public_id, ip_or_hash)
+        clue = await check_diversion(
+            db,
+            tenant_id,
+            public_id,
+            ip_or_hash,
+            scan_event_id=uuid.UUID(scan_event_id) if scan_event_id else None,
+            scan_time=datetime.fromisoformat(scan_time) if scan_time else None,
+            observation_ip_hash=ip_or_hash,
+        )
         if clue:
             return {
                 "detected_city": clue.detected_city,
@@ -173,10 +165,12 @@ async def _handle_scan_created(event_type: str, data: dict, tenant_id: str) -> N
     from app.core.database import async_session_factory, set_session_tenant_context
 
     public_id = data.get("public_id")
-    if not public_id:
+    scan_event_id_raw = data.get("scan_event_id")
+    if not public_id or not scan_event_id_raw:
         return
 
     tenant_uuid = uuid.UUID(tenant_id)
+    scan_event_id = uuid.UUID(scan_event_id_raw)
 
     async with async_session_factory() as db:
         await set_session_tenant_context(db, tenant_uuid)
@@ -223,7 +217,16 @@ async def _handle_scan_created(event_type: str, data: dict, tenant_id: str) -> N
 
             # 跨区检测（yimatong-zgb1.7：用 ip_hash 替代 raw ip；scan.created 现在携带 ip_hash）
             ip_hash = data.get("ip_hash")
-            diversion_info = await _check_and_record_diversion(db, tenant_uuid, public_id, ip_hash)
+            diversion_info = None
+            if _event_handler_owns_diversion_observation(data):
+                diversion_info = await _check_and_record_diversion(
+                    db,
+                    tenant_uuid,
+                    public_id,
+                    ip_hash,
+                    data.get("scan_event_id"),
+                    data.get("scan_time"),
+                )
             if diversion_info:
                 context["cross_region_detected"] = True
                 context["detected_region"] = diversion_info["detected_city"]
@@ -236,30 +239,26 @@ async def _handle_scan_created(event_type: str, data: dict, tenant_id: str) -> N
                     cross_ctx["cross_region_detected"] = True
                     context.update(cross_ctx)
 
-            # 逐条评估规则
+            # PostgreSQL reloads the exact scan/rule pair and atomically owns
+            # evaluation, receipt deduplication, alerting, pauses, and outbox.
             for rule in rules:
-                # Redis 去重
-                if await _check_dedup(tenant_id, str(rule.id), public_id):
-                    continue
+                from app.services.risk_action import execute_risk_action
 
-                if _evaluate_rule(rule, context):
+                result = await execute_risk_action(
+                    db,
+                    tenant_uuid,
+                    scan_event_id=scan_event_id,
+                    rule=rule,
+                    context=context,
+                    idempotency_key=f"scan-risk:{scan_event_id}:{rule.id}",
+                )
+                if result["triggered"]:
                     logger.info(
-                        "Risk rule triggered: rule=%s public_id=%s action=%s",
+                        "Risk rule triggered: rule=%s scan_event=%s action=%s replayed=%s",
                         rule.name,
-                        public_id,
-                        rule.action,
-                    )
-
-                    # 执行处置动作
-                    from app.services.risk_action import execute_risk_action
-
-                    await execute_risk_action(
-                        db=db,
-                        tenant_id=tenant_uuid,
-                        rule=rule,
-                        public_id=public_id,
-                        code_item=code_item,
-                        context=context,
+                        scan_event_id,
+                        result["action"],
+                        result["replayed"],
                     )
 
             await db.commit()

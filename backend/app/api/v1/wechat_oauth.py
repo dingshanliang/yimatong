@@ -15,23 +15,24 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
-from uuid6 import uuid7
 
 from app.core.config import settings
 from app.core.database import get_db_for_consumer, set_session_tenant_context
 from app.models.campaign import Benefit
 from app.models.connector import Connector
-from app.models.consent import ConsentRecord, ConsentStatus, ConsentType
-from app.models.member import ConsumerProfile
-from app.services.audit import write_audit_log
 from app.services.connectors.secrets import decrypt_secrets
-from app.services.consent import grant_consent
+from app.services.consent import (
+    get_consumer_consent_receipt_status,
+    get_current_consumer_policy,
+    grant_consumer_consent_authority,
+    require_consumer_scan_authority,
+)
 from app.services.redis_cache import get_redis_pool
 from app.services.scan_token import bind_scan_token_consumer, verify_scan_token
+from app.services.visitor import link_visitor_to_consumer
+from app.services.wechat_oauth_authority import bind_wechat_oauth_consumer_authority
 from app.utils.client_ip import compute_ip_hash, get_client_ip
-from app.utils.crypto import encrypt_wechat_openid, hash_wechat_openid
 
 wechat_oauth_router = APIRouter(prefix="/api/v1/wechat", tags=["wechat-oauth"])
 
@@ -39,7 +40,6 @@ _AUTHORIZE_URL = "https://open.weixin.qq.com/connect/oauth2/authorize"
 _TOKEN_URL = "https://api.weixin.qq.com/sns/oauth2/access_token"
 _STATE_TTL_SECONDS = 300
 _CALLBACK_LOCK_SECONDS = 30
-_OAUTH_POLICY_VERSION = "2026-08-11-v1"
 
 
 class WeChatOAuthStart(BaseModel):
@@ -116,52 +116,6 @@ def _oauth_credentials(connector: Connector) -> tuple[str, str]:
     return appid, secret
 
 
-async def _bind_openid(
-    db: AsyncSession,
-    tenant_id: uuid.UUID,
-    scan_payload: dict,
-    openid: str,
-) -> ConsumerProfile:
-    openid_hash = hash_wechat_openid(tenant_id, openid)
-    consumer: ConsumerProfile | None = None
-    consumer_id = scan_payload.get("consumer_id")
-    if isinstance(consumer_id, str) and consumer_id:
-        try:
-            consumer = await db.scalar(
-                select(ConsumerProfile).where(
-                    ConsumerProfile.id == uuid.UUID(consumer_id),
-                    ConsumerProfile.tenant_id == tenant_id,
-                )
-            )
-        except ValueError:
-            consumer = None
-        if consumer is None:
-            raise HTTPException(status_code=401, detail="invalid consumer identity")
-        if consumer.wechat_openid_hash not in (None, openid_hash):
-            raise HTTPException(status_code=409, detail="consumer is already bound to another WeChat account")
-    else:
-        consumer = await db.scalar(
-            select(ConsumerProfile).where(
-                ConsumerProfile.tenant_id == tenant_id,
-                ConsumerProfile.wechat_openid_hash == openid_hash,
-            )
-        )
-        if consumer is None:
-            consumer = ConsumerProfile(id=uuid7(), tenant_id=tenant_id)
-            db.add(consumer)
-
-    ciphertext, nonce, key_id = encrypt_wechat_openid(tenant_id, consumer.id, openid)
-    consumer.wechat_openid_hash = openid_hash
-    consumer.wechat_openid_ciphertext = ciphertext
-    consumer.wechat_openid_nonce = nonce
-    consumer.wechat_openid_key_id = key_id
-    try:
-        await db.flush()
-    except IntegrityError as exc:
-        raise HTTPException(status_code=409, detail="WeChat account is already bound") from exc
-    return consumer
-
-
 @wechat_oauth_router.post("/auth-url")
 async def get_auth_url(
     request: Request,
@@ -181,19 +135,12 @@ async def get_auth_url(
     connector = await _cash_connector(db, tenant_id, body.benefit_id)
     appid, _secret = _oauth_credentials(connector)
 
-    public_id = str(payload.get("public_id") or "")
-    token_jti = str(payload.get("jti") or "")
-    if not public_id or not token_jti:
-        raise HTTPException(status_code=401, detail="scan credential lacks OAuth authority")
-    try:
-        token_consumer_id = uuid.UUID(payload["consumer_id"]) if payload.get("consumer_id") else None
-    except (TypeError, ValueError) as exc:
-        raise HTTPException(status_code=401, detail="invalid consumer identity") from exc
+    authority = require_consumer_scan_authority(payload)
     redis = await get_redis_pool()
     if redis is None:
         raise HTTPException(status_code=503, detail="OAuth state service unavailable")
     state = secrets.token_hex(32)
-    pending_key = _pending_key(token_jti)
+    pending_key = _pending_key(authority.rate_subject)
     client_ip = get_client_ip(request)
     script_result = await redis.eval(
         _START_STATE_SCRIPT,
@@ -210,30 +157,46 @@ async def get_auth_url(
     state = selected_state
     if outcome == 0:
         try:
-            consent = await grant_consent(
+            if authority.consumer_id is not None and not await link_visitor_to_consumer(
                 db,
                 tenant_id,
-                ConsentType.privacy,
-                public_id=public_id,
-                consumer_id=token_consumer_id,
-                ip_hash=payload.get("ip_hash"),
-                scenario="wechat_cash_payout",
-                policy_version=_OAUTH_POLICY_VERSION,
-                user_agent=request.headers.get("user-agent"),
+                authority.visitor_id,
+                authority.consumer_id,
+            ):
+                raise HTTPException(status_code=403, detail="consumer_visitor_subject_denied")
+            policy = await get_current_consumer_policy(db, tenant_id, "wechat_cash_payout")
+            consent = await grant_consumer_consent_authority(
+                db,
+                tenant_id=tenant_id,
+                purpose="wechat_cash_payout",
+                expected_version=policy["policy_version"],
+                expected_digest=policy["policy_digest"],
+                scan_event_id=authority.scan_event_id,
+                scan_time=authority.scan_time,
+                public_id=authority.public_id,
+                visitor_id=authority.visitor_id,
+                token_consumer_id=authority.consumer_id,
+                ip_hash=compute_ip_hash(client_ip),
+                user_agent=request.headers.get("user-agent", ""),
+                idempotency_key=f"wechat-oauth:{state}",
             )
-            await db.commit()
+            if consent.get("status") != "granted":
+                raise HTTPException(status_code=409, detail="consent_authority_invalid")
+            consent_id = uuid.UUID(str(consent["consent_id"]))
             state_payload = json.dumps(
                 {
                     "tenant_id": str(tenant_id),
                     "benefit_id": str(body.benefit_id),
                     "scan_token": body.scan_token,
-                    "consent_id": str(consent.id),
+                    "consent_id": str(consent_id),
                     "pending_key": pending_key,
                 },
                 separators=(",", ":"),
             )
             await redis.setex(_state_key(state), _STATE_TTL_SECONDS, state_payload)
+            await db.commit()
         except Exception:
+            await db.rollback()
             await redis.delete(pending_key, _state_key(state))
             raise
     elif not await redis.exists(_state_key(state)):
@@ -291,22 +254,30 @@ async def oauth_callback(
         raise HTTPException(status_code=401, detail="expired scan credential")
 
     try:
+        authority = require_consumer_scan_authority(scan_payload)
         await set_session_tenant_context(db, tenant_id)
-        consent = await db.scalar(
-            select(ConsentRecord).where(
-                ConsentRecord.id == consent_id,
-                ConsentRecord.tenant_id == tenant_id,
-                ConsentRecord.public_id == scan_payload["public_id"],
-                ConsentRecord.consent_type == ConsentType.privacy,
-                ConsentRecord.scenario == "wechat_cash_payout",
-                ConsentRecord.policy_version == _OAUTH_POLICY_VERSION,
-                ConsentRecord.status == ConsentStatus.granted,
-                ConsentRecord.withdrawn_at.is_(None),
-            )
+        policy = await get_current_consumer_policy(db, tenant_id, "wechat_cash_payout")
+        receipt = await get_consumer_consent_receipt_status(
+            db,
+            tenant_id=tenant_id,
+            consent_id=consent_id,
+            scan_event_id=authority.scan_event_id,
+            scan_time=authority.scan_time,
+            public_id=authority.public_id,
+            visitor_id=authority.visitor_id,
+            token_consumer_id=authority.consumer_id,
         )
-        if consent is None:
+        if (
+            receipt.get("status") != "granted"
+            or receipt.get("purpose") != "wechat_cash_payout"
+            or receipt.get("policy_version") != policy["policy_version"]
+            or receipt.get("policy_digest") != policy["policy_digest"]
+        ):
             raise HTTPException(status_code=403, detail="consent_required")
         connector = await _cash_connector(db, tenant_id, benefit_id)
+        # Receipt status deliberately holds a NOWAIT share lock. End this read-only
+        # phase before the callback-only authority takes its write lock in another session.
+        await db.commit()
         appid, secret = _oauth_credentials(connector)
         async with httpx.AsyncClient(timeout=10.0) as client:
             response = await client.get(
@@ -320,28 +291,27 @@ async def oauth_callback(
         if not isinstance(openid, str) or not openid or oauth_data.get("errcode"):
             raise HTTPException(status_code=401, detail="WeChat OAuth was not granted")
 
-        consumer = await _bind_openid(db, tenant_id, scan_payload, openid)
-        consent.consumer_id = consumer.id
-        await db.flush()
-
-        await write_audit_log(
-            db,
-            str(consumer.id),
-            str(tenant_id),
-            "consumer_wechat_bound",
-            f"consumer_profile:{consumer.id}",
-            {"benefit_id": str(benefit_id), "public_id": scan_payload["public_id"], "consent_id": str(consent.id)},
+        bound = await bind_wechat_oauth_consumer_authority(
+            tenant_id=tenant_id,
+            consent_id=consent_id,
+            scan_event_id=authority.scan_event_id,
+            scan_time=authority.scan_time,
+            public_id=authority.public_id,
+            visitor_id=authority.visitor_id,
+            token_consumer_id=authority.consumer_id,
+            openid=openid,
+            benefit_id=benefit_id,
         )
-        await db.commit()
+        consumer_id = uuid.UUID(str(bound["consumer_id"]))
         await redis.delete(_state_key(state), pending_key)
 
-        rebound = bind_scan_token_consumer(scan_payload, consumer.id, scan_payload.get("ip_hash"))
+        rebound = bind_scan_token_consumer(scan_payload, consumer_id, scan_payload.get("ip_hash"))
         h5_url = f"{settings.h5_public_url.rstrip('/')}/c/{quote(scan_payload['public_id'], safe='')}"
         fragment = urlencode(
             {
                 "scan_token": rebound,
                 "benefit_id": str(benefit_id),
-                "consent_id": str(consent.id),
+                "consent_id": str(consent_id),
                 "oauth": "success",
             }
         )

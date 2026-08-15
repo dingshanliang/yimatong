@@ -8,14 +8,13 @@ import sys
 import time
 import uuid
 from contextlib import AsyncExitStack
-from datetime import date, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
 import typer
 from sqlalchemy import delete, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import selectinload
-from uuid6 import uuid7
 
 # 确保可以 import app 模块
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -34,6 +33,8 @@ from app.models.channel import (
 )
 from app.models.code import CodeBatch, CodeItem, CodeItemStatus
 from app.models.connector import Connector  # noqa: F401 - register FK for Benefit.connector_id
+from app.models.diversion_evidence import DiversionActionReceipt, DiversionEvidence, DiversionObservation
+from app.models.diversion_history import DiversionInvestigationHistory
 from app.models.member import (
     ConsumerProfile,
     PointProduct,
@@ -44,39 +45,43 @@ from app.models.member import (
 )
 from app.models.page import PageTemplate, PageVersion, PageVersionStatus
 from app.models.product import SKU, Brand, Product, ProductionBatch
-from app.models.risk import InterceptionRecord, RiskAlert, RiskAlertType, RiskNotification, RiskRule
 from app.models.scan import ScanEvent
 from app.models.tenant import (
     Account,
     AgencyAuthorization,
     AgencyAuthStatus,
     Organization,
+    Permission,
     Role,
     Tenant,
     TenantStatus,
     TenantType,
     account_roles,
+    role_permissions,
 )
 from app.modules.brand_tenant_initialization import (
     BrandTenantInitialization,
     InitializeBrandTenant,
     TrustedAutomationOpening,
 )
+from app.services import channel_authority, diversion_authority
 from app.services.analytics import aggregate_daily_stats
 from app.services.audit import write_audit_log
 from app.services.auth import revoke_current_tenant_account_sessions
 from app.services.campaign import change_campaign_status, create_benefit, create_campaign
-from app.services.channel import create_account_scope
 from app.services.code import activate_batch, create_code_batch, mark_delivered, mark_printing, revoke_code_item
 from app.services.code_export import generate_code_csv
 from app.services.entitlement import require_active_plan
+from app.services.member import create_anonymous_consumer_profile_authority
 from app.services.page import create_page_template, create_page_version, publish_page_version
 from app.services.product import create_brand, create_product, create_sku
 from app.services.quota import lock_quota_rollout_state, refresh_quota_usage_from_authoritative_rows
 from app.services.risk import freeze_code_item
+from app.services.risk_authority import evaluate_execute_scan, mutate_rule
 from app.services.tenant import create_tenant
 from app.utils import utcnow
-from app.utils.crypto import EnvKeyProvider, encrypt_wechat_openid, hash_wechat_openid, init_crypto
+from app.utils.auth_rbac import WEB_ROLE_PERMISSIONS
+from app.utils.crypto import EnvKeyProvider, init_crypto
 from app.utils.security import hash_password, verify_password
 
 app = typer.Typer(help="一码通演示数据生成器")
@@ -87,6 +92,11 @@ control_engine = create_async_engine(
     str(settings.control_database_url or settings.migration_database_url or settings.database_url)
 )
 control_session = async_sessionmaker(control_engine, class_=AsyncSession, expire_on_commit=False)
+if settings.migration_database_url is None:
+    seed_owner_session_factory: async_sessionmaker[AsyncSession] | None = None
+else:
+    seed_owner_engine = create_async_engine(str(settings.migration_database_url))
+    seed_owner_session_factory = async_sessionmaker(seed_owner_engine, class_=AsyncSession, expire_on_commit=False)
 
 TENANT_SLUG = "demo"
 TENANT_NAME = "青岭良仓演示租户"
@@ -864,11 +874,35 @@ async def _ensure_role(db: AsyncSession, tenant_id: uuid.UUID, name: str, descri
     role = result.scalar_one_or_none()
     if role:
         role.description = description
-        return role
-    role = Role(tenant_id=tenant_id, name=name, description=description)
-    db.add(role)
-    await db.flush()
-    await db.refresh(role)
+    else:
+        role = Role(tenant_id=tenant_id, name=name, description=description)
+        db.add(role)
+        await db.flush()
+        await db.refresh(role)
+
+    for code in WEB_ROLE_PERMISSIONS.get(name, []):
+        permission = await db.scalar(
+            select(Permission).where(Permission.tenant_id == tenant_id, Permission.code == code)
+        )
+        if permission is None:
+            permission = Permission(tenant_id=tenant_id, code=code, description=f"默认权限：{code}")
+            db.add(permission)
+            await db.flush()
+        linked = await db.scalar(
+            select(role_permissions.c.role_id).where(
+                role_permissions.c.tenant_id == tenant_id,
+                role_permissions.c.role_id == role.id,
+                role_permissions.c.permission_id == permission.id,
+            )
+        )
+        if linked is None:
+            await db.execute(
+                role_permissions.insert().values(
+                    tenant_id=tenant_id,
+                    role_id=role.id,
+                    permission_id=permission.id,
+                )
+            )
     return role
 
 
@@ -1127,7 +1161,15 @@ async def _create_and_deliver_demo_code_batch(
         idempotency_key=_demo_code_generation_idempotency_key(tenant_id, production_batch_id),
     )
     batch_id = uuid.UUID(data["id"])
-    await generate_code_csv(db, tenant_id, batch_id, created_by)
+    if seed_owner_session_factory is None:
+        raise RuntimeError("migration_database_url is required for trusted seed export authority")
+    await generate_code_csv(
+        db,
+        tenant_id,
+        batch_id,
+        created_by,
+        seed_owner_session_factory=seed_owner_session_factory,
+    )
     await mark_printing(db, tenant_id, batch_id, actor_id=str(created_by))
     await mark_delivered(
         db,
@@ -1216,6 +1258,7 @@ async def _ensure_code_batches(
                 item.id,
                 actor_id=str(created_by),
                 reason=f"source=official_rich_demo; purpose=risk_freeze_sample; public_id={item.public_id}",
+                idempotency_key=f"official-rich-demo-freeze:{tenant_id}:{item.id}",
             )
 
     refreshed_items = {
@@ -1234,6 +1277,10 @@ async def _ensure_code_batches(
 # ═══════════════════════════════════════════════════════
 
 
+def _channel_seed_idem(tenant_id: uuid.UUID, action: str, natural_key: str) -> str:
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, f"yimatong:rich-seed:{tenant_id}:{action}:{natural_key}"))
+
+
 async def _ensure_channels(
     db: AsyncSession,
     tenant_id: uuid.UUID,
@@ -1249,16 +1296,25 @@ async def _ensure_channels(
         )
         dist = result.scalar_one_or_none()
         if not dist:
-            dist = Distributor(
-                tenant_id=tenant_id,
+            dist = await channel_authority.create_distributor(
+                db,
+                tenant_id,
+                idempotency_key=_channel_seed_idem(tenant_id, "create-distributor", dist_data["code"]),
                 name=dist_data["name"],
                 code=dist_data["code"],
                 contact_name=dist_data["contact"],
+                contact_phone=None,
                 status="active",
             )
-            db.add(dist)
-            await db.flush()
-            await db.refresh(dist)
+        elif dist.name != dist_data["name"] or dist.contact_name != dist_data["contact"] or dist.status != "active":
+            dist = await channel_authority.update_distributor(
+                db,
+                tenant_id,
+                dist.id,
+                expected_version=dist.version,
+                idempotency_key=_channel_seed_idem(tenant_id, "update-distributor", f"{dist.id}:v{dist.version}"),
+                changes={"name": dist_data["name"], "contact_name": dist_data["contact"], "status": "active"},
+            )
         distributors.append(dist)
 
     # 区域
@@ -1268,26 +1324,40 @@ async def _ensure_channels(
         reg = result.scalar_one_or_none()
         dist = distributors[reg_data["dist"]]
         if not reg:
-            reg = Region(
-                tenant_id=tenant_id,
-                name=reg_data["name"],
-                code=reg_data["code"],
-                province=reg_data["province"],
-                city=reg_data["city"],
-                coverage_type="city",
-                coverage_areas=[{"province": reg_data["province"], "city": reg_data["city"]}],
-                distributor_id=dist.id,
-                status="active",
+            reg = await channel_authority.create_region(
+                db,
+                tenant_id,
+                idempotency_key=_channel_seed_idem(tenant_id, "create-region", reg_data["code"]),
+                payload={
+                    "name": reg_data["name"],
+                    "code": reg_data["code"],
+                    "province": reg_data["province"],
+                    "city": reg_data["city"],
+                    "coverage_type": "city",
+                    "coverage_areas": [{"province": reg_data["province"], "city": reg_data["city"]}],
+                    "distributor_id": dist.id,
+                    "status": "active",
+                },
             )
-            db.add(reg)
-            await db.flush()
-            await db.refresh(reg)
-        else:
-            reg.distributor_id = dist.id
-            reg.status = "active"
-            reg.coverage_type = "city"
-            reg.coverage_areas = [{"province": reg_data["province"], "city": reg_data["city"]}]
-            await db.flush()
+        elif (
+            reg.distributor_id != dist.id
+            or reg.status != "active"
+            or reg.coverage_type != "city"
+            or reg.coverage_areas != [{"province": reg_data["province"], "city": reg_data["city"]}]
+        ):
+            reg = await channel_authority.update_region(
+                db,
+                tenant_id,
+                reg.id,
+                expected_version=reg.version,
+                idempotency_key=_channel_seed_idem(tenant_id, "update-region", f"{reg.id}:v{reg.version}"),
+                changes={
+                    "distributor_id": dist.id,
+                    "status": "active",
+                    "coverage_type": "city",
+                    "coverage_areas": [{"province": reg_data["province"], "city": reg_data["city"]}],
+                },
+            )
         regions.append(reg)
 
     # 门店
@@ -1298,23 +1368,28 @@ async def _ensure_channels(
         region = regions[store_data["region"]]
         dist = distributors[REGIONS_DATA[store_data["region"]]["dist"]]
         if not store:
-            store = Store(
-                tenant_id=tenant_id,
-                name=store_data["name"],
-                code=store_data["code"],
-                region_id=region.id,
-                distributor_id=dist.id,
-                address=store_data["address"],
-                status="active",
+            store = await channel_authority.create_store(
+                db,
+                tenant_id,
+                idempotency_key=_channel_seed_idem(tenant_id, "create-store", store_data["code"]),
+                payload={
+                    "name": store_data["name"],
+                    "code": store_data["code"],
+                    "region_id": region.id,
+                    "distributor_id": dist.id,
+                    "address": store_data["address"],
+                    "status": "active",
+                },
             )
-            db.add(store)
-            await db.flush()
-            await db.refresh(store)
-        else:
-            store.region_id = region.id
-            store.distributor_id = dist.id
-            store.status = "active"
-            await db.flush()
+        elif store.region_id != region.id or store.distributor_id != dist.id or store.status != "active":
+            store = await channel_authority.update_store(
+                db,
+                tenant_id,
+                store.id,
+                expected_version=store.version,
+                idempotency_key=_channel_seed_idem(tenant_id, "update-store", f"{store.id}:v{store.version}"),
+                changes={"region_id": region.id, "distributor_id": dist.id, "status": "active"},
+            )
         stores.append(store)
 
     # 码分配：将激活码分配给门店
@@ -1330,19 +1405,22 @@ async def _ensure_channels(
             primary_dist = distributors[REGIONS_DATA[batch_idx % len(regions)]["dist"]]
             result = await db.execute(select(CodeBatch).where(CodeBatch.id == batch_id))
             code_batch = result.scalar_one_or_none()
-            if code_batch:
-                code_batch.distributor_id = primary_dist.id
-                code_batch.region_id = primary_region.id
+            if code_batch and (
+                code_batch.distributor_id != primary_dist.id or code_batch.region_id != primary_region.id
+            ):
+                await channel_authority.assign_batch(
+                    db,
+                    tenant_id,
+                    code_batch.id,
+                    idempotency_key=_channel_seed_idem(
+                        tenant_id, "assign-batch", f"{code_batch.id}:{primary_dist.id}:{primary_region.id}"
+                    ),
+                    distributor_id=primary_dist.id,
+                    region_id=primary_region.id,
+                )
 
             per_store = max(1, len(batch_items) // len(stores))
-            now_str = utcnow().replace(microsecond=0).isoformat()
             for idx, store in enumerate(stores):
-                region = regions[STORES_DATA[idx]["region"]] if idx < len(STORES_DATA) else regions[0]
-                dist = (
-                    distributors[REGIONS_DATA[STORES_DATA[idx]["region"]]["dist"]]
-                    if idx < len(STORES_DATA)
-                    else distributors[0]
-                )
                 alloc_qty = min(per_store, len(batch_items) - idx * per_store)
                 if alloc_qty <= 0:
                     break
@@ -1352,34 +1430,77 @@ async def _ensure_channels(
                         CodeAllocation.tenant_id == tenant_id,
                         CodeAllocation.batch_id == batch_id,
                         CodeAllocation.store_id == store.id,
+                        CodeAllocation.effective_to.is_(None),
+                        CodeAllocation.status == "active",
                     )
                 )
                 alloc = result.scalar_one_or_none()
                 if alloc:
-                    alloc.quantity = alloc_qty
-                    alloc.distributor_id = dist.id
-                    alloc.region_id = region.id
-                else:
-                    db.add(
-                        CodeAllocation(
-                            tenant_id=tenant_id,
-                            batch_id=batch_id,
-                            store_id=store.id,
-                            region_id=region.id,
-                            distributor_id=dist.id,
+                    if alloc.quantity != alloc_qty:
+                        await channel_authority.reassign_allocation(
+                            db,
+                            tenant_id,
+                            alloc.id,
+                            expected_version=alloc.version,
+                            idempotency_key=_channel_seed_idem(
+                                tenant_id, "reassign-allocation", f"{alloc.allocation_root_id}:{alloc_qty}"
+                            ),
+                            target_type="store",
+                            target_id=store.id,
                             quantity=alloc_qty,
-                            allocated_at=now_str,
+                            reason="rich demo seed restores the store allocation",
                         )
+                else:
+                    await channel_authority.allocate(
+                        db,
+                        tenant_id,
+                        idempotency_key=_channel_seed_idem(tenant_id, "allocate-store", f"{batch_id}:{store.id}"),
+                        batch_id=batch_id,
+                        target_type="store",
+                        target_id=store.id,
+                        quantity=alloc_qty,
+                        reason="rich demo seed creates the store allocation",
                     )
-        await db.flush()
 
     # 账号渠道作用域
     dist_account = next((a for a in accounts if a.email == "dist@demo.com"), None)
     store_account = next((a for a in accounts if a.email == "store@demo.com"), None)
     if dist_account and distributors:
-        await create_account_scope(db, tenant_id, dist_account.id, "distributor", distributor_id=distributors[0].id)
+        existing_scope = await db.scalar(
+            select(AccountChannelScope).where(
+                AccountChannelScope.tenant_id == tenant_id,
+                AccountChannelScope.account_id == dist_account.id,
+                AccountChannelScope.scope_type == "distributor",
+            )
+        )
+        if existing_scope is None or existing_scope.target_id != distributors[0].id:
+            await channel_authority.set_scope(
+                db,
+                tenant_id,
+                idempotency_key=_channel_seed_idem(
+                    tenant_id, "scope-distributor", f"{dist_account.id}:{distributors[0].id}"
+                ),
+                account_id=dist_account.id,
+                scope_type="distributor",
+                target_id=distributors[0].id,
+            )
     if store_account and stores:
-        await create_account_scope(db, tenant_id, store_account.id, "store", store_id=stores[0].id)
+        existing_scope = await db.scalar(
+            select(AccountChannelScope).where(
+                AccountChannelScope.tenant_id == tenant_id,
+                AccountChannelScope.account_id == store_account.id,
+                AccountChannelScope.scope_type == "store",
+            )
+        )
+        if existing_scope is None or existing_scope.target_id != stores[0].id:
+            await channel_authority.set_scope(
+                db,
+                tenant_id,
+                idempotency_key=_channel_seed_idem(tenant_id, "scope-store", f"{store_account.id}:{stores[0].id}"),
+                account_id=store_account.id,
+                scope_type="store",
+                target_id=stores[0].id,
+            )
 
     return {"distributors": distributors, "regions": regions, "stores": stores}
 
@@ -1658,46 +1779,26 @@ async def _ensure_consumers(db: AsyncSession, tenant_id: uuid.UUID) -> tuple[lis
         return consumers, consumer_ids
 
     consumers = []
-    for i in range(target_count):
-        nickname = random.choice(NICKNAME_POOL)
-        level, points = _assign_member_level()
-        consumer_id = uuid7()
-        openid = f"demo_o{hashlib.md5(f'consumer-{i}'.encode()).hexdigest()[:24]}" if random.random() < 0.6 else None
-        openid_hash = None
-        openid_ciphertext = None
-        openid_nonce = None
-        openid_key_id = None
-        if openid is not None:
-            openid_hash = hash_wechat_openid(tenant_id, openid)
-            openid_ciphertext, openid_nonce, openid_key_id = encrypt_wechat_openid(
-                tenant_id,
-                consumer_id,
-                openid,
-            )
-        consumer = ConsumerProfile(
-            id=consumer_id,
-            tenant_id=tenant_id,
-            nickname=f"{nickname}{random.randint(1, 999) if random.random() < 0.3 else ''}",
-            member_level=level,
-            total_points=points,
-            wechat_openid_hash=openid_hash,
-            wechat_openid_ciphertext=openid_ciphertext,
-            wechat_openid_nonce=openid_nonce,
-            wechat_openid_key_id=openid_key_id,
-            tags=random.choice(["扫码用户", "会员", "高活跃", None]),
-            extra_data={
-                "source": "demo",
-                "city": random.choice(["上海", "杭州", "南京", "苏州", "广州", "深圳", "北京", "成都"]),
-            },
+    for _index in range(target_count - existing):
+        created = await create_anonymous_consumer_profile_authority(db, tenant_id)
+        consumer = await db.get(
+            ConsumerProfile,
+            uuid.UUID(str(created["consumer_id"])),
+            populate_existing=True,
         )
-        db.add(consumer)
+        if consumer is None:  # pragma: no cover - authority returned the created row
+            raise RuntimeError("Anonymous demo consumer authority row is unavailable")
         consumers.append(consumer)
 
     # 批量 flush
     await db.flush()
-    # 批量 refresh（一次查询获取所有 ID）
-    consumer_ids_db = [c.id for c in consumers]
-    result = await db.execute(select(ConsumerProfile).where(ConsumerProfile.id.in_(consumer_ids_db)))
+    # 一次查询返回既有与本轮补齐的完整、稳定 demo 集合。
+    result = await db.execute(
+        select(ConsumerProfile)
+        .where(ConsumerProfile.tenant_id == tenant_id)
+        .order_by(ConsumerProfile.id)
+        .limit(target_count)
+    )
     consumers = list(result.scalars().all())
 
     # 为有积分的消费者创建积分流水
@@ -1768,12 +1869,65 @@ async def _ensure_consumers(db: AsyncSession, tenant_id: uuid.UUID) -> tuple[lis
 # ═══════════════════════════════════════════════════════
 
 DIVERSION_CLUES_DATA = [
-    {"expected": "上海", "detected": "北京", "resolved": False},
-    {"expected": "杭州", "detected": "武汉", "resolved": True},
-    {"expected": "广州", "detected": "长沙", "resolved": False},
-    {"expected": "南京", "detected": "郑州", "resolved": True},
-    {"expected": "苏州", "detected": "合肥", "resolved": False},
+    {"expected": "上海", "detected": "北京"},
+    {"expected": "杭州", "detected": "武汉"},
+    {"expected": "广州", "detected": "长沙"},
+    {"expected": "南京", "detected": "郑州"},
+    {"expected": "苏州", "detected": "合肥"},
 ]
+
+
+def _diversion_seed_uuid(tenant_id: uuid.UUID, resource: str, index: int) -> uuid.UUID:
+    return uuid.uuid5(uuid.NAMESPACE_URL, f"yimatong:rich-seed:diversion:v1:{tenant_id}:{resource}:{index}")
+
+
+def _diversion_seed_idem(tenant_id: uuid.UUID, index: int) -> str:
+    return f"rich-seed-diversion-v1-{tenant_id.hex}-{index}"
+
+
+async def _ensure_diversion_scan_facts(
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    code_items: list[CodeItem],
+) -> None:
+    """Create deterministic, valid scan facts before observation authority runs."""
+
+    activated_items = sorted(
+        (item for item in code_items if item.status == CodeItemStatus.activated),
+        key=lambda item: item.public_id,
+    )
+    for idx, code_item in enumerate(activated_items[: len(DIVERSION_CLUES_DATA)]):
+        scan_event_id = _diversion_seed_uuid(tenant_id, "scan", idx)
+        existing = await db.get(ScanEvent, scan_event_id)
+        if existing is not None:
+            if existing.tenant_id != tenant_id:
+                raise RuntimeError("Demo diversion scan fact conflicts with its deterministic subject")
+            subject_id = await db.scalar(
+                select(CodeItem.id).where(
+                    CodeItem.tenant_id == tenant_id,
+                    CodeItem.public_id == existing.public_id,
+                )
+            )
+            if subject_id is None:
+                raise RuntimeError("Demo diversion scan fact lost its deterministic code subject")
+            continue
+        db.add(
+            ScanEvent(
+                id=scan_event_id,
+                tenant_id=tenant_id,
+                public_id=code_item.public_id,
+                scan_time=datetime(2026, 1, 1, 8 + idx, tzinfo=UTC),
+                ip_hash=hashlib.sha256(f"demo-diversion-ip:{tenant_id}:{idx}".encode()).hexdigest(),
+                user_agent="Mozilla/5.0 Demo Diversion Observation",
+                is_first_scan=False,
+                environment="wechat",
+                is_valid_visit=True,
+                location_source="ip_inference",
+                location_accuracy="medium",
+                location_authorized=None,
+            )
+        )
+    await db.flush()
 
 
 async def _ensure_risk_data(
@@ -1783,142 +1937,136 @@ async def _ensure_risk_data(
     channels: dict,
 ) -> None:
     """创建窜货线索、风险告警、风险规则和拦截记录"""
-    activated_items = [i for i in code_items if i.status == CodeItemStatus.activated]
+    activated_items = sorted(
+        (item for item in code_items if item.status == CodeItemStatus.activated),
+        key=lambda item: item.public_id,
+    )
     if not activated_items:
         return
 
     distributors = channels["distributors"]
     regions = channels["regions"]
 
-    # 窜货线索
-    for idx, clue_data in enumerate(DIVERSION_CLUES_DATA):
-        if idx >= len(activated_items):
-            break
-        code_item = activated_items[idx]
-        dist_idx = min(idx, len(distributors) - 1)
-        reg_idx = min(idx, len(regions) - 1)
-        diversion_code = f"DEMO-DIVERSION-{idx + 1}"
+    await _ensure_diversion_observations(db, tenant_id, activated_items, distributors, regions)
 
-        result = await db.execute(
-            select(DiversionClue).where(
-                DiversionClue.tenant_id == tenant_id,
-                DiversionClue.public_id == diversion_code,
-            )
-        )
-        clue = result.scalar_one_or_none()
-        if not clue:
-            clue = DiversionClue(
-                tenant_id=tenant_id,
-                public_id=diversion_code,
-                code_item_id=code_item.id,
-                expected_region=clue_data["expected"],
-                detected_city=clue_data["detected"],
-                distributor_id=distributors[dist_idx].id,
-                region_id=regions[reg_idx].id,
-                ip_hash=f"demo-diversion-ip-{idx}",
-                resolved=clue_data["resolved"],
-            )
-            if clue_data["resolved"]:
-                clue.resolution_action = "confirmed"
-                clue.resolution_note = "已联系经销商核实，确认正常调拨。"
-                clue.resolved_at = utcnow() - timedelta(days=random.randint(1, 10))
-            db.add(clue)
-
-    # 风险规则
+    # 风险规则和结果只能通过数据库权威接口生成。两条频次规则都由已持久化
+    # scan_event 确定触发，分别提供可解释的 warn / block 演示事实。
     risk_rules_data = [
         {
-            "name": "异地扫码预警",
-            "rule_type": "multi_location",
+            "name": "高频扫码预警",
+            "rule_type": "scan_frequency",
             "action": "warn",
-            "config": {"max_locations": 3, "time_window_hours": 24},
+            "config": {"window_minutes": 1440, "max_requests": 1},
         },
         {
-            "name": "疑似仿制码拦截",
-            "rule_type": "suspected_copy",
+            "name": "高频扫码拦截",
+            "rule_type": "ip_frequency",
             "action": "block",
-            "config": {"min_scan_interval_seconds": 5},
-        },
-        {
-            "name": "高风险码冻结",
-            "rule_type": "risk_frozen",
-            "action": "block",
-            "config": {"max_daily_scans_per_code": 50},
+            "config": {"window_minutes": 1440, "max_requests": 1},
         },
     ]
     risk_rules = []
     for rule_data in risk_rules_data:
-        result = await db.execute(
-            select(RiskRule).where(
-                RiskRule.tenant_id == tenant_id,
-                RiskRule.rule_type == rule_data["rule_type"],
+        rule_id = uuid.uuid5(
+            uuid.NAMESPACE_URL,
+            f"yimatong:rich-seed:risk-rule:v1:{tenant_id}:{rule_data['rule_type']}",
+        )
+        result = await mutate_rule(
+            db,
+            tenant_id,
+            action="create",
+            rule_id=rule_id,
+            expected_version=None,
+            idempotency_key=f"rich-seed-risk-rule-create:{tenant_id}:{rule_data['rule_type']}",
+            name=rule_data["name"],
+            rule_type=rule_data["rule_type"],
+            rule_action=rule_data["action"],
+            config=rule_data["config"],
+            enabled=True,
+        )
+        risk_rules.append((result["rule_id"], rule_data))
+
+    for index, (rule_id, rule_data) in enumerate(risk_rules):
+        receipt_id = uuid.uuid5(
+            uuid.NAMESPACE_URL,
+            f"yimatong:rich-seed:risk-evaluation:v1:{tenant_id}:{rule_data['rule_type']}",
+        )
+        scan_event_id = await db.scalar(
+            text("SELECT scan_event_id FROM risk_action_receipts WHERE tenant_id=:tenant AND id=:receipt"),
+            {"tenant": tenant_id, "receipt": receipt_id},
+        )
+        if scan_event_id is None:
+            subject = activated_items[index]
+            scan_event_id = await db.scalar(
+                select(ScanEvent.id)
+                .where(ScanEvent.tenant_id == tenant_id, ScanEvent.public_id == subject.public_id)
+                .order_by(ScanEvent.scan_time, ScanEvent.id)
+                .limit(1)
+            )
+        if scan_event_id is None:
+            raise RuntimeError("Rich risk seed requires an exact persisted scan event")
+        outcome = await evaluate_execute_scan(
+            db,
+            tenant_id,
+            scan_event_id=scan_event_id,
+            rule_id=rule_id,
+            receipt_id=receipt_id,
+            idempotency_key=f"rich-seed-risk-evaluate:{tenant_id}:{rule_data['rule_type']}",
+            context={"request_source": "official_rich_seed"},
+        )
+        if not outcome["triggered"] or outcome["action"] != rule_data["action"]:
+            raise RuntimeError("Rich risk seed authority did not produce its declared outcome")
+
+
+async def _ensure_diversion_observations(
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    activated_items: list[CodeItem],
+    distributors: list[Distributor],
+    regions: list[Region],
+) -> None:
+    """Replay deterministic observations through the database authority."""
+
+    for idx, clue_data in enumerate(DIVERSION_CLUES_DATA):
+        dist_idx = min(idx, len(distributors) - 1)
+        reg_idx = min(idx, len(regions) - 1)
+        scan_event_id = _diversion_seed_uuid(tenant_id, "scan", idx)
+        scan_event = await db.scalar(
+            select(ScanEvent).where(
+                ScanEvent.tenant_id == tenant_id,
+                ScanEvent.id == scan_event_id,
             )
         )
-        rule = result.scalar_one_or_none()
-        if not rule:
-            rule = RiskRule(
-                tenant_id=tenant_id,
-                name=rule_data["name"],
-                rule_type=rule_data["rule_type"],
-                action=rule_data["action"],
-                config=rule_data["config"],
-                enabled=True,
+        if scan_event is None:
+            raise RuntimeError("Committed demo diversion scan fact is unavailable")
+        code_item = await db.scalar(
+            select(CodeItem).where(
+                CodeItem.tenant_id == tenant_id,
+                CodeItem.public_id == scan_event.public_id,
             )
-            db.add(rule)
-            await db.flush()
-            await db.refresh(rule)
-        risk_rules.append(rule)
-
-    # 风险告警
-    alert_types = [
-        (RiskAlertType.multi_location, "同一码在多个城市被扫描"),
-        (RiskAlertType.suspected_copy, "疑似仿制码，短时间大量扫码"),
-        (RiskAlertType.risk_frozen, "码已被系统自动冻结"),
-    ]
-    existing_alerts = (
-        await db.execute(select(func.count()).select_from(RiskAlert).where(RiskAlert.tenant_id == tenant_id))
-    ).scalar_one()
-
-    if existing_alerts < 5:
-        for i in range(8 - existing_alerts):
-            if i >= len(activated_items):
-                break
-            code_item = activated_items[i]
-            alert_type, detail = alert_types[i % len(alert_types)]
-            db.add(
-                RiskAlert(
-                    tenant_id=tenant_id,
-                    alert_type=alert_type,
-                    public_id=code_item.public_id,
-                    code_item_id=code_item.id,
-                    detail=detail,
-                    ip_hash=f"demo-alert-ip-{i}",
-                    resolved=random.random() < 0.4,
-                )
-            )
-
-    # 拦截记录
-    existing_interceptions = (
-        await db.execute(
-            select(func.count()).select_from(InterceptionRecord).where(InterceptionRecord.tenant_id == tenant_id)
         )
-    ).scalar_one()
-
-    if existing_interceptions < 2 and risk_rules:
-        for i in range(3):
-            rule = risk_rules[i % len(risk_rules)]
-            db.add(
-                InterceptionRecord(
-                    tenant_id=tenant_id,
-                    risk_rule_id=rule.id,
-                    action=rule.action,
-                    context={"reason": "演示数据", "ip": f"192.168.{i}.{random.randint(1, 254)}"},
-                    consumer_id=f"demo-consumer-{i}",
-                    auto_triggered=random.random() < 0.7,
-                    action_taken="blocked" if rule.action == "block" else "warned",
-                )
-            )
-
-    await db.flush()
+        if code_item is None:
+            raise RuntimeError("Committed demo diversion scan subject is unavailable")
+        await diversion_authority.record_observation(
+            db,
+            tenant_id,
+            observation_id=_diversion_seed_uuid(tenant_id, "observation", idx),
+            scan_event_id=scan_event.id,
+            scan_time=scan_event.scan_time,
+            idempotency_key=_diversion_seed_idem(tenant_id, idx),
+            public_id=code_item.public_id,
+            code_item_id=code_item.id,
+            ip_hash=scan_event.ip_hash,
+            detected_city=clue_data["detected"],
+            expected_region=clue_data["expected"],
+            location_source="ip_inference",
+            location_accuracy="medium",
+            location_authorized=None,
+            distributor_id=distributors[dist_idx].id,
+            region_id=regions[reg_idx].id,
+            rule_name="cross_region_ip",
+            confidence="high",
+        )
 
 
 # ═══════════════════════════════════════════════════════
@@ -2089,14 +2237,10 @@ async def _aggregate_stats(db: AsyncSession, tenant_id: uuid.UUID) -> int:
 
 
 async def _clean_demo_data(db: AsyncSession, tenant_id: uuid.UUID) -> None:
-    """删除所有演示数据（保留租户本身）"""
+    """Delete mutable demo projections while preserving authority-owned lifecycle facts."""
     typer.echo("\U0001f9f9 正在清理演示数据...")
     # 按依赖顺序删除
     for model in [
-        InterceptionRecord,
-        RiskAlert,
-        RiskRule,
-        RiskNotification,
         PointRedemption,
         PointTransaction,
         PointProduct,
@@ -2105,27 +2249,28 @@ async def _clean_demo_data(db: AsyncSession, tenant_id: uuid.UUID) -> None:
         Benefit,
         Campaign,
         ConsumerProfile,
-        DiversionClue,
-        CodeAllocation,
-        AccountChannelScope,
-        ScanEvent,
         PageVersion,
         PageTemplate,
-        CodeItem,
-        CodeBatch,
-        ProductionBatch,
-        SKU,
-        Product,
-        Brand,
-        Store,
-        Region,
-        Distributor,
     ]:
         result = await db.execute(delete(model).where(model.tenant_id == tenant_id))
         if result.rowcount:
             typer.echo(f"  删除 {model.__tablename__}: {result.rowcount} 条")
     await db.flush()
     typer.echo("✅ 清理完成")
+
+
+async def _clean_diversion_data(db: AsyncSession, tenant_id: uuid.UUID) -> None:
+    """Control-plane cleanup for authority-owned diversion records."""
+
+    for model in [
+        DiversionActionReceipt,
+        DiversionEvidence,
+        DiversionInvestigationHistory,
+        DiversionObservation,
+        DiversionClue,
+    ]:
+        await db.execute(delete(model).where(model.tenant_id == tenant_id))
+    await db.flush()
 
 
 # ═══════════════════════════════════════════════════════
@@ -2242,6 +2387,7 @@ def generate(
             async with control_session() as scan_db:
                 await set_session_tenant_context(scan_db, tenant_id)
                 event_count = await _ensure_scan_events(scan_db, tenant_id, activated_public_ids)
+                await _ensure_diversion_scan_facts(scan_db, tenant_id, code_items)
                 await scan_db.commit()
             p.step("扫码事件", f"({event_count:,} 次)")
 
@@ -2269,7 +2415,13 @@ def generate(
 
             # 8. 风控（需要重新查询 code_items）
             code_items_b = list(
-                (await db.execute(select(CodeItem).where(CodeItem.tenant_id == tenant_id).limit(100))).scalars().all()
+                (
+                    await db.execute(
+                        select(CodeItem).where(CodeItem.tenant_id == tenant_id).order_by(CodeItem.public_id).limit(100)
+                    )
+                )
+                .scalars()
+                .all()
             )
             await _ensure_risk_data(db, tenant_id, code_items_b, channels)
             p.step("风控数据", "(告警/窜货/拦截)")
@@ -2321,8 +2473,8 @@ def clean(
                 typer.echo(f"未找到演示租户 '{TENANT_SLUG}'")
                 return
             tenant_id = tenant.id
-        async with async_session() as db:
             await set_session_tenant_context(db, tenant_id)
+            await _clean_diversion_data(db, tenant_id)
             await _clean_demo_data(db, tenant_id)
             await refresh_quota_usage_from_authoritative_rows(db, tenant_id)
             await db.commit()
@@ -2345,9 +2497,9 @@ def reset(
             result = await db.execute(select(Tenant).where(Tenant.slug == TENANT_SLUG))
             tenant = result.scalar_one_or_none()
             tenant_id = tenant.id if tenant else None
-        if tenant_id:
-            async with async_session() as db:
+            if tenant_id:
                 await set_session_tenant_context(db, tenant_id)
+                await _clean_diversion_data(db, tenant_id)
                 await _clean_demo_data(db, tenant_id)
                 await refresh_quota_usage_from_authoritative_rows(db, tenant_id)
                 await db.commit()

@@ -2,19 +2,50 @@
 
 from collections.abc import AsyncGenerator
 from datetime import UTC, datetime
-from uuid import UUID
+from unittest.mock import AsyncMock
+from uuid import UUID, uuid4
 
 import pytest
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.v1 import risk_dashboard as risk_dashboard_api
 from app.core.database import get_db
 from app.main import app
 from app.models.channel import Distributor, DiversionClue, Region
 from app.models.risk import RiskAlert, RiskAlertType
 from app.models.scan import ScanEvent
+from app.schemas.diversion import DiversionEvidenceCreate, DiversionTransitionRequest
 from app.utils.security import create_access_token
 from tests.conftest import TestSessionLocal
+
+
+def test_diversion_mutation_schemas_are_strict_bounded_and_state_aware():
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        DiversionTransitionRequest(
+            expected_version=1,
+            to_status="confirmed_diversion",
+            reason="done",
+            resolution_note=None,
+        )
+    with pytest.raises(ValidationError):
+        DiversionTransitionRequest(expected_version=1, to_status="open", reason="reopen", resolution_note="overwrite")
+    with pytest.raises(ValidationError):
+        DiversionEvidenceCreate(expected_version=1, evidence_type="explanation")
+    with pytest.raises(ValidationError):
+        DiversionEvidenceCreate(
+            expected_version=1,
+            evidence_type="logistics",
+            file_url="https://evidence.example/file.pdf",
+        )
+    evidence = DiversionEvidenceCreate(
+        expected_version=1,
+        evidence_type="explanation",
+        description="渠道书面说明",
+    )
+    assert evidence.description == "渠道书面说明"
 
 
 def _platform_admin_headers() -> dict:
@@ -245,6 +276,11 @@ class TestDiversionSummary:
                 distributor_id=None,
                 ip_hash="ip_res",
                 resolved=resolved,
+                investigation_status="false_positive" if resolved else "open",
+                resolution_action="false_positive" if resolved else None,
+                resolution_note="verified false positive" if resolved else None,
+                resolved_by_account_id=(UUID("00000000-0000-0000-0000-000000000001") if resolved else None),
+                resolved_at=datetime.now(UTC) if resolved else None,
             )
             db_session.add(clue)
         await db_session.commit()
@@ -258,11 +294,12 @@ class TestDiversionSummary:
         assert resp.json()["total"] >= 1
 
     @pytest.mark.anyio
-    async def test_resolve_diversion_records_note_and_operator(
+    async def test_transition_diversion_uses_strict_authority_contract(
         self,
         client: AsyncClient,
         setup_tenant,
         db_session: AsyncSession,
+        monkeypatch,
     ):
         tid, headers = setup_tenant
         clue = DiversionClue(
@@ -277,22 +314,99 @@ class TestDiversionSummary:
         db_session.add(clue)
         await db_session.commit()
 
-        resp = await client.put(
-            f"/api/v1/risk-dashboard/diversion-clues/{clue.id}/resolve",
-            json={"resolution_action": "confirmed_diversion", "resolution_note": "已联系经销商核实为临时调货"},
-            headers=headers,
+        from app.api.v1 import risk_dashboard as risk_api
+
+        authority = AsyncMock(
+            return_value={
+                "resource_id": clue.id,
+                "clue_id": clue.id,
+                "clue_version": 2,
+                "investigation_status": "confirmed_diversion",
+                "resolved": True,
+                "observation_count": 1,
+                "replayed": False,
+                "actor_id": uuid4(),
+                "recorded_at": datetime.now(UTC),
+            }
+        )
+        monkeypatch.setattr(risk_api.diversion_authority, "transition_clue", authority)
+        resp = await client.post(
+            f"/api/v1/risk-dashboard/diversion-clues/{clue.id}/transition",
+            json={
+                "expected_version": 1,
+                "to_status": "confirmed_diversion",
+                "reason": "complete investigation",
+                "resolution_note": "已联系经销商核实为临时调货",
+            },
+            headers={**headers, "Idempotency-Key": str(uuid4())},
         )
         assert resp.status_code == 200
-        data = resp.json()
-        assert data["resolved"] is True
-        assert data["resolution_action"] == "confirmed_diversion"
-        assert data["resolution_note"] == "已联系经销商核实为临时调货"
-        assert data["resolved_by_account_id"] == "00000000-0000-0000-0000-000000000001"
-        assert data["resolved_at"] is not None
+        authority.assert_awaited_once()
+
+    @pytest.mark.anyio
+    async def test_transition_rejects_invalid_contract_before_authority(
+        self, client: AsyncClient, setup_tenant, monkeypatch
+    ):
+        _tid, headers = setup_tenant
+        from app.api.v1 import risk_dashboard as risk_api
+
+        authority = AsyncMock()
+        monkeypatch.setattr(risk_api.diversion_authority, "transition_clue", authority)
+        clue_id = uuid4()
+        response = await client.post(
+            f"/api/v1/risk-dashboard/diversion-clues/{clue_id}/transition",
+            json={"expected_version": 1, "to_status": "confirmed_diversion", "reason": "done"},
+            headers={**headers, "Idempotency-Key": str(uuid4())},
+        )
+        assert response.status_code == 422
+        authority.assert_not_awaited()
+
+    @pytest.mark.anyio
+    @pytest.mark.parametrize("role", ["viewer", "distributor", "store_guide"])
+    async def test_unauthorized_roles_cannot_transition_before_authority(
+        self, client: AsyncClient, setup_tenant, monkeypatch, role: str
+    ):
+        tid, _headers = setup_tenant
+        from app.api.v1 import risk_dashboard as risk_api
+
+        authority = AsyncMock()
+        monkeypatch.setattr(risk_api.diversion_authority, "transition_clue", authority)
+        token = create_access_token(tid, str(uuid4()), role)
+        response = await client.post(
+            f"/api/v1/risk-dashboard/diversion-clues/{uuid4()}/transition",
+            json={
+                "expected_version": 1,
+                "to_status": "false_positive",
+                "reason": "review complete",
+                "resolution_note": "not a diversion",
+            },
+            headers={"Authorization": f"Bearer {token}", "Idempotency-Key": str(uuid4())},
+        )
+        assert response.status_code == 403
+        authority.assert_not_awaited()
 
 
 class TestRiskExport:
     """W14-004: 风控数据导出"""
+
+    @pytest.mark.anyio
+    @pytest.mark.parametrize("reason", [None, "   ", "x" * 501])
+    async def test_reason_validation_precedes_risk_query(self, client: AsyncClient, setup_tenant, monkeypatch, reason):
+        _, headers = setup_tenant
+        export = AsyncMock()
+        monkeypatch.setattr(risk_dashboard_api, "export_risk_data", export)
+        body = {"data_type": "alerts"}
+        if reason is not None:
+            body["reason"] = reason
+
+        response = await client.post(
+            "/api/v1/risk-dashboard/export",
+            json=body,
+            headers={**headers, "Idempotency-Key": str(uuid4())},
+        )
+
+        assert response.status_code == 422
+        export.assert_not_awaited()
 
     @pytest.mark.anyio
     async def test_export_risk_alerts_csv(
@@ -313,10 +427,10 @@ class TestRiskExport:
         db_session.add(alert)
         await db_session.commit()
 
-        resp = await client.get(
+        resp = await client.post(
             "/api/v1/risk-dashboard/export",
-            params={"data_type": "alerts"},
-            headers=headers,
+            json={"data_type": "alerts", "reason": "风控月度复盘"},
+            headers={**headers, "Idempotency-Key": str(uuid4())},
         )
         assert resp.status_code == 200
         assert "text/csv" in resp.headers.get("content-type", "")
@@ -343,10 +457,10 @@ class TestRiskExport:
         db_session.add(clue)
         await db_session.commit()
 
-        resp = await client.get(
+        resp = await client.post(
             "/api/v1/risk-dashboard/export",
-            params={"data_type": "diversions"},
-            headers=headers,
+            json={"data_type": "diversions", "reason": "窜货线索复核"},
+            headers={**headers, "Idempotency-Key": str(uuid4())},
         )
         assert resp.status_code == 200
         assert "EXP002" in resp.text

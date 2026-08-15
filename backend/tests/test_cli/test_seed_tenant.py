@@ -13,12 +13,33 @@ os.environ.setdefault("database_url", "sqlite+aiosqlite://")
 os.environ.setdefault("redis_url", "redis://localhost:6379/0")
 os.environ.setdefault("secret_key", "test-secret-key-0123456789-ABCDEFGHIJKLMNOPQRSTUVWXYZ")
 
+from app.cli import seed  # noqa: E402
 from app.cli.seed import app, settings  # noqa: E402
 
 runner = CliRunner()
 
 
 class TestSeedTenant:
+    def test_official_demo_roles_include_anonymous_consumer_authority_permission(self):
+        assert "consumer:detail" in seed.WEB_ROLE_PERMISSIONS["admin"]
+        assert "consumer:detail" in seed.WEB_ROLE_PERMISSIONS["operator"]
+        assert "consumer:detail" not in seed.WEB_ROLE_PERMISSIONS["viewer"]
+
+    def test_demo_account_request_uses_canonical_requested_admin_and_retains_other_accounts(self):
+        accounts = seed._demo_accounts_for_request(
+            admin_email=" OWNER@EXAMPLE.COM ",
+            admin_name="恢复管理员",
+            admin_password="RecoveryPass123",
+        )
+
+        assert accounts[0] == {
+            **seed.DEMO_ACCOUNTS[0],
+            "email": "owner@example.com",
+            "name": "恢复管理员",
+            "password": "RecoveryPass123",
+        }
+        assert accounts[1:] == seed.DEMO_ACCOUNTS[1:]
+
     @patch("app.cli.seed._ensure_tenant", new_callable=AsyncMock)
     def test_seed_tenant_creates_new(self, mock_ensure):
         mock_ensure.return_value = ("test-id", True)

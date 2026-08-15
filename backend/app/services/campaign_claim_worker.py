@@ -13,6 +13,29 @@ logger = logging.getLogger(__name__)
 
 WORKER_ID = "campaign-claim-worker-v1"
 CALLBACK_TIMEOUT_SECONDS = 300
+_OPERATIONAL_DELIVERY_STATUSES = {"pending", "processing", "success", "failed"}
+_OPERATIONAL_DELIVERY_REASONS = {
+    "ambiguous_provider_outcome",
+    "provider_outcome_requires_reconciliation",
+}
+
+
+def _normalize_delivery_result(external_data: object) -> dict:
+    """Bound provider output before it crosses the durable database seam."""
+
+    if not isinstance(external_data, dict):
+        return {}
+    normalized: dict[str, object] = {}
+    status = external_data.get("status")
+    if status in _OPERATIONAL_DELIVERY_STATUSES:
+        normalized["status"] = status
+    status_code = external_data.get("status_code")
+    if isinstance(status_code, int) and not isinstance(status_code, bool) and 100 <= status_code <= 599:
+        normalized["status_code"] = status_code
+    reason = external_data.get("reason")
+    if reason in _OPERATIONAL_DELIVERY_REASONS:
+        normalized["reason"] = reason
+    return normalized
 
 
 async def _lease(db, tenant_id: uuid.UUID, limit: int = 20) -> list[dict]:
@@ -102,6 +125,7 @@ async def _process_leased(tenant_id: uuid.UUID, leased: dict) -> bool:
     from app.services.benefit_delivery_handler import _get_circuit_breaker
     from app.services.connectors import get_adapter
     from app.services.connectors.coupon_pool import CouponPoolAdapter
+    from app.services.connectors.generic_http import GenericHttpAdapter
     from app.services.connectors.secrets import connector_with_runtime_secrets
     from app.utils.crypto import decrypt_wechat_openid
 
@@ -198,7 +222,10 @@ async def _process_leased(tenant_id: uuid.UUID, leased: dict) -> bool:
                 raise ConnectionError("connector_circuit_open")
             runtime_connector = connector_with_runtime_secrets(connector)
             adapter = get_adapter(runtime_connector)
-            if isinstance(adapter, CouponPoolAdapter):
+            if leased.get("callback_timed_out") and isinstance(adapter, GenericHttpAdapter):
+                stable_provider_key = str(leased.get("external_id") or claim.id)
+                result = await adapter.reconcile(runtime_connector, stable_provider_key)
+            elif isinstance(adapter, CouponPoolAdapter):
                 result = await adapter.deliver_from_pool(db, connector, claim.consumer_id, claim.id)
             else:
                 result = await adapter.deliver(runtime_connector, claim.consumer_id, delivery_config)
@@ -216,7 +243,7 @@ async def _process_leased(tenant_id: uuid.UUID, leased: dict) -> bool:
                 connector.id,
                 result.status,
                 stable_external_id,
-                result.external_data if isinstance(result.external_data, dict) else {},
+                _normalize_delivery_result(result.external_data),
             )
             await db.commit()
             return True

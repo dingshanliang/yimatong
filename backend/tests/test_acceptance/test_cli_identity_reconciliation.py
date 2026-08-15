@@ -8,7 +8,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import selectinload
 
@@ -17,6 +17,7 @@ from app.cli import seed
 from app.cli.baseline import BASELINE_ADMIN_EMAIL, BASELINE_TENANT_SLUG
 from app.models.audit import PlatformAuditLog
 from app.models.auth_security import AuthSession
+from app.models.plan import TenantQuotaUsage
 from app.models.tenant import Account, Organization, Role, Tenant, account_roles
 from app.services.quota import lock_quota_rollout_state
 from app.utils.security import hash_password, verify_password
@@ -142,6 +143,231 @@ async def _assert_cli_lifecycle_actor_and_cleanup(
         ).all()
     )
     assert lifecycle_operators == {str(admin.id)}
+
+
+async def test_seed_all_repairs_partial_tenant_with_requested_admin_and_keeps_policy_seed_idempotent(
+    migrated_pg_url: str,
+) -> None:
+    slug = f"partial-demo-{uuid.uuid4().hex[:8]}"
+    requested_email = f"owner-{uuid.uuid4().hex[:8]}@example.com"
+    owner_engine = create_async_engine(migrated_pg_url)
+    owner_factory = async_sessionmaker(owner_engine, class_=AsyncSession, expire_on_commit=False)
+    try:
+        async with owner_factory() as db, db.begin():
+            residual = Tenant(name="Partial demo tenant", slug=slug, plan="free")
+            db.add(residual)
+            await db.flush()
+            tenant_id = residual.id
+
+        arguments = (
+            "all",
+            "--slug",
+            slug,
+            "--admin-email",
+            f" {requested_email.upper()} ",
+            "--admin-name",
+            "恢复管理员",
+            "--admin-password",
+            "RecoveryPass123",
+            "--allow-non-demo-target",
+        )
+        await asyncio.to_thread(_run_cli, migrated_pg_url, *arguments)
+        await asyncio.to_thread(_run_cli, migrated_pg_url, *arguments)
+
+        async with owner_factory() as db:
+            admin = await db.scalar(
+                select(Account)
+                .options(selectinload(Account.roles))
+                .where(Account.tenant_id == tenant_id, Account.email == requested_email)
+            )
+            assert admin is not None
+            assert admin.name == "恢复管理员"
+            assert verify_password("RecoveryPass123", admin.hashed_password)
+            assert [role.name for role in admin.roles] == ["admin"]
+            assert await db.scalar(select(func.count()).select_from(Account).where(Account.tenant_id == tenant_id)) == 5
+            assert not await db.scalar(
+                select(Account.id).where(Account.tenant_id == tenant_id, Account.email == "admin@demo.com")
+            )
+            assert (
+                await db.scalar(
+                    text("SELECT count(*) FROM consumer_consent_policies WHERE tenant_id=:tenant_id"),
+                    {"tenant_id": tenant_id},
+                )
+                == 3
+            )
+            assert (
+                await db.scalar(
+                    text("SELECT count(*) FROM consumer_consent_policy_current WHERE tenant_id=:tenant_id"),
+                    {"tenant_id": tenant_id},
+                )
+                == 3
+            )
+            assert (
+                await db.scalar(
+                    select(func.count())
+                    .select_from(AuthSession)
+                    .where(
+                        AuthSession.tenant_id == tenant_id,
+                        AuthSession.current_refresh_jti.like("cli-%"),
+                    )
+                )
+                == 0
+            )
+    finally:
+        await owner_engine.dispose()
+
+
+async def test_demo_admin_repair_and_account_quota_refresh_share_one_retryable_transaction(
+    migrated_pg_url: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    slug = f"partial-quota-{uuid.uuid4().hex[:8]}"
+    owner_engine = create_async_engine(migrated_pg_url)
+    runtime_engine = create_async_engine(_runtime_url(migrated_pg_url))
+    owner_factory = async_sessionmaker(owner_engine, class_=AsyncSession, expire_on_commit=False)
+    runtime_factory = async_sessionmaker(runtime_engine, class_=AsyncSession, expire_on_commit=False)
+    try:
+        async with owner_factory() as db, db.begin():
+            residual = Tenant(name="Partial quota tenant", slug=slug, plan="free")
+            db.add(residual)
+            await db.flush()
+            tenant_id = residual.id
+
+        real_refresh = seed.refresh_quota_usage_from_authoritative_rows
+
+        async def fail_refresh(*_args, **_kwargs):
+            raise RuntimeError("quota refresh unavailable")
+
+        monkeypatch.setattr(seed, "async_session", runtime_factory)
+        admin_id = await seed._ensure_committed_demo_admin(
+            tenant_id,
+            admin_email="owner@example.com",
+            admin_name="恢复管理员",
+            admin_password="RecoveryPass123",
+        )
+
+        async with owner_factory() as db:
+            assert await db.scalar(select(func.count()).select_from(Account).where(Account.tenant_id == tenant_id)) == 1
+            quota = await db.get(TenantQuotaUsage, tenant_id)
+            assert quota is not None and quota.accounts == 1
+            assert await db.get(Account, admin_id) is not None
+
+        monkeypatch.setattr(seed, "refresh_quota_usage_from_authoritative_rows", fail_refresh)
+        with pytest.raises(RuntimeError, match="quota refresh unavailable"):
+            async with runtime_factory() as db:
+                await seed.lock_quota_rollout_state(db)
+                tenant = await seed._open_tenant_scope(db, tenant_id)
+                organization = await seed._get_default_org(db, tenant_id)
+                await seed._ensure_demo_accounts(
+                    db,
+                    tenant.id,
+                    organization.id,
+                    admin_email="owner@example.com",
+                    admin_name="恢复管理员",
+                    admin_password="RecoveryPass123",
+                )
+                await seed.refresh_quota_usage_from_authoritative_rows(db, tenant_id)
+                await db.commit()
+
+        async with owner_factory() as db:
+            assert await db.scalar(select(func.count()).select_from(Account).where(Account.tenant_id == tenant_id)) == 1
+            quota = await db.get(TenantQuotaUsage, tenant_id)
+            assert quota is not None and quota.accounts == 1
+
+        monkeypatch.setattr(seed, "refresh_quota_usage_from_authoritative_rows", real_refresh)
+        async with runtime_factory() as db:
+            await seed.lock_quota_rollout_state(db)
+            tenant = await seed._open_tenant_scope(db, tenant_id)
+            organization = await seed._get_default_org(db, tenant_id)
+            await seed._ensure_demo_accounts(
+                db,
+                tenant.id,
+                organization.id,
+                admin_email="owner@example.com",
+                admin_name="恢复管理员",
+                admin_password="RecoveryPass123",
+            )
+            await seed.refresh_quota_usage_from_authoritative_rows(db, tenant_id)
+            await db.commit()
+
+        async with owner_factory() as db:
+            assert await db.scalar(select(func.count()).select_from(Account).where(Account.tenant_id == tenant_id)) == 5
+            quota = await db.get(TenantQuotaUsage, tenant_id)
+            assert quota is not None and quota.accounts == 5
+            assert await db.get(Account, admin_id) is not None
+    finally:
+        await runtime_engine.dispose()
+        await owner_engine.dispose()
+
+
+async def test_demo_scan_history_and_quota_refresh_share_one_retryable_transaction(
+    migrated_pg_url: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    await asyncio.to_thread(_run_cli, migrated_pg_url, "all")
+    owner_engine = create_async_engine(migrated_pg_url)
+    owner_factory = async_sessionmaker(owner_engine, class_=AsyncSession, expire_on_commit=False)
+    try:
+        async with owner_factory() as db, db.begin():
+            tenant_id = await db.scalar(select(Tenant.id).where(Tenant.slug == "demo"))
+            assert tenant_id is not None
+            activated_public_ids = list(
+                (
+                    await db.execute(
+                        text(
+                            "SELECT public_id FROM code_items WHERE tenant_id=:tenant_id "
+                            "AND status='activated' ORDER BY public_id"
+                        ),
+                        {"tenant_id": tenant_id},
+                    )
+                ).scalars()
+            )
+            assert len(activated_public_ids) >= 4
+            assert (
+                await db.scalar(
+                    text("SELECT count(*) FROM scan_events WHERE tenant_id=:tenant_id"), {"tenant_id": tenant_id}
+                )
+                == 28
+            )
+            quota = await db.get(TenantQuotaUsage, tenant_id)
+            assert quota is not None and quota.accounts == 5 and quota.scans == 28
+            await db.execute(text("DELETE FROM scan_events WHERE tenant_id=:tenant_id"), {"tenant_id": tenant_id})
+            quota.scans = 0
+
+        real_refresh = seed.refresh_quota_usage_from_authoritative_rows
+
+        async def fail_refresh(*_args, **_kwargs):
+            raise RuntimeError("scan quota refresh unavailable")
+
+        monkeypatch.setattr(seed, "control_session", owner_factory)
+        monkeypatch.setattr(seed, "refresh_quota_usage_from_authoritative_rows", fail_refresh)
+        with pytest.raises(RuntimeError, match="scan quota refresh unavailable"):
+            await seed._ensure_demo_scan_history_and_quota(tenant_id, activated_public_ids)
+
+        async with owner_factory() as db:
+            assert (
+                await db.scalar(
+                    text("SELECT count(*) FROM scan_events WHERE tenant_id=:tenant_id"), {"tenant_id": tenant_id}
+                )
+                == 0
+            )
+            quota = await db.get(TenantQuotaUsage, tenant_id)
+            assert quota is not None and quota.accounts == 5 and quota.scans == 0
+
+        monkeypatch.setattr(seed, "refresh_quota_usage_from_authoritative_rows", real_refresh)
+        await seed._ensure_demo_scan_history_and_quota(tenant_id, activated_public_ids)
+
+        async with owner_factory() as db:
+            assert (
+                await db.scalar(
+                    text("SELECT count(*) FROM scan_events WHERE tenant_id=:tenant_id"), {"tenant_id": tenant_id}
+                )
+                == 28
+            )
+            quota = await db.get(TenantQuotaUsage, tenant_id)
+            assert quota is not None and quota.accounts == 5 and quota.scans == 28
+    finally:
+        await owner_engine.dispose()
 
 
 async def test_seed_all_reconciles_identity_atomically_and_idempotently(

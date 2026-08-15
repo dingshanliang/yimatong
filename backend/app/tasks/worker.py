@@ -8,11 +8,13 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import select, update
+from sqlalchemy import or_, select, update
+from uuid6 import uuid7
 
 from app.core.config import settings
 from app.models.webhook import WebhookDelivery, WebhookEndpoint
@@ -45,107 +47,161 @@ async def _get_db():
 
 
 async def process_single_delivery(delivery_id: str) -> None:
-    """处理单条 webhook 投递。"""
-    from app.core.database import async_session_factory, bootstrap_tenant_row
+    """Lease, commit, send outside a DB transaction, then conditionally acknowledge."""
+    from app.core.database import async_session_factory, bootstrap_tenant_row, set_session_tenant_context
+    from app.utils.crypto import CryptoError, decrypt_bytes
 
+    lease_token = uuid7()
+    now = datetime.now(UTC)
     async with async_session_factory() as db:
         delivery = await bootstrap_tenant_row(
             db,
-            select(WebhookDelivery).where(WebhookDelivery.id == delivery_id).with_for_update(),
+            select(WebhookDelivery)
+            .where(
+                WebhookDelivery.id == delivery_id,
+                WebhookDelivery.status.in_(("pending", "retrying", "delivering")),
+                or_(WebhookDelivery.lease_expires_at.is_(None), WebhookDelivery.lease_expires_at <= now),
+                or_(WebhookDelivery.next_retry_at.is_(None), WebhookDelivery.next_retry_at <= now),
+            )
+            .with_for_update(skip_locked=True),
         )
-        if not delivery:
-            logger.warning("Delivery %s not found", delivery_id)
+        if delivery is None:
             return
-
-        if delivery.status == "delivered":
-            return
-
-        # 查找 endpoint
-        ep_result = await db.execute(
-            select(WebhookEndpoint).where(
-                WebhookEndpoint.id == delivery.endpoint_id,
-                WebhookEndpoint.tenant_id == delivery.tenant_id,
+        has_snapshot = all(
+            (
+                delivery.endpoint_url,
+                delivery.endpoint_secret_ciphertext,
+                delivery.endpoint_secret_nonce,
+                delivery.endpoint_secret_key_id,
             )
         )
-        endpoint = ep_result.scalar_one_or_none()
-        if not endpoint or not endpoint.enabled:
+        if delivery.domain_event_id is None and not has_snapshot:
+            endpoint = await db.scalar(
+                select(WebhookEndpoint).where(
+                    WebhookEndpoint.id == delivery.endpoint_id,
+                    WebhookEndpoint.tenant_id == delivery.tenant_id,
+                )
+            )
+            if endpoint is None or not endpoint.enabled:
+                delivery.status = "failed"
+                delivery.last_response_body = "Endpoint not found or disabled"
+                await db.commit()
+                return
+            url = endpoint.url
+            ciphertext, nonce, key_id = endpoint.secret_ciphertext, endpoint.secret_nonce, endpoint.secret_key_id
+        else:
+            url = delivery.endpoint_url
+            ciphertext = delivery.endpoint_secret_ciphertext
+            nonce = delivery.endpoint_secret_nonce
+            key_id = delivery.endpoint_secret_key_id
+        if not url or not ciphertext or not nonce or not key_id:
             delivery.status = "failed"
-            delivery.last_response_body = "Endpoint not found or disabled"
+            delivery.last_response_body = "Delivery endpoint snapshot is incomplete"
             await db.commit()
             return
+        tenant_id = delivery.tenant_id
+        endpoint_id = delivery.endpoint_id
+        envelope = delivery.payload if isinstance(delivery.payload, dict) else json.loads(delivery.payload)
+        canonical_body = json.dumps(envelope, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        if (
+            delivery.payload_digest is not None
+            and hashlib.sha256(canonical_body).hexdigest() != delivery.payload_digest
+        ):
+            delivery.status = "failed"
+            delivery.last_response_body = "Delivery payload digest mismatch"
+            delivery.next_retry_at = None
+            await db.commit()
+            return
+        delivery.status = "delivering"
+        delivery.lease_token = lease_token
+        delivery.lease_expires_at = now + timedelta(seconds=30)
+        delivery.attempt_count += 1
+        await db.commit()
 
-        # 发送
-        status_code, response_body = await deliver(
-            url=endpoint.url,
-            secret=endpoint.secret,
-            envelope=delivery.payload if isinstance(delivery.payload, dict) else json.loads(delivery.payload),
+    aad = f"webhook-endpoint:{tenant_id}:{endpoint_id}".encode()
+    try:
+        secret = decrypt_bytes(ciphertext, nonce=nonce, key_id=key_id, aad=aad).decode()
+    except (CryptoError, UnicodeDecodeError):
+        async with async_session_factory() as db:
+            await set_session_tenant_context(db, tenant_id)
+            delivery = await db.scalar(
+                select(WebhookDelivery)
+                .where(
+                    WebhookDelivery.id == delivery_id,
+                    WebhookDelivery.tenant_id == tenant_id,
+                    WebhookDelivery.status == "delivering",
+                    WebhookDelivery.lease_token == lease_token,
+                )
+                .with_for_update()
+            )
+            if delivery is not None:
+                delivery.status = "failed"
+                delivery.lease_token = None
+                delivery.lease_expires_at = None
+                delivery.next_retry_at = None
+                delivery.last_response_body = "Delivery credential unavailable"
+                await db.commit()
+        return
+    status_code, response_body = await deliver(url=url, secret=secret, envelope=envelope)
+
+    async with async_session_factory() as db:
+        await set_session_tenant_context(db, tenant_id)
+        delivery = await db.scalar(
+            select(WebhookDelivery)
+            .where(
+                WebhookDelivery.id == delivery_id,
+                WebhookDelivery.tenant_id == tenant_id,
+                WebhookDelivery.status == "delivering",
+                WebhookDelivery.lease_token == lease_token,
+            )
+            .with_for_update()
         )
-
+        if delivery is None:
+            return
         delivery.last_response_code = status_code
         delivery.last_response_body = response_body[:2000]
         delivery.updated_at = datetime.now(UTC)
-
+        delivery.lease_token = None
+        delivery.lease_expires_at = None
         if 200 <= status_code < 300:
             delivery.status = "delivered"
-            logger.info("Webhook delivered %s → %s (HTTP %d)", delivery_id, endpoint.url, status_code)
+            delivery.next_retry_at = None
         elif should_retry(status_code) and delivery.retry_count < MAX_RETRIES:
             delay = RETRY_DELAYS[min(delivery.retry_count, len(RETRY_DELAYS) - 1)]
             delivery.retry_count += 1
             delivery.next_retry_at = datetime.now(UTC) + timedelta(seconds=delay)
             delivery.status = "retrying"
-            logger.info(
-                "Webhook %s retry %d/%d in %ds (HTTP %d)",
-                delivery_id,
-                delivery.retry_count,
-                MAX_RETRIES,
-                delay,
-                status_code,
-            )
         else:
             delivery.status = "failed"
-            logger.warning("Webhook %s permanently failed (HTTP %d)", delivery_id, status_code)
-
+            delivery.next_retry_at = None
         await db.commit()
 
 
-async def poll_pending_retries() -> int:
-    """查询到期的重试投递，重新入队。返回入队数量。"""
-    import redis.asyncio as aioredis
+async def poll_ready_deliveries(limit: int = 100) -> int:
+    """Database-authoritative recovery path for queue loss and expired leases."""
+    from app.core.database import async_session_factory, bootstrap_tenant_keys
 
-    from app.core.database import async_session_factory, bootstrap_tenant_keys, set_session_tenant_context
-
-    count = 0
-    async with async_session_factory() as control_db:
-        work_keys = await bootstrap_tenant_keys(
-            control_db,
+    now = datetime.now(UTC)
+    async with async_session_factory() as db:
+        keys = await bootstrap_tenant_keys(
+            db,
             select(WebhookDelivery.id, WebhookDelivery.tenant_id)
             .where(
-                WebhookDelivery.status == "retrying",
-                WebhookDelivery.next_retry_at <= datetime.now(UTC),
+                WebhookDelivery.status.in_(("pending", "retrying", "delivering")),
+                or_(WebhookDelivery.next_retry_at.is_(None), WebhookDelivery.next_retry_at <= now),
+                or_(WebhookDelivery.lease_expires_at.is_(None), WebhookDelivery.lease_expires_at <= now),
             )
-            .order_by(WebhookDelivery.next_retry_at, WebhookDelivery.id)
-            .limit(100),
+            .order_by(WebhookDelivery.created_at, WebhookDelivery.id)
+            .limit(limit),
         )
+    for ready_id, _tenant_id in keys:
+        await process_single_delivery(str(ready_id))
+    return len(keys)
 
-    if work_keys:
-        async with aioredis.from_url(settings.redis_url) as r:
-            for delivery_id, tenant_id in work_keys:
-                async with async_session_factory() as db:
-                    await set_session_tenant_context(db, tenant_id)
-                    d = await db.scalar(
-                        select(WebhookDelivery).where(
-                            WebhookDelivery.id == delivery_id,
-                            WebhookDelivery.tenant_id == tenant_id,
-                        )
-                    )
-                    if d is None or d.status != "retrying" or d.next_retry_at > datetime.now(UTC):
-                        continue
-                    d.status = "pending"
-                    await r.lpush(REDIS_QUEUE_KEY, str(d.id))
-                    count += 1
-                    await db.commit()
 
-    return count
+async def poll_pending_retries() -> int:
+    """Compatibility wrapper for the database-authoritative due-delivery poller."""
+    return await poll_ready_deliveries()
 
 
 async def poll_benefit_delivery_retries() -> int:
@@ -168,6 +224,7 @@ async def poll_benefit_delivery_retries() -> int:
             select(BenefitDelivery.id, BenefitDelivery.tenant_id)
             .where(
                 BenefitDelivery.status == DeliveryStatus.PENDING,
+                BenefitDelivery.campaign_outbox_id.is_(None),
                 BenefitDelivery.retry_count < BenefitDelivery.max_retries,
                 BenefitDelivery.next_retry_at <= now,
             )
@@ -178,10 +235,16 @@ async def poll_benefit_delivery_retries() -> int:
         async with async_session_factory() as db:
             await set_session_tenant_context(db, tenant_id)
             d = await db.scalar(
-                select(BenefitDelivery).where(
+                select(BenefitDelivery)
+                .where(
                     BenefitDelivery.id == delivery_id,
                     BenefitDelivery.tenant_id == tenant_id,
+                    BenefitDelivery.campaign_outbox_id.is_(None),
+                    BenefitDelivery.status == DeliveryStatus.PENDING,
+                    BenefitDelivery.retry_count < BenefitDelivery.max_retries,
+                    BenefitDelivery.next_retry_at <= datetime.now(UTC),
                 )
+                .with_for_update(skip_locked=True)
             )
             if d is None:
                 continue
@@ -307,6 +370,13 @@ async def worker_loop() -> None:
     cleanup_counter = 0
 
     while True:
+        try:
+            from app.services.webhook_dispatcher import expand_committed_events
+
+            await expand_committed_events()
+            await poll_ready_deliveries()
+        except Exception:
+            logger.exception("Webhook durable outbox poll error")
         try:
             async with aioredis.from_url(settings.redis_url) as r:
                 # BRPOP with 1s timeout

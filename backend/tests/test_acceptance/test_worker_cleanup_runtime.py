@@ -47,10 +47,13 @@ async def test_cleanup_rechecks_terminal_state_and_remains_bounded(migrated_pg_u
             f"cleanup-{tenant_id.hex[:8]}",
         )
         await owner.execute(
-            "INSERT INTO webhook_endpoints (id,tenant_id,url,events,secret,enabled,batch_mode,batch_size) "
-            "VALUES ($1,$2,'https://example.invalid','[]'::json,'secret',true,false,100)",
+            "INSERT INTO webhook_endpoints (id,tenant_id,url,events,secret_ciphertext,secret_nonce,secret_key_id,"
+            "enabled,batch_mode,batch_size,config_version) "
+            "VALUES ($1,$2,'https://example.invalid','[]'::json,$3,$4,'test-key-v1',true,false,100,1)",
             endpoint_id,
             tenant_id,
+            b"x" * 32,
+            b"n" * 12,
         )
         rows = [
             (delivery_id, tenant_id, endpoint_id, str(delivery_id), "delivered", old) for delivery_id in delivered_ids
@@ -61,12 +64,19 @@ async def test_cleanup_rechecks_terminal_state_and_remains_bounded(migrated_pg_u
                 (pending_id, tenant_id, endpoint_id, str(pending_id), "pending", old),
             ]
         )
-        await owner.executemany(
-            "INSERT INTO webhook_deliveries "
-            "(id,tenant_id,endpoint_id,event_id,event_type,payload,status,retry_count,created_at,updated_at) "
-            "VALUES ($1,$2,$3,$4,'test','{}'::json,$5,0,$6,$6)",
-            rows,
-        )
+        # These rows model deliveries that existed before the U08D finalize
+        # boundary. New legacy inserts are rejected after cutover, while
+        # migrated legacy rows remain retry/cleanup compatible.
+        await owner.execute("ALTER TABLE webhook_deliveries DISABLE TRIGGER USER")
+        try:
+            await owner.executemany(
+                "INSERT INTO webhook_deliveries "
+                "(id,tenant_id,endpoint_id,event_id,event_type,payload,status,retry_count,created_at,updated_at) "
+                "VALUES ($1,$2,$3,$4,'test','{}'::json,$5,0,$6,$6)",
+                rows,
+            )
+        finally:
+            await owner.execute("ALTER TABLE webhook_deliveries ENABLE TRIGGER USER")
 
         original_bootstrap = database.bootstrap_tenant_keys
         calls = 0

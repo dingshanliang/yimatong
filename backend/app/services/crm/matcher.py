@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.member import ConsumerProfile
 from app.models.sync_mapping import SyncMapping
-from app.utils.crypto import CryptoError, decrypt_phone
+from app.utils.crypto import CryptoError, decrypt_consumer_phone
 
 
 class MatchResult:
@@ -80,6 +80,7 @@ async def match_by_phone(
         select(ConsumerProfile).where(
             ConsumerProfile.tenant_id == tenant_id,
             ConsumerProfile.phone_hash == phone_hash,
+            ConsumerProfile.lead_contact_suppressed.is_(False),
         )
     )
     return result.scalar_one_or_none()
@@ -90,11 +91,23 @@ async def decrypt_and_match_phone(
     tenant_id: uuid.UUID,
     consumer: ConsumerProfile,
 ) -> str | None:
-    """解密消费者的 phone_encrypted 并返回明文手机号。"""
-    if not consumer.phone_encrypted:
+    """Decrypt a complete tenant/profile-bound phone envelope."""
+    if (
+        consumer.tenant_id != tenant_id
+        or consumer.lead_contact_suppressed
+        or consumer.phone_ciphertext is None
+        or consumer.phone_nonce is None
+        or consumer.phone_key_id is None
+    ):
         return None
     try:
-        return decrypt_phone(consumer.phone_encrypted)
+        return decrypt_consumer_phone(
+            tenant_id,
+            consumer.id,
+            consumer.phone_ciphertext,
+            consumer.phone_nonce,
+            consumer.phone_key_id,
+        )
     except CryptoError:
         return None
 

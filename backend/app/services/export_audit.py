@@ -25,6 +25,7 @@ async def log_export(
     artifact_nonce: bytes | None = None,
     artifact_scheme: str | None = None,
     artifact_key_id: str | None = None,
+    reason: str | None = None,
 ) -> ExportLog:
     resource_uuid = uuid.UUID(resource_id) if resource_id else None
     if export_type == "code_csv" and (
@@ -78,8 +79,8 @@ async def log_export(
             "manifest_version": manifest_version,
             "checksum_sha256": checksum_sha256,
             "artifact_size_bytes": artifact_size_bytes,
-            "reason": "用户发起数据导出",
-            "result": "success",
+            "reason": reason or "trusted maintenance export",
+            "result": "prepared",
         },
     )
     return entry

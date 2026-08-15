@@ -2,8 +2,9 @@
 
 from collections.abc import AsyncGenerator
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
-from uuid import NAMESPACE_URL, UUID, uuid5
+from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -114,7 +115,11 @@ async def _create_and_activate_batch(client, headers, product_id, sku_id, batch_
     )
     assert batch.status_code == 201, batch.text
     batch_id = batch.json()["id"]
-    exported = await client.post(f"/api/v1/code-batches/{batch_id}/export", headers=headers)
+    exported = await client.post(
+        f"/api/v1/code-batches/{batch_id}/export",
+        json={"reason": "Test lifecycle setup"},
+        headers={**headers, "Idempotency-Key": str(uuid4())},
+    )
     printing = await client.post(f"/api/v1/code-batches/{batch_id}/mark-printing", headers=headers)
     delivered = await client.post(
         f"/api/v1/code-batches/{batch_id}/mark-delivered",
@@ -351,6 +356,30 @@ class TestFreezeCode:
         assert response.json()["error_code"] == expected_error_code
 
     @pytest.mark.anyio
+    async def test_freeze_forwards_optional_idempotency_header_without_changing_response(
+        self,
+        client: AsyncClient,
+        setup_tenant,
+        monkeypatch,
+    ):
+        _, headers, *_ = setup_tenant
+        item_id = UUID("00000000-0000-0000-0000-000000000999")
+        freeze = AsyncMock(
+            return_value=SimpleNamespace(id=item_id, public_id="IDEM-FREEZE-1", status=CodeItemStatus.frozen)
+        )
+        monkeypatch.setattr(risk_api, "freeze_code_item", freeze)
+
+        response = await client.post(
+            f"/api/v1/risk-alerts/code-items/{item_id}/freeze",
+            json={"reason": "investigation", "confirm": "freeze"},
+            headers={**headers, "Idempotency-Key": "manual-freeze-retry-1"},
+        )
+
+        assert response.status_code == 200
+        assert response.json() == {"id": str(item_id), "public_id": "IDEM-FREEZE-1", "status": "frozen"}
+        assert freeze.await_args.kwargs["idempotency_key"] == "manual-freeze-retry-1"
+
+    @pytest.mark.anyio
     async def test_freeze_activated_code(
         self,
         client: AsyncClient,
@@ -453,6 +482,8 @@ class TestFreezeCode:
         assert body["code_data"]["lifecycle"] == "frozen"
         # AC3：不颁发 scan_token（权益暂停）
         assert not body.get("scan_token")
+        assert body["scan_info"]["benefit_paused"] is True
+        assert body["scan_info"]["paused_reason"] == "frozen"
 
     @pytest.mark.anyio
     async def test_unfreeze_code(
@@ -540,27 +571,63 @@ class TestRiskAlertAPI:
     """W10-006: 后台预警查询 API"""
 
     @pytest.mark.anyio
-    @pytest.mark.parametrize("role", ["operator", "viewer"])
-    async def test_non_admin_cannot_list_risk_alerts(self, client: AsyncClient, setup_tenant, role: str):
+    async def test_operator_can_list_tenant_scoped_risk_alerts(self, client: AsyncClient, setup_tenant, monkeypatch):
         tid, _, *_ = setup_tenant
-        token = create_access_token(tid, "00000000-0000-0000-0000-000000000001", role)
+        token = create_access_token(tid, "00000000-0000-0000-0000-000000000001", "operator")
+        list_alerts = AsyncMock(return_value=([], 0))
+        monkeypatch.setattr(risk_api, "list_risk_alerts", list_alerts)
 
         resp = await client.get(
             "/api/v1/risk-alerts",
             headers={"Authorization": f"Bearer {token}"},
         )
 
-        assert resp.status_code == 403
-        assert resp.json()["detail"] == "Missing permission: code:manage"
+        assert resp.status_code == 200
+        assert resp.json()["items"] == []
+        assert list_alerts.await_args.args[1] == UUID(tid)
 
     @pytest.mark.anyio
-    @pytest.mark.parametrize("role", ["operator", "viewer"])
-    async def test_non_admin_cannot_resolve_risk_alert(
+    async def test_viewer_is_denied_before_risk_alert_list_service(self, client, setup_tenant, monkeypatch):
+        tid, _, *_ = setup_tenant
+        token = create_access_token(tid, "00000000-0000-0000-0000-000000000001", "viewer")
+        list_alerts = AsyncMock()
+        monkeypatch.setattr(risk_api, "list_risk_alerts", list_alerts)
+
+        resp = await client.get("/api/v1/risk-alerts", headers={"Authorization": f"Bearer {token}"})
+
+        assert resp.status_code == 403
+        assert resp.json()["detail"] == "Missing permission: risk:read"
+        list_alerts.assert_not_awaited()
+
+    @pytest.mark.anyio
+    async def test_api_key_and_acting_context_cannot_list_risk_alerts(self, client, setup_tenant, monkeypatch):
+        tid, _, *_ = setup_tenant
+        list_alerts = AsyncMock()
+        monkeypatch.setattr(risk_api, "list_risk_alerts", list_alerts)
+
+        api_key = await client.get("/api/v1/risk-alerts", headers={"X-Api-Key": "not-admin-authority"})
+        acting_token = create_access_token(
+            tid,
+            "00000000-0000-0000-0000-000000000001",
+            "operator",
+            "brand",
+            extra={"acting_tenant_id": str(UUID("00000000-0000-0000-0000-000000000099"))},
+        )
+        acting = await client.get(
+            "/api/v1/risk-alerts",
+            headers={"Authorization": f"Bearer {acting_token}"},
+        )
+
+        assert api_key.status_code == 401
+        assert acting.status_code == 403
+        list_alerts.assert_not_awaited()
+
+    @pytest.mark.anyio
+    async def test_operator_can_resolve_risk_alert(
         self,
         client: AsyncClient,
         setup_tenant,
         db_session: AsyncSession,
-        role: str,
     ):
         tid, _, *_ = setup_tenant
         alert = RiskAlert(
@@ -572,15 +639,36 @@ class TestRiskAlertAPI:
         )
         db_session.add(alert)
         await db_session.commit()
-        token = create_access_token(tid, "00000000-0000-0000-0000-000000000001", role)
+        token = create_access_token(tid, "00000000-0000-0000-0000-000000000001", "operator")
 
         resp = await client.post(
             f"/api/v1/risk-alerts/{alert.id}/resolve",
             headers={"Authorization": f"Bearer {token}"},
         )
 
+        assert resp.status_code == 200
+        assert resp.json()["resolved"] is True
+
+    @pytest.mark.anyio
+    async def test_viewer_is_denied_before_risk_alert_resolve_service(
+        self,
+        client: AsyncClient,
+        setup_tenant,
+        monkeypatch,
+    ):
+        tid, _, *_ = setup_tenant
+        resolve_alert = AsyncMock()
+        monkeypatch.setattr(risk_api, "resolve_risk_alert", resolve_alert)
+        token = create_access_token(tid, "00000000-0000-0000-0000-000000000001", "viewer")
+
+        resp = await client.post(
+            f"/api/v1/risk-alerts/{UUID('00000000-0000-0000-0000-000000000099')}/resolve",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
         assert resp.status_code == 403
-        assert resp.json()["detail"] == "Missing permission: code:manage"
+        assert resp.json()["detail"] == "Missing permission: risk:manage"
+        resolve_alert.assert_not_awaited()
 
     @pytest.mark.anyio
     async def test_list_alerts(

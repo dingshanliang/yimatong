@@ -32,6 +32,8 @@ from urllib.parse import unquote, urlsplit, urlunsplit
 import asyncpg
 import pytest
 import pytest_asyncio
+from alembic.config import Config
+from alembic.script import ScriptDirectory
 from sqlalchemy import text
 from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
@@ -392,21 +394,70 @@ def _prepare_runtime_role() -> None:
 # ── 会话级：干净 PG + 迁移 ────────────────────────────────────────────────
 
 
-def _run_migrations() -> None:
-    env = os.environ.copy()
-    env["database_url"] = ACCEPTANCE_DSN
-    env["migration_database_url"] = ACCEPTANCE_DSN
-    env["control_database_url"] = ACCEPTANCE_DSN
-    result = subprocess.run(
-        [sys.executable, "-m", "alembic", "upgrade", "head"],
-        cwd=BACKEND_DIR,
-        capture_output=True,
-        text=True,
-        env=env,
-        timeout=180,
+_RESUMABLE_SNAPSHOT_MIGRATION_TITLES = (
+    "build WeCom contact tenant identity index online",
+    "build WeCom member-scoped contact indexes online",
+)
+
+
+def _is_resumable_snapshot_timeout(result: subprocess.CompletedProcess[str]) -> bool:
+    output = f"{result.stdout}\n{result.stderr}"
+    return (
+        "asyncpg.exceptions.QueryCanceledError" in output
+        and "canceling statement due to statement timeout" in output
+        and "SELECT pg_sleep(10) WHERE EXISTS" in output
+        and any(title in output for title in _RESUMABLE_SNAPSHOT_MIGRATION_TITLES)
     )
-    if result.returncode != 0:
-        pytest.fail(f"alembic upgrade head failed on clean PG:\nSTDOUT:\n{result.stdout}\nSTDERR:\n{result.stderr}")
+
+
+def _assert_migration_head_and_ownership(lease: AcceptanceDatabaseLease) -> None:
+    config = Config(str(BACKEND_DIR / "alembic.ini"))
+    config.set_main_option("script_location", str(BACKEND_DIR / "alembic"))
+    repository_heads = tuple(ScriptDirectory.from_config(config).get_heads())
+    if len(repository_heads) != 1:
+        raise AssertionError(f"acceptance migrations require exactly one repository head, got {repository_heads!r}")
+
+    async def _go() -> None:
+        conn = await asyncpg.connect(lease.database_dsn.replace("postgresql+asyncpg://", "postgresql://"))
+        try:
+            database_heads = tuple(
+                row["version_num"] for row in await conn.fetch("SELECT version_num FROM alembic_version ORDER BY 1")
+            )
+            marker = await _database_owner_marker(conn, lease.database_name)
+            if database_heads != repository_heads:
+                raise AssertionError(
+                    f"acceptance database head mismatch: database={database_heads!r} repository={repository_heads!r}"
+                )
+            if marker != lease.owner_marker:
+                raise AcceptanceDatabaseOwnershipError("acceptance database ownership marker changed during migrations")
+        finally:
+            await conn.close()
+
+    asyncio.run(_go())
+
+
+def run_owned_migrations_with_snapshot_retry(lease: AcceptanceDatabaseLease) -> None:
+    env = os.environ.copy()
+    env["database_url"] = lease.database_dsn
+    env["migration_database_url"] = lease.database_dsn
+    env["control_database_url"] = lease.database_dsn
+    result: subprocess.CompletedProcess[str] | None = None
+    for attempt in range(3):
+        result = subprocess.run(
+            [sys.executable, "-m", "alembic", "upgrade", "head"],
+            cwd=BACKEND_DIR,
+            capture_output=True,
+            text=True,
+            env=env,
+            timeout=180,
+        )
+        if result.returncode == 0:
+            _assert_migration_head_and_ownership(lease)
+            return
+        if not _is_resumable_snapshot_timeout(result) or attempt == 2:
+            break
+    assert result is not None
+    pytest.fail(f"alembic upgrade head failed on clean PG:\nSTDOUT:\n{result.stdout}\nSTDERR:\n{result.stderr}")
 
 
 def _provision_test_principals() -> None:
@@ -466,7 +517,7 @@ def migrated_pg_url() -> Generator[str, None, None]:
     try:
         asyncio.run(_create_owned_database(lease, ADMIN_DSN))
         _prepare_runtime_role()
-        _run_migrations()
+        run_owned_migrations_with_snapshot_retry(lease)
         _provision_test_principals()
         _assert_target_database(lease)
         yield ACCEPTANCE_DSN

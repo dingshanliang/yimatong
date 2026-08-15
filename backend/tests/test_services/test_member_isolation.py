@@ -52,6 +52,23 @@ async def test_search_consumers_isolated():
 
 
 @pytest.mark.anyio
+async def test_withdrawn_lead_contact_is_not_searchable_by_nickname():
+    tenant_id = uuid.uuid4()
+    async with TestSessionLocal() as db:
+        db.add(
+            ConsumerProfile(
+                tenant_id=tenant_id,
+                nickname="已撤回用户",
+                lead_contact_suppressed=True,
+            )
+        )
+        await db.commit()
+
+    async with TestSessionLocal() as db:
+        assert await search_consumers(db, tenant_id, "已撤回用户", lookup_type="nickname") == []
+
+
+@pytest.mark.anyio
 async def test_get_consumer_profile_cross_tenant_returns_none():
     """用租户 B 的 tenant_id 查询租户 A 的消费者应返回 None"""
     tid_a = uuid.uuid4()

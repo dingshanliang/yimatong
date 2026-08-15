@@ -35,6 +35,7 @@ class _FakeConnection:
         current_database: str = TEST_DATABASE,
         create_error: Exception | None = None,
         comment_error: Exception | None = None,
+        migration_heads: tuple[str, ...] = ("current-head",),
     ) -> None:
         self.exists = exists
         self.marker = marker
@@ -44,6 +45,7 @@ class _FakeConnection:
         self.current_database = current_database
         self.create_error = create_error
         self.comment_error = comment_error
+        self.migration_heads = migration_heads
         self.closed = False
         self.terminated = False
         self.executed: list[str] = []
@@ -80,6 +82,10 @@ class _FakeConnection:
             assert args == (TEST_DATABASE,)
             return self.exists
         raise AssertionError(f"unexpected SQL: {sql}")
+
+    async def fetch(self, sql: str):
+        assert sql == "SELECT version_num FROM alembic_version ORDER BY 1"
+        return [{"version_num": head} for head in self.migration_heads]
 
     async def close(self) -> None:
         self.closed = True
@@ -126,6 +132,145 @@ def _lease() -> AcceptanceDatabaseLease:
         database_dsn=TEST_TARGET_DSN,
         owner_token="test-token",
     )
+
+
+def _snapshot_timeout_result(title: str) -> object:
+    return acceptance_conftest.subprocess.CompletedProcess(
+        args=["alembic", "upgrade", "head"],
+        returncode=1,
+        stdout=f"Running upgrade previous -> current, {title}\n",
+        stderr=(
+            "asyncpg.exceptions.QueryCanceledError: canceling statement due to statement timeout\n"
+            "[SQL: SELECT pg_sleep(10) WHERE EXISTS (SELECT 1 FROM pg_stat_activity)]\n"
+        ),
+    )
+
+
+def test_run_migrations_resumes_two_exact_snapshot_timeouts_then_verifies_ownership(monkeypatch) -> None:
+    results = iter(
+        [
+            _snapshot_timeout_result("build WeCom contact tenant identity index online"),
+            _snapshot_timeout_result("build WeCom member-scoped contact indexes online"),
+            acceptance_conftest.subprocess.CompletedProcess(["alembic"], 0, "", ""),
+        ]
+    )
+    calls: list[object] = []
+    migration_envs: list[dict[str, str]] = []
+
+    def run(*args, **kwargs):
+        migration_envs.append(kwargs["env"])
+        return next(results)
+
+    monkeypatch.setenv("database_url", "postgresql+asyncpg://wrong/global")
+    monkeypatch.setenv("migration_database_url", "postgresql+asyncpg://wrong/global")
+    monkeypatch.setenv("control_database_url", "postgresql+asyncpg://wrong/global")
+    monkeypatch.setattr(acceptance_conftest.subprocess, "run", run)
+    monkeypatch.setattr(acceptance_conftest, "_assert_migration_head_and_ownership", calls.append)
+
+    lease = _lease()
+    acceptance_conftest.run_owned_migrations_with_snapshot_retry(lease)
+
+    assert calls == [lease]
+    assert len(migration_envs) == 3
+    assert all(
+        env[variable] == lease.database_dsn
+        for env in migration_envs
+        for variable in ("database_url", "migration_database_url", "control_database_url")
+    )
+
+
+def test_migration_verification_requires_dynamic_sole_head_and_matching_owner(monkeypatch) -> None:
+    lease = _lease()
+    connection = _FakeConnection()
+    seen_dsns: list[str] = []
+
+    class _Script:
+        @staticmethod
+        def get_heads() -> tuple[str, ...]:
+            return ("current-head",)
+
+    monkeypatch.setattr(acceptance_conftest.ScriptDirectory, "from_config", lambda _config: _Script())
+    monkeypatch.setattr(
+        acceptance_conftest.asyncpg,
+        "connect",
+        _connection_factory([connection], seen_dsns),
+    )
+
+    acceptance_conftest._assert_migration_head_and_ownership(lease)
+
+    assert seen_dsns == [lease.database_dsn.replace("postgresql+asyncpg://", "postgresql://")]
+    assert connection.closed
+
+
+@pytest.mark.parametrize(
+    ("migration_heads", "marker", "error", "message"),
+    [
+        (("stale-head",), TEST_MARKER, AssertionError, "head mismatch"),
+        (("current-head",), "yimatong-acceptance-owner:foreign", AcceptanceDatabaseOwnershipError, "marker changed"),
+    ],
+)
+def test_migration_verification_rejects_head_or_owner_drift(
+    monkeypatch,
+    migration_heads: tuple[str, ...],
+    marker: str,
+    error: type[Exception],
+    message: str,
+) -> None:
+    class _Script:
+        @staticmethod
+        def get_heads() -> tuple[str, ...]:
+            return ("current-head",)
+
+    connection = _FakeConnection(migration_heads=migration_heads, marker=marker)
+    monkeypatch.setattr(acceptance_conftest.ScriptDirectory, "from_config", lambda _config: _Script())
+    monkeypatch.setattr(
+        acceptance_conftest.asyncpg,
+        "connect",
+        _connection_factory([connection]),
+    )
+
+    with pytest.raises(error, match=message):
+        acceptance_conftest._assert_migration_head_and_ownership(_lease())
+
+    assert connection.closed
+
+
+def test_run_migrations_exact_snapshot_timeout_exhaustion_propagates(monkeypatch) -> None:
+    result = _snapshot_timeout_result("build WeCom contact tenant identity index online")
+    calls = 0
+
+    def run(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        return result
+
+    monkeypatch.setattr(acceptance_conftest.subprocess, "run", run)
+    monkeypatch.setattr(
+        acceptance_conftest,
+        "_assert_migration_head_and_ownership",
+        lambda _lease: pytest.fail("ownership assertion must not run after failed migration"),
+    )
+
+    with pytest.raises(pytest.fail.Exception, match="alembic upgrade head failed"):
+        acceptance_conftest.run_owned_migrations_with_snapshot_retry(_lease())
+    assert calls == 3
+
+
+def test_run_migrations_nonmatching_failure_is_not_retried(monkeypatch) -> None:
+    calls = 0
+
+    def run(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        return acceptance_conftest.subprocess.CompletedProcess(
+            ["alembic"], 1, "", "RuntimeError: unrelated migration failure"
+        )
+
+    monkeypatch.setattr(acceptance_conftest.subprocess, "run", run)
+
+    with pytest.raises(pytest.fail.Exception, match="unrelated migration failure"):
+        acceptance_conftest.run_owned_migrations_with_snapshot_retry(_lease())
+    assert calls == 1
 
 
 def test_cleanup_retries_transient_drop_failure_then_confirms_absence() -> None:
@@ -348,7 +493,7 @@ def _patch_successful_lifecycle(monkeypatch: pytest.MonkeyPatch) -> list[Accepta
 
     monkeypatch.setattr(acceptance_conftest, "_create_owned_database", _create)
     monkeypatch.setattr(acceptance_conftest, "_prepare_runtime_role", lambda: None)
-    monkeypatch.setattr(acceptance_conftest, "_run_migrations", lambda: None)
+    monkeypatch.setattr(acceptance_conftest, "run_owned_migrations_with_snapshot_retry", lambda _lease: None)
     monkeypatch.setattr(acceptance_conftest, "_provision_test_principals", lambda: None)
     monkeypatch.setattr(acceptance_conftest, "_assert_target_database", lambda _lease: None)
     return leases
@@ -356,7 +501,12 @@ def _patch_successful_lifecycle(monkeypatch: pytest.MonkeyPatch) -> list[Accepta
 
 @pytest.mark.parametrize(
     "failure_point",
-    ["_prepare_runtime_role", "_run_migrations", "_provision_test_principals", "_assert_target_database"],
+    [
+        "_prepare_runtime_role",
+        "run_owned_migrations_with_snapshot_retry",
+        "_provision_test_principals",
+        "_assert_target_database",
+    ],
 )
 def test_every_post_create_setup_failure_triggers_cleanup(
     monkeypatch: pytest.MonkeyPatch,

@@ -13,9 +13,11 @@ from app.utils.crypto import (
     CryptoError,
     EnvKeyProvider,
     decrypt_bytes,
+    decrypt_consumer_phone,
     decrypt_phone,
     decrypt_wechat_openid,
     encrypt_bytes,
+    encrypt_consumer_phone,
     encrypt_phone,
     encrypt_wechat_openid,
     hash_phone,
@@ -154,6 +156,25 @@ class TestWechatOpenidProtection:
         with pytest.raises(CryptoError) as error:
             hash_wechat_openid(tenant_id, openid)
         assert str(error.value) == "Invalid WeChat OpenID"
+
+
+class TestConsumerPhoneProtection:
+    def test_phone_envelope_roundtrip_is_bound_to_tenant_and_consumer(self):
+        tenant_id = uuid.uuid4()
+        consumer_id = uuid.uuid4()
+        ciphertext, nonce, key_id = encrypt_consumer_phone(tenant_id, consumer_id, "13800138000")
+
+        assert b"13800138000" not in ciphertext
+        assert len(ciphertext) == 27
+        assert decrypt_consumer_phone(tenant_id, consumer_id, ciphertext, nonce, key_id) == "13800138000"
+        with pytest.raises(CryptoError, match="Decryption failed"):
+            decrypt_consumer_phone(tenant_id, uuid.uuid4(), ciphertext, nonce, key_id)
+
+    @pytest.mark.parametrize("phone", ["", "1380013800", "138001380000", "1380013800x"])
+    def test_invalid_phone_fails_without_echoing_value(self, phone):
+        with pytest.raises(CryptoError) as error:
+            encrypt_consumer_phone(uuid.uuid4(), uuid.uuid4(), phone)
+        assert str(error.value) == "Invalid consumer phone"
 
 
 class TestMaskPhone:

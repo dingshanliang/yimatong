@@ -180,6 +180,22 @@ def _resolve_control_database_url(
     return str(settings.control_database_url or settings.migration_database_url or settings.database_url)
 
 
+def _resolve_seed_owner_database_url(
+    runtime_override: str | None = None,
+    control_override: str | None = None,
+    owner_override: str | None = None,
+) -> str:
+    """Resolve the owner-only seed authority without using control credentials."""
+
+    if owner_override is not None:
+        return owner_override
+    if runtime_override is not None:
+        return control_override or runtime_override
+    if settings.migration_database_url is None:
+        raise RuntimeError("migration_database_url is required for trusted seed export authority")
+    return str(settings.migration_database_url)
+
+
 def _session_factory(url: str) -> tuple[async_sessionmaker[AsyncSession], AsyncEngine]:
     engine = create_async_engine(url)
     return async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False), engine
@@ -488,6 +504,7 @@ async def _create_and_deliver_seed_code_batch(
     batch_code: str,
     quantity: int,
     created_by: uuid.UUID,
+    seed_owner_session_factory: async_sessionmaker[AsyncSession],
 ) -> uuid.UUID:
     init_crypto(EnvKeyProvider())
     data = await create_code_batch(
@@ -502,7 +519,13 @@ async def _create_and_deliver_seed_code_batch(
         idempotency_key=_seed_code_generation_idempotency_key(tenant_id, production_batch_id),
     )
     batch_id = uuid.UUID(data["id"])
-    await generate_code_csv(db, tenant_id, batch_id, created_by)
+    await generate_code_csv(
+        db,
+        tenant_id,
+        batch_id,
+        created_by,
+        seed_owner_session_factory=seed_owner_session_factory,
+    )
     await mark_printing(db, tenant_id, batch_id, actor_id=str(created_by))
     await mark_delivered(
         db,
@@ -526,6 +549,7 @@ async def _ensure_code_batch(
     batch_code: str,
     quantity: int,
     created_by: uuid.UUID,
+    seed_owner_session_factory: async_sessionmaker[AsyncSession],
 ) -> tuple[CodeBatch, list[CodeItem]]:
     """幂等定位或创建并完整交付、激活码批次。返回 (batch, items)。
 
@@ -555,6 +579,7 @@ async def _ensure_code_batch(
             batch_code=batch_code,
             quantity=quantity,
             created_by=created_by,
+            seed_owner_session_factory=seed_owner_session_factory,
         )
         result = await db.execute(select(CodeBatch).where(CodeBatch.id == batch_id))
         batch = result.scalar_one()
@@ -840,6 +865,7 @@ async def _ensure_committed_runtime_admin(
 async def _build_baseline_tenant(
     session_factory: async_sessionmaker[AsyncSession],
     control_session_factory: async_sessionmaker[AsyncSession],
+    seed_owner_session_factory: async_sessionmaker[AsyncSession],
     tenant_ref: _TenantSeedRef,
 ) -> _BaselineFacts:
     try:
@@ -853,7 +879,6 @@ async def _build_baseline_tenant(
                 )
             )
             db = await stack.enter_async_context(session_factory())
-            await stack.enter_async_context(db.begin())
             tenant = await _open_runtime_tenant(db, tenant_ref)
             brand = await _ensure_brand(db, tenant.id, BRAND_NAME, "基准品牌：食品/农产品品牌方。")
             product = await _ensure_product(
@@ -882,6 +907,7 @@ async def _build_baseline_tenant(
                 CODE_BATCH_CODE,
                 BASELINE_CODE_QUANTITY,
                 admin_id,
+                seed_owner_session_factory,
             )
             template, version = await _ensure_page(
                 db,
@@ -910,6 +936,7 @@ async def _build_baseline_tenant(
                 (item for item in code_items if item.status == CodeItemStatus.activated),
                 code_items[0] if code_items else None,
             )
+            await db.commit()
             return _BaselineFacts(
                 brand_id=brand.id,
                 product_id=product.id,
@@ -938,6 +965,7 @@ async def _build_baseline_tenant(
 async def _build_control_tenant(
     session_factory: async_sessionmaker[AsyncSession],
     control_session_factory: async_sessionmaker[AsyncSession],
+    seed_owner_session_factory: async_sessionmaker[AsyncSession],
     tenant_ref: _TenantSeedRef,
 ) -> _ControlFacts:
     try:
@@ -951,7 +979,6 @@ async def _build_control_tenant(
                 )
             )
             db = await stack.enter_async_context(session_factory())
-            await stack.enter_async_context(db.begin())
             tenant = await _open_runtime_tenant(db, tenant_ref)
             brand = await _ensure_brand(db, tenant.id, CONTROL_BRAND_NAME, "对照品牌")
             product = await _ensure_product(
@@ -986,8 +1013,10 @@ async def _build_control_tenant(
                 CONTROL_CODE_BATCH_CODE,
                 CONTROL_CODE_QUANTITY,
                 admin_id,
+                seed_owner_session_factory,
             )
             await refresh_quota_usage_from_authoritative_rows(db, tenant.id)
+            await db.commit()
             return _ControlFacts(
                 brand_id=brand.id,
                 first_public_id=code_items[0].public_id if code_items else None,
@@ -1007,6 +1036,7 @@ async def _build_control_tenant(
 async def _build_baseline_dataset(
     database_url: str | None = None,
     control_database_url: str | None = None,
+    seed_owner_database_url: str | None = None,
 ) -> dict[str, Any]:
     """构建完整基准数据集，返回稳定标识 → 关键字段映射（用于证据与摘要）。
 
@@ -1027,12 +1057,14 @@ async def _build_baseline_dataset(
     """
     runtime_url = _resolve_runtime_database_url(database_url)
     control_url = _resolve_control_database_url(database_url, control_database_url)
+    owner_url = _resolve_seed_owner_database_url(database_url, control_database_url, seed_owner_database_url)
     runtime_factory, runtime_engine = _session_factory(runtime_url)
     control_factory, control_engine = _session_factory(control_url)
+    owner_factory, owner_engine = _session_factory(owner_url)
     try:
         base_ref, control_ref = await _ensure_control_plane(control_factory)
-        base_facts = await _build_baseline_tenant(runtime_factory, control_factory, base_ref)
-        control_facts = await _build_control_tenant(runtime_factory, control_factory, control_ref)
+        base_facts = await _build_baseline_tenant(runtime_factory, control_factory, owner_factory, base_ref)
+        control_facts = await _build_control_tenant(runtime_factory, control_factory, owner_factory, control_ref)
         return {
             "baseline_tenant": {
                 "id": str(base_ref.tenant_id),
@@ -1074,6 +1106,7 @@ async def _build_baseline_dataset(
     finally:
         await runtime_engine.dispose()
         await control_engine.dispose()
+        await owner_engine.dispose()
 
 
 def _format_summary(result: dict[str, Any]) -> str:

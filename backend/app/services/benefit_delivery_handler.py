@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import async_session_factory
 from app.core.event_bus import event_bus
-from app.models.campaign import Benefit, BenefitClaim
+from app.models.campaign import Benefit, BenefitClaim, CampaignClaimOutbox
 from app.models.connector import BenefitDelivery, Connector
 from app.services.circuit_breaker import CircuitBreaker
 from app.services.connectors import get_adapter
@@ -69,6 +69,13 @@ async def on_claim_created(event_type: str, data: dict, tenant_id: str) -> None:
         benefit = benefit_result.scalar_one_or_none()
         if not benefit or not benefit.connector_id:
             return  # 平台内权益，不需要外部发放
+        if claim_id and await db.scalar(
+            select(CampaignClaimOutbox.id).where(
+                CampaignClaimOutbox.tenant_id == event_tenant_id,
+                CampaignClaimOutbox.claim_id == uuid.UUID(claim_id),
+            )
+        ):
+            return  # Canonical campaign outbox is the sole delivery authority.
 
         # 查询连接器
         conn_result = await db.execute(
@@ -172,6 +179,7 @@ async def _do_deliver(
 
         cb.record_success()
         delivery.status = DeliveryStatus.SUCCESS if result.status == "success" else DeliveryStatus.PENDING
+        delivery.external_id = result.external_id
         delivery.external_data = result.external_data
         if delivery.status == DeliveryStatus.SUCCESS:
             delivery.next_retry_at = None

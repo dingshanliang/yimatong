@@ -3,23 +3,28 @@
 import uuid
 from collections.abc import AsyncGenerator
 from datetime import UTC, date, datetime, timedelta
+from unittest.mock import AsyncMock
 
 import pytest
 from httpx import ASGITransport, AsyncClient
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.v1 import analytics_dashboard as analytics_dashboard_api
 from app.core.database import get_db
 from app.main import app
 from app.models.analytics import DailyScanStats
 from app.models.campaign import BenefitClaim, Campaign
-from app.models.channel import DiversionClue
 from app.models.export_log import ExportLog
-from app.models.risk import RiskAlert
+from app.models.regional import RegionalOrg
 from app.models.scan import ScanEvent
 from app.models.tenant import Tenant, TenantStatus, TenantType
 from app.utils.security import create_access_token
 from tests.conftest import TestSessionLocal
+
+
+def _export_headers(headers: dict[str, str]) -> dict[str, str]:
+    return {**headers, "Idempotency-Key": str(uuid.uuid4())}
 
 
 def _platform_admin_headers() -> dict:
@@ -230,8 +235,13 @@ class TestDashboardExport:
 
         resp = await client.post(
             "/api/v1/analytics/exports",
-            params={"export_type": "scan_events", "start_date": start, "end_date": end},
-            headers=headers,
+            json={
+                "export_type": "scan_events",
+                "start_date": start,
+                "end_date": end,
+                "reason": "  月度扫码复盘  ",
+            },
+            headers=_export_headers(headers),
         )
         assert resp.status_code == 200
         assert "spreadsheetml.sheet" in resp.headers.get("content-type", "")
@@ -243,6 +253,42 @@ class TestDashboardExport:
         log = result.scalar_one_or_none()
         assert log is not None
         assert log.row_count == 3
+        assert log.reason == "月度扫码复盘"
+        assert log.scope_snapshot["start_date"] == start
+        assert resp.headers["X-Content-SHA256"] == log.checksum_sha256
+        assert int(resp.headers["Content-Length"]) == log.artifact_size_bytes
+
+    @pytest.mark.anyio
+    async def test_export_xlsx_replays_same_bytes_for_same_idempotency_key(
+        self, client: AsyncClient, db_session: AsyncSession, dashboard_setup
+    ):
+        tenant_id, headers = dashboard_setup
+        request_headers = {**headers, "Idempotency-Key": "11111111-1111-4111-8111-111111111111"}
+        body = {"export_type": "scan_stats", "reason": "固定报表重试"}
+
+        first = await client.post("/api/v1/analytics/exports", json=body, headers=request_headers)
+        second = await client.post("/api/v1/analytics/exports", json=body, headers=request_headers)
+
+        assert first.status_code == second.status_code == 200
+        assert first.content == second.content
+        assert first.headers["X-Export-Id"] == second.headers["X-Export-Id"]
+        assert first.headers["X-Content-SHA256"] == second.headers["X-Content-SHA256"]
+        count = await db_session.scalar(
+            select(func.count())
+            .select_from(ExportLog)
+            .where(
+                ExportLog.tenant_id == uuid.UUID(tenant_id),
+                ExportLog.idempotency_key == request_headers["Idempotency-Key"],
+            )
+        )
+        assert count == 1
+
+        conflict = await client.post(
+            "/api/v1/analytics/exports",
+            json={"export_type": "scan_stats", "reason": "不同用途"},
+            headers=request_headers,
+        )
+        assert conflict.status_code == 409
 
     @pytest.mark.anyio
     async def test_export_campaign_dashboard(self, client: AsyncClient, db_session: AsyncSession, dashboard_setup):
@@ -274,8 +320,12 @@ class TestDashboardExport:
 
         resp = await client.post(
             "/api/v1/analytics/exports",
-            params={"export_type": "campaign_dashboard"},
-            headers=headers,
+            json={
+                "export_type": "campaign_dashboard",
+                "campaign_id": str(campaign.id),
+                "reason": "活动效果复盘",
+            },
+            headers=_export_headers(headers),
         )
         assert resp.status_code == 200
         assert "spreadsheetml.sheet" in resp.headers.get("content-type", "")
@@ -290,55 +340,46 @@ class TestDashboardExport:
         assert log.row_count >= 1
 
     @pytest.mark.anyio
-    async def test_export_risk_dashboard(self, client: AsyncClient, db_session: AsyncSession, dashboard_setup):
-        tid, headers = dashboard_setup
-        tenant_uuid = uuid.UUID(tid)
-
-        alert = RiskAlert(
-            tenant_id=tenant_uuid,
-            alert_type="multi_location",
-            public_id="RISK001",
-            code_item_id=uuid.UUID("00000000-0000-0000-0000-000000000001"),
-            detail="测试预警",
-        )
-        db_session.add(alert)
-        await db_session.commit()
-
+    async def test_risk_export_compatibility_contract(
+        self, client: AsyncClient, db_session: AsyncSession, dashboard_setup
+    ):
+        tenant_id, headers = dashboard_setup
         resp = await client.post(
             "/api/v1/analytics/exports",
-            params={"export_type": "risk_dashboard"},
-            headers=headers,
+            json={"export_type": "risk_dashboard", "reason": "月度风控汇总"},
+            headers=_export_headers(headers),
         )
         assert resp.status_code == 200
-        assert "spreadsheetml.sheet" in resp.headers.get("content-type", "")
-
-        result = await db_session.execute(
-            select(ExportLog).where(ExportLog.tenant_id == tenant_uuid, ExportLog.export_type == "risk_dashboard_xlsx")
+        log = await db_session.scalar(
+            select(ExportLog).where(
+                ExportLog.tenant_id == uuid.UUID(tenant_id),
+                ExportLog.export_type == "risk_dashboard_xlsx",
+            )
         )
-        log = result.scalar_one_or_none()
         assert log is not None
-        assert log.row_count >= 1
+        assert log.reason == "月度风控汇总"
+        assert log.scope_snapshot["read_model"] == "/api/v1/analytics/risk-dashboard"
+        assert resp.headers["X-Content-SHA256"] == log.checksum_sha256
 
     @pytest.mark.anyio
     async def test_export_regional_dashboard(self, client: AsyncClient, db_session: AsyncSession, dashboard_setup):
         tid, headers = dashboard_setup
         tenant_uuid = uuid.UUID(tid)
 
-        clue = DiversionClue(
-            tenant_id=tenant_uuid,
-            public_id="DIV001",
-            code_item_id=uuid.UUID("00000000-0000-0000-0000-000000000001"),
-            expected_region="上海",
-            detected_city="北京",
-            resolved=False,
-        )
-        db_session.add(clue)
+        org = RegionalOrg(tenant_id=tenant_uuid, name="区域协会", org_type="association")
+        db_session.add(org)
         await db_session.commit()
+        await db_session.refresh(org)
 
         resp = await client.post(
             "/api/v1/analytics/exports",
-            params={"export_type": "regional_dashboard"},
-            headers=headers,
+            json={
+                "export_type": "regional_dashboard",
+                "org_id": str(org.id),
+                "days_back": 30,
+                "reason": "区域成员经营复盘",
+            },
+            headers=_export_headers(headers),
         )
         assert resp.status_code == 200
         assert "spreadsheetml.sheet" in resp.headers.get("content-type", "")
@@ -350,7 +391,20 @@ class TestDashboardExport:
         )
         log = result.scalar_one_or_none()
         assert log is not None
-        assert log.row_count >= 1
+        assert log.row_count == 5
+        assert log.scope_snapshot == {
+            "days_back": 30,
+            "dimensions": [
+                "member_count",
+                "product_count",
+                "total_scans",
+                "total_claims",
+                "days_back",
+                "by_member",
+                "by_product",
+            ],
+            "org_id": str(org.id),
+        }
 
     @pytest.mark.anyio
     async def test_export_permission_denied_for_non_admin(self, client: AsyncClient, dashboard_setup):
@@ -360,7 +414,59 @@ class TestDashboardExport:
 
         resp = await client.post(
             "/api/v1/analytics/exports",
-            params={"export_type": "scan_events"},
-            headers=operator_headers,
+            json={"export_type": "scan_events", "reason": "越权测试"},
+            headers=_export_headers(operator_headers),
         )
         assert resp.status_code == 403
+
+    @pytest.mark.anyio
+    async def test_export_rejects_acting_agency_session(self, client: AsyncClient, dashboard_setup):
+        tenant_id, _ = dashboard_setup
+        token = create_access_token(
+            tenant_id,
+            "00000000-0000-0000-0000-000000000001",
+            "admin",
+            "agency",
+            extra={"acting_tenant_id": tenant_id, "scope": ["analytics:view"]},
+        )
+
+        response = await client.post(
+            "/api/v1/analytics/exports",
+            json={"export_type": "scan_events", "reason": "代理越权测试"},
+            headers=_export_headers({"Authorization": f"Bearer {token}"}),
+        )
+
+        assert response.status_code == 403
+
+    @pytest.mark.anyio
+    @pytest.mark.parametrize("reason", [None, "   ", "x" * 501])
+    async def test_export_reason_is_required_before_ledger_write(
+        self,
+        client: AsyncClient,
+        db_session: AsyncSession,
+        dashboard_setup,
+        monkeypatch,
+        reason,
+    ):
+        tenant_id, headers = dashboard_setup
+        rate_limit = AsyncMock()
+        monkeypatch.setattr(analytics_dashboard_api, "enforce_export_rate_limit", rate_limit)
+        before = await db_session.scalar(
+            select(func.count()).select_from(ExportLog).where(ExportLog.tenant_id == uuid.UUID(tenant_id))
+        )
+        body = {"export_type": "scan_events"}
+        if reason is not None:
+            body["reason"] = reason
+
+        response = await client.post(
+            "/api/v1/analytics/exports",
+            json=body,
+            headers=_export_headers(headers),
+        )
+
+        assert response.status_code == 422
+        after = await db_session.scalar(
+            select(func.count()).select_from(ExportLog).where(ExportLog.tenant_id == uuid.UUID(tenant_id))
+        )
+        assert after == before
+        rate_limit.assert_not_awaited()

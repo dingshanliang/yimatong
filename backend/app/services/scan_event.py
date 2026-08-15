@@ -1,6 +1,7 @@
 """扫码事件服务"""
 
 import uuid
+from typing import Literal
 
 from sqlalchemy import select, text
 from sqlalchemy import update as sa_update
@@ -23,6 +24,7 @@ async def record_scan_event(
     environment: str | None = None,
     visitor_id: str | None = None,
     is_valid_visit: bool = False,
+    diversion_observation_owner: Literal["risk_auto_handler", "resolver"] = "risk_auto_handler",
 ) -> ScanEvent:
     """记录扫码事件；PostgreSQL 由受控函数原子写首扫时间和权威事件。"""
     # 每一条成功落库的权威扫码事实（包括重复扫码）计一次 max_scans；
@@ -107,6 +109,8 @@ async def record_scan_event(
     await event_bus.emit(
         "scan.created",
         {
+            "scan_event_id": str(event.id),
+            "scan_time": event.scan_time.isoformat(),
             "public_id": public_id,
             "is_first_scan": is_first,
             "environment": environment,
@@ -114,8 +118,12 @@ async def record_scan_event(
             # 导致 cross-region 路径失效）
             "ip_hash": ip_hash,
             "tenant_id": str(tenant_id),
+            # Resolver writes the exact observation in this transaction. Other
+            # scan producers retain the event-handler fallback by default.
+            "diversion_observation_owner": diversion_observation_owner,
         },
         str(tenant_id),
+        db=db,
     )
     return event
 

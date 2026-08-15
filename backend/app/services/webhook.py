@@ -8,6 +8,7 @@ import secrets
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from typing import Any
 
 from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -18,11 +19,16 @@ from app.models.webhook import ApiKey, WebhookDelivery, WebhookEndpoint
 from app.services.audit import write_audit_log
 from app.services.connectors.secrets import decrypt_secrets, encrypt_secrets
 from app.utils.auth_rbac import VALID_API_KEY_ROLES, get_permissions_for_role
+from app.utils.crypto import encrypt_bytes
 
 
 def _generate_secret() -> str:
     """生成 webhook secret（whsec_ 前缀，32 字节随机）。"""
     return f"whsec_{secrets.token_hex(32)}"
+
+
+def _webhook_url_digest(url: str) -> str:
+    return hashlib.sha256(url.encode()).hexdigest()
 
 
 @dataclass(frozen=True)
@@ -54,7 +60,48 @@ class ApiKeyActiveLimitReached(ValueError):
     pass
 
 
-def _canonical_json(value: dict) -> str:
+class WebhookEndpointConflict(ValueError):
+    pass
+
+
+@dataclass(frozen=True)
+class WebhookEndpointView:
+    id: uuid.UUID
+    url: str
+    events: list[str]
+    description: str | None
+    enabled: bool
+    config_version: int
+    batch_mode: bool
+    batch_size: int
+
+
+@dataclass(frozen=True)
+class IssuedWebhookEndpoint(WebhookEndpointView):
+    secret: str
+
+
+@dataclass(frozen=True)
+class WebhookDeliveryListView:
+    id: uuid.UUID
+    endpoint_id: uuid.UUID
+    event_id: str
+    event_type: str
+    status: str
+    retry_count: int
+    last_response_code: int | None
+    created_at: datetime | None
+
+
+@dataclass(frozen=True)
+class WebhookDeliveryDetailView(WebhookDeliveryListView):
+    payload: dict
+    next_retry_at: datetime | None
+    last_response_body: str | None
+    updated_at: datetime | None
+
+
+def _canonical_json(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
 
@@ -176,93 +223,261 @@ def _audit_details(*, key_prefix: str, role: str, expires_at: datetime | None, *
 async def create_webhook_endpoint(
     db: AsyncSession,
     tenant_id: uuid.UUID,
+    auth_session_id: uuid.UUID,
     url: str,
     events: list[str],
+    *,
+    actor_id: uuid.UUID | None = None,
     description: str | None = None,
     batch_mode: bool = False,
     batch_size: int = 100,
-) -> WebhookEndpoint:
+) -> IssuedWebhookEndpoint:
+    endpoint_id = uuid7()
     secret = _generate_secret()
-    ep = WebhookEndpoint(
-        tenant_id=tenant_id,
+    aad = f"webhook-endpoint:{tenant_id}:{endpoint_id}".encode()
+    ciphertext, nonce, key_id = encrypt_bytes(secret.encode(), aad=aad)
+    if db.get_bind().dialect.name == "postgresql":
+        result = await db.execute(
+            text(
+                "SELECT * FROM public.create_webhook_endpoint("
+                ":tenant_id,:auth_session_id,:endpoint_id,:url,CAST(:events AS jsonb),:description,"
+                ":batch_mode,:batch_size,:secret_ciphertext,:secret_nonce,:secret_key_id)"
+            ),
+            {
+                "tenant_id": tenant_id,
+                "auth_session_id": auth_session_id,
+                "endpoint_id": endpoint_id,
+                "url": url,
+                "events": _canonical_json(events),
+                "description": description,
+                "batch_mode": batch_mode,
+                "batch_size": batch_size,
+                "secret_ciphertext": ciphertext,
+                "secret_nonce": nonce,
+                "secret_key_id": key_id,
+            },
+        )
+        returned = result.mappings().one()
+        if uuid.UUID(str(returned["endpoint_id"])) != endpoint_id:
+            raise RuntimeError("Webhook endpoint authority returned an unexpected identifier")
+        config_version = int(returned["config_version"])
+    else:
+        ep = WebhookEndpoint(
+            id=endpoint_id,
+            tenant_id=tenant_id,
+            url=url,
+            events=events,
+            secret_ciphertext=ciphertext,
+            secret_nonce=nonce,
+            secret_key_id=key_id,
+            description=description,
+            batch_mode=batch_mode,
+            batch_size=batch_size,
+        )
+        db.add(ep)
+        await db.flush()
+        config_version = ep.config_version
+    if actor_id is not None:
+        await write_audit_log(
+            db,
+            operator_id=str(actor_id),
+            target_tenant_id=str(tenant_id),
+            action="webhook_endpoint_created",
+            resource=f"webhook_endpoint:{endpoint_id}",
+            details={"config_version": config_version, "url_digest": _webhook_url_digest(url)},
+        )
+    return IssuedWebhookEndpoint(
+        id=endpoint_id,
         url=url,
         events=events,
-        secret=secret,
         description=description,
+        enabled=True,
+        config_version=config_version,
         batch_mode=batch_mode,
         batch_size=batch_size,
+        secret=secret,
     )
-    db.add(ep)
-    await db.flush()
-    await db.refresh(ep)
-    return ep
 
 
 async def update_webhook_endpoint(
     db: AsyncSession,
     tenant_id: uuid.UUID,
+    auth_session_id: uuid.UUID,
     endpoint_id: uuid.UUID,
     *,
+    actor_id: uuid.UUID | None = None,
+    expected_version: int,
     url: str | None = None,
     events: list[str] | None = None,
     description: str | None = None,
     enabled: bool | None = None,
     batch_mode: bool | None = None,
     batch_size: int | None = None,
-) -> WebhookEndpoint | None:
+) -> WebhookEndpointView | None:
     result = await db.execute(
-        select(WebhookEndpoint).where(
+        select(
+            WebhookEndpoint.id,
+            WebhookEndpoint.url,
+            WebhookEndpoint.events,
+            WebhookEndpoint.description,
+            WebhookEndpoint.enabled,
+            WebhookEndpoint.config_version,
+            WebhookEndpoint.batch_mode,
+            WebhookEndpoint.batch_size,
+        ).where(
             WebhookEndpoint.id == endpoint_id,
             WebhookEndpoint.tenant_id == tenant_id,
         )
     )
-    ep = result.scalar_one_or_none()
-    if not ep:
+    current = result.one_or_none()
+    if current is None:
         return None
-    if url is not None:
-        ep.url = url
-    if events is not None:
-        ep.events = events
-    if description is not None:
-        ep.description = description
-    if enabled is not None:
-        ep.enabled = enabled
-    if batch_mode is not None:
-        ep.batch_mode = batch_mode
-    if batch_size is not None:
-        ep.batch_size = batch_size
-    await db.flush()
-    await db.refresh(ep)
-    return ep
+    if current.config_version != expected_version:
+        raise WebhookEndpointConflict("Webhook endpoint version conflict")
+    next_url = url if url is not None else current.url
+    next_events = events if events is not None else list(current.events)
+    next_description = description if description is not None else current.description
+    next_enabled = enabled if enabled is not None else current.enabled
+    next_batch_mode = batch_mode if batch_mode is not None else current.batch_mode
+    next_batch_size = batch_size if batch_size is not None else current.batch_size
+    if db.get_bind().dialect.name == "postgresql":
+        next_version = await db.scalar(
+            text(
+                "SELECT public.update_webhook_endpoint("
+                ":tenant_id,:auth_session_id,:endpoint_id,:expected_version,:url,CAST(:events AS jsonb),"
+                ":description,:enabled,:batch_mode,:batch_size,NULL,NULL,NULL)"
+            ),
+            {
+                "tenant_id": tenant_id,
+                "auth_session_id": auth_session_id,
+                "endpoint_id": endpoint_id,
+                "expected_version": expected_version,
+                "url": next_url,
+                "events": _canonical_json(next_events),
+                "description": next_description,
+                "enabled": next_enabled,
+                "batch_mode": next_batch_mode,
+                "batch_size": next_batch_size,
+            },
+        )
+        view = WebhookEndpointView(
+            id=endpoint_id,
+            url=next_url,
+            events=next_events,
+            description=next_description,
+            enabled=next_enabled,
+            config_version=int(next_version),
+            batch_mode=next_batch_mode,
+            batch_size=next_batch_size,
+        )
+    else:
+        ep = await db.get(WebhookEndpoint, endpoint_id)
+        if ep is None or ep.tenant_id != tenant_id:
+            return None
+        ep.url = next_url
+        ep.events = next_events
+        ep.description = next_description
+        ep.enabled = next_enabled
+        ep.batch_mode = next_batch_mode
+        ep.batch_size = next_batch_size
+        ep.config_version += 1
+        await db.flush()
+        await db.refresh(ep)
+        view = _endpoint_view(ep)
+    if actor_id is not None:
+        await write_audit_log(
+            db,
+            operator_id=str(actor_id),
+            target_tenant_id=str(tenant_id),
+            action="webhook_endpoint_updated",
+            resource=f"webhook_endpoint:{endpoint_id}",
+            details={"config_version": view.config_version, "url_digest": _webhook_url_digest(view.url)},
+        )
+    return view
 
 
 async def delete_webhook_endpoint(
     db: AsyncSession,
     tenant_id: uuid.UUID,
+    auth_session_id: uuid.UUID,
     endpoint_id: uuid.UUID,
+    *,
+    actor_id: uuid.UUID | None = None,
+    expected_version: int,
 ) -> bool:
     result = await db.execute(
-        select(WebhookEndpoint).where(
+        select(WebhookEndpoint.id, WebhookEndpoint.config_version).where(
             WebhookEndpoint.id == endpoint_id,
             WebhookEndpoint.tenant_id == tenant_id,
         )
     )
-    ep = result.scalar_one_or_none()
-    if not ep:
+    current = result.one_or_none()
+    if current is None:
         return False
-    await db.delete(ep)
-    await db.flush()
-    return True
+    if current.config_version != expected_version:
+        raise WebhookEndpointConflict("Webhook endpoint version conflict")
+    if db.get_bind().dialect.name == "postgresql":
+        deleted_id = await db.scalar(
+            text("SELECT public.delete_webhook_endpoint(:tenant_id,:auth_session_id,:endpoint_id,:expected_version)"),
+            {
+                "tenant_id": tenant_id,
+                "auth_session_id": auth_session_id,
+                "endpoint_id": endpoint_id,
+                "expected_version": expected_version,
+            },
+        )
+        deleted = deleted_id is True
+    else:
+        ep = await db.get(WebhookEndpoint, endpoint_id)
+        if ep is None or ep.tenant_id != tenant_id:
+            return False
+        await db.delete(ep)
+        await db.flush()
+        deleted = True
+    if deleted and actor_id is not None:
+        await write_audit_log(
+            db,
+            operator_id=str(actor_id),
+            target_tenant_id=str(tenant_id),
+            action="webhook_endpoint_deleted",
+            resource=f"webhook_endpoint:{endpoint_id}",
+            details={"config_version": expected_version},
+        )
+    return deleted
 
 
 async def list_webhook_endpoints(
     db: AsyncSession,
     tenant_id: uuid.UUID,
-) -> list[WebhookEndpoint]:
+) -> list[WebhookEndpointView]:
     result = await db.execute(
-        select(WebhookEndpoint).where(WebhookEndpoint.tenant_id == tenant_id).order_by(WebhookEndpoint.id.desc())
+        select(
+            WebhookEndpoint.id,
+            WebhookEndpoint.url,
+            WebhookEndpoint.events,
+            WebhookEndpoint.description,
+            WebhookEndpoint.enabled,
+            WebhookEndpoint.config_version,
+            WebhookEndpoint.batch_mode,
+            WebhookEndpoint.batch_size,
+        )
+        .where(WebhookEndpoint.tenant_id == tenant_id)
+        .order_by(WebhookEndpoint.id.desc())
     )
-    return list(result.scalars().all())
+    return [WebhookEndpointView(*row) for row in result.all()]
+
+
+def _endpoint_view(endpoint: WebhookEndpoint) -> WebhookEndpointView:
+    return WebhookEndpointView(
+        id=endpoint.id,
+        url=endpoint.url,
+        events=list(endpoint.events),
+        description=endpoint.description,
+        enabled=endpoint.enabled,
+        config_version=endpoint.config_version,
+        batch_mode=endpoint.batch_mode,
+        batch_size=endpoint.batch_size,
+    )
 
 
 async def create_api_key(
@@ -606,7 +821,7 @@ async def list_deliveries(
     page: int = 1,
     page_size: int = 20,
     status: str | None = None,
-) -> tuple[list[WebhookDelivery], int]:
+) -> tuple[list[WebhookDeliveryListView], int]:
     filters = [WebhookDelivery.tenant_id == tenant_id]
     if status:
         filters.append(WebhookDelivery.status == status)
@@ -616,11 +831,51 @@ async def list_deliveries(
     total = total_result.scalar() or 0
 
     stmt = (
-        select(WebhookDelivery)
+        select(
+            WebhookDelivery.id,
+            WebhookDelivery.endpoint_id,
+            WebhookDelivery.event_id,
+            WebhookDelivery.event_type,
+            WebhookDelivery.status,
+            WebhookDelivery.retry_count,
+            WebhookDelivery.last_response_code,
+            WebhookDelivery.created_at,
+        )
         .where(*filters)
         .order_by(WebhookDelivery.id.desc())
         .offset((page - 1) * page_size)
         .limit(page_size)
     )
     result = await db.execute(stmt)
-    return list(result.scalars().all()), total
+    return [WebhookDeliveryListView(*row) for row in result.all()], total
+
+
+async def get_webhook_delivery(
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    delivery_id: uuid.UUID,
+) -> WebhookDeliveryDetailView | None:
+    """Load the operational delivery projection without endpoint secret material."""
+
+    row = (
+        await db.execute(
+            select(
+                WebhookDelivery.id,
+                WebhookDelivery.endpoint_id,
+                WebhookDelivery.event_id,
+                WebhookDelivery.event_type,
+                WebhookDelivery.status,
+                WebhookDelivery.retry_count,
+                WebhookDelivery.last_response_code,
+                WebhookDelivery.created_at,
+                WebhookDelivery.payload,
+                WebhookDelivery.next_retry_at,
+                WebhookDelivery.last_response_body,
+                WebhookDelivery.updated_at,
+            ).where(
+                WebhookDelivery.id == delivery_id,
+                WebhookDelivery.tenant_id == tenant_id,
+            )
+        )
+    ).one_or_none()
+    return WebhookDeliveryDetailView(*row) if row is not None else None

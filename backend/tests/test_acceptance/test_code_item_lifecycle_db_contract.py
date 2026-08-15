@@ -3,16 +3,28 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import os
 import subprocess
 import sys
 import time
 import uuid
+from collections.abc import AsyncIterator
 
 import asyncpg
 import pytest
+import pytest_asyncio
+from sqlalchemy.engine import make_url
+from uuid6 import uuid7
 
-from tests.test_acceptance.conftest import BACKEND_DIR
+from tests.test_acceptance.conftest import (
+    ADMIN_DSN,
+    BACKEND_DIR,
+    AcceptanceDatabaseLease,
+    _create_owned_database,
+    _drop_database_with_retry,
+    run_owned_migrations_with_snapshot_retry,
+)
 from tests.test_acceptance.test_code_batch_delivery_contract import (
     _insert_batch,
     _insert_items,
@@ -33,6 +45,84 @@ VALIDATE_REVISION = "c186daf407c9"
 HEAD_REVISION = "d297eb0518da"
 BACKFILL_INDEX = "ix_code_items_frozen_provenance_backfill"
 DOWNGRADE_IDENTITY_INDEX = "uq_code_items_tenant_id_id_downgrade"
+
+
+async def _migration_heads(database_url: str) -> tuple[str, ...]:
+    conn = await asyncpg.connect(database_url.replace("postgresql+asyncpg://", "postgresql://", 1))
+    try:
+        rows = await conn.fetch("SELECT version_num FROM alembic_version ORDER BY version_num")
+        return tuple(row["version_num"] for row in rows)
+    finally:
+        await conn.close()
+
+
+async def _resolve_owned_legacy_markers(database_url: str) -> None:
+    """Resolve only the deterministic legacy markers in this fresh leased DB."""
+
+    expected = {
+        ("0006", "distributors", "contact_phone"),
+        ("0006", "kyc_records", "real_name"),
+        ("0006", "kyc_records", "id_number"),
+        ("0006", "kyc_records", "phone"),
+    }
+    conn = await asyncpg.connect(database_url.replace("postgresql+asyncpg://", "postgresql://", 1))
+    try:
+        rows = await conn.fetch(
+            "SELECT source_revision,source_table,source_column,state FROM legacy_pii_recovery_markers"
+        )
+        assert {(row["source_revision"], row["source_table"], row["source_column"]) for row in rows} == expected
+        assert all(row["state"] == "legacy_unknown" for row in rows)
+        assert (
+            await conn.execute(
+                "UPDATE legacy_pii_recovery_markers SET state='operator_recovered',"
+                "note=note||'; isolated lifecycle roundtrip acknowledgement' "
+                "WHERE source_revision='0006' AND state='legacy_unknown'"
+            )
+            == f"UPDATE {len(expected)}"
+        )
+    finally:
+        await conn.close()
+
+
+@pytest_asyncio.fixture
+async def lifecycle_roundtrip_pg_url(migrated_pg_url: str) -> AsyncIterator[str]:
+    """Lease a DB so this deep downgrade can never consume sibling facts."""
+
+    database_name = f"yimatong_acceptance_lifecycle_{uuid.uuid4().hex[:12]}"
+    database_url = make_url(migrated_pg_url).set(database=database_name).render_as_string(hide_password=False)
+    lease = AcceptanceDatabaseLease(
+        database_name=database_name, database_dsn=database_url, owner_token=uuid.uuid4().hex
+    )
+    initial_heads: tuple[str, ...] = ()
+    primary_error: BaseException | None = None
+    cleanup_errors: list[BaseException] = []
+    try:
+        await _create_owned_database(lease, ADMIN_DSN)
+        await asyncio.to_thread(run_owned_migrations_with_snapshot_retry, lease)
+        initial_heads = await _migration_heads(database_url)
+        assert initial_heads
+        await _resolve_owned_legacy_markers(database_url)
+        yield database_url
+    except BaseException as exc:
+        primary_error = exc
+        raise
+    finally:
+        if lease.created:
+            try:
+                await _drop_database_with_retry(
+                    lease.database_name,
+                    ADMIN_DSN,
+                    expected_owner_marker=lease.owner_marker,
+                    allow_unmarked_created=lease.created and not lease.marker_written,
+                )
+            except BaseException as exc:
+                cleanup_errors.append(exc)
+        if cleanup_errors:
+            if primary_error is not None:
+                for cleanup_error in cleanup_errors:
+                    primary_error.add_note(f"isolated lifecycle database cleanup also failed: {cleanup_error!r}")
+            else:
+                raise cleanup_errors[0]
 
 
 def _alembic(database_url: str, *args: str, succeeds: bool = True) -> subprocess.CompletedProcess[str]:
@@ -68,6 +158,52 @@ async def _assert_sqlstate(coro, sqlstate: str) -> None:
     with pytest.raises(asyncpg.PostgresError) as raised:
         await coro
     assert raised.value.sqlstate == sqlstate
+
+
+async def _insert_legacy_lifecycle_manifest_and_deliver(
+    conn: asyncpg.Connection,
+    ids: dict[str, uuid.UUID],
+    batch_id: uuid.UUID,
+    *,
+    row_count: int,
+) -> uuid.UUID:
+    """Attach one pre-U08C authority-v0 artifact for this isolated roundtrip."""
+
+    export_id = uuid7()
+    plaintext = b"public_id,status\n" + b"A,created\n" * row_count
+    checksum = hashlib.sha256(plaintext).hexdigest()
+    payload_digest = hashlib.sha256(b"isolated lifecycle legacy export:" + export_id.bytes).hexdigest()
+    await conn.execute(
+        "INSERT INTO export_logs "
+        "(id,tenant_id,account_id,export_type,resource_id,file_name,content_type,row_count,status,reason,"
+        "scope_snapshot,idempotency_key,payload_digest,authority_version,code_batch_id,manifest_version,"
+        "checksum_sha256,artifact_size_bytes,artifact_ciphertext,artifact_nonce,artifact_scheme,artifact_key_id,"
+        "created_at,updated_at) VALUES($1,$2,$3,'code_csv',$4,'codes.csv','text/csv; charset=utf-8',$5,"
+        "'completed','pre-U08C lifecycle acceptance artifact','{}'::jsonb,$6,$7,0,$4,1,$8,$9,$10,$11,"
+        "'aes-256-gcm-v1','test-key-1',now(),now())",
+        export_id,
+        ids["tenant"],
+        ids["account"],
+        batch_id,
+        row_count,
+        f"legacy:{export_id}",
+        payload_digest,
+        checksum,
+        len(plaintext),
+        b"c" * (len(plaintext) + 16),
+        b"n" * 12,
+    )
+    await conn.execute(
+        "UPDATE code_batches SET status='exported',export_manifest_id=$1,exported_at=now() WHERE id=$2",
+        export_id,
+        batch_id,
+    )
+    await conn.execute("UPDATE code_batches SET status='printing',printing_at=now() WHERE id=$1", batch_id)
+    await conn.execute(
+        "UPDATE code_batches SET status='delivered',delivered_at=now(),delivery_recipient='printer-a' WHERE id=$1",
+        batch_id,
+    )
+    return export_id
 
 
 async def _leave_invalid_concurrent_index(
@@ -536,7 +672,10 @@ async def test_staged_backfill_keeps_unrelated_runtime_io_available_and_cutover_
         await owner.close()
 
 
-async def test_function_only_lifecycle_risk_replay_first_scan_and_roundtrip(migrated_pg_url: str) -> None:
+async def test_function_only_lifecycle_risk_replay_first_scan_and_roundtrip(
+    lifecycle_roundtrip_pg_url: str,
+) -> None:
+    migrated_pg_url = lifecycle_roundtrip_pg_url
     owner_dsn = migrated_pg_url.replace("postgresql+asyncpg://", "postgresql://")
     runtime_dsn = owner_dsn.replace("yimatong:yimatong@", "yimatong_app:yimatong_app@")
     owner = await asyncpg.connect(owner_dsn)
@@ -546,7 +685,7 @@ async def test_function_only_lifecycle_risk_replay_first_scan_and_roundtrip(migr
     batch_id = await _insert_batch(owner, ids, receipt_id)
     await _insert_items(owner, ids["tenant"], batch_id, 2)
     await owner.execute("UPDATE code_batches SET status='completed' WHERE id=$1", batch_id)
-    await _insert_manifest_and_deliver(owner, ids, batch_id, row_count=2)
+    await _insert_legacy_lifecycle_manifest_and_deliver(owner, ids, batch_id, row_count=2)
     auth_session_id = uuid.uuid4()
     await owner.execute(
         "INSERT INTO auth_sessions "
@@ -704,9 +843,13 @@ async def test_function_only_lifecycle_risk_replay_first_scan_and_roundtrip(migr
         owned_interceptions.append(null_interception_id)
         owned_alerts.append(alert_id)
         owned_audits.append(risk_audit_id)
+        # This owner fixture exercises the older code-item lifecycle function in
+        # isolation; creating a rule through the later U07C authority would
+        # change the migration round-trip under test. Populate the complete
+        # current catalog row explicitly, including the authority-owned version.
         await owner.execute(
-            "INSERT INTO risk_rules(id,tenant_id,name,rule_type,action,config,enabled,created_at,updated_at) "
-            "VALUES($1,$2,'auto block','suspected_copy','block','{\"version\":\"v9\"}'::json,true,now(),now())",
+            "INSERT INTO risk_rules(id,tenant_id,name,rule_type,action,config,enabled,version,created_at,updated_at) "
+            "VALUES($1,$2,'auto block','suspected_copy','block','{\"version\":\"v9\"}'::json,true,1,now(),now())",
             rule_id,
             ids["tenant"],
         )
@@ -780,6 +923,13 @@ async def test_function_only_lifecycle_risk_replay_first_scan_and_roundtrip(migr
         )
         assert tuple(provenance)[:2] == ("bound", "system:risk-auto")
         assert provenance["freeze_provenance_version"] == 1 and len(provenance["freeze_reason"]) <= 200
+        interception_fingerprint = await owner.fetchrow(
+            "SELECT xmin::text,md5(to_jsonb(record)::text) digest FROM interception_records record WHERE id=$1",
+            interception_id,
+        )
+        assert not await owner.fetchval(
+            "SELECT has_table_privilege('yimatong_app','public.interception_records','UPDATE')"
+        )
         async with runtime.transaction():
             await runtime.execute("SELECT set_config('app.tenant_id',$1,true)", str(ids["tenant"]))
             await _assert_sqlstate(
@@ -787,8 +937,33 @@ async def test_function_only_lifecycle_risk_replay_first_scan_and_roundtrip(migr
                     "UPDATE interception_records SET action_taken=NULL WHERE id=$1",
                     interception_id,
                 ),
+                "42501",
+            )
+        assert (
+            await owner.fetchrow(
+                "SELECT xmin::text,md5(to_jsonb(record)::text) digest FROM interception_records record WHERE id=$1",
+                interception_id,
+            )
+            == interception_fingerprint
+        )
+        # The owner path still proves the underlying immutable-result trigger;
+        # runtime callers stop earlier at the U07C table ACL and must not be
+        # granted write access merely to reach this 55000 contract.
+        async with owner.transaction():
+            await _assert_sqlstate(
+                owner.execute(
+                    "UPDATE interception_records SET action_taken=NULL WHERE id=$1",
+                    interception_id,
+                ),
                 "55000",
             )
+        assert (
+            await owner.fetchrow(
+                "SELECT xmin::text,md5(to_jsonb(record)::text) digest FROM interception_records record WHERE id=$1",
+                interception_id,
+            )
+            == interception_fingerprint
+        )
         before_counts = await owner.fetchrow(
             "SELECT (SELECT count(*) FROM risk_alerts WHERE id=$1) alerts,"
             "(SELECT count(*) FROM platform_audit_log WHERE id=$2) audits",
@@ -960,7 +1135,7 @@ async def test_function_only_lifecycle_risk_replay_first_scan_and_roundtrip(migr
         recalled_batch = await _insert_batch(owner, recalled_ids, recalled_receipt)
         await _insert_items(owner, recalled_ids["tenant"], recalled_batch, 2)
         await owner.execute("UPDATE code_batches SET status='completed' WHERE id=$1", recalled_batch)
-        await _insert_manifest_and_deliver(owner, recalled_ids, recalled_batch, row_count=2)
+        await _insert_legacy_lifecycle_manifest_and_deliver(owner, recalled_ids, recalled_batch, row_count=2)
         recalled_session = uuid.uuid4()
         await owner.execute(
             "INSERT INTO auth_sessions "
@@ -1002,45 +1177,63 @@ async def test_function_only_lifecycle_risk_replay_first_scan_and_roundtrip(migr
             "42501",
         )
 
+        catalog_fingerprint = await owner.fetchrow(
+            "SELECT md5(string_agg(column_name||':'||data_type||':'||is_nullable,',' ORDER BY ordinal_position)) "
+            "FROM information_schema.columns WHERE table_schema='public' AND table_name='code_items'"
+        )
+        fact_counts = await owner.fetchrow(
+            "SELECT (SELECT count(*) FROM interception_records), (SELECT count(*) FROM export_logs)"
+        )
         blocked_downgrade = _alembic(migrated_pg_url, "downgrade", PARENT_REVISION, succeeds=False)
         assert "Cannot discard risk interception code-item evidence" in (
             blocked_downgrade.stdout + blocked_downgrade.stderr
         )
         assert await owner.fetchval("SELECT version_num FROM alembic_version") == HEAD_REVISION
-        await owner.execute("DELETE FROM interception_records WHERE id=$1", interception_id)
-        _alembic(migrated_pg_url, "downgrade", PARENT_REVISION)
+        assert (
+            await owner.fetchrow(
+                "SELECT md5(string_agg(column_name||':'||data_type||':'||is_nullable,',' ORDER BY ordinal_position)) "
+                "FROM information_schema.columns WHERE table_schema='public' AND table_name='code_items'"
+            )
+            == catalog_fingerprint
+        )
+        assert (
+            await owner.fetchrow(
+                "SELECT (SELECT count(*) FROM interception_records), (SELECT count(*) FROM export_logs)"
+            )
+            == fact_counts
+        )
+        assert (
+            await owner.fetchrow(
+                "SELECT xmin::text,md5(to_jsonb(record)::text) digest FROM interception_records record WHERE id=$1",
+                interception_id,
+            )
+            == interception_fingerprint
+        )
+    finally:
+        await runtime.close()
+        await owner.close()
+
+
+async def test_empty_lifecycle_database_downgrade_upgrade_roundtrip(
+    lifecycle_roundtrip_pg_url: str,
+) -> None:
+    """Prove the clean catalog roundtrip separately from the blocker fixture."""
+
+    initial_heads = await _migration_heads(lifecycle_roundtrip_pg_url)
+    assert initial_heads
+    _alembic(lifecycle_roundtrip_pg_url, "downgrade", PARENT_REVISION)
+    owner = await asyncpg.connect(lifecycle_roundtrip_pg_url.replace("postgresql+asyncpg://", "postgresql://", 1))
+    try:
         assert not await owner.fetchval(
             "SELECT EXISTS(SELECT 1 FROM information_schema.columns "
             "WHERE table_schema='public' AND table_name='code_items' AND column_name='frozen_from_status')"
         )
         assert await owner.fetchval("SELECT has_table_privilege('yimatong_app','code_items','UPDATE')")
-        _alembic(migrated_pg_url, "upgrade", "head")
-        _alembic(migrated_pg_url, "check")
-        for fixture in (ids, recalled_ids):
-            await _purge_owned_delivery_fixture(owner, fixture["tenant"])
-        await owner.execute(
-            "DELETE FROM risk_alerts WHERE tenant_id=ANY($1::uuid[])", [ids["tenant"], recalled_ids["tenant"]]
-        )
-        await owner.execute(
-            "DELETE FROM interception_records WHERE tenant_id=ANY($1::uuid[])",
-            [ids["tenant"], recalled_ids["tenant"]],
-        )
-        await owner.execute(
-            "DELETE FROM risk_rules WHERE tenant_id=ANY($1::uuid[])", [ids["tenant"], recalled_ids["tenant"]]
-        )
-        await owner.execute(
-            "DELETE FROM platform_audit_log WHERE target_tenant_id=ANY($1::text[])",
-            [str(ids["tenant"]), str(recalled_ids["tenant"])],
-        )
-        await owner.execute(
-            "DELETE FROM auth_sessions WHERE tenant_id=ANY($1::uuid[])",
-            [ids["tenant"], recalled_ids["tenant"]],
-        )
-        for fixture in (ids, recalled_ids):
-            await owner.execute("DELETE FROM production_batches WHERE tenant_id=$1", fixture["tenant"])
     finally:
-        await runtime.close()
         await owner.close()
+    _alembic(lifecycle_roundtrip_pg_url, "upgrade", "heads")
+    assert await _migration_heads(lifecycle_roundtrip_pg_url) == initial_heads
+    _alembic(lifecycle_roundtrip_pg_url, "check")
 
 
 async def test_acting_agency_lifecycle_authority_and_audit_are_target_bound(migrated_pg_url: str) -> None:

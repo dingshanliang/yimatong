@@ -10,10 +10,11 @@ from fastapi import HTTPException
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import select
 
+from app.api.v1 import takeovers as takeovers_api
 from app.core.database import get_db, get_db_with_bypass
 from app.main import app
-from app.models.audit import PlatformAuditLog
 from app.models.code import CodeBatch, CodeBatchStatus, CodeItem, CodeItemStatus
+from app.models.export_log import ExportLog
 from app.models.product import SKU, Brand, Product, ProductionBatch
 from app.models.takeover import TakeoverMode, TakeoverProject, TakeoverProjectStatus
 from app.services.redis_cache import SharedSecurityCacheUnavailable
@@ -230,23 +231,47 @@ async def test_takeover_error_export_neutralizes_formulas_and_audits_actor(clien
     )
     job_id = dry_run.json()["id"]
 
-    response = await client.get(
+    response = await client.post(
         f"/api/v1/takeovers/{project_id}/imports/{job_id}/errors.csv",
-        headers=_headers(tenant_id, account_id),
+        json={"reason": "复核既有码导入错误"},
+        headers={**_headers(tenant_id, account_id), "Idempotency-Key": str(uuid.uuid4())},
     )
-    audit = await db.scalar(
-        select(PlatformAuditLog).where(
-            PlatformAuditLog.target_tenant_id == str(tenant_id),
-            PlatformAuditLog.action == "takeover_import_errors_exported",
-            PlatformAuditLog.resource == f"takeover_import:{job_id}",
+    export = await db.scalar(
+        select(ExportLog).where(
+            ExportLog.tenant_id == tenant_id,
+            ExportLog.export_type == "takeover_import_errors_csv",
+            ExportLog.resource_id == uuid.UUID(job_id),
         )
     )
 
     assert response.status_code == 200
     assert "'=1+1" in response.content.decode("utf-8-sig")
-    assert audit is not None
-    assert audit.operator_id == str(account_id)
-    assert audit.details == {"project_id": project_id, "row_count": 1}
+    assert export is not None
+    assert export.reason == "复核既有码导入错误"
+    assert export.scope_snapshot == {
+        "errors_only": True,
+        "job_id": job_id,
+        "project_id": project_id,
+        "row_limit": 50_000,
+    }
+    assert response.headers["X-Content-SHA256"] == export.checksum_sha256
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("reason", [None, "   ", "x" * 501])
+async def test_takeover_error_reason_validation_precedes_resource_query(client, monkeypatch, reason):
+    project_lookup = AsyncMock()
+    monkeypatch.setattr(takeovers_api, "_require_project", project_lookup)
+    body = {} if reason is None else {"reason": reason}
+
+    response = await client.post(
+        f"/api/v1/takeovers/{uuid.uuid4()}/imports/{uuid.uuid4()}/errors.csv",
+        json=body,
+        headers={**_headers(uuid.uuid4(), uuid.uuid4()), "Idempotency-Key": str(uuid.uuid4())},
+    )
+
+    assert response.status_code == 422
+    project_lookup.assert_not_awaited()
 
 
 @pytest.mark.anyio

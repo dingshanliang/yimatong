@@ -6,6 +6,7 @@ from enum import StrEnum
 
 from sqlalchemy import (
     JSON,
+    Boolean,
     CheckConstraint,
     DateTime,
     ForeignKey,
@@ -41,8 +42,17 @@ class ConsumerProfile(Base):
     wechat_openid_nonce: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
     wechat_openid_key_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
     phone_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    phone_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
+    phone_ciphertext: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
+    phone_nonce: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
+    phone_key_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
     nickname: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    lead_contact_suppressed: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("false")
+    )
+    lead_consent_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True)
+    lead_scan_event_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True)
+    lead_scan_event_time: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    lead_captured_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     member_level: Mapped[str] = mapped_column(
         String(20),
         nullable=False,
@@ -58,7 +68,30 @@ class ConsumerProfile(Base):
 
     __table_args__ = (
         ForeignKeyConstraint(["tenant_id"], ["tenants.id"], name="fk_consumer_profiles_tenant"),
+        ForeignKeyConstraint(
+            ["tenant_id", "lead_consent_id"],
+            ["consent_records.tenant_id", "consent_records.id"],
+            name="fk_consumer_profiles_tenant_lead_consent",
+            use_alter=True,
+        ),
+        UniqueConstraint("tenant_id", "id", name="uq_consumer_profiles_tenant_id"),
         UniqueConstraint("tenant_id", "phone_hash", name="uq_consumer_tenant_phone"),
+        CheckConstraint(
+            "(phone_hash IS NULL AND phone_ciphertext IS NULL AND phone_nonce IS NULL AND phone_key_id IS NULL) OR "
+            "(length(phone_hash)=64 AND phone_ciphertext IS NOT NULL AND length(phone_nonce)=12 "
+            "AND NULLIF(trim(phone_key_id),'') IS NOT NULL)",
+            name="ck_consumer_profiles_phone_envelope",
+        ),
+        CheckConstraint(
+            "phone_hash IS NULL OR (phone_hash ~ '^[0-9a-f]{64}$' AND octet_length(phone_ciphertext)=27 "
+            "AND phone_key_id ~ '^aes-master-v[1-9][0-9]*$')",
+            name="ck_consumer_profiles_phone_envelope_format",
+        ).ddl_if(dialect="postgresql"),
+        CheckConstraint(
+            "lead_consent_id IS NULL OR (lead_scan_event_id IS NOT NULL AND lead_scan_event_time IS NOT NULL "
+            "AND lead_captured_at IS NOT NULL)",
+            name="ck_consumer_profiles_lead_provenance",
+        ),
         CheckConstraint(
             "(wechat_openid_hash IS NULL AND wechat_openid_ciphertext IS NULL "
             "AND wechat_openid_nonce IS NULL AND wechat_openid_key_id IS NULL) OR "
@@ -82,6 +115,35 @@ class ConsumerProfile(Base):
             sqlite_where=text("wechat_openid_hash IS NOT NULL"),
         ),
         Index("ix_consumer_profiles_tenant_phone", "tenant_id", "phone_hash"),
+        Index("ix_consumer_profiles_tenant_lead_consent", "tenant_id", "lead_consent_id"),
+    )
+
+
+class ConsumerPhoneEncryptionKey(Base):
+    """Deployment-global non-secret key metadata for sanctioned phone envelopes."""
+
+    __tablename__ = "consumer_phone_encryption_keys"
+
+    key_id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    algorithm: Mapped[str] = mapped_column(String(20), nullable=False, default="aes-256-gcm")
+    status: Mapped[str] = mapped_column(String(20), nullable=False)
+    activated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    retired_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    __table_args__ = (
+        CheckConstraint("algorithm='aes-256-gcm'", name="ck_consumer_phone_keys_algorithm"),
+        CheckConstraint("status IN ('active','retired')", name="ck_consumer_phone_keys_status"),
+        CheckConstraint(
+            "(status='active' AND retired_at IS NULL) OR (status='retired' AND retired_at IS NOT NULL)",
+            name="ck_consumer_phone_keys_retirement",
+        ),
+        Index(
+            "uq_consumer_phone_keys_single_active",
+            "status",
+            unique=True,
+            postgresql_where=text("status='active'"),
+            sqlite_where=text("status='active'"),
+        ),
     )
 
 

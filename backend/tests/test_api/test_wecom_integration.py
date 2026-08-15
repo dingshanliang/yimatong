@@ -5,6 +5,7 @@ from __future__ import annotations
 import uuid
 from collections.abc import AsyncGenerator
 from datetime import UTC, datetime, timedelta
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -203,7 +204,11 @@ async def create_live_scan_token(
     )
     assert code_batch.status_code == 201
     batch_id = code_batch.json()["id"]
-    exported = await client.post(f"/api/v1/code-batches/{batch_id}/export", headers=headers)
+    exported = await client.post(
+        f"/api/v1/code-batches/{batch_id}/export",
+        json={"reason": "Test lifecycle setup"},
+        headers={**headers, "Idempotency-Key": str(uuid.uuid4())},
+    )
     printing = await client.post(f"/api/v1/code-batches/{batch_id}/mark-printing", headers=headers)
     delivered = await client.post(
         f"/api/v1/code-batches/{batch_id}/mark-delivered",
@@ -417,3 +422,232 @@ async def test_contact_way_rejects_benefit_from_another_scan_token_tenant(
 
     assert response.status_code == 404
     assert response.json()["detail"] == "Benefit not found"
+
+
+@pytest.mark.anyio
+async def test_wecom_callback_cache_outage_is_before_db_bootstrap_and_decrypt(
+    client: AsyncClient,
+    monkeypatch,
+    shared_security_cache,
+):
+    from app.api.v1 import wecom_integrations
+    from app.services import wecom_integration
+
+    original_db_override = app.dependency_overrides[get_db]
+    db_dependency_calls = 0
+    bootstrap = AsyncMock()
+    decrypt = MagicMock()
+
+    async def tracked_db_override():
+        nonlocal db_dependency_calls
+        db_dependency_calls += 1
+        async for session in original_db_override():
+            yield session
+
+    app.dependency_overrides[get_db] = tracked_db_override
+    monkeypatch.setattr(wecom_integrations, "_scope_public_connector_tenant", bootstrap)
+    monkeypatch.setattr(wecom_integration, "decrypt_secrets", decrypt)
+    shared_security_cache.fail_rate_limits = True
+    try:
+        response = await client.post(
+            f"/api/v1/integrations/wecom/callback/{uuid.uuid4()}",
+            content=b"<xml />",
+        )
+    finally:
+        app.dependency_overrides[get_db] = original_db_override
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == "Callback service is temporarily unavailable"
+    assert db_dependency_calls == 0
+    bootstrap.assert_not_awaited()
+    decrypt.assert_not_called()
+
+
+@pytest.mark.anyio
+async def test_wecom_callback_public_bypass_is_exact_route_shape(client: AsyncClient):
+    exact_invalid_uuid = await client.post("/api/v1/integrations/wecom/callback/not-a-uuid", content=b"<xml />")
+    extra_segment = await client.post(
+        f"/api/v1/integrations/wecom/callback/{uuid.uuid4()}/extra",
+        content=b"<xml />",
+    )
+
+    assert exact_invalid_uuid.status_code == 422
+    assert extra_segment.status_code == 401
+
+
+@pytest.mark.anyio
+async def test_wecom_callback_declared_and_chunked_body_caps_run_before_admission_and_db(
+    client: AsyncClient,
+    monkeypatch,
+):
+    from app.api.v1 import wecom_integrations
+    from app.middleware.request_body_limit import WECOM_CALLBACK_BODY_LIMIT
+
+    admission = AsyncMock()
+    original_db_override = app.dependency_overrides[get_db]
+    db_dependency_calls = 0
+
+    async def tracked_db_override():
+        nonlocal db_dependency_calls
+        db_dependency_calls += 1
+        async for session in original_db_override():
+            yield session
+
+    async def oversized_chunks():
+        yield b"a" * 40_000
+        yield b"b" * (WECOM_CALLBACK_BODY_LIMIT - 39_999)
+
+    app.dependency_overrides[get_db] = tracked_db_override
+    app.dependency_overrides[wecom_integrations.enforce_wecom_callback_ip_admission] = admission
+    try:
+        declared = await client.post(
+            f"/api/v1/integrations/wecom/callback/{uuid.uuid4()}",
+            content=b"x" * (WECOM_CALLBACK_BODY_LIMIT + 1),
+        )
+        chunked_invalid_uuid = await client.post(
+            "/api/v1/integrations/wecom/callback/not-a-uuid",
+            content=oversized_chunks(),
+        )
+    finally:
+        app.dependency_overrides.pop(wecom_integrations.enforce_wecom_callback_ip_admission, None)
+        app.dependency_overrides[get_db] = original_db_override
+
+    assert declared.status_code == 413
+    assert chunked_invalid_uuid.status_code == 413
+    assert db_dependency_calls == 0
+    admission.assert_not_awaited()
+
+
+@pytest.mark.anyio
+async def test_wecom_callback_ip_limit_precedes_bootstrap_and_uses_trusted_proxy(
+    client: AsyncClient,
+    monkeypatch,
+    shared_security_cache,
+):
+    from app.api.v1 import wecom_integrations
+    from app.services import connector_callback_admission
+
+    bootstrap = AsyncMock(return_value=None)
+    monkeypatch.setattr(wecom_integrations, "_scope_public_connector_tenant", bootstrap)
+    monkeypatch.setattr(connector_callback_admission, "WECOM_CALLBACK_IP_RATE_LIMIT", 1)
+    path = f"/api/v1/integrations/wecom/callback/{uuid.uuid4()}"
+
+    first = await client.post(path, content=b"<xml />", headers={"X-Forwarded-For": "203.0.113.31"})
+    limited = await client.post(path, content=b"<xml />", headers={"X-Forwarded-For": "203.0.113.31"})
+    distinct = await client.post(path, content=b"<xml />", headers={"X-Forwarded-For": "203.0.113.32"})
+
+    assert first.status_code == 404
+    assert limited.status_code == 429
+    assert limited.headers["Retry-After"] == "60"
+    assert distinct.status_code == 404
+    assert bootstrap.await_count == 2
+    assert all("203.0.113" not in key for key in shared_security_cache.rate_keys)
+
+
+@pytest.mark.anyio
+async def test_wecom_callback_ignores_spoofed_forwarding_header_from_untrusted_peer(
+    client: AsyncClient,
+    monkeypatch,
+):
+    from app.api.v1 import wecom_integrations
+    from app.core.config import settings
+    from app.services import connector_callback_admission
+
+    bootstrap = AsyncMock(return_value=None)
+    monkeypatch.setattr(wecom_integrations, "_scope_public_connector_tenant", bootstrap)
+    monkeypatch.setattr(connector_callback_admission, "WECOM_CALLBACK_IP_RATE_LIMIT", 1)
+    monkeypatch.setattr(settings, "trusted_proxy_cidrs", "")
+    path = f"/api/v1/integrations/wecom/callback/{uuid.uuid4()}"
+
+    first = await client.post(path, content=b"<xml />", headers={"X-Forwarded-For": "203.0.113.41"})
+    spoofed = await client.post(path, content=b"<xml />", headers={"X-Forwarded-For": "203.0.113.42"})
+
+    assert first.status_code == 404
+    assert spoofed.status_code == 429
+    assert bootstrap.await_count == 1
+
+
+@pytest.mark.anyio
+async def test_wecom_callback_connector_limit_runs_after_signature_before_event_mutation(
+    client: AsyncClient,
+    auth_setup,
+    monkeypatch,
+):
+    from app.api.v1 import wecom_integrations
+    from app.models.connector import Connector
+    from app.services import connector_callback_admission
+
+    tenant_id, _ = auth_setup
+    connector = Connector(
+        id=uuid.uuid4(),
+        tenant_id=uuid.UUID(tenant_id),
+        name="signed callback",
+        connector_type="wecom_customer_contact",
+        config={},
+        enabled=True,
+    )
+    parsed_event = {"Event": "change_external_contact", "ChangeType": "add_external_contact"}
+    parse = MagicMock(return_value=parsed_event)
+    authority = AsyncMock()
+    monkeypatch.setattr(wecom_integrations, "_scope_public_connector_tenant", AsyncMock(return_value=connector))
+    monkeypatch.setattr(wecom_integrations, "parse_wecom_callback_body", parse)
+    monkeypatch.setattr(wecom_integrations, "apply_verified_wecom_contact_event", authority)
+    monkeypatch.setattr(connector_callback_admission, "WECOM_CALLBACK_IDENTITY_RATE_LIMIT", 0)
+
+    response = await client.post(
+        f"/api/v1/integrations/wecom/callback/{connector.id}",
+        content=b"<xml />",
+    )
+
+    assert response.status_code == 429
+    parse.assert_called_once()
+    authority.assert_not_awaited()
+
+
+@pytest.mark.anyio
+async def test_verified_wecom_callback_retry_preserves_success_and_authority_replay(
+    client: AsyncClient,
+    auth_setup,
+    monkeypatch,
+    shared_security_cache,
+):
+    from app.api.v1 import wecom_integrations
+    from app.models.connector import Connector
+
+    tenant_id, _ = auth_setup
+    connector = Connector(
+        id=uuid.uuid4(),
+        tenant_id=uuid.UUID(tenant_id),
+        name="verified callback",
+        connector_type="wecom_customer_contact",
+        config={},
+        enabled=True,
+    )
+    event = {
+        "Event": "change_external_contact",
+        "ChangeType": "add_external_contact",
+        "ExternalUserID": "external-replay",
+        "CreateTime": "1700000000",
+    }
+    authority = AsyncMock(
+        side_effect=[
+            {"status": "recorded", "replayed": False},
+            {"status": "duplicate", "replayed": True},
+        ]
+    )
+    monkeypatch.setattr(wecom_integrations, "_scope_public_connector_tenant", AsyncMock(return_value=connector))
+    monkeypatch.setattr(wecom_integrations, "parse_wecom_callback_body", MagicMock(return_value=event))
+    monkeypatch.setattr(wecom_integrations, "apply_verified_wecom_contact_event", authority)
+    path = f"/api/v1/integrations/wecom/callback/{connector.id}"
+
+    first = await client.post(path, content=b"<xml />")
+    replay = await client.post(path, content=b"<xml />")
+
+    assert first.status_code == 200
+    assert first.text == "success"
+    assert replay.status_code == 200
+    assert replay.text == "success"
+    assert authority.await_count == 2
+    assert sum(key.startswith("wecom-connector:") for key in shared_security_cache.rate_keys) == 2
+    assert tenant_id not in "".join(shared_security_cache.rate_keys)
+    assert str(connector.id) not in "".join(shared_security_cache.rate_keys)

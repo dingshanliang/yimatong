@@ -477,7 +477,7 @@ class TestCodeOperationAdmission:
         _, headers, batch_id, _ = code_batch_with_auth
         export = AsyncMock()
         audit = AsyncMock()
-        monkeypatch.setattr(code_batches_api, "generate_code_csv", export)
+        monkeypatch.setattr(code_batches_api, "generate_authorized_code_csv", export)
         monkeypatch.setattr("app.services.export_audit.log_export", audit)
         monkeypatch.setattr(
             code_service._code_operation_rate_cache,
@@ -485,7 +485,11 @@ class TestCodeOperationAdmission:
             AsyncMock(side_effect=SharedSecurityCacheUnavailable("redis unavailable")),
         )
 
-        response = await client.post(f"/api/v1/code-batches/{batch_id}/export", headers=headers)
+        response = await client.post(
+            f"/api/v1/code-batches/{batch_id}/export",
+            json={"reason": "Test export"},
+            headers={**headers, "Idempotency-Key": str(uuid.uuid4())},
+        )
 
         assert response.status_code == 503
         export.assert_not_awaited()
@@ -932,7 +936,8 @@ class TestCodeOperationAdmission:
 
         resp = await client.post(
             f"/api/v1/code-batches/{batch_id}/export",
-            headers=op_headers,
+            json={"reason": "Test export"},
+            headers={**op_headers, "Idempotency-Key": str(uuid.uuid4())},
         )
         # operator 有 code:export 权限，应返回 200
         assert resp.status_code == 200
@@ -1041,7 +1046,11 @@ class TestBatchStateMachine:
     @pytest.mark.anyio
     async def test_mark_printing_invalid_transition(self, client: AsyncClient, code_batch_with_auth):
         _, headers, batch_id, _ = code_batch_with_auth
-        exported = await client.post(f"/api/v1/code-batches/{batch_id}/export", headers=headers)
+        exported = await client.post(
+            f"/api/v1/code-batches/{batch_id}/export",
+            json={"reason": "Test export"},
+            headers={**headers, "Idempotency-Key": str(uuid.uuid4())},
+        )
         assert exported.status_code == 200
         resp = await client.post(
             f"/api/v1/code-batches/{batch_id}/mark-printing",
@@ -1059,7 +1068,11 @@ class TestBatchStateMachine:
     @pytest.mark.anyio
     async def test_mark_delivered_requires_printing(self, client: AsyncClient, code_batch_with_auth):
         _, headers, batch_id, _ = code_batch_with_auth
-        exported = await client.post(f"/api/v1/code-batches/{batch_id}/export", headers=headers)
+        exported = await client.post(
+            f"/api/v1/code-batches/{batch_id}/export",
+            json={"reason": "Test export"},
+            headers={**headers, "Idempotency-Key": str(uuid.uuid4())},
+        )
         assert exported.status_code == 200
         resp = await client.post(
             f"/api/v1/code-batches/{batch_id}/mark-delivered",
@@ -1071,7 +1084,11 @@ class TestBatchStateMachine:
     @pytest.mark.anyio
     async def test_delivered_after_printing(self, client: AsyncClient, code_batch_with_auth):
         _, headers, batch_id, _ = code_batch_with_auth
-        exported = await client.post(f"/api/v1/code-batches/{batch_id}/export", headers=headers)
+        exported = await client.post(
+            f"/api/v1/code-batches/{batch_id}/export",
+            json={"reason": "Test export"},
+            headers={**headers, "Idempotency-Key": str(uuid.uuid4())},
+        )
         assert exported.status_code == 200
         resp1 = await client.post(
             f"/api/v1/code-batches/{batch_id}/mark-printing",
@@ -1104,7 +1121,11 @@ class TestBatchStateMachine:
         _, headers = tenant_with_auth
         _, _, production_batch_id = sku_with_auth
         _, _, code_batch_id, _ = code_batch_with_auth
-        exported = await client.post(f"/api/v1/code-batches/{code_batch_id}/export", headers=headers)
+        exported = await client.post(
+            f"/api/v1/code-batches/{code_batch_id}/export",
+            json={"reason": "Test export"},
+            headers={**headers, "Idempotency-Key": str(uuid.uuid4())},
+        )
         assert exported.status_code == 200
         if transition == "mark-delivered":
             printing = await client.post(f"/api/v1/code-batches/{code_batch_id}/mark-printing", headers=headers)
@@ -1155,7 +1176,11 @@ class TestBatchStateMachine:
     ):
         _, headers = tenant_with_auth
         _, _, code_batch_id, _ = code_batch_with_auth
-        exported = await client.post(f"/api/v1/code-batches/{code_batch_id}/export", headers=headers)
+        exported = await client.post(
+            f"/api/v1/code-batches/{code_batch_id}/export",
+            json={"reason": "Test export"},
+            headers={**headers, "Idempotency-Key": str(uuid.uuid4())},
+        )
         assert exported.status_code == 200
         if transition == "mark-delivered":
             printing = await client.post(f"/api/v1/code-batches/{code_batch_id}/mark-printing", headers=headers)
@@ -1195,7 +1220,8 @@ class TestExportNotFound:
         _, headers = tenant_with_auth
         resp = await client.post(
             "/api/v1/code-batches/00000000-0000-0000-0000-000000000999/export",
-            headers=headers,
+            json={"reason": "Test export"},
+            headers={**headers, "Idempotency-Key": str(uuid.uuid4())},
         )
         assert resp.status_code == 404
 
@@ -1228,7 +1254,11 @@ class TestAuthoritativeCodeExportBoundary:
         item.pair_id = None
         await db_session.flush()
 
-        response = await client.post(f"/api/v1/code-batches/{batch_id}/export", headers=headers)
+        response = await client.post(
+            f"/api/v1/code-batches/{batch_id}/export",
+            json={"reason": "Test export"},
+            headers={**headers, "Idempotency-Key": str(uuid.uuid4())},
+        )
 
         assert response.status_code == 409
         assert (
@@ -1266,7 +1296,11 @@ class TestAuthoritativeCodeExportBoundary:
             )
         assert blocked.status_code == 200
 
-        response = await client.post(f"/api/v1/code-batches/{code_batch_id}/export", headers=headers)
+        response = await client.post(
+            f"/api/v1/code-batches/{code_batch_id}/export",
+            json={"reason": "Test export"},
+            headers={**headers, "Idempotency-Key": str(uuid.uuid4())},
+        )
 
         assert response.status_code == 409
         assert (

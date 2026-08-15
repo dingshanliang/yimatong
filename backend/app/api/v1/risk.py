@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -14,7 +14,7 @@ from app.core.dependencies import get_current_account_id, get_current_tenant, re
 from app.schemas.common import PaginatedResponse
 from app.services.code import map_code_lifecycle_db_error
 from app.services.risk import freeze_code_item, list_risk_alerts, resolve_risk_alert, unfreeze_code_item
-from app.utils.auth_rbac import require_permission
+from app.services.risk_access import risk_dependencies
 
 risk_router = APIRouter(
     prefix="/api/v1/risk-alerts",
@@ -51,7 +51,7 @@ def _raise_mapped_code_lifecycle_db_error(exc: DBAPIError) -> None:
     raise exc
 
 
-@risk_router.get("", summary="risk alerts 列表")
+@risk_router.get("", summary="risk alerts 列表", dependencies=risk_dependencies("risk:read"))
 async def list_risk_alerts_endpoint(
     alert_type: str | None = Query(None),
     resolved: bool | None = Query(None),
@@ -59,7 +59,6 @@ async def list_risk_alerts_endpoint(
     page_size: int = Query(20, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
-    _: None = Depends(require_permission("code:manage")),
 ):
     alerts, total = await list_risk_alerts(
         db,
@@ -77,27 +76,25 @@ async def list_risk_alerts_endpoint(
     )
 
 
-@risk_router.post("/{alert_id}/resolve", summary="解析 alert")
+@risk_router.post("/{alert_id}/resolve", summary="解析 alert", dependencies=risk_dependencies("risk:manage"))
 async def resolve_alert_endpoint(
     alert_id: uuid.UUID,
     db: AsyncSession = Depends(get_db, scope="function"),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
     account_id: uuid.UUID = Depends(get_current_account_id),
-    _: None = Depends(require_permission("code:manage")),
 ):
     alert = await resolve_risk_alert(db, tenant_id, alert_id, actor_id=str(account_id))
     return RiskAlertRead.model_validate(alert)
 
 
-@risk_router.post("/code-items/{item_id}/freeze")
+@risk_router.post("/code-items/{item_id}/freeze", dependencies=risk_dependencies("risk:manage"))
 async def freeze_code_item_endpoint(
     item_id: uuid.UUID,
     body: CodeItemFreezeRequest,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key", min_length=1, max_length=128),
     db: AsyncSession = Depends(get_db, scope="function"),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
     account_id: uuid.UUID = Depends(get_current_account_id),
-    # yimatong-zgb1.8 AC1：只有具备 code:manage 权限的账号可执行状态操作
-    _: None = Depends(require_permission("code:manage")),
 ):
     from app.services.code_state import InvalidStateTransitionError
 
@@ -108,6 +105,7 @@ async def freeze_code_item_endpoint(
             item_id,
             actor_id=str(account_id),
             reason=body.reason,
+            idempotency_key=idempotency_key,
         )
         return {"id": str(item.id), "public_id": item.public_id, "status": item.status}
     except InvalidStateTransitionError as e:
@@ -116,14 +114,12 @@ async def freeze_code_item_endpoint(
         _raise_mapped_code_lifecycle_db_error(exc)
 
 
-@risk_router.post("/code-items/{item_id}/unfreeze")
+@risk_router.post("/code-items/{item_id}/unfreeze", dependencies=risk_dependencies("risk:manage"))
 async def unfreeze_code_item_endpoint(
     item_id: uuid.UUID,
     db: AsyncSession = Depends(get_db, scope="function"),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
     account_id: uuid.UUID = Depends(get_current_account_id),
-    # yimatong-zgb1.8 AC1：解冻同样需要 code:manage 权限
-    _: None = Depends(require_permission("code:manage")),
 ):
     try:
         item = await unfreeze_code_item(db, tenant_id, item_id, actor_id=str(account_id))

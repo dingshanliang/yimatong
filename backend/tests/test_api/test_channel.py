@@ -1,14 +1,17 @@
 """W11: 渠道流向绑定测试"""
 
 from collections.abc import AsyncGenerator
-from uuid import UUID
+from unittest.mock import AsyncMock
+from uuid import UUID, uuid4
 
 import pytest
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.main import app
+from app.models.code import CodeItem
 from app.models.tenant import Account, Organization
 from app.utils.security import create_access_token, hash_password
 from tests.conftest import TestSessionLocal
@@ -57,7 +60,10 @@ async def setup_tenant(client: AsyncClient):
     )
     tid = resp.json()["id"]
     token = create_access_token(tid, "00000000-0000-0000-0000-000000000001", "admin")
-    headers = {"Authorization": f"Bearer {token}"}
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Idempotency-Key": "018f0f65-7ad4-7cc4-b874-57d93b10ab12",
+    }
     # enabled_features 必须走平台 control API；品牌方不能自助开付费 feature。
     feature_resp = await client.patch(
         f"/api/v1/tenants/{tid}",
@@ -121,6 +127,183 @@ async def test_channel_management_and_analytics_require_the_paid_feature(client:
         assert response.json()["detail"]["feature"] == "channel_portal"
 
 
+@pytest.mark.anyio
+async def test_channel_role_matrix_denies_viewer_and_scope_for_operator_before_service(
+    client: AsyncClient, setup_tenant, monkeypatch
+):
+    tid, _headers, *_ = setup_tenant
+    from app.api.v1 import channels as channel_api
+
+    service_spy = AsyncMock(return_value=([], 0))
+    monkeypatch.setattr(channel_api, "list_distributors", service_spy)
+    viewer = create_access_token(tid, str(uuid4()), "viewer")
+    viewer_response = await client.get("/api/v1/channels/distributors", headers={"Authorization": f"Bearer {viewer}"})
+    assert viewer_response.status_code == 403
+    service_spy.assert_not_awaited()
+
+    operator = create_access_token(tid, str(uuid4()), "operator")
+    operator_headers = {
+        "Authorization": f"Bearer {operator}",
+        "Idempotency-Key": str(uuid4()),
+    }
+    operator_read = await client.get("/api/v1/channels/distributors", headers=operator_headers)
+    assert operator_read.status_code == 200
+    service_spy.assert_awaited_once()
+    operator_manage = await client.post(
+        "/api/v1/channels/distributors",
+        json={"name": "运营员经销商"},
+        headers=operator_headers,
+    )
+    assert operator_manage.status_code == 201
+    operator_scope = await client.get("/api/v1/channels/account-scopes", headers=operator_headers)
+    assert operator_scope.status_code == 403
+
+
+def test_channel_search_query_contract_is_bounded_at_runtime():
+    expected_paths = {
+        "/api/v1/channels/distributors",
+        "/api/v1/channels/regions",
+        "/api/v1/channels/stores",
+        "/api/v1/channels/diversion-clues",
+    }
+    routes = {route.path: route for route in app.routes if getattr(route, "path", None) in expected_paths}
+
+    assert routes.keys() == expected_paths
+    for route in routes.values():
+        query_param = next(param for param in route.dependant.query_params if param.name == "q")
+        string_schema = next(
+            item for item in query_param._type_adapter.json_schema()["anyOf"] if item.get("type") == "string"
+        )
+        assert string_schema["minLength"] == 1
+        assert string_schema["maxLength"] == 100
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("path", "service_name"),
+    [
+        ("/api/v1/channels/distributors", "list_distributors"),
+        ("/api/v1/channels/regions", "list_regions"),
+        ("/api/v1/channels/stores", "list_stores"),
+        ("/api/v1/channels/diversion-clues", "list_diversion_clues"),
+    ],
+)
+async def test_channel_search_query_is_normalized_and_rejected_before_service(
+    client: AsyncClient,
+    setup_tenant,
+    monkeypatch,
+    path: str,
+    service_name: str,
+):
+    _tid, headers, *_ = setup_tenant
+    from app.api.v1 import channels as channel_api
+
+    service_spy = AsyncMock(return_value=([], 0))
+    monkeypatch.setattr(channel_api, service_name, service_spy)
+
+    oversized = await client.get(path, params={"q": "x" * 101}, headers=headers)
+    blank = await client.get(path, params={"q": "   "}, headers=headers)
+
+    assert oversized.status_code == 422
+    assert blank.status_code == 422
+    service_spy.assert_not_awaited()
+
+    valid = await client.get(path, params={"q": "  needle  "}, headers=headers)
+
+    assert valid.status_code == 200
+    assert service_spy.await_args.kwargs["q"] == "needle"
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("path", "service_name"),
+    [
+        ("/api/v1/channels/distributors", "list_distributors"),
+        ("/api/v1/channels/regions", "list_regions"),
+        ("/api/v1/channels/stores", "list_stores"),
+    ],
+)
+async def test_channel_status_query_is_canonical_before_service(
+    client: AsyncClient,
+    setup_tenant,
+    monkeypatch,
+    path: str,
+    service_name: str,
+):
+    _tid, headers, *_ = setup_tenant
+    from app.api.v1 import channels as channel_api
+
+    service_spy = AsyncMock(return_value=([], 0))
+    monkeypatch.setattr(channel_api, service_name, service_spy)
+
+    for status in ("unknown", " active ", "archived"):
+        response = await client.get(path, params={"status": status}, headers=headers)
+        assert response.status_code == 422
+    service_spy.assert_not_awaited()
+
+    valid = await client.get(path, params={"status": "inactive"}, headers=headers)
+
+    assert valid.status_code == 200
+    assert service_spy.await_args.kwargs["status"] == "inactive"
+
+
+@pytest.mark.anyio
+async def test_diversion_severity_query_is_canonical_before_service(
+    client: AsyncClient,
+    setup_tenant,
+    monkeypatch,
+):
+    _tid, headers, *_ = setup_tenant
+    from app.api.v1 import channels as channel_api
+
+    service_spy = AsyncMock(return_value=([], 0))
+    monkeypatch.setattr(channel_api, "list_diversion_clues", service_spy)
+
+    for severity in ("unknown", " high "):
+        response = await client.get("/api/v1/channels/diversion-clues", params={"severity": severity}, headers=headers)
+        assert response.status_code == 422
+    service_spy.assert_not_awaited()
+
+    valid = await client.get("/api/v1/channels/diversion-clues", params={"severity": "high"}, headers=headers)
+
+    assert valid.status_code == 200
+    assert service_spy.await_args.kwargs["severity"] == "high"
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("path", "service_name", "service_result"),
+    [
+        ("/api/v1/channel-analytics/scan-by-channel", "get_scan_by_channel", ([], 0)),
+        ("/api/v1/channel-analytics/health-scores", "get_channel_health_scores", []),
+        ("/api/v1/channel-analytics/conversion-comparison", "get_conversion_comparison", []),
+    ],
+)
+async def test_channel_analytics_dimension_is_canonical_before_service(
+    client: AsyncClient,
+    setup_tenant,
+    monkeypatch,
+    path: str,
+    service_name: str,
+    service_result,
+):
+    _tid, headers, *_ = setup_tenant
+    from app.api.v1 import channel_analytics as channel_analytics_api
+
+    service_spy = AsyncMock(return_value=service_result)
+    monkeypatch.setattr(channel_analytics_api, service_name, service_spy)
+
+    for dimension in ("unknown", " store "):
+        response = await client.get(path, params={"dimension": dimension}, headers=headers)
+        assert response.status_code == 422
+    service_spy.assert_not_awaited()
+
+    valid = await client.get(path, params={"dimension": "store"}, headers=headers)
+
+    assert valid.status_code == 200
+    assert service_spy.await_args.kwargs["dimension"] == "store"
+
+
 class TestDistributorCRUD:
     """W11-002: 经销商 CRUD"""
 
@@ -147,7 +330,7 @@ class TestDistributorCRUD:
         second = await client.post(
             "/api/v1/channels/distributors",
             json={"name": "第二个经销商", "status": "inactive"},
-            headers=headers,
+            headers={**headers, "Idempotency-Key": str(uuid4())},
         )
 
         assert first.status_code == 201
@@ -158,6 +341,47 @@ class TestDistributorCRUD:
         assert second.json()["code"].startswith("DIST-")
         assert second.json()["code"] != first.json()["code"]
         assert second.json()["status"] == "inactive"
+
+    @pytest.mark.anyio
+    async def test_distributor_idempotency_uses_business_phone_hash_not_random_ciphertext(
+        self, client: AsyncClient, setup_tenant
+    ):
+        _tid, headers, *_ = setup_tenant
+        create_headers = {**headers, "Idempotency-Key": str(uuid4())}
+        body = {"name": "幂等经销商", "contact_name": "张三", "contact_phone": "13800138000"}
+
+        first = await client.post("/api/v1/channels/distributors", json=body, headers=create_headers)
+        replay = await client.post("/api/v1/channels/distributors", json=body, headers=create_headers)
+        conflict = await client.post(
+            "/api/v1/channels/distributors",
+            json={**body, "contact_phone": "13900139000"},
+            headers=create_headers,
+        )
+
+        assert first.status_code == replay.status_code == 201
+        assert replay.json() == first.json()
+        assert first.json()["contact_phone_masked"] == "138****8000"
+        assert conflict.status_code == 409
+
+        update_headers = {**headers, "Idempotency-Key": str(uuid4())}
+        update = {"expected_version": 1, "contact_phone": "13700137000"}
+        updated = await client.patch(
+            f"/api/v1/channels/distributors/{first.json()['id']}", json=update, headers=update_headers
+        )
+        update_replay = await client.patch(
+            f"/api/v1/channels/distributors/{first.json()['id']}", json=update, headers=update_headers
+        )
+        update_conflict = await client.patch(
+            f"/api/v1/channels/distributors/{first.json()['id']}",
+            json={"expected_version": 1, "contact_phone": "13600136000"},
+            headers=update_headers,
+        )
+
+        assert updated.status_code == update_replay.status_code == 200
+        assert update_replay.json() == updated.json()
+        assert updated.json()["version"] == 2
+        assert updated.json()["contact_phone_masked"] == "137****7000"
+        assert update_conflict.status_code == 409
 
     @pytest.mark.anyio
     async def test_list_distributors(self, client: AsyncClient, setup_tenant):
@@ -183,12 +407,20 @@ class TestDistributorCRUD:
 
         patch_resp = await client.patch(
             f"/api/v1/channels/distributors/{distributor_id}",
-            json={"name": "华南核心经销商", "status": "inactive"},
+            json={
+                "name": "华南核心经销商",
+                "contact_name": None,
+                "contact_phone": "13900139000",
+                "status": "inactive",
+                "expected_version": created.json()["version"],
+            },
             headers=headers,
         )
         assert patch_resp.status_code == 200
         assert patch_resp.json()["name"] == "华南核心经销商"
         assert patch_resp.json()["status"] == "inactive"
+        assert patch_resp.json()["contact_name"] is None
+        assert patch_resp.json()["contact_phone_masked"] == "139****9000"
 
         list_resp = await client.get(
             "/api/v1/channels/distributors",
@@ -384,7 +616,7 @@ class TestStoreCRUD:
         )
         patch_resp = await client.patch(
             f"/api/v1/channels/stores/{store.json()['id']}",
-            json={"name": "新门店", "address": "上海市黄浦区"},
+            json={"name": "新门店", "address": "上海市黄浦区", "expected_version": store.json()["version"]},
             headers=headers,
         )
         assert patch_resp.status_code == 200
@@ -488,6 +720,7 @@ class TestBatchAssignment:
                 "target_type": "region",
                 "region_id": region.json()["id"],
                 "quantity": 6,
+                "reason": "initial regional allocation",
             },
             headers=headers,
         )
@@ -532,14 +765,26 @@ class TestBatchAssignment:
 
         first = await client.post(
             "/api/v1/channels/code-allocations",
-            json={"batch_id": batch.json()["id"], "store_id": store.json()["id"], "quantity": 6},
+            json={
+                "batch_id": batch.json()["id"],
+                "target_type": "store",
+                "store_id": store.json()["id"],
+                "quantity": 6,
+                "reason": "initial store allocation",
+            },
             headers=headers,
         )
         assert first.status_code == 201
 
         over = await client.post(
             "/api/v1/channels/code-allocations",
-            json={"batch_id": batch.json()["id"], "store_id": store.json()["id"], "quantity": 5},
+            json={
+                "batch_id": batch.json()["id"],
+                "target_type": "store",
+                "store_id": store.json()["id"],
+                "quantity": 5,
+                "reason": "exceeds remaining capacity",
+            },
             headers=headers,
         )
         assert over.status_code == 400
@@ -553,6 +798,139 @@ class TestBatchAssignment:
         assert item["store_name"] == "限量门店"
         assert item["batch_code"] == batch.json()["batch_code"]
         assert item["remaining_quantity"] == 4
+
+    @pytest.mark.anyio
+    async def test_reassign_and_archive_preserve_allocation_history(
+        self, client: AsyncClient, setup_tenant, db_session: AsyncSession
+    ):
+        tid, headers, product_id, sku_id, production_batch_id = setup_tenant
+        first_store = await client.post(
+            "/api/v1/channels/stores", json={"name": "原门店", "code": "STORE-HISTORY-A"}, headers=headers
+        )
+        second_store = await client.post(
+            "/api/v1/channels/stores", json={"name": "新门店", "code": "STORE-HISTORY-B"}, headers=headers
+        )
+        batch = await client.post(
+            "/api/v1/code-batches",
+            json={
+                "product_id": product_id,
+                "sku_id": sku_id,
+                "production_batch_id": production_batch_id,
+                "quantity": 10,
+            },
+            headers=headers,
+        )
+        initial = await client.post(
+            "/api/v1/channels/code-allocations",
+            json={
+                "batch_id": batch.json()["id"],
+                "target_type": "store",
+                "store_id": first_store.json()["id"],
+                "quantity": 8,
+                "reason": "initial shipment",
+            },
+            headers={**headers, "Idempotency-Key": str(uuid4())},
+        )
+        assert initial.status_code == 201
+
+        reassigned = await client.post(
+            f"/api/v1/channels/code-allocations/{initial.json()['id']}/reassign",
+            json={
+                "expected_version": initial.json()["version"],
+                "target_type": "store",
+                "store_id": second_store.json()["id"],
+                "quantity": 7,
+                "reason": "route correction",
+            },
+            headers={**headers, "Idempotency-Key": str(uuid4())},
+        )
+        assert reassigned.status_code == 200
+        assert reassigned.json()["version"] == 2
+        assert reassigned.json()["action"] == "reassign"
+
+        stale = await client.post(
+            f"/api/v1/channels/code-allocations/{initial.json()['id']}/archive",
+            json={"expected_version": 1, "reason": "stale archive"},
+            headers={**headers, "Idempotency-Key": str(uuid4())},
+        )
+        assert stale.status_code == 409
+
+        archived = await client.post(
+            f"/api/v1/channels/code-allocations/{reassigned.json()['id']}/archive",
+            json={"expected_version": 2, "reason": "shipment cancelled"},
+            headers={**headers, "Idempotency-Key": str(uuid4())},
+        )
+        assert archived.status_code == 200
+        assert archived.json()["status"] == "archived"
+        assert archived.json()["version"] == 3
+        assert archived.json()["allocated_quantity"] == 0
+        assert archived.json()["remaining_quantity"] == 10
+
+        current = await client.get("/api/v1/channels/code-allocations", headers=headers)
+        history = await client.get(
+            "/api/v1/channels/code-allocations", params={"include_history": True}, headers=headers
+        )
+        assert current.json()["total"] == 0
+        assert current.json()["items"] == []
+        assert history.json()["total"] == 3
+        assert [item["version"] for item in history.json()["items"]] == [3, 2, 1]
+
+        reassign_tombstone = await client.post(
+            f"/api/v1/channels/code-allocations/{archived.json()['id']}/reassign",
+            json={
+                "expected_version": 3,
+                "target_type": "store",
+                "store_id": first_store.json()["id"],
+                "quantity": 1,
+                "reason": "tombstone must remain terminal",
+            },
+            headers={**headers, "Idempotency-Key": str(uuid4())},
+        )
+        rearchive_tombstone = await client.post(
+            f"/api/v1/channels/code-allocations/{archived.json()['id']}/archive",
+            json={"expected_version": 3, "reason": "tombstone must not be archived twice"},
+            headers={**headers, "Idempotency-Key": str(uuid4())},
+        )
+        assert reassign_tombstone.status_code == 409
+        assert rearchive_tombstone.status_code == 409
+        history_after_terminal_rejections = await client.get(
+            "/api/v1/channels/code-allocations", params={"include_history": True}, headers=headers
+        )
+        assert history_after_terminal_rejections.json()["total"] == 3
+
+        overview = await client.get("/api/v1/channels/overview", headers=headers)
+        assert overview.status_code == 200
+        assert overview.json()["allocated_quantity"] == 0
+
+        code_item = await db_session.scalar(
+            select(CodeItem).where(CodeItem.tenant_id == UUID(tid), CodeItem.code_batch_id == UUID(batch.json()["id"]))
+        )
+        assert code_item is not None
+        resolved = await client.get(f"/api/v1/channels/code-items/{code_item.public_id}/store", headers=headers)
+        assert resolved.status_code == 200
+        assert resolved.json() == {"matched": False}
+
+        replacement = await client.post(
+            "/api/v1/channels/code-allocations",
+            json={
+                "batch_id": batch.json()["id"],
+                "target_type": "store",
+                "store_id": first_store.json()["id"],
+                "quantity": 10,
+                "reason": "capacity restored after archive",
+            },
+            headers={**headers, "Idempotency-Key": str(uuid4())},
+        )
+        assert replacement.status_code == 201
+        assert replacement.json()["allocation_root_id"] != archived.json()["allocation_root_id"]
+        assert replacement.json()["allocated_quantity"] == 10
+        assert replacement.json()["remaining_quantity"] == 0
+        current_after_replacement = await client.get("/api/v1/channels/code-allocations", headers=headers)
+        assert current_after_replacement.json()["total"] == 1
+        assert (
+            current_after_replacement.json()["items"][0]["allocation_root_id"]
+            == replacement.json()["allocation_root_id"]
+        )
 
 
 class TestChannelAccountScopes:
@@ -596,7 +974,13 @@ class TestChannelAccountScopes:
         )
         await client.post(
             "/api/v1/channels/code-allocations",
-            json={"batch_id": batch.json()["id"], "store_id": store.json()["id"], "quantity": 8},
+            json={
+                "batch_id": batch.json()["id"],
+                "target_type": "store",
+                "store_id": store.json()["id"],
+                "quantity": 8,
+                "reason": "portal scope fixture",
+            },
             headers=headers,
         )
 
@@ -675,6 +1059,7 @@ class TestChannelAccountScopes:
                 "target_type": "region",
                 "region_id": region.json()["id"],
                 "quantity": 8,
+                "reason": "region portal fixture",
             },
             headers=headers,
         )

@@ -18,6 +18,7 @@ import json
 import logging
 import socket
 import ssl
+import string
 from urllib.parse import urlparse
 
 import h11
@@ -32,6 +33,11 @@ logger = logging.getLogger(__name__)
 
 _MAX_RESPONSE_BYTES = 1_048_576
 _MAX_RESOLVED_ADDRESSES = 8
+_RECONCILIATION_FIELDS = {"idempotency_key"}
+
+
+class AmbiguousDeliveryResult(Exception):
+    """The provider may have accepted a delivery whose response was not observed."""
 
 
 def _parse_safe_base_url(url: str):
@@ -84,6 +90,7 @@ async def _request_json(
     *,
     headers: dict[str, str],
     payload: dict | None = None,
+    allow_address_failover: bool = True,
 ) -> dict:
     """Send one no-redirect HTTPS request over an address validated and pinned for this call."""
 
@@ -107,6 +114,7 @@ async def _request_json(
     last_error: Exception | None = None
     for address in addresses:
         writer = None
+        request_may_have_been_written = False
         try:
             reader, writer = await asyncio.wait_for(
                 asyncio.open_connection(
@@ -118,6 +126,7 @@ async def _request_json(
                 timeout=5.0,
             )
             connection = h11.Connection(h11.CLIENT)
+            request_may_have_been_written = True
             writer.write(
                 connection.send(
                     h11.Request(
@@ -154,19 +163,28 @@ async def _request_json(
                 elif isinstance(event, h11.EndOfMessage):
                     break
                 elif isinstance(event, h11.ConnectionClosed):
-                    break
+                    raise AmbiguousDeliveryResult("connector response ended before completion")
             if status_code is None or not 200 <= status_code < 300:
                 raise ValueError(f"connector returned HTTP {status_code or 502}")
             result = json.loads(response_body or b"{}")
             if not isinstance(result, dict):
                 raise ValueError("connector response must be a JSON object")
             return result
-        except (OSError, TimeoutError, ssl.SSLError) as exc:
+        except (OSError, TimeoutError, ssl.SSLError, h11.RemoteProtocolError) as exc:
             last_error = exc
+            if request_may_have_been_written:
+                raise AmbiguousDeliveryResult("connector delivery outcome is unknown") from exc
+            if not allow_address_failover:
+                raise
         finally:
             if writer is not None:
                 writer.close()
-                await writer.wait_closed()
+                try:
+                    await writer.wait_closed()
+                except (OSError, TimeoutError, ssl.SSLError):
+                    # Closing is best-effort. It must not override a complete,
+                    # already parsed provider response or reclassify it for retry.
+                    pass
     raise ValueError("connector HTTPS request failed") from last_error
 
 
@@ -176,6 +194,11 @@ class GenericHttpAdapter(BaseConnectorAdapter):
         api_key = connector.config.get("api_key", "")
         if not _is_url_safe(api_url):
             raise ValueError("api_url must be a valid HTTPS URL to a public domain")
+        if connector.config.get("provider_idempotency") is not True:
+            raise ValueError("generic_http delivery requires provider_idempotency=true")
+        reconciliation_path = connector.config.get("reconciliation_path")
+        if not _is_reconciliation_path_valid(reconciliation_path):
+            raise ValueError("generic_http delivery requires a bounded reconciliation_path")
         data = await _request_json("GET", api_url, "stock", headers={"Authorization": f"Bearer {api_key}"})
         return data.get("available", data.get("count", 0))
 
@@ -190,25 +213,70 @@ class GenericHttpAdapter(BaseConnectorAdapter):
         benefit_type = benefit_config.get("benefit_type", "coupon")
         if not _is_url_safe(api_url):
             raise ValueError("api_url must be a valid HTTPS URL to a public domain")
+        if connector.config.get("provider_idempotency") is not True:
+            raise ValueError("generic_http delivery requires provider_idempotency=true")
+        if not _is_reconciliation_path_valid(connector.config.get("reconciliation_path")):
+            raise ValueError("generic_http delivery requires a bounded reconciliation_path")
 
         request_headers = {"Authorization": f"Bearer {api_key}"}
         idempotency_key = benefit_config.get("idempotency_key")
-        if isinstance(idempotency_key, str) and idempotency_key:
-            request_headers["Idempotency-Key"] = idempotency_key
+        if not isinstance(idempotency_key, str) or not idempotency_key:
+            raise ValueError("generic_http delivery requires a stable idempotency_key")
+        request_headers["Idempotency-Key"] = idempotency_key
         request_payload = {
             "consumer_id": consumer_id,
             "benefit_type": benefit_type,
             "benefit_config": benefit_config,
         }
-        if isinstance(idempotency_key, str) and idempotency_key:
-            request_payload["idempotency_key"] = idempotency_key
-        ext_data = await _request_json("POST", api_url, "deliver", headers=request_headers, payload=request_payload)
+        request_payload["idempotency_key"] = idempotency_key
+        try:
+            ext_data = await _request_json(
+                "POST",
+                api_url,
+                "deliver",
+                headers=request_headers,
+                payload=request_payload,
+                allow_address_failover=False,
+            )
+        except AmbiguousDeliveryResult:
+            return DeliveryResult(
+                status="pending",
+                external_id=idempotency_key,
+                external_data={"status": "pending", "reason": "ambiguous_provider_outcome"},
+                message="Provider outcome requires reconciliation",
+            )
 
+        provider_status = ext_data.get("status", "success")
         return DeliveryResult(
-            status=ext_data.get("status", "success"),
+            status="success" if provider_status == "success" else "pending",
             external_id=ext_data.get("id") or ext_data.get("code"),
-            external_data=ext_data,
+            external_data=(
+                ext_data
+                if provider_status == "success"
+                else {**ext_data, "reason": "provider_outcome_requires_reconciliation"}
+            ),
             message=ext_data.get("message", ""),
+        )
+
+    async def reconcile(self, connector: Connector, idempotency_key: str) -> DeliveryResult:
+        """Query a provider outcome without repeating the value-bearing POST."""
+
+        api_url = connector.config.get("api_url", "")
+        api_key = connector.config.get("api_key", "")
+        path = connector.config.get("reconciliation_path")
+        if not _is_url_safe(api_url) or not _is_reconciliation_path_valid(path):
+            raise ValueError("generic_http reconciliation is not configured")
+        data = await _request_json(
+            "GET",
+            api_url,
+            path.format(idempotency_key=idempotency_key),
+            headers={"Authorization": f"Bearer {api_key}"},
+        )
+        return DeliveryResult(
+            status=data.get("status", "pending"),
+            external_id=data.get("id") or data.get("code") or idempotency_key,
+            external_data=data,
+            message=data.get("message", ""),
         )
 
     async def parse_callback(
@@ -256,7 +324,23 @@ class GenericHttpAdapter(BaseConnectorAdapter):
             return False, "api_url is required"
         if not _is_url_safe(api_url):
             return False, "api_url must be a valid HTTPS URL to a public domain"
+        if config.get("provider_idempotency") is not True:
+            return False, "provider_idempotency=true is required"
+        if not _is_reconciliation_path_valid(config.get("reconciliation_path")):
+            return False, "reconciliation_path must be a bounded relative path containing {idempotency_key}"
         return True, ""
+
+
+def _is_reconciliation_path_valid(path: object) -> bool:
+    if not isinstance(path, str) or not 1 <= len(path) <= 256 or path.startswith(("/", "http:", "https:")):
+        return False
+    if ".." in path or "?" in path or "#" in path or "\\" in path:
+        return False
+    try:
+        fields = {field for _, field, _, _ in string.Formatter().parse(path) if field}
+    except ValueError:
+        return False
+    return fields == _RECONCILIATION_FIELDS
 
 
 register_adapter("generic_http", GenericHttpAdapter)

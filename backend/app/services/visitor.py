@@ -79,6 +79,8 @@ async def link_visitor_to_consumer(
     visitor = result.scalar_one_or_none()
     if not visitor:
         return False
+    if visitor.consumer_id is not None and visitor.consumer_id != consumer_id:
+        return False
     visitor.consumer_id = consumer_id
     await db.flush()
     return True

@@ -13,6 +13,7 @@ from app.middleware.rate_limit import rate_limiter
 from app.models.code import CodeItem, CodeItemStatus, CodeType, to_lifecycle
 from app.models.product import BatchStatus
 from app.models.scan import ScanEvent
+from app.services.launch import record_launch_release_valid_scan, resolve_current_launch_release
 from app.services.page_render import render_page
 from app.services.page_templates import (
     EXPIRED_PAGE,
@@ -109,6 +110,20 @@ async def resolve_code_endpoint(
     if not data or data.get("tenant_id") != str(tenant_uuid):
         return _not_found(want_json)
 
+    launch_release = await resolve_current_launch_release(db, tenant_uuid, public_id)
+    launch_paused = launch_release is None
+    if launch_release:
+        data.update(
+            {
+                "launch_release_id": str(launch_release["release_id"]),
+                "launch_content_digest": launch_release["content_digest"],
+                "template_id": str(launch_release["page_template_id"]),
+                "page_version_id": str(launch_release["page_version_id"]),
+                "campaign_id": str(launch_release["campaign_id"]),
+                "code_batch_id": str(launch_release["code_batch_id"]),
+            }
+        )
+
     status = data["status"]
     production_batch_status = data.get("production_batch_status")
     production_batch_blocked = production_batch_status != BatchStatus.active
@@ -163,20 +178,92 @@ async def resolve_code_endpoint(
     # 把签发的 visitor_id 放进 scan_info，H5 存 localStorage
     scan_info["visitor_id"] = visitor_id
 
-    # 7. 生成 scan_token（含 tenant_id）— frozen 不颁发（权益暂停，AC3）
+    # Record the cross-region observation in the same transaction as its exact
+    # scan fact. The authority binds the supplied classification to that event,
+    # while a savepoint keeps geolocation/lock failures retryable and never
+    # discards the consumer scan.
+    observation_scan_time = scan_info.get("_scan_time")
+    if observation_scan_time:
+        try:
+            from app.services.channel import check_diversion
+            from app.services.entitlement import require_tenant_feature
+
+            async with db.begin_nested():
+                await require_tenant_feature(db, tenant_uuid, "risk_module")
+                await check_diversion(
+                    db,
+                    tenant_uuid,
+                    public_id,
+                    client_ip,
+                    scan_event_id=uuid.UUID(str(scan_info["scan_event_id"])),
+                    scan_time=observation_scan_time,
+                    observation_ip_hash=ip_hash,
+                )
+        except Exception as exc:
+            logger.warning(
+                "diversion observation remains retryable",
+                extra={
+                    "error_code": "diversion_observation_retryable",
+                    "error_class": type(exc).__name__,
+                    "scan_event_id": str(scan_info["scan_event_id"]),
+                },
+            )
+
+    # A live release's first valid consumer scan is operational evidence, not
+    # a pre-live readiness gate. PostgreSQL re-validates the exact durable
+    # event and release binding. A savepoint keeps a lock/contention failure
+    # retryable on the next valid scan without discarding the consumer scan.
+    observation_is_valid = bool(scan_info.pop("_is_valid_visit", False))
+    observation_scan_time = scan_info.pop("_scan_time", None)
+    if launch_release and observation_is_valid and observation_scan_time:
+        try:
+            async with db.begin_nested():
+                observation = await record_launch_release_valid_scan(
+                    db,
+                    tenant_id=tenant_uuid,
+                    release_id=uuid.UUID(str(launch_release["release_id"])),
+                    scan_event_id=uuid.UUID(str(scan_info["scan_event_id"])),
+                    scan_time=observation_scan_time,
+                )
+                observation_status = observation["observation_status"]
+                if observation_status not in {"observed", "already_observed"} or (
+                    observation_status == "already_observed" and not observation["replayed"]
+                ):
+                    raise RuntimeError("launch scan observation returned an invalid receipt")
+        except Exception as exc:
+            logger.warning(
+                "launch scan observation remains retryable",
+                extra={
+                    "error_code": "launch_scan_observation_retryable",
+                    "error_class": type(exc).__name__,
+                    "release_id": str(launch_release["release_id"]),
+                    "scan_event_id": str(scan_info["scan_event_id"]),
+                },
+            )
+
+    # 7. 扫码凭证必须绑定当前权威 live release。预上线、暂停、失效、
+    # frozen 或生产批次不可用时均不得颁发可变更消费者事实的凭证。
     scan_token = None
-    if not is_frozen and not production_batch_blocked:
+    if launch_release and not is_frozen and not production_batch_blocked:
         scan_token = create_scan_token(
             public_id=public_id,
             ip_hash=ip_hash,
             tenant_id=data["tenant_id"],
             scan_event_id=str(scan_info["scan_event_id"]),
+            scan_time=observation_scan_time.isoformat() if observation_scan_time else "",
             visitor_id=visitor_id,
+            launch_release_id=str(launch_release["release_id"]) if launch_release else "",
+            campaign_id=str(launch_release["campaign_id"]) if launch_release else "",
+            code_batch_id=str(launch_release["code_batch_id"]) if launch_release else "",
+            content_digest=str(launch_release["content_digest"]) if launch_release else "",
         )
     elif is_frozen:
         # frozen：标记权益暂停（H5 据此隐藏领取入口）
         scan_info["benefit_paused"] = True
         scan_info["paused_reason"] = "frozen"
+    if launch_paused and not is_frozen:
+        scan_info["benefit_paused"] = True
+        scan_info["paused_reason"] = "launch_not_live"
     if production_batch_status == BatchStatus.recalled:
         scan_info["benefit_paused"] = True
         scan_info["paused_reason"] = "production_batch_recalled"
@@ -194,7 +281,7 @@ async def resolve_code_endpoint(
         return JSONResponse(content=resp)
 
     # 9. HTML 模式
-    return await _html_response(db, data, public_id)
+    return await _html_response(db, data, public_id, launch_paused=launch_paused)
 
 
 # -- 内部辅助函数 --
@@ -383,6 +470,7 @@ async def _record_scan(
             environment=parse_environment(user_agent),
             visitor_id=visitor_id,
             is_valid_visit=is_valid_visit,
+            diversion_observation_owner="resolver",
         )
         # 权威首查时间：读自 code_items.first_scanned_at（单一源；与 event.is_first_scan 一致）。
         item_result = await db.execute(
@@ -405,6 +493,8 @@ async def _record_scan(
         scan_info["scan_count"] = verification_count  # 兼容别名
         scan_info["first_scan_time"] = first_scanned_at.isoformat() if first_scanned_at else None
         scan_info["verification_time"] = event.scan_time.isoformat()
+        scan_info["_is_valid_visit"] = bool(event.is_valid_visit)
+        scan_info["_scan_time"] = event.scan_time
         # yimatong-zgb1.5：last_scan_time = 本次查验时间（与 verification_time 同值，契约字段名更清晰）
         scan_info["last_scan_time"] = event.scan_time.isoformat()
     except QuotaExceededError:
@@ -415,11 +505,14 @@ async def _record_scan(
     return scan_info
 
 
-async def _html_response(db: AsyncSession, data: dict, public_id: str):
+async def _html_response(db: AsyncSession, data: dict, public_id: str, *, launch_paused: bool = False):
     code_type = data.get("code_type", CodeType.single)
 
     if code_type == CodeType.outer:
         return HTMLResponse(content=OUTER_LANDING_PAGE.format(public_id=public_id))
+
+    if launch_paused:
+        return HTMLResponse(content=build_code_page(data))
 
     # inner 和 single 共享模板渲染逻辑
     template_id = data.get("template_id")

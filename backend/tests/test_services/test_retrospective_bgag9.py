@@ -119,6 +119,7 @@ async def test_reminder_ops_task_ignores_revoked_authorization(db):
     client_id = await seed_pilot_tenant(db)
     await seed_pilot_launch_release(db, client_id, launched_at=launched)
     agency, operator = await _seed_agency_with_operator(db, operator_email="ops2@agency.test")
+    granted_at = datetime.now(UTC)
     db.add(
         AgencyAuthorization(
             agency_tenant_id=agency.id,
@@ -126,6 +127,8 @@ async def test_reminder_ops_task_ignores_revoked_authorization(db):
             scope=["analytics"],
             status=AgencyAuthStatus.revoked,
             granted_by=uuid.uuid4(),
+            granted_at=granted_at,
+            revoked_at=granted_at + timedelta(seconds=1),
         )
     )
     await db.flush()

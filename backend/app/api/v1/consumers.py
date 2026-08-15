@@ -1,24 +1,28 @@
 """消费者相关端点（H5 前端使用，scan_token 鉴权）"""
 
 import uuid
+from dataclasses import dataclass
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from uuid6 import uuid7
 
 from app.core.context import set_consumer_tenant_id
 from app.core.database import get_db_for_consumer, lock_active_tenant_context, set_session_tenant_context
 from app.models.member import ConsumerProfile
 from app.schemas.common import PaginatedResponse
+from app.schemas.consent import LeadCaptureRequest
 from app.schemas.member import ExchangeRequest as PointsExchangeRequest
-from app.schemas.member import LeadCaptureRequest
+from app.services.consent import capture_consumer_lead_authority, require_consumer_scan_authority
+from app.services.consumer_admission import enforce_public_consumer_admission
 from app.services.member import get_consumer_profile, list_point_transactions
 from app.services.point_shop import exchange_product, list_consumer_point_products
 from app.services.resolver import resolve_public_code
 from app.services.scan_token import bind_scan_token_consumer, verify_scan_token
 from app.utils.client_ip import compute_ip_hash, get_client_ip
-from app.utils.crypto import encrypt_phone, hash_phone
+from app.utils.crypto import encrypt_consumer_phone, hash_phone
 
 
 async def _require_consumer_business_plan(db: AsyncSession, tenant_id: uuid.UUID) -> JSONResponse | None:
@@ -41,6 +45,13 @@ async def _require_consumer_business_plan(db: AsyncSession, tenant_id: uuid.UUID
 consumer_router = APIRouter(prefix="/api/v1/consumers", tags=["consumers"])
 
 
+@dataclass(frozen=True)
+class VerifiedConsumerScanContext:
+    payload: dict
+    client_ip: str
+    ip_hash: str | None
+
+
 def _extract_bearer_token(request: Request) -> str:
     auth_header = request.headers.get("Authorization", "")
     if not auth_header.startswith("Bearer "):
@@ -48,12 +59,23 @@ def _extract_bearer_token(request: Request) -> str:
     return auth_header[7:]
 
 
-async def _resolve_scan_context(request: Request, db: AsyncSession) -> tuple[uuid.UUID, uuid.UUID]:
-    """Resolve tenant and the required private consumer subject from scan_token."""
+async def verify_consumer_scan_request(request: Request) -> VerifiedConsumerScanContext:
+    """Verify the middleware-bypassed credential before opening a DB session."""
     token = _extract_bearer_token(request)
-    payload = verify_scan_token(token)
+    client_ip = get_client_ip(request)
+    ip_hash = compute_ip_hash(client_ip)
+    payload = verify_scan_token(token, expected_ip_hash=ip_hash)
     if not payload or not payload.get("public_id"):
         raise HTTPException(status_code=401, detail="invalid token")
+    return VerifiedConsumerScanContext(payload=payload, client_ip=client_ip, ip_hash=ip_hash)
+
+
+async def _resolve_scan_context(
+    scan_context: VerifiedConsumerScanContext,
+    db: AsyncSession,
+) -> tuple[uuid.UUID, uuid.UUID]:
+    """Resolve tenant and the required private consumer subject from scan_token."""
+    payload = scan_context.payload
 
     # 优先从 token payload 获取 tenant_id（减少 DB 查询）
     tid = payload.get("tenant_id")
@@ -88,129 +110,52 @@ def _verify_consumer_ownership(bound_consumer_id: uuid.UUID, requested_consumer_
 async def lead_capture(
     request: Request,
     body: LeadCaptureRequest,
+    scan_context: VerifiedConsumerScanContext = Depends(verify_consumer_scan_request),
     db: AsyncSession = Depends(get_db_for_consumer, scope="function"),
 ):
-    """消费者留资（姓名+手机号），需要 scan_token 鉴权。
-
-    yimatong-zgb1.5 AC3：采集手机号（PII）前必须存在 granted 的 privacy consent；
-    撤回后停止采集。非 PII 字段（region/intention）不强制 consent。
-    """
-    auth_header = request.headers.get("Authorization", "")
-    if not auth_header.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="unauthorized")
-
-    token = auth_header[7:]
-    client_ip = get_client_ip(request)
-    ip_hash = compute_ip_hash(client_ip)
-    payload = verify_scan_token(token, body.public_id, expected_ip_hash=ip_hash)
-    if payload is None:
-        raise HTTPException(status_code=401, detail="invalid_token")
-    claim_authority_fields = ("scan_event_id", "visitor_id")
-    if body.phone and any(
-        not isinstance(payload.get(field), str) or not payload[field] for field in claim_authority_fields
-    ):
-        raise HTTPException(status_code=401, detail="scan credential lacks claim authority")
-
-    token_tenant_id = payload.get("tenant_id")
-    if token_tenant_id:
-        tenant_id = await set_session_tenant_context(db, token_tenant_id)
-    else:
-        code_data = await resolve_public_code(db, body.public_id)
-        if not code_data:
-            raise HTTPException(status_code=404, detail="code not found")
-        tenant_id = uuid.UUID(code_data["tenant_id"])
-    set_consumer_tenant_id(str(tenant_id))
-    if expired_response := await _require_consumer_business_plan(db, tenant_id):
+    """Capture a lead through exact scan and consent database authority."""
+    payload = scan_context.payload
+    authority = require_consumer_scan_authority(payload)
+    await enforce_public_consumer_admission(scan_context.client_ip, authority.rate_subject)
+    await set_session_tenant_context(db, authority.tenant_id)
+    set_consumer_tenant_id(str(authority.tenant_id))
+    if expired_response := await _require_consumer_business_plan(db, authority.tenant_id):
         return expired_response
-    token_consumer_id = payload.get("consumer_id")
-    try:
-        bound_consumer_id = uuid.UUID(token_consumer_id) if token_consumer_id else None
-    except (TypeError, ValueError):
-        raise HTTPException(status_code=401, detail="invalid consumer subject")
-
-    # yimatong-zgb1.5：采集手机号前检查 consent
-    encrypted_phone = None
-    phone_hash = None
-    profile = None
-    if body.phone:
-        # consent gating：privacy 类型必须 granted 且未撤回
-        from app.models.consent import ConsentType
-        from app.services.consent import has_active_consent
-
-        consent_ok = await has_active_consent(
-            db,
-            tenant_id=tenant_id,
-            consent_type=ConsentType.privacy,
-            public_id=body.public_id,
-        )
-        if not consent_ok:
-            # 区分"从未同意"和"已撤回"
-            from sqlalchemy import select as sa_select
-
-            from app.models.consent import ConsentRecord, ConsentStatus
-
-            any_consent = (
-                await db.execute(
-                    sa_select(ConsentRecord.status)
-                    .where(
-                        ConsentRecord.tenant_id == tenant_id,
-                        ConsentRecord.consent_type == ConsentType.privacy,
-                        ConsentRecord.public_id == body.public_id,
-                    )
-                    .limit(1)
-                )
-            ).scalar_one_or_none()
-            if any_consent == ConsentStatus.withdrawn:
-                raise HTTPException(status_code=403, detail="consent_withdrawn")
-            raise HTTPException(status_code=403, detail="consent_required")
-
-        encrypted_phone = encrypt_phone(body.phone)
-        phone_hash = hash_phone(body.phone)
-
-        # 存储到 consumer_profile（通过 member 服务）
-        extra = {}
-        if body.region:
-            extra["region"] = body.region
-        if body.intention:
-            extra["intention"] = body.intention
-
-        result = await db.execute(
-            select(ConsumerProfile)
-            .where(
-                ConsumerProfile.tenant_id == tenant_id,
-                ConsumerProfile.phone_hash == phone_hash,
-            )
-            .limit(1)
-        )
-        profile = result.scalar_one_or_none()
-        if not profile:
-            profile = ConsumerProfile(
-                id=uuid.uuid4(),
-                tenant_id=tenant_id,
-                phone_hash=phone_hash,
-                phone_encrypted=encrypted_phone,
-                nickname=body.name,
-                extra_data=extra or None,
-            )
-            db.add(profile)
-        else:
-            if bound_consumer_id is None:
-                raise HTTPException(status_code=403, detail="consumer_identity_required")
-            if bound_consumer_id != profile.id:
-                raise HTTPException(status_code=403, detail="consumer_id mismatch with token")
-            if body.name:
-                profile.nickname = body.name
-            if extra:
-                existing = profile.extra_data or {}
-                existing.update(extra)
-                profile.extra_data = existing
-    bound_token = None
-    if phone_hash and profile:
-        bound_token = bind_scan_token_consumer(payload, profile.id, ip_hash)
+    requested_consumer_id = authority.consumer_id or uuid7()
+    phone_ciphertext, phone_nonce, phone_key_id = encrypt_consumer_phone(
+        authority.tenant_id,
+        requested_consumer_id,
+        body.phone,
+    )
+    result = await capture_consumer_lead_authority(
+        db,
+        tenant_id=authority.tenant_id,
+        requested_consumer_id=requested_consumer_id,
+        consent_id=body.consent_id,
+        scan_event_id=authority.scan_event_id,
+        scan_time=authority.scan_time,
+        public_id=authority.public_id,
+        visitor_id=authority.visitor_id,
+        token_consumer_id=authority.consumer_id,
+        phone_hash=hash_phone(body.phone),
+        phone_ciphertext=phone_ciphertext,
+        phone_nonce=phone_nonce,
+        phone_key_id=phone_key_id,
+        requested_name=body.name,
+        requested_lead_extra={
+            key: value for key, value in {"region": body.region, "intention": body.intention}.items() if value
+        },
+        idempotency_key=body.idempotency_key,
+    )
+    if result["outcome"] != "captured":
+        return JSONResponse(status_code=409, content={"code": result["outcome"], "detail": "Lead was not captured"})
+    consumer_id = uuid.UUID(str(result["consumer_id"]))
+    bound_token = bind_scan_token_consumer(payload, consumer_id, scan_context.ip_hash)
     return {
-        "status": "ok",
-        "consumer_id": str(profile.id) if phone_hash and profile else None,
+        "status": "captured",
+        "consumer_id": str(consumer_id),
         "scan_token": bound_token,
+        "replayed": bool(result["replayed"]),
     }
 
 
@@ -218,10 +163,11 @@ async def lead_capture(
 async def get_consumer_me(
     request: Request,
     consumer_id: str | None = None,
+    scan_context: VerifiedConsumerScanContext = Depends(verify_consumer_scan_request),
     db: AsyncSession = Depends(get_db_for_consumer),
 ):
     """查询当前消费者信息（积分、等级），必须结合 scan_token 与 consumer_id。"""
-    tenant_id, bound_cid = await _resolve_scan_context(request, db)
+    tenant_id, bound_cid = await _resolve_scan_context(scan_context, db)
     if consumer_id:
         try:
             cid = uuid.UUID(consumer_id)
@@ -246,7 +192,7 @@ async def get_consumer_me(
         "consumer_id": str(profile.id),
         "member_level": profile.member_level,
         "total_points": profile.total_points,
-        "nickname": profile.nickname,
+        "nickname": None if profile.lead_contact_suppressed else profile.nickname,
     }
 
 
@@ -254,9 +200,10 @@ async def get_consumer_me(
 async def get_consumer_points_me(
     request: Request,
     consumer_id: uuid.UUID | None = None,
+    scan_context: VerifiedConsumerScanContext = Depends(verify_consumer_scan_request),
     db: AsyncSession = Depends(get_db_for_consumer),
 ):
-    tenant_id, bound_cid = await _resolve_scan_context(request, db)
+    tenant_id, bound_cid = await _resolve_scan_context(scan_context, db)
     if consumer_id is not None:
         _verify_consumer_ownership(bound_cid, consumer_id)
 
@@ -272,9 +219,10 @@ async def list_consumer_points_transactions(
     consumer_id: uuid.UUID,
     page: int = 1,
     page_size: int = 20,
+    scan_context: VerifiedConsumerScanContext = Depends(verify_consumer_scan_request),
     db: AsyncSession = Depends(get_db_for_consumer),
 ):
-    tenant_id, bound_cid = await _resolve_scan_context(request, db)
+    tenant_id, bound_cid = await _resolve_scan_context(scan_context, db)
     _verify_consumer_ownership(bound_cid, consumer_id)
 
     txns, total = await list_point_transactions(db, tenant_id, bound_cid, page=page, page_size=page_size)
@@ -301,9 +249,10 @@ async def list_consumer_points_transactions(
 async def list_consumer_points_products(
     request: Request,
     consumer_id: uuid.UUID,
+    scan_context: VerifiedConsumerScanContext = Depends(verify_consumer_scan_request),
     db: AsyncSession = Depends(get_db_for_consumer),
 ):
-    tenant_id, bound_cid = await _resolve_scan_context(request, db)
+    tenant_id, bound_cid = await _resolve_scan_context(scan_context, db)
     _verify_consumer_ownership(bound_cid, consumer_id)
 
     try:
@@ -316,9 +265,10 @@ async def list_consumer_points_products(
 async def create_consumer_points_exchange(
     request: Request,
     body: PointsExchangeRequest,
+    scan_context: VerifiedConsumerScanContext = Depends(verify_consumer_scan_request),
     db: AsyncSession = Depends(get_db_for_consumer),
 ):
-    tenant_id, bound_cid = await _resolve_scan_context(request, db)
+    tenant_id, bound_cid = await _resolve_scan_context(scan_context, db)
     _verify_consumer_ownership(bound_cid, body.consumer_id)
     if expired_response := await _require_consumer_business_plan(db, tenant_id):
         return expired_response

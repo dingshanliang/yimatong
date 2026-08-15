@@ -22,6 +22,7 @@ from app.models.campaign import Benefit, BenefitClaim, Campaign
 from app.models.connector import BenefitDelivery, Connector
 from app.models.product import Product
 from app.services.quota import CumulativeQuotaKey, check_quota_for_tenant, release_quota
+from app.services.scan_token import ScanLaunchAuthority
 from app.utils import escape_like_pattern
 from app.utils.campaign_validation import validate_benefit_config_shape
 
@@ -290,6 +291,7 @@ async def change_campaign_status(
         event_name,
         {"campaign_id": str(campaign_id), "status": new_status},
         str(tenant_id),
+        db=db,
     )
     product_names = await _load_product_names(db, tenant_id, [c])
     stats = await _load_campaign_stats(db, tenant_id, [c.id])
@@ -823,6 +825,7 @@ async def claim_benefit(
     public_id: str | None = None,
     scan_event_id: uuid.UUID | None = None,
     scanned_product_id: uuid.UUID | None = None,
+    launch_authority: ScanLaunchAuthority | None = None,
 ) -> dict:
     """领取权益，带幂等控制和库存校验。
 
@@ -837,7 +840,7 @@ async def claim_benefit(
     from app.core.database import _session_uses_postgresql
 
     if _session_uses_postgresql(db):
-        if public_id is None or scan_event_id is None or scanned_product_id is None:
+        if public_id is None or scan_event_id is None or scanned_product_id is None or launch_authority is None:
             raise ValueError("Authoritative scan context is required")
         from app.services.campaign_authority import claim_campaign_benefit_authority
 
@@ -850,7 +853,58 @@ async def claim_benefit(
             public_id,
             consumer_id,
             idempotency_key,
+            launch_authority,
         )
+
+    if launch_authority is not None:
+        from app.models.code import CodeItem
+        from app.models.launch import LaunchRelease, LaunchReleaseStatus
+        from app.models.scan import ScanEvent
+
+        if public_id is None or scan_event_id is None or scanned_product_id is None:
+            raise ValueError("Authoritative scan context is required")
+        current_release = await db.scalar(
+            select(LaunchRelease)
+            .join(
+                CodeItem,
+                (CodeItem.tenant_id == LaunchRelease.tenant_id)
+                & (CodeItem.code_batch_id == LaunchRelease.code_batch_id),
+            )
+            .join(
+                ScanEvent,
+                (ScanEvent.tenant_id == CodeItem.tenant_id) & (ScanEvent.public_id == CodeItem.public_id),
+            )
+            .where(
+                LaunchRelease.tenant_id == tenant_id,
+                LaunchRelease.id == launch_authority.launch_release_id,
+                LaunchRelease.campaign_id == launch_authority.campaign_id,
+                LaunchRelease.code_batch_id == launch_authority.code_batch_id,
+                CodeItem.public_id == public_id,
+                ScanEvent.id == scan_event_id,
+                ScanEvent.is_valid_visit.is_(True),
+            )
+        )
+        if current_release is None:
+            return {"status": "launch_release_not_current"}
+        from app.services.launch import refresh_launch_release
+
+        await refresh_launch_release(db, current_release)
+        if (
+            current_release.status != LaunchReleaseStatus.live
+            or current_release.content_digest != launch_authority.content_digest
+            or current_release.brand_confirmation_digest != launch_authority.content_digest
+        ):
+            return {"status": "launch_release_not_current"}
+        benefit_row = (
+            await db.execute(
+                select(Benefit.id, Benefit.campaign_id).where(
+                    Benefit.id == benefit_id,
+                    Benefit.tenant_id == tenant_id,
+                )
+            )
+        ).one_or_none()
+        if benefit_row is not None and benefit_row.campaign_id != launch_authority.campaign_id:
+            return {"status": "benefit_not_in_launch_release"}
 
     # yimatong-zgb1.7：风险门禁（在幂等检查之后，权益查询之前）
     if public_id:
@@ -969,6 +1023,7 @@ async def claim_benefit(
         "claim.created",
         {"claim_id": str(claim.id), "benefit_id": str(benefit_id), "consumer_id": consumer_id},
         str(tenant_id),
+        db=db,
     )
     logger.info("Benefit claimed: benefit_id=%s, consumer_id=%s", benefit_id, consumer_id)
     return {"status": "success", "claim": _claim_to_dict(claim)}

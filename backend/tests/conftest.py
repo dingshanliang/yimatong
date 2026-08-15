@@ -342,6 +342,7 @@ async def seed_pilot_launch_release(
         readiness_snapshot={},
         content_digest="d" * 64,
         created_by=uuid.uuid4(),
+        created_by_tenant_id=tenant_id,
         brand_confirmed_at=brand_confirmed_at,
         launched_at=launched_at,
     )

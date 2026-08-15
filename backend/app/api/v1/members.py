@@ -20,11 +20,11 @@ from app.schemas.member import (
 )
 from app.services.member import (
     award_points,
+    create_anonymous_consumer_profile_authority,
     create_point_rule,
     delete_point_rule,
     get_consumer_profile,
     get_member_overview,
-    get_or_create_consumer,
     get_point_rules,
     list_point_redemptions,
     list_point_transactions,
@@ -40,6 +40,7 @@ from app.services.point_shop import (
     serialize_point_product,
     update_point_product,
 )
+from app.utils.auth_rbac import require_permission
 
 
 def require_admin_or_operator(role: str = Depends(get_current_role)) -> str:
@@ -54,7 +55,11 @@ member_router = APIRouter(prefix="/api/v1/members", tags=["members"])
 # ─── Consumer Endpoints ───
 
 
-@member_router.get("/overview", summary="会员积分概览")
+@member_router.get(
+    "/overview",
+    summary="会员积分概览",
+    dependencies=[Depends(require_permission("consumer:detail"))],
+)
 async def overview_endpoint(
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
@@ -65,20 +70,27 @@ async def overview_endpoint(
 @member_router.post("/consumers", status_code=201, summary="创建 消费者")
 async def create_consumer_endpoint(
     body: ConsumerCreateRequest,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
     _role: str = Depends(require_admin_or_operator),
+    _permission: None = Depends(require_permission("consumer:detail")),
 ):
-    consumer = await get_or_create_consumer(db, tenant_id, phone=body.phone, nickname=body.nickname)
+    if body.phone is not None or body.nickname is not None:
+        raise HTTPException(status_code=403, detail="consumer_consent_required")
+    consumer = await create_anonymous_consumer_profile_authority(db, tenant_id)
     return {
-        "id": str(consumer.id),
-        "nickname": consumer.nickname,
-        "member_level": consumer.member_level,
-        "total_points": consumer.total_points,
+        "id": str(consumer["consumer_id"]),
+        "nickname": None,
+        "member_level": "normal",
+        "total_points": 0,
     }
 
 
-@member_router.get("/consumers/search", summary="搜索消费者")
+@member_router.get(
+    "/consumers/search",
+    summary="搜索消费者",
+    dependencies=[Depends(require_permission("consumer:detail"))],
+)
 async def search_consumers_endpoint(
     keyword: str = Query(..., min_length=1),
     lookup_type: str = Query("auto", pattern="^(auto|id|phone|nickname|mixed)$"),
@@ -90,7 +102,11 @@ async def search_consumers_endpoint(
     return PaginatedResponse(items=items, total=len(items), page=1, page_size=limit)
 
 
-@member_router.get("/consumers/{consumer_id}", summary="获取 消费者")
+@member_router.get(
+    "/consumers/{consumer_id}",
+    summary="获取 消费者",
+    dependencies=[Depends(require_permission("consumer:detail"))],
+)
 async def get_consumer_endpoint(
     consumer_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
@@ -157,7 +173,11 @@ async def spend_points_endpoint(
         raise HTTPException(status_code=400, detail=str(e))
 
 
-@member_router.get("/consumers/{consumer_id}/transactions", summary="transactions 列表")
+@member_router.get(
+    "/consumers/{consumer_id}/transactions",
+    summary="transactions 列表",
+    dependencies=[Depends(require_permission("consumer:detail"))],
+)
 async def list_transactions_endpoint(
     consumer_id: uuid.UUID,
     page: int = Query(1, ge=1),
@@ -275,7 +295,11 @@ async def delete_point_rule_endpoint(
 # ─── Point Products (积分商城) ───
 
 
-@member_router.get("/point-redemptions", summary="积分兑换记录")
+@member_router.get(
+    "/point-redemptions",
+    summary="积分兑换记录",
+    dependencies=[Depends(require_permission("consumer:detail"))],
+)
 async def list_point_redemptions_endpoint(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),

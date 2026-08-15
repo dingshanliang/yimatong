@@ -78,26 +78,25 @@ INSERT INTO runtime_business_relation_allowlist (table_name)
 SELECT unnest(ARRAY[
     'account_channel_scopes', 'account_roles', 'accounts',
     'ai_generations', 'anonymous_visitors',
-    'brands', 'campaign_risk_rules',
-    'code_allocations', 'code_batch_generation_receipts', 'code_batches', 'code_items',
-    'connectors', 'consent_records', 'consumer_profiles', 'coupon_codes',
-    'coupon_pools', 'daily_scan_stats', 'distributors', 'diversion_clues',
-    'diversion_evidence', 'diversion_investigation_history', 'export_logs',
-    'external_orders', 'gmv_attributions', 'gmv_daily_stats', 'intent_events',
-    'interception_records', 'launch_releases', 'ops_tasks', 'organizations',
+    'brands',
+    'channel_action_receipts', 'code_allocations', 'code_batch_generation_receipts', 'code_batches', 'code_items',
+    'connectors', 'consumer_profiles', 'coupon_codes',
+    'coupon_pools', 'daily_scan_stats', 'distributors',
+    'gmv_attribution_confirmations', 'gmv_attributions', 'gmv_daily_stats', 'intent_events',
+    'launch_release_actions', 'launch_releases', 'ops_tasks', 'organizations',
     'permissions', 'point_products',
-    'pilot_milestone_corrections', 'pilot_milestones',
     'point_redemptions', 'point_rules', 'point_transactions',
     'private_domain_configs', 'product_assets', 'production_batches',
     'products', 'regional_code_rules', 'regional_org_members', 'regional_orgs',
-    'regional_product_auths', 'regional_templates', 'regions', 'risk_alerts',
-    'risk_notifications', 'risk_rules', 'role_permissions', 'roles',
+    'regional_product_auths', 'regional_templates', 'regions',
+    'role_permissions', 'roles',
     'scan_events', 'skus', 'stores', 'sync_mappings', 'sync_records',
     'takeover_aliases', 'takeover_cutover_events', 'takeover_domain_checks',
     'takeover_import_errors', 'takeover_import_jobs', 'takeover_observations',
     'takeover_projects', 'takeover_route_versions', 'tenant_domains',
-    'tenant_health_metrics', 'tenant_quota_usage', 'tenants', 'translations', 'retrospectives', 'webhook_deliveries',
-    'webhook_endpoints', 'wecom_contact_ways', 'wecom_external_contacts',
+    'tenant_health_metrics', 'tenant_quota_usage', 'tenants', 'translations',
+    'webhook_deliveries', 'webhook_domain_events',
+    'wecom_contact_ways',
     'whitelabel_configs'
 ]::name[]);
 
@@ -111,8 +110,7 @@ INSERT INTO runtime_no_delete_relation_allowlist (table_name)
 VALUES ('code_batches'),
        ('code_items'),
        ('code_batch_generation_receipts'),
-       ('interception_records'),
-       ('export_logs');
+       ('interception_records');
 -- During the explicit expand/deploy phase the nullable legacy raw column still
 -- exists so drained old processes require the previous tenant-scoped CRUD ACL.
 -- The finalize revision drops that column and moves api_keys to the restricted
@@ -135,9 +133,42 @@ VALUES ('agency_authorizations'),
        ('benefit_claims'),
        ('benefits'),
        ('campaign_claim_outbox'),
+       ('campaign_delivery_callback_attempts'),
        ('campaigns'),
+       ('diversion_action_receipts'),
+       ('diversion_clues'),
+       ('campaign_risk_rules'),
+       ('interception_records'),
+       ('risk_action_outbox'),
+       ('risk_action_receipts'),
+       ('risk_alerts'),
+       ('risk_campaign_pauses'),
+       ('risk_notifications'),
+       ('risk_rules'),
+       ('external_orders'),
+       ('external_order_value_events'),
+       ('external_order_value_receipts'),
+       ('gmv_attribution_confirmations'),
+       ('gmv_attributions'),
+       ('wecom_callback_receipts'),
+       ('wecom_external_contacts'),
+       ('diversion_evidence'),
+       ('diversion_investigation_history'),
+       ('diversion_observations'),
        ('page_templates'),
-       ('page_versions');
+       ('page_versions'),
+       ('export_logs'),
+       ('webhook_endpoints'),
+       ('pilot_milestone_corrections'),
+       ('pilot_milestones'),
+       ('retrospectives');
+INSERT INTO runtime_restricted_mutation_relation_allowlist (table_name)
+SELECT 'consent_records'::name WHERE to_regclass('public.consent_records') IS NOT NULL;
+INSERT INTO runtime_restricted_mutation_relation_allowlist (table_name)
+SELECT relation_name::name FROM unnest(ARRAY[
+    'consumer_consent_policies', 'consumer_consent_policy_current', 'consumer_consent_actions'
+]::text[]) AS relation_name
+WHERE to_regclass('public.'||relation_name) IS NOT NULL;
 INSERT INTO runtime_restricted_mutation_relation_allowlist (table_name)
 SELECT 'api_keys'::name
 WHERE NOT EXISTS (
@@ -156,6 +187,41 @@ VALUES ('platform_audit_log');
 -- touching the otherwise control-only auth_sessions relation.
 DO $$
 BEGIN
+    IF to_regprocedure('public.get_current_consumer_consent_policy(uuid,text)') IS NOT NULL THEN
+        REVOKE ALL ON FUNCTION public.get_current_consumer_consent_policy(uuid,text) FROM PUBLIC;
+        GRANT EXECUTE ON FUNCTION public.get_current_consumer_consent_policy(uuid,text) TO yimatong_app;
+    END IF;
+    IF to_regprocedure('public.get_consumer_consent_receipt_status(uuid,uuid,uuid,timestamp with time zone,text,text,uuid)') IS NOT NULL THEN
+        REVOKE ALL ON FUNCTION public.get_consumer_consent_receipt_status(uuid,uuid,uuid,timestamptz,text,text,uuid) FROM PUBLIC;
+        GRANT EXECUTE ON FUNCTION public.get_consumer_consent_receipt_status(uuid,uuid,uuid,timestamptz,text,text,uuid) TO yimatong_app;
+    END IF;
+    IF to_regprocedure('public.grant_consumer_consent(uuid,uuid,uuid,text,text,text,uuid,timestamp with time zone,text,text,uuid,text,text,text)') IS NOT NULL THEN
+        REVOKE ALL ON FUNCTION public.grant_consumer_consent(uuid,uuid,uuid,text,text,text,uuid,timestamptz,text,text,uuid,text,text,text) FROM PUBLIC;
+        GRANT EXECUTE ON FUNCTION public.grant_consumer_consent(uuid,uuid,uuid,text,text,text,uuid,timestamptz,text,text,uuid,text,text,text) TO yimatong_app;
+    END IF;
+    IF to_regprocedure('public.capture_consumer_lead(uuid,uuid,uuid,uuid,uuid,timestamp with time zone,text,text,uuid,text,text,text,jsonb,text)') IS NOT NULL THEN
+        REVOKE ALL ON FUNCTION public.capture_consumer_lead(uuid,uuid,uuid,uuid,uuid,timestamptz,text,text,uuid,text,text,text,jsonb,text) FROM PUBLIC;
+        GRANT EXECUTE ON FUNCTION public.capture_consumer_lead(uuid,uuid,uuid,uuid,uuid,timestamptz,text,text,uuid,text,text,text,jsonb,text) TO yimatong_app;
+    END IF;
+    IF to_regprocedure('public.capture_consumer_lead(uuid,uuid,uuid,uuid,uuid,timestamp with time zone,text,text,uuid,text,bytea,bytea,text,text,jsonb,text)') IS NOT NULL THEN
+        REVOKE ALL ON FUNCTION public.capture_consumer_lead(uuid,uuid,uuid,uuid,uuid,timestamptz,text,text,uuid,text,bytea,bytea,text,text,jsonb,text) FROM PUBLIC;
+        GRANT EXECUTE ON FUNCTION public.capture_consumer_lead(uuid,uuid,uuid,uuid,uuid,timestamptz,text,text,uuid,text,bytea,bytea,text,text,jsonb,text) TO yimatong_app;
+        IF to_regprocedure('public.capture_consumer_lead(uuid,uuid,uuid,uuid,uuid,timestamp with time zone,text,text,uuid,text,text,text,jsonb,text)') IS NOT NULL THEN
+            REVOKE EXECUTE ON FUNCTION public.capture_consumer_lead(uuid,uuid,uuid,uuid,uuid,timestamptz,text,text,uuid,text,text,text,jsonb,text) FROM yimatong_app;
+        END IF;
+    END IF;
+    IF to_regprocedure('public.withdraw_consumer_consent(uuid,uuid,uuid,uuid,timestamp with time zone,text,text,uuid,text)') IS NOT NULL THEN
+        REVOKE ALL ON FUNCTION public.withdraw_consumer_consent(uuid,uuid,uuid,uuid,timestamptz,text,text,uuid,text) FROM PUBLIC;
+        GRANT EXECUTE ON FUNCTION public.withdraw_consumer_consent(uuid,uuid,uuid,uuid,timestamptz,text,text,uuid,text) TO yimatong_app;
+    END IF;
+    IF to_regprocedure('public.validate_consumer_consent_subject(uuid,uuid,timestamp with time zone,text,text,uuid)') IS NOT NULL THEN
+        REVOKE ALL ON FUNCTION public.validate_consumer_consent_subject(uuid,uuid,timestamptz,text,text,uuid) FROM PUBLIC;
+        REVOKE ALL ON FUNCTION public.validate_consumer_consent_subject(uuid,uuid,timestamptz,text,text,uuid) FROM yimatong_app;
+    END IF;
+    IF to_regprocedure('public.seed_consumer_consent_policies_for_tenant()') IS NOT NULL THEN
+        REVOKE ALL ON FUNCTION public.seed_consumer_consent_policies_for_tenant() FROM PUBLIC;
+        REVOKE ALL ON FUNCTION public.seed_consumer_consent_policies_for_tenant() FROM yimatong_app;
+    END IF;
     IF to_regprocedure('public.revoke_current_tenant_account_sessions(uuid)') IS NOT NULL THEN
         REVOKE ALL ON FUNCTION public.revoke_current_tenant_account_sessions(uuid) FROM PUBLIC;
         GRANT EXECUTE ON FUNCTION public.revoke_current_tenant_account_sessions(uuid) TO yimatong_app;
@@ -399,8 +465,43 @@ SELECT unnest(ARRAY[
     'tenant_platform_role_assignment_backups'
 ]::name[]);
 INSERT INTO runtime_control_relation_allowlist (table_name)
+SELECT 'consumer_phone_encryption_keys'::name
+WHERE to_regclass('public.consumer_phone_encryption_keys') IS NOT NULL;
+INSERT INTO runtime_control_relation_allowlist (table_name)
 SELECT 'takeover_domain_claims'::name
 WHERE to_regclass('public.takeover_domain_claims') IS NOT NULL;
+INSERT INTO runtime_control_relation_allowlist (table_name)
+SELECT 'pilot_authority_receipts'::name
+WHERE to_regclass('public.pilot_authority_receipts') IS NOT NULL;
+
+DO $$
+DECLARE signature text;
+BEGIN
+    FOREACH signature IN ARRAY ARRAY[
+        'public.materialize_pilot_milestones(uuid,uuid,jsonb)',
+        'public.update_pending_retrospective_authority(uuid,uuid,uuid,uuid,bigint,text,text,jsonb,date,text,text)',
+        'public.complete_retrospective_authority(uuid,uuid,uuid,uuid,bigint,text,text,jsonb,date,text,text,text)',
+        'public.append_retrospective_note_authority(uuid,uuid,uuid,uuid,bigint,text,text,text)'
+    ]
+    LOOP
+        IF to_regprocedure(signature) IS NOT NULL THEN
+            EXECUTE format('REVOKE ALL ON FUNCTION %s FROM PUBLIC', signature);
+            EXECUTE format('GRANT EXECUTE ON FUNCTION %s TO yimatong_app', signature);
+        END IF;
+    END LOOP;
+    FOREACH signature IN ARRAY ARRAY[
+        'public.assert_pilot_tenant_actor(uuid,uuid,text,text,uuid)',
+        'public.append_pilot_milestone_correction(uuid,uuid,uuid,text,timestamp with time zone,text,text,text,text)',
+        'public.materialize_due_retrospective(uuid,uuid,uuid,integer,timestamp with time zone,timestamp with time zone,date,jsonb,text,uuid)'
+    ]
+    LOOP
+        IF to_regprocedure(signature) IS NOT NULL THEN
+            EXECUTE format('REVOKE ALL ON FUNCTION %s FROM PUBLIC', signature);
+            EXECUTE format('REVOKE ALL ON FUNCTION %s FROM yimatong_app', signature);
+        END IF;
+    END LOOP;
+END
+$$;
 
 CREATE TEMP TABLE runtime_public_relation_allowlist (
     table_name name PRIMARY KEY
@@ -424,8 +525,16 @@ VALUES ('alembic_version'),
        ('api_key_catalog_audit_context_secrets'),
        ('api_key_legacy_secret_backups'),
        ('code_delivery_contract_rollout_state'),
+       ('channel_permission_backfill'),
        ('connector_secret_migration_backups'),
+       ('consumer_detail_role_grant_backfills'),
+       ('legacy_pii_recovery_markers'),
+       ('external_order_ledger_recovery_markers'),
+       ('external_order_permission_backfill'),
+       ('webhook_permission_backfill'),
+       ('wecom_member_recovery_markers'),
        ('rls_force_remediation_backups'),
+       ('risk_permission_backfill'),
        ('runtime_privilege_remediation_backup');
 
 -- The live public root catalog and the reviewed ORM registry must be a
@@ -447,8 +556,11 @@ BEGIN
         UNION ALL SELECT table_name FROM runtime_public_relation_allowlist
         UNION ALL SELECT table_name FROM runtime_read_only_global_relation_allowlist
     ) AS orm_registry;
-    IF registry_count <> 99 + (CASE
-        WHEN to_regclass('public.takeover_domain_claims') IS NULL THEN 0 ELSE 1 END) THEN
+    IF registry_count <> 116
+        + (CASE WHEN to_regclass('public.takeover_domain_claims') IS NULL THEN 0 ELSE 1 END)
+        + (CASE WHEN to_regclass('public.consumer_phone_encryption_keys') IS NULL THEN 0 ELSE 1 END)
+        + (CASE WHEN to_regclass('public.campaign_delivery_callback_attempts') IS NULL THEN 0 ELSE 1 END)
+        + (CASE WHEN to_regclass('public.wecom_callback_receipts') IS NULL THEN 0 ELSE 1 END) THEN
         RAISE EXCEPTION 'Runtime ORM registry count is inconsistent, got %', registry_count;
     END IF;
 
@@ -708,6 +820,26 @@ REVOKE UPDATE ON TABLE public.code_items FROM yimatong_app;
 REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER
     ON TABLE public.scan_events FROM yimatong_app;
 
+-- Confirmed GMV attribution and its evidence are database-authority owned.
+REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER
+    ON TABLE public.gmv_attributions,
+             public.gmv_attribution_confirmations
+    FROM yimatong_app;
+GRANT SELECT ON TABLE public.gmv_attributions,
+                      public.gmv_attribution_confirmations
+    TO yimatong_app;
+
+-- Diversion observations, evidence, history, lifecycle and receipts are
+-- immutable and actor-bound. Runtime reads them through tenant RLS and writes
+-- only through the reviewed authority functions below.
+REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER
+    ON TABLE public.diversion_clues,
+             public.diversion_observations,
+             public.diversion_evidence,
+             public.diversion_investigation_history,
+             public.diversion_action_receipts
+    FROM yimatong_app;
+
 -- Takeover delivery evidence and state transitions are function-controlled.
 -- Runtime may insert immutable route candidates, staged aliases, and import
 -- evidence; domain checks and lifecycle evidence use actor-bound functions. It cannot retarget live aliases, forge lifecycle
@@ -732,11 +864,16 @@ REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER
 -- only through the tenant-bound SECURITY DEFINER getter installed by Alembic.
 REVOKE SELECT ON TABLE public.export_logs FROM yimatong_app;
 GRANT SELECT (
-    id, tenant_id, account_id, export_type, resource_id, file_name,
-    row_count, status, code_batch_id, manifest_version, checksum_sha256,
-    artifact_size_bytes, created_at, updated_at
+    id, tenant_id, account_id, auth_session_id, export_type, resource_id,
+    file_name, content_type, row_count, status, reason, scope_snapshot,
+    idempotency_key, payload_digest, authority_version, code_batch_id,
+    manifest_version, checksum_sha256, artifact_size_bytes, created_at, updated_at
 ) ON TABLE public.export_logs TO yimatong_app;
 GRANT EXECUTE ON FUNCTION public.get_code_export_artifact(uuid, uuid, uuid) TO yimatong_app;
+GRANT EXECUTE ON FUNCTION public.record_prepared_export(
+    uuid, uuid, uuid, text, text, jsonb, text, text, text, integer, text,
+    bigint, uuid, uuid, integer, bytea, bytea, text, text
+) TO yimatong_app;
 
 -- Deliberately public catalog data used by tenant requests is read-only.
 GRANT SELECT ON TABLE public.plan_definitions TO yimatong_app;
@@ -768,7 +905,11 @@ BEGIN
         'agency_authorization_integrity_backups',
         'api_key_catalog_audit_context_secrets',
         'api_key_legacy_secret_backups',
+        'consumer_detail_role_grant_backfills',
+        'external_order_ledger_recovery_markers',
+        'external_order_permission_backfill',
         'rls_force_remediation_backups',
+        'risk_permission_backfill',
         'runtime_privilege_remediation_backup',
         'alembic_version'
     ]
@@ -827,6 +968,7 @@ $$;
 DO $$
 DECLARE
     signature text;
+    relation_name text;
 BEGIN
     IF to_regclass('public.campaigns') IS NOT NULL THEN
         REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON public.campaigns FROM yimatong_app;
@@ -848,6 +990,29 @@ BEGIN
         REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON public.campaign_claim_outbox FROM yimatong_app;
         GRANT SELECT ON public.campaign_claim_outbox TO yimatong_app;
     END IF;
+    IF to_regclass('public.launch_releases') IS NOT NULL THEN
+        REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER
+            ON public.launch_releases FROM yimatong_app;
+        GRANT SELECT ON public.launch_releases TO yimatong_app;
+    END IF;
+    IF to_regclass('public.launch_release_actions') IS NOT NULL THEN
+        REVOKE ALL ON public.launch_release_actions FROM yimatong_app;
+        GRANT SELECT ON public.launch_release_actions TO yimatong_app;
+    END IF;
+    FOREACH relation_name IN ARRAY ARRAY[
+        'distributors', 'regions', 'stores', 'code_allocations',
+        'account_channel_scopes', 'channel_action_receipts',
+        'risk_rules', 'campaign_risk_rules', 'interception_records', 'risk_alerts',
+        'risk_notifications', 'risk_action_receipts', 'risk_campaign_pauses', 'risk_action_outbox'
+    ] LOOP
+        IF to_regclass('public.' || relation_name) IS NOT NULL THEN
+            EXECUTE format(
+                'REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON public.%I FROM yimatong_app',
+                relation_name
+            );
+            EXECUTE format('GRANT SELECT ON public.%I TO yimatong_app', relation_name);
+        END IF;
+    END LOOP;
     IF to_regclass('public.production_batches') IS NOT NULL
        AND to_regprocedure('public.recall_production_batch(uuid,uuid,uuid,uuid,text)') IS NOT NULL THEN
         REVOKE UPDATE ON public.production_batches FROM yimatong_app;
@@ -859,12 +1024,44 @@ BEGIN
         REVOKE UPDATE ON public.coupon_pools FROM yimatong_app;
         GRANT UPDATE(name,updated_at) ON public.coupon_pools TO yimatong_app;
     END IF;
+    IF to_regclass('public.consumer_profiles') IS NOT NULL
+       AND to_regprocedure('public.create_anonymous_consumer_profile(uuid,uuid,uuid,uuid)') IS NOT NULL THEN
+        REVOKE INSERT ON TABLE public.consumer_profiles FROM yimatong_app;
+    END IF;
+    IF to_regprocedure('public.claim_campaign_benefit(uuid,uuid,uuid,uuid,uuid,text,text,text)') IS NOT NULL THEN
+        REVOKE ALL ON FUNCTION public.claim_campaign_benefit(uuid,uuid,uuid,uuid,uuid,text,text,text)
+            FROM PUBLIC, yimatong_app;
+    END IF;
+    IF to_regprocedure(
+        'public.record_external_order_value_event(uuid,text,text,text,numeric,text,text,text,text,uuid,timestamp with time zone,timestamp with time zone,text,text,text,text)'
+    ) IS NOT NULL THEN
+        REVOKE ALL ON FUNCTION public.record_external_order_value_event(
+            uuid,text,text,text,numeric,text,text,text,text,uuid,timestamp with time zone,
+            timestamp with time zone,text,text,text,text
+        ) FROM PUBLIC;
+    END IF;
+    IF to_regprocedure(
+        'public.confirm_gmv_attribution(uuid,uuid,uuid,uuid,uuid,uuid,uuid,timestamp with time zone,integer,text,text)'
+    ) IS NOT NULL THEN
+        REVOKE ALL ON FUNCTION public.confirm_gmv_attribution(
+            uuid,uuid,uuid,uuid,uuid,uuid,uuid,timestamp with time zone,integer,text,text
+        ) FROM PUBLIC;
+    END IF;
     FOREACH signature IN ARRAY ARRAY[
         'recall_production_batch(uuid,uuid,uuid,uuid,text)',
         'create_production_batch(uuid,uuid,uuid,uuid,uuid,uuid,text,date,date,text)',
         'update_production_batch(uuid,uuid,uuid,uuid,text,date,date,text,boolean)',
         'delete_production_batch(uuid,uuid,uuid,uuid)',
         'allocate_coupon_code(uuid,uuid,text,uuid)',
+        'create_anonymous_consumer_profile(uuid,uuid,uuid,uuid)',
+        'create_launch_release(uuid,uuid,uuid,uuid,uuid,uuid,uuid,uuid,text)',
+        'confirm_launch_release(uuid,uuid,uuid,uuid,uuid,text,text)',
+        'launch_launch_release(uuid,uuid,uuid,uuid,uuid,text,text)',
+        'suspend_launch_release(uuid,uuid,uuid,uuid,uuid,text,text)',
+        'resume_launch_release(uuid,uuid,uuid,uuid,uuid,text,text)',
+        'invalidate_launch_release(uuid,uuid,uuid,uuid,uuid,text,text,text)',
+        'resolve_current_launch_release(uuid,text)',
+        'record_launch_release_valid_scan(uuid,uuid,uuid,timestamp with time zone)',
         'create_campaign(uuid,uuid,uuid,uuid,uuid,text,text,timestamptz,timestamptz,jsonb,text)',
         'update_campaign(uuid,uuid,uuid,uuid,boolean,uuid,text,text,timestamptz,timestamptz,jsonb,text)',
         'transition_campaign(uuid,uuid,uuid,uuid,text)',
@@ -874,12 +1071,38 @@ BEGIN
         'detach_benefit(uuid,uuid,uuid,uuid,uuid)',
         'delete_campaign(uuid,uuid,uuid,uuid)',
         'delete_benefit(uuid,uuid,uuid,uuid)',
-        'claim_campaign_benefit(uuid,uuid,uuid,uuid,uuid,text,text,text)',
+        'claim_campaign_benefit(uuid,uuid,uuid,uuid,uuid,text,text,text,uuid,uuid,text)',
         'lease_campaign_claim_outbox(uuid,text,integer,integer)',
         'record_campaign_claim_delivery_result(uuid,uuid,uuid,uuid,uuid,text,text,jsonb,integer)',
         'complete_campaign_claim_outbox(uuid,uuid,uuid)',
         'fail_campaign_claim_outbox(uuid,uuid,uuid,text,integer)',
-        'redeem_campaign_benefit_claim(uuid,uuid,uuid,uuid)'
+        'redeem_campaign_benefit_claim(uuid,uuid,uuid,uuid)',
+        'create_channel_distributor(uuid,uuid,uuid,uuid,text,text,text,text,text,text,text)',
+        'update_channel_distributor(uuid,uuid,uuid,uuid,bigint,text,text,text,text,text,text)',
+        'create_channel_region(uuid,uuid,uuid,uuid,text,text,text,text,text,text,jsonb,uuid,text)',
+        'update_channel_region(uuid,uuid,uuid,uuid,bigint,text,text,text,text,text,jsonb,uuid,text)',
+        'create_channel_store(uuid,uuid,uuid,uuid,text,text,text,uuid,uuid,text,text)',
+        'update_channel_store(uuid,uuid,uuid,uuid,bigint,text,text,uuid,uuid,text,text)',
+        'archive_channel_store(uuid,uuid,uuid,uuid,bigint,text)',
+        'assign_code_batch_channel(uuid,uuid,uuid,uuid,text,uuid,uuid)',
+        'allocate_code_batch_channel(uuid,uuid,uuid,uuid,text,uuid,text,uuid,bigint,text)',
+        'reassign_code_batch_channel(uuid,uuid,uuid,uuid,text,uuid,bigint,text,uuid,bigint,text)',
+        'archive_code_batch_allocation(uuid,uuid,uuid,uuid,text,uuid,bigint,text)',
+        'set_account_channel_scope(uuid,uuid,uuid,uuid,text,uuid,text,uuid)',
+        'delete_account_channel_scope(uuid,uuid,uuid,uuid,bigint,text)',
+        'get_my_channel_scope(uuid,uuid,text)'
+        ,'record_diversion_observation(uuid,uuid,uuid,timestamptz,text,text,uuid,text,text,text,text,text,boolean,uuid,uuid,text,text)'
+        ,'add_diversion_evidence(uuid,uuid,uuid,uuid,uuid,bigint,text,text,text,text,text)'
+        ,'transition_diversion_clue(uuid,uuid,uuid,uuid,bigint,text,text,text,text)'
+        ,'mutate_risk_rule(uuid,uuid,uuid,text,uuid,bigint,text,text,text,text,jsonb,boolean)'
+        ,'set_campaign_risk_rule(uuid,uuid,uuid,uuid,uuid,boolean,text)'
+        ,'resume_risk_campaign_pause(uuid,uuid,uuid,uuid,bigint,text,text)'
+        ,'evaluate_execute_scan_risk(uuid,uuid,uuid,uuid,text,jsonb)'
+        ,'freeze_code_item_with_risk_alert(uuid,uuid,uuid,uuid,uuid,uuid,text,text)'
+        ,'mark_risk_notification_read(uuid,uuid,uuid,uuid,text)'
+        ,'mark_all_risk_notifications_read(uuid,uuid,uuid,text)'
+        ,'record_external_order_value_event(uuid,text,text,text,numeric,text,text,text,text,uuid,timestamp with time zone,timestamp with time zone,text,text,text,text)'
+        ,'confirm_gmv_attribution(uuid,uuid,uuid,uuid,uuid,uuid,uuid,timestamp with time zone,integer,text,text)'
     ] LOOP
         IF to_regprocedure('public.' || signature) IS NOT NULL THEN
             EXECUTE format('GRANT EXECUTE ON FUNCTION public.%s TO yimatong_app', signature);
@@ -889,15 +1112,19 @@ END
 $$;
 
 DO $$
-DECLARE
-    callback_signature text :=
-        'settle_campaign_claim_callback(uuid,uuid,uuid,uuid,uuid,text,text,jsonb)';
+DECLARE callback_signature text;
 BEGIN
-    IF to_regprocedure('public.' || callback_signature) IS NOT NULL THEN
-        EXECUTE format('REVOKE ALL ON FUNCTION public.%s FROM PUBLIC', callback_signature);
-        EXECUTE format('REVOKE ALL ON FUNCTION public.%s FROM yimatong_app', callback_signature);
-        EXECUTE format('GRANT EXECUTE ON FUNCTION public.%s TO yimatong_callback', callback_signature);
-    END IF;
+    FOREACH callback_signature IN ARRAY ARRAY[
+        'settle_campaign_claim_callback(uuid,uuid,uuid,uuid,uuid,text,text,jsonb)',
+        'bind_wechat_oauth_consumer(uuid,uuid,uuid,timestamp with time zone,text,text,uuid,uuid,text,bytea,bytea,text,uuid,uuid)',
+        'apply_verified_wecom_contact_event(uuid,uuid,uuid,text,text,text,text,text,timestamp with time zone,bigint,text)'
+    ] LOOP
+        IF to_regprocedure('public.' || callback_signature) IS NOT NULL THEN
+            EXECUTE format('REVOKE ALL ON FUNCTION public.%s FROM PUBLIC', callback_signature);
+            EXECUTE format('REVOKE ALL ON FUNCTION public.%s FROM yimatong_app', callback_signature);
+            EXECUTE format('GRANT EXECUTE ON FUNCTION public.%s TO yimatong_callback', callback_signature);
+        END IF;
+    END LOOP;
 END
 $$;
 

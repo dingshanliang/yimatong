@@ -57,8 +57,8 @@ class TestSevenLayerFunnel:
         assert "退款总额" in step_names, "漏斗必须含退款层"
         assert "净成交额" in step_names, "漏斗必须含净成交额层"
 
-    async def test_funnel_valid_visit_denominator(self, db_session, migrated_pg_url):
-        """AC1：有效访问是分母（Decision 21），不是 raw scan。"""
+    async def test_occurrence_metrics_do_not_share_an_unlabelled_denominator(self, db_session, migrated_pg_url):
+        """AC1：发生期指标单位不同，不伪造统一转化率。"""
         from tests.test_acceptance.conftest import seed_baseline
 
         summary = await seed_baseline(migrated_pg_url)
@@ -67,9 +67,12 @@ class TestSevenLayerFunnel:
         from app.services.analytics_extended import get_conversion_funnel
 
         funnel = await get_conversion_funnel(db_session, tenant_id, days_back=30)
-        # 有效访问层 rate 应为 100%（分母）
-        valid_visit_step = next(s for s in funnel["steps"] if s["name"] == "有效访问")
-        assert valid_visit_step["rate"] == 100.0, "有效访问层应为 100%（分母）"
+        assert funnel["report_type"] == "result_occurrence"
+        assert funnel["conversion_rates_available"] is False
+        assert all(step["rate"] is None for step in funnel["steps"])
+        assert next(step for step in funnel["steps"] if step["name"] == "有效访问")["unit"] == "count"
+        assert next(step for step in funnel["steps"] if step["name"] == "订单总额")["unit"] == "yuan"
+        assert funnel["visitor_cohort"]["status"] in {"collecting", "complete"}
 
 
 # ── AC5：汇总与净额一致 ──────────────────────────────────────────────────

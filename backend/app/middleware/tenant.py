@@ -7,6 +7,7 @@ from fastapi import Request
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from app.core.config import settings
+from app.middleware.request_body_limit import is_public_benefit_claim_path, is_wecom_callback_path
 from app.services.redis_cache import AsyncRedisCache, SharedSecurityCacheUnavailable
 from app.utils.security import verify_access_token
 
@@ -27,6 +28,10 @@ def _api_key_metadata_is_invalid(exc: Exception) -> bool:
 
 _AGENCY_AUTHORIZATION_DETAIL_PATH = re.compile(
     r"/api/v1/ops/authorizations/"
+    r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
+)
+_RETROSPECTIVE_DETAIL_PATH = re.compile(
+    r"/api/v1/retrospectives/"
     r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
 )
 
@@ -57,7 +62,7 @@ class TenantScopeMiddleware(BaseHTTPMiddleware):
         # yimatong-zgb1.5：public/consents 同样用 scan_token 自校验，需放行（否则 grant/withdraw 必 401）。
         # scan_event_router uses the canonical API prefix and self-validates scan_token.
         # consents withdraw 路径含 {consent_id} 路径参数，用前缀匹配 is_public_consent。
-        scan_token_paths = {"/api/v1/scan-events"}
+        scan_token_paths = {"/api/v1/scan-events", "/api/v1/public/leads"}
         # SSE 端点使用 query-param 认证，不走 middleware JWT
         query_auth_paths = {"/api/v1/risk-dashboard/alerts/stream"}
         if (
@@ -70,8 +75,9 @@ class TenantScopeMiddleware(BaseHTTPMiddleware):
             or request.url.path.startswith("/api/v1/consumers/points/")
             or request.url.path.startswith("/api/v1/files/public/")
             or request.url.path == "/api/v1/benefit-claims"
+            or is_public_benefit_claim_path(request.url.path)
             or request.url.path.startswith("/api/v1/takeover/gateway")
-            or request.url.path.startswith("/api/v1/integrations/wecom/callback/")
+            or is_wecom_callback_path(request.url.path)
             or request.url.path == "/api/v1/integrations/wecom/contact-way"
             or request.url.path == "/api/v1/platform/auth/login"
             or (
@@ -641,7 +647,7 @@ class TenantScopeMiddleware(BaseHTTPMiddleware):
                     return False, []
                 permissions = set()
                 for role_obj in account.roles:
-                    if role_obj.name not in {"admin", "operator", "viewer"}:
+                    if role_obj.name not in {"admin", "operator", "viewer", "distributor", "store_guide"}:
                         continue
                     for perm in role_obj.permissions:
                         permissions.add(perm.code)
@@ -698,6 +704,12 @@ class TenantScopeMiddleware(BaseHTTPMiddleware):
         # any authorized client workspace. It exposes no profile or quota data.
         if path == "/api/v1/tenants/me/entitlement":
             return method == "GET"
+        if path == "/api/v1/pilot-milestones":
+            return method == "GET" and bool({"analytics", "campaigns"}.intersection(scopes))
+        if path == "/api/v1/retrospectives" or _RETROSPECTIVE_DETAIL_PATH.fullmatch(path):
+            if method == "GET":
+                return bool({"analytics", "campaigns"}.intersection(scopes))
+            return method == "PATCH" and "campaigns" in scopes and bool(_RETROSPECTIVE_DETAIL_PATH.fullmatch(path))
         if path.startswith("/api/v1/imports"):
             if method == "GET":
                 return (
@@ -755,7 +767,18 @@ class TenantScopeMiddleware(BaseHTTPMiddleware):
             ),
         }
         if path.startswith("/api/v1/ops/launch-releases"):
-            return "pages" in scopes or "release:execute" in scopes
+            if path == "/api/v1/ops/launch-releases":
+                if method == "GET":
+                    return "pages" in scopes or "release:execute" in scopes
+                return method == "POST" and "pages" in scopes
+            parts = path.split("/")
+            if len(parts) == 6 and parts[5]:
+                return method == "GET" and ("pages" in scopes or "release:execute" in scopes)
+            if len(parts) == 7 and parts[5] and parts[6] == "request-confirmation":
+                return method == "POST" and "pages" in scopes
+            if len(parts) == 7 and parts[5] and parts[6] == "publish":
+                return method == "POST" and "release:execute" in scopes
+            return False
         if path.startswith("/api/v1/product-assets/"):
             return method in {"PATCH", "DELETE"} and "products" in scopes
         # Product material editing uploads a file before attaching its returned

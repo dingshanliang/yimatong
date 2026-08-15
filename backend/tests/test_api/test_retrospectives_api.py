@@ -2,6 +2,7 @@
 
 import uuid
 from datetime import UTC, datetime, timedelta
+from unittest.mock import AsyncMock
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -26,9 +27,20 @@ async def client(db):
     app.dependency_overrides.clear()
 
 
-def _headers(tenant_id, account_id, role="admin"):
-    token = create_access_token(str(tenant_id), str(account_id), role, tenant_type="brand")
-    return {"Authorization": f"Bearer {token}"}
+@pytest.fixture(autouse=True)
+def _disable_shared_rate_limit(monkeypatch):
+    monkeypatch.setattr("app.api.v1.retrospectives.enforce_pilot_mutation_rate_limit", AsyncMock())
+
+
+def _headers(tenant_id, account_id, role="admin", version=1):
+    token = create_access_token(
+        str(tenant_id), str(account_id), role, tenant_type="brand", extra={"sid": str(uuid.uuid4())}
+    )
+    return {
+        "Authorization": f"Bearer {token}",
+        "If-Match": str(version),
+        "Idempotency-Key": str(uuid.uuid4()),
+    }
 
 
 async def _seed_retro(db, tenant_id, period_day=7, launched=None):
@@ -42,6 +54,9 @@ async def _seed_retro(db, tenant_id, period_day=7, launched=None):
         next_review_date=(launched + timedelta(days=period_day + 7)).date(),
         status="pending",
         scorecard_snapshot={"window_days": period_day},
+        snapshot_digest="0" * 64,
+        version=1,
+        authority_version=0,
     )
     db.add(retro)
     await db.flush()
@@ -149,7 +164,7 @@ async def test_patch_completed_only_allows_supplementary(client, db):
     # 再追加补充
     resp = await client.patch(
         f"/api/v1/retrospectives/{retro.id}",
-        headers=_headers(tenant_id, uuid.uuid4()),
+        headers=_headers(tenant_id, uuid.uuid4(), version=2),
         json={"supplementary_notes": "补充说明", "issues": "试图覆盖"},
     )
     assert resp.status_code == 200

@@ -1,9 +1,9 @@
 """统计服务层"""
 
 import uuid
-from datetime import date, timedelta
+from datetime import UTC, date, datetime, timedelta
 
-from sqlalchemy import Integer, case, func, select
+from sqlalchemy import Integer, and_, case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.analytics import DailyScanStats
@@ -78,8 +78,8 @@ async def get_dashboard(
     days_back: int = 30,
 ) -> dict:
     """获取看板数据"""
-    today = date.today()
-    seven_days_ago = today - timedelta(days=7)
+    today = datetime.now(UTC).date()
+    current_week_start = today - timedelta(days=6)
     cutoff = today - timedelta(days=days_back)
 
     # 今日统计
@@ -103,11 +103,9 @@ async def get_dashboard(
     cumulative_first_scans = int(total_row[1])
 
     # 最近 7 天趋势
-    trend = await get_scan_stats(db, tenant_id, seven_days_ago, today)
+    trend = await get_scan_stats(db, tenant_id, current_week_start, today)
 
     # 环境占比（从 scan_events 查询，限制日期范围避免全表扫描）
-    from datetime import UTC, datetime
-
     cutoff_dt = datetime(cutoff.year, cutoff.month, cutoff.day, tzinfo=UTC)
     env_result = await db.execute(
         select(ScanEvent.environment, func.count())
@@ -117,21 +115,24 @@ async def get_dashboard(
     env_stats = {env or "unknown": count for env, count in env_result.all()}
 
     # 同期对比
-    prev_start = seven_days_ago - timedelta(days=7)
+    prev_start = current_week_start - timedelta(days=7)
 
     # 一次查询同时获取当前和前一周期的总量
     current_and_prev = await db.execute(
         select(
             func.coalesce(
-                func.sum(case((DailyScanStats.date >= seven_days_ago, DailyScanStats.total_scans), else_=0)), 0
+                func.sum(case((DailyScanStats.date >= current_week_start, DailyScanStats.total_scans), else_=0)), 0
             ),
             func.coalesce(
-                func.sum(case((DailyScanStats.date >= seven_days_ago, DailyScanStats.first_scans), else_=0)), 0
+                func.sum(case((DailyScanStats.date >= current_week_start, DailyScanStats.first_scans), else_=0)), 0
             ),
             func.coalesce(
                 func.sum(
                     case(
-                        (DailyScanStats.date >= prev_start, DailyScanStats.total_scans),
+                        (
+                            and_(DailyScanStats.date >= prev_start, DailyScanStats.date < current_week_start),
+                            DailyScanStats.total_scans,
+                        ),
                         else_=0,
                     )
                 ),
@@ -140,7 +141,10 @@ async def get_dashboard(
             func.coalesce(
                 func.sum(
                     case(
-                        (DailyScanStats.date >= prev_start, DailyScanStats.first_scans),
+                        (
+                            and_(DailyScanStats.date >= prev_start, DailyScanStats.date < current_week_start),
+                            DailyScanStats.first_scans,
+                        ),
                         else_=0,
                     )
                 ),
@@ -168,6 +172,7 @@ async def get_dashboard(
         .select_from(BenefitClaim)
         .where(
             BenefitClaim.tenant_id == tenant_id,
+            BenefitClaim.created_at >= cutoff_dt,
             BenefitClaim.status == "success",
         )
     )
@@ -185,7 +190,9 @@ async def get_dashboard(
             "weekly_first_scans_change": _calc_change(cur_first_scans, prev_first_scans),
         },
         "period_claim_count": period_claim_count,
-        "period_claim_rate": round(period_claim_count / cumulative_scans * 100, 1) if cumulative_scans > 0 else 0.0,
+        # Claims and scans are result-occurrence metrics from different
+        # populations. A conversion rate is only valid in a cohort report.
+        "period_claim_rate": None,
     }
 
 

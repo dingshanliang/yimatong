@@ -1,10 +1,13 @@
 """渠道服务层：经销商/区域/门店 CRUD + 渠道流向登记 + 窜货检测"""
 
 import uuid
+from types import SimpleNamespace
 
 from sqlalchemy import and_, func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
+from uuid6 import uuid7
 
+from app.core.database import _session_uses_postgresql, get_request_security_credential
 from app.models.channel import AccountChannelScope, CodeAllocation, Distributor, DiversionClue, Region, Store
 from app.models.code import CodeBatch, CodeItem
 from app.models.product import SKU, Product
@@ -18,6 +21,11 @@ def _like(value: str) -> str:
 
 def _dt(value) -> str | None:
     return value.isoformat() if value else None
+
+
+def _current_allocation_predicates():
+    """Canonical predicate for an allocation that still affects current state."""
+    return CodeAllocation.effective_to.is_(None), CodeAllocation.status == "active"
 
 
 def _diversion_severity(clue: DiversionClue) -> str:
@@ -437,6 +445,7 @@ async def _sum_allocated(db: AsyncSession, tenant_id: uuid.UUID, batch_id: uuid.
             select(func.coalesce(func.sum(CodeAllocation.quantity), 0)).where(
                 CodeAllocation.tenant_id == tenant_id,
                 CodeAllocation.batch_id == batch_id,
+                *_current_allocation_predicates(),
             )
         )
     ).scalar()
@@ -491,7 +500,10 @@ async def get_channel_overview(db: AsyncSession, tenant_id: uuid.UUID) -> dict:
     ).scalar() or 0
     allocated_quantity = (
         await db.execute(
-            select(func.coalesce(func.sum(CodeAllocation.quantity), 0)).where(CodeAllocation.tenant_id == tenant_id)
+            select(func.coalesce(func.sum(CodeAllocation.quantity), 0)).where(
+                CodeAllocation.tenant_id == tenant_id,
+                *_current_allocation_predicates(),
+            )
         )
     ).scalar() or 0
     pending_diversion_count = (
@@ -608,7 +620,11 @@ async def get_distributor_stats(db: AsyncSession, tenant_id: uuid.UUID, distribu
     alloc_rows = (
         await db.execute(
             select(CodeAllocation.distributor_id, func.coalesce(func.sum(CodeAllocation.quantity), 0).label("quantity"))
-            .where(CodeAllocation.tenant_id == tenant_id, CodeAllocation.distributor_id.in_(distributor_ids))
+            .where(
+                CodeAllocation.tenant_id == tenant_id,
+                CodeAllocation.distributor_id.in_(distributor_ids),
+                *_current_allocation_predicates(),
+            )
             .group_by(CodeAllocation.distributor_id)
         )
     ).all()
@@ -759,7 +775,11 @@ async def get_region_stats(db: AsyncSession, tenant_id: uuid.UUID, regions: list
     alloc_rows = (
         await db.execute(
             select(CodeAllocation.region_id, func.coalesce(func.sum(CodeAllocation.quantity), 0).label("quantity"))
-            .where(CodeAllocation.tenant_id == tenant_id, CodeAllocation.region_id.in_(region_ids))
+            .where(
+                CodeAllocation.tenant_id == tenant_id,
+                CodeAllocation.region_id.in_(region_ids),
+                *_current_allocation_predicates(),
+            )
             .group_by(CodeAllocation.region_id)
         )
     ).all()
@@ -919,7 +939,11 @@ async def get_store_stats(db: AsyncSession, tenant_id: uuid.UUID, stores: list[S
     alloc_rows = (
         await db.execute(
             select(CodeAllocation.store_id, func.coalesce(func.sum(CodeAllocation.quantity), 0).label("quantity"))
-            .where(CodeAllocation.tenant_id == tenant_id, CodeAllocation.store_id.in_(store_ids))
+            .where(
+                CodeAllocation.tenant_id == tenant_id,
+                CodeAllocation.store_id.in_(store_ids),
+                *_current_allocation_predicates(),
+            )
             .group_by(CodeAllocation.store_id)
         )
     ).all()
@@ -1055,14 +1079,22 @@ async def allocate_codes_to_store(
     if quantity > remaining:
         raise ValueError(f"登记数量超过当前剩余码量，剩余 {remaining} 个")
 
+    allocation_id = uuid7()
+    target_type = "store" if store_id else "region" if region_id else "distributor"
+    target_id = store_id or region_id or distributor_id
     alloc = CodeAllocation(
+        id=allocation_id,
         tenant_id=tenant_id,
         batch_id=batch_id,
         store_id=store_id,
         region_id=region.id if region else region_id,
         distributor_id=distributor.id if distributor else distributor_id,
+        allocation_root_id=allocation_id,
+        target_type=target_type,
+        target_id=target_id,
         quantity=quantity,
         allocated_at=utcnow().replace(microsecond=0).isoformat(),
+        effective_from=utcnow().replace(microsecond=0),
     )
     db.add(alloc)
     await db.flush()
@@ -1077,11 +1109,14 @@ async def list_allocations(
     store_id: uuid.UUID | None = None,
     region_id: uuid.UUID | None = None,
     distributor_id: uuid.UUID | None = None,
+    include_history: bool = False,
     page: int = 1,
     page_size: int = 20,
 ) -> tuple[list[CodeAllocation], int]:
     """查询渠道流向登记记录"""
     conditions = [CodeAllocation.tenant_id == tenant_id]
+    if not include_history:
+        conditions.extend(_current_allocation_predicates())
     if batch_id:
         conditions.append(CodeAllocation.batch_id == batch_id)
     if store_id:
@@ -1097,7 +1132,7 @@ async def list_allocations(
             await db.execute(
                 select(CodeAllocation)
                 .where(*conditions)
-                .order_by(CodeAllocation.id.desc())
+                .order_by(CodeAllocation.allocation_root_id, CodeAllocation.version.desc())
                 .offset((page - 1) * page_size)
                 .limit(page_size)
             )
@@ -1151,6 +1186,14 @@ async def allocation_to_dict(db: AsyncSession, tenant_id: uuid.UUID, alloc: Code
     batch_quantity = batch.quantity if batch else 0
     return {
         "id": str(alloc.id),
+        "allocation_root_id": str(alloc.allocation_root_id),
+        "version": alloc.version,
+        "action": alloc.action,
+        "status": alloc.status,
+        "target_type": alloc.target_type,
+        "target_id": str(alloc.target_id) if alloc.target_id else None,
+        "effective_from": _dt(alloc.effective_from),
+        "effective_to": _dt(alloc.effective_to),
         "batch_id": str(alloc.batch_id),
         "batch_code": batch.batch_code if batch else None,
         "batch_quantity": batch_quantity,
@@ -1171,25 +1214,34 @@ async def allocation_to_dict(db: AsyncSession, tenant_id: uuid.UUID, alloc: Code
 
 async def resolve_store_for_code(
     db: AsyncSession,
+    tenant_id: uuid.UUID,
     public_id: str,
 ) -> dict | None:
     """扫码时自动匹配门店归属"""
-    item = (await db.execute(select(CodeItem).where(CodeItem.public_id == public_id))).scalar_one_or_none()
+    item = (
+        await db.execute(select(CodeItem).where(CodeItem.tenant_id == tenant_id, CodeItem.public_id == public_id))
+    ).scalar_one_or_none()
     if not item:
         return None
 
     alloc = (
         await db.execute(
             select(CodeAllocation)
-            .where(CodeAllocation.batch_id == item.code_batch_id)
-            .order_by(CodeAllocation.id.desc())
+            .where(
+                CodeAllocation.tenant_id == tenant_id,
+                CodeAllocation.batch_id == item.code_batch_id,
+                *_current_allocation_predicates(),
+            )
+            .order_by(CodeAllocation.version.desc())
             .limit(1)
         )
     ).scalar_one_or_none()
     if not alloc or not alloc.store_id:
         return None
 
-    store = (await db.execute(select(Store).where(Store.id == alloc.store_id))).scalar_one_or_none()
+    store = (
+        await db.execute(select(Store).where(Store.tenant_id == tenant_id, Store.id == alloc.store_id))
+    ).scalar_one_or_none()
     if not store:
         return None
 
@@ -1201,14 +1253,18 @@ async def resolve_store_for_code(
     }
 
     if store.region_id:
-        region = (await db.execute(select(Region).where(Region.id == store.region_id))).scalar_one_or_none()
+        region = (
+            await db.execute(select(Region).where(Region.tenant_id == tenant_id, Region.id == store.region_id))
+        ).scalar_one_or_none()
         if region:
             result["region_name"] = region.name
             result["city"] = region.city
 
     if store.distributor_id:
         dist = (
-            await db.execute(select(Distributor).where(Distributor.id == store.distributor_id))
+            await db.execute(
+                select(Distributor).where(Distributor.tenant_id == tenant_id, Distributor.id == store.distributor_id)
+            )
         ).scalar_one_or_none()
         if dist:
             result["distributor_name"] = dist.name
@@ -1241,15 +1297,16 @@ async def create_account_scope(
         region = await _get_region(db, tenant_id, region_id)
         if not region:
             raise ValueError("区域不存在")
-        distributor_id = distributor_id or region.distributor_id
     if store_id:
         store = (
             await db.execute(select(Store).where(Store.id == store_id, Store.tenant_id == tenant_id))
         ).scalar_one_or_none()
         if not store:
             raise ValueError("门店不存在")
-        distributor_id = distributor_id or store.distributor_id
-        region_id = region_id or store.region_id
+
+    exact_distributor_id = distributor_id if scope_type == "distributor" else None
+    exact_region_id = region_id if scope_type == "region" else None
+    exact_store_id = store_id if scope_type == "store" else None
 
     existing = (
         await db.execute(
@@ -1261,9 +1318,14 @@ async def create_account_scope(
         )
     ).scalar_one_or_none()
     if existing:
-        existing.distributor_id = distributor_id
-        existing.region_id = region_id
-        existing.store_id = store_id
+        existing.target_id = {
+            "distributor": exact_distributor_id,
+            "region": exact_region_id,
+            "store": exact_store_id,
+        }[scope_type]
+        existing.distributor_id = exact_distributor_id
+        existing.region_id = exact_region_id
+        existing.store_id = exact_store_id
         await db.flush()
         await db.refresh(existing)
         return existing
@@ -1272,9 +1334,14 @@ async def create_account_scope(
         tenant_id=tenant_id,
         account_id=account_id,
         scope_type=scope_type,
-        distributor_id=distributor_id,
-        region_id=region_id,
-        store_id=store_id,
+        target_id={
+            "distributor": exact_distributor_id,
+            "region": exact_region_id,
+            "store": exact_store_id,
+        }[scope_type],
+        distributor_id=exact_distributor_id,
+        region_id=exact_region_id,
+        store_id=exact_store_id,
     )
     db.add(scope)
     await db.flush()
@@ -1282,19 +1349,32 @@ async def create_account_scope(
     return scope
 
 
-async def list_account_scopes(db: AsyncSession, tenant_id: uuid.UUID) -> list[AccountChannelScope]:
+async def list_account_scopes(
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    *,
+    page: int = 1,
+    page_size: int = 20,
+) -> tuple[list[AccountChannelScope], int]:
+    total = (
+        await db.execute(
+            select(func.count()).select_from(AccountChannelScope).where(AccountChannelScope.tenant_id == tenant_id)
+        )
+    ).scalar() or 0
     rows = (
         (
             await db.execute(
                 select(AccountChannelScope)
                 .where(AccountChannelScope.tenant_id == tenant_id)
                 .order_by(AccountChannelScope.updated_at.desc(), AccountChannelScope.id.desc())
+                .offset((page - 1) * page_size)
+                .limit(page_size)
             )
         )
         .scalars()
         .all()
     )
-    return list(rows)
+    return list(rows), total
 
 
 async def delete_account_scope(db: AsyncSession, tenant_id: uuid.UUID, scope_id: uuid.UUID) -> bool:
@@ -1319,6 +1399,37 @@ async def get_account_scope(
     account_id: uuid.UUID,
     scope_type: str,
 ) -> AccountChannelScope | None:
+    if _session_uses_postgresql(db):
+        credential = get_request_security_credential()
+        if credential is None or credential[0] != "auth_session":
+            return None
+        try:
+            session_id = uuid.UUID(credential[1])
+        except (TypeError, ValueError):
+            return None
+        row = (
+            (
+                await db.execute(
+                    text("SELECT * FROM public.get_my_channel_scope(:tenant_id,:session_id,:scope_type)"),
+                    {"tenant_id": tenant_id, "session_id": session_id, "scope_type": scope_type},
+                )
+            )
+            .mappings()
+            .one_or_none()
+        )
+        if row is None:
+            return None
+        target_id = row["target_id"]
+        return SimpleNamespace(
+            id=row["scope_id"],
+            tenant_id=tenant_id,
+            account_id=account_id,
+            scope_type=row["scope_type"],
+            distributor_id=target_id if row["scope_type"] == "distributor" else None,
+            region_id=target_id if row["scope_type"] == "region" else None,
+            store_id=target_id if row["scope_type"] == "store" else None,
+            version=row["version"],
+        )
     return (
         await db.execute(
             select(AccountChannelScope).where(
@@ -1481,8 +1592,9 @@ async def get_code_expected_region(
             .where(
                 CodeAllocation.batch_id == item.code_batch_id,
                 CodeAllocation.tenant_id == tenant_id,
+                *_current_allocation_predicates(),
             )
-            .order_by(CodeAllocation.id.desc())
+            .order_by(CodeAllocation.version.desc())
             .limit(1)
         )
     ).scalar_one_or_none()
@@ -1542,18 +1654,23 @@ async def check_diversion(
     tenant_id: uuid.UUID,
     public_id: str,
     ip: str,
+    *,
+    scan_event_id: uuid.UUID | None = None,
+    scan_time=None,
+    observation_ip_hash: str | None = None,
 ) -> DiversionClue | None:
     """检测窜货：扫码 IP 城市与码归属区域不匹配（支持门店级和批次级两种链路）"""
     # 幂等性检查：该码是否已有未处理的窜货线索
-    existing_result = await db.execute(
-        select(DiversionClue).where(
-            DiversionClue.tenant_id == tenant_id,
-            DiversionClue.public_id == public_id,
-            DiversionClue.resolved.is_(False),
+    if not _session_uses_postgresql(db):
+        existing_result = await db.execute(
+            select(DiversionClue).where(
+                DiversionClue.tenant_id == tenant_id,
+                DiversionClue.public_id == public_id,
+                DiversionClue.resolved.is_(False),
+            )
         )
-    )
-    if existing_result.scalar_one_or_none():
-        return None  # 已有未处理线索，不重复创建
+        if existing_result.scalar_one_or_none():
+            return None  # SQLite compatibility path retains one active clue.
 
     detected_city = _resolve_ip(ip)
     if not detected_city:
@@ -1573,7 +1690,11 @@ async def check_diversion(
     if not expected_region:
         return None
 
-    item = (await db.execute(select(CodeItem).where(CodeItem.public_id == public_id))).scalar_one_or_none()
+    item = (
+        await db.execute(select(CodeItem).where(CodeItem.public_id == public_id, CodeItem.tenant_id == tenant_id))
+    ).scalar_one_or_none()
+    if item is None:
+        return None
 
     dist_id = None
     region_id = None
@@ -1587,6 +1708,38 @@ async def check_diversion(
             region_id = uuid.UUID(expected["region_id"])
         except (ValueError, TypeError):
             pass
+
+    if _session_uses_postgresql(db):
+        if scan_event_id is None or scan_time is None:
+            raise RuntimeError("PostgreSQL diversion observations require an exact scan event")
+        from app.services.diversion_authority import record_observation
+
+        receipt = await record_observation(
+            db,
+            tenant_id,
+            observation_id=uuid.uuid5(uuid.NAMESPACE_URL, f"diversion:{scan_event_id}:cross_region_ip"),
+            scan_event_id=scan_event_id,
+            scan_time=scan_time,
+            idempotency_key=str(scan_event_id),
+            public_id=public_id,
+            code_item_id=item.id,
+            ip_hash=observation_ip_hash,
+            detected_city=detected_city,
+            expected_region=expected_region,
+            location_source="ip_inference",
+            location_accuracy="medium",
+            location_authorized=None,
+            distributor_id=dist_id,
+            region_id=region_id,
+            rule_name="cross_region_ip",
+            confidence="medium",
+        )
+        return await db.scalar(
+            select(DiversionClue).where(
+                DiversionClue.tenant_id == tenant_id,
+                DiversionClue.id == receipt["clue_id"],
+            )
+        )
 
     clue = DiversionClue(
         tenant_id=tenant_id,
@@ -1727,8 +1880,12 @@ async def diversion_clue_to_dict(db: AsyncSession, tenant_id: uuid.UUID, clue: D
         allocation = (
             await db.execute(
                 select(CodeAllocation)
-                .where(CodeAllocation.tenant_id == tenant_id, CodeAllocation.batch_id == batch.id)
-                .order_by(CodeAllocation.id.desc())
+                .where(
+                    CodeAllocation.tenant_id == tenant_id,
+                    CodeAllocation.batch_id == batch.id,
+                    *_current_allocation_predicates(),
+                )
+                .order_by(CodeAllocation.version.desc())
                 .limit(1)
             )
         ).scalar_one_or_none()

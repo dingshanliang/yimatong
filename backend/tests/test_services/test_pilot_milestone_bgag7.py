@@ -7,6 +7,8 @@ import pytest
 
 from app.constants.campaign import CampaignStatus
 from app.constants.pilot import PilotMilestoneStatus, PilotMilestoneType
+from app.models.campaign import Benefit
+from app.models.product import Brand, Product
 from app.services.campaign import change_campaign_status, create_campaign
 from app.services.pilot_milestone import (
     build_milestone_timeline,
@@ -26,6 +28,41 @@ def _as_utc(dt: datetime) -> datetime:
     return dt.astimezone(UTC)
 
 
+async def _create_publishable_campaign(db, tenant_id: uuid.UUID, name: str) -> dict:
+    """Build real activation prerequisites, then leave transition to campaign authority."""
+    brand = Brand(tenant_id=tenant_id, name=f"{name}-brand")
+    db.add(brand)
+    await db.flush()
+    product = Product(tenant_id=tenant_id, brand_id=brand.id, name=f"{name}-product")
+    db.add(product)
+    await db.flush()
+    campaign = await create_campaign(
+        db,
+        tenant_id,
+        name,
+        "discount",
+        "2026-07-01T00:00:00Z",
+        "2026-08-31T00:00:00Z",
+        rules_json={},
+        product_id=product.id,
+    )
+    db.add(
+        Benefit(
+            tenant_id=tenant_id,
+            campaign_id=uuid.UUID(campaign["id"]),
+            name=f"{name}-benefit",
+            benefit_type="platform_coupon",
+            config_json={},
+            stock_total=10,
+            stock_used=0,
+            per_person_limit=1,
+            status="active",
+        )
+    )
+    await db.flush()
+    return campaign
+
+
 # ── 里程碑 5：首个活动发布 published_at 捕获 ──────────────────────────
 
 
@@ -35,12 +72,8 @@ async def test_milestone5_derives_from_earliest_campaign_published_at(db):
     onboarding = datetime(2026, 7, 1, tzinfo=UTC)
     tenant_id = await seed_pilot_tenant(db, created_at=onboarding)
 
-    c1 = await create_campaign(
-        db, tenant_id, "c1", "discount", "2026-07-01T00:00:00Z", "2026-08-31T00:00:00Z", rules_json={}
-    )
-    c2 = await create_campaign(
-        db, tenant_id, "c2", "discount", "2026-07-01T00:00:00Z", "2026-08-31T00:00:00Z", rules_json={}
-    )
+    c1 = await _create_publishable_campaign(db, tenant_id, "c1")
+    c2 = await _create_publishable_campaign(db, tenant_id, "c2")
     # c2 先发布，c1 后发布 → 应取 c2 的更早 published_at
     c2_activated = await change_campaign_status(db, tenant_id, uuid.UUID(c2["id"]), CampaignStatus.ACTIVE)
     earlier_published = c2_activated["published_at"]
@@ -59,9 +92,7 @@ async def test_milestone5_derives_from_earliest_campaign_published_at(db):
 async def test_change_campaign_status_sets_published_at_once(db):
     """change_campaign_status 首次切到 ACTIVE 写 published_at；二次（PAUSED→ACTIVE）不复写。"""
     tenant_id = await seed_pilot_tenant(db)
-    c = await create_campaign(
-        db, tenant_id, "c1", "discount", "2026-07-01T00:00:00Z", "2026-08-31T00:00:00Z", rules_json={}
-    )
+    c = await _create_publishable_campaign(db, tenant_id, "c1")
     first = await change_campaign_status(db, tenant_id, uuid.UUID(c["id"]), CampaignStatus.ACTIVE)
     first_published = first["published_at"]
     assert first_published is not None

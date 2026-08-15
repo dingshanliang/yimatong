@@ -7,27 +7,34 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.core.dependencies import get_current_tenant, require_tenant_feature
+from app.schemas.channel import ChannelDimension
 from app.schemas.common import PaginatedResponse
+from app.services.channel_access import channel_dependencies
 from app.services.channel_analytics import (
     get_channel_health_scores,
     get_conversion_comparison,
     get_scan_by_channel,
 )
+from app.utils.auth_rbac import require_permission
 
 channel_analytics_router = APIRouter(
     prefix="/api/v1/channel-analytics",
     tags=["channel-analytics"],
-    dependencies=[Depends(require_tenant_feature("channel_portal"))],
+    dependencies=[
+        Depends(require_tenant_feature("channel_portal", db_scope="function")),
+        Depends(require_permission("analytics:view")),
+        *channel_dependencies("channel:read"),
+    ],
 )
 
 
 @channel_analytics_router.get("/scan-by-channel")
 async def scan_by_channel_endpoint(
-    dimension: str = Query("distributor", pattern="^(distributor|region|store)$"),
+    dimension: ChannelDimension = Query("distributor"),
     days_back: int = Query(30, ge=1, le=365),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
     """按渠道维度聚合扫码统计"""
@@ -44,9 +51,9 @@ async def scan_by_channel_endpoint(
 
 @channel_analytics_router.get("/health-scores")
 async def health_scores_endpoint(
-    dimension: str = Query("distributor", pattern="^(distributor|region|store)$"),
+    dimension: ChannelDimension = Query("distributor"),
     days_back: int = Query(30, ge=1, le=365),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
     """渠道健康评分"""
@@ -56,9 +63,9 @@ async def health_scores_endpoint(
 
 @channel_analytics_router.get("/conversion-comparison")
 async def conversion_comparison_endpoint(
-    dimension: str = Query("distributor", pattern="^(distributor|region|store)$"),
+    dimension: ChannelDimension = Query("distributor"),
     days_back: int = Query(30, ge=1, le=365),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
     """渠道间转化率对比"""

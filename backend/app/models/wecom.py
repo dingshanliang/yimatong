@@ -5,7 +5,19 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from sqlalchemy import JSON, BigInteger, DateTime, ForeignKey, Index, String, UniqueConstraint, func
+from sqlalchemy import (
+    JSON,
+    BigInteger,
+    CheckConstraint,
+    DateTime,
+    ForeignKey,
+    ForeignKeyConstraint,
+    Index,
+    String,
+    Text,
+    UniqueConstraint,
+    func,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 from uuid6 import uuid7
 
@@ -102,14 +114,113 @@ class WeComExternalContact(Base):
     )
 
     __table_args__ = (
+        UniqueConstraint("tenant_id", "id", name="uq_wecom_external_contacts_tenant_id_id_u6l"),
         UniqueConstraint(
             "tenant_id",
             "connector_id",
+            "user_id",
             "external_userid",
-            "state",
-            name="uq_wecom_external_contacts_source",
+            name="uq_wecom_external_contacts_member_source_u6l",
         ),
         Index("ix_wecom_external_contacts_lookup", "tenant_id", "benefit_id", "scan_token_hash", "status"),
         # yimatong-zgb1.12：事件指纹幂等（同 change_type + CreateTime 只处理一次）
         Index("ix_wecom_external_contacts_fingerprint", "tenant_id", "event_fingerprint"),
+        Index(
+            "ix_wecom_external_contacts_member_order_u6l",
+            "tenant_id",
+            "connector_id",
+            "user_id",
+            "external_userid",
+            "event_time",
+            "event_sequence",
+        ),
+    )
+
+
+class WeComCallbackReceipt(Base):
+    """Immutable official callback history applied to the contact projection."""
+
+    __tablename__ = "wecom_callback_receipts"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid7)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
+    connector_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
+    event_identity_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    payload_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    change_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    external_userid: Mapped[str] = mapped_column(String(120), nullable=False)
+    user_id: Mapped[str] = mapped_column(String(120), nullable=False)
+    state: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    unionid: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    event_time: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    event_sequence: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    outcome: Mapped[str] = mapped_column(String(30), nullable=False)
+    contact_id: Mapped[uuid.UUID] = mapped_column(nullable=False)
+    result: Mapped[dict] = mapped_column(JSON, nullable=False)
+    recorded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "id", name="uq_wecom_callback_receipts_tenant_id"),
+        UniqueConstraint("tenant_id", "connector_id", "event_identity_digest", name="uq_wecom_callback_receipts_event"),
+        ForeignKeyConstraint(
+            ["tenant_id", "connector_id"],
+            ["connectors.tenant_id", "connectors.id"],
+            name="fk_wecom_callback_receipts_tenant_connector",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "contact_id"],
+            ["wecom_external_contacts.tenant_id", "wecom_external_contacts.id"],
+            name="fk_wecom_callback_receipts_tenant_contact",
+            ondelete="RESTRICT",
+        ),
+        CheckConstraint("length(event_identity_digest) = 64", name="ck_wecom_callback_receipts_event_digest"),
+        CheckConstraint("length(payload_digest) = 64", name="ck_wecom_callback_receipts_payload_digest"),
+        CheckConstraint("event_sequence >= 0", name="ck_wecom_callback_receipts_event_sequence"),
+        Index(
+            "ix_wecom_callback_receipts_contact_order",
+            "tenant_id",
+            "connector_id",
+            "external_userid",
+            "event_time",
+            "event_sequence",
+        ),
+        Index(
+            "ix_wecom_callback_receipts_member_order_u6l",
+            "tenant_id",
+            "connector_id",
+            "user_id",
+            "external_userid",
+            "event_time",
+            "event_sequence",
+        ),
+        Index("ix_wecom_callback_receipts_tenant_contact", "tenant_id", "contact_id"),
+    )
+
+
+class WeComMemberRecoveryMarker(Base):
+    """Owner-only staged reconciliation for historical official contact member identity."""
+
+    __tablename__ = "wecom_member_recovery_markers"
+
+    tenant_id: Mapped[uuid.UUID] = mapped_column(primary_key=True)
+    contact_id: Mapped[uuid.UUID] = mapped_column(primary_key=True)
+    observed_user_id: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    acknowledged_user_id: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    resolution_state: Mapped[str] = mapped_column(String(30), nullable=False)
+    note: Mapped[str] = mapped_column(Text, nullable=False)
+    recorded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    acknowledged_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["tenant_id", "contact_id"],
+            ["wecom_external_contacts.tenant_id", "wecom_external_contacts.id"],
+            name="fk_wecom_member_recovery_marker_contact",
+            ondelete="RESTRICT",
+        ),
+        CheckConstraint(
+            "resolution_state IN ('exact_bound','operator_acknowledged','unresolved')",
+            name="ck_wecom_member_recovery_resolution",
+        ),
     )

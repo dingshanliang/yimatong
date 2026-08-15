@@ -112,6 +112,34 @@ def test_acting_context_routes_are_mapped_to_live_scope():
     assert not middleware._acting_path_is_explicitly_supported("/api/v1/tenants/me", ["products", "pages"])
 
 
+def test_pilot_routes_have_exact_method_bound_agency_scope_mapping():
+    middleware = TenantScopeMiddleware(Starlette())
+    retro_id = "11111111-1111-4111-8111-111111111111"
+
+    for scope in ("analytics", "campaigns"):
+        assert middleware._acting_path_is_explicitly_supported("/api/v1/pilot-milestones", [scope], "GET")
+        assert middleware._acting_path_is_explicitly_supported("/api/v1/retrospectives", [scope], "GET")
+        assert middleware._acting_path_is_explicitly_supported(f"/api/v1/retrospectives/{retro_id}", [scope], "GET")
+
+    assert middleware._acting_path_is_explicitly_supported(f"/api/v1/retrospectives/{retro_id}", ["campaigns"], "PATCH")
+    assert not middleware._acting_path_is_explicitly_supported(
+        f"/api/v1/retrospectives/{retro_id}", ["analytics"], "PATCH"
+    )
+    assert not middleware._acting_path_is_explicitly_supported("/api/v1/retrospectives", ["campaigns"], "PATCH")
+    assert not middleware._acting_path_is_explicitly_supported(
+        f"/api/v1/retrospectives/{retro_id}/complete", ["campaigns"], "PATCH"
+    )
+    assert not middleware._acting_path_is_explicitly_supported(
+        "/api/v1/pilot-milestones/corrections", ["analytics", "campaigns"], "POST"
+    )
+    assert not middleware._acting_path_is_explicitly_supported(
+        f"/api/v1/platform/tenants/{retro_id}/pilot-milestones/corrections",
+        ["analytics", "campaigns"],
+        "POST",
+    )
+    assert not middleware._acting_path_is_explicitly_supported("/api/v1/pilot-milestones", ["products"], "GET")
+
+
 def test_import_routes_have_exact_method_bound_agency_scope_mapping():
     middleware = TenantScopeMiddleware(Starlette())
 

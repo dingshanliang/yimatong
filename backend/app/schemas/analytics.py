@@ -2,31 +2,58 @@
 
 import uuid
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel
 
 
 class FunnelStep(BaseModel):
-    """转化漏斗单步"""
+    """One result-occurrence metric; heterogeneous units never share a rate."""
 
     name: str
-    value: int
-    rate: float  # 相对扫码量的百分比
+    value: float
+    unit: Literal["count", "yuan"]
+    rate: float | None = None
+
+
+class VisitorCohortSummary(BaseModel):
+    window_start: datetime
+    window_end: datetime
+    attribution_window_hours: Literal[720]
+    status: Literal["collecting", "complete"]
+    visitors: int
+    collecting_visitors: int
+    confirmed_order_visitors: int
+    confirmed_orders: int
+    confirmed_net_amount: float
+    confirmed_order_visitor_rate: float | None
 
 
 class ConversionFunnelResponse(BaseModel):
-    """转化漏斗响应"""
+    """Separate occurrence metrics from an immutable visitor-cohort projection."""
 
     period_days: int
+    window_start: datetime
+    window_end: datetime
+    report_type: Literal["result_occurrence"]
+    conversion_rates_available: Literal[False]
+    valid_visits: int
+    intent_events: int
+    confirmed_claims: int
+    confirmed_wecom: int
+    order_amount: float
+    refund_amount: float
+    cancelled_amount: float
+    net_amount: float
+    order_data_quality: Literal["complete", "incomplete"]
+    quarantined_order_count: int
+    unattributed_order_count: int
+    visitor_cohort: VisitorCohortSummary
     scan_count: int
     claim_count: int
-    claim_rate: float
-    signup_count: int
-    signup_rate: float
-    private_domain_count: int
-    private_domain_rate: float
+    claim_rate: None
     gmv_amount: float
-    gmv_rate: float
+    gmv_rate: None
     steps: list[FunnelStep]
 
 
@@ -51,9 +78,10 @@ class CampaignRankingItem(BaseModel):
     campaign_id: uuid.UUID
     campaign_name: str
     campaign_status: str
-    scan_count: int
+    scan_count: int | None
     claim_count: int
-    conversion_rate: float
+    conversion_rate: float | None
+    conversion_status: Literal["unavailable"]
 
 
 class CampaignRankingResponse(BaseModel):

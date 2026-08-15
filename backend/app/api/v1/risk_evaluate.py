@@ -3,24 +3,26 @@
 import uuid
 
 from fastapi import APIRouter, Depends
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.core.dependencies import get_current_tenant, require_tenant_feature
 from app.models.scan import ScanEvent
+from app.services.risk_access import risk_dependencies
 
 risk_evaluate_router = APIRouter(
     prefix="/api/v1/risk",
     tags=["risk-evaluate"],
-    dependencies=[Depends(require_tenant_feature("risk_module"))],
+    dependencies=[Depends(require_tenant_feature("risk_module", db_scope="function"))],
 )
 
 
 class RiskEvaluateRequest(BaseModel):
-    public_id: str
-    ip_hash: str | None = None
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    public_id: str = Field(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9_-]+$")
 
 
 class RiskEvaluateResponse(BaseModel):
@@ -29,7 +31,9 @@ class RiskEvaluateResponse(BaseModel):
     scan_count: int
 
 
-@risk_evaluate_router.post("/evaluate", response_model=RiskEvaluateResponse)
+@risk_evaluate_router.post(
+    "/evaluate", response_model=RiskEvaluateResponse, dependencies=risk_dependencies("risk:evaluate")
+)
 async def evaluate_risk(
     body: RiskEvaluateRequest,
     db: AsyncSession = Depends(get_db),
@@ -58,17 +62,14 @@ async def evaluate_risk(
         risk_factors.append("medium_scan_frequency")
         risk_score += 1
 
-    # IP 多地检查
-    if body.ip_hash:
-        ip_count_stmt = select(func.count(func.distinct(ScanEvent.ip_hash))).where(
-            ScanEvent.tenant_id == tenant_id,
-            ScanEvent.public_id == body.public_id,
-        )
-        ip_result = await db.execute(ip_count_stmt)
-        ip_count = ip_result.scalar() or 0
-        if ip_count > 5:
-            risk_factors.append("multiple_locations")
-            risk_score += 2
+    ip_count_stmt = select(func.count(func.distinct(ScanEvent.ip_hash))).where(
+        ScanEvent.tenant_id == tenant_id,
+        ScanEvent.public_id == body.public_id,
+    )
+    ip_count = (await db.execute(ip_count_stmt)).scalar() or 0
+    if ip_count > 5:
+        risk_factors.append("multiple_locations")
+        risk_score += 2
 
     # 确定风险等级
     if risk_score >= 3:

@@ -3,15 +3,17 @@
 from __future__ import annotations
 
 import csv
+import hashlib
 import io
 import uuid
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile, status
-from fastapi.responses import RedirectResponse, StreamingResponse
+from fastapi.responses import RedirectResponse, Response
 from sqlalchemy import func, select, text
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import load_only
+from uuid6 import uuid7
 
 from app.core.database import get_db
 from app.core.dependencies import get_current_account_id, get_current_tenant
@@ -25,6 +27,7 @@ from app.models.takeover import (
     TakeoverProject,
     TakeoverRouteVersion,
 )
+from app.schemas.export import TakeoverErrorExportRequest
 from app.schemas.takeover import (
     ExternalExecutionRequest,
     ObservationRequest,
@@ -34,8 +37,13 @@ from app.schemas.takeover import (
     TakeoverRouteCreate,
     validate_takeover_domain_name,
 )
-from app.services.audit import write_audit_log
 from app.services.code_export import spreadsheet_safe
+from app.services.export_access import (
+    CanonicalExportIdempotencyKey,
+    record_authorized_prepared_export,
+    require_export_auth_session,
+)
+from app.services.export_admission import enforce_export_rate_limit
 from app.services.takeover import (
     MAX_IMPORT_BYTES,
     complete_route,
@@ -65,6 +73,8 @@ from app.services.takeover import (
 )
 from app.services.takeover_admission import enforce_takeover_probe_rate_limit
 from app.utils.auth_rbac import require_permission
+
+_EXPORT_ROW_LIMIT = 50_000
 
 router = APIRouter(prefix="/api/v1/takeovers", tags=["takeovers"])
 gateway_router = APIRouter(tags=["takeover-gateway"])
@@ -278,18 +288,26 @@ async def retry_takeover_import(
     return serialize_import(retry_job, [])
 
 
-@router.get("/{project_id}/imports/{job_id}/errors.csv")
+@router.post("/{project_id}/imports/{job_id}/errors.csv")
 async def download_takeover_import_errors(
     project_id: uuid.UUID,
     job_id: uuid.UUID,
+    body: TakeoverErrorExportRequest,
+    idempotency_key: CanonicalExportIdempotencyKey,
+    request: Request,
     db: AsyncSession = Depends(get_db, scope="function"),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
-    account_id: uuid.UUID = Depends(get_current_account_id),
     _: None = Depends(require_permission("takeover:prepare")),
 ):
+    auth_session_id = require_export_auth_session(request)
+    await enforce_export_rate_limit(tenant_id, uuid.UUID(str(request.state.account_id)))
     project = await _require_project(db, tenant_id, project_id)
     job = await db.scalar(
-        select(TakeoverImportJob).where(TakeoverImportJob.id == job_id, TakeoverImportJob.project_id == project.id)
+        select(TakeoverImportJob).where(
+            TakeoverImportJob.id == job_id,
+            TakeoverImportJob.tenant_id == tenant_id,
+            TakeoverImportJob.project_id == project.id,
+        )
     )
     if not job:
         raise HTTPException(status_code=404, detail="导入任务不存在")
@@ -299,8 +317,9 @@ async def download_takeover_import_errors(
         (
             await db.scalars(
                 select(TakeoverImportError)
-                .where(TakeoverImportError.job_id == job.id)
+                .where(TakeoverImportError.tenant_id == tenant_id, TakeoverImportError.job_id == job.id)
                 .order_by(TakeoverImportError.row_number)
+                .limit(_EXPORT_ROW_LIMIT)
             )
         ).all()
     )
@@ -317,18 +336,39 @@ async def download_takeover_import_errors(
                 error.retryable,
             ]
         )
-    await write_audit_log(
+    content = output.getvalue().encode("utf-8-sig")
+    checksum = hashlib.sha256(content).hexdigest()
+    prepared = await record_authorized_prepared_export(
         db,
-        str(account_id),
-        str(tenant_id),
-        "takeover_import_errors_exported",
-        f"takeover_import:{job.id}",
-        {"project_id": str(project.id), "row_count": len(errors)},
+        tenant_id=tenant_id,
+        auth_session_id=auth_session_id,
+        export_id=uuid7(),
+        export_type="takeover_import_errors_csv",
+        reason=body.reason,
+        scope_snapshot={
+            "project_id": str(project.id),
+            "job_id": str(job.id),
+            "errors_only": True,
+            "row_limit": _EXPORT_ROW_LIMIT,
+        },
+        idempotency_key=idempotency_key,
+        file_name=f"takeover-errors-{job.id}.csv",
+        content_type="text/csv; charset=utf-8",
+        row_count=len(errors),
+        checksum_sha256=checksum,
+        file_size_bytes=len(content),
+        resource_id=job.id,
     )
-    return StreamingResponse(
-        iter([output.getvalue().encode("utf-8-sig")]),
+    await db.commit()
+    return Response(
+        content=content,
         media_type="text/csv; charset=utf-8",
-        headers={"Content-Disposition": f'attachment; filename="takeover-errors-{job.id}.csv"'},
+        headers={
+            "Content-Disposition": f'attachment; filename="takeover-errors-{job.id}.csv"',
+            "Content-Length": str(prepared.file_size_bytes),
+            "X-Content-SHA256": prepared.checksum_sha256,
+            "X-Export-Id": str(prepared.export_id),
+        },
     )
 
 

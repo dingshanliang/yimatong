@@ -9,7 +9,19 @@ PRD docs/prd/pilot-learning-retrospective.md §4.1 + §6.2：里程碑是事实�
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, ForeignKeyConstraint, Index, String, Text, UniqueConstraint, func
+from sqlalchemy import (
+    JSON,
+    BigInteger,
+    DateTime,
+    ForeignKey,
+    ForeignKeyConstraint,
+    Index,
+    SmallInteger,
+    String,
+    Text,
+    UniqueConstraint,
+    func,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 from uuid6 import uuid7
 
@@ -34,6 +46,8 @@ class PilotMilestone(Base):
     # 派生来源说明（如 tenant.created_at / launch_releases.launched_at / scan_events），
     # 便于审计与回查，不参与业务判断。
     source: Mapped[str] = mapped_column(String(120), nullable=False)
+    fact_digest: Mapped[str] = mapped_column(String(64), nullable=False, default=lambda: "0" * 64)
+    authority_version: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
@@ -68,6 +82,15 @@ class PilotMilestoneCorrection(Base):
     reason: Mapped[str] = mapped_column(Text, nullable=False)
     # 更正操作人（accounts.id；平台/系统自动派生更正可留空）
     corrected_by: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("accounts.id"), nullable=True)
+    request_id: Mapped[uuid.UUID] = mapped_column(nullable=False, default=uuid7)
+    actor_type: Mapped[str] = mapped_column(String(20), nullable=False, default="legacy")
+    actor_principal: Mapped[str] = mapped_column(String(64), nullable=False, default="legacy-system")
+    platform_auth_session_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("platform_auth_sessions.id"), nullable=True
+    )
+    idempotency_key: Mapped[str] = mapped_column(String(128), nullable=False, default=lambda: f"legacy:{uuid7()}")
+    payload_digest: Mapped[str] = mapped_column(String(64), nullable=False, default=lambda: "0" * 64)
+    authority_version: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     __table_args__ = (
@@ -83,4 +106,46 @@ class PilotMilestoneCorrection(Base):
             "milestone_id",
             "created_at",
         ),
+        Index("ix_pilot_corrections_platform_session_u09", "platform_auth_session_id"),
+    )
+
+
+class PilotAuthorityReceipt(Base):
+    """Immutable idempotency and actor evidence for pilot mutations."""
+
+    __tablename__ = "pilot_authority_receipts"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("tenants.id"), nullable=False)
+    operation: Mapped[str] = mapped_column(String(40), nullable=False)
+    idempotency_key: Mapped[str] = mapped_column(String(128), nullable=False)
+    payload_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    resource_id: Mapped[uuid.UUID] = mapped_column(nullable=False)
+    resource_version: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    actor_type: Mapped[str] = mapped_column(String(20), nullable=False)
+    actor_tenant_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True)
+    actor_account_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True)
+    auth_session_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True)
+    platform_auth_session_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("platform_auth_sessions.id"), nullable=True
+    )
+    agency_authorization_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("agency_authorizations.id"))
+    result: Mapped[dict] = mapped_column(JSON, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "id", name="uq_pilot_receipts_tenant_id_u09"),
+        UniqueConstraint("tenant_id", "operation", "idempotency_key", name="uq_pilot_receipts_tenant_operation_idem"),
+        ForeignKeyConstraint(
+            ["actor_tenant_id", "actor_account_id"],
+            ["accounts.tenant_id", "accounts.id"],
+            name="fk_pilot_receipts_actor_account_u09",
+        ),
+        ForeignKeyConstraint(
+            ["actor_tenant_id", "auth_session_id"],
+            ["auth_sessions.tenant_id", "auth_sessions.id"],
+            name="fk_pilot_receipts_auth_session_u09",
+        ),
+        Index("ix_pilot_receipts_tenant_auth_session_u09", "actor_tenant_id", "auth_session_id"),
+        Index("ix_pilot_receipts_platform_session_u09", "platform_auth_session_id"),
     )

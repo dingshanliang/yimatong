@@ -1,20 +1,23 @@
 """码批次和码项 API"""
 
+import hashlib
 import uuid
 from datetime import date, datetime
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from fastapi.responses import Response
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
+from uuid6 import uuid7
 
 from app.core.database import get_db
 from app.core.dependencies import get_current_account_id, get_current_tenant
 from app.core.exceptions import BadRequestError
 from app.models.code import CodeBatchSource, CodeGenerationMode, CodeItemStatus, CodeType
 from app.schemas.common import PaginatedResponse
+from app.schemas.export import CodeBatchExportRequest
 from app.services.batch_state import InvalidBatchStateTransitionError
 from app.services.code import (
     activate_batch,
@@ -36,7 +39,12 @@ from app.services.code import (
     update_code_item,
     void_batch,
 )
-from app.services.code_export import generate_code_csv
+from app.services.code_export import generate_authorized_code_csv
+from app.services.export_access import (
+    CanonicalExportIdempotencyKey,
+    record_authorized_prepared_export,
+    require_export_auth_session,
+)
 from app.utils.auth_rbac import require_permission
 
 code_batch_router = APIRouter(prefix="/api/v1/code-batches", tags=["code-batches"])
@@ -248,14 +256,45 @@ async def activate_batch_endpoint(
 @code_batch_router.post("/{batch_id}/export", summary="导出 码批次")
 async def export_code_batch_endpoint(
     batch_id: uuid.UUID,
-    _admission: None = Depends(enforce_code_operation_rate_limit),
+    body: CodeBatchExportRequest,
+    idempotency_key: CanonicalExportIdempotencyKey,
+    request: Request,
     db: AsyncSession = Depends(get_db, scope="function"),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
-    account_id: uuid.UUID = Depends(get_current_account_id),
     _: None = Depends(require_permission("code:export")),
 ):
+    auth_session_id = require_export_auth_session(request)
+    await enforce_code_operation_rate_limit(tenant_id, uuid.UUID(str(request.state.account_id)))
     try:
-        artifact = await generate_code_csv(db, tenant_id, batch_id, account_id)
+        artifact = await generate_authorized_code_csv(
+            db,
+            tenant_id,
+            batch_id,
+            auth_session_id=auth_session_id,
+            reason=body.reason,
+        )
+        checksum = hashlib.sha256(artifact.content).hexdigest()
+        prepared = await record_authorized_prepared_export(
+            db,
+            tenant_id=tenant_id,
+            auth_session_id=auth_session_id,
+            export_id=uuid7(),
+            export_type="code_csv_download",
+            reason=body.reason,
+            scope_snapshot={
+                "code_batch_id": str(batch_id),
+                "manifest_version": artifact.manifest_version,
+                "artifact_checksum_sha256": artifact.checksum_sha256,
+            },
+            idempotency_key=idempotency_key,
+            file_name=f"codes-{batch_id}.csv",
+            content_type="text/csv; charset=utf-8",
+            row_count=artifact.row_count,
+            checksum_sha256=checksum,
+            file_size_bytes=len(artifact.content),
+            resource_id=batch_id,
+        )
+        await db.commit()
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except DBAPIError as exc:
@@ -267,7 +306,9 @@ async def export_code_batch_endpoint(
             "Content-Disposition": f"attachment; filename=codes-{batch_id}.csv",
             "X-Code-Manifest-Version": str(artifact.manifest_version),
             "X-Code-Item-Count": str(artifact.row_count),
-            "X-Content-SHA256": artifact.checksum_sha256,
+            "X-Content-SHA256": prepared.checksum_sha256,
+            "X-Export-Id": str(prepared.export_id),
+            "Content-Length": str(prepared.file_size_bytes),
         },
     )
 

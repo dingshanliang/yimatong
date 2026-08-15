@@ -3,20 +3,22 @@
 import uuid
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Header, Query
 from pydantic import BaseModel
-from sqlalchemy import func, select, update
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.core.dependencies import get_current_tenant, require_tenant_feature
 from app.models.risk import RiskNotification
 from app.schemas.common import PaginatedResponse
+from app.services.risk_access import risk_dependencies
+from app.services.risk_authority import mark_all_notifications_read, mark_notification_read
 
 risk_notification_router = APIRouter(
     prefix="/api/v1/risk-notifications",
     tags=["risk-notifications"],
-    dependencies=[Depends(require_tenant_feature("risk_module"))],
+    dependencies=[Depends(require_tenant_feature("risk_module", db_scope="function"))],
 )
 
 
@@ -35,7 +37,7 @@ class RiskNotificationRead(BaseModel):
     model_config = {"from_attributes": True}
 
 
-@risk_notification_router.get("", summary="风控通知列表")
+@risk_notification_router.get("", summary="风控通知列表", dependencies=risk_dependencies("risk:read"))
 async def list_notifications(
     notification_type: str | None = Query(None),
     read: bool | None = Query(None),
@@ -66,7 +68,7 @@ async def list_notifications(
     )
 
 
-@risk_notification_router.get("/unread-count", summary="未读通知数量")
+@risk_notification_router.get("/unread-count", summary="未读通知数量", dependencies=risk_dependencies("risk:read"))
 async def unread_count(
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
@@ -79,36 +81,29 @@ async def unread_count(
     return {"unread_count": result.scalar() or 0}
 
 
-@risk_notification_router.post("/{notification_id}/read", summary="标记通知已读")
+@risk_notification_router.post(
+    "/{notification_id}/read", summary="标记通知已读", dependencies=risk_dependencies("risk:manage")
+)
 async def mark_read(
     notification_id: uuid.UUID,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
+    idempotency_key: str = Header(min_length=8, max_length=128, alias="Idempotency-Key"),
 ):
-    result = await db.execute(
-        select(RiskNotification).where(
-            RiskNotification.id == notification_id,
-            RiskNotification.tenant_id == tenant_id,
-        )
+    result = await mark_notification_read(
+        db,
+        tenant_id,
+        notification_id=notification_id,
+        idempotency_key=idempotency_key,
     )
-    notification = result.scalar_one_or_none()
-    if not notification:
-        from fastapi import HTTPException
-
-        raise HTTPException(status_code=404, detail="Notification not found")
-    notification.read = True
-    await db.flush()
-    return {"id": str(notification.id), "read": True}
+    return {"id": str(result["notification_id"]), "read": result["read"]}
 
 
-@risk_notification_router.post("/mark-all-read", summary="标记全部已读")
+@risk_notification_router.post("/mark-all-read", summary="标记全部已读", dependencies=risk_dependencies("risk:manage"))
 async def mark_all_read(
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
+    idempotency_key: str = Header(min_length=8, max_length=128, alias="Idempotency-Key"),
 ):
-    result = await db.execute(
-        update(RiskNotification)
-        .where(RiskNotification.tenant_id == tenant_id, RiskNotification.read.is_(False))
-        .values(read=True)
-    )
-    return {"updated": result.rowcount}
+    result = await mark_all_notifications_read(db, tenant_id, idempotency_key=idempotency_key)
+    return {"updated": result["updated_count"]}

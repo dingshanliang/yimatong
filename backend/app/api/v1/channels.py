@@ -1,24 +1,33 @@
 """渠道管理 API"""
 
 import uuid
+from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel, Field
+from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.core.dependencies import get_current_account_id, get_current_tenant, require_tenant_feature
+from app.schemas.channel import (
+    AccountScopeCreate,
+    AllocationArchive,
+    AllocationReassign,
+    BatchAssign,
+    ChannelEntityStatus,
+    ChannelSearchQuery,
+    DistributorCreate,
+    DistributorUpdate,
+    DiversionSeverity,
+    RegionCreate,
+    RegionUpdate,
+    StoreAllocation,
+    StoreCreate,
+    StoreUpdate,
+)
 from app.schemas.common import PaginatedResponse
+from app.services import channel_authority
 from app.services.channel import (
-    allocate_codes_to_store,
     allocation_to_dict,
-    assign_batch_to_channel,
-    create_account_scope,
-    create_distributor,
-    create_region,
-    create_store,
-    delete_account_scope,
-    delete_store,
     diversion_clue_to_dict,
     get_channel_overview,
     get_distributor_portal_summary,
@@ -34,94 +43,32 @@ from app.services.channel import (
     list_stores,
     region_coverage_label,
     resolve_store_for_code,
-    update_distributor,
-    update_region,
-    update_store,
+)
+from app.services.channel_access import (
+    channel_dependencies as _channel_dependencies,
+)
+from app.services.channel_access import (
+    require_distributor_portal_principal,
+    require_store_portal_principal,
 )
 from app.utils.crypto import CryptoError, decrypt_phone, mask_phone
 
 channel_router = APIRouter(
     prefix="/api/v1/channels",
     tags=["channels"],
-    dependencies=[Depends(require_tenant_feature("channel_portal"))],
+    dependencies=[Depends(require_tenant_feature("channel_portal", db_scope="function"))],
 )
 
 
-class DistributorCreate(BaseModel):
-    name: str
-    code: str | None = None
-    contact_name: str | None = None
-    contact_phone: str | None = None
-    status: str = "active"
-
-
-class DistributorUpdate(BaseModel):
-    name: str | None = None
-    status: str | None = None
-
-
-class RegionCoverageArea(BaseModel):
-    province: str | None = None
-    city: str | None = None
-
-
-class RegionCreate(BaseModel):
-    name: str
-    code: str | None = None
-    province: str | None = None
-    city: str | None = None
-    coverage_type: str | None = Field("city", pattern="^(city|province|multi_province)$")
-    coverage_areas: list[RegionCoverageArea] | None = None
-    distributor_id: uuid.UUID | None = None
-    status: str = "active"
-
-
-class RegionUpdate(BaseModel):
-    name: str | None = None
-    province: str | None = None
-    city: str | None = None
-    coverage_type: str | None = Field(None, pattern="^(city|province|multi_province)$")
-    coverage_areas: list[RegionCoverageArea] | None = None
-    distributor_id: uuid.UUID | None = None
-    status: str | None = None
-
-
-class StoreCreate(BaseModel):
-    name: str
-    code: str | None = None
-    region_id: uuid.UUID | None = None
-    distributor_id: uuid.UUID | None = None
-    address: str | None = None
-
-
-class StoreUpdate(BaseModel):
-    name: str | None = None
-    region_id: uuid.UUID | None = None
-    distributor_id: uuid.UUID | None = None
-    address: str | None = None
-    status: str | None = None
-
-
-class BatchAssign(BaseModel):
-    distributor_id: uuid.UUID | None = None
-    region_id: uuid.UUID | None = None
-
-
-class StoreAllocation(BaseModel):
-    batch_id: uuid.UUID
-    target_type: str | None = Field(None, pattern="^(distributor|region|store)$")
-    distributor_id: uuid.UUID | None = None
-    region_id: uuid.UUID | None = None
-    store_id: uuid.UUID | None = None
-    quantity: int = Field(..., gt=0)
-
-
-class AccountScopeCreate(BaseModel):
-    account_id: uuid.UUID
-    scope_type: str = Field(..., pattern="^(distributor|region|store)$")
-    distributor_id: uuid.UUID | None = None
-    region_id: uuid.UUID | None = None
-    store_id: uuid.UUID | None = None
+CanonicalIdempotencyKey = Annotated[
+    str,
+    Header(
+        alias="Idempotency-Key",
+        min_length=36,
+        max_length=36,
+        pattern=r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+    ),
+]
 
 
 def _distributor_item(dist, stats: dict | None = None) -> dict:
@@ -139,6 +86,7 @@ def _distributor_item(dist, stats: dict | None = None) -> dict:
         "contact_name": dist.contact_name,
         "contact_phone_masked": contact_phone_masked,
         "status": dist.status,
+        "version": dist.version,
         "region_count": stats.get("region_count", 0),
         "store_count": stats.get("store_count", 0),
         "allocated_quantity": stats.get("allocated_quantity", 0),
@@ -158,6 +106,7 @@ def _region_item(region, stats: dict | None = None) -> dict:
         "coverage_areas": region.coverage_areas or [],
         "coverage_label": region_coverage_label(region),
         "status": region.status,
+        "version": region.version,
         "distributor_id": str(region.distributor_id) if region.distributor_id else None,
         "distributor_name": stats.get("distributor_name"),
         "store_count": stats.get("store_count", 0),
@@ -179,6 +128,7 @@ def _store_item(store, stats: dict | None = None) -> dict:
         "distributor_name": stats.get("distributor_name"),
         "allocated_quantity": stats.get("allocated_quantity", 0),
         "status": store.status,
+        "version": store.version,
         "updated_at": store.updated_at.isoformat() if store.updated_at else None,
     }
 
@@ -191,6 +141,7 @@ def _scope_item(scope) -> dict:
         "distributor_id": str(scope.distributor_id) if scope.distributor_id else None,
         "region_id": str(scope.region_id) if scope.region_id else None,
         "store_id": str(scope.store_id) if scope.store_id else None,
+        "version": scope.version,
         "updated_at": scope.updated_at.isoformat() if scope.updated_at else None,
     }
 
@@ -204,15 +155,18 @@ def _diversion_item(clue) -> dict:
         "distributor_id": str(clue.distributor_id) if clue.distributor_id else None,
         "region_id": str(clue.region_id) if clue.region_id else None,
         "resolved": clue.resolved,
+        "version": clue.version,
+        "investigation_status": clue.investigation_status,
+        "observation_count": clue.observation_count,
         "resolution_note": clue.resolution_note,
         "resolved_by_account_id": str(clue.resolved_by_account_id) if clue.resolved_by_account_id else None,
         "resolved_at": clue.resolved_at.isoformat() if clue.resolved_at else None,
     }
 
 
-@channel_router.get("/overview", summary="渠道管理概览")
+@channel_router.get("/overview", summary="渠道管理概览", dependencies=_channel_dependencies("channel:read"))
 async def channel_overview_endpoint(
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
     return await get_channel_overview(db, tenant_id)
@@ -221,17 +175,21 @@ async def channel_overview_endpoint(
 # ── 经销商 ────────────────────────────────────────
 
 
-@channel_router.post("/distributors", status_code=201, summary="创建经销商")
+@channel_router.post(
+    "/distributors", status_code=201, summary="创建经销商", dependencies=_channel_dependencies("channel:manage")
+)
 async def create_distributor_endpoint(
     body: DistributorCreate,
-    db: AsyncSession = Depends(get_db),
+    idempotency_key: CanonicalIdempotencyKey,
+    db: AsyncSession = Depends(get_db, scope="function"),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
-    dist = await create_distributor(
+    dist = await channel_authority.create_distributor(
         db,
         tenant_id,
-        body.name,
-        body.code,
+        idempotency_key=idempotency_key,
+        name=body.name,
+        code=body.code,
         contact_name=body.contact_name,
         contact_phone=body.contact_phone,
         status=body.status,
@@ -239,13 +197,13 @@ async def create_distributor_endpoint(
     return _distributor_item(dist)
 
 
-@channel_router.get("/distributors", summary="经销商列表")
+@channel_router.get("/distributors", summary="经销商列表", dependencies=_channel_dependencies("channel:read"))
 async def list_distributors_endpoint(
-    q: str | None = Query(None),
-    status: str | None = Query(None),
+    q: ChannelSearchQuery | None = Query(None),
+    status: ChannelEntityStatus | None = Query(None),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
     dists, total = await list_distributors(db, tenant_id, page=page, page_size=page_size, q=q, status=status)
@@ -258,15 +216,27 @@ async def list_distributors_endpoint(
     )
 
 
-@channel_router.put("/distributors/{distributor_id}", summary="更新经销商")
-@channel_router.patch("/distributors/{distributor_id}", summary="局部更新经销商")
+@channel_router.put(
+    "/distributors/{distributor_id}", summary="更新经销商", dependencies=_channel_dependencies("channel:manage")
+)
+@channel_router.patch(
+    "/distributors/{distributor_id}", summary="局部更新经销商", dependencies=_channel_dependencies("channel:manage")
+)
 async def update_distributor_endpoint(
     distributor_id: uuid.UUID,
     body: DistributorUpdate,
-    db: AsyncSession = Depends(get_db),
+    idempotency_key: CanonicalIdempotencyKey,
+    db: AsyncSession = Depends(get_db, scope="function"),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
-    dist = await update_distributor(db, tenant_id, distributor_id, name=body.name, status=body.status)
+    dist = await channel_authority.update_distributor(
+        db,
+        tenant_id,
+        distributor_id,
+        expected_version=body.expected_version,
+        idempotency_key=idempotency_key,
+        changes=body.model_dump(exclude={"expected_version"}, exclude_unset=True),
+    )
     if not dist:
         raise HTTPException(404, "Distributor not found")
     stats = await get_distributor_stats(db, tenant_id, [dist.id])
@@ -276,24 +246,18 @@ async def update_distributor_endpoint(
 # ── 区域 ──────────────────────────────────────────
 
 
-@channel_router.post("/regions", status_code=201, summary="创建区域")
+@channel_router.post(
+    "/regions", status_code=201, summary="创建区域", dependencies=_channel_dependencies("channel:manage")
+)
 async def create_region_endpoint(
     body: RegionCreate,
-    db: AsyncSession = Depends(get_db),
+    idempotency_key: CanonicalIdempotencyKey,
+    db: AsyncSession = Depends(get_db, scope="function"),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
     try:
-        region = await create_region(
-            db,
-            tenant_id,
-            body.name,
-            body.code,
-            province=body.province,
-            city=body.city,
-            coverage_type=body.coverage_type,
-            coverage_areas=[area.model_dump() for area in body.coverage_areas] if body.coverage_areas else None,
-            distributor_id=body.distributor_id,
-            status=body.status,
+        region = await channel_authority.create_region(
+            db, tenant_id, idempotency_key=idempotency_key, payload=body.model_dump()
         )
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
@@ -301,14 +265,14 @@ async def create_region_endpoint(
     return _region_item(region, stats.get(region.id))
 
 
-@channel_router.get("/regions", summary="区域列表")
+@channel_router.get("/regions", summary="区域列表", dependencies=_channel_dependencies("channel:read"))
 async def list_regions_endpoint(
-    q: str | None = Query(None),
-    status: str | None = Query(None),
+    q: ChannelSearchQuery | None = Query(None),
+    status: ChannelEntityStatus | None = Query(None),
     distributor_id: uuid.UUID | None = Query(None),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
     regions, total = await list_regions(
@@ -329,26 +293,25 @@ async def list_regions_endpoint(
     )
 
 
-@channel_router.put("/regions/{region_id}", summary="更新区域")
-@channel_router.patch("/regions/{region_id}", summary="局部更新区域")
+@channel_router.put("/regions/{region_id}", summary="更新区域", dependencies=_channel_dependencies("channel:manage"))
+@channel_router.patch(
+    "/regions/{region_id}", summary="局部更新区域", dependencies=_channel_dependencies("channel:manage")
+)
 async def update_region_endpoint(
     region_id: uuid.UUID,
     body: RegionUpdate,
-    db: AsyncSession = Depends(get_db),
+    idempotency_key: CanonicalIdempotencyKey,
+    db: AsyncSession = Depends(get_db, scope="function"),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
     try:
-        region = await update_region(
+        region = await channel_authority.update_region(
             db,
             tenant_id,
             region_id,
-            name=body.name,
-            province=body.province,
-            city=body.city,
-            coverage_type=body.coverage_type,
-            coverage_areas=[area.model_dump() for area in body.coverage_areas] if body.coverage_areas else None,
-            distributor_id=body.distributor_id,
-            status=body.status,
+            expected_version=body.expected_version,
+            idempotency_key=idempotency_key,
+            changes=body.model_dump(exclude={"expected_version"}, exclude_unset=True),
         )
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
@@ -361,21 +324,18 @@ async def update_region_endpoint(
 # ── 门店 ──────────────────────────────────────────
 
 
-@channel_router.post("/stores", status_code=201, summary="创建门店")
+@channel_router.post(
+    "/stores", status_code=201, summary="创建门店", dependencies=_channel_dependencies("channel:manage")
+)
 async def create_store_endpoint(
     body: StoreCreate,
-    db: AsyncSession = Depends(get_db),
+    idempotency_key: CanonicalIdempotencyKey,
+    db: AsyncSession = Depends(get_db, scope="function"),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
     try:
-        store = await create_store(
-            db,
-            tenant_id,
-            body.name,
-            body.code,
-            region_id=body.region_id,
-            distributor_id=body.distributor_id,
-            address=body.address,
+        store = await channel_authority.create_store(
+            db, tenant_id, idempotency_key=idempotency_key, payload=body.model_dump()
         )
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
@@ -383,15 +343,15 @@ async def create_store_endpoint(
     return _store_item(store, stats.get(store.id))
 
 
-@channel_router.get("/stores", summary="门店列表")
+@channel_router.get("/stores", summary="门店列表", dependencies=_channel_dependencies("channel:read"))
 async def list_stores_endpoint(
-    q: str | None = Query(None),
-    status: str | None = Query("active"),
+    q: ChannelSearchQuery | None = Query(None),
+    status: ChannelEntityStatus | None = Query("active"),
     region_id: uuid.UUID | None = Query(None),
     distributor_id: uuid.UUID | None = Query(None),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
     stores, total = await list_stores(
@@ -413,24 +373,25 @@ async def list_stores_endpoint(
     )
 
 
-@channel_router.put("/stores/{store_id}", summary="更新门店")
-@channel_router.patch("/stores/{store_id}", summary="局部更新门店")
+@channel_router.put("/stores/{store_id}", summary="更新门店", dependencies=_channel_dependencies("channel:manage"))
+@channel_router.patch(
+    "/stores/{store_id}", summary="局部更新门店", dependencies=_channel_dependencies("channel:manage")
+)
 async def update_store_endpoint(
     store_id: uuid.UUID,
     body: StoreUpdate,
-    db: AsyncSession = Depends(get_db),
+    idempotency_key: CanonicalIdempotencyKey,
+    db: AsyncSession = Depends(get_db, scope="function"),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
     try:
-        store = await update_store(
+        store = await channel_authority.update_store(
             db,
             tenant_id,
             store_id,
-            name=body.name,
-            region_id=body.region_id,
-            distributor_id=body.distributor_id,
-            address=body.address,
-            status=body.status,
+            expected_version=body.expected_version,
+            idempotency_key=idempotency_key,
+            changes=body.model_dump(exclude={"expected_version"}, exclude_unset=True),
         )
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
@@ -440,30 +401,40 @@ async def update_store_endpoint(
     return _store_item(store, stats.get(store.id))
 
 
-@channel_router.delete("/stores/{store_id}", summary="删除门店")
+@channel_router.delete("/stores/{store_id}", summary="删除门店", dependencies=_channel_dependencies("channel:manage"))
 async def delete_store_endpoint(
     store_id: uuid.UUID,
-    db: AsyncSession = Depends(get_db),
+    idempotency_key: CanonicalIdempotencyKey,
+    expected_version: int = Query(..., ge=1),
+    db: AsyncSession = Depends(get_db, scope="function"),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
-    ok = await delete_store(db, tenant_id, store_id)
+    ok = await channel_authority.archive_store(
+        db, tenant_id, store_id, expected_version=expected_version, idempotency_key=idempotency_key
+    )
     return {"success": ok}
 
 
 # ── 渠道流向登记 ──────────────────────────────────────
 
 
-@channel_router.post("/code-batches/{batch_id}/assign", summary="批次流向登记到经销商/区域")
+@channel_router.post(
+    "/code-batches/{batch_id}/assign",
+    summary="批次流向登记到经销商/区域",
+    dependencies=_channel_dependencies("channel:allocate"),
+)
 async def assign_batch_endpoint(
     batch_id: uuid.UUID,
     body: BatchAssign,
-    db: AsyncSession = Depends(get_db),
+    idempotency_key: CanonicalIdempotencyKey,
+    db: AsyncSession = Depends(get_db, scope="function"),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
-    result = await assign_batch_to_channel(
+    result = await channel_authority.assign_batch(
         db,
         tenant_id,
         batch_id,
+        idempotency_key=idempotency_key,
         distributor_id=body.distributor_id,
         region_id=body.region_id,
     )
@@ -472,22 +443,31 @@ async def assign_batch_endpoint(
     return result
 
 
-@channel_router.post("/code-allocations", status_code=201, summary="已赋码货品流向登记")
+@channel_router.post(
+    "/code-allocations",
+    status_code=201,
+    summary="已赋码货品流向登记",
+    dependencies=_channel_dependencies("channel:allocate"),
+)
 async def allocate_to_store_endpoint(
     body: StoreAllocation,
-    db: AsyncSession = Depends(get_db),
+    idempotency_key: CanonicalIdempotencyKey,
+    db: AsyncSession = Depends(get_db, scope="function"),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
     try:
-        target_type = body.target_type or ("store" if body.store_id else "region" if body.region_id else "distributor")
-        alloc = await allocate_codes_to_store(
+        target_type = body.target_type
+        target_id = {"store": body.store_id, "region": body.region_id, "distributor": body.distributor_id}[target_type]
+        assert target_id is not None
+        alloc = await channel_authority.allocate(
             db,
             tenant_id,
-            body.batch_id,
-            body.store_id if target_type == "store" else None,
-            body.quantity,
-            distributor_id=body.distributor_id if target_type == "distributor" else None,
-            region_id=body.region_id if target_type == "region" else None,
+            idempotency_key=idempotency_key,
+            batch_id=body.batch_id,
+            target_type=target_type,
+            target_id=target_id,
+            quantity=body.quantity,
+            reason=body.reason,
         )
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
@@ -496,15 +476,16 @@ async def allocate_to_store_endpoint(
     return await allocation_to_dict(db, tenant_id, alloc)
 
 
-@channel_router.get("/code-allocations", summary="渠道流向登记列表")
+@channel_router.get("/code-allocations", summary="渠道流向登记列表", dependencies=_channel_dependencies("channel:read"))
 async def list_allocations_endpoint(
     batch_id: uuid.UUID | None = Query(None),
     store_id: uuid.UUID | None = Query(None),
     region_id: uuid.UUID | None = Query(None),
     distributor_id: uuid.UUID | None = Query(None),
+    include_history: bool = Query(False),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
     allocs, total = await list_allocations(
@@ -514,6 +495,7 @@ async def list_allocations_endpoint(
         store_id=store_id,
         region_id=region_id,
         distributor_id=distributor_id,
+        include_history=include_history,
         page=page,
         page_size=page_size,
     )
@@ -525,12 +507,70 @@ async def list_allocations_endpoint(
     )
 
 
-@channel_router.get("/code-items/{public_id}/store", summary="扫码查门店归属")
+@channel_router.post(
+    "/code-allocations/{allocation_id}/reassign",
+    summary="重分配已登记流向",
+    dependencies=_channel_dependencies("channel:allocate"),
+)
+async def reassign_allocation_endpoint(
+    allocation_id: uuid.UUID,
+    body: AllocationReassign,
+    idempotency_key: CanonicalIdempotencyKey,
+    db: AsyncSession = Depends(get_db, scope="function"),
+    tenant_id: uuid.UUID = Depends(get_current_tenant),
+):
+    target_id = {"store": body.store_id, "region": body.region_id, "distributor": body.distributor_id}[body.target_type]
+    assert target_id is not None
+    allocation = await channel_authority.reassign_allocation(
+        db,
+        tenant_id,
+        allocation_id,
+        expected_version=body.expected_version,
+        idempotency_key=idempotency_key,
+        target_type=body.target_type,
+        target_id=target_id,
+        quantity=body.quantity,
+        reason=body.reason,
+    )
+    if allocation is None:
+        raise HTTPException(404, "Allocation not found")
+    return await allocation_to_dict(db, tenant_id, allocation)
+
+
+@channel_router.post(
+    "/code-allocations/{allocation_id}/archive",
+    summary="归档已登记流向",
+    dependencies=_channel_dependencies("channel:allocate"),
+)
+async def archive_allocation_endpoint(
+    allocation_id: uuid.UUID,
+    body: AllocationArchive,
+    idempotency_key: CanonicalIdempotencyKey,
+    db: AsyncSession = Depends(get_db, scope="function"),
+    tenant_id: uuid.UUID = Depends(get_current_tenant),
+):
+    allocation = await channel_authority.archive_allocation(
+        db,
+        tenant_id,
+        allocation_id,
+        expected_version=body.expected_version,
+        idempotency_key=idempotency_key,
+        reason=body.reason,
+    )
+    if allocation is None:
+        raise HTTPException(404, "Allocation not found")
+    return await allocation_to_dict(db, tenant_id, allocation)
+
+
+@channel_router.get(
+    "/code-items/{public_id}/store", summary="扫码查门店归属", dependencies=_channel_dependencies("channel:read")
+)
 async def resolve_store_endpoint(
     public_id: str,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
+    tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
-    result = await resolve_store_for_code(db, public_id)
+    result = await resolve_store_for_code(db, tenant_id, public_id)
     if not result:
         return {"matched": False}
     return {"matched": True, **result}
@@ -539,48 +579,70 @@ async def resolve_store_endpoint(
 # ── 账号范围和渠道入口 ─────────────────────────────
 
 
-@channel_router.post("/account-scopes", status_code=201, summary="绑定账号渠道范围")
+@channel_router.post(
+    "/account-scopes", status_code=201, summary="绑定账号渠道范围", dependencies=_channel_dependencies("channel:scope")
+)
 async def create_account_scope_endpoint(
     body: AccountScopeCreate,
-    db: AsyncSession = Depends(get_db),
+    idempotency_key: CanonicalIdempotencyKey,
+    db: AsyncSession = Depends(get_db, scope="function"),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
     try:
-        scope = await create_account_scope(
+        target_id = {"distributor": body.distributor_id, "region": body.region_id, "store": body.store_id}[
+            body.scope_type
+        ]
+        assert target_id is not None
+        scope = await channel_authority.set_scope(
             db,
             tenant_id,
-            body.account_id,
-            body.scope_type,
-            distributor_id=body.distributor_id,
-            region_id=body.region_id,
-            store_id=body.store_id,
+            idempotency_key=idempotency_key,
+            account_id=body.account_id,
+            scope_type=body.scope_type,
+            target_id=target_id,
         )
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
     return _scope_item(scope)
 
 
-@channel_router.get("/account-scopes", summary="账号渠道范围列表")
+@channel_router.get("/account-scopes", summary="账号渠道范围列表", dependencies=_channel_dependencies("channel:scope"))
 async def list_account_scopes_endpoint(
-    db: AsyncSession = Depends(get_db),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    db: AsyncSession = Depends(get_db, scope="function"),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
-    scopes = await list_account_scopes(db, tenant_id)
-    return [_scope_item(scope) for scope in scopes]
+    scopes, total = await list_account_scopes(db, tenant_id, page=page, page_size=page_size)
+    return PaginatedResponse(
+        items=[_scope_item(scope) for scope in scopes], total=total, page=page, page_size=page_size
+    )
 
 
-@channel_router.delete("/account-scopes/{scope_id}", summary="删除账号渠道范围")
+@channel_router.delete(
+    "/account-scopes/{scope_id}", summary="删除账号渠道范围", dependencies=_channel_dependencies("channel:scope")
+)
 async def delete_account_scope_endpoint(
     scope_id: uuid.UUID,
-    db: AsyncSession = Depends(get_db),
+    idempotency_key: CanonicalIdempotencyKey,
+    expected_version: int = Query(..., ge=1),
+    db: AsyncSession = Depends(get_db, scope="function"),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
-    return {"success": await delete_account_scope(db, tenant_id, scope_id)}
+    return {
+        "success": await channel_authority.delete_scope(
+            db, tenant_id, scope_id, expected_version=expected_version, idempotency_key=idempotency_key
+        )
+    }
 
 
-@channel_router.get("/portal/distributor/summary", summary="经销商入口概览")
+@channel_router.get(
+    "/portal/distributor/summary",
+    summary="经销商入口概览",
+    dependencies=[Depends(require_distributor_portal_principal)],
+)
 async def distributor_portal_summary_endpoint(
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
     account_id: uuid.UUID = Depends(get_current_account_id),
 ):
@@ -590,9 +652,11 @@ async def distributor_portal_summary_endpoint(
     return summary
 
 
-@channel_router.get("/portal/store/summary", summary="门店入口概览")
+@channel_router.get(
+    "/portal/store/summary", summary="门店入口概览", dependencies=[Depends(require_store_portal_principal)]
+)
 async def store_portal_summary_endpoint(
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
     account_id: uuid.UUID = Depends(get_current_account_id),
 ):
@@ -605,16 +669,16 @@ async def store_portal_summary_endpoint(
 # ── 窜货线索 ──────────────────────────────────────
 
 
-@channel_router.get("/diversion-clues", summary="窜货线索列表")
+@channel_router.get("/diversion-clues", summary="窜货线索列表", dependencies=_channel_dependencies("channel:read"))
 async def list_diversion_clues_endpoint(
     resolved: bool | None = Query(None),
-    severity: str | None = Query(None, pattern="^(high|medium|low)$"),
+    severity: DiversionSeverity | None = Query(None),
     distributor_id: uuid.UUID | None = Query(None),
     region_id: uuid.UUID | None = Query(None),
-    q: str | None = Query(None),
+    q: ChannelSearchQuery | None = Query(None),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
     clues, total = await list_diversion_clues(

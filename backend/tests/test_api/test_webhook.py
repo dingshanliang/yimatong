@@ -95,6 +95,24 @@ async def setup_tenant(client: AsyncClient):
 class TestWebhookManagement:
     """W19-001: Webhook 端点管理"""
 
+    @pytest.fixture(autouse=True)
+    def public_webhook_dns(self, monkeypatch):
+        async def allow_test_destination(url: str) -> str:
+            return url
+
+        monkeypatch.setattr(webhook_api, "validate_webhook_destination", allow_test_destination)
+
+    def test_retained_delivery_foreign_key_has_stable_disable_instead_response(self):
+        class PgFailure(Exception):
+            sqlstate = "23503"
+
+        error = webhook_api._webhook_authority_error(
+            DBAPIError("SELECT delete_webhook_endpoint(...) ", {}, PgFailure("retained delivery"), False)
+        )
+
+        assert error.status_code == 409
+        assert "disable" in error.detail
+
     @pytest.mark.anyio
     async def test_create_webhook(self, client: AsyncClient, setup_tenant):
         tid, headers = setup_tenant
@@ -115,6 +133,7 @@ class TestWebhookManagement:
         assert "scan.created" in data["events"]
         assert "secret" in data
         assert data["secret"].startswith("whsec_")
+        assert data["config_version"] == 1
         assert data["batch_mode"] is False
         assert data["batch_size"] == 100
 
@@ -151,11 +170,12 @@ class TestWebhookManagement:
         resp = await client.patch(
             f"/api/v1/webhooks/endpoints/{endpoint_id}",
             json={"enabled": False, "description": "已禁用"},
-            headers=headers,
+            headers={**headers, "If-Match": "1"},
         )
         assert resp.status_code == 200
         assert resp.json()["enabled"] is False
         assert resp.json()["description"] == "已禁用"
+        assert resp.json()["config_version"] == 2
 
     @pytest.mark.anyio
     async def test_delete_webhook(self, client: AsyncClient, setup_tenant):
@@ -172,10 +192,162 @@ class TestWebhookManagement:
 
         resp = await client.delete(
             f"/api/v1/webhooks/endpoints/{endpoint_id}",
-            headers=headers,
+            headers={**headers, "If-Match": "1"},
         )
         assert resp.status_code == 200
         assert resp.json()["deleted"] is True
+
+    @pytest.mark.anyio
+    async def test_secret_is_returned_only_by_create(self, client: AsyncClient, setup_tenant):
+        _, headers = setup_tenant
+        created = await client.post(
+            "/api/v1/webhooks/endpoints",
+            json={"url": "https://example.com/one-time", "events": ["scan.created"]},
+            headers=headers,
+        )
+        endpoint_id = created.json()["id"]
+
+        listed = await client.get("/api/v1/webhooks/endpoints", headers=headers)
+        updated = await client.patch(
+            f"/api/v1/webhooks/endpoints/{endpoint_id}",
+            json={"description": "changed"},
+            headers={**headers, "If-Match": "1"},
+        )
+
+        assert "secret" in created.json()
+        assert all("secret" not in item for item in listed.json())
+        assert "secret" not in updated.json()
+
+    @pytest.mark.anyio
+    @pytest.mark.parametrize(
+        ("role", "tenant_type", "extra"),
+        [
+            ("viewer", "brand", {"sid": "00000000-0000-0000-0000-000000000021"}),
+            ("operator", "brand", {"sid": "00000000-0000-0000-0000-000000000022"}),
+            ("distributor", "brand", {"sid": "00000000-0000-0000-0000-000000000023"}),
+            ("store_guide", "brand", {"sid": "00000000-0000-0000-0000-000000000024"}),
+            ("admin", "agency", {"sid": "00000000-0000-0000-0000-000000000025"}),
+            ("admin", "brand", None),
+        ],
+    )
+    async def test_non_direct_admin_principals_cannot_read_or_write_endpoints(
+        self,
+        client: AsyncClient,
+        setup_tenant,
+        role: str,
+        tenant_type: str,
+        extra: dict | None,
+    ):
+        tenant_id, admin_headers = setup_tenant
+        before = await client.get("/api/v1/webhooks/endpoints", headers=admin_headers)
+        token = create_access_token(
+            tenant_id,
+            str(uuid.uuid4()),
+            role,
+            tenant_type=tenant_type,
+            extra=extra,
+        )
+        denied_headers = {"Authorization": f"Bearer {token}"}
+
+        read = await client.get("/api/v1/webhooks/endpoints", headers=denied_headers)
+        write = await client.post(
+            "/api/v1/webhooks/endpoints",
+            json={"url": "https://example.com/denied", "events": ["scan.created"]},
+            headers=denied_headers,
+        )
+        after = await client.get("/api/v1/webhooks/endpoints", headers=admin_headers)
+
+        assert read.status_code in {401, 403}
+        assert write.status_code in {401, 403}
+        assert after.json() == before.json()
+
+    @pytest.mark.anyio
+    async def test_api_key_and_platform_cookie_cannot_access_endpoint_management(
+        self,
+        client: AsyncClient,
+        setup_tenant,
+    ):
+        _, admin_headers = setup_tenant
+        key = await client.post(
+            "/api/v1/webhooks/api-keys",
+            json=_api_key_body("Webhook admin API key", "webhook_admin"),
+            headers=_lifecycle_headers(admin_headers),
+        )
+
+        api_key_read = await client.get(
+            "/api/v1/webhooks/endpoints",
+            headers={"X-Api-Key": key.json()["key"]},
+        )
+        platform_read = await client.get("/api/v1/webhooks/endpoints", headers=_platform_admin_headers())
+
+        assert api_key_read.status_code in {401, 403}
+        assert platform_read.status_code in {401, 403}
+
+    @pytest.mark.anyio
+    async def test_endpoint_ids_are_tenant_scoped(self, client: AsyncClient, setup_tenant):
+        _, tenant_a_headers = setup_tenant
+        created = await client.post(
+            "/api/v1/webhooks/endpoints",
+            json={"url": "https://example.com/tenant-a", "events": ["scan.created"]},
+            headers=tenant_a_headers,
+        )
+        endpoint_id = created.json()["id"]
+        tenant_b = await client.post(
+            "/api/v1/tenants",
+            json={
+                "name": "Webhook隔离租户B",
+                "admin_email": "webhook-endpoint-b@test.com",
+                "admin_name": "Admin B",
+                "admin_password": "Pass1234",
+            },
+            headers=_platform_admin_headers(),
+        )
+        tenant_b_token = create_access_token(
+            tenant_b.json()["id"],
+            str(uuid.uuid4()),
+            "admin",
+            extra={"sid": str(uuid.uuid4())},
+        )
+        tenant_b_headers = {"Authorization": f"Bearer {tenant_b_token}"}
+
+        update = await client.patch(
+            f"/api/v1/webhooks/endpoints/{endpoint_id}",
+            json={"enabled": False},
+            headers={**tenant_b_headers, "If-Match": "1"},
+        )
+        delete = await client.delete(
+            f"/api/v1/webhooks/endpoints/{endpoint_id}",
+            headers={**tenant_b_headers, "If-Match": "1"},
+        )
+        tenant_a_list = await client.get("/api/v1/webhooks/endpoints", headers=tenant_a_headers)
+        tenant_b_list = await client.get("/api/v1/webhooks/endpoints", headers=tenant_b_headers)
+
+        assert update.status_code == delete.status_code == 404
+        assert any(item["id"] == endpoint_id for item in tenant_a_list.json())
+        assert all(item["id"] != endpoint_id for item in tenant_b_list.json())
+
+    @pytest.mark.anyio
+    async def test_management_rate_limit_fails_closed_before_endpoint_state(
+        self,
+        client: AsyncClient,
+        setup_tenant,
+        shared_security_cache,
+        monkeypatch,
+    ):
+        _, headers = setup_tenant
+        shared_security_cache.fail_rate_limits = True
+
+        async def unexpected_write(*_args, **_kwargs):
+            raise AssertionError("rate-limit failure must precede endpoint writes")
+
+        monkeypatch.setattr(webhook_api, "create_webhook_endpoint", unexpected_write)
+        response = await client.post(
+            "/api/v1/webhooks/endpoints",
+            json={"url": "https://example.com/rate-limited", "events": ["scan.created"]},
+            headers=headers,
+        )
+
+        assert response.status_code == 503
 
 
 class TestApiKey:

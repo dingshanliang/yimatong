@@ -1,113 +1,126 @@
-"""消费者同意记录端点（公开，H5 使用）"""
+"""Consumer consent policy and durable receipt endpoints."""
 
 import uuid
 
-from fastapi import APIRouter, Depends, Request
-from pydantic import BaseModel
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.context import set_consumer_tenant_id
 from app.core.database import get_db_for_consumer, set_session_tenant_context
-from app.services.consent import grant_consent, withdraw_consent
+from app.schemas.consent import ConsentGrantRequest, ConsentWithdrawRequest
+from app.services.consent import (
+    get_consumer_consent_receipt_status,
+    get_current_consumer_policy,
+    grant_consumer_consent_authority,
+    require_consumer_scan_authority,
+    withdraw_consumer_consent_authority,
+)
+from app.services.consumer_admission import enforce_public_consumer_admission
 from app.services.scan_token import verify_scan_token
+from app.services.visitor import link_visitor_to_consumer
 from app.utils.client_ip import compute_ip_hash, get_client_ip
 
 consent_router = APIRouter(tags=["consents"])
 
 
-class ConsentRequest(BaseModel):
-    consent_type: str
-    public_id: str | None = None
-    # yimatong-zgb1.5：合规证据链字段（场景 + 版本）
-    scenario: str | None = None
-    policy_version: str | None = None
+def _scan_authority(request: Request):
+    auth_header = request.headers.get("Authorization", "")
+    if not auth_header.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="scan_token required")
+    ip_hash = compute_ip_hash(get_client_ip(request))
+    payload = verify_scan_token(auth_header[7:], expected_ip_hash=ip_hash)
+    if payload is None:
+        raise HTTPException(status_code=401, detail="invalid_scan_token")
+    return require_consumer_scan_authority(payload), ip_hash
+
+
+async def _bind_tenant(db: AsyncSession, tenant_id: uuid.UUID) -> None:
+    await set_session_tenant_context(db, tenant_id)
+    set_consumer_tenant_id(str(tenant_id))
+
+
+@consent_router.get("/api/v1/public/consents/policy")
+async def current_consent_policy(
+    request: Request,
+    purpose: str = Query(min_length=1, max_length=100, pattern=r"^[a-z][a-z0-9_]{0,99}$"),
+    db: AsyncSession = Depends(get_db_for_consumer),
+):
+    authority, _ = _scan_authority(request)
+    await _bind_tenant(db, authority.tenant_id)
+    return await get_current_consumer_policy(db, authority.tenant_id, purpose)
+
+
+@consent_router.get("/api/v1/public/consents/{consent_id}/status")
+async def consent_receipt_status(
+    consent_id: uuid.UUID,
+    request: Request,
+    db: AsyncSession = Depends(get_db_for_consumer),
+):
+    authority, _ = _scan_authority(request)
+    await _bind_tenant(db, authority.tenant_id)
+    return await get_consumer_consent_receipt_status(
+        db,
+        tenant_id=authority.tenant_id,
+        consent_id=consent_id,
+        scan_event_id=authority.scan_event_id,
+        scan_time=authority.scan_time,
+        public_id=authority.public_id,
+        visitor_id=authority.visitor_id,
+        token_consumer_id=authority.consumer_id,
+    )
 
 
 @consent_router.post("/api/v1/public/consents", status_code=201)
 async def create_consent(
     request: Request,
-    body: ConsentRequest,
-    db: AsyncSession = Depends(get_db_for_consumer),
+    body: ConsentGrantRequest,
+    db: AsyncSession = Depends(get_db_for_consumer, scope="function"),
 ):
-    """消费者授予同意（隐私政策、营销等）。
-
-    yimatong-zgb1.5：记录完整合规证据链（场景、版本、时间、IP/UA）。
-    """
-    client_ip = get_client_ip(request)
-    ip_hash = compute_ip_hash(client_ip)
-    user_agent = request.headers.get("user-agent")
-
-    auth_header = request.headers.get("Authorization", "")
-    tenant_id = None
-    if auth_header.startswith("Bearer "):
-        token = auth_header[7:]
-        payload = verify_scan_token(token, body.public_id, expected_ip_hash=ip_hash)
-        if payload:
-            tenant_id = payload.get("tenant_id")
-
-    if not tenant_id:
-        from app.services.resolver import resolve_public_code
-
-        if body.public_id:
-            data = await resolve_public_code(db, body.public_id)
-            if data:
-                tenant_id = data.get("tenant_id")
-
-    if not tenant_id:
-        return {"status": "ignored", "reason": "cannot_determine_tenant"}
-
-    tenant_uuid = await set_session_tenant_context(db, tenant_id)
-    set_consumer_tenant_id(str(tenant_uuid))
-
-    record = await grant_consent(
-        db=db,
-        tenant_id=tenant_uuid,
-        consent_type=body.consent_type,
-        public_id=body.public_id,
+    authority, ip_hash = _scan_authority(request)
+    await enforce_public_consumer_admission(get_client_ip(request), authority.rate_subject)
+    await _bind_tenant(db, authority.tenant_id)
+    if authority.consumer_id is not None and not await link_visitor_to_consumer(
+        db,
+        authority.tenant_id,
+        authority.visitor_id,
+        authority.consumer_id,
+    ):
+        raise HTTPException(status_code=403, detail="consumer_visitor_subject_denied")
+    return await grant_consumer_consent_authority(
+        db,
+        tenant_id=authority.tenant_id,
+        purpose=body.purpose,
+        expected_version=body.policy_version,
+        expected_digest=body.policy_digest,
+        scan_event_id=authority.scan_event_id,
+        scan_time=authority.scan_time,
+        public_id=authority.public_id,
+        visitor_id=authority.visitor_id,
+        token_consumer_id=authority.consumer_id,
         ip_hash=ip_hash,
-        scenario=body.scenario,
-        policy_version=body.policy_version,
-        user_agent=user_agent,
+        user_agent=request.headers.get("user-agent", ""),
+        idempotency_key=body.idempotency_key,
     )
-    return {
-        "id": str(record.id),
-        "consent_type": record.consent_type,
-        "status": record.status,
-        "scenario": record.scenario,
-        "policy_version": record.policy_version,
-        "granted_at": record.granted_at.isoformat(),
-        "withdrawn_at": record.withdrawn_at.isoformat() if record.withdrawn_at else None,
-    }
 
 
 @consent_router.post("/api/v1/public/consents/{consent_id}/withdraw")
 async def withdraw_consent_endpoint(
     consent_id: uuid.UUID,
     request: Request,
-    db: AsyncSession = Depends(get_db_for_consumer),
+    body: ConsentWithdrawRequest,
+    db: AsyncSession = Depends(get_db_for_consumer, scope="function"),
 ):
-    """消费者撤回同意"""
-    client_ip = get_client_ip(request)
-    ip_hash = compute_ip_hash(client_ip)
-
-    auth_header = request.headers.get("Authorization", "")
-    tenant_id = None
-    if auth_header.startswith("Bearer "):
-        token = auth_header[7:]
-        payload = verify_scan_token(token, expected_ip_hash=ip_hash)
-        if payload:
-            tenant_id = payload.get("tenant_id")
-
-    if not tenant_id:
-        return {"status": "ignored", "reason": "no_tenant_context"}
-
-    tenant_uuid = await set_session_tenant_context(db, tenant_id)
-    set_consumer_tenant_id(str(tenant_uuid))
-    record = await withdraw_consent(db, tenant_uuid, consent_id)
-    if not record:
-        return {"status": "ignored", "reason": "not_found"}
-    return {
-        "id": str(record.id),
-        "status": record.status,
-        "withdrawn_at": record.withdrawn_at.isoformat() if record.withdrawn_at else None,
-    }
+    authority, _ = _scan_authority(request)
+    await enforce_public_consumer_admission(get_client_ip(request), authority.rate_subject)
+    await _bind_tenant(db, authority.tenant_id)
+    return await withdraw_consumer_consent_authority(
+        db,
+        tenant_id=authority.tenant_id,
+        consent_id=consent_id,
+        scan_event_id=authority.scan_event_id,
+        scan_time=authority.scan_time,
+        public_id=authority.public_id,
+        visitor_id=authority.visitor_id,
+        token_consumer_id=authority.consumer_id,
+        idempotency_key=body.idempotency_key,
+    )

@@ -7,9 +7,17 @@ import uuid
 import pytest
 
 from app.core.event_bus import _EventBus
+from app.services import webhook_sender
 from app.services.connectors.secrets import encrypt_secrets
 from app.services.webhook import build_api_key_lifecycle_material, recover_api_key_secret
-from app.services.webhook_sender import build_envelope, compute_signature, should_retry
+from app.services.webhook_sender import (
+    build_envelope,
+    canonical_json_bytes,
+    compute_signature,
+    resolve_public_webhook_addresses,
+    should_retry,
+    validate_webhook_url,
+)
 from app.utils.auth_rbac import (
     ROLE_PERMISSIONS,
     get_permissions_for_role,
@@ -174,6 +182,131 @@ class TestWebhookSender:
         sig1 = compute_signature("secret1", body)
         sig2 = compute_signature("secret1", body)
         assert sig1 == sig2
+
+    def test_canonical_body_and_timestamp_bound_signature_are_deterministic(self):
+        first = canonical_json_bytes({"z": 1, "data": {"b": 2, "a": "中文"}})
+        second = canonical_json_bytes({"data": {"a": "中文", "b": 2}, "z": 1})
+
+        assert first == second == b'{"data":{"a":"\xe4\xb8\xad\xe6\x96\x87","b":2},"z":1}'
+        assert compute_signature("secret", first, "1700000000") == compute_signature("secret", second, "1700000000")
+        assert compute_signature("secret", first, "1700000000") != compute_signature("secret", first, "1700000001")
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "http://hooks.example.com/path",
+            "https://user:pass@hooks.example.com/path",
+            "https://hooks.example.com:444/path",
+            "https://hooks.example.com/path?token=secret",
+            "https://hooks.example.com/path#fragment",
+            "https://localhost/path",
+            "https://service.local/path",
+            "https://127.0.0.1/path",
+            "https://[::1]/path",
+            "https://hooks.example.com/\u8def\u5f84",
+            "https://hooks.example.com/path with space",
+        ],
+    )
+    def test_rejects_unsafe_webhook_url_shapes(self, url: str):
+        with pytest.raises(ValueError, match="credential-free public HTTPS"):
+            validate_webhook_url(url)
+
+    @pytest.mark.anyio
+    async def test_rejects_dns_answer_set_containing_private_or_rebinding_address(self, monkeypatch):
+        loop = __import__("asyncio").get_running_loop()
+
+        async def private_answer(*_args, **_kwargs):
+            return [
+                (2, 1, 6, "", ("93.184.216.34", 443)),
+                (2, 1, 6, "", ("10.0.0.8", 443)),
+            ]
+
+        monkeypatch.setattr(loop, "getaddrinfo", private_answer)
+        with pytest.raises(ValueError, match="resolve only to public"):
+            await resolve_public_webhook_addresses("hooks.example.com")
+
+    @pytest.mark.anyio
+    async def test_delivery_uses_resolved_ip_pin_and_signs_exact_body(self, monkeypatch):
+        captured = {}
+        attempts = []
+
+        async def resolve(hostname: str):
+            assert hostname == "hooks.example.com"
+            return ["93.184.216.34"]
+
+        async def post(parsed, addresses, *, raw_body, headers):
+            captured.update(parsed=parsed, addresses=addresses, raw_body=raw_body, headers=headers)
+            attempts.append((raw_body, dict(headers)))
+            return 204, ""
+
+        monkeypatch.setattr(webhook_sender, "resolve_public_webhook_addresses", resolve)
+        monkeypatch.setattr(webhook_sender, "_post_pinned", post)
+        envelope = {
+            "type": "scan.created",
+            "id": "00000000-0000-4000-8000-000000000001",
+            "timestamp": "2026-08-14T12:34:56.987654+00:00",
+            "data": {"b": 2, "a": 1},
+        }
+
+        result = await webhook_sender.deliver("https://hooks.example.com/events", "secret", envelope)
+        replay = await webhook_sender.deliver("https://hooks.example.com/events", "secret", envelope)
+
+        assert result == replay == (204, "")
+        assert attempts[0] == attempts[1]
+        assert captured["addresses"] == ["93.184.216.34"]
+        assert captured["parsed"].hostname == "hooks.example.com"
+        assert captured["raw_body"] == canonical_json_bytes(envelope)
+        assert captured["headers"]["X-Ymt-Signature"] == compute_signature(
+            "secret", captured["raw_body"], captured["headers"]["X-Ymt-Timestamp"]
+        )
+        assert captured["headers"]["X-Ymt-Signature-Version"] == "v1"
+        assert captured["headers"]["X-Ymt-Timestamp"] == "1786710896"
+
+    @pytest.mark.anyio
+    async def test_delivery_failure_does_not_log_or_return_endpoint_url(self, monkeypatch, caplog):
+        async def resolve(_hostname: str):
+            return ["93.184.216.34"]
+
+        async def fail(*_args, **_kwargs):
+            raise OSError("connection secret detail")
+
+        monkeypatch.setattr(webhook_sender, "resolve_public_webhook_addresses", resolve)
+        monkeypatch.setattr(webhook_sender, "_post_pinned", fail)
+        url = "https://hooks.example.com/private-path"
+
+        status, body = await webhook_sender.deliver(
+            url,
+            "secret",
+            {
+                "type": "test.event",
+                "id": "00000000-0000-4000-8000-000000000001",
+                "timestamp": "2026-08-14T12:34:56+00:00",
+            },
+        )
+
+        assert status == 0
+        assert body == "Webhook delivery transport failed"
+        assert url not in caplog.text
+        assert "private-path" not in caplog.text
+        assert "connection secret detail" not in caplog.text
+
+    @pytest.mark.anyio
+    @pytest.mark.parametrize("timestamp", [None, "", "not-a-date", "2026-08-14T12:34:56"])
+    async def test_delivery_rejects_missing_invalid_or_naive_snapshot_timestamp(self, monkeypatch, timestamp):
+        async def must_not_resolve(_hostname: str):
+            raise AssertionError("invalid immutable envelope must be rejected before DNS")
+
+        monkeypatch.setattr(webhook_sender, "resolve_public_webhook_addresses", must_not_resolve)
+        envelope = {
+            "type": "test.event",
+            "id": "00000000-0000-4000-8000-000000000001",
+            "timestamp": timestamp,
+        }
+
+        status, body = await webhook_sender.deliver("https://hooks.example.com/events", "secret", envelope)
+
+        assert status == 0
+        assert body == "Webhook delivery rejected"
 
     def test_should_retry_5xx(self):
         assert should_retry(500) is True

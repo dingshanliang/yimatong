@@ -130,6 +130,7 @@ class BenefitClaim(Base):
     )
     consumer_id: Mapped[str] = mapped_column(String(100), nullable=False)
     idempotency_key: Mapped[str] = mapped_column(String(100), nullable=False)
+    request_digest: Mapped[str | None] = mapped_column(String(64), nullable=True)
     claim_type: Mapped[str] = mapped_column(String(20), nullable=False, default="claim")
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="success")
     delivery_status: Mapped[str] = mapped_column(String(20), nullable=False, default="not_required")
@@ -164,6 +165,10 @@ class BenefitClaim(Base):
         ),
         CheckConstraint("claim_type = 'claim'", name="ck_benefit_claims_type"),
         CheckConstraint(
+            "request_digest IS NULL OR length(request_digest) = 64",
+            name="ck_benefit_claims_request_digest",
+        ),
+        CheckConstraint(
             "status IN ('success','claimed','delivered','used','failed')",
             name="ck_benefit_claims_status",
         ),
@@ -179,6 +184,13 @@ class BenefitClaim(Base):
         Index("ix_benefit_claims_campaign_consumer", "campaign_id", "consumer_id"),
         Index("ix_benefit_claims_tenant_benefit", "tenant_id", "benefit_id"),
         Index("ix_benefit_claims_tenant_campaign", "tenant_id", "campaign_id"),
+        Index(
+            "uq_benefit_claims_bound_idempotency",
+            "tenant_id",
+            "idempotency_key",
+            unique=True,
+            postgresql_where=text("request_digest IS NOT NULL"),
+        ),
     )
 
 

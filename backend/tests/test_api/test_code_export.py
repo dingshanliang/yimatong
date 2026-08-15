@@ -16,6 +16,20 @@ from app.utils.security import create_access_token
 from tests.conftest import TestSessionLocal
 
 
+async def _export_code_batch(
+    client: AsyncClient,
+    batch_id: str,
+    headers: dict[str, str],
+    *,
+    reason: str = "交付印刷码表",
+):
+    return await client.post(
+        f"/api/v1/code-batches/{batch_id}/export",
+        json={"reason": reason},
+        headers={**headers, "Idempotency-Key": str(uuid.uuid4())},
+    )
+
+
 def _platform_admin_headers() -> dict:
     from app.utils.security import create_access_token
 
@@ -103,12 +117,34 @@ async def batch_with_codes(client: AsyncClient):
 
 class TestCodeExport:
     @pytest.mark.anyio
+    @pytest.mark.parametrize("reason", [None, "   ", "x" * 501])
+    async def test_reason_validation_precedes_export_state_and_ledger(
+        self, client: AsyncClient, db_session: AsyncSession, batch_with_codes, reason
+    ):
+        tenant_id, headers, batch_id = batch_with_codes
+        before = await db_session.scalar(
+            select(func.count()).select_from(ExportLog).where(ExportLog.tenant_id == uuid.UUID(tenant_id))
+        )
+        body = {} if reason is None else {"reason": reason}
+
+        response = await client.post(
+            f"/api/v1/code-batches/{batch_id}/export",
+            json=body,
+            headers={**headers, "Idempotency-Key": str(uuid.uuid4())},
+        )
+
+        assert response.status_code == 422
+        batch = await db_session.get(CodeBatch, uuid.UUID(batch_id))
+        assert batch is not None and batch.status == CodeBatchStatus.completed
+        after = await db_session.scalar(
+            select(func.count()).select_from(ExportLog).where(ExportLog.tenant_id == uuid.UUID(tenant_id))
+        )
+        assert after == before
+
+    @pytest.mark.anyio
     async def test_trigger_export_returns_csv(self, client: AsyncClient, batch_with_codes):
         _, headers, batch_id = batch_with_codes
-        resp = await client.post(
-            f"/api/v1/code-batches/{batch_id}/export",
-            headers=headers,
-        )
+        resp = await _export_code_batch(client, batch_id, headers)
         assert resp.status_code == 200
         assert "text/csv" in resp.headers.get("content-type", "")
         assert f"codes-{batch_id}.csv" in resp.headers.get("content-disposition", "")
@@ -120,10 +156,7 @@ class TestCodeExport:
     @pytest.mark.anyio
     async def test_export_contains_code_url(self, client: AsyncClient, batch_with_codes):
         _, headers, batch_id = batch_with_codes
-        resp = await client.post(
-            f"/api/v1/code-batches/{batch_id}/export",
-            headers=headers,
-        )
+        resp = await _export_code_batch(client, batch_id, headers)
         assert resp.status_code == 200
         assert "qr.yimatong.cn" in resp.text
 
@@ -139,7 +172,7 @@ class TestCodeExport:
         batch.product.name = '=HYPERLINK("https://evil.invalid")'
         await db_session.flush()
 
-        response = await client.post(f"/api/v1/code-batches/{batch_id}/export", headers=headers)
+        response = await _export_code_batch(client, batch_id, headers)
 
         assert response.status_code == 200
         assert "'=HYPERLINK" in response.text
@@ -157,7 +190,7 @@ class TestCodeExport:
         await db_session.delete(item)
         await db_session.flush()
 
-        response = await client.post(f"/api/v1/code-batches/{batch_id}/export", headers=headers)
+        response = await _export_code_batch(client, batch_id, headers)
 
         assert response.status_code == 409
         batch = await db_session.get(CodeBatch, batch_uuid)
@@ -176,7 +209,7 @@ class TestCodeExport:
         batch.contract_version = 0
         await db_session.flush()
 
-        response = await client.post(f"/api/v1/code-batches/{batch_id}/export", headers=headers)
+        response = await _export_code_batch(client, batch_id, headers)
 
         assert response.status_code == 200
         await db_session.refresh(batch)
@@ -196,7 +229,7 @@ class TestCodeExport:
         batch.expected_item_count = 4
         await db_session.flush()
 
-        response = await client.post(f"/api/v1/code-batches/{batch_id}/export", headers=headers)
+        response = await _export_code_batch(client, batch_id, headers)
 
         assert response.status_code == 409
         await db_session.refresh(batch)
@@ -213,8 +246,8 @@ class TestCodeExport:
     ):
         _, headers, batch_id = batch_with_codes
 
-        first = await client.post(f"/api/v1/code-batches/{batch_id}/export", headers=headers)
-        replay = await client.post(f"/api/v1/code-batches/{batch_id}/export", headers=headers)
+        first = await _export_code_batch(client, batch_id, headers)
+        replay = await _export_code_batch(client, batch_id, headers)
 
         assert first.status_code == replay.status_code == 200
         assert replay.content == first.content
@@ -236,13 +269,13 @@ class TestCodeExport:
         _, headers, batch_id = batch_with_codes
         batch = await db_session.get(CodeBatch, uuid.UUID(batch_id))
 
-        first = await client.post(f"/api/v1/code-batches/{batch_id}/export", headers=headers)
+        first = await _export_code_batch(client, batch_id, headers)
         batch.product.name = "导出后修改的产品名"
         batch.sku.name = "导出后修改的SKU名"
         batch.sku.code = "CHANGED-AFTER-EXPORT"
         batch.production_batch.origin = "导出后修改的产地"
         await db_session.flush()
-        replay = await client.post(f"/api/v1/code-batches/{batch_id}/export", headers=headers)
+        replay = await _export_code_batch(client, batch_id, headers)
 
         assert first.status_code == replay.status_code == 200
         assert replay.content == first.content
@@ -257,7 +290,7 @@ class TestCodeExport:
         caplog,
     ):
         _, headers, batch_id = batch_with_codes
-        first = await client.post(f"/api/v1/code-batches/{batch_id}/export", headers=headers)
+        first = await _export_code_batch(client, batch_id, headers)
         manifest = await db_session.scalar(select(ExportLog).where(ExportLog.code_batch_id == uuid.UUID(batch_id)))
         public_id = first.text.splitlines()[1].split(",", 1)[0]
         original_ciphertext = bytes(manifest.artifact_ciphertext)
@@ -265,7 +298,7 @@ class TestCodeExport:
         manifest.artifact_ciphertext = bytes([original_ciphertext[0] ^ 1]) + original_ciphertext[1:]
         await db_session.flush()
 
-        replay = await client.post(f"/api/v1/code-batches/{batch_id}/export", headers=headers)
+        replay = await _export_code_batch(client, batch_id, headers)
 
         assert replay.status_code == 409
         assert public_id not in caplog.text
@@ -284,7 +317,7 @@ class TestCodeExport:
         premature_print = await client.post(f"/api/v1/code-batches/{batch_id}/mark-printing", headers=headers)
         assert premature_print.status_code == 409
 
-        exported = await client.post(f"/api/v1/code-batches/{batch_id}/export", headers=headers)
+        exported = await _export_code_batch(client, batch_id, headers)
         printing = await client.post(f"/api/v1/code-batches/{batch_id}/mark-printing", headers=headers)
         missing_evidence = await client.post(f"/api/v1/code-batches/{batch_id}/mark-delivered", headers=headers)
         delivered = await client.post(

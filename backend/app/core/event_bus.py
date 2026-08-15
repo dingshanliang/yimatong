@@ -9,7 +9,10 @@ from __future__ import annotations
 import logging
 from collections import defaultdict
 from collections.abc import Callable, Coroutine
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = logging.getLogger(__name__)
 
@@ -33,11 +36,24 @@ class _EventBus:
         """编程式注册事件处理器。"""
         self._handlers[event_type].append(handler)
 
-    async def emit(self, event_type: str, data: dict, tenant_id: str) -> None:
+    async def emit(
+        self,
+        event_type: str,
+        data: dict,
+        tenant_id: str,
+        *,
+        db: AsyncSession | None = None,
+    ) -> None:
         """发射事件，异步调用所有注册的处理器。
 
         处理器异常会被捕获并记录日志，不会阻塞调用方。
         """
+        if db is not None:
+            import uuid
+
+            from app.services.webhook_dispatcher import record_domain_event
+
+            await record_domain_event(db, uuid.UUID(tenant_id), event_type, data)
         handlers = self._handlers.get(event_type, [])
         for handler in handlers:
             try:

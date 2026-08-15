@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.core.dependencies import get_current_tenant
+from app.schemas.analytics import ConversionFunnelResponse
 from app.services.analytics import get_campaign_scan_stats, get_code_stats, get_dashboard, get_scan_stats
 from app.services.analytics_extended import (
     get_alerts,
@@ -15,8 +16,13 @@ from app.services.analytics_extended import (
     get_conversion_funnel,
     get_recent_events,
 )
+from app.utils.auth_rbac import require_permission
 
-analytics_router = APIRouter(prefix="/api/v1/analytics", tags=["analytics"])
+analytics_router = APIRouter(
+    prefix="/api/v1/analytics",
+    tags=["analytics"],
+    dependencies=[Depends(require_permission("analytics:view"))],
+)
 
 
 @analytics_router.get("/scan-stats", summary="获取 scan stats")
@@ -58,7 +64,11 @@ async def get_campaign_scan_stats_endpoint(
     return await get_campaign_scan_stats(db, tenant_id, campaign_id, start_date, end_date)
 
 
-@analytics_router.get("/conversion-funnel", summary="获取转化漏斗数据")
+@analytics_router.get(
+    "/conversion-funnel",
+    summary="获取结果发生与访客群组数据",
+    response_model=ConversionFunnelResponse,
+)
 async def get_conversion_funnel_endpoint(
     days_back: int = Query(30, ge=1, le=365),
     db: AsyncSession = Depends(get_db),

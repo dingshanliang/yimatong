@@ -94,7 +94,11 @@ async def create_live_scan_token(
     )
     assert code_batch.status_code == 201
     batch_id = code_batch.json()["id"]
-    exported = await client.post(f"/api/v1/code-batches/{batch_id}/export", headers=headers)
+    exported = await client.post(
+        f"/api/v1/code-batches/{batch_id}/export",
+        json={"reason": "Test lifecycle setup"},
+        headers={**headers, "Idempotency-Key": str(uuid.uuid4())},
+    )
     printing = await client.post(f"/api/v1/code-batches/{batch_id}/mark-printing", headers=headers)
     delivered = await client.post(
         f"/api/v1/code-batches/{batch_id}/mark-delivered",
@@ -575,15 +579,26 @@ class TestH5ClaimTenantIsolation:
     """验证 H5 领取端点的租户隔离和权益状态检查"""
 
     @pytest.mark.anyio
-    async def test_claim_rejects_inactive_benefit(self, client: AsyncClient, auth_setup, db_session: AsyncSession):
-        """停用的权益不允许通过 H5 端领取"""
+    async def test_claim_rejects_inactive_benefit(
+        self,
+        client: AsyncClient,
+        auth_setup,
+        db_session: AsyncSession,
+        monkeypatch,
+    ):
+        """已经通过 launch validation 的停用权益仍必须返回 409。"""
+        import jwt
+        from sqlalchemy import select
         from sqlalchemy import update as sa_update
 
+        from app.core.config import settings
         from app.models.campaign import Benefit
+        from app.models.code import CodeItem
+        from app.services.scan_token import create_scan_token
 
         tenant_id, headers = auth_setup
         product_id = await create_product(client, headers, "停用权益码产品")
-        token = await create_live_scan_token(client, headers, tenant_id, product_id, "INACTIVE")
+        telemetry_token = await create_live_scan_token(client, headers, tenant_id, product_id, "INACTIVE")
 
         # 通过 API 创建活动 + 权益
         campaign_resp = await client.post(
@@ -591,8 +606,8 @@ class TestH5ClaimTenantIsolation:
             json={
                 "name": "停用权益测试",
                 "campaign_type": "coupon",
-                "start_at": "2026-06-01T00:00:00",
-                "end_at": "2026-06-30T23:59:59",
+                "start_at": (datetime.now(UTC) - timedelta(hours=1)).isoformat(),
+                "end_at": (datetime.now(UTC) + timedelta(days=1)).isoformat(),
                 "rules_json": RULES_JSON,
             },
             headers=headers,
@@ -616,6 +631,38 @@ class TestH5ClaimTenantIsolation:
         # 手动将权益设为 inactive
         await db_session.execute(sa_update(Benefit).where(Benefit.id == uuid.UUID(bid)).values(status="inactive"))
         await db_session.commit()
+
+        telemetry_payload = jwt.decode(telemetry_token, settings.secret_key, algorithms=["HS256"])
+        code_item = await db_session.scalar(
+            select(CodeItem).where(
+                CodeItem.tenant_id == uuid.UUID(tenant_id),
+                CodeItem.public_id == telemetry_payload["public_id"],
+            )
+        )
+        assert code_item is not None
+        release_id = uuid.uuid4()
+        content_digest = "a" * 64
+        token = create_scan_token(
+            telemetry_payload["public_id"],
+            telemetry_payload["ip_hash"],
+            tenant_id=tenant_id,
+            scan_event_id=telemetry_payload["scan_event_id"],
+            visitor_id=telemetry_payload["visitor_id"],
+            launch_release_id=str(release_id),
+            campaign_id=cid,
+            code_batch_id=str(code_item.code_batch_id),
+            content_digest=content_digest,
+        )
+
+        async def current_release(*_args):
+            return {
+                "release_id": release_id,
+                "campaign_id": uuid.UUID(cid),
+                "code_batch_id": code_item.code_batch_id,
+                "content_digest": content_digest,
+            }
+
+        monkeypatch.setattr("app.services.launch.resolve_current_launch_release", current_release)
 
         resp = await client.post(
             "/api/v1/benefit-claims",

@@ -12,6 +12,8 @@ from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
 from uuid6 import uuid7
 
+from app.services.scan_token import ScanLaunchAuthority
+
 
 def _auth_session_id() -> uuid.UUID:
     from app.core.database import get_request_security_credential
@@ -222,12 +224,14 @@ async def claim_campaign_benefit_authority(
     public_id: str,
     consumer_id: str,
     idempotency_key: str,
+    launch_authority: ScanLaunchAuthority,
 ) -> dict:
     claim_id = uuid7()
     return await _one(
         db,
         "SELECT * FROM public.claim_campaign_benefit(:tenant_id,:claim_id,:benefit_id,:scan_event_id,"
-        ":scanned_product_id,:public_id,:consumer_id,:idempotency_key)",
+        ":scanned_product_id,:public_id,:consumer_id,:idempotency_key,:launch_release_id,"
+        ":launch_campaign_id,:launch_content_digest)",
         {
             "tenant_id": tenant_id,
             "claim_id": claim_id,
@@ -237,6 +241,9 @@ async def claim_campaign_benefit_authority(
             "public_id": public_id,
             "consumer_id": consumer_id,
             "idempotency_key": idempotency_key,
+            "launch_release_id": launch_authority.launch_release_id,
+            "launch_campaign_id": launch_authority.campaign_id,
+            "launch_content_digest": launch_authority.content_digest,
         },
     )
 

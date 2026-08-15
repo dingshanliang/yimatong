@@ -3,7 +3,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKeyConstraint, Integer, String, func
+from sqlalchemy import DateTime, ForeignKeyConstraint, Index, Integer, String, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base
@@ -43,6 +43,7 @@ class AuthSession(Base):
             name="fk_auth_sessions_tenant_account",
             ondelete="CASCADE",
         ),
+        Index("uq_auth_sessions_tenant_id_id_u8b", "tenant_id", "id", unique=True),
     )
 
 

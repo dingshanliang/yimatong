@@ -14,6 +14,7 @@ from app.services.campaign_authority import (
     update_benefit_authority,
     update_campaign_authority,
 )
+from app.services.scan_token import ScanLaunchAuthority
 
 
 class _Mappings:
@@ -59,6 +60,12 @@ async def test_claim_authority_passes_exact_scan_and_product_facts():
     benefit_id = uuid.uuid4()
     scan_event_id = uuid.uuid4()
     product_id = uuid.uuid4()
+    launch_authority = ScanLaunchAuthority(
+        launch_release_id=uuid.uuid4(),
+        campaign_id=uuid.uuid4(),
+        code_batch_id=uuid.uuid4(),
+        content_digest="b" * 64,
+    )
 
     result = await claim_campaign_benefit_authority(
         db,
@@ -69,6 +76,7 @@ async def test_claim_authority_passes_exact_scan_and_product_facts():
         "PUBLIC001",
         "consumer-1",
         "claim:v1:" + "a" * 64,
+        launch_authority,
     )
 
     assert result["created"] is True
@@ -79,6 +87,10 @@ async def test_claim_authority_passes_exact_scan_and_product_facts():
     assert params["scanned_product_id"] == product_id
     assert params["public_id"] == "PUBLIC001"
     assert params["idempotency_key"] == "claim:v1:" + "a" * 64
+    assert params["launch_release_id"] == launch_authority.launch_release_id
+    assert params["launch_campaign_id"] == launch_authority.campaign_id
+    assert params["launch_content_digest"] == launch_authority.content_digest
+    assert "claim_campaign_benefit" in str(db.execute.await_args.args[0])
 
 
 @pytest.mark.anyio

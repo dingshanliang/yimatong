@@ -22,6 +22,10 @@ import app.services.connectors.wecom_crm  # noqa: F401
 from app.core.database import bootstrap_tenant_row, get_db
 from app.core.dependencies import get_current_tenant
 from app.models.connector import BenefitDelivery, Connector
+from app.services.connector_callback_admission import (
+    enforce_connector_callback_identity_admission,
+    enforce_connector_callback_ip_admission,
+)
 from app.services.connectors import get_adapter
 from app.services.connectors.secrets import (
     connector_with_runtime_secrets,
@@ -187,11 +191,30 @@ def _delivery_to_dict(delivery) -> dict:
         "status": delivery.status,
         "retry_count": delivery.retry_count,
         "max_retries": delivery.max_retries,
-        "external_data": delivery.external_data,
+        "external_reference": delivery.external_id,
+        "external_data": _public_delivery_result(delivery.external_data),
         "next_retry_at": delivery.next_retry_at.isoformat() if delivery.next_retry_at else None,
         "created_at": delivery.created_at.isoformat() if delivery.created_at else None,
         "updated_at": delivery.updated_at.isoformat() if delivery.updated_at else None,
     }
+
+
+def _public_delivery_result(external_data: object) -> dict:
+    """Expose only bounded operational state, never arbitrary provider JSON."""
+
+    if not isinstance(external_data, dict):
+        return {}
+    result: dict[str, object] = {}
+    status = external_data.get("status")
+    if status in {"pending", "processing", "success", "failed"}:
+        result["status"] = status
+    status_code = external_data.get("status_code")
+    if isinstance(status_code, int) and not isinstance(status_code, bool) and 100 <= status_code <= 599:
+        result["status_code"] = status_code
+    reason = external_data.get("reason")
+    if reason in {"ambiguous_provider_outcome", "provider_outcome_requires_reconciliation"}:
+        result["reason"] = reason
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -501,6 +524,7 @@ async def deliver_benefit_endpoint(
 async def delivery_callback_endpoint(
     conn_id: uuid.UUID,
     request: Request,
+    _admission: None = Depends(enforce_connector_callback_ip_admission),
     db: AsyncSession = Depends(get_db, scope="function"),
 ):
     """外部系统回调端点 — 不走 JWT 认证，由适配器签名验证保护。"""
@@ -521,6 +545,8 @@ async def delivery_callback_endpoint(
     # 验证回调签名（必须由适配器实现）
     if not await adapter.verify_callback(connector, body, headers):
         raise HTTPException(status_code=403, detail="Invalid callback signature")
+
+    await enforce_connector_callback_identity_admission(connector.tenant_id, connector.id)
 
     # 解析回调
     result = await adapter.parse_callback(connector, body, headers)
@@ -644,6 +670,7 @@ async def pending_retries_endpoint(
     filters = (
         BenefitDelivery.tenant_id == tenant_id,
         BenefitDelivery.status == "pending",
+        BenefitDelivery.campaign_outbox_id.is_(None),
         BenefitDelivery.retry_count < BenefitDelivery.max_retries,
         BenefitDelivery.next_retry_at <= now,
     )

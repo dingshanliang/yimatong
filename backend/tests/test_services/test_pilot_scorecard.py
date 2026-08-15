@@ -1,13 +1,15 @@
 """运营 scorecard 快照服务测试（beads: yimatong-bgag.3，PRD §4.4）。"""
 
+import uuid
 from datetime import UTC, datetime, timedelta
 
 import pytest
+from sqlalchemy import select
 
 from app.constants.pilot import PilotMilestoneType
-from app.models.pilot_milestone import PilotMilestone
+from app.models.pilot_milestone import PilotMilestone, PilotMilestoneCorrection
 from app.services.pilot_scorecard import INSUFFICIENT, build_scorecard
-from tests.conftest import seed_pilot_launch_release, seed_pilot_tenant
+from tests.conftest import seed_pilot_tenant
 
 
 async def _seed_milestones(db, tenant_id, onboarding, launched, first_scan=None):
@@ -18,6 +20,8 @@ async def _seed_milestones(db, tenant_id, onboarding, launched, first_scan=None)
             milestone_type=PilotMilestoneType.ONBOARDING,
             achieved_at=onboarding,
             source="tenant.created_at",
+            fact_digest="0" * 64,
+            authority_version=0,
         )
     )
     db.add(
@@ -26,6 +30,8 @@ async def _seed_milestones(db, tenant_id, onboarding, launched, first_scan=None)
             milestone_type=PilotMilestoneType.LAUNCHED,
             achieved_at=launched,
             source="launch_releases.launched_at",
+            fact_digest="1" * 64,
+            authority_version=0,
         )
     )
     if first_scan is not None:
@@ -35,6 +41,8 @@ async def _seed_milestones(db, tenant_id, onboarding, launched, first_scan=None)
                 milestone_type=PilotMilestoneType.FIRST_VALID_SCAN,
                 achieved_at=first_scan,
                 source="scan_events.first_valid_visit",
+                fact_digest="2" * 64,
+                authority_version=0,
             )
         )
     await db.flush()
@@ -48,7 +56,6 @@ async def test_scorecard_computes_durations_and_rates(db):
     first_scan = datetime(2026, 7, 9, tzinfo=UTC)  # 上线→首扫 1 天
 
     tenant_id = await seed_pilot_tenant(db, created_at=onboarding)
-    await seed_pilot_launch_release(db, tenant_id, launched_at=launched)
     await _seed_milestones(db, tenant_id, onboarding, launched, first_scan)
 
     scorecard = await build_scorecard(db, tenant_id, window_start=launched, window_end=launched + timedelta(days=7))
@@ -68,6 +75,41 @@ async def test_scorecard_missing_milestone_is_insufficient(db):
     )
     assert scorecard["onboarding_to_launch"]["status"] == INSUFFICIENT
     assert scorecard["onboarding_to_launch"]["value"] is None
+
+
+@pytest.mark.asyncio
+async def test_scorecard_duration_uses_latest_append_only_correction(db):
+    onboarding = datetime(2026, 7, 1, tzinfo=UTC)
+    launched = datetime(2026, 7, 8, tzinfo=UTC)
+    tenant_id = await seed_pilot_tenant(db, created_at=onboarding)
+    await _seed_milestones(db, tenant_id, onboarding, launched)
+    milestone_id = await db.scalar(
+        select(PilotMilestone.id).where(
+            PilotMilestone.tenant_id == tenant_id,
+            PilotMilestone.milestone_type == PilotMilestoneType.LAUNCHED,
+        )
+    )
+    db.add(
+        PilotMilestoneCorrection(
+            tenant_id=tenant_id,
+            milestone_id=milestone_id,
+            milestone_type=PilotMilestoneType.LAUNCHED,
+            corrected_at=datetime(2026, 7, 10, tzinfo=UTC),
+            source="platform correction",
+            reason="verified launch receipt",
+            request_id=uuid.uuid4(),
+            actor_type="legacy",
+            actor_principal="test",
+            idempotency_key=f"legacy:{uuid.uuid4()}",
+            payload_digest="3" * 64,
+            authority_version=0,
+        )
+    )
+    await db.flush()
+
+    scorecard = await build_scorecard(db, tenant_id, window_start=launched, window_end=launched + timedelta(days=7))
+
+    assert scorecard["onboarding_to_launch"]["value"] == timedelta(days=9).total_seconds()
 
 
 @pytest.mark.asyncio
@@ -122,13 +164,21 @@ async def test_scorecard_window_anchored_to_absolute_range(db):
     # 窗口内一条有效扫码
     db.add(
         ScanEvent(
-            tenant_id=tenant_id, public_id="IN01", scan_time=datetime(2026, 7, 3, tzinfo=UTC), is_valid_visit=True
+            tenant_id=tenant_id,
+            public_id="IN01",
+            scan_time=datetime(2026, 9, 3, tzinfo=UTC),
+            created_at=datetime(2026, 7, 3, tzinfo=UTC),
+            is_valid_visit=True,
         )
     )
     # 窗口外（更晚）一条有效扫码，不应计入本期窗口
     db.add(
         ScanEvent(
-            tenant_id=tenant_id, public_id="OUT01", scan_time=datetime(2026, 9, 1, tzinfo=UTC), is_valid_visit=True
+            tenant_id=tenant_id,
+            public_id="OUT01",
+            scan_time=datetime(2026, 7, 3, tzinfo=UTC),
+            created_at=datetime(2026, 9, 1, tzinfo=UTC),
+            is_valid_visit=True,
         )
     )
     await db.flush()
@@ -136,3 +186,38 @@ async def test_scorecard_window_anchored_to_absolute_range(db):
     scorecard = await build_scorecard(db, tenant_id, window_start=w_start, window_end=w_end)
     assert scorecard["valid_visits"]["value"] == 1
     assert scorecard["funnel_raw"]["valid_visits"] == 1
+
+
+def test_confirmed_gmv_query_requires_receipt_status_and_server_cohort() -> None:
+    from sqlalchemy.dialects import postgresql
+
+    from app.services.pilot_scorecard import _confirmed_gmv_query
+
+    tenant_id = uuid.uuid4()
+    start = datetime(2026, 7, 1, tzinfo=UTC)
+    end = datetime(2026, 7, 8, tzinfo=UTC)
+    sql = str(_confirmed_gmv_query(tenant_id, start, end).compile(dialect=postgresql.dialect()))
+
+    assert "JOIN gmv_attribution_confirmations" in sql
+    assert "gmv_attributions.authority_status" in sql
+    assert "gmv_attribution_confirmations.scan_received_at" in sql
+
+
+@pytest.mark.asyncio
+async def test_zero_net_gmv_is_computed_when_confirmed_cohort_exists(db, monkeypatch):
+    import app.services.pilot_scorecard as scorecard_service
+
+    tenant_id = await seed_pilot_tenant(db)
+
+    async def confirmed_zero(*_args, **_kwargs):
+        return {"net_amount": 0.0, "attributed_orders": 1}
+
+    monkeypatch.setattr(scorecard_service, "_gmv_from_attribution_snapshot", confirmed_zero)
+    scorecard = await build_scorecard(
+        db,
+        tenant_id,
+        window_start=datetime(2026, 7, 1, tzinfo=UTC),
+        window_end=datetime(2026, 7, 8, tzinfo=UTC),
+    )
+
+    assert scorecard["net_gmv"] == {"value": 0.0, "status": "computed", "unit": "yuan"}

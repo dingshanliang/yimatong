@@ -7,6 +7,7 @@ import pytest
 from app.services.campaign_claim_worker import (
     _fail,
     _lease,
+    _normalize_delivery_result,
     _process_leased,
     _record_delivery_result,
     poll_campaign_claim_outbox,
@@ -66,7 +67,20 @@ def test_global_outbox_poll_uses_bootstrap_object_and_tenant_key_pair():
     assert "for _, tenant_id in tenant_rows" in source
 
 
-def test_external_delivery_retries_use_the_claim_as_idempotency_authority():
+def test_legacy_delivery_paths_exclude_canonical_campaign_outbox_rows():
+    from app.services.benefit_delivery_handler import on_claim_created
+    from app.tasks.worker import poll_benefit_delivery_retries
+
+    legacy_event_source = inspect.getsource(on_claim_created)
+    legacy_retry_source = inspect.getsource(poll_benefit_delivery_retries)
+
+    assert "CampaignClaimOutbox" in legacy_event_source
+    assert "CampaignClaimOutbox.claim_id" in legacy_event_source
+    assert legacy_retry_source.count("BenefitDelivery.campaign_outbox_id.is_(None)") >= 2
+    assert ".with_for_update(skip_locked=True)" in legacy_retry_source
+
+
+def test_external_delivery_uses_claim_key_and_reconciliation_instead_of_ambiguous_resend():
     worker_source = inspect.getsource(_process_leased)
     adapter_source = inspect.getsource(GenericHttpAdapter.deliver)
 
@@ -74,6 +88,55 @@ def test_external_delivery_retries_use_the_claim_as_idempotency_authority():
     assert "_record_delivery_result(" in worker_source
     assert 'result.status not in {"success", "pending"}' in worker_source
     assert 'request_headers["Idempotency-Key"] = idempotency_key' in adapter_source
+    assert "allow_address_failover=False" in adapter_source
+    assert "adapter.reconcile" in worker_source
+    assert 'leased.get("callback_timed_out")' in worker_source
+    assert "_normalize_delivery_result(result.external_data)" in worker_source
+
+
+@pytest.mark.parametrize(
+    ("provider_data", "expected"),
+    [
+        (
+            {
+                "status": "success",
+                "status_code": 201,
+                "token": "provider-secret",
+                "phone": "13800138000",
+                "nested": {"customer": "private"},
+                "message": "arbitrary provider prose",
+                "error": "internal stack",
+            },
+            {"status": "success", "status_code": 201},
+        ),
+        (
+            {
+                "status": "pending",
+                "status_code": 202,
+                "reason": "ambiguous_provider_outcome",
+                "access_token": "provider-secret",
+                "customer": {"phone": "13800138000"},
+            },
+            {"status": "pending", "status_code": 202, "reason": "ambiguous_provider_outcome"},
+        ),
+        (
+            {
+                "status": "success",
+                "reason": "provider_outcome_requires_reconciliation",
+                "result": {"phone": "13800138000", "token": "provider-secret"},
+            },
+            {"status": "success", "reason": "provider_outcome_requires_reconciliation"},
+        ),
+    ],
+    ids=("post-success", "post-pending", "get-reconciliation"),
+)
+def test_provider_result_is_normalized_before_database_recording(provider_data, expected):
+    normalized = _normalize_delivery_result(provider_data)
+
+    assert normalized == expected
+    durable_text = repr(normalized)
+    assert "provider-secret" not in durable_text
+    assert "13800138000" not in durable_text
 
 
 @pytest.mark.anyio

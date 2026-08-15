@@ -9,6 +9,8 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.channel import Distributor, DiversionClue
+from app.models.diversion_evidence import DiversionEvidence
+from app.models.diversion_history import DiversionInvestigationHistory
 from app.models.risk import RiskAlert
 from app.models.scan import ScanEvent
 
@@ -190,7 +192,9 @@ async def get_diversion_summary(
     dist_ids = [row.distributor_id for row in dist_rows if row.distributor_id]
     by_distributor = []
     if dist_ids:
-        dists_result = await db.execute(select(Distributor).where(Distributor.id.in_(dist_ids)))
+        dists_result = await db.execute(
+            select(Distributor).where(Distributor.tenant_id == tenant_id, Distributor.id.in_(dist_ids))
+        )
         dists = {d.id: d.name for d in dists_result.scalars().all()}
         by_distributor = [
             {"distributor_id": str(did), "name": dists.get(did, "未知"), "count": cnt}
@@ -217,32 +221,33 @@ async def get_diversion_summary(
     }
 
 
-async def resolve_diversion_clue(
-    db: AsyncSession,
-    tenant_id: uuid.UUID,
-    clue_id: uuid.UUID,
-    resolution_action: str | None = None,
-    resolution_note: str | None = None,
-    resolved_by_account_id: uuid.UUID | None = None,
-) -> DiversionClue | None:
-    """标记窜货线索为已处理"""
-    result = await db.execute(
-        select(DiversionClue).where(
-            DiversionClue.id == clue_id,
-            DiversionClue.tenant_id == tenant_id,
+async def get_diversion_investigation(
+    db: AsyncSession, tenant_id: uuid.UUID, clue_id: uuid.UUID
+) -> tuple[DiversionClue, list[DiversionEvidence], list[DiversionInvestigationHistory]] | None:
+    """Load one tenant-bound clue with its immutable evidence and transition timeline."""
+    clue = await db.scalar(
+        select(DiversionClue).where(DiversionClue.tenant_id == tenant_id, DiversionClue.id == clue_id)
+    )
+    if clue is None:
+        return None
+    evidence = list(
+        await db.scalars(
+            select(DiversionEvidence)
+            .where(DiversionEvidence.tenant_id == tenant_id, DiversionEvidence.clue_id == clue_id)
+            .order_by(DiversionEvidence.uploaded_at, DiversionEvidence.id)
         )
     )
-    clue = result.scalar_one_or_none()
-    if not clue:
-        return None
-    clue.resolved = True
-    clue.resolution_action = resolution_action
-    clue.resolution_note = resolution_note
-    clue.resolved_by_account_id = resolved_by_account_id
-    clue.resolved_at = datetime.now(UTC)
-    await db.flush()
-    await db.refresh(clue)
-    return clue
+    history = list(
+        await db.scalars(
+            select(DiversionInvestigationHistory)
+            .where(
+                DiversionInvestigationHistory.tenant_id == tenant_id,
+                DiversionInvestigationHistory.clue_id == clue_id,
+            )
+            .order_by(DiversionInvestigationHistory.changed_at, DiversionInvestigationHistory.id)
+        )
+    )
+    return clue, evidence, history
 
 
 async def export_risk_data(
@@ -251,6 +256,8 @@ async def export_risk_data(
     data_type: str,
 ) -> str:
     """导出风控数据为 CSV"""
+    from app.services.code_export import spreadsheet_safe
+
     output = io.StringIO()
     writer = csv.writer(output)
 
@@ -263,7 +270,15 @@ async def export_risk_data(
             .limit(_EXPORT_ROW_LIMIT)
         )
         for alert in result.scalars().all():
-            writer.writerow([str(alert.id), alert.alert_type, alert.public_id, alert.detail, alert.resolved])
+            writer.writerow(
+                [
+                    str(alert.id),
+                    spreadsheet_safe(alert.alert_type),
+                    spreadsheet_safe(alert.public_id),
+                    spreadsheet_safe(alert.detail),
+                    alert.resolved,
+                ]
+            )
 
     elif data_type == "diversions":
         writer.writerow(["id", "public_id", "expected_region", "detected_city", "resolved"])
@@ -274,6 +289,14 @@ async def export_risk_data(
             .limit(_EXPORT_ROW_LIMIT)
         )
         for clue in result.scalars().all():
-            writer.writerow([str(clue.id), clue.public_id, clue.expected_region, clue.detected_city, clue.resolved])
+            writer.writerow(
+                [
+                    str(clue.id),
+                    spreadsheet_safe(clue.public_id),
+                    spreadsheet_safe(clue.expected_region),
+                    spreadsheet_safe(clue.detected_city),
+                    clue.resolved,
+                ]
+            )
 
     return output.getvalue()

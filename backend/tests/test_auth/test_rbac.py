@@ -20,10 +20,12 @@ class TestRBAC:
         assert "tenant:manage" in admin_perms
         assert "code:generate" in admin_perms
         assert "product:create" in admin_perms
+        assert "consumer:detail" in admin_perms
 
     def test_operator_has_limited_permissions(self):
         operator_perms = set(WEB_ROLE_PERMISSIONS["operator"])
         assert "code:generate" in operator_perms
+        assert "consumer:detail" in operator_perms
         assert "tenant:manage" not in operator_perms
 
     def test_viewer_has_zero_business_permissions(self):

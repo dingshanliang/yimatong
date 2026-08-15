@@ -4,10 +4,12 @@ from unittest.mock import AsyncMock
 import pytest
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from uuid6 import uuid7
 
 from app.cli import seed as basic_seed
 from app.models.audit import PlatformAuditLog
-from app.models.tenant import Account, Organization, Role, Tenant, account_roles
+from app.models.member import ConsumerProfile
+from app.models.tenant import Account, Organization, Permission, Role, Tenant, account_roles, role_permissions
 from app.utils.security import hash_password, verify_password
 from scripts import seed_demo
 
@@ -15,6 +17,121 @@ from scripts import seed_demo
 def test_official_demo_seeds_enable_the_risk_lifecycle_they_showcase():
     assert basic_seed.DEMO_ENABLED_FEATURES["risk_module"] is True
     assert seed_demo.DEMO_ENABLED_FEATURES["risk_module"] is True
+
+
+@pytest.mark.anyio
+async def test_basic_and_rich_demo_reconciliation_preserve_channel_portal_roles(db: AsyncSession):
+    tenant = Tenant(name="Demo portal identities", slug=f"demo-portal-{uuid.uuid4().hex[:8]}")
+    db.add(tenant)
+    await db.flush()
+    organization = Organization(tenant_id=tenant.id, name="演示默认组织")
+    db.add(organization)
+    await db.flush()
+
+    await basic_seed._ensure_demo_accounts(db, tenant.id, organization.id)
+    await db.flush()
+    await seed_demo._ensure_accounts(db, tenant.id, organization.id)
+    await db.flush()
+    await basic_seed._ensure_demo_accounts(db, tenant.id, organization.id)
+    await db.flush()
+
+    rows = (
+        await db.execute(
+            select(Account.email, Role.name)
+            .join(account_roles, account_roles.c.account_id == Account.id)
+            .join(Role, Role.id == account_roles.c.role_id)
+            .where(Account.tenant_id == tenant.id, Account.email.in_({"dist@demo.com", "store@demo.com"}))
+            .order_by(Account.email)
+        )
+    ).all()
+    assert rows == [("dist@demo.com", "distributor"), ("store@demo.com", "store_guide")]
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("role_name", ["admin", "operator"])
+async def test_rich_demo_role_reconciles_canonical_consumer_permission(db: AsyncSession, role_name: str):
+    tenant = Tenant(name="Demo permission repair", slug=f"demo-permission-{uuid.uuid4().hex[:8]}")
+    db.add(tenant)
+    await db.flush()
+    role = Role(tenant_id=tenant.id, name=role_name)
+    db.add(role)
+    await db.flush()
+
+    reconciled = await seed_demo._ensure_role(db, tenant.id, role_name, "canonical")
+    await db.flush()
+
+    granted = await db.scalar(
+        select(Permission.code)
+        .join(role_permissions, role_permissions.c.permission_id == Permission.id)
+        .where(
+            role_permissions.c.tenant_id == tenant.id,
+            role_permissions.c.role_id == reconciled.id,
+            Permission.code == "consumer:detail",
+        )
+    )
+    assert granted == "consumer:detail"
+
+
+@pytest.mark.anyio
+async def test_rich_demo_consumers_use_anonymous_authority_without_fabricated_pii(
+    db: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    tenant = Tenant(name="Demo consumer authority", slug=f"demo-consumer-{uuid.uuid4().hex[:8]}")
+    db.add(tenant)
+    await db.flush()
+    authority_calls = 0
+
+    async def create_anonymous(session: AsyncSession, tenant_id: uuid.UUID) -> dict:
+        nonlocal authority_calls
+        authority_calls += 1
+        profile = ConsumerProfile(id=uuid7(), tenant_id=tenant_id)
+        session.add(profile)
+        await session.flush()
+        return {"consumer_id": profile.id, "created_at": profile.created_at}
+
+    monkeypatch.setattr(seed_demo, "create_anonymous_consumer_profile_authority", create_anonymous)
+
+    consumers, consumer_ids = await seed_demo._ensure_consumers(db, tenant.id)
+
+    assert authority_calls == 200
+    assert len(consumers) == len(consumer_ids) == 200
+    assert all(consumer.nickname is None for consumer in consumers)
+    assert all(consumer.phone_hash is None and consumer.phone_ciphertext is None for consumer in consumers)
+    assert all(
+        consumer.wechat_openid_hash is None and consumer.wechat_openid_ciphertext is None for consumer in consumers
+    )
+    assert all((consumer.extra_data or {}) == {} for consumer in consumers)
+    assert all(consumer.member_level == "normal" and consumer.total_points == 0 for consumer in consumers)
+
+
+@pytest.mark.anyio
+async def test_rich_demo_consumers_repair_partial_population_to_exact_target(
+    db: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    tenant = Tenant(name="Demo consumer retry", slug=f"demo-consumer-retry-{uuid.uuid4().hex[:8]}")
+    db.add(tenant)
+    await db.flush()
+    db.add_all([ConsumerProfile(id=uuid7(), tenant_id=tenant.id) for _index in range(3)])
+    await db.flush()
+    authority_calls = 0
+
+    async def create_anonymous(session: AsyncSession, tenant_id: uuid.UUID) -> dict:
+        nonlocal authority_calls
+        authority_calls += 1
+        profile = ConsumerProfile(id=uuid7(), tenant_id=tenant_id)
+        session.add(profile)
+        await session.flush()
+        return {"consumer_id": profile.id, "created_at": profile.created_at}
+
+    monkeypatch.setattr(seed_demo, "create_anonymous_consumer_profile_authority", create_anonymous)
+
+    consumers, consumer_ids = await seed_demo._ensure_consumers(db, tenant.id)
+
+    assert authority_calls == 197
+    assert len(consumers) == len(consumer_ids) == 200
+    assert len(set(consumer_ids)) == 200
 
 
 @pytest.mark.anyio

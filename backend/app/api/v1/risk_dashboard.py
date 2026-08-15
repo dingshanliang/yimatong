@@ -1,38 +1,57 @@
 """渠道风控看板 API"""
 
 import asyncio
+import hashlib
 import json
 import secrets
 import time
 import uuid
+from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from fastapi.responses import PlainTextResponse, StreamingResponse
-from pydantic import BaseModel
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
+from fastapi.responses import Response, StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
+from uuid6 import uuid7
 
 from app.core.database import get_db
 from app.core.dependencies import get_current_account_id, get_current_tenant, require_tenant_feature
 from app.schemas.common import PaginatedResponse
+from app.schemas.diversion import DiversionEvidenceCreate, DiversionTransitionRequest
+from app.schemas.export import RiskExportRequest
+from app.services import diversion_authority
+from app.services.channel_access import channel_dependencies
+from app.services.export_access import (
+    CanonicalExportIdempotencyKey,
+    record_authorized_prepared_export,
+    require_export_auth_session,
+)
+from app.services.export_admission import enforce_export_rate_limit
+from app.services.risk_access import risk_dependencies
 from app.services.risk_dashboard import (
     export_risk_data,
     get_cross_region_stats,
     get_cross_region_trend,
+    get_diversion_investigation,
     get_diversion_summary,
     get_repeat_scan_stats,
-    resolve_diversion_clue,
 )
 
 risk_dashboard_router = APIRouter(
     prefix="/api/v1/risk-dashboard",
     tags=["risk-dashboard"],
 )
-_require_risk_feature = require_tenant_feature("risk_module")
+_require_risk_feature = require_tenant_feature("risk_module", db_scope="function")
 
 
-class ResolveDiversionRequest(BaseModel):
-    resolution_action: str | None = None
-    resolution_note: str | None = None
+CanonicalIdempotencyKey = Annotated[
+    str,
+    Header(
+        alias="Idempotency-Key",
+        min_length=36,
+        max_length=36,
+        pattern=r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+    ),
+]
 
 
 def require_admin(request: Request) -> None:
@@ -41,7 +60,9 @@ def require_admin(request: Request) -> None:
         raise HTTPException(status_code=403, detail="Admin permission required")
 
 
-@risk_dashboard_router.get("/repeat-scans", dependencies=[Depends(_require_risk_feature)])
+@risk_dashboard_router.get(
+    "/repeat-scans", dependencies=[Depends(_require_risk_feature), *risk_dependencies("risk:read")]
+)
 async def repeat_scans_endpoint(
     min_count: int = Query(2, ge=2),
     page: int = Query(1, ge=1),
@@ -53,7 +74,9 @@ async def repeat_scans_endpoint(
     return PaginatedResponse(items=items, total=total, page=page, page_size=page_size)
 
 
-@risk_dashboard_router.get("/cross-region", dependencies=[Depends(_require_risk_feature)])
+@risk_dashboard_router.get(
+    "/cross-region", dependencies=[Depends(_require_risk_feature), *risk_dependencies("risk:read")]
+)
 async def cross_region_endpoint(
     days_back: int = Query(30, ge=1, le=365),
     db: AsyncSession = Depends(get_db),
@@ -63,7 +86,9 @@ async def cross_region_endpoint(
     return stats
 
 
-@risk_dashboard_router.get("/cross-region-trend", dependencies=[Depends(_require_risk_feature)])
+@risk_dashboard_router.get(
+    "/cross-region-trend", dependencies=[Depends(_require_risk_feature), *risk_dependencies("risk:read")]
+)
 async def cross_region_trend_endpoint(
     days_back: int = Query(30, ge=1, le=365),
     db: AsyncSession = Depends(get_db),
@@ -73,7 +98,14 @@ async def cross_region_trend_endpoint(
     return {"trend": trend}
 
 
-@risk_dashboard_router.get("/diversion-summary", dependencies=[Depends(_require_risk_feature)])
+@risk_dashboard_router.get(
+    "/diversion-summary",
+    dependencies=[
+        Depends(_require_risk_feature),
+        *risk_dependencies("risk:read"),
+        *channel_dependencies("channel:read"),
+    ],
+)
 async def diversion_summary_endpoint(
     resolved: bool | None = Query(None),
     page: int = Query(1, ge=1),
@@ -84,67 +116,158 @@ async def diversion_summary_endpoint(
     return await get_diversion_summary(db, tenant_id, resolved=resolved, page=page, page_size=page_size)
 
 
-@risk_dashboard_router.put(
-    "/diversion-clues/{clue_id}/resolve",
-    dependencies=[Depends(_require_risk_feature)],
+@risk_dashboard_router.get(
+    "/diversion-clues/{clue_id}/investigation",
+    dependencies=[
+        Depends(_require_risk_feature),
+        *risk_dependencies("risk:read"),
+        *channel_dependencies("channel:read"),
+    ],
 )
-async def resolve_diversion_endpoint(
+async def diversion_investigation_endpoint(
     clue_id: uuid.UUID,
-    body: ResolveDiversionRequest | None = None,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
-    account_id: uuid.UUID = Depends(get_current_account_id),
 ):
-    clue = await resolve_diversion_clue(
-        db,
-        tenant_id,
-        clue_id,
-        resolution_action=body.resolution_action if body else None,
-        resolution_note=body.resolution_note if body else None,
-        resolved_by_account_id=account_id,
-    )
-    if not clue:
+    investigation = await get_diversion_investigation(db, tenant_id, clue_id)
+    if investigation is None:
         raise HTTPException(404, "Diversion clue not found")
+    clue, evidence, history = investigation
     return {
-        "id": str(clue.id),
+        "clue_id": str(clue.id),
+        "version": clue.version,
+        "investigation_status": clue.investigation_status,
         "resolved": clue.resolved,
         "resolution_action": clue.resolution_action,
         "resolution_note": clue.resolution_note,
-        "resolved_by_account_id": str(clue.resolved_by_account_id) if clue.resolved_by_account_id else None,
-        "resolved_at": clue.resolved_at.isoformat() if clue.resolved_at else None,
+        "evidence": [
+            {
+                "id": str(item.id),
+                "evidence_type": item.evidence_type,
+                "source": item.source,
+                "file_url": item.file_url,
+                "description": item.description,
+                "uploaded_by_account_id": str(item.uploaded_by_account_id),
+                "uploaded_at": item.uploaded_at.isoformat(),
+            }
+            for item in evidence
+        ],
+        "history": [
+            {
+                "id": str(item.id),
+                "from_status": item.from_status,
+                "to_status": item.to_status,
+                "changed_by_account_id": (str(item.changed_by_account_id) if item.changed_by_account_id else None),
+                "changed_at": item.changed_at.isoformat(),
+                "reason": item.reason,
+            }
+            for item in history
+        ],
     }
 
 
-@risk_dashboard_router.get(
-    "/export",
-    response_class=PlainTextResponse,
-    dependencies=[Depends(_require_risk_feature)],
+@risk_dashboard_router.post(
+    "/diversion-clues/{clue_id}/evidence",
+    status_code=201,
+    dependencies=[
+        Depends(_require_risk_feature),
+        *risk_dependencies("risk:manage"),
+        *channel_dependencies("channel:manage"),
+    ],
 )
-async def export_endpoint(
-    data_type: str = Query("alerts", pattern="^(alerts|diversions)$"),
-    db: AsyncSession = Depends(get_db),
+async def add_diversion_evidence_endpoint(
+    clue_id: uuid.UUID,
+    body: DiversionEvidenceCreate,
+    idempotency_key: CanonicalIdempotencyKey,
+    db: AsyncSession = Depends(get_db, scope="function"),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
     account_id: uuid.UUID = Depends(get_current_account_id),
-    _: None = Depends(require_admin),
 ):
-    csv_data = await export_risk_data(db, tenant_id, data_type)
-
-    from app.services.export_audit import log_export
-
-    await log_export(
+    return await diversion_authority.add_evidence(
         db,
         tenant_id,
-        account_id,
-        f"risk_{data_type}_csv",
-        file_name=f"risk_{data_type}.csv",
-        row_count=csv_data.count("\n") - 1 if csv_data else 0,
+        clue_id,
+        expected_version=body.expected_version,
+        idempotency_key=idempotency_key,
+        evidence_type=body.evidence_type,
+        file_url=str(body.file_url) if body.file_url else None,
+        description=body.description,
+        evidence_digest=body.evidence_digest,
+        actor_id=account_id,
+    )
+
+
+@risk_dashboard_router.post(
+    "/diversion-clues/{clue_id}/transition",
+    dependencies=[
+        Depends(_require_risk_feature),
+        *risk_dependencies("risk:manage"),
+        *channel_dependencies("channel:manage"),
+    ],
+)
+async def transition_diversion_endpoint(
+    clue_id: uuid.UUID,
+    body: DiversionTransitionRequest,
+    idempotency_key: CanonicalIdempotencyKey,
+    db: AsyncSession = Depends(get_db, scope="function"),
+    tenant_id: uuid.UUID = Depends(get_current_tenant),
+    account_id: uuid.UUID = Depends(get_current_account_id),
+):
+    return await diversion_authority.transition_clue(
+        db,
+        tenant_id,
+        clue_id,
+        expected_version=body.expected_version,
+        idempotency_key=idempotency_key,
+        to_status=body.to_status,
+        reason=body.reason,
+        resolution_note=body.resolution_note,
+        actor_id=account_id,
+    )
+
+
+@risk_dashboard_router.post(
+    "/export",
+    dependencies=[Depends(_require_risk_feature), *risk_dependencies("risk:read")],
+)
+async def export_endpoint(
+    body: RiskExportRequest,
+    idempotency_key: CanonicalExportIdempotencyKey,
+    request: Request,
+    db: AsyncSession = Depends(get_db, scope="function"),
+    tenant_id: uuid.UUID = Depends(get_current_tenant),
+    _: None = Depends(require_admin),
+):
+    auth_session_id = require_export_auth_session(request)
+    await enforce_export_rate_limit(tenant_id, uuid.UUID(str(request.state.account_id)))
+    csv_bytes = (await export_risk_data(db, tenant_id, body.data_type)).encode("utf-8-sig")
+    checksum = hashlib.sha256(csv_bytes).hexdigest()
+    prepared = await record_authorized_prepared_export(
+        db,
+        tenant_id=tenant_id,
+        auth_session_id=auth_session_id,
+        export_id=uuid7(),
+        export_type=f"risk_{body.data_type}_csv",
+        reason=body.reason,
+        scope_snapshot={"data_type": body.data_type, "row_limit": 50_000},
+        idempotency_key=idempotency_key,
+        file_name=f"risk_{body.data_type}.csv",
+        content_type="text/csv; charset=utf-8",
+        row_count=max(0, csv_bytes.count(b"\n") - 1),
+        checksum_sha256=checksum,
+        file_size_bytes=len(csv_bytes),
     )
     await db.commit()
 
-    return PlainTextResponse(
-        content=csv_data,
-        media_type="text/csv",
-        headers={"Content-Disposition": f"attachment; filename=risk_{data_type}.csv"},
+    return Response(
+        content=csv_bytes,
+        media_type="text/csv; charset=utf-8",
+        headers={
+            "Content-Disposition": f"attachment; filename=risk_{body.data_type}.csv",
+            "Content-Length": str(prepared.file_size_bytes),
+            "X-Content-SHA256": prepared.checksum_sha256,
+            "X-Export-Id": str(prepared.export_id),
+        },
     )
 
 
@@ -168,7 +291,9 @@ def _broadcast_alert(tenant_id: str, alert_data: dict) -> None:
             pass  # 丢弃过旧消息
 
 
-@risk_dashboard_router.post("/alerts/ticket", dependencies=[Depends(_require_risk_feature)])
+@risk_dashboard_router.post(
+    "/alerts/ticket", dependencies=[Depends(_require_risk_feature), *risk_dependencies("risk:read")]
+)
 async def create_sse_ticket(
     tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):

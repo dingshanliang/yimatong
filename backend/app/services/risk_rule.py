@@ -1,222 +1,56 @@
-"""风控规则引擎服务"""
+"""Read-only risk projections and pure rule evaluation helpers."""
 
 import uuid
 
+from pydantic import ValidationError
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.risk import (
-    CampaignRiskRule,
-    InterceptionRecord,
-    RiskRule,
-)
+from app.models.risk import InterceptionRecord, RiskCampaignPause, RiskRule
+from app.schemas.risk_rule import _CONFIG_MODEL
 
 
-async def create_risk_rule(
-    db: AsyncSession,
-    tenant_id: uuid.UUID,
-    name: str,
-    rule_type: str,
-    action: str,
-    config: dict,
-) -> RiskRule:
-    rule = RiskRule(
-        tenant_id=tenant_id,
-        name=name,
-        rule_type=rule_type,
-        action=action,
-        config=config,
-    )
-    db.add(rule)
-    await db.flush()
-    await db.refresh(rule)
-    return rule
+def normalize_rule_config(rule_type: str, config: dict) -> dict:
+    model = _CONFIG_MODEL.get(rule_type)
+    if model is None:
+        raise ValidationError.from_exception_data("RiskRuleConfig", [])
+    return model.model_validate(config).model_dump()
 
 
-async def list_risk_rules(
-    db: AsyncSession,
-    tenant_id: uuid.UUID,
-) -> list[RiskRule]:
+async def list_risk_rules(db: AsyncSession, tenant_id: uuid.UUID) -> list[RiskRule]:
     result = await db.execute(select(RiskRule).where(RiskRule.tenant_id == tenant_id).order_by(RiskRule.id.desc()))
     return list(result.scalars().all())
 
 
 async def get_risk_rule(
-    db: AsyncSession,
-    tenant_id: uuid.UUID,
-    rule_id: uuid.UUID,
+    db: AsyncSession, tenant_id: uuid.UUID, rule_id: uuid.UUID, *, refresh: bool = False
 ) -> RiskRule | None:
-    result = await db.execute(select(RiskRule).where(RiskRule.id == rule_id, RiskRule.tenant_id == tenant_id))
-    return result.scalar_one_or_none()
-
-
-async def update_risk_rule(
-    db: AsyncSession,
-    tenant_id: uuid.UUID,
-    rule_id: uuid.UUID,
-    **updates,
-) -> RiskRule:
-    rule = await get_risk_rule(db, tenant_id, rule_id)
-    if not rule:
-        raise ValueError("Risk rule not found")
-    for k, v in updates.items():
-        setattr(rule, k, v)
-    await db.flush()
-    await db.refresh(rule)
-    return rule
-
-
-async def delete_risk_rule(
-    db: AsyncSession,
-    tenant_id: uuid.UUID,
-    rule_id: uuid.UUID,
-) -> bool:
-    rule = await get_risk_rule(db, tenant_id, rule_id)
-    if not rule:
-        raise ValueError("Risk rule not found")
-    await db.delete(rule)
-    await db.flush()
-    return True
+    stmt = select(RiskRule).where(RiskRule.id == rule_id, RiskRule.tenant_id == tenant_id)
+    if refresh:
+        stmt = stmt.execution_options(populate_existing=True)
+    return (await db.execute(stmt)).scalar_one_or_none()
 
 
 def _evaluate_rule(rule: RiskRule, context: dict) -> bool:
-    """根据规则配置和上下文判断是否触发"""
+    """Pure preview helper. Authoritative execution happens in PostgreSQL."""
     config = rule.config
-    rt = rule.rule_type
-
-    if rt == "ip_frequency":
+    rule_type = rule.rule_type
+    if rule_type in {"ip_frequency", "phone_frequency", "device_frequency"}:
         return context.get("request_count", 0) >= config.get("max_requests", 999)
-    elif rt == "phone_frequency":
-        return context.get("request_count", 0) >= config.get("max_requests", 999)
-    elif rt == "device_frequency":
-        return context.get("request_count", 0) >= config.get("max_requests", 999)
-    elif rt == "time_window":
-        current_hour = context.get("current_hour")
-        allowed = config.get("allowed_hours", [])
-        return current_hour not in allowed
-    elif rt == "region_restriction":
+    if rule_type == "time_window":
+        return context.get("current_hour") not in config.get("allowed_hours", [])
+    if rule_type == "region_restriction":
         allowed = config.get("allowed_regions", [])
-        detected = context.get("detected_region", "")
-        return detected not in allowed if allowed else False
-    elif rt == "cross_region":
-        # 跨区预警规则：检测到跨区扫码且累计次数超过阈值
-        if not context.get("cross_region_detected"):
-            return False
-        threshold = config.get("threshold_count", 1)
-        return context.get("cross_region_count", 0) >= threshold
-    elif rt == "budget_limit":
+        return context.get("detected_region", "") not in allowed if allowed else False
+    if rule_type == "cross_region":
+        return bool(context.get("cross_region_detected")) and context.get("cross_region_count", 0) >= config.get(
+            "threshold_count", 1
+        )
+    if rule_type == "budget_limit":
         return context.get("current_spend", 0) >= config.get("max_budget", float("inf"))
-    elif rt == "stock_limit":
+    if rule_type == "stock_limit":
         return context.get("stock_used", 0) >= config.get("max_stock", float("inf"))
     return False
-
-
-async def evaluate_rule(
-    db: AsyncSession,
-    tenant_id: uuid.UUID,
-    rule_type: str,
-    context: dict,
-    consumer_id: str | None = None,
-) -> dict:
-    """评估指定类型的所有启用规则"""
-    result = await db.execute(
-        select(RiskRule).where(
-            RiskRule.tenant_id == tenant_id,
-            RiskRule.rule_type == rule_type,
-            RiskRule.enabled.is_(True),
-        )
-    )
-    rules = list(result.scalars().all())
-
-    for rule in rules:
-        if _evaluate_rule(rule, context):
-            record = InterceptionRecord(
-                tenant_id=tenant_id,
-                risk_rule_id=rule.id,
-                action=rule.action,
-                context=context,
-                consumer_id=consumer_id,
-            )
-            db.add(record)
-            await db.flush()
-            await db.refresh(record)
-            return {
-                "triggered": True,
-                "action": rule.action,
-                "rule_id": str(rule.id),
-                "rule_name": rule.name,
-                "interception_id": str(record.id),
-            }
-
-    return {"triggered": False, "action": None}
-
-
-async def attach_rule_to_campaign(
-    db: AsyncSession,
-    tenant_id: uuid.UUID,
-    rule_id: uuid.UUID,
-    campaign_id: uuid.UUID,
-) -> CampaignRiskRule:
-    link = CampaignRiskRule(
-        tenant_id=tenant_id,
-        campaign_id=campaign_id,
-        risk_rule_id=rule_id,
-    )
-    db.add(link)
-    await db.flush()
-    await db.refresh(link)
-    return link
-
-
-async def evaluate_campaign_rules(
-    db: AsyncSession,
-    tenant_id: uuid.UUID,
-    campaign_id: uuid.UUID,
-    context: dict,
-) -> dict:
-    """评估活动关联的所有启用规则"""
-    result = await db.execute(
-        select(CampaignRiskRule).where(
-            CampaignRiskRule.campaign_id == campaign_id,
-            CampaignRiskRule.tenant_id == tenant_id,
-        )
-    )
-    links = list(result.scalars().all())
-    rule_ids = [link.risk_rule_id for link in links]
-
-    if not rule_ids:
-        return {"triggered": False, "action": None, "rules_evaluated": 0}
-
-    rules_result = await db.execute(
-        select(RiskRule).where(
-            RiskRule.id.in_(rule_ids),
-            RiskRule.enabled.is_(True),
-        )
-    )
-    rules = list(rules_result.scalars().all())
-
-    for rule in rules:
-        if _evaluate_rule(rule, context):
-            record = InterceptionRecord(
-                tenant_id=tenant_id,
-                risk_rule_id=rule.id,
-                campaign_id=campaign_id,
-                action=rule.action,
-                context=context,
-            )
-            db.add(record)
-            await db.flush()
-            await db.refresh(record)
-            return {
-                "triggered": True,
-                "action": rule.action,
-                "rule_id": str(rule.id),
-                "rule_name": rule.name,
-                "interception_id": str(record.id),
-                "rules_evaluated": len(rules),
-            }
-
-    return {"triggered": False, "action": None, "rules_evaluated": len(rules)}
 
 
 async def list_interceptions(
@@ -227,27 +61,39 @@ async def list_interceptions(
     page: int = 1,
     page_size: int = 20,
 ) -> tuple[list[InterceptionRecord], int]:
-    stmt = select(InterceptionRecord).where(
-        InterceptionRecord.tenant_id == tenant_id,
-    )
-    count_stmt = (
-        select(func.count())
-        .select_from(InterceptionRecord)
-        .where(
-            InterceptionRecord.tenant_id == tenant_id,
-        )
-    )
-
+    filters = [InterceptionRecord.tenant_id == tenant_id]
     if action:
-        stmt = stmt.where(InterceptionRecord.action == action)
-        count_stmt = count_stmt.where(InterceptionRecord.action == action)
+        filters.append(InterceptionRecord.action == action)
     if auto_triggered is not None:
-        stmt = stmt.where(InterceptionRecord.auto_triggered == auto_triggered)
-        count_stmt = count_stmt.where(InterceptionRecord.auto_triggered == auto_triggered)
+        filters.append(InterceptionRecord.auto_triggered == auto_triggered)
+    total = (await db.execute(select(func.count()).select_from(InterceptionRecord).where(*filters))).scalar() or 0
+    result = await db.execute(
+        select(InterceptionRecord)
+        .where(*filters)
+        .order_by(InterceptionRecord.id.desc())
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+    )
+    return list(result.scalars().all()), total
 
-    total_result = await db.execute(count_stmt)
-    total = total_result.scalar() or 0
 
-    stmt = stmt.order_by(InterceptionRecord.id.desc()).offset((page - 1) * page_size).limit(page_size)
-    result = await db.execute(stmt)
+async def list_campaign_pauses(
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    *,
+    status: str | None,
+    page: int,
+    page_size: int,
+) -> tuple[list[RiskCampaignPause], int]:
+    filters = [RiskCampaignPause.tenant_id == tenant_id]
+    if status is not None:
+        filters.append(RiskCampaignPause.status == status)
+    total = (await db.execute(select(func.count()).select_from(RiskCampaignPause).where(*filters))).scalar() or 0
+    result = await db.execute(
+        select(RiskCampaignPause)
+        .where(*filters)
+        .order_by(RiskCampaignPause.paused_at.desc(), RiskCampaignPause.id.desc())
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+    )
     return list(result.scalars().all()), total

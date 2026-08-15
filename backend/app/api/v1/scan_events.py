@@ -3,6 +3,7 @@
 import hashlib
 import hmac
 import logging
+from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -24,6 +25,7 @@ scan_event_router = APIRouter(tags=["scan-events"])
 _RATE_WINDOW_SECONDS = 60
 _IP_MAX_EVENTS = 120
 _TOKEN_TENANT_MAX_EVENTS = 60
+_MAX_CLIENT_CLOCK_SKEW = timedelta(minutes=5)
 _security_cache = AsyncRedisCache(prefix="scan_event_security", default_ttl=_RATE_WINDOW_SECONDS)
 
 
@@ -45,6 +47,16 @@ class ScanEventRequest(BaseModel):
     # 所有允许的客户端事件都必须提供幂等键。action/value 等未定义维度
     # 会被 extra=forbid 拒绝，避免任意高基数数据进入分析表。
     client_event_id: str = Field(min_length=1, max_length=100, pattern=r"^[A-Za-z0-9:_-]+$")
+
+
+def _validate_client_timestamp(value: datetime | None, *, received_at: datetime) -> datetime:
+    """Bound advisory client time; reporting windows use trusted ``received_at``."""
+
+    if value is None:
+        return received_at
+    if abs(value.astimezone(UTC) - received_at) > _MAX_CLIENT_CLOCK_SKEW:
+        raise HTTPException(status_code=422, detail="timestamp exceeds allowed clock skew")
+    return value
 
 
 def _keyed_rate_digest(value: str) -> str:
@@ -83,6 +95,8 @@ async def report_scan_event(
     - 幂等：(tenant_id, client_event_id) 由数据库原子唯一索引保证。
     - 不创建 ScanEvent 行（权威扫码事实由 resolver 唯一写入，yimatong-zgb1.4）。
     """
+    received_at = datetime.now(UTC)
+    occurred_at = _validate_client_timestamp(body.timestamp, received_at=received_at)
     auth_header = request.headers.get("Authorization", "")
     if not auth_header.startswith("Bearer "):
         return {"status": "ignored", "reason": "missing_token"}
@@ -149,7 +163,7 @@ async def report_scan_event(
             page_version_id=body.page_version_id,
             ip_hash=ip_hash,
             user_agent=user_agent[:500] if user_agent else None,
-            occurred_at=body.timestamp,
+            occurred_at=occurred_at,
         )
         await db.commit()
     except Exception:

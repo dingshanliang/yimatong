@@ -130,8 +130,16 @@ class TestCleanEnvRebuild:
 
     async def test_baseline_seed_idempotent(self, bypass_session, migrated_pg_url):
         """门禁 AC：同一初始化流程连续运行两次不产生重复记录或状态漂移。"""
-        await seed_baseline(migrated_pg_url)
-        await seed_baseline(migrated_pg_url)  # 第二次
+        first_summary = await seed_baseline(migrated_pg_url)
+        second_summary = await seed_baseline(migrated_pg_url)
+        seed_tenant_ids = {
+            uuid.UUID(first_summary["baseline_tenant"]["id"]),
+            uuid.UUID(first_summary["control_tenant"]["id"]),
+        }
+        assert seed_tenant_ids == {
+            uuid.UUID(second_summary["baseline_tenant"]["id"]),
+            uuid.UUID(second_summary["control_tenant"]["id"]),
+        }
         await bypass_session.rollback()
         await bypass_session.execute(text("SET LOCAL app.bypass_rls = 'true'"))
         evidence = await verify_no_duplicate_on_rerun(bypass_session)
@@ -139,6 +147,24 @@ class TestCleanEnvRebuild:
         # 码数仍为 20（无重复生成）
         presence = await verify_baseline_presence(bypass_session)
         assert presence["db_assertions"]["code_items"]["count"] == 20
+        seed_export_ids = list(
+            (
+                await bypass_session.execute(
+                    text(
+                        "SELECT id FROM export_logs "
+                        "WHERE tenant_id IN (:baseline_tenant_id,:control_tenant_id) "
+                        "AND authority_version=2 AND scope_snapshot->>'source'='trusted_seed' "
+                        "ORDER BY tenant_id"
+                    ),
+                    {
+                        "baseline_tenant_id": first_summary["baseline_tenant"]["id"],
+                        "control_tenant_id": first_summary["control_tenant"]["id"],
+                    },
+                )
+            ).scalars()
+        )
+        assert len(seed_export_ids) == 2
+        assert all(export_id.version == 7 for export_id in seed_export_ids)
 
 
 # ── 门禁：多租户隔离（真实 PG RLS，SQLite 测不到）─────────────────────────

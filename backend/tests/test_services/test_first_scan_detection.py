@@ -41,7 +41,7 @@ class TestRecordScanEvent:
         with (
             patch("app.core.database._session_uses_postgresql", return_value=True),
             patch("app.services.scan_event.check_quota_incremental_locked", AsyncMock()),
-            patch("app.services.scan_event.event_bus.emit", AsyncMock()),
+            patch("app.services.scan_event.event_bus.emit", AsyncMock()) as emit,
         ):
             event = await record_scan_event(db, tenant_id, "PGFIRSTSCAN01")
 
@@ -52,6 +52,7 @@ class TestRecordScanEvent:
         assert parameters["event_id"] is not None
         assert event.is_first_scan is True
         assert event.scan_time == first_scanned_at
+        assert emit.await_args.args[1]["diversion_observation_owner"] == "risk_auto_handler"
 
     @pytest.mark.anyio
     async def test_record_first_scan(self, db: AsyncSession):

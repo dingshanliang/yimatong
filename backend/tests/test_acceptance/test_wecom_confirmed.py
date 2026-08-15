@@ -13,26 +13,54 @@ from __future__ import annotations
 import asyncio
 import uuid
 from collections.abc import AsyncGenerator
+from pathlib import Path
+from unittest.mock import patch
 
 import pytest
+from fastapi import HTTPException
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.core.database import get_db, get_db_with_bypass
 from app.main import app
+from tests.test_acceptance.test_campaign_authority_rollout import _isolated_campaign_rollout_database
 
 pytestmark = [pytest.mark.acceptance, pytest.mark.asyncio]
+_WAY_FIXTURE_LOCK = asyncio.Lock()
 
 
 @pytest.fixture
-async def client(migrated_pg_url: str) -> AsyncGenerator[AsyncClient, None]:
-    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+async def wecom_pg_url(migrated_pg_url: str) -> AsyncGenerator[str, None]:
+    async with _isolated_campaign_rollout_database(migrated_pg_url) as database_url:
+        import asyncpg
 
+        owner = await asyncpg.connect(database_url.replace("postgresql+asyncpg://", "postgresql://"))
+        try:
+            await owner.execute((Path(__file__).parents[2] / "scripts" / "init_runtime_role.sql").read_text())
+        finally:
+            await owner.close()
+        yield database_url
+
+
+@pytest.fixture
+async def bypass_session(wecom_pg_url: str) -> AsyncGenerator[AsyncSession, None]:
+    engine = create_async_engine(wecom_pg_url)
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+    try:
+        async with factory() as session:
+            yield session
+    finally:
+        await engine.dispose()
+
+
+@pytest.fixture
+async def client(wecom_pg_url: str) -> AsyncGenerator[AsyncClient, None]:
     from app.middleware.rate_limit import rate_limiter
 
     rate_limiter._cache._mem_store.clear()  # type: ignore[attr-defined]
 
-    engine = create_async_engine(migrated_pg_url)
+    engine = create_async_engine(wecom_pg_url)
 
     async def override_get_db():
         async with async_sessionmaker(engine, expire_on_commit=False)() as session:
@@ -61,17 +89,60 @@ async def _process_callback(
     event: dict,
     verification_source: str = "confirmed_callback",
 ) -> dict:
-    """直接调 process_wecom_callback_event（契约级模拟）。"""
-    from app.services.wecom_integration import process_wecom_callback_event
+    """Use callback authority for official events; isolate the explicit mock contract."""
 
-    result = await process_wecom_callback_event(
-        bypass_session,
-        connector_id=uuid.UUID(connector_id),
-        event=event,
-        verification_source=verification_source,
-    )
-    await bypass_session.commit()
-    return result
+    if verification_source == "mock_added":
+        from app.core.database import set_session_tenant_context
+        from app.services.wecom_integration import process_wecom_callback_event
+
+        await set_session_tenant_context(bypass_session, uuid.UUID(tenant_id))
+        result = await process_wecom_callback_event(
+            bypass_session,
+            connector_id=uuid.UUID(connector_id),
+            event=event,
+            verification_source=verification_source,
+        )
+        await bypass_session.commit()
+        return result
+
+    from app.services import wecom_callback_authority
+
+    state = event.get("State") or event.get("state")
+    user_id = event.get("UserID") or event.get("user_id")
+    if state and user_id:
+        async with _WAY_FIXTURE_LOCK:
+            await bypass_session.execute(text("SET LOCAL app.bypass_rls = 'true'"))
+            await bypass_session.execute(
+                text(
+                    "INSERT INTO wecom_contact_ways "
+                    "(id,tenant_id,connector_id,state,user_ids,status,created_at,updated_at) "
+                    "VALUES(:id,:tenant_id,:connector_id,:state,json_build_array(CAST(:user_id AS text)),"
+                    "'active',now(),now()) ON CONFLICT (tenant_id,state) DO UPDATE SET "
+                    "connector_id=excluded.connector_id,user_ids=excluded.user_ids,status='active',updated_at=now()"
+                ),
+                {
+                    "id": str(uuid.uuid4()),
+                    "tenant_id": tenant_id,
+                    "connector_id": connector_id,
+                    "state": state,
+                    "user_id": user_id,
+                },
+            )
+            await bypass_session.commit()
+
+    owner_url = bypass_session.get_bind().url.render_as_string(hide_password=False)
+    callback_url = owner_url.replace("yimatong:yimatong@", "yimatong_callback:yimatong_callback@")
+    callback_engine = create_async_engine(callback_url)
+    callback_factory = async_sessionmaker(callback_engine, expire_on_commit=False)
+    try:
+        with patch.object(wecom_callback_authority, "callback_session_factory", callback_factory):
+            return await wecom_callback_authority.apply_verified_wecom_contact_event(
+                tenant_id=uuid.UUID(tenant_id),
+                connector_id=uuid.UUID(connector_id),
+                event=event,
+            )
+    finally:
+        await callback_engine.dispose()
 
 
 # ── AC1：点击不计为确认转化 ───────────────────────────────────────────────
@@ -80,11 +151,11 @@ async def _process_callback(
 class TestClickIsIntentNotConfirmed:
     """AC1：点击企微入口（contact-way 创建）不会直接计为已加企微或确认转化。"""
 
-    async def test_contact_way_creation_no_external_contact(self, bypass_session, migrated_pg_url):
+    async def test_contact_way_creation_no_external_contact(self, bypass_session, wecom_pg_url):
         """AC1：获取 contact-way（点击意图）不创建 WeComExternalContact 行。"""
         from tests.test_acceptance.conftest import seed_baseline
 
-        summary = await seed_baseline(migrated_pg_url)
+        summary = await seed_baseline(wecom_pg_url)
         tenant_id = summary["baseline_tenant"]["id"]
 
         # AC1：contact-way 创建时不应有 WeComExternalContact 行（只有意图事件）
@@ -105,11 +176,11 @@ class TestClickIsIntentNotConfirmed:
 class TestCallbackSingleConfirmation:
     """AC2：合法官方回调通过验签后只生成一次确认结果。"""
 
-    async def test_callback_creates_confirmed_contact(self, bypass_session, migrated_pg_url):
+    async def test_callback_creates_confirmed_contact(self, bypass_session, wecom_pg_url):
         """AC2：合法 add_external_contact 回调创建一条 ACTIVE 确认行。"""
         from tests.test_acceptance.conftest import seed_baseline
 
-        summary = await seed_baseline(migrated_pg_url)
+        summary = await seed_baseline(wecom_pg_url)
         tenant_id = summary["baseline_tenant"]["id"]
 
         # 需要先创建 connector（企微连接器）
@@ -173,11 +244,11 @@ class TestCallbackSingleConfirmation:
 class TestReplayForgeryRejection:
     """AC3：重放、伪造和跨租户回调被拒绝。"""
 
-    async def test_replay_same_event_idempotent(self, bypass_session, migrated_pg_url):
+    async def test_replay_same_event_idempotent(self, bypass_session, wecom_pg_url):
         """AC3：重放同 CreateTime 的事件被幂等拒绝。"""
         from tests.test_acceptance.conftest import seed_baseline
 
-        summary = await seed_baseline(migrated_pg_url)
+        summary = await seed_baseline(wecom_pg_url)
         tenant_id = summary["baseline_tenant"]["id"]
 
         await bypass_session.execute(text("SET LOCAL app.bypass_rls = 'true'"))
@@ -227,11 +298,11 @@ class TestReplayForgeryRejection:
 class TestHalfAddPendingNotConfirmed:
     """AC4：回调不可达或外部条件未具备时显示待验证，不伪装为成功。"""
 
-    async def test_half_add_pending_not_active_confirmed(self, bypass_session, migrated_pg_url):
+    async def test_half_add_pending_not_active_confirmed(self, bypass_session, wecom_pg_url):
         """AC4：add_half_external_contact 标记为 pending，has_confirmed_wecom_contact 返回 False。"""
         from tests.test_acceptance.conftest import seed_baseline
 
-        summary = await seed_baseline(migrated_pg_url)
+        summary = await seed_baseline(wecom_pg_url)
         tenant_id = summary["baseline_tenant"]["id"]
 
         await bypass_session.execute(text("SET LOCAL app.bypass_rls = 'true'"))
@@ -289,11 +360,11 @@ class TestHalfAddPendingNotConfirmed:
 class TestContractLevelMock:
     """AC5：自动化使用契约级模拟，mock_added 标记为非验签。"""
 
-    async def test_mock_added_marked_verification_source(self, bypass_session, migrated_pg_url):
+    async def test_mock_added_marked_verification_source(self, bypass_session, wecom_pg_url):
         """AC5：mock_added 路径标记 verification_source='mock_added'（区分真实回调）。"""
         from tests.test_acceptance.conftest import seed_baseline
 
-        summary = await seed_baseline(migrated_pg_url)
+        summary = await seed_baseline(wecom_pg_url)
         tenant_id = summary["baseline_tenant"]["id"]
 
         await bypass_session.execute(text("SET LOCAL app.bypass_rls = 'true'"))
@@ -352,12 +423,10 @@ class TestContractLevelMock:
 class TestAuthoritativeCallbackOrdering:
     """真实 PostgreSQL 证明删除、乱序和并发回调不能伪造确认关系。"""
 
-    async def test_delete_terminates_confirmation_and_older_add_cannot_restore_it(
-        self, bypass_session, migrated_pg_url
-    ):
+    async def test_delete_terminates_confirmation_and_older_add_cannot_restore_it(self, bypass_session, wecom_pg_url):
         from tests.test_acceptance.conftest import seed_baseline
 
-        summary = await seed_baseline(migrated_pg_url)
+        summary = await seed_baseline(wecom_pg_url)
         tenant_id = summary["baseline_tenant"]["id"]
         connector_id = uuid.uuid4()
         await bypass_session.execute(text("SET LOCAL app.bypass_rls = 'true'"))
@@ -384,6 +453,7 @@ class TestAuthoritativeCallbackOrdering:
             "ChangeType": "del_external_contact",
             "ExternalUserID": "ordered-external",
             "UserID": "ordered-staff",
+            "State": "ordered-state",
             "CreateTime": 300,
             "Sequence": 1,
         }
@@ -392,7 +462,9 @@ class TestAuthoritativeCallbackOrdering:
         assert (await _process_callback(bypass_session, tenant_id, str(connector_id), add))["status"] == "recorded"
         assert (await _process_callback(bypass_session, tenant_id, str(connector_id), delete))["status"] == "recorded"
         stale_result = await _process_callback(bypass_session, tenant_id, str(connector_id), stale_add)
-        assert stale_result == {"status": "ignored", "reason": "non_newer_event"}
+        assert stale_result["status"] == "ignored"
+        assert stale_result["reason"] == "non_newer_event"
+        assert stale_result["outcome"] == "ignored_stale"
 
         await bypass_session.execute(text("SET LOCAL app.bypass_rls = 'true'"))
         row = (
@@ -412,10 +484,10 @@ class TestAuthoritativeCallbackOrdering:
         assert row.event_sequence == 1
         assert row.deleted_at == row.event_time
 
-    async def test_unknown_event_is_ignored_without_relationship_write(self, bypass_session, migrated_pg_url):
+    async def test_unknown_event_is_ignored_without_relationship_write(self, bypass_session, wecom_pg_url):
         from tests.test_acceptance.conftest import seed_baseline
 
-        summary = await seed_baseline(migrated_pg_url)
+        summary = await seed_baseline(wecom_pg_url)
         tenant_id = summary["baseline_tenant"]["id"]
         connector_id = uuid.uuid4()
         await bypass_session.execute(text("SET LOCAL app.bypass_rls = 'true'"))
@@ -448,11 +520,11 @@ class TestAuthoritativeCallbackOrdering:
         ).scalar() == 0
 
     async def test_missing_or_wrong_top_level_event_is_ignored_before_relationship_write(
-        self, bypass_session, migrated_pg_url
+        self, bypass_session, wecom_pg_url
     ):
         from tests.test_acceptance.conftest import seed_baseline
 
-        summary = await seed_baseline(migrated_pg_url)
+        summary = await seed_baseline(wecom_pg_url)
         tenant_id = summary["baseline_tenant"]["id"]
         connector_id = uuid.uuid4()
         await bypass_session.execute(text("SET LOCAL app.bypass_rls = 'true'"))
@@ -489,34 +561,31 @@ class TestAuthoritativeCallbackOrdering:
             )
         ).scalar() == 0
 
-    async def test_concurrent_out_of_order_callbacks_converge_on_newest_event(self, migrated_pg_url):
-        from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
-
-        from app.services.wecom_integration import process_wecom_callback_event
+    async def test_concurrent_out_of_order_callbacks_converge_on_newest_event(self, bypass_session, wecom_pg_url):
         from tests.test_acceptance.conftest import seed_baseline
 
-        summary = await seed_baseline(migrated_pg_url)
+        summary = await seed_baseline(wecom_pg_url)
         tenant_id = summary["baseline_tenant"]["id"]
         connector_id = uuid.uuid4()
-        engine = create_async_engine(migrated_pg_url)
-        sessions = async_sessionmaker(engine, expire_on_commit=False)
-        async with sessions() as setup:
-            await setup.execute(text("SET LOCAL app.bypass_rls = 'true'"))
-            await setup.execute(
-                text(
-                    "INSERT INTO connectors (id, tenant_id, name, connector_type, config, enabled) "
-                    "VALUES (:id, :tenant_id, 'concurrent-wecom', 'wecom_customer_contact', '{}', true)"
-                ),
-                {"id": connector_id, "tenant_id": tenant_id},
-            )
-            await setup.commit()
+        await bypass_session.execute(text("SET LOCAL app.bypass_rls = 'true'"))
+        await bypass_session.execute(
+            text(
+                "INSERT INTO connectors (id, tenant_id, name, connector_type, config, enabled) "
+                "VALUES (:id, :tenant_id, 'concurrent-wecom', 'wecom_customer_contact', '{}', true)"
+            ),
+            {"id": connector_id, "tenant_id": tenant_id},
+        )
+        await bypass_session.commit()
 
         async def apply(event: dict) -> dict:
-            async with sessions() as session:
-                await session.execute(text("SET LOCAL app.bypass_rls = 'true'"))
-                result = await process_wecom_callback_event(session, connector_id=connector_id, event=event)
-                await session.commit()
-                return result
+            for _ in range(20):
+                try:
+                    return await _process_callback(bypass_session, tenant_id, str(connector_id), event)
+                except HTTPException as exc:
+                    if exc.status_code != 409 or exc.headers.get("Retry-After") != "1":
+                        raise
+                    await asyncio.sleep(0.01)
+            return await _process_callback(bypass_session, tenant_id, str(connector_id), event)
 
         older = {
             "Event": "change_external_contact",
@@ -537,18 +606,16 @@ class TestAuthoritativeCallbackOrdering:
         results = await asyncio.gather(apply(newer), apply(older))
         assert {result["status"] for result in results} <= {"recorded", "ignored"}
 
-        async with sessions() as verify:
-            await verify.execute(text("SET LOCAL app.bypass_rls = 'true'"))
-            row = (
-                await verify.execute(
-                    text(
-                        "SELECT verification_source, change_type, event_time, welcome_code_pending "
-                        "FROM wecom_external_contacts WHERE external_userid='concurrent-external'"
-                    )
+        await bypass_session.execute(text("SET LOCAL app.bypass_rls = 'true'"))
+        row = (
+            await bypass_session.execute(
+                text(
+                    "SELECT verification_source, change_type, event_time, welcome_code_pending "
+                    "FROM wecom_external_contacts WHERE external_userid='concurrent-external'"
                 )
-            ).one()
-            assert row.verification_source == "confirmed_callback"
-            assert row.change_type == "add_external_contact"
-            assert int(row.event_time.timestamp()) == 600
-            assert row.welcome_code_pending is False
-        await engine.dispose()
+            )
+        ).one()
+        assert row.verification_source == "confirmed_callback"
+        assert row.change_type == "add_external_contact"
+        assert int(row.event_time.timestamp()) == 600
+        assert row.welcome_code_pending is False

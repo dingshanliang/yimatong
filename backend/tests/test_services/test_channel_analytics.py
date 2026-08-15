@@ -1,6 +1,11 @@
 """渠道分析服务单元测试"""
 
 import uuid
+from unittest.mock import AsyncMock
+
+import pytest
+
+from app.services import channel_analytics
 
 
 class TestHealthScoreCalculation:
@@ -68,34 +73,29 @@ class TestHealthScoreCalculation:
         assert rate == 0.05
 
 
-class TestConversionRate:
-    """测试转化率计算"""
+@pytest.mark.anyio
+async def test_conversion_unavailable_without_immutable_claim_channel_receipt(monkeypatch):
+    """Tenant-wide claims must never be prorated into a channel conversion rate."""
+    monkeypatch.setattr(
+        channel_analytics,
+        "get_scan_by_channel",
+        AsyncMock(return_value=([{"id": "channel-1", "name": "华东", "scan_uv": 300}], 1)),
+    )
 
-    def test_basic_conversion(self):
-        claims = 50
-        uv = 1000
-        rate = round(claims / uv * 100, 2)
-        assert rate == 5.0
+    result = await channel_analytics.get_conversion_comparison(AsyncMock(), uuid.uuid4())
 
-    def test_zero_uv(self):
-        claims = 10
-        uv = 0
-        rate = round(claims / uv * 100, 2) if uv > 0 else 0
-        assert rate == 0
-
-    def test_vs_average(self):
-        channel_rate = 8.0
-        average_rate = 5.0
-        diff = round(channel_rate - average_rate, 2)
-        assert diff == 3.0
-
-    def test_estimated_claims_distribution(self):
-        """按 UV 比例分配总领取数"""
-        total_claims = 100
-        channel_uv = 300
-        total_uv = 1000
-        estimated = round(total_claims * channel_uv / total_uv)
-        assert estimated == 30
+    assert result == [
+        {
+            "id": "channel-1",
+            "name": "华东",
+            "scan_uv": 300,
+            "confirmed_claims": None,
+            "conversion_rate": None,
+            "vs_average": None,
+            "conversion_status": "unavailable",
+        }
+    ]
+    assert "estimated_claims" not in result[0]
 
 
 class TestSSEClientManagement:

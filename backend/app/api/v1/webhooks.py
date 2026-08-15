@@ -7,7 +7,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Annotated, Literal, Self
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
-from pydantic import AwareDatetime, BaseModel, Field, field_validator, model_validator
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, field_validator, model_validator
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -19,9 +19,11 @@ from app.services.redis_cache import AsyncRedisCache, SharedSecurityCacheUnavail
 from app.services.webhook import (
     ApiKeyActiveLimitReached,
     ApiKeyLifecycleConflict,
+    WebhookEndpointConflict,
     create_api_key,
     create_webhook_endpoint,
     delete_webhook_endpoint,
+    get_webhook_delivery,
     list_api_keys,
     list_deliveries,
     list_webhook_endpoints,
@@ -29,10 +31,12 @@ from app.services.webhook import (
     rotate_api_key,
     update_webhook_endpoint,
 )
-from app.utils.auth_rbac import require_api_key_admin
+from app.services.webhook_sender import validate_webhook_destination, validate_webhook_url
+from app.utils.auth_rbac import require_api_key_admin, require_durable_session, require_permission
 
 webhook_router = APIRouter(prefix="/api/v1/webhooks", tags=["webhooks"])
 _api_key_lifecycle_cache = AsyncRedisCache(prefix="api_key_lifecycle", default_ttl=60)
+_webhook_management_cache = AsyncRedisCache(prefix="webhook_management", default_ttl=60)
 _API_KEY_LIFECYCLE_WINDOW_SECONDS = 60
 
 CanonicalIdempotencyKey = Annotated[
@@ -45,6 +49,34 @@ CanonicalIdempotencyKey = Annotated[
     ),
 ]
 _MAX_API_KEY_LIFETIME = timedelta(days=365)
+WebhookConfigVersion = Annotated[int, Header(alias="If-Match", ge=1)]
+_WEBHOOK_EVENTS = frozenset(
+    {
+        "scan.created",
+        "claim.created",
+        "risk.alert",
+        "campaign.active",
+        "campaign.paused",
+        "campaign.ended",
+    }
+)
+
+
+async def require_brand_webhook_principal(request: Request) -> None:
+    """Allow only a live direct-brand JWT; API keys and acting tenants are excluded."""
+
+    await require_durable_session(request)
+    if (
+        getattr(request.state, "tenant_type", None) != "brand"
+        or getattr(request.state, "auth_method", None) != "jwt"
+        or not getattr(request.state, "session_id", None)
+        or getattr(request.state, "acting_tenant_id", None)
+    ):
+        raise HTTPException(status_code=403, detail="Direct brand webhook access required")
+
+
+def _webhook_dependencies(permission: str) -> list:
+    return [Depends(require_brand_webhook_principal), Depends(require_permission(permission))]
 
 
 def _lifecycle_rate_bucket(kind: str, identifier: uuid.UUID) -> str:
@@ -84,6 +116,33 @@ async def _enforce_api_key_lifecycle_rate_limit(tenant_id: uuid.UUID, actor_id: 
         raise HTTPException(status_code=503, detail="API key lifecycle service is temporarily unavailable") from exc
 
 
+def _webhook_rate_bucket(kind: str, identifier: uuid.UUID) -> str:
+    digest = hmac.new(
+        settings.hmac_pepper.encode(),
+        f"webhook-management:{kind}:{identifier}".encode(),
+        hashlib.sha256,
+    ).hexdigest()
+    return f"{kind}:{digest}"
+
+
+async def _enforce_webhook_management_rate_limit(tenant_id: uuid.UUID, actor_id: uuid.UUID) -> None:
+    try:
+        for kind, identifier, limit in (("tenant", tenant_id, 60), ("principal", actor_id, 20)):
+            allowed, _ = await _webhook_management_cache.rate_limit_check_shared(
+                _webhook_rate_bucket(kind, identifier),
+                max_attempts=limit,
+                window_seconds=_API_KEY_LIFECYCLE_WINDOW_SECONDS,
+            )
+            if not allowed:
+                raise HTTPException(
+                    status_code=429,
+                    detail="Webhook management requests are too frequent",
+                    headers={"Retry-After": str(_API_KEY_LIFECYCLE_WINDOW_SECONDS)},
+                )
+    except SharedSecurityCacheUnavailable as exc:
+        raise HTTPException(status_code=503, detail="Webhook management service is temporarily unavailable") from exc
+
+
 def _api_key_lifecycle_error(exc: DBAPIError) -> HTTPException:
     sqlstate = getattr(exc.orig, "sqlstate", None) or getattr(exc.orig, "pgcode", None)
     response_by_sqlstate = {
@@ -101,21 +160,76 @@ def _api_key_lifecycle_error(exc: DBAPIError) -> HTTPException:
     return HTTPException(status_code=status_code, detail=detail)
 
 
+def _webhook_authority_error(exc: DBAPIError) -> HTTPException:
+    sqlstate = getattr(exc.orig, "sqlstate", None) or getattr(exc.orig, "pgcode", None)
+    response_by_sqlstate = {
+        "22023": (400, "Invalid webhook endpoint"),
+        "28000": (401, "Authentication state is no longer valid"),
+        "42501": (403, "Insufficient permissions"),
+        "55P03": (409, "Webhook endpoint is busy"),
+        "40001": (409, "Webhook endpoint version conflict"),
+        "23505": (409, "Webhook endpoint conflict"),
+        "23503": (409, "Webhook endpoint has retained delivery history; disable it instead"),
+    }
+    response = response_by_sqlstate.get(sqlstate)
+    if response is None:
+        raise exc
+    status_code, detail = response
+    return HTTPException(status_code=status_code, detail=detail)
+
+
 class WebhookCreate(BaseModel):
-    url: str
-    events: list[str]
-    description: str | None = None
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    url: str = Field(min_length=1, max_length=500)
+    events: list[str] = Field(min_length=1, max_length=len(_WEBHOOK_EVENTS))
+    description: str | None = Field(default=None, max_length=500)
     batch_mode: bool = False
-    batch_size: int = 100
+    batch_size: int = Field(default=100, ge=1, le=1000)
+
+    @field_validator("url")
+    @classmethod
+    def validate_url_shape(cls, value: str) -> str:
+        validate_webhook_url(value)
+        return value
+
+    @field_validator("events")
+    @classmethod
+    def validate_events(cls, value: list[str]) -> list[str]:
+        if len(set(value)) != len(value) or any(event not in _WEBHOOK_EVENTS for event in value):
+            raise ValueError("Webhook events must be unique supported event names")
+        return value
 
 
 class WebhookUpdate(BaseModel):
-    url: str | None = None
-    events: list[str] | None = None
-    description: str | None = None
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    url: str | None = Field(default=None, min_length=1, max_length=500)
+    events: list[str] | None = Field(default=None, min_length=1, max_length=len(_WEBHOOK_EVENTS))
+    description: str | None = Field(default=None, max_length=500)
     enabled: bool | None = None
     batch_mode: bool | None = None
-    batch_size: int | None = None
+    batch_size: int | None = Field(default=None, ge=1, le=1000)
+
+    @field_validator("url")
+    @classmethod
+    def validate_url_shape(cls, value: str | None) -> str | None:
+        if value is not None:
+            validate_webhook_url(value)
+        return value
+
+    @field_validator("events")
+    @classmethod
+    def validate_events(cls, value: list[str] | None) -> list[str] | None:
+        if value is not None:
+            return WebhookCreate.validate_events(value)
+        return value
+
+    @model_validator(mode="after")
+    def require_change(self) -> Self:
+        if not self.model_fields_set:
+            raise ValueError("At least one webhook setting must be provided")
+        return self
 
 
 class ApiKeyCreate(BaseModel):
@@ -164,34 +278,46 @@ class ApiKeyListPage(BaseModel):
     page_size: int
 
 
-@webhook_router.post("/endpoints", status_code=201)
+@webhook_router.post("/endpoints", status_code=201, dependencies=_webhook_dependencies("webhook:manage"))
 async def create_endpoint(
     body: WebhookCreate,
-    db: AsyncSession = Depends(get_db),
+    request: Request,
+    db: AsyncSession = Depends(get_db, scope="function"),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
-    ep = await create_webhook_endpoint(
-        db,
-        tenant_id,
-        body.url,
-        body.events,
-        description=body.description,
-        batch_mode=body.batch_mode,
-        batch_size=body.batch_size,
-    )
+    actor_id = uuid.UUID(request.state.account_id)
+    await _enforce_webhook_management_rate_limit(tenant_id, actor_id)
+    try:
+        safe_url = await validate_webhook_destination(body.url)
+        ep = await create_webhook_endpoint(
+            db,
+            tenant_id,
+            uuid.UUID(request.state.session_id),
+            safe_url,
+            body.events,
+            actor_id=actor_id,
+            description=body.description,
+            batch_mode=body.batch_mode,
+            batch_size=body.batch_size,
+        )
+    except DBAPIError as exc:
+        raise _webhook_authority_error(exc) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {
         "id": str(ep.id),
         "url": ep.url,
         "events": ep.events,
         "description": ep.description,
         "enabled": ep.enabled,
+        "config_version": ep.config_version,
         "batch_mode": ep.batch_mode,
         "batch_size": ep.batch_size,
         "secret": ep.secret,
     }
 
 
-@webhook_router.get("/endpoints")
+@webhook_router.get("/endpoints", dependencies=_webhook_dependencies("webhook:read"))
 async def list_endpoints(
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
@@ -204,6 +330,7 @@ async def list_endpoints(
             "events": e.events,
             "description": e.description,
             "enabled": e.enabled,
+            "config_version": e.config_version,
             "batch_mode": e.batch_mode,
             "batch_size": e.batch_size,
         }
@@ -211,24 +338,39 @@ async def list_endpoints(
     ]
 
 
-@webhook_router.patch("/endpoints/{endpoint_id}")
+@webhook_router.patch("/endpoints/{endpoint_id}", dependencies=_webhook_dependencies("webhook:manage"))
 async def update_endpoint(
     endpoint_id: uuid.UUID,
     body: WebhookUpdate,
-    db: AsyncSession = Depends(get_db),
+    request: Request,
+    expected_version: WebhookConfigVersion,
+    db: AsyncSession = Depends(get_db, scope="function"),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
-    ep = await update_webhook_endpoint(
-        db,
-        tenant_id,
-        endpoint_id,
-        url=body.url,
-        events=body.events,
-        description=body.description,
-        enabled=body.enabled,
-        batch_mode=body.batch_mode,
-        batch_size=body.batch_size,
-    )
+    actor_id = uuid.UUID(request.state.account_id)
+    await _enforce_webhook_management_rate_limit(tenant_id, actor_id)
+    try:
+        safe_url = await validate_webhook_destination(body.url) if body.url is not None else None
+        ep = await update_webhook_endpoint(
+            db,
+            tenant_id,
+            uuid.UUID(request.state.session_id),
+            endpoint_id,
+            actor_id=actor_id,
+            expected_version=expected_version,
+            url=safe_url,
+            events=body.events,
+            description=body.description,
+            enabled=body.enabled,
+            batch_mode=body.batch_mode,
+            batch_size=body.batch_size,
+        )
+    except DBAPIError as exc:
+        raise _webhook_authority_error(exc) from exc
+    except WebhookEndpointConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     if not ep:
         raise HTTPException(status_code=404, detail="Webhook endpoint not found")
     return {
@@ -237,18 +379,35 @@ async def update_endpoint(
         "events": ep.events,
         "description": ep.description,
         "enabled": ep.enabled,
+        "config_version": ep.config_version,
         "batch_mode": ep.batch_mode,
         "batch_size": ep.batch_size,
     }
 
 
-@webhook_router.delete("/endpoints/{endpoint_id}")
+@webhook_router.delete("/endpoints/{endpoint_id}", dependencies=_webhook_dependencies("webhook:manage"))
 async def delete_endpoint(
     endpoint_id: uuid.UUID,
-    db: AsyncSession = Depends(get_db),
+    request: Request,
+    expected_version: WebhookConfigVersion,
+    db: AsyncSession = Depends(get_db, scope="function"),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
-    deleted = await delete_webhook_endpoint(db, tenant_id, endpoint_id)
+    actor_id = uuid.UUID(request.state.account_id)
+    await _enforce_webhook_management_rate_limit(tenant_id, actor_id)
+    try:
+        deleted = await delete_webhook_endpoint(
+            db,
+            tenant_id,
+            uuid.UUID(request.state.session_id),
+            endpoint_id,
+            actor_id=actor_id,
+            expected_version=expected_version,
+        )
+    except DBAPIError as exc:
+        raise _webhook_authority_error(exc) from exc
+    except WebhookEndpointConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     if not deleted:
         raise HTTPException(status_code=404, detail="Webhook endpoint not found")
     return {"deleted": True}
@@ -383,11 +542,15 @@ async def revoke_key(
     return {"revoked": True}
 
 
-@webhook_router.get("/deliveries", summary="deliveries 列表")
+@webhook_router.get(
+    "/deliveries",
+    summary="deliveries 列表",
+    dependencies=_webhook_dependencies("webhook:read"),
+)
 async def list_deliveries_endpoint(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
-    status: str | None = Query(None),
+    status: Literal["pending", "delivering", "retrying", "delivered", "failed"] | None = Query(None),
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
@@ -412,23 +575,13 @@ async def list_deliveries_endpoint(
     )
 
 
-@webhook_router.get("/deliveries/{delivery_id}")
+@webhook_router.get("/deliveries/{delivery_id}", dependencies=_webhook_dependencies("webhook:read"))
 async def get_delivery_detail(
     delivery_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
 ):
-    from sqlalchemy import select
-
-    from app.models.webhook import WebhookDelivery
-
-    result = await db.execute(
-        select(WebhookDelivery).where(
-            WebhookDelivery.id == delivery_id,
-            WebhookDelivery.tenant_id == tenant_id,
-        )
-    )
-    d = result.scalar_one_or_none()
+    d = await get_webhook_delivery(db, tenant_id, delivery_id)
     if not d:
         raise HTTPException(status_code=404, detail="Delivery not found")
     return {

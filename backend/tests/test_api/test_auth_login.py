@@ -11,6 +11,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
 from app.main import app
 from app.models.tenant import Account, Role, Tenant, TenantStatus
+from app.services.auth import resolve_account_role
+from app.utils.auth_rbac import WEB_ROLE_PERMISSIONS
 from app.utils.security import create_access_token, decode_token, hash_password
 from tests.conftest import TestSessionLocal
 
@@ -63,6 +65,13 @@ async def seeded_account(db_session: AsyncSession):
 
 
 class TestLogin:
+    @pytest.mark.parametrize("role_name", ["distributor", "store_guide"])
+    def test_channel_portal_roles_are_canonical_but_have_no_generic_permissions(self, role_name: str):
+        account = Account(roles=[Role(name=role_name)])
+
+        assert resolve_account_role(account) == role_name
+        assert WEB_ROLE_PERMISSIONS[role_name] == []
+
     @pytest.mark.anyio
     async def test_login_success_returns_tokens(self, client: AsyncClient, seeded_account):
         resp = await client.post(
@@ -119,6 +128,26 @@ class TestLogin:
         assert resp.status_code == 200
         payload = decode_token(resp.json()["access_token"])
         assert payload["role"] == "operator"
+
+    @pytest.mark.anyio
+    @pytest.mark.parametrize("role_name", ["distributor", "store_guide"])
+    async def test_login_preserves_channel_portal_role(
+        self, client: AsyncClient, db_session: AsyncSession, seeded_account, role_name: str
+    ):
+        role = Role(tenant_id=seeded_account.tenant_id, name=role_name, description="渠道门户")
+        db_session.add(role)
+        await db_session.flush()
+        seeded_account.roles = [role]
+        await db_session.commit()
+
+        resp = await client.post(
+            "/api/v1/auth/login",
+            json={"email": "login@test.com", "password": "Password1"},
+        )
+
+        assert resp.status_code == 200
+        payload = decode_token(resp.json()["access_token"])
+        assert payload["role"] == role_name
 
     @pytest.mark.anyio
     async def test_login_can_target_tenant_slug_when_email_is_duplicated(

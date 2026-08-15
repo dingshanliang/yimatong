@@ -21,8 +21,11 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.constants.pilot import PilotMilestoneType
-from app.models.gmv import GmvAttribution
-from app.models.pilot_milestone import PilotMilestone
+from app.models.campaign import BenefitClaim
+from app.models.gmv import GmvAttribution, GmvAttributionConfirmation
+from app.models.pilot_milestone import PilotMilestone, PilotMilestoneCorrection
+from app.models.scan import ScanEvent
+from app.models.wecom import WeComCallbackReceipt
 from app.services.analytics_extended import get_conversion_funnel
 
 INSUFFICIENT = "insufficient_data"
@@ -37,17 +40,25 @@ def _metric(value, status: str = COMPUTED, **extra) -> dict:
 
 
 async def _milestone_durations(db: AsyncSession, tenant_id: uuid.UUID) -> dict:
-    """从已持久化的里程碑取开通→上线、上线→首扫时长（秒）。缺失记数据不足。"""
+    """Use immutable facts plus the latest append-only platform correction."""
 
     rows = await db.execute(select(PilotMilestone).where(PilotMilestone.tenant_id == tenant_id))
     by_type: dict = {r.milestone_type: r for r in rows.scalars().all()}
+    correction_rows = await db.execute(
+        select(PilotMilestoneCorrection)
+        .where(PilotMilestoneCorrection.tenant_id == tenant_id)
+        .order_by(PilotMilestoneCorrection.created_at.asc(), PilotMilestoneCorrection.id.asc())
+    )
+    corrected_at = {row.milestone_type: row.corrected_at for row in correction_rows.scalars().all()}
 
     def _duration(frm: PilotMilestoneType, to: PilotMilestoneType) -> dict:
         f = by_type.get(frm)
         t = by_type.get(to)
         if f is None or t is None or f.achieved_at is None or t.achieved_at is None:
             return _metric(None, INSUFFICIENT)
-        return _metric((t.achieved_at - f.achieved_at).total_seconds(), unit="seconds")
+        from_at = corrected_at.get(frm, f.achieved_at)
+        to_at = corrected_at.get(to, t.achieved_at)
+        return _metric((to_at - from_at).total_seconds(), unit="seconds")
 
     return {
         "onboarding_to_launch": _duration(PilotMilestoneType.ONBOARDING, PilotMilestoneType.LAUNCHED),
@@ -75,9 +86,13 @@ async def build_scorecard(
     # 漏斗口径（本期绝对窗口 [window_start, window_end]）—— 有效访问/权益确认/企微确认
     funnel = await get_conversion_funnel(db, tenant_id, window_start=window_start, window_end=window_end)
 
-    valid_visits = funnel.get("valid_visits", 0)
-    claim_count = funnel.get("confirmed_claims", 0)
-    wecom_count = funnel.get("confirmed_wecom", 0)
+    # Frozen scorecards use server receipt clocks for every cohort member.
+    # Advisory scan/provider event timestamps remain useful operationally but
+    # cannot move facts into a different retrospective period.
+    trusted_counts = await _trusted_conversion_counts(db, tenant_id, window_start, window_end)
+    valid_visits = trusted_counts["valid_visits"]
+    claim_count = trusted_counts["confirmed_claims"]
+    wecom_count = trusted_counts["confirmed_wecom"]
 
     # 订单/净GMV（PRD §4.4 row 6：窗口 = 本期窗口 + 归因窗口，来源 = 归因快照）。
     # 复用 GmvAttribution（归因快照）：每行的 attribution_window_hours 在写入时已固化
@@ -94,9 +109,9 @@ async def build_scorecard(
             return _metric(None, INSUFFICIENT, denominator=denom)
         return _metric(round(num / denom * 100, 2), unit="percent", denominator=denom, numerator=num)
 
-    def _gmv(amount: float) -> dict:
-        """GMV：无归因订单（amount 为 0 且非真实）记数据不足。"""
-        if amount <= 0:
+    def _gmv(amount: float, order_count: int) -> dict:
+        """Only an empty confirmed cohort is insufficient; zero/negative net GMV is a real result."""
+        if order_count <= 0:
             return _metric(None, INSUFFICIENT)
         return _metric(round(amount, 2), unit="yuan")
 
@@ -105,15 +120,15 @@ async def build_scorecard(
         "window_end": window_end.isoformat(),
         "window_days": window_days,
         # GMV 来源 = 归因快照（PRD §4.4 row 6 / §6.3）；透明记录口径便于审计
-        "gmv_source": "gmv_attributions",
+        "gmv_source": "confirmed_gmv_attributions",
         "gmv_scan_window_end": window_end.isoformat(),
         "onboarding_to_launch": durations["onboarding_to_launch"],
         "launch_to_first_scan": durations["launch_to_first_scan"],
         "valid_visits": _metric(valid_visits, unit="count"),
         "claim_rate": _rate(claim_count, valid_visits),
         "wecom_rate": _rate(wecom_count, valid_visits),
-        "net_gmv": _gmv(net_amount),
-        "order_amount": _gmv(net_amount),  # 归因快照 amount 已为净额；order/净同口径
+        "net_gmv": _gmv(net_amount, attributed_orders),
+        "order_amount": _gmv(net_amount, attributed_orders),  # 归因快照 amount 已为净额；order/净同口径
         # 原始漏斗计数（便于审计回查，PRD §4.4 透明口径）
         "funnel_raw": {
             "valid_visits": valid_visits,
@@ -130,33 +145,98 @@ async def build_scorecard(
     }
 
 
+async def _trusted_conversion_counts(
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    window_start: datetime,
+    window_end: datetime,
+) -> dict[str, int]:
+    """Count conversions by trusted server receipt clocks in one tenant cohort."""
+
+    valid_visits = int(
+        (
+            await db.scalar(
+                select(func.count(ScanEvent.id)).where(
+                    ScanEvent.tenant_id == tenant_id,
+                    ScanEvent.created_at >= window_start,
+                    ScanEvent.created_at <= window_end,
+                    ScanEvent.is_valid_visit.is_(True),
+                )
+            )
+        )
+        or 0
+    )
+    confirmed_claims = int(
+        (
+            await db.scalar(
+                select(func.count(BenefitClaim.id)).where(
+                    BenefitClaim.tenant_id == tenant_id,
+                    BenefitClaim.created_at >= window_start,
+                    BenefitClaim.created_at <= window_end,
+                    BenefitClaim.status == "success",
+                )
+            )
+        )
+        or 0
+    )
+    confirmed_wecom = int(
+        (
+            await db.scalar(
+                select(func.count(func.distinct(WeComCallbackReceipt.contact_id))).where(
+                    WeComCallbackReceipt.tenant_id == tenant_id,
+                    WeComCallbackReceipt.recorded_at >= window_start,
+                    WeComCallbackReceipt.recorded_at <= window_end,
+                    WeComCallbackReceipt.result["confirmed"].as_boolean().is_(True),
+                )
+            )
+        )
+        or 0
+    )
+    return {
+        "valid_visits": valid_visits,
+        "confirmed_claims": confirmed_claims,
+        "confirmed_wecom": confirmed_wecom,
+    }
+
+
 async def _gmv_from_attribution_snapshot(
     db: AsyncSession,
     tenant_id: uuid.UUID,
     window_start: datetime,
     window_end: datetime,
 ) -> dict:
-    """订单/净GMV（PRD §4.4 row 6：来源 = 归因快照 GmvAttribution）。
+    """订单/净GMV from the immutable confirmed-attribution cohort.
 
     按 scan_time 在本期窗口 [window_start, window_end] 聚合 GmvAttribution.amount。
     每行 amount 已是退款回冲后的净额（见 gmv.refund_order），且 attribution_window_hours
     在写入时固化，故"本期窗口 + 归因窗口"的延迟下单已通过 scan_time 隶属本期窗口自然纳入。
     """
-    row = (
-        await db.execute(
-            select(
-                func.coalesce(func.sum(GmvAttribution.amount), 0),
-                func.count(GmvAttribution.id),
-            ).where(
-                GmvAttribution.tenant_id == tenant_id,
-                GmvAttribution.scan_time >= window_start,
-                GmvAttribution.scan_time <= window_end,
-            )
-        )
-    ).one()
+    row = (await db.execute(_confirmed_gmv_query(tenant_id, window_start, window_end))).one()
     net_amount = float(row[0] or 0)
     attributed_orders = int(row[1] or 0)
     return {
         "net_amount": round(net_amount, 2),
         "attributed_orders": attributed_orders,
     }
+
+
+def _confirmed_gmv_query(tenant_id: uuid.UUID, window_start: datetime, window_end: datetime):
+    """Build the exact confirmed cohort query so its security contract is testable."""
+
+    return (
+        select(
+            func.coalesce(func.sum(GmvAttribution.amount), 0),
+            func.count(GmvAttribution.id),
+        )
+        .join(
+            GmvAttributionConfirmation,
+            (GmvAttributionConfirmation.tenant_id == GmvAttribution.tenant_id)
+            & (GmvAttributionConfirmation.attribution_id == GmvAttribution.id),
+        )
+        .where(
+            GmvAttribution.tenant_id == tenant_id,
+            GmvAttribution.authority_status == "confirmed",
+            GmvAttributionConfirmation.scan_received_at >= window_start,
+            GmvAttributionConfirmation.scan_received_at <= window_end,
+        )
+    )

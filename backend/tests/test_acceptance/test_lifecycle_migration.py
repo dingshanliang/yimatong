@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import AsyncGenerator
+from types import SimpleNamespace
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -86,7 +87,9 @@ class TestMigrationIntegrity:
 class TestUnifiedLifecycleSemantics:
     """AC2：扫码、消费者页面只使用统一 lifecycle 语义（to_lifecycle 映射）。"""
 
-    async def test_resolver_returns_lifecycle_for_all_states(self, client, bypass_session, migrated_pg_url):
+    async def test_resolver_returns_lifecycle_for_all_states(
+        self, client, bypass_session, migrated_pg_url, monkeypatch
+    ):
         """AC2：resolve 对所有码状态返回 lifecycle 字段（统一语义）。"""
         from tests.test_acceptance.conftest import seed_baseline
 
@@ -94,20 +97,50 @@ class TestUnifiedLifecycleSemantics:
         public_id = summary["first_public_id"]
         tenant_id = summary["baseline_tenant"]["id"]
 
-        # 测试每个状态映射到正确的 lifecycle
+        async def scope_fixture_tenant(_db, requested_public_id):
+            assert requested_public_id == public_id
+            return uuid.UUID(str(tenant_id))
+
+        from app.api.v1 import resolver
+        from app.services import resolver as resolver_service
+
+        bootstrap_calls: list[dict[str, object]] = []
+
+        async def bootstrap_fixture_tenant(_db, statement, parameters=None):
+            compiled_parameters = statement.compile().params
+            assert parameters in (None, {})
+            assert public_id in compiled_parameters.values()
+            bootstrap_calls.append(compiled_parameters)
+            return SimpleNamespace(tenant_id=uuid.UUID(str(tenant_id)))
+
+        monkeypatch.setattr(resolver, "_scope_public_code_tenant", scope_fixture_tenant)
+        monkeypatch.setattr(resolver_service, "bootstrap_tenant_row", bootstrap_fixture_tenant)
+
+        # 真实行只沿合法的 activated -> frozen -> activated -> revoked 路径前进。
         test_cases = [
             ("activated", "active"),
             ("frozen", "frozen"),
+            ("activated", "active"),
             ("revoked", "voided"),
-            ("created", "unactivated"),
-            ("expired", "voided"),
         ]
-        for old_status, expected_lifecycle in test_cases:
-            # 重置码状态
+        for status, expected_lifecycle in test_cases:
             await bypass_session.execute(text("SET LOCAL app.bypass_rls = 'true'"))
             await bypass_session.execute(
-                text("UPDATE code_items SET status=:s WHERE tenant_id=:t AND public_id=:p"),
-                {"s": old_status, "t": tenant_id, "p": public_id},
+                text(
+                    "UPDATE code_items SET status=:s, "
+                    "frozen_from_status=CASE WHEN :is_frozen THEN 'activated' END, "
+                    "frozen_at=CASE WHEN :is_frozen THEN now() END, "
+                    "freeze_provenance_version=CASE WHEN :is_frozen THEN 0 END, "
+                    "revoked_at=CASE WHEN :is_revoked THEN now() ELSE revoked_at END "
+                    "WHERE tenant_id=:t AND public_id=:p"
+                ),
+                {
+                    "s": status,
+                    "is_frozen": status == "frozen",
+                    "is_revoked": status == "revoked",
+                    "t": tenant_id,
+                    "p": public_id,
+                },
             )
             await bypass_session.commit()
             from app.services.resolve_cache import resolve_cache
@@ -119,8 +152,13 @@ class TestUnifiedLifecycleSemantics:
             cd = body.get("code_data", {})
             # AC2：所有状态都返回 lifecycle（统一语义），映射正确
             assert cd.get("lifecycle") == expected_lifecycle, (
-                f"旧 status={old_status} 应映射到 lifecycle={expected_lifecycle}，实际 {cd.get('lifecycle')}"
+                f"码 {public_id} 应映射到 lifecycle={expected_lifecycle}，实际 {cd.get('lifecycle')}"
             )
+        from app.models.code import CodeItemStatus, to_lifecycle
+
+        assert to_lifecycle(CodeItemStatus.created) == "unactivated"
+        assert to_lifecycle(CodeItemStatus.expired) == "voided"
+        assert len(bootstrap_calls) == 2 * len(test_cases)
 
 
 # ── AC3：存量码迁移前后消费者业务结果一致 ──────────────────────────────────

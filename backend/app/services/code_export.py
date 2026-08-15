@@ -8,14 +8,17 @@ from collections import Counter, defaultdict
 from dataclasses import dataclass
 
 from sqlalchemy import select, text
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from uuid6 import uuid7
 
-from app.core.database import _session_uses_postgresql
+from app.core.database import _session_uses_postgresql, set_session_tenant_context
 from app.core.exceptions import ConflictError
 from app.models.code import CodeBatchSource, CodeBatchStatus, CodeGenerationMode, CodeItem, CodeItemStatus, CodeType
 from app.models.export_log import ExportLog
 from app.services.code import _lock_forward_operational_code_batch
+from app.services.export_access import record_authorized_prepared_export
 from app.services.export_audit import log_export
+from app.services.export_authority import record_seed_code_export_manifest
 from app.utils import utcnow
 from app.utils.crypto import CryptoError, decrypt_bytes, encrypt_bytes
 
@@ -280,11 +283,15 @@ def _build_code_csv(batch, items: list[CodeItem]) -> CodeCSVArtifact:
     )
 
 
-async def generate_code_csv(
+async def _generate_code_csv(
     db: AsyncSession,
     tenant_id: uuid.UUID,
     batch_id: uuid.UUID,
-    account_id: uuid.UUID,
+    account_id: uuid.UUID | None = None,
+    *,
+    auth_session_id: uuid.UUID | None = None,
+    reason: str | None = None,
+    seed_owner_session_factory: async_sessionmaker[AsyncSession] | None = None,
 ) -> CodeCSVArtifact:
     """Generate or replay complete deterministic bytes under one transaction."""
 
@@ -322,26 +329,134 @@ async def generate_code_csv(
         aad=_artifact_aad(tenant_id, batch_id, artifact.manifest_version),
     )
 
-    manifest = await log_export(
-        db,
-        tenant_id,
-        account_id,
-        "code_csv",
-        resource_id=str(batch_id),
-        file_name=f"codes-{batch_id}.csv",
-        row_count=artifact.row_count,
-        code_batch_id=batch_id,
-        manifest_version=artifact.manifest_version,
-        checksum_sha256=artifact.checksum_sha256,
-        artifact_size_bytes=len(artifact.content),
-        artifact_ciphertext=ciphertext,
-        artifact_nonce=nonce,
-        artifact_scheme=CODE_CSV_ARTIFACT_SCHEME,
-        artifact_key_id=key_id,
-    )
-    batch.export_manifest_id = manifest.id
+    if _session_uses_postgresql(db):
+        if auth_session_id is not None and reason is not None:
+            manifest = await record_authorized_prepared_export(
+                db,
+                tenant_id=tenant_id,
+                auth_session_id=auth_session_id,
+                export_id=uuid7(),
+                export_type="code_csv",
+                reason=reason,
+                scope_snapshot={
+                    "code_batch_id": str(batch_id),
+                    "expected_item_count": batch.expected_item_count,
+                    "manifest_version": artifact.manifest_version,
+                    "sort": ["public_id", "asc"],
+                },
+                idempotency_key=str(uuid.uuid5(uuid.NAMESPACE_URL, f"yimatong:code-csv:{tenant_id}:{batch_id}:v1")),
+                file_name=f"codes-{batch_id}.csv",
+                content_type="text/csv; charset=utf-8",
+                row_count=artifact.row_count,
+                checksum_sha256=artifact.checksum_sha256,
+                file_size_bytes=len(artifact.content),
+                resource_id=batch_id,
+                code_batch_id=batch_id,
+                manifest_version=artifact.manifest_version,
+                artifact_ciphertext=ciphertext,
+                artifact_nonce=nonce,
+                artifact_scheme=CODE_CSV_ARTIFACT_SCHEME,
+                artifact_key_id=key_id,
+            )
+            manifest_id = manifest.export_id
+        elif auth_session_id is None and reason is None and account_id is not None:
+            # Seed/demo callers are an explicit control-plane capability. The
+            # completed batch must be durable before the owner function can
+            # bind its immutable artifact, then lifecycle work resumes in a
+            # fresh tenant-scoped runtime transaction.
+            if seed_owner_session_factory is None:
+                raise ValueError("The trusted seed export requires an explicit owner session factory")
+            await db.commit()
+            export_id = uuid7()
+            async with seed_owner_session_factory() as owner_db:
+                await owner_db.execute(text("SELECT set_config('app.tenant_id', '', true)"))
+                await owner_db.execute(text("SELECT set_config('app.bypass_rls', 'true', true)"))
+                manifest = await record_seed_code_export_manifest(
+                    owner_db,
+                    tenant_id=tenant_id,
+                    export_id=export_id,
+                    code_batch_id=batch_id,
+                    file_name=f"codes-{batch_id}.csv",
+                    row_count=artifact.row_count,
+                    checksum_sha256=artifact.checksum_sha256,
+                    file_size_bytes=len(artifact.content),
+                    artifact_ciphertext=ciphertext,
+                    artifact_nonce=nonce,
+                    artifact_scheme=CODE_CSV_ARTIFACT_SCHEME,
+                    artifact_key_id=key_id,
+                )
+                await owner_db.commit()
+            await set_session_tenant_context(db, tenant_id)
+            batch = await _lock_forward_operational_code_batch(db, tenant_id, batch_id)
+            manifest_id = manifest.export_id
+        else:
+            raise ValueError("Use either a live login session with reason or the trusted seed seam")
+    else:
+        # SQLite fixtures and trusted local maintenance retain the legacy
+        # adapter; production PostgreSQL can only write through DB authority.
+        if account_id is None:
+            account_id = auth_session_id
+        if account_id is None:
+            raise ValueError("An export principal is required")
+        legacy_manifest = await log_export(
+            db,
+            tenant_id,
+            account_id,
+            "code_csv",
+            resource_id=str(batch_id),
+            file_name=f"codes-{batch_id}.csv",
+            row_count=artifact.row_count,
+            code_batch_id=batch_id,
+            manifest_version=artifact.manifest_version,
+            checksum_sha256=artifact.checksum_sha256,
+            artifact_size_bytes=len(artifact.content),
+            artifact_ciphertext=ciphertext,
+            artifact_nonce=nonce,
+            artifact_scheme=CODE_CSV_ARTIFACT_SCHEME,
+            artifact_key_id=key_id,
+        )
+        manifest_id = legacy_manifest.id
+    batch.export_manifest_id = manifest_id
     batch.exported_at = utcnow()
     batch.contract_version = 1
     batch.status = CodeBatchStatus.exported
     await db.flush()
     return artifact
+
+
+async def generate_authorized_code_csv(
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    batch_id: uuid.UUID,
+    *,
+    auth_session_id: uuid.UUID,
+    reason: str,
+) -> CodeCSVArtifact:
+    """Prepare an HTTP export through durable session authority."""
+
+    return await _generate_code_csv(
+        db,
+        tenant_id,
+        batch_id,
+        auth_session_id=auth_session_id,
+        reason=reason,
+    )
+
+
+async def generate_code_csv(
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    batch_id: uuid.UUID,
+    account_id: uuid.UUID,
+    *,
+    seed_owner_session_factory: async_sessionmaker[AsyncSession] | None = None,
+) -> CodeCSVArtifact:
+    """Compatibility seam for trusted seed/unit-test callers, never HTTP routes."""
+
+    return await _generate_code_csv(
+        db,
+        tenant_id,
+        batch_id,
+        account_id,
+        seed_owner_session_factory=seed_owner_session_factory,
+    )

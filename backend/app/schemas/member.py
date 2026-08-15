@@ -90,13 +90,5 @@ class ExchangeRequest(BaseModel):
     product_id: uuid.UUID
 
 
-class LeadCaptureRequest(BaseModel):
-    name: str | None = None
-    phone: str | None = None
-    region: str | None = None
-    intention: str | None = None
-    public_id: str
-
-
 # Alias for consumer-facing endpoint compatibility
 PointsExchangeRequest = ExchangeRequest

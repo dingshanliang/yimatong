@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import time
 import uuid
 from collections.abc import AsyncGenerator
@@ -15,6 +16,7 @@ import jwt
 import pytest
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import select, text
+from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.core.config import settings
@@ -26,8 +28,53 @@ from app.services.quota import (
     QUOTA_RECONCILIATION_SOURCE_REVISION,
     lock_quota_rollout_state,
 )
+from tests.test_acceptance.conftest import (
+    ADMIN_DSN,
+    BACKEND_DIR,
+    AcceptanceDatabaseLease,
+    _create_owned_database,
+    _drop_database_with_retry,
+    run_owned_migrations_with_snapshot_retry,
+)
 
 pytestmark = pytest.mark.acceptance
+
+
+@pytest.fixture
+async def claim_journey_pg_url(migrated_pg_url: str) -> AsyncGenerator[str, None]:
+    """Keep immutable claim/outbox facts inside a marker-owned database."""
+
+    database_name = f"yimatong_acceptance_claim_{uuid.uuid4().hex[:12]}"
+    database_url = make_url(migrated_pg_url).set(database=database_name).render_as_string(hide_password=False)
+    lease = AcceptanceDatabaseLease(
+        database_name=database_name, database_dsn=database_url, owner_token=uuid.uuid4().hex
+    )
+    primary_error: BaseException | None = None
+    try:
+        await _create_owned_database(lease, ADMIN_DSN)
+        await asyncio.to_thread(run_owned_migrations_with_snapshot_retry, lease)
+        owner = await asyncpg.connect(database_url.replace("postgresql+asyncpg://", "postgresql://"))
+        try:
+            await owner.execute((BACKEND_DIR / "scripts" / "init_runtime_role.sql").read_text())
+        finally:
+            await owner.close()
+        yield database_url
+    except BaseException as exc:
+        primary_error = exc
+        raise
+    finally:
+        if lease.created:
+            try:
+                await _drop_database_with_retry(
+                    lease.database_name,
+                    ADMIN_DSN,
+                    expected_owner_marker=lease.owner_marker,
+                    allow_unmarked_created=lease.created and not lease.marker_written,
+                )
+            except BaseException as cleanup_error:
+                if primary_error is None:
+                    raise
+                primary_error.add_note(f"isolated claim database cleanup also failed: {cleanup_error!r}")
 
 
 @dataclass(frozen=True, slots=True)
@@ -250,6 +297,52 @@ async def runtime_client(migrated_pg_url: str) -> AsyncGenerator[AsyncClient, No
     await control_engine.dispose()
 
 
+@pytest.fixture
+async def isolated_public_client(claim_journey_pg_url: str) -> AsyncGenerator[AsyncClient, None]:
+    """Serve one public journey entirely inside its marker-owned database."""
+
+    from app.middleware.rate_limit import rate_limiter
+
+    rate_limiter._cache._mem_store.clear()  # type: ignore[attr-defined]
+    runtime_url = claim_journey_pg_url.replace("yimatong:yimatong@", "yimatong_app:yimatong_app@")
+    runtime_engine = create_async_engine(runtime_url)
+    runtime_factory = async_sessionmaker(runtime_engine, expire_on_commit=False)
+    control_engine = create_async_engine(claim_journey_pg_url)
+    control_factory = async_sessionmaker(control_engine, expire_on_commit=False)
+
+    async def override_get_db():
+        async with runtime_factory() as session:
+            try:
+                yield session
+                await session.commit()
+            except Exception:
+                await session.rollback()
+                raise
+
+    app.dependency_overrides[get_db] = override_get_db
+    try:
+        transport = ASGITransport(app=app)
+        with patch("app.core.database.control_session_factory", control_factory):
+            async with AsyncClient(transport=transport, base_url="http://test") as client:
+                yield client
+    finally:
+        app.dependency_overrides.clear()
+        await runtime_engine.dispose()
+        await control_engine.dispose()
+
+
+@pytest.fixture
+async def isolated_public_bypass_session(claim_journey_pg_url: str) -> AsyncGenerator[AsyncSession, None]:
+    engine = create_async_engine(claim_journey_pg_url)
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+    try:
+        async with factory() as session:
+            await session.execute(text("SET LOCAL app.bypass_rls = 'true'"))
+            yield session
+    finally:
+        await engine.dispose()
+
+
 async def _create_owned_tenant(db: AsyncSession, marker: str) -> uuid.UUID:
     tenant_id = uuid.uuid4()
     await db.execute(
@@ -409,153 +502,216 @@ async def _delete_owned_code_item(migrated_pg_url: str, tenant_id: str, item_id:
 
 
 class TestPublicScanRuntimeRLS:
-    @pytest.mark.parametrize("_repeat", (0, 1), ids=("first-pass", "same-db-repeat"))
     async def test_public_benefit_claim_uses_scan_token_tenant_rls(
         self,
-        runtime_client: AsyncClient,
-        bypass_session,
-        asyncpg_conn,
-        _repeat: int,
+        claim_journey_pg_url: str,
     ):
-        """A public claim must establish RLS context before any business query."""
+        """A resolver-bound claim is replay-safe and tenant isolated under the runtime role."""
 
-        from app.utils.client_ip import compute_ip_hash
+        from app.middleware.rate_limit import rate_limiter
+        from tests.test_acceptance.conftest import seed_baseline
 
-        tenant_id = uuid.uuid4()
-        control_tenant_id = uuid.uuid4()
-        public_id = f"C15{uuid.uuid4().hex[:13]}"
-        benefit_id = uuid.uuid4()
-        fixed_ip = "203.0.113.209"
-        claim_created = False
-
-        await bypass_session.rollback()
-        await bypass_session.execute(text("SET LOCAL app.bypass_rls = 'true'"))
-        shared_before = await _shared_fact_counts(bypass_session)
-        tenant_id = await _create_owned_tenant(bypass_session, "claim")
-        control_tenant_id = await _create_owned_tenant(bypass_session, "claim-control")
-        await bypass_session.execute(
-            text(
-                "INSERT INTO benefits "
-                "(id, tenant_id, name, benefit_type, config_json, stock_total, stock_used, per_person_limit, status) "
-                "VALUES (:id, :tenant_id, :name, 'platform_coupon', '{}'::json, 2, 0, 1, 'active')"
-            ),
-            {"id": benefit_id, "tenant_id": tenant_id, "name": f"cycle15-claim-{benefit_id}"},
+        owner_dsn = claim_journey_pg_url.replace("postgresql+asyncpg://", "postgresql://")
+        owner = await asyncpg.connect(owner_dsn)
+        summary = await seed_baseline(claim_journey_pg_url)
+        tenant_id = uuid.UUID(summary["baseline_tenant"]["id"])
+        control_tenant_id = uuid.UUID(summary["control_tenant"]["id"])
+        benefit_id = uuid.UUID(summary["benefit"]["id"])
+        public_id = summary["first_public_id"]
+        baseline_account_id = await owner.fetchval(
+            "SELECT id FROM accounts WHERE tenant_id=$1 AND is_active IS TRUE ORDER BY id LIMIT 1", tenant_id
         )
-        await bypass_session.commit()
+        assert baseline_account_id is not None
+        await owner.execute(
+            "UPDATE campaigns SET status='active',start_at=now()-interval '1 hour',"
+            "end_at=now()+interval '1 day',updated_at=now() WHERE tenant_id=$1 AND id=$2",
+            tenant_id,
+            uuid.UUID(summary["campaign"]["id"]),
+        )
+        unbound_benefit_id = uuid.uuid4()
+        inactive_benefit_id = uuid.uuid4()
+        control_benefit_id = uuid.uuid4()
+        await owner.executemany(
+            "INSERT INTO benefits(id,tenant_id,name,benefit_type,config_json,stock_total,stock_used,"
+            "per_person_limit,status,campaign_id,created_at,updated_at) "
+            "VALUES($1,$2,$3,'platform_coupon','{}',2,0,1,$4,$5,now(),now())",
+            (
+                (unbound_benefit_id, tenant_id, "unbound claim benefit", "active", None),
+                (
+                    inactive_benefit_id,
+                    tenant_id,
+                    "inactive launch benefit",
+                    "inactive",
+                    uuid.UUID(summary["campaign"]["id"]),
+                ),
+                (control_benefit_id, control_tenant_id, "control claim benefit", "active", None),
+            ),
+        )
+        release_id = uuid.uuid4()
+        readiness = await owner.fetchrow(
+            "SELECT * FROM compute_launch_readiness($1,$2,$3,$4)",
+            tenant_id,
+            uuid.UUID(summary["page_version"]["id"]),
+            uuid.UUID(summary["campaign"]["id"]),
+            uuid.UUID(summary["code_batch"]["id"]),
+        )
+        assert readiness is not None and readiness["ready"] is True
+        manifest = (
+            json.loads(readiness["manifest"]) if isinstance(readiness["manifest"], str) else readiness["manifest"]
+        )
+        await owner.execute(
+            "INSERT INTO launch_releases(id,tenant_id,page_template_id,page_version_id,campaign_id,code_batch_id,"
+            "status,readiness_snapshot,readiness_manifest,readiness_code_item_id,content_digest,created_by,"
+            "created_by_tenant_id,brand_confirmed_by,brand_confirmed_by_tenant_id,brand_confirmed_at,"
+            "brand_confirmation_digest,launched_by,launched_by_tenant_id,launched_at,created_at,updated_at) "
+            "VALUES($1,$2,$3,$4,$5,$6,'live',$7,$8,$9,$10,$11,$2,$11,$2,now(),$10,$11,$2,now(),now(),now())",
+            release_id,
+            tenant_id,
+            uuid.UUID(summary["page_template"]["id"]),
+            uuid.UUID(summary["page_version"]["id"]),
+            uuid.UUID(summary["campaign"]["id"]),
+            uuid.UUID(summary["code_batch"]["id"]),
+            json.dumps({"version": 3, "ready": True}),
+            json.dumps(manifest),
+            readiness["readiness_code_item_id"],
+            readiness["content_digest"],
+            baseline_account_id,
+        )
+        fixed_ip = "203.0.113.209"
 
-        def scan_token(*, for_tenant: str, expires_in: int = 300) -> str:
-            return jwt.encode(
-                {
-                    "public_id": public_id,
-                    "ip_hash": compute_ip_hash(fixed_ip),
-                    "tenant_id": for_tenant,
-                    "consumer_id": f"runtime-claim-{uuid.uuid4()}",
-                    "type": "scan_token",
-                    "jti": str(uuid.uuid4()),
-                    "exp": int(time.time()) + expires_in,
-                },
-                settings.secret_key,
-                algorithm="HS256",
-            )
+        runtime_url = claim_journey_pg_url.replace("yimatong:yimatong@", "yimatong_app:yimatong_app@")
+        runtime_engine = create_async_engine(runtime_url)
+        runtime_factory = async_sessionmaker(runtime_engine, expire_on_commit=False)
+        control_engine = create_async_engine(claim_journey_pg_url)
+        control_factory = async_sessionmaker(control_engine, expire_on_commit=False)
+
+        async def override_get_db():
+            async with runtime_factory() as session:
+                try:
+                    yield session
+                    await session.commit()
+                except Exception:
+                    await session.rollback()
+                    raise
+
+        rate_limiter._cache._mem_store.clear()  # type: ignore[attr-defined]
+        app.dependency_overrides[get_db] = override_get_db
 
         try:
-            assert await asyncpg_conn.fetchval("SELECT current_user") == "acceptance_tester"
-            assert await asyncpg_conn.fetchval("SELECT rolbypassrls FROM pg_roles WHERE rolname=current_user") is False
+            transport = ASGITransport(app=app)
+            with patch("app.core.database.control_session_factory", control_factory):
+                async with AsyncClient(transport=transport, base_url="http://test") as client:
+                    resolve = await client.get(
+                        f"/c/{public_id}", headers={"Accept": "application/json", "X-Forwarded-For": fixed_ip}
+                    )
+                    assert resolve.status_code == 200, resolve.text
+                    scan_token = resolve.json().get("scan_token")
+                    assert scan_token
 
-            success = await runtime_client.post(
-                "/api/v1/benefit-claims",
-                json={"benefit_id": str(benefit_id), "scan_token": scan_token(for_tenant=str(tenant_id))},
-                headers={"X-Forwarded-For": fixed_ip},
-            )
-            assert success.status_code == 201, success.text
-            assert success.json() == {"status": "claimed", "benefit_id": str(benefit_id)}
-            claim_created = True
+                    claim_headers = {"Authorization": f"Bearer {scan_token}", "X-Forwarded-For": fixed_ip}
+                    inactive = await client.post(
+                        "/api/v1/benefit-claims",
+                        json={"benefit_id": str(inactive_benefit_id)},
+                        headers=claim_headers,
+                    )
+                    assert inactive.status_code == 409, inactive.text
+                    assert inactive.json()["detail"] == "权益已停用"
+                    assert (
+                        await owner.fetchval(
+                            "SELECT stock_used FROM benefits WHERE tenant_id=$1 AND id=$2",
+                            tenant_id,
+                            inactive_benefit_id,
+                        )
+                        == 0
+                    )
+                    assert (
+                        await owner.fetchval(
+                            "SELECT count(*) FROM benefit_claims WHERE tenant_id=$1 AND benefit_id=$2",
+                            tenant_id,
+                            inactive_benefit_id,
+                        )
+                        == 0
+                    )
+                    assert (
+                        await owner.fetchval("SELECT count(*) FROM campaign_claim_outbox WHERE tenant_id=$1", tenant_id)
+                        == 0
+                    )
 
-            await bypass_session.execute(text("SET LOCAL app.bypass_rls = 'true'"))
-            assert await _owned_benefit_fact_sentinel(bypass_session, tenant_id=tenant_id, benefit_id=benefit_id) == (
-                1,
-                1,
-                0,
-                0,
-                0,
-            )
+                    success = await client.post(
+                        "/api/v1/benefit-claims", json={"benefit_id": str(benefit_id)}, headers=claim_headers
+                    )
+                    assert success.status_code == 201, success.text
+                    first = success.json()
+                    assert first["status"] == "claimed" and first["benefit_id"] == str(benefit_id)
+                    assert first["claim_id"]
+
+                    replay = await client.post(
+                        "/api/v1/benefit-claims", json={"benefit_id": str(benefit_id)}, headers=claim_headers
+                    )
+                    assert replay.status_code == 201, replay.text
+                    assert replay.json() == first
+
+                    alias_replay = await client.post(
+                        f"/api/v1/public/benefits/{benefit_id}/claim",
+                        json={},
+                        headers=claim_headers,
+                    )
+                    assert alias_replay.status_code == 201, alias_replay.text
+                    assert alias_replay.json() == first
+
+                    expired_payload = jwt.decode(scan_token, options={"verify_signature": False})
+                    expired_payload["exp"] = int(time.time()) - 1
+                    expired_token = jwt.encode(expired_payload, settings.secret_key, algorithm="HS256")
+                    expired = await client.post(
+                        "/api/v1/benefit-claims",
+                        json={"benefit_id": str(benefit_id)},
+                        headers={"Authorization": f"Bearer {expired_token}", "X-Forwarded-For": fixed_ip},
+                    )
+                    assert expired.status_code == 401
+
+                    parts = scan_token.split(".")
+                    parts[2] = f"{'a' if parts[2][0] != 'a' else 'b'}{parts[2][1:]}"
+                    forged = await client.post(
+                        "/api/v1/benefit-claims",
+                        json={"benefit_id": str(benefit_id)},
+                        headers={"Authorization": f"Bearer {'.'.join(parts)}", "X-Forwarded-For": fixed_ip},
+                    )
+                    assert forged.status_code == 401
+
+                    unbound = await client.post(
+                        "/api/v1/benefit-claims",
+                        json={"benefit_id": str(unbound_benefit_id)},
+                        headers=claim_headers,
+                    )
+                    assert unbound.status_code == 409
+
+                    cross_tenant = await client.post(
+                        f"/api/v1/public/benefits/{control_benefit_id}/claim",
+                        json={},
+                        headers=claim_headers,
+                    )
+                    assert cross_tenant.status_code == 404
+
             assert (
-                await bypass_session.scalar(
-                    text("SELECT stock_used FROM benefits WHERE tenant_id=:tenant_id AND id=:benefit_id"),
-                    {"tenant_id": tenant_id, "benefit_id": benefit_id},
+                await owner.fetchval(
+                    "SELECT count(*) FROM benefit_claims WHERE tenant_id=$1 AND benefit_id=$2",
+                    tenant_id,
+                    benefit_id,
                 )
                 == 1
             )
-
-            expired = await runtime_client.post(
-                "/api/v1/benefit-claims",
-                json={
-                    "benefit_id": str(benefit_id),
-                    "scan_token": scan_token(for_tenant=str(tenant_id), expires_in=-1),
-                },
-                headers={"X-Forwarded-For": fixed_ip},
-            )
-            assert expired.status_code == 401
-
-            forged_token = scan_token(for_tenant=str(tenant_id))
-            parts = forged_token.split(".")
-            parts[2] = f"{'a' if parts[2][0] != 'a' else 'b'}{parts[2][1:]}"
-            forged = await runtime_client.post(
-                "/api/v1/benefit-claims",
-                json={"benefit_id": str(benefit_id), "scan_token": ".".join(parts)},
-                headers={"X-Forwarded-For": fixed_ip},
-            )
-            assert forged.status_code == 401
-
-            cross_tenant = await runtime_client.post(
-                "/api/v1/benefit-claims",
-                json={
-                    "benefit_id": str(benefit_id),
-                    "scan_token": scan_token(for_tenant=str(control_tenant_id)),
-                },
-                headers={"X-Forwarded-For": fixed_ip},
-            )
-            assert cross_tenant.status_code == 404
-            await bypass_session.execute(text("SET LOCAL app.bypass_rls = 'true'"))
-            assert await _owned_benefit_fact_sentinel(bypass_session, tenant_id=tenant_id, benefit_id=benefit_id) == (
-                1,
-                1,
-                0,
-                0,
-                0,
-            )
-        finally:
-            await bypass_session.rollback()
-            await bypass_session.execute(text("SET LOCAL app.bypass_rls = 'true'"))
-            deleted_deliveries = await bypass_session.execute(
-                text("DELETE FROM benefit_deliveries WHERE tenant_id=:tenant_id AND benefit_id=:benefit_id"),
-                {"tenant_id": tenant_id, "benefit_id": benefit_id},
-            )
-            assert deleted_deliveries.rowcount == 0
-            deleted_claims = await bypass_session.execute(
-                text("DELETE FROM benefit_claims WHERE tenant_id=:tenant_id AND benefit_id=:benefit_id"),
-                {"tenant_id": tenant_id, "benefit_id": benefit_id},
-            )
-            assert deleted_claims.rowcount == int(claim_created)
-            deleted_benefit = await bypass_session.execute(
-                text("DELETE FROM benefits WHERE tenant_id=:tenant_id AND id=:benefit_id"),
-                {"tenant_id": tenant_id, "benefit_id": benefit_id},
-            )
-            assert deleted_benefit.rowcount == 1
-            assert await _owned_benefit_fact_sentinel(bypass_session, tenant_id=tenant_id, benefit_id=benefit_id) == (
-                0,
-                0,
-                0,
-                0,
-                0,
-            )
-            for owned_tenant_id in (tenant_id, control_tenant_id):
-                deleted_tenant = await bypass_session.execute(
-                    text("DELETE FROM tenants WHERE id=:tenant_id"), {"tenant_id": owned_tenant_id}
+            assert (
+                await owner.fetchval(
+                    "SELECT stock_used FROM benefits WHERE tenant_id=$1 AND id=$2", tenant_id, benefit_id
                 )
-                assert deleted_tenant.rowcount == 1
-            assert await _shared_fact_counts(bypass_session) == shared_before
-            await bypass_session.commit()
+                == 1
+            )
+            assert await owner.fetchval("SELECT count(*) FROM campaign_claim_outbox WHERE tenant_id=$1", tenant_id) == 1
+        finally:
+            app.dependency_overrides.clear()
+            await runtime_engine.dispose()
+            await control_engine.dispose()
+            await owner.close()
 
     @pytest.mark.parametrize("_repeat", (0, 1), ids=("first-pass", "same-db-repeat"))
     async def test_resolve_and_telemetry_use_trusted_tenant_context(
@@ -649,6 +805,20 @@ class TestPublicScanRuntimeRLS:
             assert payload["code_data"]["public_id"] == public_id
             assert payload["scan_info"]["visitor_id"] == visitor_id
             scan_token = payload["scan_token"]
+            token_payload = jwt.decode(scan_token, settings.secret_key, algorithms=["HS256"])
+            assert token_payload["version"] == 1
+            assert not any(
+                field in token_payload
+                for field in ("launch_release_id", "campaign_id", "code_batch_id", "content_digest")
+            )
+
+            claim_with_telemetry_token = await runtime_client.post(
+                "/api/v1/benefit-claims",
+                json={"benefit_id": summary["benefit"]["id"]},
+                headers={"Authorization": f"Bearer {scan_token}", "X-Forwarded-For": fixed_ip},
+            )
+            assert claim_with_telemetry_token.status_code == 401
+            assert claim_with_telemetry_token.json()["detail"]["code"] == "scan_token_unbound"
 
             telemetry = await runtime_client.post(
                 "/api/v1/scan-events",
@@ -948,10 +1118,12 @@ class TestPublicScanRuntimeRLS:
     @pytest.mark.parametrize("_repeat", (0, 1), ids=("first-pass", "same-db-repeat"))
     async def test_public_wecom_contact_way_uses_scan_token_tenant_rls(
         self,
-        runtime_client: AsyncClient,
-        bypass_session,
+        isolated_public_client: AsyncClient,
+        isolated_public_bypass_session: AsyncSession,
         _repeat: int,
     ):
+        runtime_client = isolated_public_client
+        bypass_session = isolated_public_bypass_session
         tenant_id = uuid.uuid4()
         control_tenant_id = uuid.uuid4()
         public_id = f"C15{uuid.uuid4().hex[:13]}"
@@ -963,7 +1135,6 @@ class TestPublicScanRuntimeRLS:
 
         await bypass_session.rollback()
         await bypass_session.execute(text("SET LOCAL app.bypass_rls = 'true'"))
-        shared_before = await _shared_fact_counts(bypass_session)
         tenant_id = await _create_owned_tenant(bypass_session, "wecom")
         control_tenant_id = await _create_owned_tenant(bypass_session, "wecom-control")
         await bypass_session.execute(
@@ -1104,12 +1275,8 @@ class TestPublicScanRuntimeRLS:
                 0,
                 0,
             )
-            for owned_tenant_id in (tenant_id, control_tenant_id):
-                deleted_tenant = await bypass_session.execute(
-                    text("DELETE FROM tenants WHERE id=:tenant_id"), {"tenant_id": owned_tenant_id}
-                )
-                assert deleted_tenant.rowcount == 1
-            assert await _shared_fact_counts(bypass_session) == shared_before
+            # Consent policy rows seeded by the tenant trigger are immutable.
+            # The marker-owned database is the cleanup boundary for those facts.
             await bypass_session.commit()
 
 

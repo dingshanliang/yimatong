@@ -35,8 +35,8 @@ def _seed_attr(tenant_id, *, amount, scan_time, order_id=None, public_id="SCAN-A
 
 
 @pytest.mark.asyncio
-async def test_gmv_uses_attribution_snapshot_by_scan_time(db):
-    """§4.4 row 6：净 GMV 来源 = 归因快照，按 scan_time 在本期窗口聚合。
+async def test_gmv_excludes_unconfirmed_legacy_attribution(db):
+    """§4.4 row 6：没有 immutable confirmation 的旧归因不得进入冻结 scorecard。
 
     归因快照每行的 attribution_window_hours 已在写入时固化扫码→下单延迟，
     故本期窗口 [window_start, window_end] 内的扫码归因自然包含延迟下单。
@@ -44,7 +44,6 @@ async def test_gmv_uses_attribution_snapshot_by_scan_time(db):
     onboarding = datetime(2026, 7, 1, tzinfo=UTC)
     launched = datetime(2026, 7, 8, tzinfo=UTC)
     tenant_id = await seed_pilot_tenant(db, created_at=onboarding)
-    await seed_pilot_launch_release(db, tenant_id, launched_at=launched)
     db.add(
         PilotMilestone(
             tenant_id=tenant_id, milestone_type=PilotMilestoneType.ONBOARDING, achieved_at=onboarding, source="t"
@@ -64,10 +63,10 @@ async def test_gmv_uses_attribution_snapshot_by_scan_time(db):
     await db.flush()
 
     scorecard = await build_scorecard(db, tenant_id, window_start=window_start, window_end=window_end)
-    assert scorecard["net_gmv"]["value"] == 100.0
-    assert scorecard["net_gmv"]["status"] == "computed"
-    assert scorecard["gmv_source"] == "gmv_attributions"
-    assert scorecard["funnel_raw"]["attributed_orders"] == 1
+    assert scorecard["net_gmv"]["value"] is None
+    assert scorecard["net_gmv"]["status"] == "insufficient_data"
+    assert scorecard["gmv_source"] == "confirmed_gmv_attributions"
+    assert scorecard["funnel_raw"]["attributed_orders"] == 0
 
 
 @pytest.mark.asyncio
@@ -85,8 +84,8 @@ async def test_gmv_excludes_attributions_outside_scan_window(db):
 
 
 @pytest.mark.asyncio
-async def test_gmv_amount_is_net_after_refund(db):
-    """归因快照 amount 已是退款回冲后净额，scorecard 直接采用。"""
+async def test_gmv_does_not_trust_unconfirmed_net_projection(db):
+    """即使旧 projection 含净额，没有 confirmation 仍不得冻结为可信结果。"""
     tenant_id = await seed_pilot_tenant(db)
     window_start = datetime(2026, 7, 1, tzinfo=UTC)
     window_end = datetime(2026, 7, 8, tzinfo=UTC)
@@ -95,8 +94,8 @@ async def test_gmv_amount_is_net_after_refund(db):
     await db.flush()
 
     scorecard = await build_scorecard(db, tenant_id, window_start=window_start, window_end=window_end)
-    assert scorecard["net_gmv"]["value"] == 150.0
-    assert scorecard["funnel_raw"]["attributed_net_amount"] == 150.0
+    assert scorecard["net_gmv"]["value"] is None
+    assert scorecard["funnel_raw"]["attributed_net_amount"] == 0.0
 
 
 # ── §8 上期动作显式承接 ────────────────────────────────────────────────

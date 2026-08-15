@@ -2,6 +2,7 @@
 
 import json
 import uuid
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock
 
 import pytest
@@ -53,6 +54,31 @@ def _body(**overrides) -> ScanEventRequest:
 def test_scan_event_request_rejects_unbounded_or_non_idempotent_payloads(payload):
     with pytest.raises(ValidationError):
         ScanEventRequest(**payload)
+
+
+@pytest.mark.parametrize("offset", [timedelta(minutes=-5), timedelta(minutes=5)])
+def test_client_timestamp_accepts_only_bounded_clock_skew(offset):
+    received_at = datetime(2026, 8, 14, 12, 0, tzinfo=UTC)
+    occurred_at = received_at + offset
+
+    assert scan_events._validate_client_timestamp(occurred_at, received_at=received_at) == occurred_at
+
+
+@pytest.mark.parametrize("offset", [timedelta(minutes=-5, microseconds=-1), timedelta(minutes=5, microseconds=1)])
+def test_client_timestamp_rejects_historical_and_future_window_injection(offset):
+    received_at = datetime(2026, 8, 14, 12, 0, tzinfo=UTC)
+
+    with pytest.raises(HTTPException) as exc_info:
+        scan_events._validate_client_timestamp(received_at + offset, received_at=received_at)
+
+    assert exc_info.value.status_code == 422
+    assert exc_info.value.detail == "timestamp exceeds allowed clock skew"
+
+
+def test_missing_client_timestamp_uses_server_receipt_clock():
+    received_at = datetime(2026, 8, 14, 12, 0, tzinfo=UTC)
+
+    assert scan_events._validate_client_timestamp(None, received_at=received_at) == received_at
 
 
 @pytest.mark.anyio

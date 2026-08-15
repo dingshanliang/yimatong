@@ -8,6 +8,7 @@
 - 凭证加密/解密/脱敏
 """
 
+import json
 import os
 import socket
 from unittest.mock import AsyncMock, MagicMock
@@ -48,7 +49,12 @@ def generic_connector(tenant_id):
         tenant_id=tenant_id,
         name="测试 HTTP 连接器",
         connector_type="generic_http",
-        config={"api_url": "https://api.example.com", "api_key": "sk-test"},
+        config={
+            "api_url": "https://api.example.com",
+            "api_key": "sk-test",
+            "provider_idempotency": True,
+            "reconciliation_path": "deliveries/{idempotency_key}",
+        },
         enabled=True,
     )
 
@@ -130,6 +136,75 @@ class TestGenericHttpAdapter:
         is_valid, error = await adapter.validate_config({})
         assert not is_valid
         assert "api_url" in error
+
+    @pytest.mark.asyncio
+    async def test_validate_config_requires_provider_idempotency_and_reconciliation(self):
+        adapter = get_adapter(
+            Connector(
+                id=uuid7(),
+                tenant_id=uuid7(),
+                name="x",
+                connector_type="generic_http",
+                config={},
+                enabled=True,
+            )
+        )
+        is_valid, error = await adapter.validate_config({"api_url": "https://api.example.com"})
+        assert not is_valid
+        assert "provider_idempotency" in error
+
+        is_valid, error = await adapter.validate_config(
+            {"api_url": "https://api.example.com", "provider_idempotency": True}
+        )
+        assert not is_valid
+        assert "reconciliation_path" in error
+
+    @pytest.mark.parametrize(
+        "path",
+        [
+            "/deliveries/{idempotency_key}",
+            "../deliveries/{idempotency_key}",
+            "deliveries/{other}",
+            "https://other.example/{idempotency_key}",
+            "deliveries/{idempotency_key}?secret=x",
+        ],
+    )
+    def test_reconciliation_path_is_bounded_to_provider_base(self, path):
+        from app.services.connectors.generic_http import _is_reconciliation_path_valid
+
+        assert _is_reconciliation_path_valid(path) is False
+
+    @pytest.mark.asyncio
+    async def test_ambiguous_delivery_is_quarantined_then_reconciled_without_second_post(
+        self, generic_connector, monkeypatch
+    ):
+        from app.services.connectors import generic_http
+
+        calls = []
+
+        async def request(method, _base, suffix, **kwargs):
+            calls.append((method, suffix, kwargs))
+            if method == "POST":
+                raise generic_http.AmbiguousDeliveryResult
+            return {"status": "success", "id": "provider-delivery-1"}
+
+        monkeypatch.setattr(generic_http, "_request_json", request)
+        adapter = get_adapter(generic_connector)
+        pending = await adapter.deliver(
+            generic_connector,
+            "consumer-1",
+            {"benefit_type": "coupon", "idempotency_key": "stable-provider-key"},
+        )
+        assert pending.status == "pending"
+        assert pending.external_id == "stable-provider-key"
+        assert pending.external_data == {"status": "pending", "reason": "ambiguous_provider_outcome"}
+
+        reconciled = await adapter.reconcile(generic_connector, pending.external_id)
+        repeated_reconciliation = await adapter.reconcile(generic_connector, pending.external_id)
+        assert reconciled.status == "success"
+        assert repeated_reconciliation.status == "success"
+        assert [method for method, _, _ in calls] == ["POST", "GET", "GET"]
+        assert calls[1][1] == "deliveries/stable-provider-key"
 
     @pytest.mark.asyncio
     async def test_validate_config_rejects_http(self):
@@ -293,6 +368,90 @@ class TestSSRFProtection:
         raw_request = b"".join(call.args[0] for call in writer.write.call_args_list)
         assert b"Host: api.example.com" in raw_request
         assert b"GET /v1/stock HTTP/1.1" in raw_request
+
+    @pytest.mark.asyncio
+    async def test_complete_json_response_survives_connection_reset_during_close(self, monkeypatch):
+        from app.services.connectors import generic_http
+
+        loop = MagicMock()
+        loop.getaddrinfo = AsyncMock(return_value=[(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 443))])
+        monkeypatch.setattr(generic_http.asyncio, "get_running_loop", lambda: loop)
+        response = b'HTTP/1.1 200 OK\r\nContent-Length: 20\r\nConnection: close\r\n\r\n{"status":"success"}'
+        reader = AsyncMock()
+        reader.read = AsyncMock(side_effect=[response])
+        writer = MagicMock()
+        writer.drain = AsyncMock()
+        writer.wait_closed = AsyncMock(side_effect=ConnectionResetError("peer reset on close"))
+        monkeypatch.setattr(generic_http.asyncio, "open_connection", AsyncMock(return_value=(reader, writer)))
+
+        result = await generic_http._request_json(
+            "POST",
+            "https://api.example.com",
+            "deliver",
+            headers={"Idempotency-Key": "stable-key"},
+            payload={"value": 1},
+            allow_address_failover=False,
+        )
+
+        assert result == {"status": "success"}
+        assert writer.write.call_count >= 2
+
+    @pytest.mark.asyncio
+    async def test_incomplete_response_after_post_is_ambiguous_and_never_address_failed_over(self, monkeypatch):
+        from app.services.connectors import generic_http
+
+        loop = MagicMock()
+        loop.getaddrinfo = AsyncMock(
+            return_value=[
+                (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 443)),
+                (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.35", 443)),
+            ]
+        )
+        monkeypatch.setattr(generic_http.asyncio, "get_running_loop", lambda: loop)
+        incomplete = b'HTTP/1.1 200 OK\r\nContent-Length: 20\r\nConnection: close\r\n\r\n{"status":'
+        reader = AsyncMock()
+        reader.read = AsyncMock(side_effect=[incomplete, b""])
+        writer = MagicMock()
+        writer.drain = AsyncMock()
+        writer.wait_closed = AsyncMock(side_effect=ConnectionResetError("peer reset"))
+        open_connection = AsyncMock(return_value=(reader, writer))
+        monkeypatch.setattr(generic_http.asyncio, "open_connection", open_connection)
+
+        with pytest.raises(generic_http.AmbiguousDeliveryResult):
+            await generic_http._request_json(
+                "POST",
+                "https://api.example.com",
+                "deliver",
+                headers={"Idempotency-Key": "stable-key"},
+                payload={"value": 1},
+            )
+
+        assert open_connection.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_full_invalid_json_is_not_misclassified_as_transport_ambiguity(self, monkeypatch):
+        from app.services.connectors import generic_http
+
+        loop = MagicMock()
+        loop.getaddrinfo = AsyncMock(return_value=[(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 443))])
+        monkeypatch.setattr(generic_http.asyncio, "get_running_loop", lambda: loop)
+        response = b"HTTP/1.1 200 OK\r\nContent-Length: 8\r\nConnection: close\r\n\r\nnot-json"
+        reader = AsyncMock()
+        reader.read = AsyncMock(side_effect=[response])
+        writer = MagicMock()
+        writer.drain = AsyncMock()
+        writer.wait_closed = AsyncMock()
+        monkeypatch.setattr(generic_http.asyncio, "open_connection", AsyncMock(return_value=(reader, writer)))
+
+        with pytest.raises(json.JSONDecodeError):
+            await generic_http._request_json(
+                "POST",
+                "https://api.example.com",
+                "deliver",
+                headers={"Idempotency-Key": "stable-key"},
+                payload={"value": 1},
+                allow_address_failover=False,
+            )
 
 
 # ---------------------------------------------------------------------------

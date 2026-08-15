@@ -98,7 +98,11 @@ async def _create_code_chain(client: AsyncClient, prefix: str):
         },
     )
     batch_id = batch.json()["id"]
-    await client.post(f"/api/v1/code-batches/{batch_id}/export", headers=headers)
+    await client.post(
+        f"/api/v1/code-batches/{batch_id}/export",
+        json={"reason": "Test lifecycle setup"},
+        headers={**headers, "Idempotency-Key": str(uuid.uuid4())},
+    )
     await client.post(f"/api/v1/code-batches/{batch_id}/mark-printing", headers=headers)
     await client.post(
         f"/api/v1/code-batches/{batch_id}/mark-delivered",
@@ -166,28 +170,102 @@ class TestExpiredCode:
 
 
 class TestScanTokenTenantId:
-    """验证 scan_token 包含 tenant_id"""
+    """Live release 决定扫码凭证是否包含 claim authority。"""
 
     @pytest.mark.anyio
-    async def test_scan_token_contains_tenant_id(self, client: AsyncClient):
-        """通过完整链路验证 scan_token 包含 tenant_id"""
-        from app.services.scan_token import verify_scan_token
+    async def test_scan_token_without_live_launch_is_not_issued(self, client: AsyncClient):
+        public_id, _, _tid = await _create_code_chain(client, "TID")
 
-        public_id, _, tid = await _create_code_chain(client, "TID")
-
-        # 扫码获取 scan_token
         scan_resp = await client.get(
             f"/c/{public_id}",
             headers={"Accept": "application/json"},
         )
         assert scan_resp.status_code == 200
-        scan_token = scan_resp.json()["scan_token"]
+        assert scan_resp.json()["scan_token"] is None
+        assert scan_resp.json()["scan_info"]["paused_reason"] == "launch_not_live"
+        assert "campaign" not in scan_resp.json()
 
-        # 验证 token 包含 tenant_id
-        payload = verify_scan_token(scan_token, public_id)
-        assert payload is not None
-        assert payload["tenant_id"] == tid, f"tenant_id 应为 {tid}，实际 {payload.get('tenant_id')}"
-        assert uuid.UUID(payload["scan_event_id"])
+    @pytest.mark.anyio
+    async def test_live_scan_observation_failure_is_retryable_and_does_not_break_consumer_response(
+        self, client: AsyncClient, caplog
+    ):
+        public_id, _, tid = await _create_code_chain(client, "OBSERVE")
+        release_id = uuid.uuid4()
+        release = {
+            "release_id": release_id,
+            "page_template_id": uuid.uuid4(),
+            "page_version_id": uuid.uuid4(),
+            "campaign_id": uuid.uuid4(),
+            "code_batch_id": uuid.uuid4(),
+            "content_digest": "a" * 64,
+        }
+
+        with (
+            patch("app.api.v1.resolver.resolve_current_launch_release", return_value=release),
+            patch(
+                "app.api.v1.resolver.record_launch_release_valid_scan",
+                side_effect=[
+                    RuntimeError("transient observation failure"),
+                    {
+                        "release_id": release_id,
+                        "observation_status": "observed",
+                        "recorded_at": None,
+                        "replayed": False,
+                    },
+                ],
+            ) as observe,
+        ):
+            response = await client.get(f"/c/{public_id}", headers={"Accept": "application/json"})
+            retried = await client.get(f"/c/{public_id}", headers={"Accept": "application/json"})
+
+        assert response.status_code == 200
+        assert retried.status_code == 200
+        assert response.json()["scan_token"]
+        assert retried.json()["scan_token"]
+        assert observe.await_count == 2
+        assert observe.await_args_list[0].kwargs["tenant_id"] == uuid.UUID(tid)
+        assert observe.await_args_list[0].kwargs["release_id"] == release_id
+        assert observe.await_args_list[0].kwargs["scan_event_id"]
+        assert observe.await_args_list[0].kwargs["scan_time"]
+        retry_logs = [
+            record for record in caplog.records if record.message == "launch scan observation remains retryable"
+        ]
+        assert len(retry_logs) == 1
+        assert retry_logs[0].error_code == "launch_scan_observation_retryable"
+        assert retry_logs[0].error_class == "RuntimeError"
+        assert "transient observation failure" not in retry_logs[0].message
+
+    @pytest.mark.anyio
+    async def test_later_valid_scan_already_observed_receipt_emits_no_retry_warning(self, client: AsyncClient, caplog):
+        public_id, _, _tid = await _create_code_chain(client, "ALREADYOBS")
+        release_id = uuid.uuid4()
+        release = {
+            "release_id": release_id,
+            "page_template_id": uuid.uuid4(),
+            "page_version_id": uuid.uuid4(),
+            "campaign_id": uuid.uuid4(),
+            "code_batch_id": uuid.uuid4(),
+            "content_digest": "b" * 64,
+        }
+        receipt = {
+            "release_id": release_id,
+            "observation_status": "already_observed",
+            "recorded_at": None,
+            "replayed": True,
+        }
+
+        with (
+            patch("app.api.v1.resolver.resolve_current_launch_release", return_value=release),
+            patch("app.api.v1.resolver.record_launch_release_valid_scan", return_value=receipt) as observe,
+        ):
+            response = await client.get(f"/c/{public_id}", headers={"Accept": "application/json"})
+
+        assert response.status_code == 200
+        assert response.json()["scan_token"]
+        observe.assert_awaited_once()
+        assert not [
+            record for record in caplog.records if record.message == "launch scan observation remains retryable"
+        ]
 
 
 class TestVerificationAvailability:

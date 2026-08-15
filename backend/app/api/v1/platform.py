@@ -33,15 +33,15 @@ from app.schemas.common import PaginatedResponse
 from app.services.audit import query_audit_logs, write_audit_log
 from app.services.auth import logout_session
 from app.services.entitlement import is_plan_expired, validate_feature_flags
-from app.services.platform_auth import PlatformSessionUnavailable, revoke_platform_session
+from app.services.platform_auth import (
+    PlatformSessionUnavailable,
+    prune_expired_platform_sessions,
+    revoke_platform_session,
+)
 from app.services.quota import is_quota_usage_effectively_ready, validate_quota_config
 from app.services.redis_cache import AsyncRedisCache, SharedSecurityCacheUnavailable
-from app.services.tenant import (
-    TenantTypeTransitionConflict,
-)
-from app.services.tenant import (
-    update_tenant as update_tenant_service,
-)
+from app.services.tenant import TenantTypeTransitionConflict
+from app.services.tenant import update_tenant as update_tenant_service
 from app.services.tenant_health import refresh_all_health_metrics
 from app.services.tenant_lifecycle import TenantStatusTransitionError, terminate_tenant, transition_tenant_status
 from app.utils.auth_rbac import require_role
@@ -206,6 +206,7 @@ async def platform_login(
         extra={"sid": str(session_id)},
     )
     session_expires_at = datetime.fromtimestamp(decode_token(token)["exp"], tz=UTC)
+    await prune_expired_platform_sessions(db)
     db.add(
         PlatformAuthSession(
             id=session_id,

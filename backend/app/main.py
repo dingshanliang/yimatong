@@ -38,6 +38,7 @@ from app.api.v1.ops_launch_releases import router as ops_launch_release_router
 from app.api.v1.organizations import router as orgs_router
 from app.api.v1.page_templates import page_template_router, page_version_router
 from app.api.v1.password import router as password_router
+from app.api.v1.pilot_milestones import platform_router as platform_pilot_milestone_router
 from app.api.v1.pilot_milestones import router as pilot_milestone_router
 from app.api.v1.platform import router as platform_router
 from app.api.v1.prd_compat import prd_compat_router
@@ -298,8 +299,8 @@ else:
 # Otherwise, inner middlewares (e.g., TenantScopeMiddleware returning 401) bypass
 # CORS header injection, causing browsers to block responses as CORS failures.
 app.add_middleware(LoggingMiddleware)
-app.add_middleware(ConnectorRequestBodyLimitMiddleware)
 app.add_middleware(TenantScopeMiddleware)
+app.add_middleware(ConnectorRequestBodyLimitMiddleware)
 app.add_middleware(RequestIDMiddleware)
 app.add_middleware(
     CORSMiddleware,
@@ -338,6 +339,7 @@ app.include_router(agency_switch_router)
 app.include_router(ops_router)
 app.include_router(ops_launch_release_router)
 app.include_router(pilot_milestone_router)
+app.include_router(platform_pilot_milestone_router)
 app.include_router(retrospectives_router)
 app.include_router(risk_router)
 app.include_router(risk_notification_router)

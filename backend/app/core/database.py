@@ -389,7 +389,7 @@ async def _revalidate_mutating_principal(session: AsyncSession, request: Request
         {
             permission.code
             for role in account.roles
-            if role.name in {"admin", "operator", "viewer"}
+            if role.name in {"admin", "operator", "viewer", "distributor", "store_guide"}
             for permission in role.permissions
         }
         if account is not None

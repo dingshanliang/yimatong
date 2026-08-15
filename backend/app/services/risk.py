@@ -3,8 +3,9 @@
 import uuid
 from datetime import timedelta
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
+from uuid6 import uuid7
 
 from app.core.event_bus import event_bus
 from app.core.exceptions import ConflictError
@@ -68,6 +69,7 @@ async def check_multi_location(
             "risk.alert",
             {"alert_type": "multi_location", "public_id": public_id, "detail": alert.detail},
             str(tenant_id),
+            db=db,
         )
         return alert
     return None
@@ -120,6 +122,7 @@ async def check_suspected_copy(
             "risk.alert",
             {"alert_type": "suspected_copy", "public_id": public_id, "detail": alert.detail},
             str(tenant_id),
+            db=db,
         )
         return alert
     return None
@@ -131,12 +134,36 @@ async def freeze_code_item(
     item_id: uuid.UUID,
     actor_id: str,
     reason: str,
+    idempotency_key: str | None = None,
 ) -> CodeItem:
     """冻结码项"""
-    from app.services.code import transition_code_item_lifecycle
+    normalized_reason = reason.strip()
+    if not normalized_reason or len(normalized_reason) > 200:
+        raise ConflictError("Code lifecycle reason is invalid", error_code="CODE_LIFECYCLE_CONFLICT")
 
-    controlled = await transition_code_item_lifecycle(db, tenant_id, item_id, "freeze", reason)
-    if controlled is not None:
+    from app.core.database import _session_uses_postgresql
+    from app.services.code import _invalidate_resolve_cache, _lifecycle_auth_session_id
+
+    if _session_uses_postgresql(db):
+        normalized_idempotency_key = (idempotency_key or f"manual-freeze:{uuid7()}").strip()
+        if not normalized_idempotency_key or len(normalized_idempotency_key) > 128:
+            raise ConflictError("Code lifecycle idempotency key is invalid", error_code="CODE_LIFECYCLE_CONFLICT")
+        await db.execute(
+            text(
+                "SELECT * FROM public.freeze_code_item_with_risk_alert("
+                ":tenant_id,:auth_session_id,:receipt_id,:audit_id,:alert_id,:item_id,:idempotency_key,:reason)"
+            ),
+            {
+                "tenant_id": tenant_id,
+                "auth_session_id": _lifecycle_auth_session_id(),
+                "receipt_id": uuid7(),
+                "audit_id": uuid7(),
+                "alert_id": uuid7(),
+                "item_id": item_id,
+                "idempotency_key": normalized_idempotency_key,
+                "reason": normalized_reason,
+            },
+        )
         item = await db.scalar(
             select(CodeItem)
             .where(CodeItem.id == item_id, CodeItem.tenant_id == tenant_id)
@@ -146,20 +173,8 @@ async def freeze_code_item(
             from fastapi import HTTPException
 
             raise HTTPException(status_code=404, detail="Code item not found")
-        alert = RiskAlert(
-            tenant_id=tenant_id,
-            alert_type=RiskAlertType.risk_frozen,
-            public_id=item.public_id,
-            code_item_id=item.id,
-            detail="码已被风险冻结",
-        )
-        db.add(alert)
-        await db.flush()
+        await _invalidate_resolve_cache(item.public_id)
         return item
-
-    reason = reason.strip()
-    if not reason or len(reason) > 200:
-        raise ConflictError("Code lifecycle reason is invalid", error_code="CODE_LIFECYCLE_CONFLICT")
 
     from app.services.code_state import can_transition
 
@@ -176,7 +191,7 @@ async def freeze_code_item(
     item.frozen_from_status = previous_status.value
     item.frozen_at = utcnow()
     item.frozen_by = actor_id
-    item.freeze_reason = reason.strip()
+    item.freeze_reason = normalized_reason
     item.freeze_provenance_version = 1
 
     # 记录冻结预警
@@ -199,7 +214,7 @@ async def freeze_code_item(
         "code_freeze",
         f"code_item:{item.public_id}",
         details={
-            "reason": reason.strip(),
+            "reason": normalized_reason,
             "before": {"status": previous_status.value},
             "after": {"status": CodeItemStatus.frozen.value},
         },

@@ -15,6 +15,7 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+from uuid6 import uuid7
 
 from app.services.code_export import generate_code_csv
 from tests.test_acceptance.conftest import BACKEND_DIR
@@ -60,17 +61,20 @@ def _alembic(database_url: str, *args: str, succeeds: bool = True) -> subprocess
 def _app_cli(database_url: str, *args: str) -> subprocess.CompletedProcess[str]:
     env = os.environ.copy()
     runtime_url = database_url.replace("yimatong:yimatong@", "yimatong_app:yimatong_app@")
+    control_url = database_url.replace("yimatong:yimatong@", "acceptance_control:control_pwd@")
     assert make_url(runtime_url).username == "yimatong_app"
+    assert make_url(control_url).username == "acceptance_control"
     assert make_url(database_url).username == "yimatong"
     env.update(
         {
             "database_url": runtime_url,
             "migration_database_url": database_url,
-            "control_database_url": database_url,
+            "control_database_url": control_url,
         }
     )
     assert env["database_url"] == runtime_url
-    assert env["migration_database_url"] == env["control_database_url"] == database_url
+    assert env["migration_database_url"] == database_url
+    assert env["control_database_url"] == control_url
     result = subprocess.run(
         [sys.executable, "-m", "app.cli", *args],
         cwd=BACKEND_DIR,
@@ -295,27 +299,28 @@ async def _insert_manifest_and_deliver(
     *,
     row_count: int,
 ) -> tuple[uuid.UUID, bytes, bytes]:
-    manifest_id = uuid.uuid4()
-    plaintext = b"public_id,status\nA,created\n"
+    requested_manifest_id = uuid7()
+    plaintext = b"public_id,status\n" + b"A,created\n" * row_count
     ciphertext = b"c" * (len(plaintext) + 16)
     nonce = b"n" * 12
-    await conn.execute(
-        "INSERT INTO export_logs "
-        "(id,tenant_id,account_id,export_type,resource_id,file_name,row_count,status,code_batch_id,"
-        "manifest_version,checksum_sha256,artifact_size_bytes,artifact_ciphertext,artifact_nonce,"
-        "artifact_scheme,artifact_key_id,created_at,updated_at) "
-        "VALUES($1,$2,$3,'code_csv',$4,'codes.csv',$5,'completed',$4,1,$6,$7,$8,$9,"
-        "'aes-256-gcm-v1','test-key-1',now(),now())",
-        manifest_id,
-        ids["tenant"],
-        ids["account"],
-        batch_id,
-        row_count,
-        hashlib.sha256(plaintext).hexdigest(),
-        len(plaintext),
-        ciphertext,
-        nonce,
-    )
+    async with conn.transaction():
+        await conn.execute("SELECT set_config('app.tenant_id','',true)")
+        await conn.execute("SELECT set_config('app.bypass_rls','true',true)")
+        manifest = await conn.fetchrow(
+            "SELECT * FROM public.record_seed_code_export_manifest($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)",
+            ids["tenant"],
+            requested_manifest_id,
+            batch_id,
+            "codes.csv",
+            row_count,
+            hashlib.sha256(plaintext).hexdigest(),
+            len(plaintext),
+            ciphertext,
+            nonce,
+            "aes-256-gcm-v1",
+            "test-key-1",
+        )
+    manifest_id = manifest["export_id"]
     await conn.execute(
         "UPDATE code_batches SET status='exported',export_manifest_id=$1,exported_at=now() WHERE id=$2",
         manifest_id,
@@ -329,20 +334,115 @@ async def _insert_manifest_and_deliver(
     return manifest_id, ciphertext, nonce
 
 
+async def _seed_owned_replay_catalog(
+    conn: asyncpg.Connection,
+    *,
+    tenant_id: uuid.UUID,
+    account_id: uuid.UUID,
+    brand_id: uuid.UUID,
+) -> tuple[dict[str, uuid.UUID], uuid.UUID]:
+    """Create a marker-owned catalog and completed batch for replay mutation."""
+
+    ids = {
+        "tenant": tenant_id,
+        "account": account_id,
+        "product": uuid7(),
+        "sku": uuid7(),
+        "production_batch": uuid7(),
+    }
+    marker = ids["product"].hex[:12]
+    await conn.execute(
+        "INSERT INTO products(id,tenant_id,brand_id,name,status,created_at,updated_at) "
+        "VALUES($1,$2,$3,$4,'active',now(),now())",
+        ids["product"],
+        tenant_id,
+        brand_id,
+        f"delivery replay {marker}",
+    )
+    await conn.execute(
+        "INSERT INTO skus(id,tenant_id,product_id,code,name,status,created_at,updated_at) "
+        "VALUES($1,$2,$3,$4,$5,'active',now(),now())",
+        ids["sku"],
+        tenant_id,
+        ids["product"],
+        f"REPLAY-{marker}",
+        f"delivery replay sku {marker}",
+    )
+    await conn.execute(
+        "INSERT INTO production_batches "
+        "(id,tenant_id,product_id,sku_id,batch_code,production_date,expiry_date,status,origin,created_at,updated_at) "
+        "VALUES($1,$2,$3,$4,$5,$6,$7,'active',$8,now(),now())",
+        ids["production_batch"],
+        tenant_id,
+        ids["product"],
+        ids["sku"],
+        f"REPLAY-PB-{marker}",
+        date.today(),
+        date.today() + timedelta(days=365),
+        f"replay-origin-{marker}",
+    )
+    receipt_id = await _insert_receipt(conn, ids)
+    batch_id = await _insert_batch(conn, ids, receipt_id)
+    await _insert_items(conn, tenant_id, batch_id, 2)
+    await conn.execute("UPDATE code_batches SET status='completed' WHERE tenant_id=$1 AND id=$2", tenant_id, batch_id)
+    return ids, batch_id
+
+
+async def _catalog_snapshot(conn: asyncpg.Connection, tenant_id: uuid.UUID) -> str:
+    """Capture every existing parent-catalog byte exposed as JSON."""
+
+    return await conn.fetchval(
+        "SELECT jsonb_build_object("
+        "'products',(SELECT COALESCE(jsonb_agg(to_jsonb(row_data) ORDER BY row_data.id),'[]'::jsonb) "
+        "FROM products row_data WHERE tenant_id=$1),"
+        "'skus',(SELECT COALESCE(jsonb_agg(to_jsonb(row_data) ORDER BY row_data.id),'[]'::jsonb) "
+        "FROM skus row_data WHERE tenant_id=$1),"
+        "'production_batches',(SELECT COALESCE(jsonb_agg(to_jsonb(row_data) ORDER BY row_data.id),'[]'::jsonb) "
+        "FROM production_batches row_data WHERE tenant_id=$1))::text",
+        tenant_id,
+    )
+
+
 async def _purge_owned_delivery_fixture(conn: asyncpg.Connection, tenant_id: uuid.UUID) -> None:
     """Remove this test's durable delivery rows without weakening production ACL."""
 
     tables = (
+        "risk_action_outbox",
+        "risk_campaign_pauses",
+        "risk_notifications",
+        "interception_records",
+        "risk_alerts",
+        "risk_action_receipts",
+        "diversion_action_receipts",
+        "diversion_evidence",
+        "diversion_investigation_history",
+        "diversion_observations",
+        "diversion_clues",
+        "launch_releases",
+        "takeover_aliases",
         "scan_events",
         "code_items",
         "code_batches",
         "code_batch_generation_receipts",
         "export_logs",
     )
-    async with conn.transaction():
-        try:
+    try:
+        async with conn.transaction():
             for table in tables:
                 await conn.execute(f"ALTER TABLE public.{table} DISABLE TRIGGER USER")
+            await conn.execute("DELETE FROM risk_action_outbox WHERE tenant_id=$1", tenant_id)
+            await conn.execute("DELETE FROM risk_campaign_pauses WHERE tenant_id=$1", tenant_id)
+            await conn.execute("DELETE FROM risk_notifications WHERE tenant_id=$1", tenant_id)
+            await conn.execute("DELETE FROM interception_records WHERE tenant_id=$1", tenant_id)
+            await conn.execute("DELETE FROM risk_alerts WHERE tenant_id=$1", tenant_id)
+            await conn.execute("DELETE FROM risk_action_receipts WHERE tenant_id=$1", tenant_id)
+            await conn.execute("DELETE FROM diversion_action_receipts WHERE tenant_id=$1", tenant_id)
+            await conn.execute("DELETE FROM diversion_evidence WHERE tenant_id=$1", tenant_id)
+            await conn.execute("DELETE FROM diversion_investigation_history WHERE tenant_id=$1", tenant_id)
+            await conn.execute("DELETE FROM diversion_observations WHERE tenant_id=$1", tenant_id)
+            await conn.execute("DELETE FROM diversion_clues WHERE tenant_id=$1", tenant_id)
+            await conn.execute("DELETE FROM launch_releases WHERE tenant_id=$1", tenant_id)
+            await conn.execute("DELETE FROM takeover_aliases WHERE tenant_id=$1", tenant_id)
             await conn.execute("DELETE FROM code_allocations WHERE tenant_id=$1", tenant_id)
             await conn.execute("DELETE FROM scan_events WHERE tenant_id=$1", tenant_id)
             await conn.execute("DELETE FROM code_items WHERE tenant_id=$1", tenant_id)
@@ -350,9 +450,15 @@ async def _purge_owned_delivery_fixture(conn: asyncpg.Connection, tenant_id: uui
             await conn.execute("DELETE FROM code_batch_generation_receipts WHERE tenant_id=$1", tenant_id)
             await conn.execute("DELETE FROM export_logs WHERE tenant_id=$1", tenant_id)
             await conn.execute("DELETE FROM code_batches WHERE tenant_id=$1", tenant_id)
-        finally:
             for table in reversed(tables):
                 await conn.execute(f"ALTER TABLE public.{table} ENABLE TRIGGER USER")
+    except BaseException:
+        # The failed transaction rolls back every DISABLE, but restore again
+        # from a clean transaction so teardown never leaves a weakened table.
+        async with conn.transaction():
+            for table in reversed(tables):
+                await conn.execute(f"ALTER TABLE public.{table} ENABLE TRIGGER USER")
+        raise
 
 
 async def test_empty_head_roundtrip_and_metadata_match(migrated_pg_url: str) -> None:
@@ -1084,10 +1190,16 @@ async def test_runtime_cannot_delete_code_or_manifest_relations(
 
 async def test_official_cli_seeds_complete_encrypted_delivery_chains(migrated_pg_url: str) -> None:
     _app_cli(migrated_pg_url, "all")
+    _app_cli(migrated_pg_url, "all")
+    _app_cli(migrated_pg_url, "demo")
+    _app_cli(migrated_pg_url, "demo")
+    _app_cli(migrated_pg_url, "baseline", "build", "--target", "baseline-base")
     _app_cli(migrated_pg_url, "baseline", "build", "--target", "baseline-base")
 
     owner = await asyncpg.connect(migrated_pg_url.replace("postgresql+asyncpg://", "postgresql://"))
     owned_tenant_ids: list[uuid.UUID] = []
+    owned_replay_catalogs: dict[uuid.UUID, tuple[dict[str, uuid.UUID], uuid.UUID]] = {}
+    parent_catalog_snapshots: dict[uuid.UUID, str] = {}
     try:
         for tenant_slug in ("demo", "baseline-base"):
             tenant_id = await owner.fetchval("SELECT id FROM tenants WHERE slug=$1", tenant_slug)
@@ -1158,36 +1270,66 @@ async def test_official_cli_seeds_complete_encrypted_delivery_chains(migrated_pg
                 assert manifest["artifact_scheme"] == "aes-256-gcm-v1"
                 assert manifest["artifact_key_id"].startswith("aes-master-v")
 
-            replay_batch = batches[0]
+            parent_catalog_snapshots[tenant_id] = await _catalog_snapshot(owner, tenant_id)
+            admin_account_id = await owner.fetchval(
+                "SELECT ar.account_id FROM account_roles ar "
+                "JOIN roles role ON role.tenant_id=ar.tenant_id AND role.id=ar.role_id "
+                "WHERE ar.tenant_id=$1 AND role.name='admin' ORDER BY ar.account_id LIMIT 1",
+                tenant_id,
+            )
+            brand_id = await owner.fetchval(
+                "SELECT id FROM brands WHERE tenant_id=$1 ORDER BY id LIMIT 1",
+                tenant_id,
+            )
+            assert admin_account_id is not None
+            assert brand_id is not None
+            async with owner.transaction():
+                replay_ids, replay_batch_id = await _seed_owned_replay_catalog(
+                    owner,
+                    tenant_id=tenant_id,
+                    account_id=admin_account_id,
+                    brand_id=brand_id,
+                )
+            owned_replay_catalogs[tenant_id] = (replay_ids, replay_batch_id)
+
             runtime_url = migrated_pg_url.replace("yimatong:yimatong@", "yimatong_app:yimatong_app@")
             runtime_engine = create_async_engine(runtime_url)
+            owner_engine = create_async_engine(migrated_pg_url)
             runtime_factory = async_sessionmaker(runtime_engine, expire_on_commit=False)
+            seed_owner_factory = async_sessionmaker(owner_engine, expire_on_commit=False)
             try:
-                async with runtime_factory() as db, db.begin():
+                async with runtime_factory() as db:
                     await db.execute(
                         text("SELECT set_config('app.tenant_id', :tenant_id, true)"),
                         {"tenant_id": str(tenant_id)},
                     )
-                    original = await generate_code_csv(db, tenant_id, replay_batch["id"], uuid.uuid4())
+                    original = await generate_code_csv(
+                        db,
+                        tenant_id,
+                        replay_batch_id,
+                        admin_account_id,
+                        seed_owner_session_factory=seed_owner_factory,
+                    )
+                    await db.commit()
 
                 await owner.execute(
                     "UPDATE products SET name=name || ' replay-change' WHERE tenant_id=$1 AND id=$2",
                     tenant_id,
-                    replay_batch["product_id"],
+                    replay_ids["product"],
                 )
                 await owner.execute(
                     "UPDATE skus SET name=name || ' replay-change' WHERE tenant_id=$1 AND product_id=$2 AND id=$3",
                     tenant_id,
-                    replay_batch["product_id"],
-                    replay_batch["sku_id"],
+                    replay_ids["product"],
+                    replay_ids["sku"],
                 )
                 await owner.execute(
                     "UPDATE production_batches SET origin=origin || ' replay-change' "
                     "WHERE tenant_id=$1 AND product_id=$2 AND sku_id=$3 AND id=$4",
                     tenant_id,
-                    replay_batch["product_id"],
-                    replay_batch["sku_id"],
-                    replay_batch["production_batch_id"],
+                    replay_ids["product"],
+                    replay_ids["sku"],
+                    replay_ids["production_batch"],
                 )
 
                 async with runtime_factory() as db, db.begin():
@@ -1195,11 +1337,42 @@ async def test_official_cli_seeds_complete_encrypted_delivery_chains(migrated_pg
                         text("SELECT set_config('app.tenant_id', :tenant_id, true)"),
                         {"tenant_id": str(tenant_id)},
                     )
-                    replay = await generate_code_csv(db, tenant_id, replay_batch["id"], uuid.uuid4())
+                    replay = await generate_code_csv(db, tenant_id, replay_batch_id, admin_account_id)
                 assert replay == original
             finally:
                 await runtime_engine.dispose()
+                await owner_engine.dispose()
     finally:
         for tenant_id in owned_tenant_ids:
             await _purge_owned_delivery_fixture(owner, tenant_id)
+            owned = owned_replay_catalogs.get(tenant_id)
+            if owned is not None:
+                replay_ids, replay_batch_id = owned
+                await owner.execute(
+                    "DELETE FROM production_batches WHERE tenant_id=$1 AND id=$2",
+                    tenant_id,
+                    replay_ids["production_batch"],
+                )
+                await owner.execute(
+                    "DELETE FROM skus WHERE tenant_id=$1 AND id=$2",
+                    tenant_id,
+                    replay_ids["sku"],
+                )
+                await owner.execute(
+                    "DELETE FROM products WHERE tenant_id=$1 AND id=$2",
+                    tenant_id,
+                    replay_ids["product"],
+                )
+                assert (
+                    await owner.fetchval(
+                        "SELECT (SELECT count(*) FROM code_batches WHERE tenant_id=$1 AND id=$2)+"
+                        "(SELECT count(*) FROM code_items WHERE tenant_id=$1 AND code_batch_id=$2)+"
+                        "(SELECT count(*) FROM code_batch_generation_receipts WHERE tenant_id=$1 AND code_batch_id=$2)+"
+                        "(SELECT count(*) FROM export_logs WHERE tenant_id=$1 AND code_batch_id=$2)",
+                        tenant_id,
+                        replay_batch_id,
+                    )
+                    == 0
+                )
+                assert await _catalog_snapshot(owner, tenant_id) == parent_catalog_snapshots[tenant_id]
         await owner.close()

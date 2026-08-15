@@ -3,10 +3,14 @@
 import uuid
 from datetime import timedelta
 
-from sqlalchemy import func, or_, select
+from fastapi import HTTPException
+from sqlalchemy import and_, func, or_, select, text
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
+from uuid6 import uuid7
 
-from app.core.event_bus import event_bus
+from app.core.database import _session_uses_postgresql, get_request_security_credential
+from app.models.auth_security import AuthSession
 from app.models.campaign import Benefit
 from app.models.member import (
     ConsumerProfile,
@@ -17,82 +21,102 @@ from app.models.member import (
     PointTransaction,
     PointTransactionType,
 )
+from app.models.tenant import Account, Permission, Role, Tenant, account_roles, role_permissions
 from app.utils import utcnow
-from app.utils.crypto import CryptoError, decrypt_phone, encrypt_phone, hash_phone, mask_phone
+from app.utils.crypto import CryptoError, decrypt_consumer_phone, hash_phone, mask_phone
 from app.utils.model_helpers import apply_allowed_updates
 
 
-async def get_or_create_consumer(
-    db: AsyncSession,
-    tenant_id: uuid.UUID,
-    phone: str | None = None,
-    nickname: str | None = None,
-) -> ConsumerProfile:
-    """获取或创建消费者档案"""
-    phone_h = hash_phone(phone) if phone else None
-
-    if phone_h:
-        result = await db.execute(
-            select(ConsumerProfile).where(
-                ConsumerProfile.tenant_id == tenant_id,
-                ConsumerProfile.phone_hash == phone_h,
-            )
-        )
-        consumer = result.scalar_one_or_none()
-        if consumer:
-            if nickname and not consumer.nickname:
-                consumer.nickname = nickname
-            return consumer
-
-    consumer = ConsumerProfile(
-        tenant_id=tenant_id,
-        phone_hash=phone_h,
-        phone_encrypted=encrypt_phone(phone) if phone else None,
-        nickname=nickname,
-    )
-    db.add(consumer)
-    is_new = True
+def _member_auth_session_id() -> uuid.UUID:
+    credential = get_request_security_credential()
+    if credential is None or credential[0] != "auth_session":
+        raise HTTPException(status_code=401, detail="Live login session required for member changes")
     try:
-        async with db.begin_nested():
-            await db.flush()
-    except Exception:
-        is_new = False
-        if phone_h:
-            result = await db.execute(
-                select(ConsumerProfile).where(
-                    ConsumerProfile.tenant_id == tenant_id,
-                    ConsumerProfile.phone_hash == phone_h,
+        return uuid.UUID(credential[1])
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=401, detail="Invalid login session") from exc
+
+
+async def create_anonymous_consumer_profile_authority(db: AsyncSession, tenant_id: uuid.UUID) -> dict:
+    """Create one PII-free points profile through actor-bound database authority."""
+
+    consumer_id = uuid7()
+    auth_session_id = _member_auth_session_id()
+    if not _session_uses_postgresql(db):
+        authorized_session_id = await db.scalar(
+            select(AuthSession.id)
+            .join(
+                Account,
+                (Account.tenant_id == AuthSession.tenant_id) & (Account.id == AuthSession.account_id),
+            )
+            .join(Tenant, Tenant.id == AuthSession.tenant_id)
+            .join(
+                account_roles,
+                (account_roles.c.tenant_id == Account.tenant_id) & (account_roles.c.account_id == Account.id),
+            )
+            .join(
+                Role,
+                (Role.tenant_id == account_roles.c.tenant_id) & (Role.id == account_roles.c.role_id),
+            )
+            .join(
+                role_permissions,
+                (role_permissions.c.tenant_id == Role.tenant_id) & (role_permissions.c.role_id == Role.id),
+            )
+            .join(
+                Permission,
+                (Permission.tenant_id == role_permissions.c.tenant_id)
+                & (Permission.id == role_permissions.c.permission_id),
+            )
+            .where(
+                AuthSession.id == auth_session_id,
+                AuthSession.tenant_id == tenant_id,
+                AuthSession.revoked_at.is_(None),
+                AuthSession.expires_at > utcnow(),
+                AuthSession.auth_version == Account.auth_version,
+                Account.is_active.is_(True),
+                Tenant.status == "active",
+                Role.name.in_({"admin", "operator"}),
+                Permission.code == "consumer:detail",
+            )
+            .limit(1)
+        )
+        if authorized_session_id is None:
+            raise HTTPException(status_code=403, detail="Member authority denied")
+        profile = ConsumerProfile(id=consumer_id, tenant_id=tenant_id)
+        db.add(profile)
+        await db.flush()
+        return {"consumer_id": profile.id, "created_at": profile.created_at}
+    try:
+        row = (
+            (
+                await db.execute(
+                    text(
+                        "SELECT * FROM public.create_anonymous_consumer_profile("
+                        ":tenant_id,:auth_session_id,:audit_id,:consumer_id)"
+                    ),
+                    {
+                        "tenant_id": tenant_id,
+                        "auth_session_id": auth_session_id,
+                        "audit_id": uuid7(),
+                        "consumer_id": consumer_id,
+                    },
                 )
             )
-            consumer = result.scalar_one_or_none()
-            if consumer:
-                return consumer
+            .mappings()
+            .one()
+        )
+    except DBAPIError as exc:
+        sqlstate = getattr(getattr(exc, "orig", None), "sqlstate", None) or getattr(exc.orig, "pgcode", None)
+        if sqlstate == "42501":
+            raise HTTPException(status_code=403, detail="Member authority denied") from exc
+        if sqlstate in {"22023", "23514", "23505"}:
+            raise HTTPException(status_code=409, detail="Member authority conflict") from exc
+        if sqlstate == "55P03":
+            raise HTTPException(
+                status_code=409, detail="Member authority is busy", headers={"Retry-After": "1"}
+            ) from exc
         raise
-    await db.refresh(consumer)
-    if nickname and not consumer.nickname:
-        consumer.nickname = nickname
-
-    if is_new:
-        from sqlalchemy import event as sa_event
-
-        consumer_id_str = str(consumer.id)
-        tenant_id_str = str(tenant_id)
-        _has_phone = phone is not None
-
-        async def _emit_after_commit(session):
-            await event_bus.emit(
-                "consumer.created",
-                {"consumer_id": consumer_id_str, "has_phone": _has_phone},
-                tenant_id_str,
-            )
-
-        def _on_commit(session):
-            import asyncio
-
-            asyncio.ensure_future(_emit_after_commit(session))
-
-        sa_event.listen(db.sync_session, "after_commit", _on_commit, once=True)
-    return consumer
+    return dict(row)
 
 
 async def _get_consumer_for_update(db: AsyncSession, tenant_id: uuid.UUID, consumer_id: uuid.UUID) -> ConsumerProfile:
@@ -281,10 +305,23 @@ async def get_member_overview(db: AsyncSession, tenant_id: uuid.UUID) -> dict:
 
 
 def _masked_phone(consumer: ConsumerProfile) -> str | None:
-    if not consumer.phone_encrypted:
+    if (
+        consumer.lead_contact_suppressed
+        or consumer.phone_ciphertext is None
+        or consumer.phone_nonce is None
+        or consumer.phone_key_id is None
+    ):
         return None
     try:
-        return mask_phone(decrypt_phone(consumer.phone_encrypted))
+        return mask_phone(
+            decrypt_consumer_phone(
+                consumer.tenant_id,
+                consumer.id,
+                consumer.phone_ciphertext,
+                consumer.phone_nonce,
+                consumer.phone_key_id,
+            )
+        )
     except CryptoError:
         return None
 
@@ -292,7 +329,7 @@ def _masked_phone(consumer: ConsumerProfile) -> str | None:
 def serialize_consumer_profile(consumer: ConsumerProfile) -> dict:
     return {
         "id": str(consumer.id),
-        "nickname": consumer.nickname,
+        "nickname": None if consumer.lead_contact_suppressed else consumer.nickname,
         "phone": _masked_phone(consumer),
         "member_level": consumer.member_level,
         "total_points": consumer.total_points,
@@ -326,10 +363,12 @@ async def search_consumers(
         except ValueError:
             return []
     elif normalized_type == "phone":
+        conditions.append(ConsumerProfile.lead_contact_suppressed.is_(False))
         conditions.append(ConsumerProfile.phone_hash == hash_phone(value))
     else:
         escaped = value.replace("%", r"\%").replace("_", r"\_")
         if normalized_type == "nickname":
+            conditions.append(ConsumerProfile.lead_contact_suppressed.is_(False))
             conditions.append(ConsumerProfile.nickname.ilike(f"%{escaped}%", escape="\\"))
         else:
             try:
@@ -337,11 +376,16 @@ async def search_consumers(
             except ValueError:
                 maybe_id = None
             phone_clause = ConsumerProfile.phone_hash == hash_phone(value) if value.isdigit() else None
-            clauses = [ConsumerProfile.nickname.ilike(f"%{escaped}%", escape="\\")]
+            clauses = [
+                and_(
+                    ConsumerProfile.lead_contact_suppressed.is_(False),
+                    ConsumerProfile.nickname.ilike(f"%{escaped}%", escape="\\"),
+                )
+            ]
             if maybe_id:
                 clauses.append(ConsumerProfile.id == maybe_id)
             if phone_clause is not None:
-                clauses.append(phone_clause)
+                clauses.append(and_(ConsumerProfile.lead_contact_suppressed.is_(False), phone_clause))
             conditions.append(or_(*clauses))
 
     result = await db.execute(
@@ -437,7 +481,7 @@ async def get_consumer_profile(
 
     return {
         "id": str(consumer.id),
-        "nickname": consumer.nickname,
+        "nickname": None if consumer.lead_contact_suppressed else consumer.nickname,
         "phone": _masked_phone(consumer),
         "member_level": consumer.member_level,
         "total_points": consumer.total_points,
@@ -528,7 +572,7 @@ async def list_point_redemptions(
                 "id": str(redemption.id),
                 "consumer_id": str(redemption.consumer_id),
                 "consumer_phone": _masked_phone(consumer),
-                "consumer_nickname": consumer.nickname,
+                "consumer_nickname": None if consumer.lead_contact_suppressed else consumer.nickname,
                 "product_id": str(redemption.product_id),
                 "product_name": product.name,
                 "points_cost": redemption.points_cost,
@@ -556,9 +600,23 @@ async def get_consumer_phone(
         )
     )
     consumer = result.scalar_one_or_none()
-    if not consumer or not consumer.phone_encrypted:
+    if (
+        not consumer
+        or consumer.lead_contact_suppressed
+        or consumer.phone_ciphertext is None
+        or consumer.phone_nonce is None
+        or consumer.phone_key_id is None
+    ):
         return None
     try:
-        return mask_phone(decrypt_phone(consumer.phone_encrypted))
+        return mask_phone(
+            decrypt_consumer_phone(
+                consumer.tenant_id,
+                consumer.id,
+                consumer.phone_ciphertext,
+                consumer.phone_nonce,
+                consumer.phone_key_id,
+            )
+        )
     except CryptoError:
         return None

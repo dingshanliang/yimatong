@@ -79,7 +79,7 @@ async def handle_consumer_created(event_type: str, data: dict, tenant_id_str: st
             )
         )
         consumer = result.scalar_one_or_none()
-        if not consumer:
+        if not consumer or consumer.lead_contact_suppressed:
             return
 
         client, connector = await _get_wecom_client(db, tenant_id)
@@ -182,7 +182,7 @@ async def handle_consumer_updated(event_type: str, data: dict, tenant_id_str: st
             )
         )
         consumer = result.scalar_one_or_none()
-        if not consumer:
+        if not consumer or consumer.lead_contact_suppressed:
             return
 
         client, connector = await _get_wecom_client(db, tenant_id)

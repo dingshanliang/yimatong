@@ -6,7 +6,6 @@ from datetime import UTC, date, datetime, timedelta
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.campaign import BenefitClaim
 from app.models.channel import CodeAllocation, Distributor, Region, Store
 from app.models.code import CodeBatch, CodeItem
 from app.models.product import SKU, Product, ProductionBatch  # noqa: F401 - register CodeBatch relationships
@@ -176,37 +175,23 @@ async def get_conversion_comparison(
     dimension: str = "distributor",
     days_back: int = 30,
 ) -> list[dict]:
-    """渠道间转化率对比：扫码 UV → 权益领取数"""
+    """Return channel traffic without inventing claim attribution.
+
+    Benefit claims do not yet carry an immutable channel receipt. Distributing
+    tenant-wide claims in proportion to traffic would turn an estimate into a
+    confirmed result, so conversion fields remain explicitly unavailable.
+    """
     scan_items, _ = await get_scan_by_channel(
         db, tenant_id, dimension=dimension, days_back=days_back, page=1, page_size=100
     )
 
-    claim_result = await db.execute(
-        select(func.count())
-        .select_from(BenefitClaim)
-        .where(
-            BenefitClaim.tenant_id == tenant_id,
-            BenefitClaim.status == "success",
-        )
-    )
-    total_claims = claim_result.scalar() or 0
-
-    total_uv = sum(item.get("scan_uv", 0) for item in scan_items)
-    overall_conversion = round(total_claims / total_uv * 100, 2) if total_uv > 0 else 0
-
-    results = []
-    for item in scan_items:
-        scan_uv = item.get("scan_uv", 0)
-        estimated_claims = round(total_claims * scan_uv / total_uv) if total_uv > 0 else 0
-        conversion = round(estimated_claims / scan_uv * 100, 2) if scan_uv > 0 else 0
-
-        results.append(
-            {
-                **item,
-                "estimated_claims": estimated_claims,
-                "conversion_rate": conversion,
-                "vs_average": round(conversion - overall_conversion, 2),
-            }
-        )
-
-    return sorted(results, key=lambda x: x["conversion_rate"], reverse=True)
+    return [
+        {
+            **item,
+            "confirmed_claims": None,
+            "conversion_rate": None,
+            "vs_average": None,
+            "conversion_status": "unavailable",
+        }
+        for item in scan_items
+    ]

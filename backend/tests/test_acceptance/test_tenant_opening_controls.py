@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import subprocess
 import sys
+import textwrap
 import uuid
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
@@ -32,6 +34,68 @@ def _control_url(database_url: str) -> str:
 
 def _runtime_url(database_url: str) -> str:
     return database_url.replace("yimatong:yimatong@", "yimatong_app:yimatong_app@")
+
+
+def _callback_url(database_url: str) -> str:
+    return database_url.replace("yimatong:yimatong@", "yimatong_callback:yimatong_callback@")
+
+
+def _assert_subprocess_database_identity(env: dict[str, str], expected_database: str) -> None:
+    script = textwrap.dedent(
+        """
+        import asyncio
+        import json
+
+        from sqlalchemy import text
+        from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+
+        from app.core import database
+        from app.core.config import settings
+
+
+        async def run():
+            selected = {}
+            for name, factory in (
+                ("runtime", database.async_session_factory),
+                ("control", database.control_session_factory),
+                ("callback", database.callback_session_factory),
+            ):
+                async with factory() as session:
+                    selected[name] = await session.scalar(text("SELECT current_database()"))
+            migration_engine = create_async_engine(settings.migration_database_url)
+            migration_factory = async_sessionmaker(
+                migration_engine,
+                class_=AsyncSession,
+                expire_on_commit=False,
+            )
+            try:
+                async with migration_factory() as session:
+                    selected["migration"] = await session.scalar(text("SELECT current_database()"))
+            finally:
+                await migration_engine.dispose()
+            print(json.dumps(selected, sort_keys=True))
+
+
+        asyncio.run(run())
+        """
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        cwd=BACKEND_DIR,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    selected = json.loads(result.stdout.strip().splitlines()[-1])
+    assert selected == {
+        "callback": expected_database,
+        "control": expected_database,
+        "migration": expected_database,
+        "runtime": expected_database,
+    }
 
 
 async def _set_bypass(db: AsyncSession) -> None:
@@ -187,14 +251,16 @@ async def test_seed_cli_uses_control_only_for_bootstrap_then_tenant_scoped_runti
             await db.commit()
 
         env = os.environ.copy()
-        env.update(
-            {
-                "environment": "development",
-                "database_url": _runtime_url(migrated_pg_url),
-                "control_database_url": _control_url(migrated_pg_url),
-                "migration_database_url": migrated_pg_url,
-            }
-        )
+        env["environment"] = "development"
+        for lower, upper, value in (
+            ("database_url", "DATABASE_URL", _runtime_url(migrated_pg_url)),
+            ("control_database_url", "CONTROL_DATABASE_URL", _control_url(migrated_pg_url)),
+            ("migration_database_url", "MIGRATION_DATABASE_URL", migrated_pg_url),
+            ("callback_database_url", "CALLBACK_DATABASE_URL", _callback_url(migrated_pg_url)),
+        ):
+            env[lower] = value
+            env[upper] = value
+        _assert_subprocess_database_identity(env, migrated_pg_url.rsplit("/", 1)[-1])
         result = subprocess.run(
             [
                 sys.executable,
@@ -207,6 +273,7 @@ async def test_seed_cli_uses_control_only_for_bootstrap_then_tenant_scoped_runti
                 target_slug,
                 "--admin-email",
                 f"seed-{unique}@example.com",
+                "--allow-non-demo-target",
             ],
             cwd=BACKEND_DIR,
             env=env,

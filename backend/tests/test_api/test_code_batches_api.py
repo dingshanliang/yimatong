@@ -10,6 +10,7 @@
 - GET /api/v1/code-items 码项列表
 """
 
+import uuid
 from collections.abc import AsyncGenerator
 
 import pytest
@@ -111,7 +112,11 @@ async def auth_setup(client: AsyncClient):
 
 
 async def _prepare_delivered_batch(client: AsyncClient, headers: dict, batch_id: str) -> None:
-    exported = await client.post(f"/api/v1/code-batches/{batch_id}/export", headers=headers)
+    exported = await client.post(
+        f"/api/v1/code-batches/{batch_id}/export",
+        json={"reason": "Test lifecycle setup"},
+        headers={**headers, "Idempotency-Key": str(uuid.uuid4())},
+    )
     printing = await client.post(f"/api/v1/code-batches/{batch_id}/mark-printing", headers=headers)
     delivered = await client.post(
         f"/api/v1/code-batches/{batch_id}/mark-delivered",
@@ -324,7 +329,11 @@ class TestExportCodeBatchAPI:
         )
         batch_id = resp.json()["id"]
 
-        export_resp = await client.post(f"/api/v1/code-batches/{batch_id}/export", headers=headers)
+        export_resp = await client.post(
+            f"/api/v1/code-batches/{batch_id}/export",
+            json={"reason": "Test export"},
+            headers={**headers, "Idempotency-Key": str(uuid.uuid4())},
+        )
         assert export_resp.status_code == 200
         assert "text/csv" in export_resp.headers.get("content-type", "")
         assert "codes-" in export_resp.headers.get("content-disposition", "")
@@ -341,7 +350,8 @@ class TestExportCodeBatchAPI:
 
         resp = await client.post(
             "/api/v1/code-batches/00000000-0000-0000-0000-000000000999/export",
-            headers=headers,
+            json={"reason": "Test export"},
+            headers={**headers, "Idempotency-Key": str(uuid.uuid4())},
         )
         # 导出不存在的批次应返回 404
         assert resp.status_code == 404
@@ -609,7 +619,11 @@ class TestFullCodeLifecycleAPI:
         assert activate_resp.json()["activated"] == 10
 
         # 3. 导出 CSV
-        export_resp = await client.post(f"/api/v1/code-batches/{batch_id}/export", headers=headers)
+        export_resp = await client.post(
+            f"/api/v1/code-batches/{batch_id}/export",
+            json={"reason": "Test export replay"},
+            headers={**headers, "Idempotency-Key": str(uuid.uuid4())},
+        )
         assert export_resp.status_code == 200
         csv_lines = [line for line in export_resp.text.strip().split("\n") if line.strip()]
         assert len(csv_lines) == 11  # header + 10 rows

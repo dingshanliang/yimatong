@@ -12,6 +12,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from tests.test_acceptance.conftest import BACKEND_DIR
+from tests.test_acceptance.test_campaign_authority_rollout import _resolve_isolated_recovery_markers
 
 pytestmark = [pytest.mark.acceptance, pytest.mark.asyncio]
 
@@ -119,8 +120,13 @@ async def test_case_collision_blocks_then_clean_upgrade_and_downgrade_are_safe(m
 async def test_legacy_wecom_order_is_backfilled_and_blocks_old_replay(migrated_pg_url: str):
     from app.services.wecom_integration import process_wecom_callback_event
 
-    _alembic(migrated_pg_url, "downgrade", PARENT_REVISION)
     dsn = migrated_pg_url.replace("postgresql+asyncpg://", "postgresql://")
+    conn = await asyncpg.connect(dsn)
+    try:
+        await _resolve_isolated_recovery_markers(conn)
+    finally:
+        await conn.close()
+    _alembic(migrated_pg_url, "downgrade", PARENT_REVISION)
     tenant_id, connector_id, active_id, deleted_id, malformed_id, overflow_id = (uuid.uuid4() for _ in range(6))
     deleted_at = datetime(2025, 1, 2, 3, 4, 5, tzinfo=UTC)
     malformed_added_at = datetime(2025, 2, 3, 4, 5, 6, tzinfo=UTC)
@@ -191,6 +197,7 @@ async def test_legacy_wecom_order_is_backfilled_and_blocks_old_replay(migrated_p
     _alembic(migrated_pg_url, "upgrade", "head")
     conn = await asyncpg.connect(dsn)
     try:
+        await _resolve_isolated_recovery_markers(conn)
         active = await conn.fetchrow(
             "SELECT event_time, event_sequence FROM public.wecom_external_contacts WHERE id=$1", active_id
         )

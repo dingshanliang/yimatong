@@ -1,5 +1,7 @@
 """权益领取端点（H5 前端使用，scan_token 鉴权）"""
 
+import hashlib
+import hmac
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -7,13 +9,26 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
 from app.core.database import get_db, lock_active_tenant_context
 from app.middleware.rate_limit import rate_limiter
 from app.schemas.benefit_claim import BenefitClaimRequest
-from app.services.scan_token import verify_scan_token
+from app.services.scan_token import require_launch_claim_authority, verify_scan_token
 from app.utils.client_ip import compute_ip_hash, get_client_ip
 
 benefit_claim_router = APIRouter(prefix="/api/v1", tags=["benefit-claims"])
+
+
+def _rate_limit_identity(client_ip: str) -> str:
+    key = (settings.hmac_pepper or settings.secret_key).encode()
+    return hmac.new(key, client_ip.encode(), hashlib.sha256).hexdigest()
+
+
+def _claim_scan_token(request: Request, body: BenefitClaimRequest) -> str | None:
+    """Keep Authorization precedence consistent with the repository auth boundary."""
+
+    auth_header = request.headers.get("Authorization", "")
+    return auth_header[7:] if auth_header.startswith("Bearer ") else body.scan_token
 
 
 @benefit_claim_router.post("/benefit-claims", status_code=201)
@@ -25,7 +40,7 @@ async def claim_benefit_h5(
     """H5 端权益领取（scan_token 鉴权，无需 admin token）"""
     # 0. IP 级速率限制
     client_ip = get_client_ip(request)
-    rate_result = await rate_limiter.check(f"claim:{client_ip}", 20, 60)
+    rate_result = await rate_limiter.check(f"claim:{_rate_limit_identity(client_ip)}", 20, 60)
     if not rate_result.allowed:
         raise HTTPException(
             status_code=429,
@@ -34,10 +49,7 @@ async def claim_benefit_h5(
         )
 
     # 1. 验证 scan_token
-    auth_header = request.headers.get("Authorization", "")
-    token = body.scan_token
-    if not token and auth_header.startswith("Bearer "):
-        token = auth_header[7:]
+    token = _claim_scan_token(request, body)
 
     if not token:
         raise HTTPException(status_code=401, detail="scan_token required")
@@ -46,6 +58,13 @@ async def claim_benefit_h5(
     payload = verify_scan_token(token, expected_ip_hash=ip_hash)
     if payload is None:
         raise HTTPException(status_code=401, detail="invalid token")
+    try:
+        launch_authority = require_launch_claim_authority(payload)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=401,
+            detail={"code": "scan_token_unbound", "message": "请重新扫码后领取权益"},
+        ) from exc
 
     # 2. 查找权益（带租户隔离：只能领取 scan_token 所属租户的权益）
     from app.models.campaign import Benefit
@@ -140,11 +159,36 @@ async def claim_benefit_h5(
             status_code=403,
             detail={"code": "production_batch_unavailable", "message": "该码对应生产批次当前不可领取权益"},
         )
+    if code_batch.id != launch_authority.code_batch_id:
+        return JSONResponse(
+            status_code=409,
+            content={"detail": {"code": "launch_release_not_current", "message": "上线内容已变化，请重新扫码后领取"}},
+        )
+    from app.services.launch import resolve_current_launch_release
+
+    current_release = await resolve_current_launch_release(db, tid, token_public_id)
+    if current_release is None or any(
+        (
+            uuid.UUID(str(current_release["release_id"])) != launch_authority.launch_release_id,
+            uuid.UUID(str(current_release["campaign_id"])) != launch_authority.campaign_id,
+            uuid.UUID(str(current_release["code_batch_id"])) != launch_authority.code_batch_id,
+            str(current_release["content_digest"]) != launch_authority.content_digest,
+        )
+    ):
+        return JSONResponse(
+            status_code=409,
+            content={"detail": {"code": "launch_release_not_current", "message": "上线内容已变化，请重新扫码后领取"}},
+        )
 
     result = await db.execute(select(Benefit).where(Benefit.id == benefit_id, Benefit.tenant_id == tid))
     benefit = result.scalar_one_or_none()
     if not benefit:
         raise HTTPException(status_code=404, detail="benefit not found")
+    if benefit.campaign_id != launch_authority.campaign_id:
+        return JSONResponse(
+            status_code=409,
+            content={"detail": {"code": "benefit_not_in_launch_release", "message": "该权益不属于本次上线活动"}},
+        )
 
     # 3. 权益状态检查（对所有类型生效，包括红包）
     if benefit.status != "active":
@@ -240,6 +284,7 @@ async def claim_benefit_h5(
         public_id=claim_public_id,
         scan_event_id=uuid.UUID(payload["scan_event_id"]),
         scanned_product_id=code_batch.product_id,
+        launch_authority=launch_authority,
     )
     outcome = result.get("outcome", result.get("status"))
     if _is_successful_claim_outcome(outcome):
@@ -248,20 +293,30 @@ async def claim_benefit_h5(
             "benefit_id": str(benefit_id),
             "claim_id": str(result.get("claim_id") or result.get("claim", {}).get("id", "")),
         }
-    if result["status"] == "risk_paused":
+    if outcome == "risk_paused":
         # yimatong-zgb1.7 AC3：风险状态下服务端阻断权益领取
         raise HTTPException(
             status_code=403,
             detail={"code": "risk_paused", "message": result.get("message", "该码存在风险信号，权益领取暂时暂停")},
         )
-    if result["status"] == "inactive":
+    if outcome == "inactive":
         raise HTTPException(status_code=409, detail="权益已停用")
-    if result["status"] == "campaign_inactive":
+    if outcome == "campaign_inactive":
         raise HTTPException(status_code=409, detail="活动已结束")
-    if result["status"] == "out_of_stock":
+    if outcome == "out_of_stock":
         raise HTTPException(status_code=410, detail="权益已抢光")
-    if result["status"] == "limit_reached":
+    if outcome == "limit_reached":
         raise HTTPException(status_code=403, detail="您已达到本次活动领取上限")
+    if outcome == "benefit_not_in_launch_release":
+        return JSONResponse(
+            status_code=409,
+            content={"detail": {"code": "benefit_not_in_launch_release", "message": "该权益不属于本次上线活动"}},
+        )
+    if outcome == "launch_release_not_current":
+        return JSONResponse(
+            status_code=409,
+            content={"detail": {"code": "launch_release_not_current", "message": "上线内容已变化，请重新扫码后领取"}},
+        )
     raise HTTPException(status_code=404, detail="benefit not found")
 
 

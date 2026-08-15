@@ -107,11 +107,83 @@ async def _seed_claim_evidence(
     return scan_event_id, public_id, item_id, batch_id
 
 
+async def _seed_claim_launch(
+    owner: asyncpg.Connection,
+    ids: dict[str, object],
+    batch_id: uuid.UUID,
+    benefit_ids: tuple[uuid.UUID, ...],
+    campaign_id: uuid.UUID | None = None,
+) -> tuple[uuid.UUID, uuid.UUID, str]:
+    """Bind lower-level claim fixtures to an exact current live release."""
+
+    campaign_id = campaign_id or uuid.uuid4()
+    if not await owner.fetchval("SELECT EXISTS(SELECT 1 FROM campaigns WHERE id=$1)", campaign_id):
+        await owner.execute(
+            "INSERT INTO campaigns(id,tenant_id,name,campaign_type,status,product_id,start_at,end_at,rules_json,"
+            "created_at,updated_at) VALUES($1,$2,'claim fixture','coupon','active',$3,"
+            "now()-interval '1 hour',now()+interval '1 day','{}',now(),now())",
+            campaign_id,
+            ids["tenant"],
+            ids["product"],
+        )
+    await owner.execute(
+        "UPDATE benefits SET campaign_id=$1 WHERE tenant_id=$2 AND id=ANY($3::uuid[])",
+        campaign_id,
+        ids["tenant"],
+        list(benefit_ids),
+    )
+    template_id, version_id, release_id = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+    await owner.execute(
+        "INSERT INTO page_templates(id,tenant_id,product_id,name,template_type,status,created_at,updated_at) "
+        "VALUES($1,$2,$3,'claim fixture page','product_info','active',now(),now())",
+        template_id,
+        ids["tenant"],
+        ids["product"],
+    )
+    await owner.execute(
+        "INSERT INTO page_versions(id,tenant_id,page_template_id,version,config_json,status,created_by,"
+        "created_by_tenant_id,published_at,created_at,updated_at) "
+        "VALUES($1,$2,$3,1,'{}','published',$4,$2,now(),now(),now())",
+        version_id,
+        ids["tenant"],
+        template_id,
+        ids["account"],
+    )
+    readiness = await owner.fetchrow(
+        "SELECT * FROM compute_launch_readiness($1,$2,$3,$4)",
+        ids["tenant"],
+        version_id,
+        campaign_id,
+        batch_id,
+    )
+    assert readiness is not None and readiness["ready"] is True
+    manifest = json.loads(readiness["manifest"]) if isinstance(readiness["manifest"], str) else readiness["manifest"]
+    await owner.execute(
+        "INSERT INTO launch_releases(id,tenant_id,page_template_id,page_version_id,campaign_id,code_batch_id,"
+        "status,readiness_snapshot,readiness_manifest,readiness_code_item_id,content_digest,created_by,"
+        "created_by_tenant_id,brand_confirmed_by,brand_confirmed_by_tenant_id,brand_confirmed_at,"
+        "brand_confirmation_digest,launched_by,launched_by_tenant_id,launched_at,created_at,updated_at) "
+        "VALUES($1,$2,$3,$4,$5,$6,'live',$7,$8,$9,$10,$11,$2,$11,$2,now(),$10,$11,$2,now(),now(),now())",
+        release_id,
+        ids["tenant"],
+        template_id,
+        version_id,
+        campaign_id,
+        batch_id,
+        json.dumps({"version": 3, "ready": True}),
+        json.dumps(manifest),
+        readiness["readiness_code_item_id"],
+        readiness["content_digest"],
+        ids["account"],
+    )
+    return release_id, campaign_id, readiness["content_digest"]
+
+
 async def test_campaign_claim_catalog_and_runtime_acl(migrated_pg_url: str) -> None:
     owner = await asyncpg.connect(migrated_pg_url.replace("postgresql+asyncpg://", "postgresql://"))
     try:
         signatures = [
-            "public.claim_campaign_benefit(uuid,uuid,uuid,uuid,uuid,text,text,text)",
+            "public.claim_campaign_benefit(uuid,uuid,uuid,uuid,uuid,text,text,text,uuid,uuid,text)",
             "public.lease_campaign_claim_outbox(uuid,text,integer,integer)",
             "public.record_campaign_claim_delivery_result(uuid,uuid,uuid,uuid,uuid,text,text,jsonb,integer)",
             "public.complete_campaign_claim_outbox(uuid,uuid,uuid)",
@@ -121,6 +193,10 @@ async def test_campaign_claim_catalog_and_runtime_acl(migrated_pg_url: str) -> N
         for signature in signatures:
             assert await owner.fetchval("SELECT to_regprocedure($1) IS NOT NULL", signature)
             assert await owner.fetchval("SELECT has_function_privilege('yimatong_app',$1,'EXECUTE')", signature)
+        assert not await owner.fetchval(
+            "SELECT has_function_privilege('yimatong_app',$1,'EXECUTE')",
+            "public.claim_campaign_benefit(uuid,uuid,uuid,uuid,uuid,text,text,text)",
+        )
         for table in ("campaigns", "benefits", "benefit_claims", "benefit_deliveries", "campaign_claim_outbox"):
             assert await owner.fetchval("SELECT has_table_privilege('yimatong_app',$1,'SELECT')", f"public.{table}")
             assert not await owner.fetchval(
@@ -132,15 +208,21 @@ async def test_campaign_claim_catalog_and_runtime_acl(migrated_pg_url: str) -> N
             "public.mutate_campaign_benefit(uuid,uuid,uuid,text,uuid,uuid,text,text,jsonb,integer,integer,boolean,uuid,text)",
         ):
             assert not await owner.fetchval("SELECT has_function_privilege('yimatong_app',$1,'EXECUTE')", internal)
-        callback_signature = "public.settle_campaign_claim_callback(uuid,uuid,uuid,uuid,uuid,text,text,jsonb)"
-        assert await owner.fetchval("SELECT to_regprocedure($1) IS NOT NULL", callback_signature)
-        assert await owner.fetchval(
-            "SELECT has_function_privilege('yimatong_callback',$1,'EXECUTE')", callback_signature
+        callback_signatures = (
+            "public.settle_campaign_claim_callback(uuid,uuid,uuid,uuid,uuid,text,text,jsonb)",
+            "public.bind_wechat_oauth_consumer(uuid,uuid,uuid,timestamptz,text,text,uuid,uuid,text,bytea,bytea,"
+            "text,uuid,uuid)",
         )
+        for callback_signature in callback_signatures:
+            assert await owner.fetchval("SELECT to_regprocedure($1) IS NOT NULL", callback_signature)
+            assert await owner.fetchval(
+                "SELECT has_function_privilege('yimatong_callback',$1,'EXECUTE')", callback_signature
+            )
         assert not await owner.fetchval(
-            "SELECT has_function_privilege('yimatong_app',$1,'EXECUTE')", callback_signature
+            "SELECT has_function_privilege('yimatong_app',$1,'EXECUTE')", callback_signatures[0]
         )
-        assert not await owner.fetchval("SELECT has_function_privilege('public',$1,'EXECUTE')", callback_signature)
+        for callback_signature in callback_signatures:
+            assert not await owner.fetchval("SELECT has_function_privilege('public',$1,'EXECUTE')", callback_signature)
         callback_role = await owner.fetchrow(
             "SELECT rolsuper,rolcreatedb,rolcreaterole,rolinherit,rolbypassrls FROM pg_roles "
             "WHERE rolname='yimatong_callback'"
@@ -167,9 +249,10 @@ async def test_campaign_claim_catalog_and_runtime_acl(migrated_pg_url: str) -> N
         assert (
             await owner.fetchval(
                 "SELECT count(*) FROM pg_proc proc JOIN pg_namespace ns ON ns.oid=proc.pronamespace "
-                "WHERE ns.nspname='public' AND proc.prosecdef AND proc.oid<>to_regprocedure($1) "
+                "WHERE ns.nspname='public' AND proc.prosecdef "
+                "AND proc.oid<>ALL(ARRAY[to_regprocedure($1),to_regprocedure($2)]) "
                 "AND has_function_privilege('yimatong_callback',proc.oid,'EXECUTE')",
-                callback_signature,
+                *callback_signatures,
             )
             == 0
         )
@@ -318,11 +401,14 @@ async def test_campaign_management_is_actor_bound_audited_and_resource_serialize
         endpoint_id = uuid.uuid4()
         await owner.execute(
             "INSERT INTO webhook_endpoints "
-            "(id,tenant_id,url,events,secret,enabled,batch_mode,batch_size,created_at,updated_at) "
+            "(id,tenant_id,url,events,secret_ciphertext,secret_nonce,secret_key_id,config_version,"
+            "enabled,batch_mode,batch_size,created_at,updated_at) "
             "VALUES($1,$2,'https://example.invalid/campaign','[\"campaign.active\",\"campaign.ended\"]',"
-            "'test-secret',true,false,100,now(),now())",
+            "$3,$4,'test-key-v1',1,true,false,100,now(),now())",
             endpoint_id,
             target["tenant"],
+            b"x" * 32,
+            b"n" * 12,
         )
         active = await _runtime_campaign_call(
             runtime,
@@ -334,8 +420,11 @@ async def test_campaign_management_is_actor_bound_audited_and_resource_serialize
             campaign_id,
         )
         assert active["current_status"] == "active" and active["published_at"] is not None
+        # The DB campaign authority no longer creates a legacy delivery. The
+        # application records the U08D domain event in this transaction and
+        # committed expansion materializes exactly one delivery per endpoint.
         assert await owner.fetchval(
-            "SELECT count(*)=1 FROM webhook_deliveries WHERE tenant_id=$1 AND endpoint_id=$2 "
+            "SELECT count(*)=0 FROM webhook_deliveries WHERE tenant_id=$1 AND endpoint_id=$2 "
             "AND event_type='campaign.active' AND payload->>'campaign_id'=$3",
             target["tenant"],
             endpoint_id,
@@ -435,10 +524,11 @@ async def test_cash_claim_reservation_and_terminal_refund_are_atomic(migrated_pg
     ids = await _seed_catalog(owner, "campaign-cash")
     connector_id = uuid.uuid4()
     benefit_id = uuid.uuid4()
+    alternate_benefit_id = uuid.uuid4()
     claim_id = uuid.uuid4()
     claimed_idempotency_key = f"claim:v1:{uuid.uuid4().hex}"
     consumer_ref = f"anon:v1:{uuid.uuid4().hex}"
-    scan_event_id, public_id, _item_id, _batch_id = await _seed_claim_evidence(owner, ids)
+    scan_event_id, public_id, _item_id, batch_id = await _seed_claim_evidence(owner, ids)
     await owner.execute(
         "INSERT INTO connectors(id,tenant_id,name,connector_type,config,enabled,created_at,updated_at) "
         "VALUES($1,$2,'cash','wechat_pay','{}',true,now(),now())",
@@ -455,11 +545,21 @@ async def test_cash_claim_reservation_and_terminal_refund_are_atomic(migrated_pg
         ids["tenant"],
         connector_id,
     )
+    await owner.execute(
+        "INSERT INTO benefits(id,tenant_id,campaign_id,name,benefit_type,config_json,stock_total,stock_used,"
+        "per_person_limit,status,created_at,updated_at) "
+        "VALUES($1,$2,NULL,'alternate','platform_coupon','{}',2,0,1,'active',now(),now())",
+        alternate_benefit_id,
+        ids["tenant"],
+    )
+    launch_release_id, launch_campaign_id, launch_digest = await _seed_claim_launch(
+        owner, ids, batch_id, (benefit_id, alternate_benefit_id)
+    )
     try:
         async with runtime.transaction():
             await runtime.execute("SELECT set_config('app.tenant_id',$1,true)", str(ids["tenant"]))
             claimed = await runtime.fetchrow(
-                "SELECT * FROM claim_campaign_benefit($1,$2,$3,$4,$5,$6,$7,$8)",
+                "SELECT * FROM claim_campaign_benefit($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)",
                 ids["tenant"],
                 claim_id,
                 benefit_id,
@@ -468,17 +568,26 @@ async def test_cash_claim_reservation_and_terminal_refund_are_atomic(migrated_pg
                 public_id,
                 consumer_ref,
                 claimed_idempotency_key,
+                launch_release_id,
+                launch_campaign_id,
+                launch_digest,
             )
             assert claimed["created"] is True
             assert claimed["reserved_amount"] == 100
             assert claimed["reservation_status"] == "reserved"
             outbox_id = claimed["outbox_id"]
             first_stock = claimed["stock_used"]
+        async with runtime.transaction():
+            await runtime.execute("SELECT set_config('app.tenant_id',$1,true)", str(ids["tenant"]))
+            still_live = await runtime.fetchrow(
+                "SELECT * FROM resolve_current_launch_release($1,$2)", ids["tenant"], public_id
+            )
+        assert still_live is not None and still_live["release_id"] == launch_release_id
         replay_claim_id = uuid.uuid4()
         async with runtime.transaction():
             await runtime.execute("SELECT set_config('app.tenant_id',$1,true)", str(ids["tenant"]))
             replayed = await runtime.fetchrow(
-                "SELECT * FROM claim_campaign_benefit($1,$2,$3,$4,$5,$6,$7,$8)",
+                "SELECT * FROM claim_campaign_benefit($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)",
                 ids["tenant"],
                 replay_claim_id,
                 benefit_id,
@@ -487,11 +596,99 @@ async def test_cash_claim_reservation_and_terminal_refund_are_atomic(migrated_pg
                 public_id,
                 consumer_ref,
                 claimed_idempotency_key,
+                launch_release_id,
+                launch_campaign_id,
+                launch_digest,
             )
         assert replayed["outcome"] == "replayed"
         assert replayed["created"] is False
         assert replayed["claim_id"] == claim_id and replayed["outbox_id"] == outbox_id
         assert replayed["stock_used"] == first_stock
+        assert (
+            await owner.fetchval(
+                "SELECT request_digest FROM benefit_claims WHERE tenant_id=$1 AND id=$2", ids["tenant"], claim_id
+            )
+            is not None
+        )
+        for changed_benefit, changed_scan, changed_consumer in (
+            (benefit_id, uuid.uuid4(), consumer_ref),
+            (alternate_benefit_id, scan_event_id, consumer_ref),
+            (benefit_id, scan_event_id, f"anon:v1:{uuid.uuid4().hex}"),
+        ):
+            async with runtime.transaction():
+                await runtime.execute("SELECT set_config('app.tenant_id',$1,true)", str(ids["tenant"]))
+                with pytest.raises(asyncpg.PostgresError) as conflict:
+                    await runtime.fetchrow(
+                        "SELECT * FROM claim_campaign_benefit($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)",
+                        ids["tenant"],
+                        uuid.uuid4(),
+                        changed_benefit,
+                        changed_scan,
+                        ids["product"],
+                        public_id,
+                        changed_consumer,
+                        claimed_idempotency_key,
+                        launch_release_id,
+                        launch_campaign_id,
+                        launch_digest,
+                    )
+                assert conflict.value.sqlstate == "23505"
+        for changed_product, changed_public_id, changed_release, changed_campaign in (
+            (uuid.uuid4(), public_id, launch_release_id, launch_campaign_id),
+            (ids["product"], f"missing-{uuid.uuid4().hex}", launch_release_id, launch_campaign_id),
+            (ids["product"], public_id, uuid.uuid4(), launch_campaign_id),
+            (ids["product"], public_id, launch_release_id, uuid.uuid4()),
+        ):
+            async with runtime.transaction():
+                await runtime.execute("SELECT set_config('app.tenant_id',$1,true)", str(ids["tenant"]))
+                with pytest.raises(asyncpg.PostgresError) as invalid_context:
+                    await runtime.fetchrow(
+                        "SELECT * FROM claim_campaign_benefit($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)",
+                        ids["tenant"],
+                        uuid.uuid4(),
+                        benefit_id,
+                        scan_event_id,
+                        changed_product,
+                        changed_public_id,
+                        consumer_ref,
+                        claimed_idempotency_key,
+                        changed_release,
+                        changed_campaign,
+                        launch_digest,
+                    )
+                assert invalid_context.value.sqlstate == "23503"
+        async with runtime.transaction():
+            await runtime.execute("SELECT set_config('app.tenant_id',$1,true)", str(ids["tenant"]))
+            stale_launch = await runtime.fetchrow(
+                "SELECT * FROM claim_campaign_benefit($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)",
+                ids["tenant"],
+                uuid.uuid4(),
+                benefit_id,
+                scan_event_id,
+                ids["product"],
+                public_id,
+                consumer_ref,
+                claimed_idempotency_key,
+                launch_release_id,
+                launch_campaign_id,
+                "0" * 64,
+            )
+        assert stale_launch["outcome"] == "launch_release_not_current" and stale_launch["created"] is False
+        assert (
+            await owner.fetchval(
+                "SELECT count(*) FROM benefit_claims WHERE tenant_id=$1 AND id IN ($2,$3)",
+                ids["tenant"],
+                claim_id,
+                replay_claim_id,
+            )
+            == 1
+        )
+        assert (
+            await owner.fetchval(
+                "SELECT stock_used FROM benefits WHERE tenant_id=$1 AND id=$2", ids["tenant"], alternate_benefit_id
+            )
+            == 0
+        )
         assert (
             await owner.fetchval(
                 "SELECT (config_json->>'claimed_budget')::integer FROM benefits WHERE tenant_id=$1 AND id=$2",
@@ -560,7 +757,7 @@ async def test_campaign_consumer_limit_is_cross_benefit_replay_safe_and_serializ
     runtime_a = await _runtime_connection(migrated_pg_url)
     runtime_b = await _runtime_connection(migrated_pg_url)
     ids = await _seed_catalog(owner, "campaign-wide-limit")
-    scan_event_id, public_id, _item_id, _batch_id = await _seed_claim_evidence(owner, ids)
+    scan_event_id, public_id, _item_id, batch_id = await _seed_claim_evidence(owner, ids)
     campaign_id = uuid.uuid4()
     benefit_a, benefit_b = uuid.uuid4(), uuid.uuid4()
     consumer_ref = f"anon:v1:{uuid.uuid4().hex}"
@@ -582,7 +779,10 @@ async def test_campaign_consumer_limit_is_cross_benefit_replay_safe_and_serializ
             (benefit_b, ids["tenant"], campaign_id, "benefit B"),
         ],
     )
-    claim_sql = "SELECT * FROM claim_campaign_benefit($1,$2,$3,$4,$5,$6,$7,$8)"
+    launch_release_id, launch_campaign_id, launch_digest = await _seed_claim_launch(
+        owner, ids, batch_id, (benefit_a, benefit_b), campaign_id
+    )
+    claim_sql = "SELECT * FROM claim_campaign_benefit($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)"
     first_claim = uuid.uuid4()
     first_key = f"claim:v1:{uuid.uuid4().hex}"
     try:
@@ -598,6 +798,9 @@ async def test_campaign_consumer_limit_is_cross_benefit_replay_safe_and_serializ
                 public_id,
                 consumer_ref,
                 first_key,
+                launch_release_id,
+                launch_campaign_id,
+                launch_digest,
             )
         assert first["created"] is True
         async with runtime_a.transaction():
@@ -612,6 +815,9 @@ async def test_campaign_consumer_limit_is_cross_benefit_replay_safe_and_serializ
                 public_id,
                 consumer_ref,
                 first_key,
+                launch_release_id,
+                launch_campaign_id,
+                launch_digest,
             )
         assert replay["created"] is False and replay["claim_id"] == first_claim
         async with runtime_b.transaction():
@@ -627,6 +833,9 @@ async def test_campaign_consumer_limit_is_cross_benefit_replay_safe_and_serializ
                     public_id,
                     consumer_ref,
                     f"claim:v1:{uuid.uuid4().hex}",
+                    launch_release_id,
+                    launch_campaign_id,
+                    launch_digest,
                 )
         assert exceeded.value.sqlstate == "23514"
         assert (
@@ -656,6 +865,9 @@ async def test_campaign_consumer_limit_is_cross_benefit_replay_safe_and_serializ
             public_id,
             concurrent_consumer,
             f"claim:v1:{uuid.uuid4().hex}",
+            launch_release_id,
+            launch_campaign_id,
+            launch_digest,
         )
         assert concurrent_first["created"] is True
         async with runtime_b.transaction():
@@ -671,6 +883,9 @@ async def test_campaign_consumer_limit_is_cross_benefit_replay_safe_and_serializ
                     public_id,
                     concurrent_consumer,
                     f"claim:v1:{uuid.uuid4().hex}",
+                    launch_release_id,
+                    launch_campaign_id,
+                    launch_digest,
                 )
         assert busy.value.sqlstate == "55P03"
         await tx_a.commit()
@@ -687,6 +902,9 @@ async def test_campaign_consumer_limit_is_cross_benefit_replay_safe_and_serializ
                     public_id,
                     concurrent_consumer,
                     f"claim:v1:{uuid.uuid4().hex}",
+                    launch_release_id,
+                    launch_campaign_id,
+                    launch_digest,
                 )
         assert retry_exceeded.value.sqlstate == "23514"
         assert (
@@ -699,6 +917,117 @@ async def test_campaign_consumer_limit_is_cross_benefit_replay_safe_and_serializ
             == 1
         )
     finally:
+        await asyncio.gather(runtime_a.close(), runtime_b.close(), owner.close())
+
+
+async def test_stock_one_claim_race_is_exactly_once_and_never_oversells(migrated_pg_url: str) -> None:
+    owner = await asyncpg.connect(migrated_pg_url.replace("postgresql+asyncpg://", "postgresql://"))
+    runtime_a = await _runtime_connection(migrated_pg_url)
+    runtime_b = await _runtime_connection(migrated_pg_url)
+    ids = await _seed_catalog(owner, "campaign-stock-one")
+    scan_event_id, public_id, _item_id, batch_id = await _seed_claim_evidence(owner, ids)
+    benefit_id = uuid.uuid4()
+    await owner.execute(
+        "INSERT INTO benefits(id,tenant_id,campaign_id,name,benefit_type,config_json,stock_total,stock_used,"
+        "per_person_limit,status,created_at,updated_at) "
+        "VALUES($1,$2,NULL,'stock one','platform_coupon','{}',1,0,1,'active',now(),now())",
+        benefit_id,
+        ids["tenant"],
+    )
+    launch_release_id, launch_campaign_id, launch_digest = await _seed_claim_launch(owner, ids, batch_id, (benefit_id,))
+    claim_sql = "SELECT * FROM claim_campaign_benefit($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)"
+    claim_id = uuid.uuid4()
+    consumer_ref = f"anon:v1:{uuid.uuid4().hex}"
+    idempotency_key = f"claim:v1:{uuid.uuid4().hex}"
+    args = (
+        ids["tenant"],
+        claim_id,
+        benefit_id,
+        scan_event_id,
+        ids["product"],
+        public_id,
+        consumer_ref,
+        idempotency_key,
+        launch_release_id,
+        launch_campaign_id,
+        launch_digest,
+    )
+    transaction_a = runtime_a.transaction()
+    transaction_a_open = False
+    try:
+        await transaction_a.start()
+        transaction_a_open = True
+        await runtime_a.execute("SELECT set_config('app.tenant_id',$1,true)", str(ids["tenant"]))
+        first = await runtime_a.fetchrow(claim_sql, *args)
+        assert first is not None and first["created"] is True and first["stock_used"] == 1
+        for contender_args in (
+            (ids["tenant"], uuid.uuid4(), *args[2:]),
+            (
+                ids["tenant"],
+                uuid.uuid4(),
+                benefit_id,
+                scan_event_id,
+                ids["product"],
+                public_id,
+                f"anon:v1:{uuid.uuid4().hex}",
+                f"claim:v1:{uuid.uuid4().hex}",
+                launch_release_id,
+                launch_campaign_id,
+                launch_digest,
+            ),
+        ):
+            async with runtime_b.transaction():
+                await runtime_b.execute("SELECT set_config('app.tenant_id',$1,true)", str(ids["tenant"]))
+                with pytest.raises(asyncpg.PostgresError) as busy:
+                    await runtime_b.fetchrow(claim_sql, *contender_args)
+                assert busy.value.sqlstate == "55P03"
+        await transaction_a.commit()
+        transaction_a_open = False
+
+        async with runtime_b.transaction():
+            await runtime_b.execute("SELECT set_config('app.tenant_id',$1,true)", str(ids["tenant"]))
+            replay = await runtime_b.fetchrow(claim_sql, ids["tenant"], uuid.uuid4(), *args[2:])
+        assert replay is not None and replay["created"] is False and replay["claim_id"] == claim_id
+
+        async with runtime_b.transaction():
+            await runtime_b.execute("SELECT set_config('app.tenant_id',$1,true)", str(ids["tenant"]))
+            with pytest.raises(asyncpg.PostgresError) as exhausted:
+                await runtime_b.fetchrow(
+                    claim_sql,
+                    ids["tenant"],
+                    uuid.uuid4(),
+                    benefit_id,
+                    scan_event_id,
+                    ids["product"],
+                    public_id,
+                    f"anon:v1:{uuid.uuid4().hex}",
+                    f"claim:v1:{uuid.uuid4().hex}",
+                    launch_release_id,
+                    launch_campaign_id,
+                    launch_digest,
+                )
+            assert exhausted.value.sqlstate == "23514"
+        assert (
+            await owner.fetchval(
+                "SELECT stock_used FROM benefits WHERE tenant_id=$1 AND id=$2", ids["tenant"], benefit_id
+            )
+            == 1
+        )
+        assert (
+            await owner.fetchval(
+                "SELECT count(*) FROM benefit_claims WHERE tenant_id=$1 AND benefit_id=$2", ids["tenant"], benefit_id
+            )
+            == 1
+        )
+        assert (
+            await owner.fetchval(
+                "SELECT count(*) FROM campaign_claim_outbox WHERE tenant_id=$1 AND claim_id=$2", ids["tenant"], claim_id
+            )
+            == 1
+        )
+    finally:
+        if transaction_a_open:
+            await transaction_a.rollback()
         await asyncio.gather(runtime_a.close(), runtime_b.close(), owner.close())
 
 
@@ -715,13 +1044,20 @@ async def test_claim_rechecks_pb_cb_item_and_risk_under_authority_locks(migrated
         benefit_id,
         ids["tenant"],
     )
+    launch_release_id, launch_campaign_id, launch_digest = await _seed_claim_launch(owner, ids, batch_id, (benefit_id,))
+    original_pb_dates = await owner.fetchrow(
+        "SELECT production_date,expiry_date FROM production_batches WHERE tenant_id=$1 AND id=$2",
+        ids["tenant"],
+        ids["production_batch"],
+    )
+    assert original_pb_dates is not None
 
-    async def rejected(sqlstate: str) -> None:
+    async def rejected(expected: str) -> None:
         async with runtime.transaction():
             await runtime.execute("SELECT set_config('app.tenant_id',$1,true)", str(ids["tenant"]))
-            with pytest.raises(asyncpg.PostgresError) as error:
-                await runtime.fetchrow(
-                    "SELECT * FROM claim_campaign_benefit($1,$2,$3,$4,$5,$6,$7,$8)",
+            if expected == "launch_release_not_current":
+                receipt = await runtime.fetchrow(
+                    "SELECT * FROM claim_campaign_benefit($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)",
                     ids["tenant"],
                     uuid.uuid4(),
                     benefit_id,
@@ -730,8 +1066,28 @@ async def test_claim_rechecks_pb_cb_item_and_risk_under_authority_locks(migrated
                     public_id,
                     f"consumer-{uuid.uuid4().hex}",
                     f"claim:v1:{uuid.uuid4().hex}",
+                    launch_release_id,
+                    launch_campaign_id,
+                    launch_digest,
                 )
-            assert error.value.sqlstate == sqlstate
+                assert receipt is not None and receipt["outcome"] == expected and receipt["created"] is False
+            else:
+                with pytest.raises(asyncpg.PostgresError) as error:
+                    await runtime.fetchrow(
+                        "SELECT * FROM claim_campaign_benefit($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)",
+                        ids["tenant"],
+                        uuid.uuid4(),
+                        benefit_id,
+                        scan_event_id,
+                        ids["product"],
+                        public_id,
+                        f"consumer-{uuid.uuid4().hex}",
+                        f"claim:v1:{uuid.uuid4().hex}",
+                        launch_release_id,
+                        launch_campaign_id,
+                        launch_digest,
+                    )
+                assert error.value.sqlstate == expected
         assert (
             await owner.fetchval(
                 "SELECT stock_used FROM benefits WHERE tenant_id=$1 AND id=$2", ids["tenant"], benefit_id
@@ -764,12 +1120,13 @@ async def test_claim_rechecks_pb_cb_item_and_risk_under_authority_locks(migrated
             ids["tenant"],
             ids["production_batch"],
         )
-        await rejected("23514")
+        await rejected("launch_release_not_current")
         await owner.execute(
-            "UPDATE production_batches SET production_date=current_date,expiry_date=current_date+365 "
-            "WHERE tenant_id=$1 AND id=$2",
+            "UPDATE production_batches SET production_date=$3,expiry_date=$4 WHERE tenant_id=$1 AND id=$2",
             ids["tenant"],
             ids["production_batch"],
+            original_pb_dates["production_date"],
+            original_pb_dates["expiry_date"],
         )
 
         async with owner.transaction():
@@ -784,7 +1141,7 @@ async def test_claim_rechecks_pb_cb_item_and_risk_under_authority_locks(migrated
                 )
             finally:
                 await owner.execute("ALTER TABLE public.production_batches ENABLE TRIGGER USER")
-        await rejected("23514")
+        await rejected("launch_release_not_current")
         async with owner.transaction():
             await owner.execute("ALTER TABLE public.production_batches DISABLE TRIGGER USER")
             try:
@@ -807,7 +1164,7 @@ async def test_claim_rechecks_pb_cb_item_and_risk_under_authority_locks(migrated
                 )
             finally:
                 await owner.execute("ALTER TABLE public.code_batches ENABLE TRIGGER USER")
-        await rejected("23514")
+        await rejected("launch_release_not_current")
         async with owner.transaction():
             await owner.execute("ALTER TABLE public.code_batches DISABLE TRIGGER USER")
             try:
@@ -831,7 +1188,7 @@ async def test_claim_rechecks_pb_cb_item_and_risk_under_authority_locks(migrated
                 )
             finally:
                 await owner.execute("ALTER TABLE public.code_items ENABLE TRIGGER USER")
-        await rejected("23514")
+        await rejected("launch_release_not_current")
         async with owner.transaction():
             await owner.execute("ALTER TABLE public.code_items DISABLE TRIGGER USER")
             try:
@@ -927,6 +1284,8 @@ async def test_verified_callback_role_settles_exact_claim_atomically(
             lease = await runtime.fetchrow(
                 "SELECT * FROM lease_campaign_claim_outbox($1,'callback-worker',1,30)", ids["tenant"]
             )
+            delivery_secret = f"delivery-token-{uuid.uuid4().hex}"
+            delivery_phone = "13900139000"
             pending = await runtime.fetchrow(
                 "SELECT * FROM record_campaign_claim_delivery_result($1,$2,$3,$4,$5,'pending',$6,$7::jsonb,30)",
                 ids["tenant"],
@@ -935,10 +1294,32 @@ async def test_verified_callback_role_settles_exact_claim_atomically(
                 delivery_id,
                 connector_id,
                 external_id,
-                '{"provider_state":"PROCESSING"}',
+                json.dumps(
+                    {
+                        "provider_state": "PROCESSING",
+                        "token": delivery_secret,
+                        "customer": {"phone": delivery_phone},
+                    }
+                ),
             )
             assert pending["current_status"] == "awaiting_callback"
             assert pending["claim_delivery_status"] == "processing"
+        direct_durable_text = await owner.fetchval(
+            "SELECT concat_ws('|',"
+            "COALESCE((SELECT jsonb_agg(to_jsonb(d))::text FROM benefit_deliveries d "
+            "WHERE d.tenant_id=$1 AND d.id=$2),''),"
+            "COALESCE((SELECT jsonb_agg(to_jsonb(a))::text FROM campaign_delivery_callback_attempts a "
+            "WHERE a.tenant_id=$1 AND a.delivery_id=$2),''),"
+            "COALESCE((SELECT jsonb_agg(to_jsonb(l))::text FROM platform_audit_log l "
+            "WHERE l.target_tenant_id=$1::text),''),"
+            "COALESCE((SELECT jsonb_agg(to_jsonb(o))::text FROM campaign_claim_outbox o "
+            "WHERE o.tenant_id=$1 AND o.id=$3),''))",
+            ids["tenant"],
+            delivery_id,
+            outbox_id,
+        )
+        assert delivery_secret not in direct_durable_text
+        assert delivery_phone not in direct_durable_text
         async with runtime.transaction():
             await runtime.execute("SELECT set_config('app.tenant_id',$1,true)", str(ids["tenant"]))
             assert (
@@ -1018,9 +1399,23 @@ async def test_verified_callback_role_settles_exact_claim_atomically(
                 delivery_id,
                 claim_id,
                 external_id,
-                "{}",
+                json.dumps({"id": external_id, "status": "success", "provider_state": "SUCCESS"}),
             )
             assert replayed["replayed"] is True
+        async with callback.transaction():
+            await callback.execute("SELECT set_config('app.tenant_id',$1,true)", str(ids["tenant"]))
+            with pytest.raises(asyncpg.PostgresError) as changed_payload:
+                await callback.fetchrow(
+                    "SELECT * FROM settle_campaign_claim_callback($1,$2,$3,$4,$5,$6,'success',$7::jsonb)",
+                    ids["tenant"],
+                    uuid.uuid4(),
+                    connector_id,
+                    delivery_id,
+                    claim_id,
+                    external_id,
+                    "{}",
+                )
+            assert changed_payload.value.sqlstate == "23505"
         async with callback.transaction():
             await callback.execute("SELECT set_config('app.tenant_id',$1,true)", str(ids["tenant"]))
             with pytest.raises(asyncpg.PostgresError) as conflict:
@@ -1032,7 +1427,7 @@ async def test_verified_callback_role_settles_exact_claim_atomically(
                     delivery_id,
                     claim_id,
                     external_id,
-                    "{}",
+                    json.dumps({"id": external_id, "status": "failed", "provider_state": "FAILED"}),
                 )
             assert conflict.value.sqlstate == "23505"
         async with runtime.transaction():
@@ -1055,6 +1450,226 @@ async def test_verified_callback_role_settles_exact_claim_atomically(
         await runtime_engine.dispose()
         await control_engine.dispose()
         await callback_engine.dispose()
+
+
+async def test_callback_failed_retry_then_success_is_append_only_and_final(
+    migrated_pg_url: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from app.core import database
+    from app.core.database import get_db
+    from app.main import app
+    from app.utils.security import create_access_token
+
+    owner = await asyncpg.connect(migrated_pg_url.replace("postgresql+asyncpg://", "postgresql://"))
+    callback = await _callback_connection(migrated_pg_url)
+    runtime = await _runtime_connection(migrated_pg_url)
+    ids = await _seed_catalog(owner, "campaign-callback-retry")
+    session_id = await _grant_campaign_permissions(owner, ids)
+    connector_id, benefit_id, claim_id, outbox_id, delivery_id = (uuid.uuid4() for _ in range(5))
+    external_id = str(claim_id)
+    secret_marker = f"provider-token-{uuid.uuid4().hex}"
+    phone_marker = "13800138000"
+    failed_payload = {
+        "id": external_id,
+        "status": "failed",
+        "provider_state": "FAILED",
+        "token": secret_marker,
+        "customer": {"phone": phone_marker},
+    }
+    success_payload = {"id": external_id, "status": "success", "provider_state": "SUCCESS"}
+    try:
+        await owner.execute(
+            "INSERT INTO connectors(id,tenant_id,name,connector_type,config,enabled,created_at,updated_at) "
+            "VALUES($1,$2,'retry callback','generic_http','{}',true,now(),now())",
+            connector_id,
+            ids["tenant"],
+        )
+        await owner.execute(
+            "INSERT INTO benefits(id,tenant_id,name,benefit_type,config_json,connector_id,stock_total,stock_used,"
+            "per_person_limit,status,created_at,updated_at) "
+            "VALUES($1,$2,'retry benefit','platform_coupon','{}',$3,1,1,1,'active',now(),now())",
+            benefit_id,
+            ids["tenant"],
+            connector_id,
+        )
+        await owner.execute(
+            "INSERT INTO benefit_claims(id,tenant_id,benefit_id,consumer_id,idempotency_key,claim_type,status,"
+            "delivery_status,reservation_status,created_at,updated_at) "
+            "VALUES($1,$2,$3,'retry-consumer','retry-idem','claim','success','processing','not_required',now(),now())",
+            claim_id,
+            ids["tenant"],
+            benefit_id,
+        )
+        await owner.execute(
+            "INSERT INTO campaign_claim_outbox(id,tenant_id,claim_id,event_type,payload,status,attempt_count,max_attempts,"
+            "next_attempt_at,created_at,updated_at) "
+            "VALUES($1,$2,$3,'claim_committed','{}','awaiting_callback',1,8,now(),now(),now())",
+            outbox_id,
+            ids["tenant"],
+            claim_id,
+        )
+        await owner.execute(
+            "INSERT INTO benefit_deliveries(id,tenant_id,connector_id,benefit_id,claim_id,campaign_outbox_id,"
+            "consumer_id,benefit_type,benefit_config,status,retry_count,max_retries,external_data,external_id,"
+            "next_retry_at,created_at,updated_at) VALUES($1,$2,$3,$4,$5,$6,'retry-consumer','platform_coupon',"
+            "$7,'pending',0,8,$8,$9,now(),now(),now())",
+            delivery_id,
+            ids["tenant"],
+            connector_id,
+            benefit_id,
+            claim_id,
+            outbox_id,
+            json.dumps({"out_bill_no": external_id}),
+            json.dumps({"_provider_external_id": external_id}),
+            external_id,
+        )
+        async with callback.transaction():
+            await callback.execute("SELECT set_config('app.tenant_id',$1,true)", str(ids["tenant"]))
+            failed = await callback.fetchrow(
+                "SELECT * FROM settle_campaign_claim_callback($1,$2,$3,$4,$5,$6,'failed',$7::jsonb)",
+                ids["tenant"],
+                uuid.uuid4(),
+                connector_id,
+                delivery_id,
+                claim_id,
+                external_id,
+                json.dumps(failed_payload),
+            )
+        assert failed is not None and failed["replayed"] is False and failed["current_status"] == "failed"
+        async with callback.transaction():
+            await callback.execute("SELECT set_config('app.tenant_id',$1,true)", str(ids["tenant"]))
+            replay = await callback.fetchrow(
+                "SELECT * FROM settle_campaign_claim_callback($1,$2,$3,$4,$5,$6,'failed',$7::jsonb)",
+                ids["tenant"],
+                uuid.uuid4(),
+                connector_id,
+                delivery_id,
+                claim_id,
+                external_id,
+                json.dumps(failed_payload),
+            )
+        assert replay is not None and replay["replayed"] is True
+        async with callback.transaction():
+            await callback.execute("SELECT set_config('app.tenant_id',$1,true)", str(ids["tenant"]))
+            with pytest.raises(asyncpg.PostgresError) as changed:
+                await callback.fetchrow(
+                    "SELECT * FROM settle_campaign_claim_callback($1,$2,$3,$4,$5,$6,'failed',$7::jsonb)",
+                    ids["tenant"],
+                    uuid.uuid4(),
+                    connector_id,
+                    delivery_id,
+                    claim_id,
+                    external_id,
+                    "{}",
+                )
+            assert changed.value.sqlstate == "23505"
+        async with callback.transaction():
+            await callback.execute("SELECT set_config('app.tenant_id',$1,true)", str(ids["tenant"]))
+            succeeded = await callback.fetchrow(
+                "SELECT * FROM settle_campaign_claim_callback($1,$2,$3,$4,$5,$6,'success',$7::jsonb)",
+                ids["tenant"],
+                uuid.uuid4(),
+                connector_id,
+                delivery_id,
+                claim_id,
+                external_id,
+                json.dumps(success_payload),
+            )
+        assert succeeded is not None and succeeded["replayed"] is False and succeeded["current_status"] == "success"
+        attempts = await owner.fetch(
+            "SELECT callback_status,payload_digest FROM campaign_delivery_callback_attempts "
+            "WHERE tenant_id=$1 AND delivery_id=$2 ORDER BY recorded_at,id",
+            ids["tenant"],
+            delivery_id,
+        )
+        assert [row["callback_status"] for row in attempts] == ["failed", "success"]
+        assert all(len(row["payload_digest"]) == 64 for row in attempts)
+        assert not await owner.fetchval(
+            "SELECT EXISTS(SELECT 1 FROM information_schema.columns WHERE table_schema='public' "
+            "AND table_name='campaign_delivery_callback_attempts' AND column_name='payload_snapshot')"
+        )
+        durable_text = await owner.fetchval(
+            "SELECT concat_ws('|',"
+            "COALESCE((SELECT jsonb_agg(to_jsonb(a))::text FROM campaign_delivery_callback_attempts a "
+            "WHERE a.tenant_id=$1 AND a.delivery_id=$2),''),"
+            "COALESCE((SELECT jsonb_agg(to_jsonb(l))::text FROM platform_audit_log l "
+            "WHERE l.target_tenant_id=$1::text AND l.resource=$3),''),"
+            "COALESCE((SELECT jsonb_agg(to_jsonb(o))::text FROM campaign_claim_outbox o "
+            "WHERE o.tenant_id=$1 AND o.id=$4),''),"
+            "COALESCE((SELECT jsonb_agg(to_jsonb(d))::text FROM benefit_deliveries d "
+            "WHERE d.tenant_id=$1 AND d.id=$2),''))",
+            ids["tenant"],
+            delivery_id,
+            f"claim:{claim_id}",
+            outbox_id,
+        )
+        assert secret_marker not in durable_text
+        assert phone_marker not in durable_text
+        state = await owner.fetchrow(
+            "SELECT d.status,c.delivery_status,o.status AS outbox_status FROM benefit_deliveries d "
+            "JOIN benefit_claims c ON c.tenant_id=d.tenant_id AND c.id=d.claim_id "
+            "JOIN campaign_claim_outbox o ON o.tenant_id=d.tenant_id AND o.id=d.campaign_outbox_id "
+            "WHERE d.tenant_id=$1 AND d.id=$2",
+            ids["tenant"],
+            delivery_id,
+        )
+        assert dict(state) == {"status": "success", "delivery_status": "success", "outbox_status": "delivered"}
+        runtime_engine = create_async_engine(
+            migrated_pg_url.replace("yimatong:yimatong@", "yimatong_app:yimatong_app@")
+        )
+        control_engine = create_async_engine(migrated_pg_url)
+        runtime_factory = async_sessionmaker(runtime_engine, class_=AsyncSession, expire_on_commit=False)
+        control_factory = async_sessionmaker(control_engine, class_=AsyncSession, expire_on_commit=False)
+
+        async def override_get_db():
+            async with runtime_factory() as db:
+                await database.set_session_tenant_context(db, ids["tenant"])
+                yield db
+
+        app.dependency_overrides[get_db] = override_get_db
+        monkeypatch.setattr(database, "control_session_factory", control_factory)
+        token = create_access_token(
+            str(ids["tenant"]),
+            str(ids["account"]),
+            "admin",
+            extra={"permissions": ["campaign:manage"], "auth_version": 0, "sid": str(session_id)},
+        )
+        try:
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+                response = await client.get(
+                    f"/api/v1/connectors/deliveries/{delivery_id}",
+                    headers={"Authorization": f"Bearer {token}"},
+                )
+            assert response.status_code == 200, response.text
+            assert response.json()["external_reference"] == external_id
+            assert response.json()["external_data"] == {}
+            assert secret_marker not in response.text and phone_marker not in response.text
+        finally:
+            app.dependency_overrides.clear()
+            await runtime_engine.dispose()
+            await control_engine.dispose()
+        async with callback.transaction():
+            await callback.execute("SELECT set_config('app.tenant_id',$1,true)", str(ids["tenant"]))
+            with pytest.raises(asyncpg.PostgresError) as reverse:
+                await callback.fetchrow(
+                    "SELECT * FROM settle_campaign_claim_callback($1,$2,$3,$4,$5,$6,'failed',$7::jsonb)",
+                    ids["tenant"],
+                    uuid.uuid4(),
+                    connector_id,
+                    delivery_id,
+                    claim_id,
+                    external_id,
+                    json.dumps(failed_payload),
+                )
+            assert reverse.value.sqlstate == "23505"
+        async with runtime.transaction():
+            await runtime.execute("SELECT set_config('app.tenant_id',$1,true)", str(ids["tenant"]))
+            with pytest.raises(asyncpg.InsufficientPrivilegeError):
+                await runtime.execute(
+                    "DELETE FROM campaign_delivery_callback_attempts WHERE tenant_id=$1", ids["tenant"]
+                )
+    finally:
+        await asyncio.gather(runtime.close(), callback.close(), owner.close())
 
 
 async def test_api_key_bound_coupon_redeem_is_audited_and_fail_closed(migrated_pg_url: str) -> None:
@@ -1138,3 +1753,162 @@ async def test_api_key_bound_coupon_redeem_is_audited_and_fail_closed(migrated_p
     finally:
         await runtime.close()
         await owner.close()
+
+
+async def test_canonical_worker_quarantines_ambiguous_provider_without_legacy_double_delivery(
+    migrated_pg_url: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A provider-side effect is sent once; timeout recovery is read-only reconciliation."""
+
+    from app.core import database
+    from app.services import benefit_delivery_handler
+    from app.services.benefit_delivery_handler import on_claim_created
+    from app.services.campaign_claim_worker import _process_leased
+    from app.services.connectors.base import DeliveryResult
+    from app.services.connectors.generic_http import GenericHttpAdapter
+
+    owner = await asyncpg.connect(migrated_pg_url.replace("postgresql+asyncpg://", "postgresql://"))
+    runtime = await _runtime_connection(migrated_pg_url)
+    runtime_engine = create_async_engine(migrated_pg_url.replace("yimatong:yimatong@", "yimatong_app:yimatong_app@"))
+    runtime_factory = async_sessionmaker(runtime_engine, class_=AsyncSession, expire_on_commit=False)
+    ids = await _seed_catalog(owner, "canonical-worker-fault")
+    connector_id, benefit_id, claim_id, outbox_id = (uuid.uuid4() for _ in range(4))
+    await owner.execute(
+        "INSERT INTO connectors(id,tenant_id,name,connector_type,config,enabled,created_at,updated_at) "
+        "VALUES($1,$2,'fault provider','generic_http',$3::jsonb,true,now(),now())",
+        connector_id,
+        ids["tenant"],
+        json.dumps(
+            {
+                "api_url": "https://api.example.com",
+                "provider_idempotency": True,
+                "reconciliation_path": "deliveries/{idempotency_key}",
+            }
+        ),
+    )
+    await owner.execute(
+        "INSERT INTO benefits(id,tenant_id,name,benefit_type,config_json,connector_id,stock_total,stock_used,"
+        "per_person_limit,status,created_at,updated_at) VALUES($1,$2,'fault benefit','platform_coupon','{}',$3,"
+        "1,1,1,'active',now(),now())",
+        benefit_id,
+        ids["tenant"],
+        connector_id,
+    )
+    await owner.execute(
+        "INSERT INTO benefit_claims(id,tenant_id,benefit_id,consumer_id,idempotency_key,claim_type,status,"
+        "delivery_status,created_at,updated_at) VALUES($1,$2,$3,'fault-consumer','fault-idem','claim','success',"
+        "'pending',now(),now())",
+        claim_id,
+        ids["tenant"],
+        benefit_id,
+    )
+    await owner.execute(
+        "INSERT INTO campaign_claim_outbox(id,tenant_id,claim_id,event_type,payload,status,attempt_count,max_attempts,"
+        "next_attempt_at,created_at,updated_at) VALUES($1,$2,$3,'claim_committed','{}','pending',0,8,now(),now(),now())",
+        outbox_id,
+        ids["tenant"],
+        claim_id,
+    )
+
+    class FaultProvider(GenericHttpAdapter):
+        def __init__(self) -> None:
+            self.posts = 0
+            self.queries = 0
+
+        async def deliver(self, connector, consumer_id, benefit_config):
+            self.posts += 1
+            return DeliveryResult(
+                status="pending",
+                external_id=str(claim_id),
+                external_data={
+                    "status": "pending",
+                    "reason": "ambiguous_provider_outcome",
+                    "token": "fault-provider-secret",
+                    "customer": {"phone": "13800138000"},
+                },
+            )
+
+        async def reconcile(self, connector, idempotency_key):
+            self.queries += 1
+            return DeliveryResult(
+                status="success",
+                external_id=idempotency_key,
+                external_data={
+                    "status": "success",
+                    "access_token": "fault-provider-secret",
+                    "phone": "13800138000",
+                },
+            )
+
+    provider = FaultProvider()
+    monkeypatch.setattr(database, "async_session_factory", runtime_factory)
+    monkeypatch.setattr(benefit_delivery_handler, "async_session_factory", runtime_factory)
+    monkeypatch.setattr("app.services.connectors.get_adapter", lambda _connector: provider)
+    try:
+        async with runtime.transaction():
+            await runtime.execute("SELECT set_config('app.tenant_id',$1,true)", str(ids["tenant"]))
+            lease = dict(
+                await runtime.fetchrow("SELECT * FROM lease_campaign_claim_outbox($1,'worker-a',1,30)", ids["tenant"])
+            )
+
+        legacy_event = {
+            "claim_id": str(claim_id),
+            "benefit_id": str(benefit_id),
+            "consumer_id": "fault-consumer",
+        }
+        canonical_result, _legacy_result = await asyncio.gather(
+            _process_leased(ids["tenant"], lease),
+            on_claim_created("claim.created", legacy_event, str(ids["tenant"])),
+        )
+        assert canonical_result is True
+        assert provider.posts == 1 and provider.queries == 0
+        assert (
+            await owner.fetchval(
+                "SELECT count(*) FROM benefit_deliveries WHERE tenant_id=$1 AND claim_id=$2", ids["tenant"], claim_id
+            )
+            == 1
+        )
+        first_durable = await owner.fetchval(
+            "SELECT to_jsonb(d)::text FROM benefit_deliveries d WHERE tenant_id=$1 AND claim_id=$2",
+            ids["tenant"],
+            claim_id,
+        )
+        assert "fault-provider-secret" not in first_durable and "13800138000" not in first_durable
+
+        await owner.execute(
+            "UPDATE campaign_claim_outbox SET next_attempt_at=now()-interval '1 second' WHERE tenant_id=$1 AND id=$2",
+            ids["tenant"],
+            outbox_id,
+        )
+        async with runtime.transaction():
+            await runtime.execute("SELECT set_config('app.tenant_id',$1,true)", str(ids["tenant"]))
+            timeout_lease = dict(
+                await runtime.fetchrow(
+                    "SELECT * FROM lease_campaign_claim_outbox($1,'worker-reconcile',1,30)", ids["tenant"]
+                )
+            )
+        assert timeout_lease["callback_timed_out"] is True
+        assert await _process_leased(ids["tenant"], timeout_lease) is True
+        assert provider.posts == 1 and provider.queries == 1
+        assert (
+            await owner.fetchval(
+                "SELECT count(*) FROM benefit_deliveries WHERE tenant_id=$1 AND claim_id=$2", ids["tenant"], claim_id
+            )
+            == 1
+        )
+        final_durable = await owner.fetchval(
+            "SELECT to_jsonb(d)::text FROM benefit_deliveries d WHERE tenant_id=$1 AND claim_id=$2",
+            ids["tenant"],
+            claim_id,
+        )
+        assert "fault-provider-secret" not in final_durable and "13800138000" not in final_durable
+        assert await owner.fetchval(
+            "SELECT status='delivered' FROM campaign_claim_outbox WHERE tenant_id=$1 AND id=$2",
+            ids["tenant"],
+            outbox_id,
+        )
+    finally:
+        await runtime.close()
+        await owner.close()
+        await runtime_engine.dispose()

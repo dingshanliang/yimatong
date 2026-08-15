@@ -34,6 +34,43 @@ class VersionImmutableError(ValueError):
     """已发布/归档版本不可修改"""
 
 
+async def _invalidate_sqlite_launch_releases_for_template(
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    page_template_id: uuid.UUID,
+    actor_id: uuid.UUID,
+) -> int:
+    """Keep the non-PostgreSQL fallback aligned with page authority invalidation."""
+
+    from app.models.launch import LaunchRelease, LaunchReleaseStatus
+
+    releases = list(
+        (
+            await db.scalars(
+                select(LaunchRelease).where(
+                    LaunchRelease.tenant_id == tenant_id,
+                    LaunchRelease.page_template_id == page_template_id,
+                    LaunchRelease.status.in_((LaunchReleaseStatus.confirmed, LaunchReleaseStatus.live)),
+                )
+            )
+        ).all()
+    )
+    for release in releases:
+        release.status = LaunchReleaseStatus.invalidated
+        release.failure_reason = "页面产生了新版本，需要重新准备并确认"
+        await write_audit_log(
+            db,
+            str(actor_id),
+            str(tenant_id),
+            "launch_release_invalidated",
+            f"launch_release:{release.id}",
+            {"reason": "page_version_created", "page_template_id": str(page_template_id)},
+        )
+    if releases:
+        await db.flush()
+    return len(releases)
+
+
 def map_page_authority_db_error(exc: DBAPIError) -> HTTPException | None:
     """Translate only the page authority interface's documented SQLSTATEs."""
     sqlstate = getattr(exc.orig, "sqlstate", None) or getattr(exc.orig, "pgcode", None)
@@ -481,9 +518,6 @@ async def create_page_version(
         )
         if row is None:
             return None
-        from app.services.launch import invalidate_launch_releases_for_template
-
-        await invalidate_launch_releases_for_template(db, tenant_id, template_id, created_by)
         return await _load_page_version_dict(db, tenant_id, version_id)
 
     # Lock the tenant-scoped parent row so concurrent creates for one template
@@ -519,9 +553,7 @@ async def create_page_version(
     db.add(v)
     await db.flush()
     await db.refresh(v)
-    from app.services.launch import invalidate_launch_releases_for_template
-
-    await invalidate_launch_releases_for_template(db, tenant_id, template_id, created_by)
+    await _invalidate_sqlite_launch_releases_for_template(db, tenant_id, template_id, created_by)
     await _audit_sqlite_page_mutation(
         db,
         tenant_id,
@@ -760,9 +792,6 @@ async def rollback_page_version(
         )
         if row is None:
             return None
-        from app.services.launch import invalidate_launch_releases_for_template
-
-        await invalidate_launch_releases_for_template(db, tenant_id, template_id, created_by)
         return await _load_page_version_dict(db, tenant_id, new_version_id)
     target = await db.execute(
         select(PageVersion).where(

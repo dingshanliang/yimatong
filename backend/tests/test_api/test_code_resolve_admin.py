@@ -132,12 +132,13 @@ class TestCodeResolveAdmin:
     @pytest.mark.anyio
     async def test_resolve_revoked_returns_gone(self, client: AsyncClient, setup_codes):
         _, headers, item_id, _, _ = setup_codes
-        # 先激活再作废
-        await client.post(
+        revoked = await client.post(
             f"/api/v1/code-items/{item_id}/revoke",
+            json={"reason": "confirmed admin resolver incident", "confirm": "void"},
             headers=headers,
         )
-        # 此时码已经 revoked
+        assert revoked.status_code == 200
+        assert revoked.json()["status"] == "revoked"
 
         # 需要通过 public_id 获取，先从详情拿到 public_id
         detail = await client.get(
@@ -152,6 +153,20 @@ class TestCodeResolveAdmin:
         )
         assert resp.status_code == 410
         assert "revoked" in resp.json()["detail"].lower() or "gone" in resp.json()["detail"].lower()
+
+    @pytest.mark.anyio
+    async def test_revoke_missing_body_is_zero_write(self, client: AsyncClient, setup_codes):
+        _, headers, item_id, public_id, _ = setup_codes
+
+        rejected = await client.post(f"/api/v1/code-items/{item_id}/revoke", headers=headers)
+
+        assert rejected.status_code == 422
+        detail = await client.get(f"/api/v1/code-items/{item_id}", headers=headers)
+        assert detail.status_code == 200
+        assert detail.json()["status"] == "created"
+        resolved = await client.get(f"/api/v1/code-items/public/{public_id}", headers=headers)
+        assert resolved.status_code == 200
+        assert resolved.json()["status"] == "created"
 
     @pytest.mark.anyio
     async def test_resolve_requires_auth(self, client: AsyncClient, setup_codes):

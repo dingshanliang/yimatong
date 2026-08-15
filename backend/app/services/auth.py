@@ -9,13 +9,17 @@ import secrets
 import uuid
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, exists, func, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.config import settings
 from app.models.auth_security import AuthSession
+from app.models.export_log import ExportLog
+from app.models.gmv import GmvAttributionConfirmation
+from app.models.pilot_milestone import PilotAuthorityReceipt
+from app.models.retrospective import Retrospective
 from app.models.tenant import Account, Tenant, TenantStatus
 from app.services.redis_cache import AsyncRedisCache, SharedSecurityCacheUnavailable
 from app.services.tenant import get_tenant
@@ -61,10 +65,10 @@ def resolve_account_role(account: Account) -> str:
     role_names = {role.name for role in account.roles}
     # Platform administrators are not tenant Accounts. A historical tenant role
     # with the same name must never cross the dedicated platform auth boundary.
-    for role in ("admin", "operator"):
+    for role in ("admin", "operator", "distributor", "store_guide", "viewer"):
         if role in role_names:
             return role
-    return "operator" if "operator" in role_names else "viewer"
+    return "viewer"
 
 
 async def _get_account_with_roles(db: AsyncSession, account_id: uuid.UUID) -> Account | None:
@@ -82,11 +86,100 @@ async def revoke_current_tenant_account_sessions(db: AsyncSession, account_id: u
 
 
 async def _prune_expired_auth_sessions(db: AsyncSession, *, limit: int = 256) -> None:
-    """Bound control-table retention work to one small batch per login."""
+    """Bound retention work without deleting sessions referenced by audit facts."""
+
+    if db.get_bind().dialect.name == "postgresql":
+        # Export and confirmed-GMV rows are immutable authority evidence. Their
+        # session reference must remain durable after the refresh family
+        # expires. Serialize against authority functions using the same
+        # per-session advisory-lock namespace, and avoid waiting behind another
+        # cleanup worker with SKIP LOCKED.
+        await db.execute(
+            text(
+                """WITH candidates AS MATERIALIZED (
+                  SELECT session.tenant_id,session.id
+                  FROM public.auth_sessions AS session
+                  WHERE session.expires_at <= CURRENT_TIMESTAMP
+                  AND NOT EXISTS (
+                    SELECT 1 FROM public.export_logs AS export
+                    WHERE export.tenant_id=session.tenant_id
+                      AND export.auth_session_id=session.id
+                  )
+                  AND NOT EXISTS (
+                    SELECT 1 FROM public.gmv_attribution_confirmations AS confirmation
+                    WHERE confirmation.tenant_id=session.tenant_id
+                      AND confirmation.auth_session_id=session.id
+                  )
+                  AND NOT EXISTS (
+                    SELECT 1 FROM public.pilot_authority_receipts AS receipt
+                    WHERE receipt.actor_tenant_id=session.tenant_id
+                      AND receipt.auth_session_id=session.id
+                  )
+                  AND NOT EXISTS (
+                    SELECT 1 FROM public.retrospectives AS retrospective
+                    WHERE retrospective.completed_actor_tenant_id=session.tenant_id
+                      AND retrospective.completed_auth_session_id=session.id
+                  )
+                  ORDER BY session.expires_at,session.id
+                  FOR UPDATE SKIP LOCKED
+                  LIMIT :limit
+                ), deletable AS MATERIALIZED (
+                  SELECT candidate.tenant_id,candidate.id
+                  FROM candidates AS candidate
+                  WHERE pg_try_advisory_xact_lock(
+                    hashtextextended('auth-session:'||candidate.id::text,0)
+                  )
+                  AND NOT EXISTS (
+                    SELECT 1 FROM public.export_logs AS export
+                    WHERE export.tenant_id=candidate.tenant_id
+                      AND export.auth_session_id=candidate.id
+                  )
+                  AND NOT EXISTS (
+                    SELECT 1 FROM public.gmv_attribution_confirmations AS confirmation
+                    WHERE confirmation.tenant_id=candidate.tenant_id
+                      AND confirmation.auth_session_id=candidate.id
+                  )
+                  AND NOT EXISTS (
+                    SELECT 1 FROM public.pilot_authority_receipts AS receipt
+                    WHERE receipt.actor_tenant_id=candidate.tenant_id
+                      AND receipt.auth_session_id=candidate.id
+                  )
+                  AND NOT EXISTS (
+                    SELECT 1 FROM public.retrospectives AS retrospective
+                    WHERE retrospective.completed_actor_tenant_id=candidate.tenant_id
+                      AND retrospective.completed_auth_session_id=candidate.id
+                  )
+                )
+                DELETE FROM public.auth_sessions AS session
+                USING deletable
+                WHERE session.tenant_id=deletable.tenant_id
+                  AND session.id=deletable.id"""
+            ),
+            {"limit": limit},
+        )
+        return
 
     expired_ids = (
         select(AuthSession.id)
-        .where(AuthSession.expires_at <= datetime.now(UTC))
+        .where(
+            AuthSession.expires_at <= datetime.now(UTC),
+            ~exists().where(
+                ExportLog.tenant_id == AuthSession.tenant_id,
+                ExportLog.auth_session_id == AuthSession.id,
+            ),
+            ~exists().where(
+                GmvAttributionConfirmation.tenant_id == AuthSession.tenant_id,
+                GmvAttributionConfirmation.auth_session_id == AuthSession.id,
+            ),
+            ~exists().where(
+                PilotAuthorityReceipt.actor_tenant_id == AuthSession.tenant_id,
+                PilotAuthorityReceipt.auth_session_id == AuthSession.id,
+            ),
+            ~exists().where(
+                Retrospective.completed_actor_tenant_id == AuthSession.tenant_id,
+                Retrospective.completed_auth_session_id == AuthSession.id,
+            ),
+        )
         .order_by(AuthSession.expires_at)
         .limit(limit)
     )

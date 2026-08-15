@@ -6,22 +6,41 @@
 
 import uuid
 from datetime import UTC, datetime
+from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
+from uuid6 import uuid7
 
 from app.core.database import get_db
 from app.core.dependencies import get_current_account_id, get_current_tenant
 from app.schemas.retrospective import RetrospectiveRead, RetrospectiveUpdateRequest
+from app.services.pilot_access import (
+    canonical_pilot_payload_digest,
+    enforce_pilot_mutation_rate_limit,
+    pilot_authority_http_error,
+    require_pilot_read_access,
+    require_retrospective_manage_access,
+)
 from app.services.retrospective import (
     _derived_status,
     get_retrospective,
     list_retrospectives,
     update_retrospective,
 )
-from app.utils.auth_rbac import require_permission
 
 router = APIRouter(prefix="/api/v1/retrospectives", tags=["retrospectives"])
+CanonicalIdempotencyKey = Annotated[
+    str,
+    Header(
+        alias="Idempotency-Key",
+        min_length=36,
+        max_length=36,
+        pattern=r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+    ),
+]
+RetrospectiveVersion = Annotated[int, Header(alias="If-Match", ge=1)]
 
 
 def _serialize(retro, now: datetime) -> RetrospectiveRead:
@@ -33,6 +52,7 @@ def _serialize(retro, now: datetime) -> RetrospectiveRead:
         window_end=retro.window_end,
         next_review_date=retro.next_review_date,
         status=str(retro.status),
+        version=retro.version,
         derived_status=_derived_status(retro, now),
         goal=retro.goal,
         scorecard_snapshot=retro.scorecard_snapshot,
@@ -51,7 +71,7 @@ def _serialize(retro, now: datetime) -> RetrospectiveRead:
 async def list_retrospectives_endpoint(
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
-    _permission: None = Depends(require_permission("analytics:view")),
+    _session: uuid.UUID = Depends(require_pilot_read_access),
 ):
     now = datetime.now(UTC)
     retros = await list_retrospectives(db, tenant_id, now)
@@ -63,7 +83,7 @@ async def get_retrospective_endpoint(
     retro_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
-    _permission: None = Depends(require_permission("analytics:view")),
+    _session: uuid.UUID = Depends(require_pilot_read_access),
 ):
     now = datetime.now(UTC)
     retro = await get_retrospective(db, tenant_id, retro_id)
@@ -76,21 +96,29 @@ async def get_retrospective_endpoint(
 async def update_retrospective_endpoint(
     retro_id: uuid.UUID,
     body: RetrospectiveUpdateRequest,
-    db: AsyncSession = Depends(get_db),
+    expected_version: RetrospectiveVersion,
+    idempotency_key: CanonicalIdempotencyKey,
+    db: AsyncSession = Depends(get_db, scope="function"),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
     account_id: uuid.UUID = Depends(get_current_account_id),
-    _permission: None = Depends(require_permission("campaign:manage")),
+    auth_session_id: uuid.UUID = Depends(require_retrospective_manage_access),
 ):
     """填写或完成复盘。mark_completed=true 推进 pending→completed，冻结快照。
 
     状态机与可写字段判定全部在 service 层（update_retrospective），
     路由只做编排。
     """
-    retro = await get_retrospective(db, tenant_id, retro_id)
-    if retro is None:
-        raise HTTPException(status_code=404, detail="Retrospective not found")
-
+    await enforce_pilot_mutation_rate_limit(tenant_id, auth_session_id)
     actions_payload = [a.model_dump(mode="json") for a in body.actions] if body.actions is not None else None
+    request_id = uuid7()
+    payload_digest = canonical_pilot_payload_digest(
+        {
+            "tenant_id": tenant_id,
+            "retrospective_id": retro_id,
+            "expected_version": expected_version,
+            **body.model_dump(mode="python", exclude_unset=True),
+        }
+    )
 
     try:
         updated = await update_retrospective(
@@ -104,10 +132,17 @@ async def update_retrospective_endpoint(
             supplementary_notes=body.supplementary_notes,
             mark_completed=body.mark_completed,
             actor_id=account_id,
+            auth_session_id=auth_session_id,
+            request_id=request_id,
+            expected_version=expected_version,
+            idempotency_key=idempotency_key,
+            payload_digest=payload_digest,
         )
     except ValueError as e:
         # PRD §8：上期承接动作未显式处置 → 409（客户端可修正后重试），非 500
         raise HTTPException(status_code=409, detail=str(e)) from e
+    except DBAPIError as exc:
+        raise pilot_authority_http_error(exc) from exc
 
     if updated is None:
         raise HTTPException(status_code=404, detail="Retrospective not found")

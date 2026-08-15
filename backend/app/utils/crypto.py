@@ -174,6 +174,48 @@ def hash_phone(phone: str) -> str:
     ).hexdigest()
 
 
+def _consumer_phone_aad(tenant_id: uuid.UUID, consumer_id: uuid.UUID) -> bytes:
+    return b"consumer-phone-v2\0" + tenant_id.bytes + b"\0" + consumer_id.bytes
+
+
+def _validate_consumer_phone(phone: str) -> None:
+    if re.fullmatch(r"1\d{10}", phone) is None:
+        raise CryptoError("Invalid consumer phone")
+
+
+def encrypt_consumer_phone(
+    tenant_id: uuid.UUID,
+    consumer_id: uuid.UUID,
+    phone: str,
+) -> tuple[bytes, bytes, str]:
+    """Encrypt a consumer phone with tenant/profile identity-bound AAD."""
+
+    _validate_consumer_phone(phone)
+    return encrypt_bytes(phone.encode("ascii"), aad=_consumer_phone_aad(tenant_id, consumer_id))
+
+
+def decrypt_consumer_phone(
+    tenant_id: uuid.UUID,
+    consumer_id: uuid.UUID,
+    ciphertext: bytes,
+    nonce: bytes,
+    key_id: str,
+) -> str:
+    """Decrypt and validate one tenant/profile-bound consumer phone envelope."""
+
+    try:
+        phone = decrypt_bytes(
+            ciphertext,
+            nonce=nonce,
+            key_id=key_id,
+            aad=_consumer_phone_aad(tenant_id, consumer_id),
+        ).decode("ascii")
+    except UnicodeDecodeError as exc:
+        raise CryptoError("Invalid consumer phone envelope") from exc
+    _validate_consumer_phone(phone)
+    return phone
+
+
 def _wechat_openid_lookup_material(tenant_id: uuid.UUID, openid: str) -> bytes:
     if not isinstance(openid, str) or not openid or openid.isspace() or len(openid) > 128:
         raise CryptoError("Invalid WeChat OpenID")

@@ -19,13 +19,15 @@ uq_pilot_milestones_tenant_type 兜底（begin_nested + IntegrityError 回退为
 achieved_at 作为展示值并附更正链。
 """
 
+import json
 import logging
 import uuid
 from datetime import datetime
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
+from uuid6 import uuid7
 
 from app.constants.pilot import (
     PILOT_MILESTONE_LABELS,
@@ -33,6 +35,7 @@ from app.constants.pilot import (
     PilotMilestoneStatus,
     PilotMilestoneType,
 )
+from app.core.database import _session_uses_postgresql
 from app.models.campaign import Campaign
 from app.models.launch import LaunchRelease
 from app.models.pilot_milestone import PilotMilestone, PilotMilestoneCorrection
@@ -178,9 +181,27 @@ async def list_milestones(db: AsyncSession, tenant_id: uuid.UUID) -> list[PilotM
     return list(result.scalars().all())
 
 
-async def build_milestone_timeline(db: AsyncSession, tenant_id: uuid.UUID) -> MilestoneTimelineResponse:
+async def build_milestone_timeline(
+    db: AsyncSession, tenant_id: uuid.UUID, *, auth_session_id: uuid.UUID | None = None
+) -> MilestoneTimelineResponse:
     """组装里程碑时间线响应：懒派生 + 5 个里程碑 + 派生时长 + 更正记录。"""
-    await derive_and_persist_milestones(db, tenant_id)
+    if _session_uses_postgresql(db):
+        if auth_session_id is None:
+            raise ValueError("A live auth session is required to materialize pilot milestones")
+        requested_ids = {milestone.value: str(uuid7()) for milestone in PILOT_MILESTONE_ORDER}
+        await db.execute(
+            text(
+                "SELECT * FROM public.materialize_pilot_milestones("
+                ":tenant_id,:auth_session_id,CAST(:requested_ids AS jsonb))"
+            ),
+            {
+                "tenant_id": tenant_id,
+                "auth_session_id": auth_session_id,
+                "requested_ids": json.dumps(requested_ids, separators=(",", ":")),
+            },
+        )
+    else:
+        await derive_and_persist_milestones(db, tenant_id)
 
     rows = await list_milestones(db, tenant_id)
     by_type: dict[PilotMilestoneType, PilotMilestone] = {r.milestone_type: r for r in rows}
@@ -271,6 +292,10 @@ async def correct_milestone(
     reason: str,
     source: str,
     corrected_by: uuid.UUID | None = None,
+    platform_auth_session_id: uuid.UUID | None = None,
+    request_id: uuid.UUID | None = None,
+    idempotency_key: str | None = None,
+    payload_digest: str | None = None,
 ) -> PilotMilestoneCorrection | None:
     """追加一条里程碑更正记录（PRD §6.2）。
 
@@ -279,6 +304,36 @@ async def correct_milestone(
     """
     if not reason or not reason.strip():
         raise ValueError("更正记录必须填写原因（PRD §6.2）")
+    if _session_uses_postgresql(db):
+        if None in (platform_auth_session_id, request_id, idempotency_key, payload_digest):
+            raise ValueError("Platform session and idempotency evidence are required")
+        result = await db.execute(
+            text(
+                "SELECT correction_id FROM public.append_pilot_milestone_correction("
+                ":tenant_id,:platform_session_id,:request_id,:milestone_type,:corrected_at,"
+                ":source,:reason,:idempotency_key,:payload_digest)"
+            ),
+            {
+                "tenant_id": tenant_id,
+                "platform_session_id": platform_auth_session_id,
+                "request_id": request_id,
+                "milestone_type": milestone_type.value,
+                "corrected_at": corrected_at,
+                "source": source,
+                "reason": reason,
+                "idempotency_key": idempotency_key,
+                "payload_digest": payload_digest,
+            },
+        )
+        correction_id = result.scalar_one()
+        return (
+            await db.execute(
+                select(PilotMilestoneCorrection).where(
+                    PilotMilestoneCorrection.tenant_id == tenant_id,
+                    PilotMilestoneCorrection.id == correction_id,
+                )
+            )
+        ).scalar_one()
     row = (
         await db.execute(
             select(PilotMilestone.id).where(

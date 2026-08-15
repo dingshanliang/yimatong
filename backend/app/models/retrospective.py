@@ -9,11 +9,14 @@ from datetime import date, datetime
 
 from sqlalchemy import (
     JSON,
+    BigInteger,
     Date,
     DateTime,
     ForeignKey,
+    ForeignKeyConstraint,
     Index,
     Integer,
+    SmallInteger,
     String,
     Text,
     UniqueConstraint,
@@ -48,6 +51,9 @@ class Retrospective(Base):
     goal: Mapped[str | None] = mapped_column(Text, nullable=True)
     # 数据快照：生成时点物化的 scorecard（PRD §4.3.3/§4.4），完成后冻结
     scorecard_snapshot: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    snapshot_digest: Mapped[str] = mapped_column(String(64), nullable=False, default=lambda: "0" * 64)
+    version: Mapped[int] = mapped_column(BigInteger, nullable=False, default=1)
+    authority_version: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=0)
     # 问题与判断（人工填写）
     issues: Mapped[str | None] = mapped_column(Text, nullable=True)
     # 动作清单：[{content, owner_id, due_date, status}]
@@ -55,6 +61,12 @@ class Retrospective(Base):
     # 完成信息
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     completed_by: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("accounts.id"), nullable=True)
+    completed_actor_tenant_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True)
+    completed_auth_session_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True)
+    completed_agency_authorization_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("agency_authorizations.id"), nullable=True
+    )
+    completion_request_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True)
     # 完成后追加的补充说明（快照冻结后唯一可写字段）
     supplementary_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     # 关联的 OpsTask 提醒入口（PRD §4.2/§6.3：OpsTask 仅作提醒，不承载复盘数据）
@@ -66,5 +78,23 @@ class Retrospective(Base):
 
     __table_args__ = (
         UniqueConstraint("tenant_id", "period_day", name="uq_retrospectives_tenant_period"),
+        UniqueConstraint("tenant_id", "id", name="uq_retrospectives_tenant_id_id_u09"),
+        ForeignKeyConstraint(
+            ["completed_actor_tenant_id", "completed_by"],
+            ["accounts.tenant_id", "accounts.id"],
+            name="fk_retrospective_completed_account_u09",
+        ),
+        ForeignKeyConstraint(
+            ["completed_actor_tenant_id", "completed_auth_session_id"],
+            ["auth_sessions.tenant_id", "auth_sessions.id"],
+            name="fk_retrospective_completed_session_u09",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "completion_request_id"],
+            ["pilot_authority_receipts.tenant_id", "pilot_authority_receipts.id"],
+            name="fk_retrospective_completion_receipt_u09",
+            deferrable=True,
+            initially="DEFERRED",
+        ),
         Index("ix_retrospectives_tenant_period", "tenant_id", "period_day"),
     )

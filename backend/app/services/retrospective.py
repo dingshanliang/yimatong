@@ -5,13 +5,16 @@
 - 完成后快照冻结，只允许追加 supplementary_notes。
 """
 
+import asyncio
+import json
 import logging
 import uuid
 from datetime import UTC, date, datetime, timedelta
 
-from sqlalchemy import select
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy import select, text
+from sqlalchemy.exc import DBAPIError, IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
+from uuid6 import uuid7
 
 from app.constants.retrospective import (
     RETO_STATE_OVERDUE,
@@ -19,6 +22,7 @@ from app.constants.retrospective import (
     RETRO_PERIOD_DAYS,
     RetrospectiveStatus,
 )
+from app.core.database import _session_uses_postgresql
 from app.models.launch import LaunchRelease
 from app.models.retrospective import Retrospective
 from app.models.tenant import (
@@ -105,6 +109,50 @@ async def _generate_one(
     carried_actions = await _carryover_actions_from_previous(db, tenant_id, period_day)
     # 提醒负责人（PRD §4.2：路由到该租户的代运营 owner）
     owner_id = await _resolve_agency_owner(db, tenant_id)
+
+    if _session_uses_postgresql(db):
+        from app.core.database import control_session_factory
+
+        scorecard_json = json.dumps(scorecard, separators=(",", ":"), default=str)
+        retrospective_id, ops_task_id = uuid7(), uuid7()
+        for attempt in range(3):
+            try:
+                async with control_session_factory() as control_db:
+                    await control_db.execute(text("SELECT set_config('app.tenant_id','',true)"))
+                    await control_db.execute(text("SELECT set_config('app.bypass_rls','true',true)"))
+                    snapshot_digest = await control_db.scalar(
+                        text(
+                            "SELECT encode(digest(convert_to(CAST(:scorecard AS jsonb)::text,'UTF8'),'sha256'),'hex')"
+                        ),
+                        {"scorecard": scorecard_json},
+                    )
+                    created = await control_db.scalar(
+                        text(
+                            "SELECT created FROM public.materialize_due_retrospective("
+                            ":tenant_id,:retrospective_id,:ops_task_id,:period_day,:window_start,:window_end,"
+                            ":next_review_date,CAST(:scorecard AS jsonb),:snapshot_digest,:assigned_to)"
+                        ),
+                        {
+                            "tenant_id": tenant_id,
+                            "retrospective_id": retrospective_id,
+                            "ops_task_id": ops_task_id,
+                            "period_day": period_day,
+                            "window_start": window_start,
+                            "window_end": window_end,
+                            "next_review_date": next_review_date,
+                            "scorecard": scorecard_json,
+                            "snapshot_digest": snapshot_digest,
+                            "assigned_to": owner_id,
+                        },
+                    )
+                    await control_db.commit()
+                return bool(created)
+            except DBAPIError as exc:
+                sqlstate = getattr(exc.orig, "sqlstate", None) or getattr(exc.orig, "pgcode", None)
+                if sqlstate != "55P03" or attempt == 2:
+                    raise
+                await asyncio.sleep(0.05 * (attempt + 1))
+        raise RuntimeError("bounded retrospective generation retry exhausted")
 
     try:
         async with db.begin_nested():
@@ -431,6 +479,11 @@ async def update_retrospective(
     supplementary_notes: str | None = None,
     mark_completed: bool = False,
     actor_id: uuid.UUID | None = None,
+    auth_session_id: uuid.UUID | None = None,
+    request_id: uuid.UUID | None = None,
+    expected_version: int | None = None,
+    idempotency_key: str | None = None,
+    payload_digest: str | None = None,
 ) -> Retrospective | None:
     """更新复盘字段（状态感知，PRD §6.1）。
 
@@ -439,6 +492,72 @@ async def update_retrospective(
     - pending 编辑：可改 goal/issues/actions/next_review_date（不推进状态）。
       用 begin_nested + 状态重检防止并发完成导致越过冻结边界。
     """
+    if _session_uses_postgresql(db):
+        if None in (auth_session_id, request_id, expected_version, idempotency_key, payload_digest):
+            raise ValueError("Live session, version, and idempotency evidence are required")
+        current = (
+            await db.execute(
+                select(Retrospective).where(
+                    Retrospective.tenant_id == tenant_id,
+                    Retrospective.id == retro_id,
+                )
+            )
+        ).scalar_one_or_none()
+        if current is None:
+            return None
+        if current.status == RetrospectiveStatus.COMPLETED:
+            if supplementary_notes is None:
+                return current
+            signature = "append_retrospective_note_authority"
+            sql = (
+                f"SELECT retrospective_id FROM public.{signature}("
+                ":tenant_id,:auth_session_id,:retro_id,:request_id,:expected_version,:note,"
+                ":idempotency_key,:payload_digest)"
+            )
+            params = {
+                "tenant_id": tenant_id,
+                "auth_session_id": auth_session_id,
+                "retro_id": retro_id,
+                "request_id": request_id,
+                "expected_version": expected_version,
+                "note": supplementary_notes,
+                "idempotency_key": idempotency_key,
+                "payload_digest": payload_digest,
+            }
+        else:
+            signature = (
+                "complete_retrospective_authority" if mark_completed else "update_pending_retrospective_authority"
+            )
+            note_argument = ",:supplementary_note" if mark_completed else ""
+            sql = (
+                f"SELECT retrospective_id FROM public.{signature}("
+                ":tenant_id,:auth_session_id,:retro_id,:request_id,:expected_version,:goal,:issues,"
+                f"CAST(:actions AS jsonb),:next_review_date{note_argument},:idempotency_key,:payload_digest)"
+            )
+            params = {
+                "tenant_id": tenant_id,
+                "auth_session_id": auth_session_id,
+                "retro_id": retro_id,
+                "request_id": request_id,
+                "expected_version": expected_version,
+                "goal": goal,
+                "issues": issues,
+                "actions": json.dumps(actions, separators=(",", ":")) if actions is not None else None,
+                "next_review_date": next_review_date,
+                "supplementary_note": supplementary_notes,
+                "idempotency_key": idempotency_key,
+                "payload_digest": payload_digest,
+            }
+        await db.execute(text(sql), params)
+        db.expire(current)
+        return (
+            await db.execute(
+                select(Retrospective)
+                .where(Retrospective.tenant_id == tenant_id, Retrospective.id == retro_id)
+                .execution_options(populate_existing=True)
+            )
+        ).scalar_one()
+
     if mark_completed:
         return await complete_retrospective(
             db,

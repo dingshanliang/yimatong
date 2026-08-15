@@ -5,7 +5,7 @@ import uuid
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.campaign import Benefit, Campaign, CampaignStatus
+from app.models.campaign import Benefit, Campaign
 from app.models.code import to_lifecycle
 from app.models.page import PageVersion, PageVersionStatus
 from app.models.product import (
@@ -100,7 +100,7 @@ async def _fetch_public_assets(
 async def build_json_response(
     db: AsyncSession,
     data: dict,
-    scan_token: str,
+    scan_token: str | None,
     scan_info: dict,
 ) -> dict:
     """构建 H5 前端所需的 JSON 响应
@@ -205,24 +205,25 @@ async def build_json_response(
         result["tenant_branding"] = {**existing, **brand_profile}
 
     # 查询页面配置（缓存优先）
-    template_id = data.get("template_id")
-    if template_id:
-        cached_config = await _page_config_cache.get(f"pv:{template_id}")
+    page_version_id = data.get("page_version_id")
+    launch_release_id = data.get("launch_release_id")
+    launch_digest = data.get("launch_content_digest")
+    if page_version_id and launch_release_id and launch_digest:
+        page_cache_key = f"pv:{launch_release_id}:{launch_digest}"
+        cached_config = await _page_config_cache.get(page_cache_key)
         if cached_config:
             result["page_config"] = cached_config
         else:
             ver_result = await db.execute(
-                select(PageVersion)
-                .where(
-                    PageVersion.page_template_id == uuid.UUID(template_id),
+                select(PageVersion).where(
+                    PageVersion.id == uuid.UUID(page_version_id),
                     PageVersion.tenant_id == tenant_uuid,
                     PageVersion.status == PageVersionStatus.published,
                 )
-                .limit(1)
             )
             version = ver_result.scalar_one_or_none()
             if version:
-                await _page_config_cache.set(f"pv:{template_id}", version.config_json)
+                await _page_config_cache.set(page_cache_key, version.config_json)
                 result["page_config"] = version.config_json
 
     # 溯源信息：使用 resolver 已传递的 production_batch_id，避免重复查 CodeBatch。
@@ -250,16 +251,13 @@ async def build_json_response(
             result["code_data"]["batch"] = batch_data  # H5 契约位置
 
     # 查询当前产品可用活动，供 H5 展示权益与活动规则
-    if product_id and data.get("production_batch_status") == "active":
+    campaign_id = data.get("campaign_id")
+    if campaign_id and data.get("production_batch_status") == "active":
         campaign_result = await db.execute(
-            select(Campaign)
-            .where(
-                Campaign.product_id == uuid.UUID(product_id),
+            select(Campaign).where(
+                Campaign.id == uuid.UUID(campaign_id),
                 Campaign.tenant_id == tenant_uuid,
-                Campaign.status == CampaignStatus.ACTIVE,
             )
-            .order_by(Campaign.id.desc())
-            .limit(1)
         )
         campaign = campaign_result.scalar_one_or_none()
         if campaign:

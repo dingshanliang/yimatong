@@ -119,7 +119,11 @@ async def traceability_setup(client: AsyncClient):
     assert batch.status_code in (200, 201)
 
     batch_id = batch.json()["id"]
-    exported = await client.post(f"/api/v1/code-batches/{batch_id}/export", headers=headers)
+    exported = await client.post(
+        f"/api/v1/code-batches/{batch_id}/export",
+        json={"reason": "Test lifecycle setup"},
+        headers={**headers, "Idempotency-Key": str(uuid.uuid4())},
+    )
     printing = await client.post(f"/api/v1/code-batches/{batch_id}/mark-printing", headers=headers)
     delivered = await client.post(
         f"/api/v1/code-batches/{batch_id}/mark-delivered",

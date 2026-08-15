@@ -14,8 +14,18 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from app.cli.lifecycle_auth import cli_lifecycle_auth_context
 from app.models.audit import PlatformAuditLog
 from app.models.auth_security import AuthSession
+from app.models.member import ConsumerProfile
 from app.models.plan import TenantQuotaUsage
-from app.models.tenant import Account, AgencyAuthorization, Role, Tenant, TenantType, account_roles
+from app.models.tenant import (
+    Account,
+    AgencyAuthorization,
+    Permission,
+    Role,
+    Tenant,
+    TenantType,
+    account_roles,
+    role_permissions,
+)
 from scripts.seed_demo import (
     DEMO_AGENCY_EMAIL,
     DEMO_AGENCY_SCOPES,
@@ -277,6 +287,58 @@ async def test_official_demo_seed_is_idempotent_on_the_same_database(migrated_pg
             assert authorization is not None
             authorization_id = authorization.id
             created_at = authorization.created_at
+            assert (
+                await db.scalar(
+                    select(func.count()).select_from(ConsumerProfile).where(ConsumerProfile.tenant_id == client_id)
+                )
+                == 200
+            )
+            assert (
+                await db.scalar(
+                    select(func.count())
+                    .select_from(ConsumerProfile)
+                    .where(
+                        ConsumerProfile.tenant_id == client_id,
+                        ConsumerProfile.phone_hash.is_(None),
+                        ConsumerProfile.phone_ciphertext.is_(None),
+                        ConsumerProfile.wechat_openid_hash.is_(None),
+                        ConsumerProfile.wechat_openid_ciphertext.is_(None),
+                        ConsumerProfile.nickname.is_(None),
+                    )
+                )
+                == 200
+            )
+            assert (
+                await db.scalar(
+                    select(func.count())
+                    .select_from(PlatformAuditLog)
+                    .where(
+                        PlatformAuditLog.target_tenant_id == str(client_id),
+                        PlatformAuditLog.action == "consumer_profile_created",
+                    )
+                )
+                == 200
+            )
+            granted_roles = set(
+                await db.scalars(
+                    select(Role.name)
+                    .join(
+                        role_permissions,
+                        (role_permissions.c.tenant_id == Role.tenant_id) & (role_permissions.c.role_id == Role.id),
+                    )
+                    .join(
+                        Permission,
+                        (Permission.tenant_id == role_permissions.c.tenant_id)
+                        & (Permission.id == role_permissions.c.permission_id),
+                    )
+                    .where(
+                        Role.tenant_id == client_id,
+                        Role.name.in_({"admin", "operator"}),
+                        Permission.code == "consumer:detail",
+                    )
+                )
+            )
+            assert granted_roles == {"admin", "operator"}
 
         async with control_factory() as db:
             assert (
@@ -331,6 +393,23 @@ async def test_official_demo_seed_is_idempotent_on_the_same_database(migrated_pg
                 )
                 == 0
             )
+            assert (
+                await db.scalar(
+                    select(func.count()).select_from(ConsumerProfile).where(ConsumerProfile.tenant_id == client_id)
+                )
+                == 200
+            )
+            assert (
+                await db.scalar(
+                    select(func.count())
+                    .select_from(PlatformAuditLog)
+                    .where(
+                        PlatformAuditLog.target_tenant_id == str(client_id),
+                        PlatformAuditLog.action == "consumer_profile_created",
+                    )
+                )
+                == 200
+            )
 
         await asyncio.to_thread(_run_official_demo_seed, migrated_pg_url)
 
@@ -366,6 +445,23 @@ async def test_official_demo_seed_is_idempotent_on_the_same_database(migrated_pg
                     )
                 )
                 == 0
+            )
+            assert (
+                await db.scalar(
+                    select(func.count()).select_from(ConsumerProfile).where(ConsumerProfile.tenant_id == client_id)
+                )
+                == 200
+            )
+            assert (
+                await db.scalar(
+                    select(func.count())
+                    .select_from(PlatformAuditLog)
+                    .where(
+                        PlatformAuditLog.target_tenant_id == str(client_id),
+                        PlatformAuditLog.action == "consumer_profile_created",
+                    )
+                )
+                == 200
             )
     finally:
         await control_engine.dispose()
