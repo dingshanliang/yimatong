@@ -246,5 +246,46 @@ async def _update_claim_delivery_status(
     )
 
 
+async def release_failed_delivery_reservation(
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    claim_id: uuid.UUID,
+) -> bool:
+    """旧版发放重试链终止时释放预留：claim 置 failed、退还库存与预算占用。
+
+    仅处理仍处于 reserved 且业务有效的旧链路 claim（outbox 主链路由
+    fail_campaign_claim_outbox 在数据库内权威释放）。幂等：重复调用返回 False。
+    reserved_amount 保留为事实记录，reservation_status='refunded' 表达已退回。
+    """
+
+    claim = await db.scalar(
+        select(BenefitClaim).where(
+            BenefitClaim.id == claim_id,
+            BenefitClaim.tenant_id == tenant_id,
+            BenefitClaim.reservation_status == "reserved",
+            BenefitClaim.status.in_(("success", "claimed")),
+        )
+    )
+    if claim is None:
+        return False
+
+    benefit = await db.scalar(
+        select(Benefit).where(Benefit.id == claim.benefit_id, Benefit.tenant_id == tenant_id)
+    )
+    if benefit is not None:
+        config = dict(benefit.config_json or {})
+        claimed_budget = config.get("claimed_budget")
+        if isinstance(claimed_budget, int) and claim.reserved_amount:
+            config["claimed_budget"] = max(0, claimed_budget - claim.reserved_amount)
+            benefit.config_json = config
+        if benefit.stock_used > 0:
+            benefit.stock_used -= 1
+
+    claim.status = "failed"
+    claim.delivery_status = "failed"
+    claim.reservation_status = "refunded"
+    return True
+
+
 # 注册事件处理器
 event_bus.add_handler("claim.created", on_claim_created)

@@ -212,6 +212,7 @@ async def poll_benefit_delivery_retries() -> int:
         DeliveryStatus,
         _do_deliver,
         _get_circuit_breaker,
+        release_failed_delivery_reservation,
     )
 
     retry_backoff_base = 2
@@ -254,6 +255,9 @@ async def poll_benefit_delivery_retries() -> int:
             connector = conn_result.scalar_one_or_none()
             if not connector or not connector.enabled:
                 d.status = DeliveryStatus.FAILED
+                if d.claim_id is not None:
+                    # 终态失败必须释放预留（kc6d.2），不允许预算永久占用
+                    await release_failed_delivery_reservation(db, tenant_id, d.claim_id)
                 await db.commit()
                 continue
 
@@ -273,6 +277,9 @@ async def poll_benefit_delivery_retries() -> int:
                 if d.retry_count >= d.max_retries:
                     d.status = DeliveryStatus.FAILED
                     d.next_retry_at = None
+                    if d.claim_id is not None:
+                        # 重试链终止：释放预留并回补库存/预算（kc6d.2）
+                        await release_failed_delivery_reservation(db, tenant_id, d.claim_id)
                 else:
                     backoff = retry_backoff_base**d.retry_count
                     d.next_retry_at = datetime.now(UTC) + timedelta(seconds=backoff)
