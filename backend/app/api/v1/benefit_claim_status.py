@@ -9,6 +9,7 @@ from app.core.database import get_db, set_session_tenant_context
 from app.middleware.rate_limit import rate_limiter
 from app.services.benefit_claim_admission import build_claim_consumer_id
 from app.services.benefit_claim_status import get_consumer_claim_status
+from app.services.claim_revisit_credential import verify_revisit_credential
 from app.services.scan_token import verify_scan_token
 
 benefit_claim_status_router = APIRouter(prefix="/api/v1", tags=["benefit-claims"])
@@ -51,18 +52,27 @@ async def get_benefit_claim_status(
         raise HTTPException(status_code=401, detail="scan_token required")
 
     # 只读端点不校验 ip_hash：轮询跨网络切换不应中断；身份以 token 主体绑定为准。
-    payload = verify_scan_token(token)
-    if payload is None:
-        raise _unavailable()
-
-    try:
-        tenant_id = uuid.UUID(str(payload.get("tenant_id")))
-    except (TypeError, ValueError):
-        raise _unavailable() from None
-    try:
-        consumer_id = build_claim_consumer_id(payload)
-    except ValueError:
-        raise _unavailable() from None
+    # scan_token 与回访凭证共用 Bearer 头：凭证仅在 scan_token 无效时作为兜底，
+    # 且必须与被查询的 claim 精确绑定（跨 claim/租户枚举一律落入统一不可查询语义）。
+    token_payload = verify_scan_token(token)
+    if token_payload is not None:
+        try:
+            tenant_id = uuid.UUID(str(token_payload.get("tenant_id")))
+        except (TypeError, ValueError):
+            raise _unavailable() from None
+        try:
+            consumer_id = build_claim_consumer_id(token_payload)
+        except ValueError:
+            raise _unavailable() from None
+    else:
+        credential = verify_revisit_credential(token, expected_claim_id=claim_id)
+        if credential is None:
+            raise _unavailable()
+        try:
+            tenant_id = uuid.UUID(str(credential.get("tenant_id")))
+        except (TypeError, ValueError):
+            raise _unavailable() from None
+        consumer_id = credential["consumer_id"]
 
     tenant_id = await set_session_tenant_context(db, tenant_id)
 

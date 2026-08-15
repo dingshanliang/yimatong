@@ -288,11 +288,7 @@ async def claim_benefit_h5(
     )
     outcome = result.get("outcome", result.get("status"))
     if _is_successful_claim_outcome(outcome):
-        return {
-            "status": "pending" if benefit.connector_id else "claimed",
-            "benefit_id": str(benefit_id),
-            "claim_id": str(result.get("claim_id") or result.get("claim", {}).get("id", "")),
-        }
+        return _claim_success_payload(benefit, result, consumer_id)
     if outcome == "risk_paused":
         # yimatong-zgb1.7 AC3：风险状态下服务端阻断权益领取
         raise HTTPException(
@@ -324,6 +320,30 @@ def _is_successful_claim_outcome(outcome: object) -> bool:
     """Treat an authoritative replay as the same successful claim, without re-mutating inventory."""
 
     return outcome in {"idempotent", "replayed", "success"}
+
+
+def _claim_success_payload(benefit, result: dict, consumer_id: str) -> dict:
+    """领取受理成功响应：异步发放给 pending + 回访凭证，其余直接 claimed。
+
+    回访凭证只绑定本笔 claim 与领取者主体，用于 scan_token 过期后
+    恢复查询发放状态；签发失败不阻断领取（轮询仍可用 scan_token）。
+    """
+
+    claim_id_raw = str(result.get("claim_id") or result.get("claim", {}).get("id", ""))
+    revisit_credential = None
+    if claim_id_raw:
+        from app.services.claim_revisit_credential import issue_revisit_credential
+
+        try:
+            revisit_credential = issue_revisit_credential(benefit.tenant_id, uuid.UUID(claim_id_raw), consumer_id)
+        except ValueError:
+            revisit_credential = None
+    return {
+        "status": "pending" if benefit.connector_id else "claimed",
+        "benefit_id": str(benefit.id),
+        "claim_id": claim_id_raw,
+        "revisit_credential": revisit_credential,
+    }
 
 
 async def _prepare_cash_red_packet_claim(

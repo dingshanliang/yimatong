@@ -173,3 +173,47 @@ async def test_status_token_without_tenant_subject_is_unavailable(status_client)
 
     assert response.status_code == 404
     stub.assert_not_awaited()
+
+
+@pytest.mark.anyio
+async def test_status_accepts_revisit_credential_without_scan_token(status_client):
+    """scan_token 过期后的回访路径：凭证绑定 claim 与主体，直接授权查询。"""
+
+    from app.services.claim_revisit_credential import issue_revisit_credential
+
+    client, monkeypatch = status_client
+    tenant_id = uuid.uuid4()
+    claim_id = uuid.uuid4()
+    consumer_id = f"anon:v1:{uuid.uuid4().hex}"
+    stub = _stub_service(monkeypatch, ConsumerClaimStatus(status="processing"))
+    credential = issue_revisit_credential(tenant_id, claim_id, consumer_id)
+
+    response = await client.get(
+        f"/api/v1/benefit-claims/{claim_id}/status",
+        headers={"Authorization": f"Bearer {credential}"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "processing"
+    call = stub.await_args
+    assert call.args[1] == tenant_id
+    assert call.args[2] == claim_id
+    assert call.args[3] == consumer_id
+
+
+@pytest.mark.anyio
+async def test_status_revisit_credential_for_other_claim_is_unavailable(status_client):
+    from app.services.claim_revisit_credential import issue_revisit_credential
+
+    client, monkeypatch = status_client
+    stub = _stub_service(monkeypatch, ConsumerClaimStatus(status="processing"))
+    credential = issue_revisit_credential(uuid.uuid4(), uuid.uuid4(), "anon:v1:x")
+
+    response = await client.get(
+        f"/api/v1/benefit-claims/{uuid.uuid4()}/status",
+        headers={"Authorization": f"Bearer {credential}"},
+    )
+
+    assert response.status_code == 404
+    assert response.json()["detail"]["code"] == "claim_status_unavailable"
+    stub.assert_not_awaited()
