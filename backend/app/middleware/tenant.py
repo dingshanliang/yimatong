@@ -75,6 +75,9 @@ class TenantScopeMiddleware(BaseHTTPMiddleware):
             or request.url.path.startswith("/api/v1/consumers/points/")
             or request.url.path.startswith("/api/v1/files/public/")
             or request.url.path == "/api/v1/benefit-claims"
+            # 发放状态查询子路径（GET /benefit-claims/{id}/status）自校验 scan_token；
+            # 该前缀下只注册了这一个只读路由，无其他方法可被前缀放行放大。
+            or request.url.path.startswith("/api/v1/benefit-claims/")
             or is_public_benefit_claim_path(request.url.path)
             or request.url.path.startswith("/api/v1/takeover/gateway")
             or is_wecom_callback_path(request.url.path)

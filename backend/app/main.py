@@ -14,6 +14,7 @@ from app.api.v1.analytics import analytics_router
 from app.api.v1.analytics_dashboard import dashboard_router
 from app.api.v1.audit_logs import audit_log_router
 from app.api.v1.auth import router as auth_router
+from app.api.v1.benefit_claim_status import benefit_claim_status_router
 from app.api.v1.benefit_claims import benefit_claim_router
 from app.api.v1.benefits import benefit_router
 from app.api.v1.campaigns import campaign_router
@@ -363,6 +364,7 @@ app.include_router(roles_router)
 app.include_router(scan_event_router)
 app.include_router(consumer_router)
 app.include_router(benefit_claim_router)
+app.include_router(benefit_claim_status_router)
 app.include_router(consent_router)
 app.include_router(wechat_oauth_router)
 app.include_router(public_page_router)
