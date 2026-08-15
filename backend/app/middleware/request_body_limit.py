@@ -32,6 +32,13 @@ def is_public_benefit_claim_path(path: str) -> bool:
     )
 
 
+def is_benefit_claim_status_path(path: str) -> bool:
+    """Match only the registered consumer claim status route shape."""
+
+    parts = path.split("/")
+    return len(parts) == 6 and parts[1:4] == ["api", "v1", "benefit-claims"] and bool(parts[4]) and parts[5] == "status"
+
+
 def is_wecom_callback_path(path: str) -> bool:
     """Match only the registered WeCom callback route shape."""
 

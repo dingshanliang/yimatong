@@ -1,4 +1,4 @@
-"""GET /benefit-claims/{claim_id}/status：scan_token 鉴权、防枚举、独立限流、中间件放行。"""
+"""GET /benefit-claims/{claim_id}/status：凭证鉴权、防枚举、独立限流、中间件放行。"""
 
 import uuid
 from datetime import UTC, datetime
@@ -11,6 +11,7 @@ from app.core.database import get_db
 from app.main import app
 from app.middleware.rate_limit import RateLimitResult
 from app.services.benefit_claim_status import ConsumerClaimStatus
+from app.services.redis_cache import SharedSecurityCacheUnavailable
 from app.services.scan_token import create_scan_token
 
 
@@ -36,7 +37,7 @@ async def status_client(monkeypatch):
 
     app.dependency_overrides[get_db] = override_get_db
     monkeypatch.setattr(
-        "app.api.v1.benefit_claim_status.rate_limiter.check",
+        "app.api.v1.benefit_claim_status.rate_limiter.check_shared",
         AsyncMock(return_value=RateLimitResult(allowed=True)),
     )
     try:
@@ -57,7 +58,7 @@ def _token(tenant_id: uuid.UUID, visitor_id: str = "visitor-1") -> str:
 
 def _stub_service(monkeypatch, result):
     stub = AsyncMock(return_value=result)
-    monkeypatch.setattr("app.api.v1.benefit_claim_status.get_consumer_claim_status", stub)
+    monkeypatch.setattr("app.services.benefit_claim_status.get_consumer_claim_status", stub)
     return stub
 
 
@@ -133,7 +134,7 @@ async def test_status_uses_uniform_unavailable_semantics(status_client, scenario
 async def test_status_independent_rate_limit_returns_429(status_client, monkeypatch):
     client = status_client[0]
     monkeypatch.setattr(
-        "app.api.v1.benefit_claim_status.rate_limiter.check",
+        "app.api.v1.benefit_claim_status.rate_limiter.check_shared",
         AsyncMock(return_value=RateLimitResult(allowed=False, retry_after=60)),
     )
 
@@ -144,6 +145,26 @@ async def test_status_independent_rate_limit_returns_429(status_client, monkeypa
 
     assert response.status_code == 429
     assert response.headers["Retry-After"] == "60"
+
+
+@pytest.mark.anyio
+async def test_status_rate_limit_store_unavailable_fails_closed(status_client, monkeypatch):
+    """共享限流存储不可用时 fail-closed（503），不回退进程内存计数。"""
+
+    client = status_client[0]
+    monkeypatch.setattr(
+        "app.api.v1.benefit_claim_status.rate_limiter.check_shared",
+        AsyncMock(side_effect=SharedSecurityCacheUnavailable("共享安全缓存不可用")),
+    )
+    stub = _stub_service(monkeypatch, ConsumerClaimStatus(status="processing"))
+
+    response = await client.get(
+        f"/api/v1/benefit-claims/{uuid.uuid4()}/status",
+        headers={"Authorization": f"Bearer {_token(uuid.uuid4())}"},
+    )
+
+    assert response.status_code == 503
+    stub.assert_not_awaited()
 
 
 @pytest.mark.anyio

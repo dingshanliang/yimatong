@@ -7,7 +7,11 @@ from fastapi import Request
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from app.core.config import settings
-from app.middleware.request_body_limit import is_public_benefit_claim_path, is_wecom_callback_path
+from app.middleware.request_body_limit import (
+    is_benefit_claim_status_path,
+    is_public_benefit_claim_path,
+    is_wecom_callback_path,
+)
 from app.services.redis_cache import AsyncRedisCache, SharedSecurityCacheUnavailable
 from app.utils.security import verify_access_token
 
@@ -75,9 +79,10 @@ class TenantScopeMiddleware(BaseHTTPMiddleware):
             or request.url.path.startswith("/api/v1/consumers/points/")
             or request.url.path.startswith("/api/v1/files/public/")
             or request.url.path == "/api/v1/benefit-claims"
-            # 发放状态查询子路径（GET /benefit-claims/{id}/status）自校验 scan_token；
-            # 该前缀下只注册了这一个只读路由，无其他方法可被前缀放行放大。
-            or request.url.path.startswith("/api/v1/benefit-claims/")
+            # 发放状态查询（GET /benefit-claims/{id}/status）自校验 scan_token/回访凭证；
+            # 精确匹配注册路由形状，白名单是方法无关的路径匹配——同前缀的新路由
+            # 不得静默继承放行（新增时必须显式扩展该 matcher 并补隔离测试）。
+            or is_benefit_claim_status_path(request.url.path)
             or is_public_benefit_claim_path(request.url.path)
             or request.url.path.startswith("/api/v1/takeover/gateway")
             or is_wecom_callback_path(request.url.path)

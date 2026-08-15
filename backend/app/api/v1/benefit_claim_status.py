@@ -1,16 +1,14 @@
-"""权益发放状态查询端点（H5，scan_token 鉴权，只读派生）。"""
+"""权益发放状态查询端点（H5，scan_token/回访凭证鉴权，只读派生）。"""
 
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.database import get_db, set_session_tenant_context
+from app.core.database import get_db
 from app.middleware.rate_limit import rate_limiter
-from app.services.benefit_claim_admission import build_claim_consumer_id
-from app.services.benefit_claim_status import get_consumer_claim_status
-from app.services.claim_revisit_credential import verify_revisit_credential
-from app.services.scan_token import verify_scan_token
+from app.services.benefit_claim_status import resolve_consumer_claim_status
+from app.services.redis_cache import SharedSecurityCacheUnavailable
 
 benefit_claim_status_router = APIRouter(prefix="/api/v1", tags=["benefit-claims"])
 
@@ -36,9 +34,14 @@ async def get_benefit_claim_status(
 ):
     """消费者查询自己某笔领取的发放状态（processing/success/failed，终态单调）。"""
 
-    rate_result = await rate_limiter.check(
-        f"claim-status:{claim_id}", CLAIM_STATUS_RATE_LIMIT, CLAIM_STATUS_RATE_WINDOW_SECONDS
-    )
+    # 共享原子限流（fail-closed）：Redis 不可用时拒绝服务而不是回退进程内存
+    # 计数（否则每个 worker 各自计数，配额形同虚设）；与公开解析端点语义一致。
+    try:
+        rate_result = await rate_limiter.check_shared(
+            f"claim-status:{claim_id}", CLAIM_STATUS_RATE_LIMIT, CLAIM_STATUS_RATE_WINDOW_SECONDS
+        )
+    except SharedSecurityCacheUnavailable:
+        raise HTTPException(status_code=503, detail="暂时无法查询，请稍后再试") from None
     if not rate_result.allowed:
         raise HTTPException(
             status_code=429,
@@ -51,32 +54,7 @@ async def get_benefit_claim_status(
     if not token:
         raise HTTPException(status_code=401, detail="scan_token required")
 
-    # 只读端点不校验 ip_hash：轮询跨网络切换不应中断；身份以 token 主体绑定为准。
-    # scan_token 与回访凭证共用 Bearer 头：凭证仅在 scan_token 无效时作为兜底，
-    # 且必须与被查询的 claim 精确绑定（跨 claim/租户枚举一律落入统一不可查询语义）。
-    token_payload = verify_scan_token(token)
-    if token_payload is not None:
-        try:
-            tenant_id = uuid.UUID(str(token_payload.get("tenant_id")))
-        except (TypeError, ValueError):
-            raise _unavailable() from None
-        try:
-            consumer_id = build_claim_consumer_id(token_payload)
-        except ValueError:
-            raise _unavailable() from None
-    else:
-        credential = verify_revisit_credential(token, expected_claim_id=claim_id)
-        if credential is None:
-            raise _unavailable()
-        try:
-            tenant_id = uuid.UUID(str(credential.get("tenant_id")))
-        except (TypeError, ValueError):
-            raise _unavailable() from None
-        consumer_id = credential["consumer_id"]
-
-    tenant_id = await set_session_tenant_context(db, tenant_id)
-
-    status = await get_consumer_claim_status(db, tenant_id, claim_id, consumer_id)
+    status = await resolve_consumer_claim_status(db, token, claim_id)
     if status is None:
         raise _unavailable()
 

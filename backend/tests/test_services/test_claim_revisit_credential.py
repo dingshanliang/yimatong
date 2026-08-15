@@ -85,29 +85,5 @@ class TestExpiryAndTamper:
         assert left["jti"] != right["jti"]
 
 
-class TestClaimSuccessPayload:
-    def test_connector_claim_response_carries_bound_credential(self):
-        from types import SimpleNamespace
-
-        from app.api.v1.benefit_claims import _claim_success_payload
-
-        tenant_id, claim_id, consumer_id = _subject()
-        benefit = SimpleNamespace(tenant_id=tenant_id, id=uuid.uuid4(), connector_id=uuid.uuid4())
-
-        payload = _claim_success_payload(benefit, {"claim_id": str(claim_id)}, consumer_id)
-
-        assert payload["status"] == "pending"
-        assert verify_revisit_credential(payload["revisit_credential"], expected_claim_id=claim_id) is not None
-
-    def test_malformed_claim_id_yields_no_credential_without_failing_claim(self):
-        from types import SimpleNamespace
-
-        from app.api.v1.benefit_claims import _claim_success_payload
-
-        tenant_id, _, consumer_id = _subject()
-        benefit = SimpleNamespace(tenant_id=tenant_id, id=uuid.uuid4(), connector_id=None)
-
-        payload = _claim_success_payload(benefit, {"claim_id": "not-a-uuid"}, consumer_id)
-
-        assert payload["status"] == "claimed"
-        assert payload["revisit_credential"] is None
+# 领取成功 payload 的行为（凭证签发 + 幂等重放真实三态）已迁移至
+# tests/test_services/test_claim_success_payload.py（service 接缝）。

@@ -60,6 +60,17 @@ class RateLimiter:
             return RateLimitResult(allowed=False, retry_after=window)
         return RateLimitResult(allowed=True)
 
+    async def check_shared(self, key: str, limit: int, window: int) -> RateLimitResult:
+        """共享原子限流（fail-closed）：Redis 不可用时抛 SharedSecurityCacheUnavailable。
+
+        消费者侧轮询等公开高频入口不得回退进程内存计数（每个 worker 各自计数，
+        配额形同虚设）；调用方须捕获该异常并返回服务不可用，与解析端点语义一致。
+        """
+        allowed, _ = await self._cache.rate_limit_check_shared(key, limit, window)
+        if not allowed:
+            return RateLimitResult(allowed=False, retry_after=window)
+        return RateLimitResult(allowed=True)
+
 
 # 全局限流器实例
 rate_limiter = RateLimiter()

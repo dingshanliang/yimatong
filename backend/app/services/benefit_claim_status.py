@@ -9,8 +9,12 @@ from datetime import datetime
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.database import set_session_tenant_context
 from app.models.campaign import BenefitClaim, CampaignClaimOutbox
 from app.models.connector import BenefitDelivery
+from app.services.benefit_claim_admission import build_claim_consumer_id
+from app.services.claim_revisit_credential import verify_revisit_credential
+from app.services.scan_token import verify_scan_token
 
 CONSUMER_STATUS_PROCESSING = "processing"
 CONSUMER_STATUS_SUCCESS = "success"
@@ -121,3 +125,83 @@ async def get_consumer_claim_status(
         .order_by(BenefitDelivery.created_at.desc())
     )
     return derive_consumer_claim_status(claim, outbox, delivery)
+
+
+async def resolve_consumer_claim_status(
+    db: AsyncSession,
+    token: str,
+    claim_id: uuid.UUID,
+) -> ConsumerClaimStatus | None:
+    """Bearer 主体解析（scan_token 优先，回访凭证兜底）→ RLS 上下文 → 状态派生。
+
+    token 无效、主体不可派生、凭证与该 claim 不绑定，任一情况统一返回 None，
+    由端点映射为同一"不可查询"语义（防枚举）；不在本层区分失败原因。
+    只读端点不校验 ip_hash：轮询跨网络切换不应中断，身份以 token 主体绑定为准。
+    """
+
+    token_payload = verify_scan_token(token)
+    if token_payload is not None:
+        try:
+            tenant_id = uuid.UUID(str(token_payload.get("tenant_id")))
+            consumer_id = build_claim_consumer_id(token_payload)
+        except (TypeError, ValueError):
+            return None
+    else:
+        credential = verify_revisit_credential(token, expected_claim_id=claim_id)
+        if credential is None:
+            return None
+        try:
+            tenant_id = uuid.UUID(str(credential.get("tenant_id")))
+        except (TypeError, ValueError):
+            return None
+        consumer_id = credential["consumer_id"]
+
+    tenant_id = await set_session_tenant_context(db, tenant_id)
+    return await get_consumer_claim_status(db, tenant_id, claim_id, consumer_id)
+
+
+async def build_claim_success_payload(
+    db: AsyncSession,
+    benefit,
+    result: dict,
+    consumer_id: str,
+) -> dict:
+    """领取受理成功响应：异步发放给 pending + 回访凭证，其余直接 claimed。
+
+    幂等/重放命中时附上既有 claim 的真实三态（``delivery`` 字段）：领取受理
+    只是意向事件，重放响应不得把已到终态的发放再次表述为纯 pending。
+    回访凭证只绑定本笔 claim 与领取者主体；签发失败不阻断领取
+    （轮询期内仍可用 scan_token）。
+    """
+
+    from app.services.claim_revisit_credential import issue_revisit_credential
+
+    outcome = result.get("outcome", result.get("status"))
+    replayed = outcome in {"idempotent", "replayed"}
+    claim_id_raw = str(result.get("claim_id") or result.get("claim", {}).get("id", ""))
+    payload: dict = {
+        "status": "pending" if benefit.connector_id else "claimed",
+        "benefit_id": str(benefit.id),
+        "claim_id": claim_id_raw,
+        "revisit_credential": None,
+    }
+    if not claim_id_raw:
+        return payload
+    try:
+        claim_uuid = uuid.UUID(claim_id_raw)
+    except ValueError:
+        return payload
+    try:
+        payload["revisit_credential"] = issue_revisit_credential(benefit.tenant_id, claim_uuid, consumer_id)
+    except ValueError:
+        payload["revisit_credential"] = None
+    if replayed and benefit.connector_id:
+        derived = await get_consumer_claim_status(db, benefit.tenant_id, claim_uuid, consumer_id)
+        if derived is not None:
+            payload["delivery"] = {
+                "status": derived.status,
+                "amount_minor": derived.amount_minor,
+                "completed_at": derived.completed_at.isoformat() if derived.completed_at else None,
+                "failure_reason": derived.failure_reason,
+            }
+    return payload
