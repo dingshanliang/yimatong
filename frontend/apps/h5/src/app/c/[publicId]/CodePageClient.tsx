@@ -19,12 +19,16 @@ export function CodePageClient({
   const [payload, setPayload] = useState<Record<string, unknown> | null>(null);
   const [loaded, setLoaded] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
+  const [retrying, setRetrying] = useState(false);
 
   useEffect(() => {
     const controller = new AbortController();
     let retriedOnce = false;
     const finish = () => {
-      if (!controller.signal.aborted) setLoaded(true);
+      if (!controller.signal.aborted) {
+        setLoaded(true);
+        setRetrying(false);
+      }
     };
     const load = async () => {
       try {
@@ -78,10 +82,13 @@ export function CodePageClient({
   }, [apiBase, publicId, reloadKey, retryDelayMs]);
 
   const handleRetry = useCallback(() => {
+    // 人工重试期间保持失败视图（按钮进入禁用加载态，防重复点击），
+    // 新结果落地或再次失败后由 finish() 恢复。
+    if (retrying) return;
+    setRetrying(true);
     setPayload(null);
-    setLoaded(false);
     setReloadKey((key) => key + 1);
-  }, []);
+  }, [retrying]);
 
   if (!loaded) {
     return (
@@ -95,6 +102,7 @@ export function CodePageClient({
       jsonPayload={payload}
       htmlContent={null}
       onRetry={handleRetry}
+      retrying={retrying}
     />
   );
 }

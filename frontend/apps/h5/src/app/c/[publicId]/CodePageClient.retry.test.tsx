@@ -13,14 +13,16 @@ vi.mock("./ResolveContent", async () => {
     ResolveContent: ({
       jsonPayload,
       onRetry,
+      retrying,
     }: {
       jsonPayload: Record<string, unknown> | null;
       onRetry?: () => void;
+      retrying?: boolean;
     }) =>
       jsonPayload ? (
         <div>RESOLVED</div>
       ) : (
-        <RealFallbackError onRetry={onRetry} />
+        <RealFallbackError onRetry={onRetry} retrying={retrying} />
       ),
   };
 });
@@ -31,8 +33,6 @@ function okResponse() {
     json: async () => ({ code_data: { result: "verified" }, scan_info: {} }),
   };
 }
-
-const tick = (ms = 10) => new Promise((resolve) => setTimeout(resolve, ms));
 
 describe("CodePageClient scan retry", () => {
   let container: HTMLDivElement;
@@ -90,6 +90,39 @@ describe("CodePageClient scan retry", () => {
     await advance(20);
 
     expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(container.textContent).toContain("RESOLVED");
+    await act(async () => root.unmount());
+  });
+
+  it("manual retry keeps a disabled loading button until the result lands", async () => {
+    fetchMock.mockRejectedValue(new Error("network"));
+    const root = await render();
+    await advance(20);
+
+    let resolveFetch!: (value: unknown) => void;
+    fetchMock.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveFetch = resolve;
+      })
+    );
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>("button")?.click();
+    });
+
+    // 重试进行中：按钮禁用并显示加载文案，重复点击不再发请求
+    const button = container.querySelector<HTMLButtonElement>("button");
+    expect(button?.disabled).toBe(true);
+    expect(button?.textContent).toContain("正在查验");
+    await act(async () => {
+      button?.click();
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+
+    await act(async () => {
+      resolveFetch(okResponse());
+      await Promise.resolve();
+    });
+    await advance(20);
     expect(container.textContent).toContain("RESOLVED");
     await act(async () => root.unmount());
   });
