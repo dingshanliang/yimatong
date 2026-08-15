@@ -169,3 +169,30 @@ class TestValidateBrandProfile:
     def test_logo_url_optional(self):
         """未提供 logo_url 时仍合法"""
         assert validate_brand_profile({"primary_color": "#1F7A4D"}) == {"primary_color": "#1F7A4D"}
+
+    # -- 客服槽位（kc6d.4：客服电话 + 企微链接，H5 失败页三层回退消费）--
+
+    def test_accepts_support_slots(self):
+        profile = {
+            "support_phone": "400-123-4567",
+            "support_wecom_url": "https://work.weixin.qq.com/kabcdef/example",
+        }
+        assert validate_brand_profile(profile) is profile
+
+    def test_accepts_clearing_support_slots_with_none(self):
+        assert validate_brand_profile({"support_phone": None, "support_wecom_url": None}) == {
+            "support_phone": None,
+            "support_wecom_url": None,
+        }
+
+    def test_rejects_malformed_support_phone(self):
+        with pytest.raises(BrandColorError, match="support_phone"):
+            validate_brand_profile({"support_phone": "call me maybe<script>"})
+        with pytest.raises(BrandColorError, match="support_phone"):
+            validate_brand_profile({"support_phone": "123"})
+
+    def test_rejects_unsafe_support_wecom_url(self):
+        with pytest.raises(BrandColorError, match="support_wecom_url"):
+            validate_brand_profile({"support_wecom_url": "javascript:alert(1)"})
+        with pytest.raises(BrandColorError, match="support_wecom_url"):
+            validate_brand_profile({"support_wecom_url": "ftp://example.com/wecom"})

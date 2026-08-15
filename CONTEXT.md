@@ -191,7 +191,7 @@ _Avoid_: 发布按钮点击
 _Avoid_: 待品牌方确认、待上线确认
 
 **品牌定制 (brand_profile)**:
-租户级、面向消费者 H5 的受控外观配置，开放五个槽位：Logo（logo_url）、品牌主色、按钮圆角预设、页面背景预设、隐藏一码通背书；Logo 复用 /files/upload 上传后的公开 URL（ADR-0001）。它经服务端白名单与主色对比度校验，H5 按「页面 DSL brand_theme → 租户 brand_profile → 一码通默认主题」三层回退消费，且租户 brand_profile 优先于产品品牌配置。它是品牌方在 Admin 自助设置、且能真正影响消费者所见界面的唯一配置。
+租户级、面向消费者 H5 的受控外观与求助入口配置，开放七个槽位：Logo（logo_url）、品牌主色、按钮圆角预设、页面背景预设、隐藏一码通背书、客服电话（support_phone）、企微客服链接（support_wecom_url）；Logo 复用 /files/upload 上传后的公开 URL（ADR-0001）。它经服务端白名单与主色对比度校验，H5 按「页面 DSL brand_theme → 租户 brand_profile → 一码通默认主题」三层回退消费，且租户 brand_profile 优先于产品品牌配置。它是品牌方在 Admin 自助设置、且能真正影响消费者所见界面的唯一配置。
 _Avoid_: 白标、白标配置、whitelabel-config
 
 **白标 (whitelabel)**:
