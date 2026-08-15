@@ -16,6 +16,7 @@ import { PointsBalance } from "@/components/PointsBalance";
 import { PointsExchange } from "@/components/PointsExchange";
 import { PointsShop } from "@/components/PointsShop";
 import { safePublicUrl } from "@/lib/public-url";
+import { readLatestClaimRef } from "@/lib/claim-revisit";
 import { OuterCodeGuide } from "@/components/OuterCodeGuide";
 import { RiskAlert } from "@/components/RiskAlert";
 import { DualCodeVerify } from "@/components/DualCodeVerify";
@@ -171,6 +172,10 @@ export function ResolveContent({
 
   const modules = (pageConfig?.modules as ModuleConfig[] | undefined) || [];
   const enabledModules = modules.filter((m) => m.enabled !== false);
+  // 回访恢复入口（kc6d.7）：本会话内该码有过领取时提示"查看我的红包"。
+  // 服务端渲染（renderToStaticMarkup）无 window，安全返回 null。
+  const latestClaimId =
+    typeof window === "undefined" ? null : readLatestClaimRef(publicId);
   const visibleModules = benefitsBlocked
     ? enabledModules.filter(
         (module) => !BATCH_BLOCKED_MODULE_TYPES.has(module.type)
@@ -222,6 +227,17 @@ export function ResolveContent({
           logoUrl={tenantBrandLogo}
           primaryColor={brandSlots.primaryColor}
         />
+
+        {/* 回访恢复入口（kc6d.7）：继续查看上一笔红包发放结果，不重复领取 */}
+        {latestClaimId && (
+          <a
+            href={`/redpacket/result?claim_id=${encodeURIComponent(latestClaimId)}&public_id=${encodeURIComponent(publicId)}`}
+            className="mb-3 flex items-center justify-between rounded-xl border border-warning bg-warning-bg px-4 py-3 text-sm font-medium text-warning"
+          >
+            <span>查看我的红包发放结果</span>
+            <span aria-hidden="true">→</span>
+          </a>
+        )}
 
         {/* yimatong-zgb1.6 AC3：frozen 码保留溯源，但顶部提示审核中 + 权益暂停 */}
         {lifecycle === "frozen" && (

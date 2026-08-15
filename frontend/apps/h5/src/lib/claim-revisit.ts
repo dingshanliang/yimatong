@@ -40,3 +40,26 @@ export function clearClaimRevisitCredential(claimId: string): void {
     // 忽略：凭证本身带时效，清理失败无安全影响。
   }
 }
+
+/** 每个码最近一笔领取的引用（回访入口用：重扫该码时提示"查看我的红包"）。 */
+function latestClaimKey(publicId: string): string {
+  return `${KEY_PREFIX}latest:${publicId}`;
+}
+
+export function saveLatestClaimRef(publicId: string, claimId: string): void {
+  if (typeof window === "undefined" || !publicId || !claimId) return;
+  try {
+    window.sessionStorage.setItem(latestClaimKey(publicId), claimId);
+  } catch {
+    // 存储不可用时不影响领取主流程。
+  }
+}
+
+export function readLatestClaimRef(publicId: string): string | null {
+  if (typeof window === "undefined" || !publicId) return null;
+  try {
+    return window.sessionStorage.getItem(latestClaimKey(publicId));
+  } catch {
+    return null;
+  }
+}

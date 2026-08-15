@@ -3,7 +3,10 @@
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { apiClient } from "@/lib/api";
-import { saveClaimRevisitCredential } from "@/lib/claim-revisit";
+import {
+  saveClaimRevisitCredential,
+  saveLatestClaimRef,
+} from "@/lib/claim-revisit";
 
 /** 权益类型 */
 type BenefitType =
@@ -260,13 +263,17 @@ export function BenefitClaimCard({
       ) {
         saveClaimRevisitCredential(receiptClaimId, data.revisit_credential);
       }
+      if (publicId) {
+        // 回访入口：重扫该码时可提示"查看我的红包"（kc6d.7）
+        saveLatestClaimRef(publicId, receiptClaimId);
+      }
       setClaimed(true);
       onClaimed?.();
       router.push(
         `/redpacket/result?claim_id=${encodeURIComponent(receiptClaimId)}`
       );
     },
-    [onClaimed, router]
+    [onClaimed, publicId, router]
   );
 
   const handleClaim = useCallback(async () => {
