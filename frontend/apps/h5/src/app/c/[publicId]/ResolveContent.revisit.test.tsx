@@ -62,10 +62,7 @@ describe("回访恢复入口（kc6d.7）", () => {
   }
 
   it("本会话该码有领取记录时展示入口，链接携带 claim 与码标识", () => {
-    sessionStorage.setItem(
-      "yimatong:claim-revisit:latest:PK-REVISIT",
-      "claim-9"
-    );
+    localStorage.setItem("yimatong:claim-revisit:latest:PK-REVISIT", "claim-9");
     const root = render();
 
     const link = container.querySelector<HTMLAnchorElement>(
@@ -87,7 +84,7 @@ describe("回访恢复入口（kc6d.7）", () => {
   });
 
   it("其他码的领取记录不在本码展示", () => {
-    sessionStorage.setItem("yimatong:claim-revisit:latest:PK-OTHER", "claim-8");
+    localStorage.setItem("yimatong:claim-revisit:latest:PK-OTHER", "claim-8");
     const root = render();
 
     expect(container.querySelector('a[href*="/redpacket/result"]')).toBeNull();

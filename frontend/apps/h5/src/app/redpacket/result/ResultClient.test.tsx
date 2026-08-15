@@ -36,7 +36,14 @@ describe("RedPacketResultClient polling", () => {
     container = document.createElement("div");
     document.body.appendChild(container);
     get.mockReset();
-    window.sessionStorage.clear();
+    // 并行文件可能破坏全局 storage：本文件自建隔离的 localStorage
+    const storage = new Map<string, string>();
+    vi.stubGlobal("localStorage", {
+      getItem: (key: string) => storage.get(key) ?? null,
+      setItem: (key: string, value: string) => storage.set(key, String(value)),
+      removeItem: (key: string) => storage.delete(key),
+      clear: () => storage.clear(),
+    });
     searchParamsRef.current = "claim_id=claim-1";
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   });
@@ -82,8 +89,11 @@ describe("RedPacketResultClient polling", () => {
     });
 
     expect(get).toHaveBeenCalledTimes(2);
-    expect(container.textContent).toContain("领取成功");
+    expect(container.textContent).toContain("红包已到账");
     expect(container.textContent).toContain("8.8");
+    // 到账口径：成功态展示完成时间，且不得用"领取成功"表述到账
+    expect(container.textContent).toContain("到账时间");
+    expect(container.textContent).not.toContain("领取成功");
     // 终态后不再轮询
     await act(async () => {
       await vi.advanceTimersByTimeAsync(60000);
@@ -127,7 +137,7 @@ describe("RedPacketResultClient polling", () => {
     });
 
     expect(get).toHaveBeenCalledTimes(2);
-    expect(container.textContent).toContain("领取成功");
+    expect(container.textContent).toContain("红包已到账");
     await act(async () => root.unmount());
   });
 
@@ -140,7 +150,7 @@ describe("RedPacketResultClient polling", () => {
     });
 
     expect(container.textContent).toContain("仍在处理中");
-    expect(container.textContent).not.toContain("领取成功");
+    expect(container.textContent).not.toContain("红包已到账");
     expect(container.textContent).not.toContain("红包未发出");
     const callsAtCap = get.mock.calls.length;
     await act(async () => {
@@ -160,7 +170,7 @@ describe("RedPacketResultClient polling", () => {
   });
 
   it("sends the stored revisit credential as the bearer token", async () => {
-    window.sessionStorage.setItem("yimatong:claim-revisit:claim-1", "cred-1");
+    window.localStorage.setItem("yimatong:claim-revisit:claim-1", "cred-1");
     get.mockResolvedValue(statusResponse("processing"));
     const root = await renderClient();
 
@@ -179,7 +189,14 @@ describe("RedPacketResultClient auth remediation", () => {
     container = document.createElement("div");
     document.body.appendChild(container);
     get.mockReset();
-    window.sessionStorage.clear();
+    // 并行文件可能破坏全局 storage：本文件自建隔离的 localStorage
+    const storage = new Map<string, string>();
+    vi.stubGlobal("localStorage", {
+      getItem: (key: string) => storage.get(key) ?? null,
+      setItem: (key: string, value: string) => storage.set(key, String(value)),
+      removeItem: (key: string) => storage.delete(key),
+      clear: () => storage.clear(),
+    });
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   });
 

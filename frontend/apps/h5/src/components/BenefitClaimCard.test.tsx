@@ -29,7 +29,14 @@ describe("BenefitClaimCard delivery state", () => {
     document.body.appendChild(container);
     post.mockReset();
     push.mockReset();
-    window.sessionStorage.clear();
+    // 并行文件可能破坏全局 storage：本文件自建隔离的 localStorage
+    const storage = new Map<string, string>();
+    vi.stubGlobal("localStorage", {
+      getItem: (key: string) => storage.get(key) ?? null,
+      setItem: (key: string, value: string) => storage.set(key, String(value)),
+      removeItem: (key: string) => storage.delete(key),
+      clear: () => storage.clear(),
+    });
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   });
 
@@ -71,9 +78,9 @@ describe("BenefitClaimCard delivery state", () => {
 
     expect(push).toHaveBeenCalledTimes(1);
     expect(push).toHaveBeenCalledWith("/redpacket/result?claim_id=claim-1");
-    expect(
-      window.sessionStorage.getItem("yimatong:claim-revisit:claim-1")
-    ).toBe("credential-1");
+    expect(window.localStorage.getItem("yimatong:claim-revisit:claim-1")).toBe(
+      "credential-1"
+    );
     expect(button?.textContent).toBe("已领取");
     expect(button?.hasAttribute("disabled")).toBe(true);
     expect(onClaimed).toHaveBeenCalledTimes(1);
@@ -124,8 +131,48 @@ describe("BenefitClaimCard delivery state", () => {
       "/redpacket/result?claim_id=claim-no-cred"
     );
     expect(
-      window.sessionStorage.getItem("yimatong:claim-revisit:claim-no-cred")
+      window.localStorage.getItem("yimatong:claim-revisit:claim-no-cred")
     ).toBeNull();
+    await act(async () => root.unmount());
+  });
+
+  it("keeps non-cash pending receipts on the card instead of the red packet result page", async () => {
+    // 红包结果页与回访入口只服务现金红包；其他异步权益的状态页接入为后续迭代。
+    post.mockResolvedValue({
+      data: {
+        status: "pending",
+        benefit_id: "benefit-1",
+        claim_id: "claim-coupon",
+        revisit_credential: "credential-coupon",
+      },
+    });
+    const onClaimed = vi.fn();
+    const root = createRoot(container);
+    await act(async () => {
+      root.render(
+        <BenefitClaimCard
+          benefitId="benefit-1"
+          benefitType="platform_coupon"
+          title="优惠券"
+          scanToken="scan-token"
+          publicId="pk-coupon"
+          onClaimed={onClaimed}
+        />
+      );
+    });
+    await act(async () =>
+      container.querySelector<HTMLButtonElement>("button")?.click()
+    );
+
+    expect(push).not.toHaveBeenCalled();
+    expect(
+      window.localStorage.getItem("yimatong:claim-revisit:claim-coupon")
+    ).toBeNull();
+    expect(
+      window.localStorage.getItem("yimatong:claim-revisit:latest:pk-coupon")
+    ).toBeNull();
+    expect(container.querySelector("button")?.textContent).toBe("已领取");
+    expect(onClaimed).toHaveBeenCalledTimes(1);
     await act(async () => root.unmount());
   });
 

@@ -1,5 +1,7 @@
 "use client";
 
+import { useEffect, useState } from "react";
+
 import dayjs from "dayjs";
 import { TriangleAlert } from "lucide-react";
 
@@ -113,6 +115,14 @@ export function ResolveContent({
   const pageConfig = jsonPayload?.page_config as
     Record<string, unknown> | undefined;
 
+  // 回访恢复入口（kc6d.7）：本机该码有过领取时提示"查看我的红包"。
+  // localStorage 只能在 effect 里读：render 期读取会导致 SSR/hydration 标记
+  // 不一致（服务端无 window）。初始渲染统一不显示，挂载后再补入口。
+  const [latestClaimId, setLatestClaimId] = useState<string | null>(null);
+  useEffect(() => {
+    setLatestClaimId(readLatestClaimRef(publicId));
+  }, [publicId]);
+
   // 租户品牌槽位三层回退：页面 DSL brand_theme → 租户 brand_profile → 默认主题（yimatong-z6i0.10）
   const brandSlots = resolveBrandSlots(tenantBranding, pageConfig);
 
@@ -172,10 +182,6 @@ export function ResolveContent({
 
   const modules = (pageConfig?.modules as ModuleConfig[] | undefined) || [];
   const enabledModules = modules.filter((m) => m.enabled !== false);
-  // 回访恢复入口（kc6d.7）：本会话内该码有过领取时提示"查看我的红包"。
-  // 服务端渲染（renderToStaticMarkup）无 window，安全返回 null。
-  const latestClaimId =
-    typeof window === "undefined" ? null : readLatestClaimRef(publicId);
   const visibleModules = benefitsBlocked
     ? enabledModules.filter(
         (module) => !BATCH_BLOCKED_MODULE_TYPES.has(module.type)

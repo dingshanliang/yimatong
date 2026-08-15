@@ -5,7 +5,6 @@ import { useEffect, useState } from "react";
 
 import { apiClient } from "@/lib/api";
 import { readClaimRevisitCredential } from "@/lib/claim-revisit";
-
 /** 消费者可见状态（与后端发放状态端点三态一致） */
 type DisplayPhase =
   "resolving" | "processing" | "success" | "failed" | "unavailable";
@@ -47,6 +46,13 @@ function fenToYuan(fen: number): string {
   return yuan.toFixed(2);
 }
 
+/** ISO 时间 → 本地可读到账时间（仅客户端渲染，无 hydration 比对）。 */
+function formatCompletedAt(iso: string): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toLocaleString("zh-CN", { hour12: false });
+}
+
 function errorMessageStatus(error: unknown): number | null {
   if (typeof error === "object" && error !== null && "response" in error) {
     const status = (error as { response?: { status?: number } }).response
@@ -75,11 +81,11 @@ export function RedPacketResultClient() {
   const searchParams = useSearchParams();
   const claimId = searchParams.get("claim_id");
   const publicId = searchParams.get("public_id");
-  const urlCredential = searchParams.get("credential");
 
   const [phase, setPhase] = useState<DisplayPhase>("resolving");
   const [capped, setCapped] = useState(false);
   const [amountMinor, setAmountMinor] = useState<number | null>(null);
+  const [completedAt, setCompletedAt] = useState<string | null>(null);
   const [failureReason, setFailureReason] = useState<string | null>(null);
 
   useEffect(() => {
@@ -90,8 +96,8 @@ export function RedPacketResultClient() {
     let cancelled = false;
     const startedAt = Date.now();
     let interval = POLL_INITIAL_MS;
-    const storedCredential = readClaimRevisitCredential(claimId);
-    const credential = urlCredential || storedCredential;
+    // 凭证只从本机存储读取：凭证属 Bearer 秘密，不进 URL/历史。
+    const credential = readClaimRevisitCredential(claimId);
     const headers = credential
       ? { Authorization: `Bearer ${credential}` }
       : undefined;
@@ -124,6 +130,7 @@ export function RedPacketResultClient() {
           if (data.status === "success") {
             setPhase("success");
             setAmountMinor(data.amount_minor);
+            setCompletedAt(data.completed_at);
             return;
           }
           if (data.status === "failed") {
@@ -149,12 +156,13 @@ export function RedPacketResultClient() {
     return () => {
       cancelled = true;
     };
-  }, [claimId, urlCredential]);
+  }, [claimId]);
 
   const config =
     phase === "success"
       ? {
-          title: "领取成功",
+          // 到账口径（意向事件 ≠ 确认转化）：不得用"领取成功"表述到账。
+          title: "红包已到账",
           gradient: "from-danger-bg via-warning-bg to-warning-bg",
           amountColor: "text-danger",
           icon: "🧧",
@@ -210,6 +218,12 @@ export function RedPacketResultClient() {
             <span className="ml-1 text-lg font-medium">元</span>
           </p>
         </div>
+      )}
+
+      {phase === "success" && completedAt && (
+        <p className="mt-3 text-xs text-foreground-tertiary">
+          到账时间：{formatCompletedAt(completedAt)}
+        </p>
       )}
 
       <p className="mt-4 text-center text-sm text-foreground-secondary">

@@ -53,8 +53,9 @@ test.describe("红包结果页（kc6d.9）", () => {
     test.skip(!resultUrl, "缺少夹具");
     await page.goto(resultUrl!);
 
-    // 终态：领取成功 + 金额（元）
-    await expect(page.getByText("领取成功")).toBeVisible({ timeout: 60_000 });
+    // 终态：到账口径（不得用"领取成功"表述到账）+ 金额（元）
+    await expect(page.getByText("红包已到账")).toBeVisible({ timeout: 60_000 });
+    await expect(page.getByText("领取成功")).toHaveCount(0);
     await expect(
       page.locator("text=/\\d+(\\.\\d+)?\\s*元/").first()
     ).toBeVisible();

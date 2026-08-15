@@ -251,29 +251,36 @@ export function BenefitClaimCard({
   );
 
   /**
-   * 受理成功后进入专属结果页：保存回访凭证（scan_token 时效后仍可恢复查询），
-   * 跳转携带 claim_id；领取卡标记已领取防重复点击。
+   * 受理成功后的落地：现金红包进入专属结果页（保存回访凭证，scan_token
+   * 时效后仍可恢复查询；携带 public_id 供补授权补救锚点使用）。
+   * 其他异步权益的状态页接入为后续迭代（spec Out of Scope），先按
+   * 已受理收口在领取卡内，不套用红包文案的结果页。
    */
-  const navigateToClaimResult = useCallback(
+  const handlePendingReceipt = useCallback(
     (data: Record<string, unknown>) => {
       const receiptClaimId = String(data.claim_id);
-      if (
-        typeof data.revisit_credential === "string" &&
-        data.revisit_credential
-      ) {
-        saveClaimRevisitCredential(receiptClaimId, data.revisit_credential);
-      }
-      if (publicId) {
-        // 回访入口：重扫该码时可提示"查看我的红包"（kc6d.7）
-        saveLatestClaimRef(publicId, receiptClaimId);
+      const isRedPacket = normalizedBenefitType === "cash_red_packet";
+      if (isRedPacket) {
+        if (
+          typeof data.revisit_credential === "string" &&
+          data.revisit_credential
+        ) {
+          saveClaimRevisitCredential(receiptClaimId, data.revisit_credential);
+        }
+        if (publicId) {
+          // 回访入口：重扫该码时可提示"查看我的红包"（kc6d.7）
+          saveLatestClaimRef(publicId, receiptClaimId);
+        }
       }
       setClaimed(true);
       onClaimed?.();
-      router.push(
-        `/redpacket/result?claim_id=${encodeURIComponent(receiptClaimId)}`
-      );
+      if (isRedPacket) {
+        const params = new URLSearchParams({ claim_id: receiptClaimId });
+        if (publicId) params.set("public_id", publicId);
+        router.push(`/redpacket/result?${params.toString()}`);
+      }
     },
-    [onClaimed, publicId, router]
+    [normalizedBenefitType, onClaimed, publicId, router]
   );
 
   const handleClaim = useCallback(async () => {
@@ -305,7 +312,7 @@ export function BenefitClaimCard({
       }
 
       if (data.status === "pending" && hasClaimReceipt(data)) {
-        navigateToClaimResult(data);
+        handlePendingReceipt(data);
         return;
       }
 
@@ -420,7 +427,7 @@ export function BenefitClaimCard({
     beginRequest,
     finishRequest,
     isCurrentRequest,
-    navigateToClaimResult,
+    handlePendingReceipt,
   ]);
 
   const handlePhoneSubmit = useCallback(async () => {
@@ -448,7 +455,7 @@ export function BenefitClaimCard({
         onClaimed?.();
       } else if (data?.status === "pending" && hasClaimReceipt(data)) {
         setShowPhoneModal(false);
-        navigateToClaimResult(data);
+        handlePendingReceipt(data);
       } else {
         setError("领取结果异常，请刷新页面后重试");
       }
@@ -466,7 +473,7 @@ export function BenefitClaimCard({
     beginRequest,
     finishRequest,
     isCurrentRequest,
-    navigateToClaimResult,
+    handlePendingReceipt,
   ]);
 
   const handleShowWeComGuide = useCallback(async () => {
