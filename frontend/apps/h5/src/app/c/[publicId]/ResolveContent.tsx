@@ -36,6 +36,9 @@ interface ResolveContentProps {
   publicId: string;
   jsonPayload: Record<string, unknown> | null;
   htmlContent: string | null;
+  /** 瞬时加载失败的人工重试入口（传入后 FallbackError 显示"重新查验"） */
+  onRetry?: () => void;
+  retrying?: boolean;
 }
 
 type ModuleConfig = {
@@ -74,6 +77,8 @@ export function ResolveContent({
   publicId,
   jsonPayload,
   htmlContent,
+  onRetry,
+  retrying,
 }: ResolveContentProps) {
   const scanToken = (jsonPayload?.scan_token as string) || undefined;
   const codeData = jsonPayload?.code_data as
@@ -103,7 +108,8 @@ export function ResolveContent({
   });
 
   if (mode === "html") {
-    if (!htmlContent) return <FallbackError />;
+    if (!htmlContent)
+      return <FallbackError onRetry={onRetry} retrying={retrying} />;
     return (
       <div
         className="mx-auto max-w-md min-h-screen"
@@ -112,8 +118,10 @@ export function ResolveContent({
     );
   }
 
-  if (!jsonPayload) return <FallbackError />;
-  if (resultCode === "unavailable") return <FallbackError />;
+  if (!jsonPayload)
+    return <FallbackError onRetry={onRetry} retrying={retrying} />;
+  if (resultCode === "unavailable")
+    return <FallbackError onRetry={onRetry} retrying={retrying} />;
 
   // yimatong-zgb1.6 AC3：frozen 码保留溯源（不再跳错误页），只在顶部显示审核中提示。
   // voided（revoked/expired）仍跳错误页（终止性，不返回溯源）。
@@ -125,7 +133,7 @@ export function ResolveContent({
   ) {
     return (
       <div className="mx-auto max-w-md min-h-screen bg-canvas">
-        <ErrorPage errorCode="revoked" publicId={publicId} />
+        <ErrorPage errorCode="revoked" publicId={publicId} showRetry={false} />
       </div>
     );
   }
@@ -136,7 +144,11 @@ export function ResolveContent({
   ) {
     return (
       <div className="mx-auto max-w-md min-h-screen bg-canvas">
-        <ErrorPage errorCode="not_activated" publicId={publicId} />
+        <ErrorPage
+          errorCode="not_activated"
+          publicId={publicId}
+          showRetry={false}
+        />
       </div>
     );
   }

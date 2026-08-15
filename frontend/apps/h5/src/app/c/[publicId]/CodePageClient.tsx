@@ -1,21 +1,31 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { API_BASE } from "@/lib/api";
 import { ResolveContent } from "./ResolveContent";
+
+/** 瞬时失败自动重试一次的退避间隔（可注入以便测试）。 */
+const AUTO_RETRY_DELAY_MS = 800;
 
 export function CodePageClient({
   publicId,
   apiBase = API_BASE,
+  retryDelayMs = AUTO_RETRY_DELAY_MS,
 }: {
   publicId: string;
   apiBase?: string;
+  retryDelayMs?: number;
 }) {
   const [payload, setPayload] = useState<Record<string, unknown> | null>(null);
   const [loaded, setLoaded] = useState(false);
+  const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
     const controller = new AbortController();
+    let retriedOnce = false;
+    const finish = () => {
+      if (!controller.signal.aborted) setLoaded(true);
+    };
     const load = async () => {
       try {
         if (!apiBase) throw new Error("Public API URL is not configured");
@@ -47,15 +57,31 @@ export function CodePageClient({
         if (scanInfo?.visitor_id)
           localStorage.setItem("visitor_id", scanInfo.visitor_id);
         setPayload(data);
+        finish();
       } catch {
-        if (!controller.signal.aborted) setPayload(null);
-      } finally {
-        if (!controller.signal.aborted) setLoaded(true);
+        if (controller.signal.aborted) return;
+        // 瞬时故障自动重试一次（短暂退避）；仍失败才落到失败界面，
+        // 失败界面提供人工"重新查验"（kc6d.3）。
+        if (!retriedOnce) {
+          retriedOnce = true;
+          setTimeout(() => {
+            if (!controller.signal.aborted) void load();
+          }, retryDelayMs);
+          return;
+        }
+        setPayload(null);
+        finish();
       }
     };
     void load();
     return () => controller.abort();
-  }, [apiBase, publicId]);
+  }, [apiBase, publicId, reloadKey, retryDelayMs]);
+
+  const handleRetry = useCallback(() => {
+    setPayload(null);
+    setLoaded(false);
+    setReloadKey((key) => key + 1);
+  }, []);
 
   if (!loaded) {
     return (
@@ -68,6 +94,7 @@ export function CodePageClient({
       publicId={publicId}
       jsonPayload={payload}
       htmlContent={null}
+      onRetry={handleRetry}
     />
   );
 }

@@ -22,6 +22,8 @@ interface ErrorPageProps {
   publicId?: string;
   /** 重试回调 */
   onRetry?: () => void;
+  /** false 时完全不渲染重试按钮（业务终态场景） */
+  showRetry?: boolean;
 }
 
 /** 错误类型对应的视觉配置 */
@@ -95,7 +97,12 @@ const ERROR_CONFIG: Record<
  * 针对不同错误状态（查无此码/已冻结/已作废/疑似风险）展示对应的错误提示，
  * 包含图标、文案、客服联系方式和重试按钮。
  */
-export function ErrorPage({ errorCode, publicId, onRetry }: ErrorPageProps) {
+export function ErrorPage({
+  errorCode,
+  publicId,
+  onRetry,
+  showRetry = true,
+}: ErrorPageProps) {
   const config = ERROR_CONFIG[errorCode] ?? ERROR_CONFIG.not_found;
 
   return (
@@ -127,8 +134,8 @@ export function ErrorPage({ errorCode, publicId, onRetry }: ErrorPageProps) {
 
       {/* 操作按钮 */}
       <div className="mt-8 flex w-full flex-col gap-3">
-        {/* 重试按钮 */}
-        {onRetry ? (
+        {/* 重试按钮：业务终态（作废/未激活等）重试无意义，不展示 */}
+        {showRetry && onRetry ? (
           <button
             type="button"
             onClick={onRetry}
@@ -136,7 +143,7 @@ export function ErrorPage({ errorCode, publicId, onRetry }: ErrorPageProps) {
           >
             重新扫码
           </button>
-        ) : (
+        ) : showRetry ? (
           <button
             type="button"
             onClick={() => window.location.reload()}
@@ -144,7 +151,7 @@ export function ErrorPage({ errorCode, publicId, onRetry }: ErrorPageProps) {
           >
             重新扫码
           </button>
-        )}
+        ) : null}
 
         {/* 客服联系方式 */}
         <div className="rounded-xl bg-muted p-4">
