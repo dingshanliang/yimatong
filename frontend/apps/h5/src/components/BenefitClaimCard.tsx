@@ -1,7 +1,9 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { apiClient } from "@/lib/api";
+import { saveClaimRevisitCredential } from "@/lib/claim-revisit";
 
 /** 权益类型 */
 type BenefitType =
@@ -162,7 +164,6 @@ export function BenefitClaimCard({
 }: BenefitClaimCardProps) {
   const [loading, setLoading] = useState(false);
   const [claimed, setClaimed] = useState(false);
-  const [deliveryPending, setDeliveryPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showPhoneModal, setShowPhoneModal] = useState(false);
   const [phone, setPhone] = useState("");
@@ -175,6 +176,7 @@ export function BenefitClaimCard({
   const generationRef = useRef(0);
   const activeControllerRef = useRef<AbortController | null>(null);
   const mountedRef = useRef(true);
+  const router = useRouter();
   const identityRef = useRef({ benefitId, scanToken });
   identityRef.current = { benefitId, scanToken };
 
@@ -200,7 +202,6 @@ export function BenefitClaimCard({
     lastClickRef.current = 0;
     setLoading(false);
     setClaimed(false);
-    setDeliveryPending(false);
     setError(null);
     setShowPhoneModal(false);
     setPhone("");
@@ -246,6 +247,28 @@ export function BenefitClaimCard({
     [isCurrentRequest]
   );
 
+  /**
+   * 受理成功后进入专属结果页：保存回访凭证（scan_token 时效后仍可恢复查询），
+   * 跳转携带 claim_id；领取卡标记已领取防重复点击。
+   */
+  const navigateToClaimResult = useCallback(
+    (data: Record<string, unknown>) => {
+      const receiptClaimId = String(data.claim_id);
+      if (
+        typeof data.revisit_credential === "string" &&
+        data.revisit_credential
+      ) {
+        saveClaimRevisitCredential(receiptClaimId, data.revisit_credential);
+      }
+      setClaimed(true);
+      onClaimed?.();
+      router.push(
+        `/redpacket/result?claim_id=${encodeURIComponent(receiptClaimId)}`
+      );
+    },
+    [onClaimed, router]
+  );
+
   const handleClaim = useCallback(async () => {
     if (loading || claimed) return;
     const now = Date.now();
@@ -275,8 +298,7 @@ export function BenefitClaimCard({
       }
 
       if (data.status === "pending" && hasClaimReceipt(data)) {
-        setDeliveryPending(true);
-        onClaimed?.();
+        navigateToClaimResult(data);
         return;
       }
 
@@ -391,6 +413,7 @@ export function BenefitClaimCard({
     beginRequest,
     finishRequest,
     isCurrentRequest,
+    navigateToClaimResult,
   ]);
 
   const handlePhoneSubmit = useCallback(async () => {
@@ -417,9 +440,8 @@ export function BenefitClaimCard({
         setShowPhoneModal(false);
         onClaimed?.();
       } else if (data?.status === "pending" && hasClaimReceipt(data)) {
-        setDeliveryPending(true);
         setShowPhoneModal(false);
-        onClaimed?.();
+        navigateToClaimResult(data);
       } else {
         setError("领取结果异常，请刷新页面后重试");
       }
@@ -437,6 +459,7 @@ export function BenefitClaimCard({
     beginRequest,
     finishRequest,
     isCurrentRequest,
+    navigateToClaimResult,
   ]);
 
   const handleShowWeComGuide = useCallback(async () => {
@@ -542,13 +565,12 @@ export function BenefitClaimCard({
             disabled={
               loading ||
               claimed ||
-              deliveryPending ||
               (normalizedBenefitType === "cash_red_packet" &&
                 !wechatConsentGranted)
             }
             onClick={handleClaim}
             className={`w-full rounded-xl py-2.5 text-sm font-semibold transition-colors ${
-              claimed || deliveryPending
+              claimed
                 ? "cursor-default bg-muted text-foreground-tertiary"
                 : loading
                   ? "cursor-wait bg-action/60 text-white"
@@ -557,15 +579,13 @@ export function BenefitClaimCard({
                     : "bg-action text-white active:bg-action-active"
             }`}
           >
-            {deliveryPending
-              ? "发放处理中"
-              : claimed
-                ? "已领取"
-                : loading
-                  ? "领取中..."
-                  : wecomPrompt
-                    ? "我已添加，继续领取"
-                    : buttonText}
+            {claimed
+              ? "已领取"
+              : loading
+                ? "领取中..."
+                : wecomPrompt
+                  ? "我已添加，继续领取"
+                  : buttonText}
           </button>
           {claimed && normalizedBenefitType === "platform_coupon" && (
             <div className="mt-3 rounded-xl bg-info-bg px-3 py-2 text-center text-sm text-info">

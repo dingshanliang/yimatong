@@ -3,7 +3,11 @@ import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const { post } = vi.hoisted(() => ({ post: vi.fn() }));
+const { push } = vi.hoisted(() => ({ push: vi.fn() }));
 vi.mock("@/lib/api", () => ({ apiClient: { post, get: vi.fn() } }));
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ push }),
+}));
 
 import { BenefitClaimCard } from "./BenefitClaimCard";
 
@@ -24,6 +28,8 @@ describe("BenefitClaimCard delivery state", () => {
     container = document.createElement("div");
     document.body.appendChild(container);
     post.mockReset();
+    push.mockReset();
+    window.sessionStorage.clear();
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   });
 
@@ -32,12 +38,13 @@ describe("BenefitClaimCard delivery state", () => {
     container.remove();
   });
 
-  it("shows an acknowledged connector claim as pending instead of delivered", async () => {
+  it("navigates to the claim result page with a saved revisit credential on pending", async () => {
     post.mockResolvedValue({
       data: {
         status: "pending",
         benefit_id: "benefit-1",
         claim_id: "claim-1",
+        revisit_credential: "credential-1",
       },
     });
     const onClaimed = vi.fn();
@@ -62,9 +69,13 @@ describe("BenefitClaimCard delivery state", () => {
     const button = container.querySelector("button");
     await act(async () => button?.click());
 
-    expect(button?.textContent).toBe("发放处理中");
+    expect(push).toHaveBeenCalledTimes(1);
+    expect(push).toHaveBeenCalledWith("/redpacket/result?claim_id=claim-1");
+    expect(
+      window.sessionStorage.getItem("yimatong:claim-revisit:claim-1")
+    ).toBe("credential-1");
+    expect(button?.textContent).toBe("已领取");
     expect(button?.hasAttribute("disabled")).toBe(true);
-    expect(container.textContent).not.toContain("已领取");
     expect(onClaimed).toHaveBeenCalledTimes(1);
     await act(async () => {
       root.render(
@@ -78,6 +89,43 @@ describe("BenefitClaimCard delivery state", () => {
       );
     });
     expect(button?.textContent).toBe("领取红包");
+    await act(async () => root.unmount());
+  });
+
+  it("still navigates when the claim response carries no revisit credential", async () => {
+    post.mockResolvedValue({
+      data: {
+        status: "pending",
+        benefit_id: "benefit-1",
+        claim_id: "claim-no-cred",
+      },
+    });
+    const root = createRoot(container);
+    await act(async () => {
+      root.render(
+        <BenefitClaimCard
+          benefitId="benefit-1"
+          benefitType="cash_red_packet"
+          title="现金红包"
+          scanToken="scan-token"
+        />
+      );
+    });
+    await act(async () => {
+      container
+        .querySelector<HTMLInputElement>('input[type="checkbox"]')
+        ?.click();
+    });
+    await act(async () =>
+      container.querySelector<HTMLButtonElement>("button")?.click()
+    );
+
+    expect(push).toHaveBeenCalledWith(
+      "/redpacket/result?claim_id=claim-no-cred"
+    );
+    expect(
+      window.sessionStorage.getItem("yimatong:claim-revisit:claim-no-cred")
+    ).toBeNull();
     await act(async () => root.unmount());
   });
 

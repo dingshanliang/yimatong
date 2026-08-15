@@ -18,11 +18,12 @@ const apiClient = axios.create({
 
 apiClient.interceptors.request.use((config) => {
   if (typeof window !== "undefined") {
-    // 优先从 localStorage 读取 scan_token，其次读 access_token
+    // 优先从 localStorage 读取 scan_token，其次读 access_token；
+    // 调用方已显式携带 Authorization（如回访凭证）时不再覆盖。
     const scanToken = localStorage.getItem("scan_token");
     const accessToken = localStorage.getItem("access_token");
     const token = scanToken || accessToken;
-    if (token) {
+    if (token && !config.headers.Authorization) {
       config.headers.Authorization = `Bearer ${token}`;
     }
     // yimatong-zgb1.10：携带匿名访客 ID（first-party 稳定标识，Decision 22）
