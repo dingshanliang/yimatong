@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import api from "@/lib/api";
 import {
+  Alert,
   Button,
   Card,
   Col,
@@ -12,12 +13,9 @@ import {
   Statistic,
   Table,
   Tag,
-  Typography,
 } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import type { Dayjs } from "dayjs";
-
-const { Text } = Typography;
 
 type DailyTrend = { date: string; gmv: number; orders: number };
 type ChannelBreakdown = { channel: string; gmv: number; orders: number };
@@ -26,14 +24,17 @@ type CampaignBreakdown = {
   campaign_name: string;
   gmv: number;
   orders: number;
-  avg_confidence: number;
 };
 
 interface DashboardData {
   total_gmv: number;
   attributed_orders: number;
   total_orders: number;
-  attribution_rate: number;
+  unattributed_orders: number;
+  quarantined_order_count: number;
+  order_data_quality: "complete" | "incomplete";
+  attribution_rate: null;
+  attribution_rate_status: "unavailable_non_cohort";
   daily_trend: DailyTrend[];
   by_channel: ChannelBreakdown[];
   by_campaign: CampaignBreakdown[];
@@ -41,30 +42,55 @@ interface DashboardData {
 
 const trendColumns: ColumnsType<DailyTrend> = [
   { title: "日期", dataIndex: "date", key: "date" },
-  { title: "归因 GMV", dataIndex: "gmv", key: "gmv", render: (v: number) => `¥${v.toLocaleString()}` },
+  {
+    title: "归因 GMV",
+    dataIndex: "gmv",
+    key: "gmv",
+    render: (v: number) => `¥${v.toLocaleString()}`,
+  },
   { title: "归因订单", dataIndex: "orders", key: "orders" },
 ];
 
 const channelColumns: ColumnsType<ChannelBreakdown> = [
-  { title: "渠道", dataIndex: "channel", key: "channel", render: (v: string) => <Tag>{v}</Tag> },
-  { title: "归因 GMV", dataIndex: "gmv", key: "gmv", render: (v: number) => `¥${v.toLocaleString()}` },
+  {
+    title: "渠道",
+    dataIndex: "channel",
+    key: "channel",
+    render: (v: string) => <Tag>{v}</Tag>,
+  },
+  {
+    title: "归因 GMV",
+    dataIndex: "gmv",
+    key: "gmv",
+    render: (v: number) => `¥${v.toLocaleString()}`,
+  },
   { title: "归因订单", dataIndex: "orders", key: "orders" },
 ];
 
 const campaignColumns: ColumnsType<CampaignBreakdown> = [
   { title: "活动名称", dataIndex: "campaign_name", key: "campaign_name" },
-  { title: "归因 GMV", dataIndex: "gmv", key: "gmv", render: (v: number) => `¥${v.toLocaleString()}` },
-  { title: "归因订单", dataIndex: "orders", key: "orders" },
   {
-    title: "平均置信度", dataIndex: "avg_confidence", key: "avg_confidence",
-    render: (v: number) => <Text type={v >= 0.8 ? "success" : v >= 0.5 ? "warning" : "danger"}>{(v * 100).toFixed(0)}%</Text>,
+    title: "归因 GMV",
+    dataIndex: "gmv",
+    key: "gmv",
+    render: (v: number) => `¥${v.toLocaleString()}`,
   },
+  { title: "归因订单", dataIndex: "orders", key: "orders" },
 ];
 
 export function DashboardTab() {
   const [data, setData] = useState<DashboardData>({
-    total_gmv: 0, attributed_orders: 0, total_orders: 0,
-    attribution_rate: 0, daily_trend: [], by_channel: [], by_campaign: [],
+    total_gmv: 0,
+    attributed_orders: 0,
+    total_orders: 0,
+    unattributed_orders: 0,
+    quarantined_order_count: 0,
+    order_data_quality: "complete",
+    attribution_rate: null,
+    attribution_rate_status: "unavailable_non_cohort",
+    daily_trend: [],
+    by_channel: [],
+    by_campaign: [],
   });
   const [loading, setLoading] = useState(false);
   const [dateRange, setDateRange] = useState<[Dayjs, Dayjs] | null>(null);
@@ -86,7 +112,9 @@ export function DashboardTab() {
     }
   };
 
-  useEffect(() => { fetch(); }, [dateRange]);
+  useEffect(() => {
+    fetch();
+  }, [dateRange]);
 
   return (
     <div>
@@ -97,26 +125,70 @@ export function DashboardTab() {
           allowClear
           placeholder={["开始日期", "结束日期"]}
         />
-        <Button size="small" onClick={fetch} loading={loading}>刷新</Button>
+        <Button size="small" onClick={fetch} loading={loading}>
+          刷新
+        </Button>
       </div>
+
+      {(data.unattributed_orders > 0 ||
+        data.order_data_quality === "incomplete") && (
+        <Alert
+          className="mb-4"
+          type="warning"
+          showIcon
+          message="订单归因数据仍在收集或隔离中"
+          description={`待归因 ${data.unattributed_orders} 单；隔离 ${data.quarantined_order_count} 单。当前归因 GMV 和订单数仅包含账本有效且已确认的发生事实。`}
+        />
+      )}
+
+      {data.attribution_rate_status === "unavailable_non_cohort" && (
+        <Alert
+          className="mb-4"
+          type="info"
+          showIcon
+          message="归因率暂不可用"
+          description="确认归因订单与账本订单不是同一访客群组，当前不计算跨口径转化率。"
+        />
+      )}
 
       <Row gutter={[16, 16]} className="mb-6">
         <Col span={6}>
-          <Card size="small"><Statistic title="总 GMV" value={data.total_gmv} prefix="¥" loading={loading} /></Card>
+          <Card size="small">
+            <Statistic
+              title="确认归因 GMV（发生口径）"
+              value={data.total_gmv}
+              prefix="¥"
+              loading={loading}
+            />
+          </Card>
         </Col>
         <Col span={6}>
-          <Card size="small"><Statistic title="归因订单" value={data.attributed_orders} loading={loading} /></Card>
+          <Card size="small">
+            <Statistic
+              title="确认归因订单（发生口径）"
+              value={data.attributed_orders}
+              loading={loading}
+            />
+          </Card>
         </Col>
         <Col span={6}>
-          <Card size="small"><Statistic title="总订单" value={data.total_orders} loading={loading} /></Card>
+          <Card size="small">
+            <Statistic
+              title="账本有效订单（发生口径）"
+              value={data.total_orders}
+              loading={loading}
+            />
+          </Card>
         </Col>
         <Col span={6}>
-          <Card size="small"><Statistic title="归因率" value={data.attribution_rate} suffix="%" loading={loading} /></Card>
+          <Card size="small">
+            <Statistic title="归因率" value="—" loading={loading} />
+          </Card>
         </Col>
       </Row>
 
       <Space direction="vertical" size="large" className="w-full">
-        <Card title="日趋势" size="small">
+        <Card title="确认归因日趋势（按扫码收件时间）" size="small">
           <Table
             columns={trendColumns}
             dataSource={data.daily_trend}
@@ -129,7 +201,7 @@ export function DashboardTab() {
 
         <Row gutter={16}>
           <Col span={12}>
-            <Card title="渠道分布" size="small">
+            <Card title="确认归因渠道分布" size="small">
               <Table
                 columns={channelColumns}
                 dataSource={data.by_channel}
@@ -141,7 +213,7 @@ export function DashboardTab() {
             </Card>
           </Col>
           <Col span={12}>
-            <Card title="活动分布" size="small">
+            <Card title="确认归因活动分布" size="small">
               <Table
                 columns={campaignColumns}
                 dataSource={data.by_campaign}

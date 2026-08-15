@@ -37,7 +37,7 @@ interface DashboardData {
   cumulative_scans: number;
   cumulative_first_scans: number;
   period_claim_count: number;
-  period_claim_rate: number;
+  period_claim_rate: null;
   trend?: { date: string; total_scans: number; uv?: number }[];
   environment_breakdown?: Record<string, number>;
   comparison?: {
@@ -162,9 +162,6 @@ export default function DashboardHome() {
             <Statistic
               title="期间领券"
               value={data?.period_claim_count ?? 0}
-              suffix={
-                data?.period_claim_rate ? `(${data.period_claim_rate}%)` : ""
-              }
               prefix={<GiftOutlined />}
               loading={loading}
             />

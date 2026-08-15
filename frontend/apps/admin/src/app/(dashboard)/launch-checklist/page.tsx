@@ -8,6 +8,7 @@ import {
   Card,
   Col,
   Empty,
+  Input,
   List,
   Progress,
   Row,
@@ -23,9 +24,10 @@ import {
   RocketOutlined,
 } from "@ant-design/icons";
 import api, { extractErrorMessage } from "@/lib/api";
+import { useAuthStore } from "@/lib/auth";
 import { STATUS_COLORS } from "@/lib/status-colors";
 
-const { Title, Paragraph, Text } = Typography;
+const { Title, Text } = Typography;
 
 interface PublishedVersion {
   id: string;
@@ -75,6 +77,11 @@ interface LaunchRelease {
     total_count: number;
     ready: boolean;
   };
+  readiness_sample_code?: {
+    public_id: string;
+    status: string;
+    ready: boolean;
+  } | null;
 }
 
 function statusLabel(status: string) {
@@ -98,6 +105,23 @@ function statusLabel(status: string) {
 
 export default function LaunchChecklistPage() {
   const { message } = App.useApp();
+  const user = useAuthStore((state) => state.user);
+  const isBrand = user?.tenant_type === "brand";
+  const isActingAgency =
+    user?.tenant_type === "agency" && Boolean(user.acting_tenant_id);
+  const scopes = user?.agency_scope || [];
+  const canPrepare =
+    (isBrand && ["admin", "operator"].includes(user?.role || "")) ||
+    (isActingAgency && scopes.includes("pages"));
+  const canExecute =
+    (isBrand && user?.role === "admin") ||
+    (isActingAgency && scopes.includes("release:execute"));
+  const canConfirm = isBrand && user?.role === "admin";
+  const canSuspend = canConfirm;
+  const canView = canPrepare || canExecute;
+  const releaseBase = isActingAgency
+    ? "/ops/launch-releases"
+    : "/launch-releases";
   const [templates, setTemplates] = useState<PageTemplateOption[]>([]);
   const [campaigns, setCampaigns] = useState<CampaignOption[]>([]);
   const [batches, setBatches] = useState<CodeBatchOption[]>([]);
@@ -105,6 +129,10 @@ export default function LaunchChecklistPage() {
   const [campaignId, setCampaignId] = useState<string>();
   const [codeBatchId, setCodeBatchId] = useState<string>();
   const [release, setRelease] = useState<LaunchRelease | null>(null);
+  const [releases, setReleases] = useState<LaunchRelease[]>([]);
+  const [releasePage, setReleasePage] = useState(1);
+  const [releaseTotal, setReleaseTotal] = useState(0);
+  const [suspensionReason, setSuspensionReason] = useState("");
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState(false);
 
@@ -125,18 +153,33 @@ export default function LaunchChecklistPage() {
   );
 
   const loadOptions = async () => {
+    if (!canView) {
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     try {
-      const [pagesResponse, campaignsResponse, batchesResponse] =
-        await Promise.all([
-          api.get("/page-templates", { params: { page_size: 100 } }),
-          api.get("/campaigns", {
-            params: { status: "active", page_size: 100 },
-          }),
-          api.get("/code-batches", {
-            params: { status: "activated", page_size: 100 },
-          }),
-        ]);
+      const [
+        pagesResponse,
+        campaignsResponse,
+        batchesResponse,
+        releasesResponse,
+      ] = await Promise.all([
+        canPrepare
+          ? api.get("/page-templates", { params: { page_size: 100 } })
+          : Promise.resolve({ data: { items: [] } }),
+        canPrepare
+          ? api.get("/campaigns", {
+              params: { status: "active", page_size: 100 },
+            })
+          : Promise.resolve({ data: { items: [] } }),
+        canPrepare
+          ? api.get("/code-batches", {
+              params: { status: "activated", page_size: 100 },
+            })
+          : Promise.resolve({ data: { items: [] } }),
+        api.get(releaseBase, { params: { page: releasePage, page_size: 20 } }),
+      ]);
       const pages = (pagesResponse.data.items || []) as PageTemplateOption[];
       const activeCampaigns = (campaignsResponse.data.items ||
         []) as CampaignOption[];
@@ -145,6 +188,8 @@ export default function LaunchChecklistPage() {
       setTemplates(pages);
       setCampaigns(activeCampaigns);
       setBatches(activeBatches);
+      setReleases((releasesResponse.data.items || []) as LaunchRelease[]);
+      setReleaseTotal(Number(releasesResponse.data.total || 0));
       const firstPage = pages.find((item) => item.published_version);
       const firstPageProduct = firstPage?.product_id;
       const firstCampaign = activeCampaigns.find(
@@ -167,7 +212,7 @@ export default function LaunchChecklistPage() {
     void loadOptions();
     // 页面初始化只加载一次；后续刷新由按钮显式触发。
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [canView, releaseBase, releasePage]);
 
   const inspectCurrentRelease = async () => {
     if (!pageVersionId || !campaignId || !codeBatchId) {
@@ -176,12 +221,17 @@ export default function LaunchChecklistPage() {
     }
     setActionLoading(true);
     try {
-      const { data } = await api.post<LaunchRelease>("/launch-releases", {
+      const { data } = await api.post<LaunchRelease>(releaseBase, {
         page_version_id: pageVersionId,
         campaign_id: campaignId,
         code_batch_id: codeBatchId,
+        idempotency_key: crypto.randomUUID(),
       });
       setRelease(data);
+      setReleases((current) => [
+        data,
+        ...current.filter((item) => item.id !== data.id),
+      ]);
     } catch (error) {
       message.error(extractErrorMessage(error, "上线检查失败"));
     } finally {
@@ -189,18 +239,32 @@ export default function LaunchChecklistPage() {
     }
   };
 
-  const confirmAndLaunch = async () => {
+  const runReleaseAction = async (
+    action:
+      | "confirm"
+      | "launch"
+      | "publish"
+      | "request-confirmation"
+      | "suspend"
+      | "resume"
+  ) => {
     if (!release) return;
     setActionLoading(true);
     try {
+      const pathAction = action === "publish" ? "publish" : action;
       const { data } = await api.post<LaunchRelease>(
-        `/launch-releases/${release.id}/confirm-and-launch`,
+        `${releaseBase}/${release.id}/${pathAction}`,
         {
-          idempotency_key: `launch-${release.id}-${release.content_digest.slice(0, 12)}`,
+          idempotency_key: crypto.randomUUID(),
+          ...(action === "suspend" ? { reason: suspensionReason.trim() } : {}),
         }
       );
       setRelease(data);
-      message.success("已正式上线");
+      setReleases((current) =>
+        current.map((item) => (item.id === data.id ? data : item))
+      );
+      if (action === "suspend") setSuspensionReason("");
+      message.success("上线状态已更新");
     } catch (error) {
       message.error(extractErrorMessage(error, "上线失败，请先处理未通过项"));
     } finally {
@@ -218,6 +282,10 @@ export default function LaunchChecklistPage() {
         <Spin />
       </div>
     );
+  }
+
+  if (!canView) {
+    return <Empty description="当前账号没有上线发布权限" />;
   }
 
   return (
@@ -306,6 +374,7 @@ export default function LaunchChecklistPage() {
           type="primary"
           icon={<CheckCircleOutlined />}
           loading={actionLoading}
+          disabled={!canPrepare}
           onClick={() => void inspectCurrentRelease()}
         >
           检查当前上线组合
@@ -329,13 +398,33 @@ export default function LaunchChecklistPage() {
             </Tag>
           }
         >
-          <Progress
-            percent={
-              totalCount ? Math.round((passedCount / totalCount) * 100) : 0
-            }
-            status={release.ready ? "success" : "active"}
-            format={() => `${passedCount}/${totalCount} 项通过`}
-          />
+          {totalCount > 0 && (
+            <Progress
+              percent={Math.round((passedCount / totalCount) * 100)}
+              status={release.ready ? "success" : "active"}
+              format={() => `${passedCount}/${totalCount} 项通过`}
+            />
+          )}
+          {release.readiness_sample_code && (
+            <Alert
+              className="mt-4"
+              type={release.readiness_sample_code.ready ? "success" : "warning"}
+              showIcon
+              message={
+                release.readiness_sample_code.ready
+                  ? "上线样本码已准备"
+                  : "上线样本码待准备"
+              }
+              description={
+                <Space direction="vertical" size={2}>
+                  <Text code>{release.readiness_sample_code.public_id}</Text>
+                  <Text type="secondary">
+                    系统从当前码批次选定样本码核对配置；正式上线前不会签发权益凭证。
+                  </Text>
+                </Space>
+              }
+            />
+          )}
           <List
             className="mt-4"
             dataSource={checks}
@@ -370,21 +459,94 @@ export default function LaunchChecklistPage() {
           )}
           {release.ready && release.status !== "live" && (
             <Space className="mt-4">
-              <Button
-                type="primary"
-                icon={<RocketOutlined />}
-                loading={actionLoading}
-                onClick={() => void confirmAndLaunch()}
-              >
-                确认并上线
-              </Button>
-              <Paragraph type="secondary" className="!mb-0">
-                点击后会记录本次版本确认，并正式上线。
-              </Paragraph>
+              {release.status === "pending_confirmation" && canConfirm && (
+                <Button
+                  loading={actionLoading}
+                  onClick={() => void runReleaseAction("confirm")}
+                >
+                  确认版本
+                </Button>
+              )}
+              {release.status === "pending_confirmation" &&
+                isActingAgency &&
+                scopes.includes("pages") && (
+                  <Button
+                    loading={actionLoading}
+                    onClick={() =>
+                      void runReleaseAction("request-confirmation")
+                    }
+                  >
+                    提交品牌方确认
+                  </Button>
+                )}
+              {release.status === "confirmed" && canExecute && (
+                <Button
+                  type="primary"
+                  icon={<RocketOutlined />}
+                  loading={actionLoading}
+                  onClick={() =>
+                    void runReleaseAction(isActingAgency ? "publish" : "launch")
+                  }
+                >
+                  执行上线
+                </Button>
+              )}
+              {release.status === "suspended" && canConfirm && (
+                <Button
+                  loading={actionLoading}
+                  onClick={() => void runReleaseAction("resume")}
+                >
+                  恢复上线
+                </Button>
+              )}
             </Space>
+          )}
+          {release.status === "live" && canSuspend && (
+            <Space.Compact className="mt-4 w-full">
+              <Input
+                value={suspensionReason}
+                maxLength={500}
+                placeholder="填写暂停原因"
+                onChange={(event) => setSuspensionReason(event.target.value)}
+              />
+              <Button
+                danger
+                disabled={!suspensionReason.trim()}
+                loading={actionLoading}
+                onClick={() => void runReleaseAction("suspend")}
+              >
+                暂停上线
+              </Button>
+            </Space.Compact>
           )}
         </Card>
       )}
+
+      <Card className="mt-4" title="上线记录">
+        <List
+          dataSource={releases}
+          pagination={{
+            current: releasePage,
+            pageSize: 20,
+            total: releaseTotal,
+            onChange: setReleasePage,
+          }}
+          renderItem={(item) => (
+            <List.Item
+              actions={[
+                <Button key="open" type="link" onClick={() => setRelease(item)}>
+                  查看
+                </Button>,
+              ]}
+            >
+              <List.Item.Meta
+                title={statusLabel(item.status)}
+                description={item.content_digest}
+              />
+            </List.Item>
+          )}
+        />
+      </Card>
     </div>
   );
 }

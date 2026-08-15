@@ -22,6 +22,7 @@ import {
   Table,
   Tabs,
   Tag,
+  Timeline,
   Typography,
 } from "antd";
 import {
@@ -33,6 +34,11 @@ import {
 } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
 import api, { extractErrorMessage } from "@/lib/api";
+import { useAuthStore } from "@/lib/auth";
+import {
+  channelAccessForPrincipal,
+  type ChannelAccess,
+} from "@/lib/channel-access";
 import { tenantFeatureEnabled } from "@/lib/plan-entitlement";
 import { STATUS_COLORS } from "@/lib/status-colors";
 
@@ -61,6 +67,7 @@ type Distributor = {
   region_count: number;
   store_count: number;
   allocated_quantity: number;
+  version: number;
 };
 type Region = {
   id: string;
@@ -76,6 +83,7 @@ type Region = {
   distributor_name?: string;
   store_count: number;
   allocated_quantity: number;
+  version: number;
 };
 type Store = {
   id: string;
@@ -88,9 +96,17 @@ type Store = {
   distributor_id?: string;
   distributor_name?: string;
   allocated_quantity: number;
+  version: number;
 };
 type Allocation = {
   id: string;
+  allocation_root_id: string;
+  version: number;
+  action: "allocate" | "reassign" | "archive";
+  status: "active" | "archived";
+  target_type?: "distributor" | "region" | "store";
+  effective_from?: string;
+  effective_to?: string | null;
   batch_id: string;
   batch_code?: string;
   product_name?: string;
@@ -120,10 +136,40 @@ type DiversionClue = {
   store_name?: string;
   detected_at?: string | null;
   resolved: boolean;
+  version: number;
+  investigation_status:
+    | "open"
+    | "pending_evidence"
+    | "confirmed_diversion"
+    | "false_positive"
+    | "normal_transfer";
+  observation_count: number;
   resolution_action?: string | null;
   resolution_note?: string | null;
   resolved_at?: string | null;
   handling_recommendation?: string;
+};
+type DiversionInvestigation = {
+  clue_id: string;
+  version: number;
+  investigation_status: DiversionClue["investigation_status"];
+  resolved: boolean;
+  resolution_action?: string | null;
+  resolution_note?: string | null;
+  evidence: Array<{
+    id: string;
+    evidence_type: string;
+    description?: string | null;
+    file_url?: string | null;
+    uploaded_at: string;
+  }>;
+  history: Array<{
+    id: string;
+    from_status?: string | null;
+    to_status: string;
+    reason?: string | null;
+    changed_at: string;
+  }>;
 };
 type Account = { id: string; name: string; email: string };
 type AccountScope = {
@@ -133,6 +179,7 @@ type AccountScope = {
   distributor_id?: string;
   region_id?: string;
   store_id?: string;
+  version: number;
 };
 type Batch = {
   id: string;
@@ -680,7 +727,10 @@ function formatDateTime(value?: string | null) {
 function batchCapacity(batch: Batch | undefined, allocations: Allocation[]) {
   if (!batch) return { total: 0, allocated: 0, remaining: 0 };
   const related = allocations.filter(
-    (item) => item.batch_id === batch.id || item.batch_code === batch.batch_code
+    (item) =>
+      (item.batch_id === batch.id || item.batch_code === batch.batch_code) &&
+      !item.effective_to &&
+      item.status === "active"
   );
   const latestRemaining = related.find(
     (item) => typeof item.remaining_quantity === "number"
@@ -763,9 +813,18 @@ function buildRegionPayload(values: Record<string, unknown>) {
 }
 
 export default function ChannelsPage() {
+  const user = useAuthStore((state) => state.user);
+  const access = channelAccessForPrincipal(user);
+  if (!access.canRead) {
+    return <Alert type="warning" message="当前账号无渠道管理权限" />;
+  }
+  return <ChannelsWorkspace access={access} />;
+}
+
+function ChannelsWorkspace({ access }: { access: ChannelAccess }) {
   const appApi = App.useApp();
   const messageRef = useRef(appApi.message);
-  const modalRef = useRef(appApi.modal);
+  const mutationKeysRef = useRef(new Map<string, string>());
   const autoRegionNameRef = useRef<string | null>(null);
   const [overview, setOverview] = useState<Overview | null>(null);
   const [distributors, setDistributors] =
@@ -780,6 +839,19 @@ export default function ChannelsPage() {
   const [batches, setBatches] = useState<Batch[]>([]);
   const [loading, setLoading] = useState(false);
   const [activeTab, setActiveTab] = useState("distributors");
+
+  const channelMutationConfig = (intent: string) => {
+    let key = mutationKeysRef.current.get(intent);
+    if (!key) {
+      key = crypto.randomUUID();
+      mutationKeysRef.current.set(intent, key);
+    }
+    return { headers: { "Idempotency-Key": key } };
+  };
+
+  const completeMutationIntent = (intent: string) => {
+    mutationKeysRef.current.delete(intent);
+  };
   const [tenantFeatures, setTenantFeatures] = useState<Record<string, boolean>>(
     {}
   );
@@ -800,12 +872,20 @@ export default function ChannelsPage() {
     useState<Distributor | null>(null);
   const [createdRegion, setCreatedRegion] = useState<Region | null>(null);
   const [allocationOpen, setAllocationOpen] = useState(false);
+  const [allocationToReassign, setAllocationToReassign] =
+    useState<Allocation | null>(null);
+  const [allocationToArchive, setAllocationToArchive] =
+    useState<Allocation | null>(null);
   const [scopeOpen, setScopeOpen] = useState(false);
   const [currentClue, setCurrentClue] = useState<DiversionClue | null>(null);
+  const [investigation, setInvestigation] =
+    useState<DiversionInvestigation | null>(null);
   const [entityForm] = Form.useForm();
   const [allocationForm] = Form.useForm();
+  const [archiveAllocationForm] = Form.useForm();
   const [scopeForm] = Form.useForm();
   const [resolveForm] = Form.useForm();
+  const [evidenceForm] = Form.useForm();
   const regionCoverageType = Form.useWatch("coverage_type", entityForm) as
     Region["coverage_type"] | undefined;
   const regionProvince = Form.useWatch("province", entityForm);
@@ -827,8 +907,7 @@ export default function ChannelsPage() {
 
   useEffect(() => {
     messageRef.current = appApi.message;
-    modalRef.current = appApi.modal;
-  }, [appApi.message, appApi.modal]);
+  }, [appApi.message]);
 
   useEffect(() => {
     api
@@ -868,11 +947,17 @@ export default function ChannelsPage() {
         api.get("/channels/distributors"),
         api.get("/channels/regions"),
         api.get("/channels/stores"),
-        api.get("/channels/code-allocations"),
+        api.get("/channels/code-allocations", {
+          params: { include_history: true },
+        }),
         api.get(clueUrl),
         api.get("/code-batches"),
-        api.get("/accounts"),
-        api.get("/channels/account-scopes"),
+        access.canScope
+          ? api.get("/accounts")
+          : Promise.resolve({ data: { items: [] } }),
+        access.canScope
+          ? api.get("/channels/account-scopes")
+          : Promise.resolve({ data: { items: [] } }),
       ]);
       setOverview(overviewRes.data);
       setDistributors(distRes.data);
@@ -886,13 +971,17 @@ export default function ChannelsPage() {
           ? accountRes.data
           : accountRes.data?.items || []
       );
-      setScopes(Array.isArray(scopeRes.data) ? scopeRes.data : []);
+      setScopes(
+        Array.isArray(scopeRes.data)
+          ? scopeRes.data
+          : scopeRes.data?.items || []
+      );
     } catch (err) {
       messageRef.current.error(extractErrorMessage(err, "加载渠道数据失败"));
     } finally {
       setLoading(false);
     }
-  }, [clueResolvedFilter, clueSeverityFilter]);
+  }, [access.canScope, clueResolvedFilter, clueSeverityFilter]);
 
   useEffect(() => {
     loadData();
@@ -906,6 +995,8 @@ export default function ChannelsPage() {
     () => batchCapacity(selectedAllocationBatch, allocations.items),
     [allocations.items, selectedAllocationBatch]
   );
+  const allocationAvailableQuantity =
+    selectedBatchCapacity.remaining + (allocationToReassign?.quantity || 0);
 
   useEffect(() => {
     if (!entityModal || createdDistributor || createdRegion) return;
@@ -1101,7 +1192,8 @@ export default function ChannelsPage() {
   };
 
   const saveEntity = async (values: Record<string, unknown>) => {
-    if (!entityModal) return;
+    if (!entityModal || !access.canManage) return;
+    const mutationIntent = `entity:${entityModal.type}:${entityModal.record?.id || "create"}`;
     const mergedValues = { ...(entityModal.defaults || {}), ...values };
     const payload =
       entityModal.type === "region"
@@ -1117,12 +1209,17 @@ export default function ChannelsPage() {
       if (entityModal.record) {
         await api.patch(
           `${paths[entityModal.type]}/${entityModal.record.id}`,
-          payload
+          { ...payload, expected_version: entityModal.record.version },
+          channelMutationConfig(mutationIntent)
         );
         messageRef.current.success("资料已更新");
         closeEntityModal();
       } else {
-        const { data } = await api.post(paths[entityModal.type], payload);
+        const { data } = await api.post(
+          paths[entityModal.type],
+          payload,
+          channelMutationConfig(mutationIntent)
+        );
         messageRef.current.success(
           entityModal.type === "distributor" ? "经销商已创建" : "资料已创建"
         );
@@ -1136,6 +1233,7 @@ export default function ChannelsPage() {
           closeEntityModal();
         }
       }
+      completeMutationIntent(mutationIntent);
       loadData();
     } catch (err) {
       messageRef.current.error(extractErrorMessage(err, "保存失败"));
@@ -1202,10 +1300,35 @@ export default function ChannelsPage() {
   };
 
   const createAllocation = async (values: Record<string, unknown>) => {
+    if (!access.canAllocate) return;
+    const mutationIntent = allocationToReassign
+      ? `allocation:reassign:${allocationToReassign.id}`
+      : "allocation:create";
     try {
-      await api.post("/channels/code-allocations", values);
-      messageRef.current.success("流向已登记");
+      if (allocationToReassign) {
+        const reassignValues = { ...values };
+        delete reassignValues.batch_id;
+        await api.post(
+          `/channels/code-allocations/${allocationToReassign.id}/reassign`,
+          {
+            ...reassignValues,
+            expected_version: allocationToReassign.version,
+          },
+          channelMutationConfig(mutationIntent)
+        );
+      } else {
+        await api.post(
+          "/channels/code-allocations",
+          values,
+          channelMutationConfig(mutationIntent)
+        );
+      }
+      completeMutationIntent(mutationIntent);
+      messageRef.current.success(
+        allocationToReassign ? "流向已重分配" : "流向已登记"
+      );
       setAllocationOpen(false);
+      setAllocationToReassign(null);
       allocationForm.resetFields();
       loadData();
     } catch (err) {
@@ -1213,9 +1336,65 @@ export default function ChannelsPage() {
     }
   };
 
-  const createScope = async (values: Record<string, unknown>) => {
+  const openAllocationReassign = (record: Allocation) => {
+    if (
+      !access.canAllocate ||
+      record.status !== "active" ||
+      record.effective_to
+    )
+      return;
+    setAllocationToReassign(record);
+    allocationForm.setFieldsValue({
+      batch_id: record.batch_id,
+      target_type: record.target_type,
+      distributor_id:
+        record.target_type === "distributor"
+          ? record.distributor_id
+          : undefined,
+      region_id: record.target_type === "region" ? record.region_id : undefined,
+      store_id: record.target_type === "store" ? record.store_id : undefined,
+      quantity: record.quantity,
+      reason: undefined,
+    });
+    setAllocationOpen(true);
+  };
+
+  const archiveAllocation = async (values: { reason: string }) => {
+    const record = allocationToArchive;
+    if (
+      !record ||
+      !access.canAllocate ||
+      record.status !== "active" ||
+      record.effective_to
+    )
+      return;
+    const mutationIntent = `allocation:archive:${record.id}`;
     try {
-      await api.post("/channels/account-scopes", values);
+      await api.post(
+        `/channels/code-allocations/${record.id}/archive`,
+        { expected_version: record.version, reason: values.reason },
+        channelMutationConfig(mutationIntent)
+      );
+      completeMutationIntent(mutationIntent);
+      messageRef.current.success("流向已归档");
+      setAllocationToArchive(null);
+      archiveAllocationForm.resetFields();
+      loadData();
+    } catch (err) {
+      messageRef.current.error(extractErrorMessage(err, "归档失败"));
+    }
+  };
+
+  const createScope = async (values: Record<string, unknown>) => {
+    if (!access.canScope) return;
+    const mutationIntent = "scope:create";
+    try {
+      await api.post(
+        "/channels/account-scopes",
+        values,
+        channelMutationConfig(mutationIntent)
+      );
+      completeMutationIntent(mutationIntent);
       messageRef.current.success("账号范围已绑定");
       setScopeOpen(false);
       scopeForm.resetFields();
@@ -1225,25 +1404,108 @@ export default function ChannelsPage() {
     }
   };
 
-  const resolveClue = async (values: {
-    resolution_action?: string;
-    resolution_note?: string;
-  }) => {
-    if (!currentClue) return;
+  const deleteScope = async (scope: AccountScope) => {
+    if (!access.canScope) return;
+    const mutationIntent = `scope:delete:${scope.id}`;
     try {
-      await api.put(
-        `/risk-dashboard/diversion-clues/${currentClue.id}/resolve`,
-        {
-          resolution_action: values.resolution_action || "contacted_channel",
-          resolution_note: values.resolution_note || "",
-        }
+      await api.delete(`/channels/account-scopes/${scope.id}`, {
+        params: { expected_version: scope.version },
+        ...channelMutationConfig(mutationIntent),
+      });
+      completeMutationIntent(mutationIntent);
+      messageRef.current.success("入口账号绑定已解除");
+      loadData();
+    } catch (err) {
+      messageRef.current.error(extractErrorMessage(err, "解除绑定失败"));
+    }
+  };
+
+  const openInvestigation = async (clue: DiversionClue) => {
+    setCurrentClue(clue);
+    setInvestigation(null);
+    try {
+      const { data } = await api.get(
+        `/risk-dashboard/diversion-clues/${clue.id}/investigation`
       );
+      setInvestigation(data);
+    } catch (err) {
+      messageRef.current.error(extractErrorMessage(err, "调查记录加载失败"));
+    }
+  };
+
+  const transitionClue = async (values: {
+    resolution_action: DiversionClue["investigation_status"];
+    resolution_note: string;
+  }) => {
+    if (!currentClue || !investigation || !access.canManage) return;
+    const mutationIntent = `diversion:transition:${currentClue.id}:${investigation.version}`;
+    try {
+      await api.post(
+        `/risk-dashboard/diversion-clues/${currentClue.id}/transition`,
+        {
+          expected_version: investigation.version,
+          to_status: values.resolution_action,
+          reason: values.resolution_note,
+          resolution_note: values.resolution_note,
+        },
+        channelMutationConfig(mutationIntent)
+      );
+      completeMutationIntent(mutationIntent);
       messageRef.current.success("线索已处理");
       setCurrentClue(null);
+      setInvestigation(null);
       resolveForm.resetFields();
       loadData();
     } catch (err) {
       messageRef.current.error(extractErrorMessage(err, "处理失败"));
+    }
+  };
+
+  const reopenClue = async () => {
+    if (!currentClue || !investigation || !access.canManage) return;
+    const reason = "发现新信息，重新进入调查";
+    const mutationIntent = `diversion:reopen:${currentClue.id}:${investigation.version}`;
+    try {
+      await api.post(
+        `/risk-dashboard/diversion-clues/${currentClue.id}/transition`,
+        { expected_version: investigation.version, to_status: "open", reason },
+        channelMutationConfig(mutationIntent)
+      );
+      completeMutationIntent(mutationIntent);
+      messageRef.current.success("线索已重开");
+      await openInvestigation({
+        ...currentClue,
+        resolved: false,
+        investigation_status: "open",
+      });
+      loadData();
+    } catch (err) {
+      messageRef.current.error(extractErrorMessage(err, "重开失败"));
+    }
+  };
+
+  const addEvidence = async (values: {
+    evidence_type: string;
+    description: string;
+  }) => {
+    if (!currentClue || !investigation || !access.canManage) return;
+    const mutationIntent = `diversion:evidence:${currentClue.id}:${investigation.version}`;
+    try {
+      await api.post(
+        `/risk-dashboard/diversion-clues/${currentClue.id}/evidence`,
+        {
+          expected_version: investigation.version,
+          evidence_type: values.evidence_type,
+          description: values.description,
+        },
+        channelMutationConfig(mutationIntent)
+      );
+      completeMutationIntent(mutationIntent);
+      evidenceForm.resetFields();
+      messageRef.current.success("调查证据已保存");
+      await openInvestigation(currentClue);
+    } catch (err) {
+      messageRef.current.error(extractErrorMessage(err, "证据保存失败"));
     }
   };
 
@@ -1272,14 +1534,22 @@ export default function ChannelsPage() {
       dataIndex: "status",
       render: (s: string, record: Distributor) => (
         <Switch
+          disabled={!access.canManage}
           checked={s === "active"}
           checkedChildren="启用"
           unCheckedChildren="停用"
           onChange={async (checked) => {
+            const mutationIntent = `distributor:status:${record.id}:${checked}`;
             try {
-              await api.patch(`/channels/distributors/${record.id}`, {
-                status: checked ? "active" : "inactive",
-              });
+              await api.patch(
+                `/channels/distributors/${record.id}`,
+                {
+                  status: checked ? "active" : "inactive",
+                  expected_version: record.version,
+                },
+                channelMutationConfig(mutationIntent)
+              );
+              completeMutationIntent(mutationIntent);
               messageRef.current.success(checked ? "已启用" : "已停用");
               loadData();
             } catch (err) {
@@ -1291,29 +1561,30 @@ export default function ChannelsPage() {
     },
     {
       title: "操作",
-      render: (_, record) => (
-        <Space>
-          <Button
-            size="small"
-            type="link"
-            icon={<EditOutlined />}
-            onClick={() => openEntityModal("distributor", record)}
-          >
-            编辑
-          </Button>
-          <Button
-            size="small"
-            type="link"
-            onClick={() =>
-              openEntityModal("region", undefined, {
-                distributor_id: record.id,
-              })
-            }
-          >
-            创建区域
-          </Button>
-        </Space>
-      ),
+      render: (_, record) =>
+        access.canManage ? (
+          <Space>
+            <Button
+              size="small"
+              type="link"
+              icon={<EditOutlined />}
+              onClick={() => openEntityModal("distributor", record)}
+            >
+              编辑
+            </Button>
+            <Button
+              size="small"
+              type="link"
+              onClick={() =>
+                openEntityModal("region", undefined, {
+                  distributor_id: record.id,
+                })
+              }
+            >
+              创建区域
+            </Button>
+          </Space>
+        ) : null,
     },
   ];
 
@@ -1348,14 +1619,22 @@ export default function ChannelsPage() {
       dataIndex: "status",
       render: (s: string, record: Region) => (
         <Switch
+          disabled={!access.canManage}
           checked={s === "active"}
           checkedChildren="启用"
           unCheckedChildren="停用"
           onChange={async (checked) => {
+            const mutationIntent = `region:status:${record.id}:${checked}`;
             try {
-              await api.patch(`/channels/regions/${record.id}`, {
-                status: checked ? "active" : "inactive",
-              });
+              await api.patch(
+                `/channels/regions/${record.id}`,
+                {
+                  status: checked ? "active" : "inactive",
+                  expected_version: record.version,
+                },
+                channelMutationConfig(mutationIntent)
+              );
+              completeMutationIntent(mutationIntent);
               messageRef.current.success(checked ? "已启用" : "已停用");
               loadData();
             } catch (err) {
@@ -1367,18 +1646,19 @@ export default function ChannelsPage() {
     },
     {
       title: "操作",
-      render: (_, record) => (
-        <Space>
-          <Button
-            size="small"
-            type="link"
-            icon={<EditOutlined />}
-            onClick={() => openEntityModal("region", record)}
-          >
-            编辑
-          </Button>
-        </Space>
-      ),
+      render: (_, record) =>
+        access.canManage ? (
+          <Space>
+            <Button
+              size="small"
+              type="link"
+              icon={<EditOutlined />}
+              onClick={() => openEntityModal("region", record)}
+            >
+              编辑
+            </Button>
+          </Space>
+        ) : null,
     },
   ];
 
@@ -1404,14 +1684,22 @@ export default function ChannelsPage() {
       dataIndex: "status",
       render: (s: string, record: Store) => (
         <Switch
+          disabled={!access.canManage}
           checked={s === "active"}
           checkedChildren="启用"
           unCheckedChildren="停用"
           onChange={async (checked) => {
+            const mutationIntent = `store:status:${record.id}:${checked}`;
             try {
-              await api.patch(`/channels/stores/${record.id}`, {
-                status: checked ? "active" : "inactive",
-              });
+              await api.patch(
+                `/channels/stores/${record.id}`,
+                {
+                  status: checked ? "active" : "inactive",
+                  expected_version: record.version,
+                },
+                channelMutationConfig(mutationIntent)
+              );
+              completeMutationIntent(mutationIntent);
               messageRef.current.success(checked ? "已启用" : "已停用");
               loadData();
             } catch (err) {
@@ -1423,18 +1711,19 @@ export default function ChannelsPage() {
     },
     {
       title: "操作",
-      render: (_, record) => (
-        <Space>
-          <Button
-            size="small"
-            type="link"
-            icon={<EditOutlined />}
-            onClick={() => openEntityModal("store", record)}
-          >
-            编辑
-          </Button>
-        </Space>
-      ),
+      render: (_, record) =>
+        access.canManage ? (
+          <Space>
+            <Button
+              size="small"
+              type="link"
+              icon={<EditOutlined />}
+              onClick={() => openEntityModal("store", record)}
+            >
+              编辑
+            </Button>
+          </Space>
+        ) : null,
     },
   ];
 
@@ -1466,9 +1755,53 @@ export default function ChannelsPage() {
       render: (value) => `${value || 0} 个`,
     },
     {
+      title: "版本/状态",
+      render: (_, record) => (
+        <Space orientation="vertical" size={0}>
+          <Text>v{record.version}</Text>
+          <Tag
+            color={
+              record.status === "active" ? STATUS_COLORS.success : undefined
+            }
+          >
+            {record.effective_to
+              ? "历史版本"
+              : record.status === "active"
+                ? "当前生效"
+                : "已归档"}
+          </Tag>
+        </Space>
+      ),
+    },
+    {
       title: "批次余量",
       dataIndex: "remaining_quantity",
       render: (value) => `剩余 ${value || 0}`,
+    },
+    {
+      title: "操作",
+      render: (_, record) =>
+        access.canAllocate &&
+        !record.effective_to &&
+        record.status === "active" ? (
+          <Space>
+            <Button
+              size="small"
+              type="link"
+              onClick={() => openAllocationReassign(record)}
+            >
+              重分配
+            </Button>
+            <Button
+              size="small"
+              type="link"
+              danger
+              onClick={() => setAllocationToArchive(record)}
+            >
+              归档
+            </Button>
+          </Space>
+        ) : null,
     },
   ];
 
@@ -1534,7 +1867,7 @@ export default function ChannelsPage() {
           <Button
             size="small"
             type="link"
-            onClick={() => setCurrentClue(record)}
+            onClick={() => void openInvestigation(record)}
           >
             查看记录
           </Button>
@@ -1543,7 +1876,7 @@ export default function ChannelsPage() {
             size="small"
             type="link"
             icon={<CheckOutlined />}
-            onClick={() => setCurrentClue(record)}
+            onClick={() => void openInvestigation(record)}
           >
             查看处理
           </Button>
@@ -1590,6 +1923,20 @@ export default function ChannelsPage() {
           record.store_id
         );
       },
+    },
+    {
+      title: "操作",
+      render: (_, record) =>
+        access.canScope ? (
+          <Button
+            size="small"
+            type="link"
+            danger
+            onClick={() => deleteScope(record)}
+          >
+            解除绑定
+          </Button>
+        ) : null,
     },
   ];
 
@@ -1664,15 +2011,17 @@ export default function ChannelsPage() {
             label: "经销商",
             children: (
               <>
-                <div className="mb-4 flex justify-end">
-                  <Button
-                    type="primary"
-                    icon={<PlusOutlined />}
-                    onClick={() => openEntityModal("distributor")}
-                  >
-                    新建经销商
-                  </Button>
-                </div>
+                {access.canManage && (
+                  <div className="mb-4 flex justify-end">
+                    <Button
+                      type="primary"
+                      icon={<PlusOutlined />}
+                      onClick={() => openEntityModal("distributor")}
+                    >
+                      新建经销商
+                    </Button>
+                  </div>
+                )}
                 <Table
                   columns={distributorColumns}
                   dataSource={distributors.items}
@@ -1692,15 +2041,17 @@ export default function ChannelsPage() {
             label: "区域",
             children: (
               <>
-                <div className="mb-4 flex justify-end">
-                  <Button
-                    type="primary"
-                    icon={<PlusOutlined />}
-                    onClick={() => openEntityModal("region")}
-                  >
-                    新建区域
-                  </Button>
-                </div>
+                {access.canManage && (
+                  <div className="mb-4 flex justify-end">
+                    <Button
+                      type="primary"
+                      icon={<PlusOutlined />}
+                      onClick={() => openEntityModal("region")}
+                    >
+                      新建区域
+                    </Button>
+                  </div>
+                )}
                 <Table
                   columns={regionColumns}
                   dataSource={regions.items}
@@ -1715,15 +2066,17 @@ export default function ChannelsPage() {
             label: "门店",
             children: (
               <>
-                <div className="mb-4 flex justify-end">
-                  <Button
-                    type="primary"
-                    icon={<PlusOutlined />}
-                    onClick={() => openEntityModal("store")}
-                  >
-                    新建门店
-                  </Button>
-                </div>
+                {access.canManage && (
+                  <div className="mb-4 flex justify-end">
+                    <Button
+                      type="primary"
+                      icon={<PlusOutlined />}
+                      onClick={() => openEntityModal("store")}
+                    >
+                      新建门店
+                    </Button>
+                  </div>
+                )}
                 <Table
                   columns={storeColumns}
                   dataSource={stores.items}
@@ -1738,15 +2091,17 @@ export default function ChannelsPage() {
             label: "账号授权",
             children: (
               <>
-                <div className="mb-4 flex justify-end">
-                  <Button
-                    type="primary"
-                    icon={<SafetyCertificateOutlined />}
-                    onClick={() => setScopeOpen(true)}
-                  >
-                    绑定入口账号
-                  </Button>
-                </div>
+                {access.canScope && (
+                  <div className="mb-4 flex justify-end">
+                    <Button
+                      type="primary"
+                      icon={<SafetyCertificateOutlined />}
+                      onClick={() => setScopeOpen(true)}
+                    >
+                      绑定入口账号
+                    </Button>
+                  </div>
+                )}
                 <Table
                   columns={scopeColumns}
                   dataSource={scopes}
@@ -1761,15 +2116,17 @@ export default function ChannelsPage() {
             label: "流向登记",
             children: (
               <>
-                <div className="mb-4 flex justify-end">
-                  <Button
-                    type="primary"
-                    icon={<PlusOutlined />}
-                    onClick={() => setAllocationOpen(true)}
-                  >
-                    新建流向
-                  </Button>
-                </div>
+                {access.canAllocate && (
+                  <div className="mb-4 flex justify-end">
+                    <Button
+                      type="primary"
+                      icon={<PlusOutlined />}
+                      onClick={() => setAllocationOpen(true)}
+                    >
+                      新建流向
+                    </Button>
+                  </div>
+                )}
                 <Table
                   columns={allocationColumns}
                   dataSource={allocations.items}
@@ -1822,11 +2179,13 @@ export default function ChannelsPage() {
               </>
             ),
           },
-        ].filter(
-          (item) =>
-            item.key !== "stores" ||
-            tenantFeatureEnabled(tenantFeatures, "channel_portal")
-        )}
+        ].filter((item) => {
+          if (item.key === "scopes" && !access.canScope) return false;
+          if (item.key === "stores") {
+            return tenantFeatureEnabled(tenantFeatures, "channel_portal");
+          }
+          return true;
+        })}
       />
 
       <Modal
@@ -1879,8 +2238,12 @@ export default function ChannelsPage() {
               <Button type="primary" onClick={continueWithRegion}>
                 创建区域
               </Button>
-              <Button onClick={continueWithScope}>绑定入口账号</Button>
-              <Button onClick={continueWithAllocation}>登记流向</Button>
+              {access.canScope && (
+                <Button onClick={continueWithScope}>绑定入口账号</Button>
+              )}
+              {access.canAllocate && (
+                <Button onClick={continueWithAllocation}>登记流向</Button>
+              )}
               <Button onClick={closeEntityModal}>完成</Button>
             </Space>
           </Space>
@@ -1912,7 +2275,9 @@ export default function ChannelsPage() {
               <Button type="primary" onClick={continueWithAllocation}>
                 登记流向
               </Button>
-              <Button onClick={continueWithRegionScope}>绑定入口账号</Button>
+              {access.canScope && (
+                <Button onClick={continueWithRegionScope}>绑定入口账号</Button>
+              )}
               <Button onClick={closeEntityModal}>查看区域统计</Button>
               <Button onClick={continueWithStore}>可选创建门店</Button>
               <Button onClick={closeEntityModal}>完成</Button>
@@ -2093,9 +2458,13 @@ export default function ChannelsPage() {
       </Modal>
 
       <Modal
-        title="新建流向登记"
+        title={allocationToReassign ? "重分配流向" : "新建流向登记"}
         open={allocationOpen}
-        onCancel={() => setAllocationOpen(false)}
+        onCancel={() => {
+          setAllocationOpen(false);
+          setAllocationToReassign(null);
+          allocationForm.resetFields();
+        }}
         onOk={() => allocationForm.submit()}
         okText="确认登记"
         cancelText="取消"
@@ -2123,6 +2492,7 @@ export default function ChannelsPage() {
             rules={[{ required: true, message: "请选择码批次" }]}
           >
             <Select
+              disabled={Boolean(allocationToReassign)}
               options={batches.map((batch) => ({
                 label: batch.batch_code,
                 value: batch.id,
@@ -2248,7 +2618,7 @@ export default function ChannelsPage() {
                 <InputNumber
                   aria-label="登记数量"
                   min={1}
-                  max={selectedBatchCapacity.remaining || undefined}
+                  max={allocationAvailableQuantity || undefined}
                   className="w-full"
                 />
               </Form.Item>
@@ -2256,18 +2626,28 @@ export default function ChannelsPage() {
                 onClick={() =>
                   allocationForm.setFieldValue(
                     "quantity",
-                    selectedBatchCapacity.remaining
+                    allocationAvailableQuantity
                   )
                 }
-                disabled={!selectedBatchCapacity.remaining}
+                disabled={!allocationAvailableQuantity}
               >
                 全部登记
               </Button>
             </Space.Compact>
           </Form.Item>
           <Text type="secondary">
-            可登记 1-{selectedBatchCapacity.remaining || 0} 个
+            可登记 1-{allocationAvailableQuantity || 0} 个
           </Text>
+          <Form.Item
+            name="reason"
+            label={allocationToReassign ? "重分配原因" : "登记原因"}
+            rules={[
+              { required: true, message: "请填写原因" },
+              { max: 200, message: "原因不能超过200个字" },
+            ]}
+          >
+            <Input.TextArea rows={2} maxLength={200} showCount />
+          </Form.Item>
           {allocationSummary && (
             <Alert
               className="mt-4"
@@ -2276,6 +2656,43 @@ export default function ChannelsPage() {
               title={allocationSummary}
             />
           )}
+        </Form>
+      </Modal>
+
+      <Modal
+        title="归档流向登记"
+        open={Boolean(allocationToArchive)}
+        onCancel={() => {
+          setAllocationToArchive(null);
+          archiveAllocationForm.resetFields();
+        }}
+        onOk={() => archiveAllocationForm.submit()}
+        okText="确认归档"
+        okButtonProps={{ danger: true }}
+        forceRender
+        destroyOnHidden
+      >
+        <Alert
+          className="mb-4"
+          type="warning"
+          showIcon
+          title="归档会保留完整历史，并释放该批次的当前登记数量。"
+        />
+        <Form
+          form={archiveAllocationForm}
+          layout="vertical"
+          onFinish={archiveAllocation}
+        >
+          <Form.Item
+            name="reason"
+            label="归档原因"
+            rules={[
+              { required: true, message: "请填写归档原因" },
+              { max: 200, message: "原因不能超过200个字" },
+            ]}
+          >
+            <Input.TextArea rows={3} maxLength={200} showCount />
+          </Form.Item>
         </Form>
       </Modal>
 
@@ -2353,7 +2770,10 @@ export default function ChannelsPage() {
       <Drawer
         title="窜货线索处理"
         open={!!currentClue}
-        onClose={() => setCurrentClue(null)}
+        onClose={() => {
+          setCurrentClue(null);
+          setInvestigation(null);
+        }}
         size="large"
       >
         {currentClue && (
@@ -2425,37 +2845,136 @@ export default function ChannelsPage() {
                 "联系渠道核实货物流向，记录处理结果。"
               }
             />
-            <Form form={resolveForm} layout="vertical" onFinish={resolveClue}>
+            {investigation && (
+              <Card title="调查时间线" size="small">
+                {investigation.history.length ? (
+                  <Timeline
+                    items={investigation.history.map((item) => ({
+                      children: (
+                        <Space orientation="vertical" size={0}>
+                          <Text>{`${item.from_status || "新线索"} → ${item.to_status}`}</Text>
+                          <Text type="secondary">
+                            {item.reason || "系统状态变更"}
+                          </Text>
+                          <Text type="secondary">
+                            {formatDateTime(item.changed_at)}
+                          </Text>
+                        </Space>
+                      ),
+                    }))}
+                  />
+                ) : (
+                  <Empty
+                    image={Empty.PRESENTED_IMAGE_SIMPLE}
+                    description="尚无状态变更"
+                  />
+                )}
+              </Card>
+            )}
+            {investigation && (
+              <Card title="调查证据" size="small">
+                <Space orientation="vertical" className="w-full" size={12}>
+                  {investigation.evidence.length ? (
+                    investigation.evidence.map((item) => (
+                      <Alert
+                        key={item.id}
+                        type="info"
+                        title={
+                          item.description ||
+                          item.file_url ||
+                          item.evidence_type
+                        }
+                        description={formatDateTime(item.uploaded_at)}
+                      />
+                    ))
+                  ) : (
+                    <Empty
+                      image={Empty.PRESENTED_IMAGE_SIMPLE}
+                      description="尚未补充证据"
+                    />
+                  )}
+                  {access.canManage && !currentClue.resolved && (
+                    <Form
+                      form={evidenceForm}
+                      layout="vertical"
+                      onFinish={addEvidence}
+                    >
+                      <Form.Item
+                        name="evidence_type"
+                        label="证据类型"
+                        rules={[{ required: true }]}
+                      >
+                        <Select
+                          options={[
+                            { label: "调货单", value: "transfer" },
+                            { label: "订单", value: "order" },
+                            { label: "物流记录", value: "logistics" },
+                            { label: "渠道说明", value: "explanation" },
+                            { label: "其他", value: "other" },
+                          ]}
+                        />
+                      </Form.Item>
+                      <Form.Item
+                        name="description"
+                        label="证据说明"
+                        rules={[{ required: true }, { max: 2000 }]}
+                      >
+                        <Input.TextArea rows={3} maxLength={2000} showCount />
+                      </Form.Item>
+                      <Button htmlType="submit">保存证据</Button>
+                    </Form>
+                  )}
+                </Space>
+              </Card>
+            )}
+            <Form
+              form={resolveForm}
+              layout="vertical"
+              onFinish={transitionClue}
+            >
               <Form.Item
                 name="resolution_action"
                 label="处理结果"
                 rules={[{ required: true, message: "请选择处理结果" }]}
               >
                 <Select
-                  disabled={currentClue.resolved}
+                  disabled={currentClue.resolved || !access.canManage}
                   options={[
                     { label: "确认窜货", value: "confirmed_diversion" },
                     { label: "误报", value: "false_positive" },
-                    { label: "已联系渠道", value: "contacted_channel" },
-                    { label: "继续跟进", value: "follow_up" },
+                    { label: "正常调货", value: "normal_transfer" },
                   ]}
                 />
               </Form.Item>
-              <Form.Item name="resolution_note" label="处理记录">
+              <Form.Item
+                name="resolution_note"
+                label="结论依据"
+                rules={[
+                  { required: true, message: "请填写结论依据" },
+                  { max: 2000 },
+                ]}
+              >
                 <Input.TextArea
                   rows={4}
                   placeholder="填写处理记录"
-                  disabled={currentClue.resolved}
+                  disabled={currentClue.resolved || !access.canManage}
                 />
               </Form.Item>
               <Button
                 type="primary"
                 htmlType="submit"
                 icon={<CheckOutlined />}
-                disabled={currentClue.resolved}
+                disabled={
+                  currentClue.resolved || !access.canManage || !investigation
+                }
               >
                 标记为已处理
               </Button>
+              {currentClue.resolved && access.canManage && investigation && (
+                <Button className="ml-2" onClick={() => void reopenClue()}>
+                  重开调查
+                </Button>
+              )}
             </Form>
           </Space>
         )}

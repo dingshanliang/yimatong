@@ -15,11 +15,17 @@ import {
   Table,
   Tag,
   InputNumber,
+  Typography,
 } from "antd";
-import { CheckOutlined, BellOutlined } from "@ant-design/icons";
+import { BellOutlined } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
 import api from "@/lib/api";
+import {
+  newExportIdempotencyKey,
+  useExportReasonDialog,
+} from "@/components/ExportReasonDialog";
 import { useAuthStore } from "@/lib/auth";
+import { channelAccessForPrincipal } from "@/lib/channel-access";
 import { STATUS_COLORS } from "@/lib/status-colors";
 import { ChannelHealthScoreHeader } from "../../_components/HealthScoreHeader";
 import { ChannelConversionRateHeader } from "../../_components/MetricHeaders";
@@ -428,40 +434,28 @@ export function ConversionCard() {
     { title: "渠道名称", dataIndex: "name", key: "name" },
     { title: "扫码 UV", dataIndex: "scan_uv", key: "scan_uv" },
     {
-      title: "预估领取",
-      dataIndex: "estimated_claims",
-      key: "estimated_claims",
+      title: "确认权益",
+      dataIndex: "confirmed_claims",
+      key: "confirmed_claims",
+      render: () => <Tag>待归因</Tag>,
     },
     {
       title: <ChannelConversionRateHeader />,
       dataIndex: "conversion_rate",
       key: "conversion_rate",
-      render: (v: number) => `${v}%`,
+      render: () => <Tag>不可用</Tag>,
     },
     {
       title: "vs 平均",
       dataIndex: "vs_average",
       key: "vs_average",
-      render: (v: number) => {
-        const color =
-          v > 0
-            ? STATUS_COLORS.success
-            : v < 0
-              ? STATUS_COLORS.error
-              : STATUS_COLORS.neutral;
-        return (
-          <Tag color={color}>
-            {v > 0 ? "+" : ""}
-            {v}%
-          </Tag>
-        );
-      },
+      render: () => <Tag>不可用</Tag>,
     },
   ];
 
   return (
     <Card
-      title="渠道转化率对比"
+      title="渠道流量与转化归因"
       size="small"
       extra={
         <Select
@@ -493,6 +487,8 @@ export function ConversionCard() {
 
 export function DiversionCard() {
   const { message } = App.useApp();
+  const user = useAuthStore((state) => state.user);
+  const access = channelAccessForPrincipal(user);
   const [items, setItems] = useState<Record<string, unknown>[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
@@ -513,18 +509,8 @@ export function DiversionCard() {
   }, [message]);
 
   useEffect(() => {
-    void fetchData();
-  }, [fetchData]);
-
-  const handleResolve = async (id: string) => {
-    try {
-      await api.put(`/risk-dashboard/diversion-clues/${id}/resolve`);
-      message.success("已标记为处理");
-      void fetchData();
-    } catch {
-      message.error("操作失败");
-    }
-  };
+    if (access.canRead) void fetchData();
+  }, [access.canRead, fetchData]);
 
   const columns: ColumnsType<Record<string, unknown>> = [
     { title: "码 ID", dataIndex: "public_id", key: "public_id" },
@@ -544,19 +530,13 @@ export function DiversionCard() {
       title: "操作",
       key: "actions",
       width: 80,
-      render: (_: unknown, record: Record<string, unknown>) =>
-        !record.resolved && (
-          <Button
-            size="small"
-            type="link"
-            icon={<CheckOutlined />}
-            onClick={() => handleResolve(String(record.id))}
-          >
-            处理
-          </Button>
-        ),
+      render: () => (
+        <Typography.Text type="secondary">请到渠道管理调查</Typography.Text>
+      ),
     },
   ];
+
+  if (!access.canRead) return null;
 
   return (
     <Card title="窜货线索汇总" size="small">
@@ -582,22 +562,30 @@ export function DiversionCard() {
 
 export function useRiskExport() {
   const { message } = App.useApp();
+  const { requestReason, exportReasonDialog } = useExportReasonDialog();
 
   const handleExport = async (dataType: string) => {
+    const reason = await requestReason();
+    if (!reason) return;
     try {
-      const exportType =
-        dataType === "alerts" ? "risk_dashboard" : "regional_dashboard";
-      const response = await api.post("/analytics/exports", null, {
-        params: { export_type: exportType, format: "xlsx" },
-        responseType: "blob",
-      });
+      const response = await api.post(
+        "/risk-dashboard/export",
+        {
+          data_type: dataType,
+          reason,
+        },
+        {
+          headers: { "Idempotency-Key": newExportIdempotencyKey() },
+          responseType: "blob",
+        }
+      );
       const blob = new Blob([response.data], {
-        type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        type: "text/csv;charset=utf-8",
       });
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `risk_${dataType}.xlsx`;
+      a.download = `risk_${dataType}.csv`;
       document.body.appendChild(a);
       a.click();
       a.remove();
@@ -608,7 +596,7 @@ export function useRiskExport() {
     }
   };
 
-  return { handleExport };
+  return { handleExport, exportReasonDialog };
 }
 
 export { useAuthStore };

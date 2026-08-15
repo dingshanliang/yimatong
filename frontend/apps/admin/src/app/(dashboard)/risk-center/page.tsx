@@ -149,11 +149,12 @@ function SummaryIndicators() {
 /* ---------- Main ---------- */
 
 export default function RiskCenterPage() {
-  const { handleExport } = useRiskExport();
+  const { handleExport, exportReasonDialog } = useRiskExport();
   const tenantId = useAuthStore((s) => s.user?.tenant_id ?? null);
 
   return (
     <div>
+      {exportReasonDialog}
       <div className="mb-4 flex items-center justify-between">
         <Title level={4} className="!mb-0">
           风控中心

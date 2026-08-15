@@ -38,6 +38,15 @@ interface RetrospectiveCardProps {
   onChanged: () => void;
 }
 
+function mutationHeaders(version: number) {
+  return {
+    headers: {
+      "Idempotency-Key": crypto.randomUUID(),
+      "If-Match": String(version),
+    },
+  };
+}
+
 function metricDisplay(metric: ScorecardMetric | undefined): {
   value: string | number;
   suffix: string;
@@ -225,7 +234,11 @@ export default function RetrospectiveCard({
       };
       const actionsPayload = buildActionsPayload(values.actions as never);
       if (actionsPayload !== null) payload.actions = actionsPayload;
-      await api.patch(`/retrospectives/${retro.id}`, payload);
+      await api.patch(
+        `/retrospectives/${retro.id}`,
+        payload,
+        mutationHeaders(retro.version)
+      );
       message.success(markCompleted ? "复盘已完成" : "已保存");
       setEditing(false);
       onChanged();
@@ -245,9 +258,11 @@ export default function RetrospectiveCard({
     try {
       const values = await notesForm.validateFields();
       setNotesSubmitting(true);
-      await api.patch(`/retrospectives/${retro.id}`, {
-        supplementary_notes: values.supplementary_notes ?? null,
-      });
+      await api.patch(
+        `/retrospectives/${retro.id}`,
+        { supplementary_notes: values.supplementary_notes ?? null },
+        mutationHeaders(retro.version)
+      );
       message.success("补充说明已追加");
       setNotesEditing(false);
       notesForm.resetFields();

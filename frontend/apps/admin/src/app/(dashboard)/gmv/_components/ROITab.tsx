@@ -4,10 +4,7 @@ import { useEffect, useState } from "react";
 import api from "@/lib/api";
 import { STATUS_COLORS } from "@/lib/status-colors";
 import {
-  OrderConversionRateHeader,
-  OrderConversionRateTitle,
-} from "../../_components/MetricHeaders";
-import {
+  Alert,
   Button,
   Card,
   DatePicker,
@@ -30,10 +27,11 @@ type ROIItem = {
   budget: number | null;
   attributed_gmv: number;
   attributed_orders: number;
-  scan_count: number;
-  scan_uv: number;
-  scan_cost: number;
-  conversion_rate: number;
+  scan_count: null;
+  scan_uv: null;
+  scan_cost: null;
+  conversion_rate: null;
+  conversion_rate_status: "unavailable_missing_campaign_eligible_cohort";
   roi: number;
   avg_confidence: number;
 };
@@ -68,37 +66,17 @@ const columns: ColumnsType<ROIItem> = [
     render: (v: number | null) => (v ? `¥${v.toLocaleString()}` : "—"),
   },
   {
-    title: "归因 GMV",
+    title: "确认归因 GMV（发生口径）",
     dataIndex: "attributed_gmv",
     key: "attributed_gmv",
     width: 110,
     render: (v: number) => <Text strong>¥{v.toLocaleString()}</Text>,
   },
   {
-    title: "归因订单",
+    title: "确认归因订单（发生口径）",
     dataIndex: "attributed_orders",
     key: "attributed_orders",
     width: 90,
-  },
-  { title: "扫码次数", dataIndex: "scan_count", key: "scan_count", width: 90 },
-  { title: "扫码 UV", dataIndex: "scan_uv", key: "scan_uv", width: 80 },
-  {
-    title: "扫码成本",
-    dataIndex: "scan_cost",
-    key: "scan_cost",
-    width: 100,
-    render: (v: number) => (v ? `¥${v.toFixed(2)}` : "—"),
-  },
-  {
-    title: <OrderConversionRateHeader />,
-    dataIndex: "conversion_rate",
-    key: "conversion_rate",
-    width: 90,
-    render: (v: number) => (
-      <Text type={v >= 5 ? "success" : v >= 1 ? "warning" : "danger"}>
-        {v}%
-      </Text>
-    ),
   },
   {
     title: "ROI",
@@ -113,17 +91,6 @@ const columns: ColumnsType<ROIItem> = [
         </Text>
       );
     },
-  },
-  {
-    title: "置信度",
-    dataIndex: "avg_confidence",
-    key: "avg_confidence",
-    width: 80,
-    render: (v: number) => (
-      <Text type={v >= 0.8 ? "success" : "warning"}>
-        {(v * 100).toFixed(0)}%
-      </Text>
-    ),
   },
 ];
 
@@ -159,9 +126,6 @@ export function ROITab() {
   const avgRoi = data.length
     ? data.reduce((s, r) => s + r.roi, 0) / data.length
     : 0;
-  const avgConversion = data.length
-    ? data.reduce((s, r) => s + r.conversion_rate, 0) / data.length
-    : 0;
 
   return (
     <div>
@@ -177,11 +141,19 @@ export function ROITab() {
         </Button>
       </div>
 
+      <Alert
+        className="mb-4"
+        type="info"
+        showIcon
+        message="活动转化率暂不可用"
+        description="当前仅展示已确认归因的活动发生金额和订单数；缺少活动级完整可归因访客群组，因此不展示扫码分母、扫码成本或转化率。"
+      />
+
       <Row gutter={[16, 16]} className="mb-4">
         <Col span={6}>
           <Card size="small">
             <Statistic
-              title="总归因 GMV"
+              title="确认归因 GMV 合计（发生口径）"
               value={totalGmv}
               prefix="¥"
               loading={loading}
@@ -191,7 +163,7 @@ export function ROITab() {
         <Col span={6}>
           <Card size="small">
             <Statistic
-              title="总归因订单"
+              title="确认归因订单合计（发生口径）"
               value={totalOrders}
               loading={loading}
             />
@@ -210,13 +182,7 @@ export function ROITab() {
         </Col>
         <Col span={6}>
           <Card size="small">
-            <Statistic
-              title={<OrderConversionRateTitle />}
-              value={avgConversion}
-              suffix="%"
-              precision={2}
-              loading={loading}
-            />
+            <Statistic title="活动转化率" value="—" loading={loading} />
           </Card>
         </Col>
       </Row>
@@ -228,7 +194,7 @@ export function ROITab() {
         loading={loading}
         size="small"
         pagination={false}
-        scroll={{ x: 1200 }}
+        scroll={{ x: 760 }}
       />
     </div>
   );

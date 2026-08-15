@@ -95,6 +95,7 @@ export interface RetrospectiveRead {
   window_end: string;
   next_review_date: string;
   status: RetrospectiveStatus;
+  version: number;
   derived_status: RetroDerivedStatus;
   goal: string | null;
   scorecard_snapshot: ScorecardSnapshot;

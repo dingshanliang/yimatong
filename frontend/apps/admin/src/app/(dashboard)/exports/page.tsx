@@ -5,6 +5,10 @@ import { Alert, App, Button, Empty, Table, Tabs, Tag, Typography } from "antd";
 import { DownloadOutlined } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
 import api from "@/lib/api";
+import {
+  newExportIdempotencyKey,
+  useExportReasonDialog,
+} from "@/components/ExportReasonDialog";
 import { useAuthStore } from "@/lib/auth";
 import { codeAccessForPrincipal } from "@/lib/code-access";
 import { useCrud } from "@/lib/hooks";
@@ -70,6 +74,7 @@ export default function ExportsPage() {
 
 function ExportsCatalog() {
   const { message } = App.useApp();
+  const { requestReason, exportReasonDialog } = useExportReasonDialog();
   const planReadOnly = useTenantPlanReadOnly();
   const {
     items: batches,
@@ -97,12 +102,15 @@ function ExportsCatalog() {
 
   const handleExport = async (batchId: string) => {
     if (planReadOnly) return;
+    const reason = await requestReason();
+    if (!reason) return;
     setExportingId(batchId);
     try {
       const response = await api.post<Blob>(
         `/code-batches/${batchId}/export`,
-        undefined,
+        { reason },
         {
+          headers: { "Idempotency-Key": newExportIdempotencyKey() },
           responseType: "blob",
         }
       );
@@ -222,6 +230,7 @@ function ExportsCatalog() {
 
   return (
     <div>
+      {exportReasonDialog}
       <Title level={4}>导出管理</Title>
       <Tabs
         defaultActiveKey="exports"

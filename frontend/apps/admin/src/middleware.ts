@@ -7,12 +7,15 @@ import {
 } from "@/lib/agency-access";
 import { catalogAccessForPrincipal } from "@/lib/catalog-access";
 import { codeAccessForPrincipal } from "@/lib/code-access";
+import { channelAccessForPrincipal } from "@/lib/channel-access";
+import { riskAccessForPrincipal } from "@/lib/risk-access";
 
 const PUBLIC_PATHS = ["/login", "/register", "/reset-password"];
 
 // Route access rules by tenant_type
 const AGENCY_ONLY_ROUTES = ["/agency"];
 const EXPORT_ADMIN_ROUTES = ["/exports"];
+const RISK_ROUTES = ["/risk", "/risk-center", "/risk-dashboard"];
 const CATALOG_ROUTES = [
   "/brands",
   "/products",
@@ -85,6 +88,34 @@ export function middleware(request: NextRequest) {
     }
 
     if (isPublicPath) return NextResponse.next();
+
+    if (
+      matchesRoute(pathname, ["/channels"]) &&
+      !channelAccessForPrincipal({
+        tenant_type: tenantType,
+        role,
+        acting_tenant_id:
+          typeof payload.acting_tenant_id === "string"
+            ? payload.acting_tenant_id
+            : null,
+      }).canRead
+    ) {
+      return NextResponse.redirect(new URL("/", request.url));
+    }
+
+    if (
+      matchesRoute(pathname, RISK_ROUTES) &&
+      !riskAccessForPrincipal({
+        tenant_type: tenantType,
+        role,
+        acting_tenant_id:
+          typeof payload.acting_tenant_id === "string"
+            ? payload.acting_tenant_id
+            : null,
+      }).canRead
+    ) {
+      return NextResponse.redirect(new URL("/", request.url));
+    }
 
     // Portal users can only access their portal + dashboard root
     if (role === "distributor") {

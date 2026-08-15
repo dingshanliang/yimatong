@@ -5,7 +5,7 @@ import { Alert, App, Button, Popconfirm, Table, Tag } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import api from "@/lib/api";
 import { useAuthStore } from "@/lib/auth";
-import { codeAccessForPrincipal } from "@/lib/code-access";
+import { riskAccessForPrincipal } from "@/lib/risk-access";
 import { STATUS_COLORS } from "@/lib/status-colors";
 import { useTenantPlanReadOnly } from "../../_components/TenantPlanReadOnly";
 
@@ -13,7 +13,7 @@ type RiskAlertRow = Record<string, unknown> & { id: string };
 
 export function AlertsTab() {
   const user = useAuthStore((state) => state.user);
-  const access = codeAccessForPrincipal(user);
+  const access = riskAccessForPrincipal(user);
 
   if (!access.canManage) {
     return <Alert type="warning" showIcon title="当前账号无权查看风险预警" />;

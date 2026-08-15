@@ -30,6 +30,16 @@ const mockPost = vi.fn();
 const mockPatch = vi.fn();
 const mockPut = vi.fn();
 const mockDelete = vi.fn();
+let mockUser: {
+  tenant_type: string;
+  role: string;
+  acting_tenant_id: string | null;
+} | null = { tenant_type: "brand", role: "admin", acting_tenant_id: null };
+
+vi.mock("@/lib/auth", () => ({
+  useAuthStore: (selector: (state: { user: typeof mockUser }) => unknown) =>
+    selector({ user: mockUser }),
+}));
 
 vi.mock("@/lib/api", () => ({
   default: {
@@ -56,6 +66,7 @@ function clickSelectOption(text: string) {
 describe("ChannelsPage", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockUser = { tenant_type: "brand", role: "admin", acting_tenant_id: null };
     mockGet.mockImplementation((url: string) => {
       if (url === "/tenants/me") {
         return Promise.resolve({
@@ -144,6 +155,13 @@ describe("ChannelsPage", () => {
           paginated([
             {
               id: "a1",
+              allocation_root_id: "a1",
+              version: 1,
+              action: "allocate",
+              status: "active",
+              target_type: "store",
+              store_id: "s1",
+              effective_to: null,
               batch_id: "b1",
               batch_code: "CB-001",
               product_name: "有机大米",
@@ -177,11 +195,26 @@ describe("ChannelsPage", () => {
               region_name: "上海区域",
               store_name: "南京东路店",
               resolved: false,
+              version: 1,
+              investigation_status: "open",
+              observation_count: 1,
               resolution_action: null,
               resolution_note: null,
             },
           ])
         );
+      }
+      if (url === "/risk-dashboard/diversion-clues/c1/investigation") {
+        return Promise.resolve({
+          data: {
+            clue_id: "c1",
+            version: 1,
+            investigation_status: "open",
+            resolved: false,
+            evidence: [],
+            history: [],
+          },
+        });
       }
       if (url === "/accounts") {
         return Promise.resolve({
@@ -196,6 +229,36 @@ describe("ChannelsPage", () => {
     mockPatch.mockResolvedValue({ data: {} });
     mockPost.mockResolvedValue({ data: {} });
     mockPut.mockResolvedValue({ data: {} });
+  });
+
+  it.each([
+    { tenant_type: "brand", role: "viewer", acting_tenant_id: null },
+    { tenant_type: "agency", role: "admin", acting_tenant_id: "brand-1" },
+  ])("denies unsupported principals before any request", async (principal) => {
+    mockUser = principal;
+    render(<ChannelsPage />);
+    expect(screen.getByText("当前账号无渠道管理权限")).toBeInTheDocument();
+    expect(mockGet).not.toHaveBeenCalled();
+  });
+
+  it("keeps operator management and allocation but makes zero scope requests", async () => {
+    mockUser = {
+      tenant_type: "brand",
+      role: "operator",
+      acting_tenant_id: null,
+    };
+    render(<ChannelsPage />);
+    await waitFor(() =>
+      expect(mockGet).toHaveBeenCalledWith("/channels/overview")
+    );
+    expect(mockGet).not.toHaveBeenCalledWith("/accounts");
+    expect(mockGet).not.toHaveBeenCalledWith("/channels/account-scopes");
+    expect(
+      screen.queryByRole("tab", { name: "账号授权" })
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /新建经销商/ })
+    ).toBeInTheDocument();
   });
 
   it("renders overview metrics and business-readable master data", async () => {
@@ -259,7 +322,10 @@ describe("ChannelsPage", () => {
     await waitFor(() =>
       expect(mockPost).toHaveBeenCalledWith(
         "/channels/distributors",
-        expect.not.objectContaining({ code: expect.anything() })
+        expect.not.objectContaining({ code: expect.anything() }),
+        expect.objectContaining({
+          headers: { "Idempotency-Key": expect.any(String) },
+        })
       )
     );
     expect(await screen.findByText("DIST-20260601-001")).toBeInTheDocument();
@@ -356,6 +422,9 @@ describe("ChannelsPage", () => {
           province: "北京",
           city: null,
           coverage_areas: [{ province: "北京", city: null }],
+        }),
+        expect.objectContaining({
+          headers: { "Idempotency-Key": expect.any(String) },
         })
       )
     );
@@ -416,6 +485,9 @@ describe("ChannelsPage", () => {
             { province: "天津", city: null },
             { province: "河北", city: null },
           ],
+        }),
+        expect.objectContaining({
+          headers: { "Idempotency-Key": expect.any(String) },
         })
       )
     );
@@ -533,6 +605,70 @@ describe("ChannelsPage", () => {
     expect(screen.getByText("剩余 700")).toBeInTheDocument();
   });
 
+  it("lets operators reassign the current allocation with CAS, reason and idempotency", async () => {
+    mockUser = {
+      tenant_type: "brand",
+      role: "operator",
+      acting_tenant_id: null,
+    };
+    render(<ChannelsPage />);
+    fireEvent.click(screen.getByRole("tab", { name: "流向登记" }));
+
+    fireEvent.click(await screen.findByRole("button", { name: "重分配" }));
+    const dialog = await screen.findByRole("dialog", { name: "重分配流向" });
+    fireEvent.change(within(dialog).getByLabelText("重分配原因"), {
+      target: { value: "配送路线更正" },
+    });
+    fireEvent.click(within(dialog).getByRole("button", { name: "确认登记" }));
+
+    await waitFor(() =>
+      expect(mockPost).toHaveBeenCalledWith(
+        "/channels/code-allocations/a1/reassign",
+        expect.objectContaining({
+          expected_version: 1,
+          target_type: "store",
+          store_id: "s1",
+          quantity: 300,
+          reason: "配送路线更正",
+        }),
+        expect.objectContaining({
+          headers: { "Idempotency-Key": expect.any(String) },
+        })
+      )
+    );
+  });
+
+  it("requires an audited reason when archiving the current allocation", async () => {
+    render(<ChannelsPage />);
+    fireEvent.click(screen.getByRole("tab", { name: "流向登记" }));
+
+    const row = (await screen.findByText("CB-001")).closest(
+      "tr"
+    ) as HTMLTableRowElement;
+    fireEvent.click(within(row).getByRole("button", { name: "归档" }));
+    const archiveTitle = await screen.findByText("归档流向登记");
+    const archiveDialog = archiveTitle.closest(
+      '[role="dialog"]'
+    ) as HTMLElement;
+    const reasonInput = within(archiveDialog).getByRole("textbox");
+    fireEvent.change(reasonInput, {
+      target: { value: "本批次流向登记作废" },
+    });
+    fireEvent.click(
+      within(archiveDialog).getByRole("button", { name: "确认归档" })
+    );
+
+    await waitFor(() =>
+      expect(mockPost).toHaveBeenCalledWith(
+        "/channels/code-allocations/a1/archive",
+        { expected_version: 1, reason: "本批次流向登记作废" },
+        expect.objectContaining({
+          headers: { "Idempotency-Key": expect.any(String) },
+        })
+      )
+    );
+  }, 10000);
+
   it("shows diversion clues with business context and resolves with action", async () => {
     render(<ChannelsPage />);
     fireEvent.click(screen.getByRole("tab", { name: "窜货线索" }));
@@ -558,12 +694,17 @@ describe("ChannelsPage", () => {
     fireEvent.click(screen.getByRole("button", { name: /标记为已处理/ }));
 
     await waitFor(() =>
-      expect(mockPut).toHaveBeenCalledWith(
-        "/risk-dashboard/diversion-clues/c1/resolve",
+      expect(mockPost).toHaveBeenCalledWith(
+        "/risk-dashboard/diversion-clues/c1/transition",
         {
-          resolution_action: "confirmed_diversion",
+          expected_version: 1,
+          to_status: "confirmed_diversion",
+          reason: "已联系经销商核实",
           resolution_note: "已联系经销商核实",
-        }
+        },
+        expect.objectContaining({
+          headers: { "Idempotency-Key": expect.any(String) },
+        })
       )
     );
   });

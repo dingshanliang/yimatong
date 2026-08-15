@@ -1,10 +1,8 @@
 "use client";
 
-import { App, Button, Table, Tag } from "antd";
-import { CheckOutlined } from "@ant-design/icons";
+import { Table, Tag, Typography } from "antd";
 import { useCrud } from "@/lib/hooks";
 import { STATUS_COLORS } from "@/lib/status-colors";
-import api from "@/lib/api";
 import type { ColumnsType } from "antd/es/table";
 
 type DiversionClue = Record<string, unknown> & {
@@ -16,21 +14,9 @@ type DiversionClue = Record<string, unknown> & {
 };
 
 export function DiversionTab() {
-  const { items, total, page, loading, setPage, mutate } =
-    useCrud<DiversionClue>("/channels/diversion-clues");
-  const { message } = App.useApp();
-
-  const handleResolve = async (id: string) => {
-    try {
-      await api.put(`/risk-dashboard/diversion-clues/${id}/resolve`, {
-        resolution_action: "confirmed",
-      });
-      message.success("已标记为处理");
-      mutate();
-    } catch {
-      message.error("操作失败");
-    }
-  };
+  const { items, total, page, loading, setPage } = useCrud<DiversionClue>(
+    "/channels/diversion-clues"
+  );
 
   const columns: ColumnsType<DiversionClue> = [
     { title: "码 ID", dataIndex: "public_id", key: "public_id" },
@@ -60,17 +46,9 @@ export function DiversionTab() {
       title: "操作",
       key: "actions",
       width: 80,
-      render: (_: unknown, record: DiversionClue) =>
-        !record.resolved && (
-          <Button
-            size="small"
-            type="link"
-            icon={<CheckOutlined />}
-            onClick={() => handleResolve(record.id)}
-          >
-            处理
-          </Button>
-        ),
+      render: () => (
+        <Typography.Text type="secondary">请到渠道管理调查</Typography.Text>
+      ),
     },
   ];
 

@@ -204,3 +204,57 @@ describe("admin middleware catalog role gate", () => {
     expect(response.status).toBe(200);
   });
 });
+
+describe("admin middleware channel role gate", () => {
+  it("allows brand admin and operator but rejects viewer direct navigation", () => {
+    expect(
+      middleware(request("/channels", { tenant_type: "brand", role: "admin" }))
+        .status
+    ).toBe(200);
+    expect(
+      middleware(
+        request("/channels", { tenant_type: "brand", role: "operator" })
+      ).status
+    ).toBe(200);
+    const viewer = middleware(
+      request("/channels", { tenant_type: "brand", role: "viewer" })
+    );
+    expect(viewer.status).toBe(307);
+    expect(viewer.headers.get("location")).toBe("http://localhost/");
+  });
+});
+
+describe("admin middleware risk role gate", () => {
+  it.each(["/risk", "/risk-center", "/risk-dashboard"])(
+    "stops viewer navigation to %s before the page can issue requests",
+    (pathname) => {
+      const response = middleware(
+        request(pathname, { tenant_type: "brand", role: "viewer" })
+      );
+      expect(response.status).toBe(307);
+      expect(response.headers.get("location")).toBe("http://localhost/");
+    }
+  );
+
+  it.each(["admin", "operator"])(
+    "allows direct brand %s risk access",
+    (role) => {
+      expect(
+        middleware(request("/risk", { tenant_type: "brand", role })).status
+      ).toBe(200);
+    }
+  );
+
+  it("rejects an acting agency even when its scope contains campaigns", () => {
+    const response = middleware(
+      request("/risk", {
+        tenant_type: "agency",
+        role: "admin",
+        acting_tenant_id: "brand-tenant",
+        scope: ["campaigns"],
+      })
+    );
+    expect(response.status).toBe(307);
+    expect(response.headers.get("location")).toBe("http://localhost/");
+  });
+});

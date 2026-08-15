@@ -6,15 +6,15 @@ import { useRouter } from "next/navigation";
 import type { ColumnsType } from "antd/es/table";
 import api from "@/lib/api";
 import { STATUS_COLORS } from "@/lib/status-colors";
-import { OrderConversionRateHeader } from "../MetricHeaders";
 
 interface RankingItem {
   campaign_id: string;
   campaign_name: string;
   campaign_status: string;
-  scan_count: number;
+  scan_count: null;
   claim_count: number;
-  conversion_rate: number;
+  conversion_rate: null;
+  conversion_status: "unavailable";
 }
 
 const STATUS_MAP: Record<string, { label: string; color: string }> = {
@@ -82,31 +82,19 @@ export default function CampaignRanking() {
       },
     },
     {
-      title: <OrderConversionRateHeader />,
-      dataIndex: "conversion_rate",
-      key: "rate",
+      title: "确认权益",
+      dataIndex: "claim_count",
+      key: "claims",
       width: 80,
-      render: (rate: number) => (
-        <span
-          style={{
-            fontWeight: 600,
-            color:
-              rate > 10
-                ? "var(--ymt-color-feedback-success)"
-                : rate > 5
-                  ? "var(--ymt-color-feedback-warning)"
-                  : "var(--ymt-color-feedback-danger)",
-          }}
-        >
-          {rate}%
-        </span>
+      render: (claims: number) => (
+        <span style={{ fontWeight: 600 }}>{claims}</span>
       ),
     },
   ];
 
   return (
     <Card
-      title="活动排行 Top 5"
+      title="活动确认结果 Top 5"
       size="small"
       style={{ height: "100%" }}
       styles={{ body: { overflow: "hidden" } }}

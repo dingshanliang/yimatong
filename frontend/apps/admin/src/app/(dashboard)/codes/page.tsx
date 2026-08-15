@@ -28,6 +28,10 @@ import {
 } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
 import api from "@/lib/api";
+import {
+  newExportIdempotencyKey,
+  useExportReasonDialog,
+} from "@/components/ExportReasonDialog";
 import { useAuthStore } from "@/lib/auth";
 import { codeAccessForPrincipal, type CodeAccess } from "@/lib/code-access";
 import { formatDate } from "@/lib/format";
@@ -184,6 +188,7 @@ export default function CodesPage() {
 
 function CodesCatalog({ access }: { access: CodeAccess }) {
   const { message, modal } = App.useApp();
+  const { requestReason, exportReasonDialog } = useExportReasonDialog();
   const planReadOnly = useTenantPlanReadOnly();
   const [products, setProducts] = useState<Product[]>([]);
   const [productsLoading, setProductsLoading] = useState(false);
@@ -397,12 +402,17 @@ function CodesCatalog({ access }: { access: CodeAccess }) {
 
   const handleExport = async (record: CodeBatch) => {
     if (planReadOnly || !access.canExport) return;
+    const reason = await requestReason();
+    if (!reason) return;
     setExportingId(record.id);
     try {
       const response = await api.post<Blob>(
         `/code-batches/${record.id}/export`,
-        null,
-        { responseType: "blob" }
+        { reason },
+        {
+          headers: { "Idempotency-Key": newExportIdempotencyKey() },
+          responseType: "blob",
+        }
       );
       const blob = response.data;
       if (!blob || blob.size === 0) {
@@ -701,6 +711,7 @@ function CodesCatalog({ access }: { access: CodeAccess }) {
 
   return (
     <div>
+      {exportReasonDialog}
       <div className="mb-4 flex items-center justify-between">
         <Title level={4} className="!mb-0">
           码管理

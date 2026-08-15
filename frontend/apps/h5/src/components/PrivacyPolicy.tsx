@@ -1,8 +1,9 @@
 "use client";
 
 import { CircleCheck } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { apiClient } from "@/lib/api";
+import { loadConsentReceiptStatus } from "@/lib/consentReceiptStatus";
 import { sanitizeHtml } from "@/lib/sanitize";
 
 interface PrivacyPolicyProps {
@@ -16,24 +17,21 @@ interface PrivacyPolicyProps {
   showActions?: boolean;
   /** 关联的 public_id（用于 consent API） */
   publicId?: string;
+  scanToken?: string;
+  purpose?: string;
 }
 
-// yimatong-zgb1.5：政策版本（合规要求"明示版本"）
-const PRIVACY_POLICY_VERSION = "2026-07-27-v1";
+interface CurrentPolicy {
+  purpose: string;
+  policy_version: string;
+  policy_digest: string;
+  policy_title: string;
+  policy_content: string;
+}
 
 /** consentId 持久化 key（按 public_id 隔离，避免跨码混淆）。 */
 function consentStorageKey(publicId?: string) {
   return `consent_id:${publicId || "anonymous"}`;
-}
-
-/** 从 localStorage 恢复 consentId（刷新后仍可撤回）。 */
-function loadConsentId(publicId?: string): string | null {
-  if (typeof window === "undefined") return null;
-  try {
-    return localStorage.getItem(consentStorageKey(publicId));
-  } catch {
-    return null;
-  }
 }
 
 function saveConsentId(publicId: string | undefined, id: string | null) {
@@ -46,6 +44,15 @@ function saveConsentId(publicId: string | undefined, id: string | null) {
     }
   } catch {
     // ignore storage errors
+  }
+}
+
+function loadConsentId(publicId: string | undefined) {
+  if (typeof window === "undefined") return null;
+  try {
+    return localStorage.getItem(consentStorageKey(publicId));
+  } catch {
+    return null;
   }
 }
 
@@ -66,39 +73,122 @@ export function PrivacyPolicy({
   onReject,
   showActions = true,
   publicId,
+  scanToken,
+  purpose = "privacy_policy",
 }: PrivacyPolicyProps) {
   const [accepted, setAccepted] = useState(false);
   const [consentId, setConsentId] = useState<string | null>(null);
   const [showRevokeConfirm, setShowRevokeConfirm] = useState(false);
+  const [policy, setPolicy] = useState<CurrentPolicy | null>(null);
+  const [error, setError] = useState("");
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const grantIdempotency = useRef(crypto.randomUUID());
+  const withdrawIdempotency = useRef(crypto.randomUUID());
+  const requestGeneration = useRef(0);
 
-  // yimatong-zgb1.5：挂载时从 localStorage 恢复 consentId，恢复"已同意"视图
   useEffect(() => {
-    const stored = loadConsentId(publicId);
-    if (stored) {
-      setConsentId(stored);
-      setAccepted(true);
-    }
-  }, [publicId]);
+    const generation = ++requestGeneration.current;
+    setPolicy(null);
+    setAccepted(false);
+    setConsentId(null);
+    setShowRevokeConfirm(false);
+    setError("");
+    grantIdempotency.current = crypto.randomUUID();
+    withdrawIdempotency.current = crypto.randomUUID();
+    if (!publicId || publicId === "preview" || !scanToken) return;
+    let active = true;
+    const load = async () => {
+      try {
+        const policyResponse = await apiClient.get("/public/consents/policy", {
+          params: { purpose },
+          headers: { Authorization: `Bearer ${scanToken}` },
+        });
+        if (!active || generation !== requestGeneration.current) return;
+        const currentPolicy = policyResponse.data as CurrentPolicy;
+        setPolicy(currentPolicy);
 
-  if (!content) return null;
+        const storedConsentId = loadConsentId(publicId);
+        if (!storedConsentId) return;
+        const receiptResult = await loadConsentReceiptStatus(
+          () =>
+            apiClient.get(`/public/consents/${storedConsentId}/status`, {
+              headers: { Authorization: `Bearer ${scanToken}` },
+            }),
+          () => active && generation === requestGeneration.current
+        );
+        if (receiptResult.kind === "cancelled") return;
+        if (receiptResult.kind === "clear") {
+          saveConsentId(publicId, null);
+          return;
+        }
+        if (receiptResult.kind === "preserve") return;
+        const receipt = receiptResult.data as {
+          consent_id?: string;
+          status?: string;
+          purpose?: string;
+          policy_version?: string;
+          policy_digest?: string;
+        };
+        if (
+          receipt.consent_id === storedConsentId &&
+          receipt.status === "granted" &&
+          receipt.purpose === currentPolicy.purpose &&
+          receipt.policy_version === currentPolicy.policy_version &&
+          receipt.policy_digest === currentPolicy.policy_digest
+        ) {
+          setConsentId(storedConsentId);
+          setAccepted(true);
+        } else {
+          saveConsentId(publicId, null);
+        }
+      } catch {
+        if (active && generation === requestGeneration.current) {
+          setError("隐私政策暂时无法加载，请稍后重试");
+        }
+      }
+    };
+    void load();
+    return () => {
+      active = false;
+    };
+  }, [publicId, purpose, scanToken]);
+
+  const visibleContent = policy?.policy_content || content;
+  if (!visibleContent) return null;
 
   const handleAccept = async () => {
-    setAccepted(true);
-    onAccept?.();
+    if (!policy || isSubmitting) return;
+    const generation = requestGeneration.current;
+    setIsSubmitting(true);
+    setError("");
     try {
-      const res = await apiClient.post("/public/consents", {
-        consent_type: "privacy",
-        public_id: publicId,
-        scenario: "privacy_policy",
-        policy_version: PRIVACY_POLICY_VERSION,
-      });
-      const id = res.data?.id || null;
+      const res = await apiClient.post(
+        "/public/consents",
+        {
+          purpose: policy.purpose,
+          policy_version: policy.policy_version,
+          policy_digest: policy.policy_digest,
+          idempotency_key: grantIdempotency.current,
+        },
+        { headers: scanToken ? { Authorization: `Bearer ${scanToken}` } : {} }
+      );
+      if (generation !== requestGeneration.current) return;
+      const id = res.data?.consent_id || null;
+      if (!id || res.data?.status !== "granted")
+        throw new Error("invalid receipt");
       setConsentId(id);
+      setAccepted(true);
+      grantIdempotency.current = crypto.randomUUID();
+      onAccept?.();
       if (id && publicId) {
         saveConsentId(publicId, id);
       }
     } catch {
-      // best-effort: consent failure does not block UX
+      if (generation === requestGeneration.current) {
+        setError("授权未保存，请重试");
+      }
+    } finally {
+      if (generation === requestGeneration.current) setIsSubmitting(false);
     }
   };
 
@@ -107,17 +197,33 @@ export function PrivacyPolicy({
   };
 
   const handleRevoke = async () => {
-    setAccepted(false);
-    setShowRevokeConfirm(false);
+    const generation = requestGeneration.current;
+    setIsSubmitting(true);
+    setError("");
     try {
       if (consentId) {
-        await apiClient.post(`/public/consents/${consentId}/withdraw`);
+        const response = await apiClient.post(
+          `/public/consents/${consentId}/withdraw`,
+          { idempotency_key: withdrawIdempotency.current },
+          { headers: scanToken ? { Authorization: `Bearer ${scanToken}` } : {} }
+        );
+        if (generation !== requestGeneration.current) return;
+        if (response.data?.status !== "withdrawn")
+          throw new Error("invalid receipt");
         // 撤回成功后清除持久化的 consentId
         saveConsentId(publicId, null);
         setConsentId(null);
+        setAccepted(false);
+        setShowRevokeConfirm(false);
+        withdrawIdempotency.current = crypto.randomUUID();
       }
     } catch {
-      // best-effort
+      if (generation === requestGeneration.current) {
+        setShowRevokeConfirm(false);
+        setError("撤回未完成，请重试");
+      }
+    } finally {
+      if (generation === requestGeneration.current) setIsSubmitting(false);
     }
   };
 
@@ -128,14 +234,14 @@ export function PrivacyPolicy({
       {/* 政策内容 */}
       <div className="mt-3 max-h-64 overflow-y-auto">
         {/* 判断是否为 HTML 富文本 */}
-        {content.trim().startsWith("<") ? (
+        {visibleContent.trim().startsWith("<") ? (
           <div
             className="prose prose-sm max-w-none text-sm text-foreground-secondary [&_a]:text-link [&_a]:underline"
-            dangerouslySetInnerHTML={{ __html: sanitizeHtml(content) }}
+            dangerouslySetInnerHTML={{ __html: sanitizeHtml(visibleContent) }}
           />
         ) : (
           <p className="whitespace-pre-wrap text-sm leading-relaxed text-foreground-secondary">
-            {content}
+            {visibleContent}
           </p>
         )}
       </div>
@@ -153,12 +259,16 @@ export function PrivacyPolicy({
           <button
             type="button"
             onClick={handleAccept}
+            disabled={!policy || isSubmitting}
             className="flex-1 rounded-xl bg-action py-2.5 text-sm font-semibold text-on-action transition-colors active:bg-action-active"
           >
-            同意（版本 {PRIVACY_POLICY_VERSION}）
+            {isSubmitting
+              ? "保存中..."
+              : `同意（版本 ${policy?.policy_version || "加载中"}）`}
           </button>
         </div>
       )}
+      {error && <p className="mt-2 text-xs text-danger">{error}</p>}
 
       {/* 已同意状态 */}
       {showActions && accepted && !showRevokeConfirm && (

@@ -24,6 +24,10 @@ import {
 import { ArrowLeftOutlined, DownloadOutlined } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
 import api from "@/lib/api";
+import {
+  newExportIdempotencyKey,
+  useExportReasonDialog,
+} from "@/components/ExportReasonDialog";
 import { useAuthStore } from "@/lib/auth";
 import { codeAccessForPrincipal, type CodeAccess } from "@/lib/code-access";
 import { formatDate, formatDateTime } from "@/lib/format";
@@ -127,6 +131,7 @@ function CodeBatchDetailWorkspace({ access }: { access: CodeAccess }) {
   const params = useParams<{ id: string }>();
   const router = useRouter();
   const { message, modal } = App.useApp();
+  const { requestReason, exportReasonDialog } = useExportReasonDialog();
   const planReadOnly = useTenantPlanReadOnly();
   const riskLifecycleEnabled = useTenantFeatureEnabled("risk_module");
   const [deliveryForm] = Form.useForm<DeliveryFormValues>();
@@ -221,12 +226,17 @@ function CodeBatchDetailWorkspace({ access }: { access: CodeAccess }) {
 
   const handleExport = async () => {
     if (!batch || planReadOnly || !access.canExport) return;
+    const reason = await requestReason();
+    if (!reason) return;
     setExporting(true);
     try {
       const response = await api.post<Blob>(
         `/code-batches/${batch.id}/export`,
-        null,
-        { responseType: "blob" }
+        { reason },
+        {
+          headers: { "Idempotency-Key": newExportIdempotencyKey() },
+          responseType: "blob",
+        }
       );
       const blob = response.data;
       if (!blob || blob.size === 0) {
@@ -369,6 +379,7 @@ function CodeBatchDetailWorkspace({ access }: { access: CodeAccess }) {
 
   return (
     <div>
+      {exportReasonDialog}
       <div className="mb-4 flex items-center gap-3">
         <Button
           icon={<ArrowLeftOutlined />}

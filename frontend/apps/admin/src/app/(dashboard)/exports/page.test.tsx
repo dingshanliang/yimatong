@@ -117,11 +117,18 @@ describe("ExportsPage access and delivery boundaries", () => {
     expect(screen.getByText("4")).toBeVisible();
     expect(screen.getAllByRole("button", { name: /导出/ })).toHaveLength(1);
     fireEvent.click(screen.getByRole("button", { name: /导出/ }));
+    fireEvent.change(await screen.findByLabelText("导出原因"), {
+      target: { value: "  交付印刷厂  " },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "准备导出" }));
     await vi.waitFor(() =>
       expect(mocks.post).toHaveBeenCalledWith(
         "/code-batches/batch-completed/export",
-        undefined,
-        { responseType: "blob" }
+        { reason: "交付印刷厂" },
+        {
+          headers: { "Idempotency-Key": expect.any(String) },
+          responseType: "blob",
+        }
       )
     );
     expect(URL.createObjectURL).toHaveBeenCalledTimes(1);

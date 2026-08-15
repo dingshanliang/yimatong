@@ -133,6 +133,41 @@ describe("ResolveContent recalled production batch", () => {
     );
   });
 
+  it("keeps traceability but removes benefit entry points when no launch release is live", () => {
+    const payload = {
+      ...recalledPayload,
+      scan_token: null,
+      code_data: {
+        ...recalledPayload.code_data,
+        status: "activated",
+        lifecycle: "active",
+        batch: {
+          batch_code: "PB-PAUSED",
+          origin: "安全暂停批次",
+          status: "active",
+        },
+      },
+      scan_info: { benefit_paused: true, paused_reason: "launch_not_live" },
+    };
+
+    const markup = renderToStaticMarkup(
+      <ResolveContent
+        mode="json"
+        publicId="PUBLIC-NO-LIVE-RELEASE"
+        jsonPayload={payload}
+        htmlContent={null}
+      />
+    );
+
+    expect(markup).toContain("当前活动尚未开放");
+    expect(markup).toContain("安全暂停批次");
+    expect(markup).not.toContain("召回后不应出现的权益");
+    expect(markup).not.toContain("立即领取");
+    expect(useScanEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ enabled: false })
+    );
+  });
+
   it("does not present product origin as an authoritative batch fact", () => {
     const payload = {
       ...recalledPayload,

@@ -27,6 +27,10 @@ import type { ColumnsType } from "antd/es/table";
 import dayjs, { type Dayjs } from "dayjs";
 import api from "@/lib/api";
 import ScanTrendChart from "@/components/ScanTrendChart";
+import {
+  newExportIdempotencyKey,
+  useExportReasonDialog,
+} from "@/components/ExportReasonDialog";
 
 const { Title } = Typography;
 const { RangePicker } = DatePicker;
@@ -62,6 +66,7 @@ export default function CampaignAnalyticsContent({
   restrictedToAnalytics?: boolean;
 }) {
   const { message } = App.useApp();
+  const { requestReason, exportReasonDialog } = useExportReasonDialog();
   const [dateRange, setDateRange] = useState<[Dayjs, Dayjs]>([
     dayjs().subtract(30, "day"),
     dayjs(),
@@ -169,18 +174,22 @@ export default function CampaignAnalyticsContent({
   );
 
   const handleExport = async () => {
+    const reason = await requestReason();
+    if (!reason) return;
     setExporting(true);
     try {
-      const params: Record<string, string> = {
+      const payload: Record<string, string> = {
         export_type: "campaign_dashboard",
         format: "xlsx",
+        reason,
       };
       if (dateRange[0] && dateRange[1]) {
-        params.start_date = dateRange[0].format("YYYY-MM-DD");
-        params.end_date = dateRange[1].format("YYYY-MM-DD");
+        payload.start_date = dateRange[0].format("YYYY-MM-DD");
+        payload.end_date = dateRange[1].format("YYYY-MM-DD");
       }
-      const response = await api.post("/analytics/exports", null, {
-        params,
+      if (selectedCampaign) payload.campaign_id = selectedCampaign;
+      const response = await api.post("/analytics/exports", payload, {
+        headers: { "Idempotency-Key": newExportIdempotencyKey() },
         responseType: "blob",
       });
       const blob = new Blob([response.data], {
@@ -221,6 +230,7 @@ export default function CampaignAnalyticsContent({
 
   return (
     <div>
+      {exportReasonDialog}
       <Title level={4}>活动看板</Title>
 
       <div className="mb-4">

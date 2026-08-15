@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { apiClient } from "@/lib/api";
 
 /** 权益类型 */
@@ -83,6 +83,12 @@ const CLAIM_BUTTON_TEXT: Record<BenefitType, string> = {
   cash_red_packet: "领取红包",
 };
 
+const IDEMPOTENT_CLAIM_CONFLICT_CODES = new Set([
+  "already_claimed",
+  "idempotent",
+  "replayed",
+]);
+
 function normalizeBenefitType(value: string): BenefitType {
   const legacyMap: Record<string, BenefitType> = {
     coupon: "platform_coupon",
@@ -98,14 +104,41 @@ function normalizeBenefitType(value: string): BenefitType {
  * 将分转换为元的显示字符串
  * 1 元 = 100 分
  */
-function fenToYuan(fen: number): string {
-  const yuan = fen / 100;
-  // 如果是整数，不显示小数点
-  if (yuan === Math.floor(yuan)) {
-    return yuan.toFixed(0);
+function claimResponse(
+  value: unknown,
+  benefitId: string
+): Record<string, unknown> | null {
+  if (typeof value !== "object" || value === null) return null;
+  const data = value as Record<string, unknown>;
+  return data.benefit_id === benefitId ? data : null;
+}
+
+function hasClaimReceipt(data: Record<string, unknown>): boolean {
+  return typeof data.claim_id === "string" && data.claim_id.trim().length > 0;
+}
+
+function safeWechatAuthUrl(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  try {
+    const url = new URL(value);
+    if (
+      url.protocol !== "https:" ||
+      url.hostname !== "open.weixin.qq.com" ||
+      url.pathname !== "/connect/oauth2/authorize"
+    ) {
+      return null;
+    }
+    return url.toString();
+  } catch {
+    return null;
   }
-  // 最多两位小数
-  return yuan.toFixed(2);
+}
+
+interface ClaimRequestGeneration {
+  generation: number;
+  benefitId: string;
+  scanToken?: string;
+  controller: AbortController;
 }
 
 /**
@@ -137,82 +170,159 @@ export function BenefitClaimCard({
     message: string;
     qrCode?: string;
   } | null>(null);
-  // 红包领取成功后的金额展示（分）
-  const [redPacketAmount, setRedPacketAmount] = useState<number | null>(null);
   const [wechatConsentGranted, setWechatConsentGranted] = useState(false);
   const lastClickRef = useRef(0);
+  const generationRef = useRef(0);
+  const activeControllerRef = useRef<AbortController | null>(null);
+  const mountedRef = useRef(true);
+  const identityRef = useRef({ benefitId, scanToken });
+  identityRef.current = { benefitId, scanToken };
 
   const normalizedBenefitType = normalizeBenefitType(benefitType);
   const style =
     BENEFIT_STYLES[normalizedBenefitType] ?? BENEFIT_STYLES.platform_coupon;
   const buttonText = CLAIM_BUTTON_TEXT[normalizedBenefitType] ?? "立即领取";
 
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      generationRef.current += 1;
+      activeControllerRef.current?.abort();
+      activeControllerRef.current = null;
+    };
+  }, []);
+
+  useEffect(() => {
+    generationRef.current += 1;
+    activeControllerRef.current?.abort();
+    activeControllerRef.current = null;
+    lastClickRef.current = 0;
+    setLoading(false);
+    setClaimed(false);
+    setDeliveryPending(false);
+    setError(null);
+    setShowPhoneModal(false);
+    setPhone("");
+    setWecomPrompt(null);
+    setWechatConsentGranted(false);
+  }, [benefitId, scanToken]);
+
+  const beginRequest = useCallback((): ClaimRequestGeneration => {
+    activeControllerRef.current?.abort();
+    const controller = new AbortController();
+    const request = {
+      generation: generationRef.current + 1,
+      benefitId,
+      scanToken,
+      controller,
+    };
+    generationRef.current = request.generation;
+    activeControllerRef.current = controller;
+    setLoading(true);
+    setError(null);
+    return request;
+  }, [benefitId, scanToken]);
+
+  const isCurrentRequest = useCallback((request: ClaimRequestGeneration) => {
+    const identity = identityRef.current;
+    return (
+      mountedRef.current &&
+      !request.controller.signal.aborted &&
+      generationRef.current === request.generation &&
+      identity.benefitId === request.benefitId &&
+      identity.scanToken === request.scanToken
+    );
+  }, []);
+
+  const finishRequest = useCallback(
+    (request: ClaimRequestGeneration) => {
+      if (!isCurrentRequest(request)) return;
+      if (activeControllerRef.current === request.controller) {
+        activeControllerRef.current = null;
+      }
+      setLoading(false);
+    },
+    [isCurrentRequest]
+  );
+
   const handleClaim = useCallback(async () => {
     if (loading || claimed) return;
     const now = Date.now();
     if (now - lastClickRef.current < 1000) return; // 1秒防抖
     lastClickRef.current = now;
-    setLoading(true);
-    setError(null);
+    const request = beginRequest();
 
     try {
-      const res = await apiClient.post("/benefit-claims", {
-        benefit_id: benefitId,
-        scan_token: scanToken,
-      });
+      const res = await apiClient.post(
+        "/benefit-claims",
+        {
+          benefit_id: benefitId,
+        },
+        {
+          signal: request.controller.signal,
+          headers: scanToken
+            ? { Authorization: `Bearer ${scanToken}` }
+            : undefined,
+        }
+      );
+      if (!isCurrentRequest(request)) return;
 
-      const data = res.data as {
-        status: string;
-        benefit_id: string;
-        amount?: number;
-        claim_id?: string;
-        auth_url_path?: string;
-      };
+      const data = claimResponse(res.data, benefitId);
+      if (!data) {
+        setError("领取结果异常，请刷新页面后重试");
+        return;
+      }
 
-      if (data.status === "pending") {
+      if (data.status === "pending" && hasClaimReceipt(data)) {
         setDeliveryPending(true);
         onClaimed?.();
         return;
       }
 
       // 现金红包需要微信 OAuth 授权
-      if (data.status === "require_wechat_auth" && data.auth_url_path) {
+      if (data.status === "require_wechat_auth") {
+        if (data.auth_url_path !== "/wechat/auth-url") {
+          setError("获取授权地址失败，请刷新页面后重试");
+          return;
+        }
         try {
           // 获取微信 OAuth 跳转地址
-          const authRes = await apiClient.post(data.auth_url_path, {
-            benefit_id: benefitId,
-            scan_token: scanToken,
-            consent_granted: true,
-          });
-          const authData = authRes.data as { auth_url: string };
-          if (authData.auth_url && /^https:\/\//i.test(authData.auth_url)) {
-            // 跳转到微信 OAuth 页面，授权后回调会重定向到结果页
-            window.location.href = authData.auth_url;
+          const authRes = await apiClient.post(
+            "/wechat/auth-url",
+            {
+              benefit_id: benefitId,
+              scan_token: scanToken,
+              consent_granted: true,
+            },
+            { signal: request.controller.signal }
+          );
+          if (!isCurrentRequest(request)) return;
+          const authData = authRes.data as { auth_url?: unknown };
+          const authUrl = safeWechatAuthUrl(authData.auth_url);
+          if (authUrl) {
+            window.location.href = authUrl;
             return;
           }
+          setError("获取授权地址失败，请刷新页面后重试");
+          return;
         } catch {
+          if (!isCurrentRequest(request)) return;
           setError("获取授权地址失败，请重试");
           return;
         }
       }
 
-      // 红包领取成功（已有 OpenID 的情况）
-      if (
-        normalizedBenefitType === "cash_red_packet" &&
-        (data.status === "success" || data.status === "delivered") &&
-        typeof data.amount === "number"
-      ) {
-        setRedPacketAmount(data.amount);
+      if (data.status === "claimed" && hasClaimReceipt(data)) {
+        setWecomPrompt(null);
         setClaimed(true);
         onClaimed?.();
         return;
       }
 
-      // 通用领取成功
-      setWecomPrompt(null);
-      setClaimed(true);
-      onClaimed?.();
+      setError("领取结果异常，请刷新页面后重试");
     } catch (err: unknown) {
+      if (!isCurrentRequest(request)) return;
       const response =
         typeof err === "object" && err !== null && "response" in err
           ? (
@@ -247,87 +357,112 @@ export function BenefitClaimCard({
         });
         return;
       }
-      // 判断幂等冲突（已领取）
       if (response?.status === 409) {
-        setClaimed(true);
+        if (
+          typeof errorCode === "string" &&
+          IDEMPOTENT_CLAIM_CONFLICT_CODES.has(errorCode)
+        ) {
+          setWecomPrompt(null);
+          setClaimed(true);
+          onClaimed?.();
+          return;
+        }
+        if (errorCode === "launch_release_not_current") {
+          setError("活动内容已更新，请重新扫码或刷新页面后领取");
+          return;
+        }
+        if (errorCode === "benefit_not_in_launch_release") {
+          setError("该权益当前不可领取，请刷新页面查看最新活动");
+          return;
+        }
+        setError("领取失败，请刷新页面后重试");
         return;
       }
       setError("领取失败，请稍后重试");
     } finally {
-      setLoading(false);
+      finishRequest(request);
     }
   }, [
     benefitId,
-    normalizedBenefitType,
     scanToken,
     loading,
     claimed,
-    wechatConsentGranted,
     onClaimed,
+    beginRequest,
+    finishRequest,
+    isCurrentRequest,
   ]);
 
   const handlePhoneSubmit = useCallback(async () => {
     if (!phone || phone.length < 11) return;
-    setLoading(true);
+    const request = beginRequest();
     try {
-      await apiClient.post("/benefit-claims", {
-        benefit_id: benefitId,
-        scan_token: scanToken,
-        phone,
-      });
-      setClaimed(true);
-      setShowPhoneModal(false);
-      onClaimed?.();
+      const response = await apiClient.post(
+        "/benefit-claims",
+        {
+          benefit_id: benefitId,
+          phone,
+        },
+        {
+          signal: request.controller.signal,
+          headers: scanToken
+            ? { Authorization: `Bearer ${scanToken}` }
+            : undefined,
+        }
+      );
+      if (!isCurrentRequest(request)) return;
+      const data = claimResponse(response.data, benefitId);
+      if (data?.status === "claimed" && hasClaimReceipt(data)) {
+        setClaimed(true);
+        setShowPhoneModal(false);
+        onClaimed?.();
+      } else if (data?.status === "pending" && hasClaimReceipt(data)) {
+        setDeliveryPending(true);
+        setShowPhoneModal(false);
+        onClaimed?.();
+      } else {
+        setError("领取结果异常，请刷新页面后重试");
+      }
     } catch {
+      if (!isCurrentRequest(request)) return;
       setError("授权失败，请重试");
     } finally {
-      setLoading(false);
+      finishRequest(request);
     }
-  }, [benefitId, scanToken, phone, onClaimed]);
+  }, [
+    benefitId,
+    scanToken,
+    phone,
+    onClaimed,
+    beginRequest,
+    finishRequest,
+    isCurrentRequest,
+  ]);
 
   const handleShowWeComGuide = useCallback(async () => {
     if (!scanToken || !benefitId) return;
-    setLoading(true);
-    setError(null);
+    const request = beginRequest();
     try {
       const { data } = await apiClient.post<{ qr_code?: string }>(
         "/integrations/wecom/contact-way",
         {
           benefit_id: benefitId,
           scan_token: scanToken,
-        }
+        },
+        { signal: request.controller.signal }
       );
+      if (!isCurrentRequest(request)) return;
       setWecomPrompt({
         message: "添加企业微信，获取活动提醒和复购服务",
         qrCode: data.qr_code,
       });
     } catch {
+      if (!isCurrentRequest(request)) return;
       setError("企业微信添加入口暂不可用，请稍后重试");
     } finally {
-      setLoading(false);
+      finishRequest(request);
     }
-  }, [benefitId, scanToken]);
-
-  // 红包领取成功时显示金额
-  if (redPacketAmount !== null) {
-    return (
-      <div className="rounded-2xl border border-danger bg-gradient-to-b from-danger-bg to-warning-bg p-5 shadow-sm">
-        <div className="text-center">
-          <span className="inline-flex h-14 w-14 items-center justify-center rounded-full bg-danger text-2xl">
-            🧧
-          </span>
-          <p className="mt-3 text-sm text-foreground-secondary">恭喜领取</p>
-          <p className="mt-1 text-3xl font-bold text-danger">
-            {fenToYuan(redPacketAmount)}
-            <span className="ml-1 text-base font-medium">元</span>
-          </p>
-          <p className="mt-2 text-xs text-foreground-tertiary">
-            红包已发放至微信零钱，请注意查收
-          </p>
-        </div>
-      </div>
-    );
-  }
+  }, [benefitId, scanToken, beginRequest, finishRequest, isCurrentRequest]);
 
   return (
     <>

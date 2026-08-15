@@ -43,11 +43,22 @@ function mockResponseForUrl(url: string) {
     return Promise.resolve({
       data: {
         steps: [
-          { name: "扫码", value: 100, rate: 100 },
-          { name: "领券", value: 25, rate: 25 },
-          { name: "核销", value: 10, rate: 10 },
+          { name: "扫码", value: 100, unit: "count", rate: null },
+          { name: "领券", value: 25, unit: "count", rate: null },
+          { name: "成交金额", value: 10, unit: "yuan", rate: null },
         ],
         period_days: 30,
+        report_type: "result_occurrence",
+        order_data_quality: "complete",
+        quarantined_order_count: 0,
+        unattributed_order_count: 0,
+        visitor_cohort: {
+          status: "collecting",
+          visitors: 80,
+          collecting_visitors: 80,
+          confirmed_order_visitors: 10,
+          confirmed_order_visitor_rate: null,
+        },
       },
     });
   }
@@ -62,9 +73,10 @@ function mockResponseForUrl(url: string) {
             campaign_id: "campaign-1",
             campaign_name: "E2E Campaign",
             campaign_status: "draft",
-            scan_count: 10,
+            scan_count: null,
             claim_count: 0,
-            conversion_rate: 0,
+            conversion_rate: null,
+            conversion_status: "unavailable",
           },
         ],
       },
@@ -89,7 +101,7 @@ function mockDashboard() {
     cumulative_scans: 100,
     cumulative_first_scans: 80,
     period_claim_count: 6,
-    period_claim_rate: 12,
+    period_claim_rate: null,
     trend: [],
     environment_breakdown: {},
     comparison: {
@@ -112,21 +124,23 @@ describe("DashboardHome", () => {
   it("renders dashboard statistics after loading", async () => {
     render(<DashboardHome />);
 
-    await waitFor(() => expect(screen.getByText("经营看板")).toBeInTheDocument());
+    await waitFor(() =>
+      expect(screen.getByText("经营看板")).toBeInTheDocument()
+    );
     expect(screen.getByText("今日扫码")).toBeInTheDocument();
     expect(screen.getByText("今日 UV")).toBeInTheDocument();
     expect(screen.getByText("累计扫码")).toBeInTheDocument();
     expect(screen.getByText("期间领券")).toBeInTheDocument();
-    expect(screen.getAllByText("10").length).toBeGreaterThanOrEqual(1);
-    expect(screen.getAllByText("100").length).toBeGreaterThanOrEqual(1);
   });
 
   it("renders the main dashboard widgets", async () => {
     render(<DashboardHome />);
 
-    await waitFor(() => expect(screen.getByText("核心转化漏斗（近 30 天）")).toBeInTheDocument());
+    await waitFor(() =>
+      expect(screen.getByTestId("conversion-summary")).toBeInTheDocument()
+    );
     expect(screen.getByText("扫码趋势")).toBeInTheDocument();
-    expect(screen.getByText("活动排行 Top 5")).toBeInTheDocument();
+    expect(screen.getByText("活动确认结果 Top 5")).toBeInTheDocument();
     expect(screen.getByText("渠道健康 Top 5")).toBeInTheDocument();
     expect(screen.getByText("最近动态")).toBeInTheDocument();
   });
@@ -141,7 +155,9 @@ describe("DashboardHome", () => {
 
     render(<DashboardHome />);
 
-    await waitFor(() => expect(screen.getByText("暂无转化数据")).toBeInTheDocument());
+    await waitFor(() =>
+      expect(screen.getByText("暂无转化数据")).toBeInTheDocument()
+    );
   });
 
   it("shows an error message when dashboard API fails", async () => {
@@ -157,17 +173,23 @@ describe("DashboardHome", () => {
 
     render(<DashboardHome />);
 
-    await waitFor(() => expect(mockMessageError).toHaveBeenCalledWith("加载工作台数据失败"));
+    await waitFor(() =>
+      expect(mockMessageError).toHaveBeenCalledWith("加载工作台数据失败")
+    );
   });
 
   it("reloads data from the refresh button", async () => {
     render(<DashboardHome />);
-    await waitFor(() => expect(screen.getByText("今日扫码")).toBeInTheDocument());
+    await waitFor(() =>
+      expect(screen.getByText("今日扫码")).toBeInTheDocument()
+    );
 
     fireEvent.click(screen.getByRole("button", { name: /刷新/ }));
 
     await waitFor(() => {
-      const dashboardCalls = mockGet.mock.calls.filter((call: unknown[]) => call[0] === "/analytics/dashboard");
+      const dashboardCalls = mockGet.mock.calls.filter(
+        (call: unknown[]) => call[0] === "/analytics/dashboard"
+      );
       expect(dashboardCalls.length).toBeGreaterThanOrEqual(2);
     });
   });

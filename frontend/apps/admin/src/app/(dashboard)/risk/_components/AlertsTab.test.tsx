@@ -71,12 +71,21 @@ describe("AlertsTab permission and plan boundaries", () => {
     mocks.post.mockResolvedValue({ data: {} });
   });
 
-  it("does not mount the alert request for a principal without code:manage", () => {
+  it("does not mount the alert request for a viewer without risk access", () => {
+    mocks.user.role = "viewer";
+
     render(<AlertsTab />);
 
     expect(screen.getByRole("alert")).toBeVisible();
     expect(mocks.useCrud).not.toHaveBeenCalled();
     expect(mocks.post).not.toHaveBeenCalled();
+  });
+
+  it("mounts the alert request for a direct brand operator with canonical risk access", async () => {
+    render(<AlertsTab />);
+
+    expect(await screen.findByText("CODE-001")).toBeVisible();
+    expect(mocks.useCrud).toHaveBeenCalledWith("/risk-alerts");
   });
 
   it("keeps alerts readable but disables resolution for an expired plan", async () => {

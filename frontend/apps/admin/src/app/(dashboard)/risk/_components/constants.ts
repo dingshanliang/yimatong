@@ -1,13 +1,12 @@
 export const RULE_TYPES = [
-  { value: "frequency", label: "频率限制" },
-  { value: "ip_diversity", label: "IP 多样性" },
-  { value: "geo_anomaly", label: "地域异常" },
-  { value: "budget", label: "预算控制" },
-  { value: "time_window", label: "时间窗口" },
+  { value: "ip_frequency", label: "IP 频率限制" },
+  { value: "phone_frequency", label: "手机号频率限制" },
+  { value: "device_frequency", label: "设备频率限制" },
+  { value: "scan_frequency", label: "扫码频率限制" },
+  { value: "cross_region", label: "跨区风险" },
 ];
 
 export const ACTIONS = [
   { value: "block", label: "拦截" },
   { value: "warn", label: "预警" },
-  { value: "flag", label: "标记" },
 ];

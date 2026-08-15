@@ -2,13 +2,14 @@
 
 import { useState } from "react";
 import { useCrud } from "@/lib/hooks";
+import api, { extractErrorMessage } from "@/lib/api";
+import type { RiskAccess } from "@/lib/risk-access";
 import {
   App,
   Button,
   Form,
   Input,
   Modal,
-  Popconfirm,
   Select,
   Space,
   Switch,
@@ -20,12 +21,14 @@ import type { ColumnsType } from "antd/es/table";
 import { STATUS_COLORS } from "@/lib/status-colors";
 import { RULE_TYPES, ACTIONS } from "./constants";
 
-type Rule = Record<string, unknown> & { id: string };
+type Rule = Record<string, unknown> & { id: string; version: number };
 
-export function RulesTab() {
+export function RulesTab({ access }: { access: RiskAccess }) {
   const { message } = App.useApp();
-  const { items, total, page, loading, setPage, create, update, remove } =
-    useCrud<Rule>("/risk-rules");
+  const { items, total, page, loading, setPage, mutate } = useCrud<Rule>(
+    "/risk-rules",
+    { enabled: access.canRead }
+  );
   const [open, setOpen] = useState(false);
   const [form] = Form.useForm();
 
@@ -34,19 +37,28 @@ export function RulesTab() {
       const config = values.config_json
         ? JSON.parse(values.config_json as string)
         : {};
-      await create({ ...values, config });
+      await api.post(
+        "/risk-rules",
+        { ...values, config, config_json: undefined },
+        { headers: { "Idempotency-Key": crypto.randomUUID() } }
+      );
+      await mutate();
       message.success("规则创建成功");
       setOpen(false);
       form.resetFields();
     } catch (e: unknown) {
-      const err = e as { response?: { data?: { detail?: string } } };
-      message.error(err.response?.data?.detail || "创建失败");
+      message.error(extractErrorMessage(e, "创建失败"));
     }
   };
 
-  const toggleEnabled = async (id: string, enabled: boolean) => {
+  const toggleEnabled = async (rule: Rule, enabled: boolean) => {
     try {
-      await update(id, { enabled });
+      await api.patch(
+        `/risk-rules/${rule.id}`,
+        { enabled, expected_version: rule.version },
+        { headers: { "Idempotency-Key": crypto.randomUUID() } }
+      );
+      await mutate();
       message.success(enabled ? "已启用" : "已禁用");
     } catch {
       message.error("操作失败");
@@ -86,40 +98,26 @@ export function RulesTab() {
       render: (v: boolean, record) => (
         <Switch
           checked={v}
-          onChange={(checked) => toggleEnabled(record.id as string, checked)}
+          disabled={!access.canManage}
+          onChange={(checked) => void toggleEnabled(record, checked)}
         />
-      ),
-    },
-    {
-      title: "操作",
-      key: "actions",
-      render: (_: unknown, record) => (
-        <Popconfirm
-          title="确认删除此规则？"
-          onConfirm={async () => {
-            await remove(record.id as string);
-            message.success("已删除");
-          }}
-        >
-          <Button size="small" danger>
-            删除
-          </Button>
-        </Popconfirm>
       ),
     },
   ];
 
   return (
     <>
-      <div className="mb-4 flex justify-end">
-        <Button
-          type="primary"
-          icon={<PlusOutlined />}
-          onClick={() => setOpen(true)}
-        >
-          新建规则
-        </Button>
-      </div>
+      {access.canManage ? (
+        <div className="mb-4 flex justify-end">
+          <Button
+            type="primary"
+            icon={<PlusOutlined />}
+            onClick={() => setOpen(true)}
+          >
+            新建规则
+          </Button>
+        </div>
+      ) : null}
       <Table
         columns={columns}
         dataSource={items}
@@ -165,7 +163,7 @@ export function RulesTab() {
           <Form.Item name="config_json" label="规则配置 (JSON)">
             <Input.TextArea
               rows={4}
-              placeholder='{"max_count": 5, "window_minutes": 60}'
+              placeholder='{"max_requests": 5, "window_minutes": 60}'
             />
           </Form.Item>
         </Form>

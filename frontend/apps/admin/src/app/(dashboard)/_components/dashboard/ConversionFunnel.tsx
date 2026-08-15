@@ -1,30 +1,35 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Card, Empty, Progress, Spin, Typography } from "antd";
+import { Alert, Card, Empty, Spin, Tag, Typography } from "antd";
 import api from "@/lib/api";
-import { STATUS_TOKEN_COLORS } from "@/lib/status-colors";
 
 const { Text, Title } = Typography;
 
 interface FunnelStep {
   name: string;
   value: number;
-  rate: number;
+  unit: "count" | "yuan";
+  rate: null;
+}
+
+interface VisitorCohort {
+  status: "collecting" | "complete";
+  visitors: number;
+  collecting_visitors: number;
+  confirmed_order_visitors: number;
+  confirmed_order_visitor_rate: number | null;
 }
 
 interface FunnelData {
   steps: FunnelStep[];
   period_days: number;
+  report_type: "result_occurrence";
+  order_data_quality: "complete" | "incomplete";
+  quarantined_order_count: number;
+  unattributed_order_count: number;
+  visitor_cohort: VisitorCohort;
 }
-
-const STEP_COLORS = [
-  STATUS_TOKEN_COLORS.processing,
-  STATUS_TOKEN_COLORS.success,
-  STATUS_TOKEN_COLORS.warning,
-  "var(--ymt-color-action-accent)",
-  STATUS_TOKEN_COLORS.error,
-];
 
 export default function ConversionFunnel() {
   const [data, setData] = useState<FunnelData | null>(null);
@@ -49,7 +54,7 @@ export default function ConversionFunnel() {
 
   if (loading) {
     return (
-      <Card title="核心转化漏斗（近 30 天）" size="small">
+      <Card title="近 30 天结果发生概览" size="small">
         <div
           className="flex items-center justify-center"
           style={{ height: 120 }}
@@ -62,9 +67,13 @@ export default function ConversionFunnel() {
 
   const steps = Array.isArray(data?.steps) ? data.steps : [];
 
-  if (steps.length === 0 || steps[0].value === 0) {
+  if (steps.length === 0 || steps.every((step) => step.value === 0)) {
     return (
-      <Card title="核心转化漏斗（近 30 天）" size="small">
+      <Card
+        title="近 30 天结果发生概览"
+        size="small"
+        data-testid="conversion-summary"
+      >
         <div
           className="flex items-center justify-center"
           style={{ minHeight: 148 }}
@@ -78,61 +87,71 @@ export default function ConversionFunnel() {
     );
   }
 
-  const maxValue = Math.max(steps[0].value, 1);
+  const cohort = data?.visitor_cohort;
 
   return (
-    <Card title="核心转化漏斗（近 30 天）" size="small">
+    <Card
+      title="近 30 天结果发生概览"
+      size="small"
+      data-testid="conversion-summary"
+      extra={<Tag color="blue">按结果发生时间</Tag>}
+    >
+      <Text type="secondary" className="mb-3 block text-xs">
+        各指标单位不同，不共用一个转化率。访客群组结果在归因窗口结束后才会定稿。
+      </Text>
+      {data?.order_data_quality === "incomplete" ? (
+        <Alert
+          className="mb-3"
+          type="warning"
+          showIcon
+          message={`订单归因待完善：${data.unattributed_order_count} 笔未归因，${data.quarantined_order_count} 笔历史数据待核验`}
+        />
+      ) : null}
       <div
         className="grid gap-3"
         style={{
           gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))",
         }}
       >
-        {steps.map((step, idx) => {
-          const progressPercent = Math.max(
-            (step.value / maxValue) * 100,
-            step.value > 0 ? 6 : 0
-          );
-          return (
-            <div
-              key={step.name}
-              className="rounded-md border px-3 py-3"
-              style={{
-                minWidth: 0,
-                background: "var(--ant-color-fill-quaternary)",
-                borderColor: "var(--ant-color-border-secondary)",
-              }}
-            >
-              <div className="mb-2 flex items-start justify-between gap-2">
-                <div className="min-w-0">
-                  <Text type="secondary" style={{ fontSize: 12 }}>
-                    {idx + 1}. {step.name}
-                  </Text>
-                  <Title level={4} className="!mb-0 !mt-1">
-                    {step.value.toLocaleString()}
-                  </Title>
-                </div>
-                <Text
-                  strong
-                  style={{
-                    color: STEP_COLORS[idx] || STATUS_TOKEN_COLORS.processing,
-                    whiteSpace: "nowrap",
-                  }}
-                >
-                  {step.rate}%
+        {steps.map((step, idx) => (
+          <div
+            key={step.name}
+            className="rounded-md border px-3 py-3"
+            style={{
+              minWidth: 0,
+              background: "var(--ant-color-fill-quaternary)",
+              borderColor: "var(--ant-color-border-secondary)",
+            }}
+          >
+            <div className="flex items-start justify-between gap-2">
+              <div className="min-w-0">
+                <Text type="secondary" style={{ fontSize: 12 }}>
+                  {idx + 1}. {step.name}
                 </Text>
+                <Title level={4} className="!mb-0 !mt-1">
+                  {step.unit === "yuan"
+                    ? `¥${step.value.toLocaleString(undefined, { maximumFractionDigits: 2 })}`
+                    : step.value.toLocaleString()}
+                </Title>
               </div>
-              <Progress
-                percent={progressPercent}
-                showInfo={false}
-                strokeColor={STEP_COLORS[idx] || STATUS_TOKEN_COLORS.processing}
-                railColor="var(--ant-color-fill-secondary)"
-                size={["100%", 8]}
-              />
             </div>
-          );
-        })}
+          </div>
+        ))}
       </div>
+      {cohort ? (
+        <div className="mt-3 flex flex-wrap items-center gap-2 text-xs">
+          <Tag color={cohort.status === "collecting" ? "gold" : "green"}>
+            访客群组：{cohort.status === "collecting" ? "归因收集中" : "已定稿"}
+          </Tag>
+          <Text type="secondary">
+            {cohort.visitors.toLocaleString()} 位访客；已确认订单访客{" "}
+            {cohort.confirmed_order_visitors.toLocaleString()} 位
+            {cohort.confirmed_order_visitor_rate === null
+              ? "（窗口结束后计算转化率）"
+              : `（${cohort.confirmed_order_visitor_rate}%）`}
+          </Text>
+        </div>
+      ) : null}
     </Card>
   );
 }

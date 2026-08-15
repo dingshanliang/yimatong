@@ -3,9 +3,11 @@
 import { useCallback, useEffect, useState } from "react";
 import {
   App,
+  Alert,
   Button,
   Card,
   Col,
+  Input,
   Modal,
   Row,
   Select,
@@ -20,6 +22,11 @@ import {
 } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
 import api from "@/lib/api";
+import { useAuthStore } from "@/lib/auth";
+import {
+  channelAccessForPrincipal,
+  type ChannelAccess,
+} from "@/lib/channel-access";
 import { formatDateTime } from "@/lib/format";
 import { STATUS_COLORS } from "@/lib/status-colors";
 
@@ -36,6 +43,7 @@ interface DiversionClue {
   severity?: string | null;
   resolved: boolean;
   resolution_action?: string | null;
+  version: number;
   created_at?: string;
 }
 
@@ -45,13 +53,22 @@ const SEVERITY_MAP: Record<string, { label: string; color: string }> = {
 };
 
 const RESOLUTION_OPTIONS = [
-  { value: "confirmed", label: "确认窜货" },
+  { value: "confirmed_diversion", label: "确认窜货" },
   { value: "false_positive", label: "误报" },
-  { value: "investigating", label: "调查中" },
+  { value: "normal_transfer", label: "正常调货" },
 ];
 
 export default function AntiDiversionPage() {
-  const { message, modal } = App.useApp();
+  const user = useAuthStore((state) => state.user);
+  const access = channelAccessForPrincipal(user);
+  if (!access.canRead) {
+    return <Alert type="warning" message="当前账号无渠道调查权限" />;
+  }
+  return <AntiDiversionWorkspace access={access} />;
+}
+
+function AntiDiversionWorkspace({ access }: { access: ChannelAccess }) {
+  const { message } = App.useApp();
 
   const [clues, setClues] = useState<DiversionClue[]>([]);
   const [total, setTotal] = useState(0);
@@ -62,7 +79,8 @@ export default function AntiDiversionPage() {
   );
   const [stats, setStats] = useState({ total: 0, unresolved: 0 });
   const [resolveModalOpen, setResolveModalOpen] = useState(false);
-  const [resolveAction, setResolveAction] = useState("confirmed");
+  const [resolveAction, setResolveAction] = useState("confirmed_diversion");
+  const [resolutionNote, setResolutionNote] = useState("");
   const [resolvingClue, setResolvingClue] = useState<DiversionClue | null>(
     null
   );
@@ -111,11 +129,18 @@ export default function AntiDiversionPage() {
     loadStats();
   }, [loadStats]);
 
-  const handleResolve = async (clueId: string, action: string) => {
+  const handleResolve = async (clue: DiversionClue, action: string) => {
     try {
-      await api.put(`/risk-dashboard/diversion-clues/${clueId}/resolve`, {
-        resolution_action: action,
-      });
+      await api.post(
+        `/risk-dashboard/diversion-clues/${clue.id}/transition`,
+        {
+          expected_version: clue.version,
+          to_status: action,
+          reason: resolutionNote,
+          resolution_note: resolutionNote,
+        },
+        { headers: { "Idempotency-Key": crypto.randomUUID() } }
+      );
       message.success("线索已处理");
       loadClues();
       loadStats();
@@ -126,7 +151,8 @@ export default function AntiDiversionPage() {
 
   const showResolveModal = (clue: DiversionClue) => {
     setResolvingClue(clue);
-    setResolveAction("confirmed");
+    setResolveAction("confirmed_diversion");
+    setResolutionNote("");
     setResolveModalOpen(true);
   };
 
@@ -212,7 +238,7 @@ export default function AntiDiversionPage() {
       key: "actions",
       width: 80,
       render: (_: unknown, record: DiversionClue) =>
-        record.resolved ? null : (
+        record.resolved || !access.canManage ? null : (
           <Button
             size="small"
             type="primary"
@@ -290,11 +316,12 @@ export default function AntiDiversionPage() {
         open={resolveModalOpen}
         onOk={() => {
           if (resolvingClue) {
-            handleResolve(resolvingClue.id, resolveAction);
+            void handleResolve(resolvingClue, resolveAction);
           }
           setResolveModalOpen(false);
         }}
         onCancel={() => setResolveModalOpen(false)}
+        okButtonProps={{ disabled: !resolutionNote.trim() }}
       >
         {resolvingClue && (
           <div className="mt-3">
@@ -317,6 +344,15 @@ export default function AntiDiversionPage() {
                 value={resolveAction}
                 onChange={(v) => setResolveAction(v)}
                 options={RESOLUTION_OPTIONS}
+              />
+              <Input.TextArea
+                className="mt-3"
+                aria-label="结论依据"
+                placeholder="填写结论依据"
+                maxLength={2000}
+                showCount
+                value={resolutionNote}
+                onChange={(event) => setResolutionNote(event.target.value)}
               />
             </div>
           </div>

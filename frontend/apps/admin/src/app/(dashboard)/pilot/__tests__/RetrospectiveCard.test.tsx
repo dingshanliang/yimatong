@@ -66,6 +66,7 @@ function retro(overrides: Partial<RetrospectiveRead> = {}): RetrospectiveRead {
     window_end: "2026-07-08T00:00:00Z",
     next_review_date: "2026-07-14",
     status: "pending",
+    version: 1,
     derived_status: "pending",
     goal: null,
     scorecard_snapshot: snapshot(),
@@ -181,6 +182,41 @@ describe("RetrospectiveCard", () => {
     // 展开后表单出现：supplementary_notes 文本域（按 placeholder 断言，稳定）
     await waitFor(() => {
       expect(screen.getByPlaceholderText("追加的补充说明")).toBeInTheDocument();
+    });
+  });
+
+  it("复盘变更绑定当前版本和一次性幂等键", async () => {
+    mockPatch.mockResolvedValue({ data: {} });
+    vi.spyOn(crypto, "randomUUID").mockReturnValue(
+      "11111111-1111-4111-8111-111111111111"
+    );
+    render(
+      <RetrospectiveCard
+        retro={retro({
+          status: "completed",
+          derived_status: "completed",
+          version: 7,
+        })}
+        onChanged={vi.fn()}
+      />
+    );
+    fireEvent.click(screen.getByText("追加补充说明"));
+    fireEvent.change(screen.getByPlaceholderText("追加的补充说明"), {
+      target: { value: "新增核验结果" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /追\s*加/ }));
+
+    await waitFor(() => {
+      expect(mockPatch).toHaveBeenCalledWith(
+        "/retrospectives/retro-1",
+        { supplementary_notes: "新增核验结果" },
+        {
+          headers: {
+            "Idempotency-Key": "11111111-1111-4111-8111-111111111111",
+            "If-Match": "7",
+          },
+        }
+      );
     });
   });
 });

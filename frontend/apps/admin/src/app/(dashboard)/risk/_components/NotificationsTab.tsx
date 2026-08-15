@@ -1,9 +1,11 @@
 "use client";
 
 import api from "@/lib/api";
+import { useAuthStore } from "@/lib/auth";
 import { useCrud } from "@/lib/hooks";
+import { riskAccessForPrincipal } from "@/lib/risk-access";
 import { STATUS_COLORS, STATUS_TOKEN_COLORS } from "@/lib/status-colors";
-import { Badge, Button, Card, Empty, List, Tag, message } from "antd";
+import { Alert, Badge, Button, Card, Empty, List, Tag, message } from "antd";
 
 type RiskNotification = Record<string, unknown> & {
   id: string;
@@ -14,16 +16,31 @@ type RiskNotification = Record<string, unknown> & {
 };
 
 export function NotificationsTab() {
+  const user = useAuthStore((state) => state.user);
+  const access = riskAccessForPrincipal(user);
+
+  if (!access.canManage) {
+    return <Alert type="warning" showIcon title="当前账号无权查看风控通知" />;
+  }
+
+  return <NotificationsWorkspace />;
+}
+
+function NotificationsWorkspace() {
   const { items, total, page, loading, setPage, mutate } =
     useCrud<RiskNotification>("/risk-notifications");
 
   const markRead = async (id: string) => {
-    await api.post(`/risk-notifications/${id}/read`);
+    await api.post(`/risk-notifications/${id}/read`, undefined, {
+      headers: { "Idempotency-Key": crypto.randomUUID() },
+    });
     mutate();
   };
 
   const markAllRead = async () => {
-    await api.post("/risk-notifications/mark-all-read");
+    await api.post("/risk-notifications/mark-all-read", undefined, {
+      headers: { "Idempotency-Key": crypto.randomUUID() },
+    });
     message.success("已全部标记为已读");
     mutate();
   };

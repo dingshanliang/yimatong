@@ -88,7 +88,11 @@ export function ResolveContent({
   const resultCode = codeData?.result as string | undefined;
   const batchBlocksBenefits =
     batchStatus === "recalled" || batchStatus === "expired";
-  const benefitsBlocked = batchBlocksBenefits || lifecycle === "frozen";
+  const launchPaused =
+    scanInfo?.benefit_paused === true &&
+    scanInfo?.paused_reason === "launch_not_live";
+  const benefitsBlocked =
+    batchBlocksBenefits || lifecycle === "frozen" || launchPaused;
 
   useScanEvent({
     publicId,
@@ -215,6 +219,27 @@ export function ResolveContent({
                 <p className="font-semibold">该码正在审核中</p>
                 <p className="mt-0.5 text-xs text-warning">
                   溯源信息可正常查看，权益领取暂时暂停。如有疑问请联系品牌客服。
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {launchPaused && (
+          <div
+            className="mx-4 mt-3 rounded-xl border border-warning bg-warning-bg p-3 text-sm text-warning"
+            role="status"
+            aria-label="当前活动尚未开放，权益暂时暂停"
+          >
+            <div className="flex items-center gap-2">
+              <TriangleAlert
+                className="h-5 w-5 shrink-0 text-warning"
+                aria-hidden="true"
+              />
+              <div>
+                <p className="font-semibold">当前活动尚未开放</p>
+                <p className="mt-0.5 text-xs text-warning">
+                  溯源信息可正常查看，权益领取暂时暂停。
                 </p>
               </div>
             </div>
@@ -533,6 +558,7 @@ function ModuleRenderer({
             <PrivacyPolicy
               content={config.privacy_content as string}
               publicId={publicId}
+              scanToken={scanToken}
             />
           )}
         </div>

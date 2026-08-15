@@ -48,6 +48,8 @@ import { useAuthStore } from "@/lib/auth";
 import { canViewRoleDirectory } from "@/lib/account-access";
 import { catalogAccessForPrincipal } from "@/lib/catalog-access";
 import { codeAccessForPrincipal } from "@/lib/code-access";
+import { channelAccessForPrincipal } from "@/lib/channel-access";
+import { riskAccessForPrincipal } from "@/lib/risk-access";
 import { resolveCampaignAccess } from "@/lib/campaign-access";
 import {
   agencyScopeMenuRoutes,
@@ -250,10 +252,20 @@ function DashboardInner({ children }: { children: React.ReactNode }) {
   ).map(({ key }) => key);
   const catalogAccess = catalogAccessForPrincipal(user);
   const codeAccess = codeAccessForPrincipal(user);
+  const channelAccess = channelAccessForPrincipal(user);
+  const riskAccess = riskAccessForPrincipal(user);
   const campaignAccess = resolveCampaignAccess(user);
 
   const channelMenuChildren: MenuProps["items"] = [
-    { key: "/channels", icon: <ShopOutlined />, label: t("menu.channels") },
+    ...(channelAccess.canRead
+      ? [
+          {
+            key: "/channels",
+            icon: <ShopOutlined />,
+            label: t("menu.channels"),
+          },
+        ]
+      : []),
     { key: "/regional", icon: <TeamOutlined />, label: t("menu.regional") },
     { key: "/accounts", icon: <TeamOutlined />, label: t("menu.accounts") },
     {
@@ -350,11 +362,15 @@ function DashboardInner({ children }: { children: React.ReactNode }) {
       icon: <LineChartOutlined />,
       label: t("menu.deep-analytics"),
     },
-    {
-      key: "/risk-center",
-      icon: <SafetyCertificateOutlined />,
-      label: t("menu.risk-center"),
-    },
+    ...(riskAccess.canRead
+      ? [
+          {
+            key: "/risk-center",
+            icon: <SafetyCertificateOutlined />,
+            label: t("menu.risk-center"),
+          },
+        ]
+      : []),
     ...(user?.tenant_type === "brand" && codeAccess.canManage
       ? [
           {
@@ -390,11 +406,15 @@ function DashboardInner({ children }: { children: React.ReactNode }) {
       icon: <SafetyCertificateOutlined />,
       label: t("menu.group.governance"),
       children: [
-        {
-          key: "/risk",
-          icon: <SafetyCertificateOutlined />,
-          label: t("menu.risk"),
-        },
+        ...(riskAccess.canRead
+          ? [
+              {
+                key: "/risk",
+                icon: <SafetyCertificateOutlined />,
+                label: t("menu.risk"),
+              },
+            ]
+          : []),
         {
           key: "/launch-checklist",
           icon: <CheckSquareOutlined />,
