@@ -15,6 +15,8 @@ export interface TenantBranding {
   radius_preset?: RadiusPreset;
   background_preset?: BackgroundPreset;
   hide_yimatong_brand?: boolean;
+  support_phone?: string;
+  support_wecom_url?: string;
 }
 
 export interface BrandSlots {
@@ -22,6 +24,8 @@ export interface BrandSlots {
   radiusPreset: RadiusPreset;
   backgroundPreset: BackgroundPreset;
   hideYimatongBrand: boolean;
+  supportPhone: string;
+  supportWecomUrl: string;
 }
 
 export interface BrandShades {
@@ -34,6 +38,13 @@ export interface BrandShades {
 
 /** 默认主色：方向 A 语义层 light color.action.primary */
 const DEFAULT_PRIMARY = "#15803d";
+
+/**
+ * 平台默认客服联系方式（三层回退的第三层）。
+ * 电话为占位号，待平台运营配置真实号码后更新；企微默认无（不渲染链接）。
+ */
+export const DEFAULT_SUPPORT_PHONE = "400-000-0000";
+export const DEFAULT_SUPPORT_WECOM_URL = "";
 
 const HEX_RE = /^#[0-9a-f]{6}$/i;
 
@@ -182,6 +193,26 @@ export function resolveBrandSlots(
     }
     return false;
   };
+  const pickPhone = (...candidates: unknown[]): string => {
+    for (const c of candidates) {
+      if (typeof c === "string") {
+        const stripped = c.replace(/[^0-9+\-*()\s]/g, "");
+        if (
+          stripped.replace(/[^0-9+]/g, "").length >= 5 &&
+          stripped.length === c.length
+        ) {
+          return c;
+        }
+      }
+    }
+    return DEFAULT_SUPPORT_PHONE;
+  };
+  const pickSecureUrl = (...candidates: unknown[]): string => {
+    for (const c of candidates) {
+      if (typeof c === "string" && /^https:\/\/[^\s]+$/i.test(c)) return c;
+    }
+    return DEFAULT_SUPPORT_WECOM_URL;
+  };
 
   return {
     primaryColor: pickColor(dsl.primary_color, tenant?.primary_color),
@@ -201,6 +232,8 @@ export function resolveBrandSlots(
       dsl.hide_yimatong_brand,
       tenant?.hide_yimatong_brand
     ),
+    supportPhone: pickPhone(tenant?.support_phone),
+    supportWecomUrl: pickSecureUrl(tenant?.support_wecom_url),
   };
 }
 

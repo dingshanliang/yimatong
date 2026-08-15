@@ -78,6 +78,8 @@ describe("BrandProfilePage", () => {
           background_preset: "tinted",
           hide_yimatong_brand: true,
           logo_url: "https://cdn.example.com/logo.png",
+          support_phone: "400-123-4567",
+          support_wecom_url: "https://work.weixin.qq.com/kabc/example",
         },
       },
     });
@@ -90,7 +92,7 @@ describe("BrandProfilePage", () => {
     expect(logoInput).toHaveValue("https://cdn.example.com/logo.png");
   });
 
-  it("点击保存时调用 PATCH /tenants/me 传入 brand_profile 五槽位", async () => {
+  it("点击保存时调用 PATCH /tenants/me 传入 brand_profile 七槽位（含客服槽位）", async () => {
     render(<BrandProfilePage />);
     await screen.findByLabelText("品牌 Logo");
     fireEvent.click(screen.getByRole("button", { name: "保存配置" }));
@@ -102,6 +104,8 @@ describe("BrandProfilePage", () => {
           background_preset: "tinted",
           hide_yimatong_brand: true,
           logo_url: "https://cdn.example.com/logo.png",
+          support_phone: "400-123-4567",
+          support_wecom_url: "https://work.weixin.qq.com/kabc/example",
         }),
       });
     });

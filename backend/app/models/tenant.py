@@ -149,7 +149,7 @@ class Tenant(Base):
     brand_profile: Mapped[dict | None] = mapped_column(
         JSON,
         nullable=True,
-        comment="租户品牌定制槽位：primary_color/radius_preset/background_preset/hide_yimatong_brand",
+        comment="租户品牌定制槽位：primary_color/radius_preset/background_preset/hide_yimatong_brand/logo_url/support_phone/support_wecom_url",
     )
     onboarding_progress: Mapped[dict | None] = mapped_column(JSON, default=dict, nullable=True)
     enabled_features: Mapped[dict | None] = mapped_column(JSON, default=dict, nullable=True)

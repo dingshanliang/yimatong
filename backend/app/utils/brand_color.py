@@ -105,11 +105,23 @@ def pick_on_primary(background: str, minimum: float = 4.5) -> str:
     return "#000000" if black_ratio >= white_ratio else "#ffffff"
 
 
+def _validate_support_phone(value: object) -> None:
+    """客服电话宽松校验：数字（可含一个前导 +）与 - * ( ) 空格分隔，长度 5-20。"""
+
+    if not isinstance(value, str):
+        raise BrandColorError("support_phone 必须是字符串")
+    stripped = "".join(ch for ch in value if ch not in " -*()")
+    digits_ok = stripped.lstrip("+").isdigit() and stripped.count("+") <= 1
+    if not digits_ok or not 5 <= len(stripped) <= 20:
+        raise BrandColorError(f"support_phone 不是有效的客服电话：{value!r}")
+
+
 def validate_brand_profile(profile: dict) -> dict:
     """校验租户级 brand_profile（写入路径调用），只保留白名单槽位
 
-    五槽位（ADR-0001）：primary_color / radius_preset / background_preset /
-    hide_yimatong_brand / logo_url。Logo 走 /files/upload，值是公开 URL。
+    七槽位：primary_color / radius_preset / background_preset /
+    hide_yimatong_brand / logo_url（ADR-0001）+ 客服槽位
+    support_phone / support_wecom_url（H5 失败页求助入口）。
     """
     allowed = {
         "primary_color",
@@ -117,6 +129,8 @@ def validate_brand_profile(profile: dict) -> dict:
         "background_preset",
         "hide_yimatong_brand",
         "logo_url",
+        "support_phone",
+        "support_wecom_url",
     }
     unknown = set(profile) - allowed
     if unknown:
@@ -133,6 +147,15 @@ def validate_brand_profile(profile: dict) -> dict:
             profile["logo_url"] = normalize_public_url(profile["logo_url"])
         except (TypeError, ValueError) as exc:
             raise BrandColorError(f"logo_url 不是安全的公开图片地址：{profile['logo_url']!r}") from exc
+    if "support_phone" in profile and profile["support_phone"] is not None:
+        _validate_support_phone(profile["support_phone"])
+    if "support_wecom_url" in profile and profile["support_wecom_url"] is not None:
+        try:
+            profile["support_wecom_url"] = normalize_public_url(profile["support_wecom_url"])
+        except (TypeError, ValueError) as exc:
+            raise BrandColorError(
+                f"support_wecom_url 不是安全的公开链接：{profile['support_wecom_url']!r}"
+            ) from exc
     return profile
 
 

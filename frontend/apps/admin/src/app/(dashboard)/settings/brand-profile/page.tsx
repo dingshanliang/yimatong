@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
+  Input,
   App,
   Button,
   Card,
@@ -29,6 +30,8 @@ interface BrandProfile {
   background_preset?: BackgroundPreset;
   hide_yimatong_brand?: boolean;
   logo_url?: string;
+  support_phone?: string;
+  support_wecom_url?: string;
 }
 
 interface TenantMe {
@@ -83,6 +86,8 @@ export default function BrandProfilePage() {
   const [saving, setSaving] = useState(false);
   const [profile, setProfile] = useState<BrandProfile>({});
   const [primaryColor, setPrimaryColor] = useState<string>(DEFAULT_PRIMARY);
+  const [supportPhone, setSupportPhone] = useState("");
+  const [supportWecomUrl, setSupportWecomUrl] = useState("");
 
   // 预览 iframe（决策 3：复用页面编辑器同款预览机制）
   // 与 PreviewPanel 一致：优先用 NEXT_PUBLIC_H5_URL，fallback 到 admin 内置 /page-preview（同源，无跨域问题）
@@ -100,6 +105,8 @@ export default function BrandProfilePage() {
       const p = data.brand_profile || {};
       setProfile(p);
       setPrimaryColor(p.primary_color || DEFAULT_PRIMARY);
+      setSupportPhone(p.support_phone || "");
+      setSupportWecomUrl(p.support_wecom_url || "");
     } catch (err) {
       message.error(extractErrorMessage(err, "加载品牌配置失败"));
     } finally {
@@ -173,6 +180,8 @@ export default function BrandProfilePage() {
       background_preset: profile.background_preset,
       hide_yimatong_brand: profile.hide_yimatong_brand,
       logo_url: profile.logo_url,
+      support_phone: supportPhone.trim() || undefined,
+      support_wecom_url: supportWecomUrl.trim() || undefined,
     };
     setSaving(true);
     try {
@@ -251,6 +260,30 @@ export default function BrandProfilePage() {
                   setProfile((p) => ({ ...p, background_preset: v }))
                 }
                 options={BACKGROUND_OPTIONS}
+              />
+            </Form.Item>
+
+            <Form.Item
+              label="客服电话"
+              extra="展示在 H5 错误/等待页求助入口，留空使用平台默认。"
+            >
+              <Input
+                value={supportPhone}
+                onChange={(e) => setSupportPhone(e.target.value)}
+                placeholder="如 400-123-4567"
+                maxLength={20}
+              />
+            </Form.Item>
+
+            <Form.Item
+              label="企微客服链接"
+              extra="https 开头的企微客服/联系我链接，留空则不展示在线客服入口。"
+            >
+              <Input
+                value={supportWecomUrl}
+                onChange={(e) => setSupportWecomUrl(e.target.value)}
+                placeholder="https://work.weixin.qq.com/…"
+                maxLength={500}
               />
             </Form.Item>
 

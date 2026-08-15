@@ -107,6 +107,14 @@ export function ResolveContent({
       Boolean(jsonPayload) && !benefitsBlocked && resultCode !== "unavailable",
   });
 
+  const tenantBranding = jsonPayload?.tenant_branding as
+    TenantBranding | undefined;
+  const pageConfig = jsonPayload?.page_config as
+    Record<string, unknown> | undefined;
+
+  // 租户品牌槽位三层回退：页面 DSL brand_theme → 租户 brand_profile → 默认主题（yimatong-z6i0.10）
+  const brandSlots = resolveBrandSlots(tenantBranding, pageConfig);
+
   if (mode === "html") {
     if (!htmlContent)
       return <FallbackError onRetry={onRetry} retrying={retrying} />;
@@ -133,7 +141,13 @@ export function ResolveContent({
   ) {
     return (
       <div className="mx-auto max-w-md min-h-screen bg-canvas">
-        <ErrorPage errorCode="revoked" publicId={publicId} showRetry={false} />
+        <ErrorPage
+          errorCode="revoked"
+          publicId={publicId}
+          showRetry={false}
+          supportPhone={brandSlots.supportPhone}
+          supportWecomUrl={brandSlots.supportWecomUrl}
+        />
       </div>
     );
   }
@@ -148,18 +162,12 @@ export function ResolveContent({
           errorCode="not_activated"
           publicId={publicId}
           showRetry={false}
+          supportPhone={brandSlots.supportPhone}
+          supportWecomUrl={brandSlots.supportWecomUrl}
         />
       </div>
     );
   }
-
-  const tenantBranding = jsonPayload.tenant_branding as
-    TenantBranding | undefined;
-  const pageConfig = jsonPayload.page_config as
-    Record<string, unknown> | undefined;
-
-  // 租户品牌槽位三层回退：页面 DSL brand_theme → 租户 brand_profile → 默认主题（yimatong-z6i0.10）
-  const brandSlots = resolveBrandSlots(tenantBranding, pageConfig);
 
   const modules = (pageConfig?.modules as ModuleConfig[] | undefined) || [];
   const enabledModules = modules.filter((m) => m.enabled !== false);

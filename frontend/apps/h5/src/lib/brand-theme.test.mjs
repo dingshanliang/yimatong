@@ -89,3 +89,29 @@ test("radius/background 预设默认值", () => {
   assert.equal(slots.radiusPreset, "md");
   assert.equal(slots.backgroundPreset, "canvas");
 });
+
+test("客服槽位回退：租户配置生效，非法值回落平台默认", () => {
+  // 无配置 → 平台默认（占位电话，无企微链接）
+  const fallback = resolveBrandSlots();
+  assert.equal(fallback.supportPhone, "400-000-0000");
+  assert.equal(fallback.supportWecomUrl, "");
+
+  // 租户配置生效
+  const tenant = resolveBrandSlots({
+    support_phone: "400-123-4567",
+    support_wecom_url: "https://work.weixin.qq.com/kabc/example",
+  });
+  assert.equal(tenant.supportPhone, "400-123-4567");
+  assert.equal(
+    tenant.supportWecomUrl,
+    "https://work.weixin.qq.com/kabc/example"
+  );
+
+  // 非法值回落：注入字符的电话与非 https 链接不透出
+  const unsafe = resolveBrandSlots({
+    support_phone: "400<script>alert(1)</script>",
+    support_wecom_url: "javascript:alert(1)",
+  });
+  assert.equal(unsafe.supportPhone, "400-000-0000");
+  assert.equal(unsafe.supportWecomUrl, "");
+});
