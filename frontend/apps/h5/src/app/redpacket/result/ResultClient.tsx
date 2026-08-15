@@ -63,6 +63,10 @@ function sleep(ms: number): Promise<void> {
 /**
  * 红包领取结果页（客户端）
  *
+ * recipient_missing（微信授权缺失/过期）是唯一可自助补救的失败分类：
+ * 失败终态已释放库存与预算（kc6d.2），回码页重新完成授权后可再次领取；
+ * 通道类失败由系统重试链兜底，不提供人工重发。
+ *
  * 领取受理后由领取卡跳转进入；按回访凭证（或 scan_token）轮询发放状态：
  * 处理中 → 成功（含金额）/ 失败（含原因分类与客服路径）。
  * 轮询封顶仍在处理时如实展示"仍在处理中 + 客服路径"，不伪装终态。
@@ -70,6 +74,7 @@ function sleep(ms: number): Promise<void> {
 export function RedPacketResultClient() {
   const searchParams = useSearchParams();
   const claimId = searchParams.get("claim_id");
+  const publicId = searchParams.get("public_id");
   const urlCredential = searchParams.get("credential");
 
   const [phase, setPhase] = useState<DisplayPhase>("resolving");
@@ -215,6 +220,16 @@ export function RedPacketResultClient() {
           如需帮助，请联系活动客服。
         </p>
       )}
+      {phase === "failed" &&
+        failureReason === "recipient_missing" &&
+        publicId && (
+          <a
+            href={`/c/${encodeURIComponent(publicId)}`}
+            className="mt-5 w-full rounded-xl bg-danger px-6 py-3 text-center text-sm font-semibold text-white active:bg-danger"
+          >
+            重新完成微信授权并领取
+          </a>
+        )}
 
       <div className="mt-auto w-full pb-10">
         <button

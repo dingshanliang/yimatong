@@ -170,3 +170,66 @@ describe("RedPacketResultClient polling", () => {
     await act(async () => root.unmount());
   });
 });
+
+describe("RedPacketResultClient auth remediation", () => {
+  let container: HTMLDivElement;
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    get.mockReset();
+    window.sessionStorage.clear();
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+    container.remove();
+  });
+
+  async function render() {
+    const root = createRoot(container);
+    await act(async () => {
+      root.render(<RedPacketResultClient />);
+    });
+    return root;
+  }
+
+  it("offers self-service re-auth for recipient_missing when public_id present", async () => {
+    searchParamsRef.current = "claim_id=claim-1&public_id=pk-9";
+    get.mockResolvedValue(
+      statusResponse("failed", { failure_reason: "recipient_missing" })
+    );
+    const root = await render();
+
+    const link = container.querySelector<HTMLAnchorElement>('a[href^="/c/"]');
+    expect(link?.getAttribute("href")).toBe("/c/pk-9");
+    expect(link?.textContent).toContain("重新完成微信授权并领取");
+    await act(async () => root.unmount());
+  });
+
+  it("offers no manual re-issue for channel failures", async () => {
+    searchParamsRef.current = "claim_id=claim-1&public_id=pk-9";
+    get.mockResolvedValue(
+      statusResponse("failed", { failure_reason: "channel_failure" })
+    );
+    const root = await render();
+
+    expect(container.querySelector('a[href^="/c/"]')).toBeNull();
+    expect(container.textContent).toContain("联系活动客服");
+    await act(async () => root.unmount());
+  });
+
+  it("hides remediation without a public_id reference", async () => {
+    searchParamsRef.current = "claim_id=claim-1";
+    get.mockResolvedValue(
+      statusResponse("failed", { failure_reason: "recipient_missing" })
+    );
+    const root = await render();
+
+    expect(container.querySelector('a[href^="/c/"]')).toBeNull();
+    await act(async () => root.unmount());
+  });
+});
