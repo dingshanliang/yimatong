@@ -50,7 +50,8 @@ export default defineConfig({
       timeout: 120_000,
     },
     {
-      command: "cd apps/h5 && PORT=3003 pnpm dev",
+      command:
+        "cd apps/h5 && NEXT_PUBLIC_API_URL=http://localhost:8000 BACKEND_URL=http://localhost:8000 PORT=3003 pnpm dev",
       url: "http://localhost:3003",
       reuseExistingServer: !process.env.CI,
       timeout: 120_000,

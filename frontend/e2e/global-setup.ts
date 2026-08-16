@@ -12,6 +12,7 @@
  */
 
 import { mkdir, writeFile } from "fs/promises";
+import { randomUUID } from "node:crypto";
 import path from "path";
 
 const API_BASE = process.env.API_BASE_URL || "http://localhost:8000";
@@ -126,11 +127,13 @@ export async function platformPost(
 export async function apiPost(
   endpoint: string,
   body: unknown,
-  token?: string
+  token?: string,
+  additionalHeaders: Record<string, string> = {}
 ): Promise<Record<string, unknown>> {
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
     Accept: "application/json",
+    ...additionalHeaders,
   };
   if (token) headers.Authorization = `Bearer ${token}`;
 
@@ -141,7 +144,11 @@ export async function apiPost(
   });
 
   const text = await res.text();
-  const json = text ? JSON.parse(text) : {};
+  const json = res.headers.get("content-type")?.includes("application/json")
+    ? text
+      ? JSON.parse(text)
+      : {}
+    : {};
   if (!res.ok) {
     throw new Error(
       `POST ${endpoint} failed: ${res.status} ${res.statusText} — ${text.slice(0, 200)}`
@@ -269,7 +276,7 @@ export default async function globalSetup() {
   // 4. Create brand
   const brandRes = await apiPost(
     "/api/v1/brands",
-    { name: "E2E Brand", industry: "food" },
+    { name: "E2E Brand" },
     token
   );
   const brandId = brandRes.id as string;
@@ -319,12 +326,29 @@ export default async function globalSetup() {
       quantity: 10,
       code_type: "single",
     },
-    token
+    token,
+    { "Idempotency-Key": randomUUID() }
   );
   const codeBatchId = batchRes.id as string;
   console.log(`[global-setup] Code batch created: ${codeBatchId}`);
 
-  // 7. Activate code batch
+  // 7. Complete the governed delivery lifecycle before activation.
+  await apiPost(
+    `/api/v1/code-batches/${codeBatchId}/export`,
+    { reason: "E2E lifecycle setup" },
+    token,
+    { "Idempotency-Key": randomUUID() }
+  );
+  await apiPost(`/api/v1/code-batches/${codeBatchId}/mark-printing`, {}, token);
+  await apiPost(
+    `/api/v1/code-batches/${codeBatchId}/mark-delivered`,
+    {
+      reason: "E2E test handoff",
+      recipient: "E2E test recipient",
+      confirm: "deliver",
+    },
+    token
+  );
   await apiPost(`/api/v1/code-batches/${codeBatchId}/activate`, {}, token);
   console.log(`[global-setup] Code batch activated`);
 
@@ -388,11 +412,7 @@ export default async function globalSetup() {
   const pageVersionId = verRes.id as string;
   console.log(`[global-setup] Page version created: ${pageVersionId}`);
 
-  // 11. Publish page version
-  await apiPost(`/api/v1/page-versions/${pageVersionId}/publish`, {}, token);
-  console.log(`[global-setup] Page version published`);
-
-  // 12. Create campaign
+  // 11. Create campaign
   const campaignRes = await apiPost(
     "/api/v1/campaigns",
     {
@@ -414,7 +434,7 @@ export default async function globalSetup() {
   const campaignId = campaignRes.id as string;
   console.log(`[global-setup] Campaign created: ${campaignId}`);
 
-  // 13. Create benefit
+  // 12. Create benefit
   const benefitRes = await apiPost(
     `/api/v1/campaigns/${campaignId}/benefits`,
     {
@@ -429,7 +449,7 @@ export default async function globalSetup() {
   const benefitId = benefitRes.id as string;
   console.log(`[global-setup] Benefit created: ${benefitId}`);
 
-  // 14. Update page DSL with actual benefit_id
+  // 13. Update the draft DSL with the actual benefit_id, then publish it.
   const updatedDsl = {
     ...dsl,
     modules: dsl.modules.map((m) =>
@@ -445,7 +465,10 @@ export default async function globalSetup() {
   );
   console.log(`[global-setup] Page DSL updated with benefit_id`);
 
-  // 15. Persist auth state + test context
+  await apiPost(`/api/v1/page-versions/${pageVersionId}/publish`, {}, token);
+  console.log(`[global-setup] Page version published`);
+
+  // 14. Persist auth state + test context
   const authDir = path.join(__dirname, ".auth");
   await mkdir(authDir, { recursive: true });
 

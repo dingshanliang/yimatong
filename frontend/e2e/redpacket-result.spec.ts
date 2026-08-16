@@ -45,12 +45,11 @@ test.describe("红包结果页（kc6d.9）", () => {
   });
 
   const resultUrl = process.env.E2E_RED_PACKET_RESULT_URL;
-  test.skip(
-    !resultUrl,
-    "完整 happy path 需要现金红包夹具：设置 E2E_RED_PACKET_RESULT_URL（领取受理后结果页 URL）后启用"
-  );
   test("扫码→领取→结果页轮询到成功终态（完整旅程）", async ({ page }) => {
-    test.skip(!resultUrl, "缺少夹具");
+    test.skip(
+      !resultUrl,
+      "完整 happy path 需要现金红包夹具：设置 E2E_RED_PACKET_RESULT_URL（领取受理后结果页 URL）后启用"
+    );
     await page.goto(resultUrl!);
 
     // 终态：到账口径（不得用"领取成功"表述到账）+ 金额（元）

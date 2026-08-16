@@ -15,6 +15,7 @@ from urllib.parse import parse_qs, urlsplit
 import asyncpg
 import pytest
 from sqlalchemy import func, select, text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.models.platform_opening import PlatformTenantOpening
@@ -102,6 +103,20 @@ async def _set_bypass(db: AsyncSession) -> None:
     await db.execute(text("SET LOCAL app.bypass_rls = 'true'"))
 
 
+async def _activate_pending_openings(factory: async_sessionmaker[AsyncSession], tenant_ids: list[uuid.UUID]) -> None:
+    async with factory() as db:
+        await _set_bypass(db)
+        for tenant_id in tenant_ids:
+            opening = (
+                await db.execute(select(PlatformTenantOpening).where(PlatformTenantOpening.tenant_id == tenant_id))
+            ).scalar_one()
+            account = await db.get(Account, opening.initial_admin_id)
+            assert account is not None
+            account.is_active = True
+            opening.initial_admin_state = "activated"
+        await db.commit()
+
+
 def _token_from_url(url: str) -> str:
     return parse_qs(urlsplit(url).query)["token"][0]
 
@@ -182,6 +197,8 @@ async def test_concurrent_activation_reissue_preserves_the_last_returned_link(mi
         assert cache.value["token_hash"] == hash_reset_token(second_token)
         assert cache.value["token_hash"] != hash_reset_token(first_token)
     finally:
+        if "receipt" in locals():
+            await _activate_pending_openings(factory, [receipt.tenant_id])
         await engine.dispose()
 
 
@@ -197,6 +214,7 @@ async def test_concurrent_same_name_openings_allocate_distinct_slugs(
     release_first_check = asyncio.Event()
     original_exists = BrandTenantInitialization._tenant_key_exists
     first_check = True
+    created_tenant_ids: list[uuid.UUID] = []
 
     async def hold_first_slug_check(self: BrandTenantInitialization, tenant_key: str) -> bool:
         nonlocal first_check
@@ -219,6 +237,16 @@ async def test_concurrent_same_name_openings_allocate_distinct_slugs(
                     opening=PlatformOpening(operator_id="platform-admin"),
                 )
             )
+            created_tenant_ids.append(receipt.tenant_id)
+            db.add(
+                PlatformTenantOpening(
+                    idempotency_key=f"slug-{unique}-{suffix}",
+                    request_hash=("a" if suffix == "one" else "b") * 64,
+                    tenant_id=receipt.tenant_id,
+                    initial_admin_id=receipt.initial_admin_id,
+                    initial_admin_state="pending_activation",
+                )
+            )
             await db.commit()
             return receipt.tenant_key
 
@@ -234,7 +262,168 @@ async def test_concurrent_same_name_openings_allocate_distinct_slugs(
         assert second_slug.startswith(f"{base_slug}-")
         assert first_slug != second_slug
     finally:
+        await _activate_pending_openings(factory, created_tenant_ids)
         await engine.dispose()
+
+
+@pytest.mark.parametrize("opening_state", [None, "cancelled", "missing_admin"])
+async def test_pending_platform_admin_requires_a_matching_opening_receipt(
+    migrated_pg_url: str, opening_state: str | None
+) -> None:
+    engine = create_async_engine(_control_url(migrated_pg_url))
+    factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    unique = uuid.uuid4().hex[:10]
+    try:
+        async with factory() as db:
+            await _set_bypass(db)
+            receipt = await BrandTenantInitialization(db).initialize(
+                InitializeBrandTenant(
+                    name=f"Rejected Pending {unique}",
+                    admin_name="Initial Admin",
+                    admin_email=f"rejected-{unique}@example.com",
+                    opening=PlatformOpening(operator_id="platform-admin"),
+                )
+            )
+            if opening_state is not None:
+                db.add(
+                    PlatformTenantOpening(
+                        idempotency_key=f"rejected-{unique}",
+                        request_hash="c" * 64,
+                        tenant_id=receipt.tenant_id,
+                        initial_admin_id=None if opening_state == "missing_admin" else receipt.initial_admin_id,
+                        initial_admin_state="pending_activation" if opening_state == "missing_admin" else opening_state,
+                    )
+                )
+            with pytest.raises(IntegrityError, match="must retain at least one active administrator"):
+                await db.commit()
+            await db.rollback()
+    finally:
+        await engine.dispose()
+
+
+async def test_pending_platform_admin_blocks_unsafe_migration_downgrade(migrated_pg_url: str) -> None:
+    engine = create_async_engine(_control_url(migrated_pg_url))
+    factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    unique = uuid.uuid4().hex[:10]
+    async with factory() as db:
+        await _set_bypass(db)
+        receipt = await BrandTenantInitialization(db).initialize(
+            InitializeBrandTenant(
+                name=f"Downgrade Guard {unique}",
+                admin_name="Initial Admin",
+                admin_email=f"downgrade-{unique}@example.com",
+                opening=PlatformOpening(operator_id="platform-admin"),
+            )
+        )
+        db.add(
+            PlatformTenantOpening(
+                idempotency_key=f"downgrade-{unique}",
+                request_hash="d" * 64,
+                tenant_id=receipt.tenant_id,
+                initial_admin_id=receipt.initial_admin_id,
+                initial_admin_state="pending_activation",
+            )
+        )
+        await db.commit()
+
+    env = os.environ.copy()
+    env["database_url"] = migrated_pg_url
+    env["migration_database_url"] = migrated_pg_url
+    blocked = subprocess.run(
+        [sys.executable, "-m", "alembic", "downgrade", "-1"],
+        cwd=BACKEND_DIR,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert blocked.returncode != 0
+    assert "cannot downgrade 929f1ea7db75" in blocked.stdout + blocked.stderr
+
+    await _activate_pending_openings(factory, [receipt.tenant_id])
+    downgraded = subprocess.run(
+        [sys.executable, "-m", "alembic", "downgrade", "-1"],
+        cwd=BACKEND_DIR,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert downgraded.returncode == 0, downgraded.stdout + downgraded.stderr
+    upgraded = subprocess.run(
+        [sys.executable, "-m", "alembic", "upgrade", "head"],
+        cwd=BACKEND_DIR,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert upgraded.returncode == 0, upgraded.stdout + upgraded.stderr
+    await engine.dispose()
+
+
+async def test_concurrent_platform_opening_blocks_stale_migration_downgrade(migrated_pg_url: str) -> None:
+    engine = create_async_engine(_control_url(migrated_pg_url))
+    factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    unique = uuid.uuid4().hex[:10]
+    env = os.environ.copy()
+    env["database_url"] = migrated_pg_url
+    env["migration_database_url"] = migrated_pg_url
+
+    async with factory() as db:
+        await _set_bypass(db)
+        receipt = await BrandTenantInitialization(db).initialize(
+            InitializeBrandTenant(
+                name=f"Concurrent Downgrade {unique}",
+                admin_name="Initial Admin",
+                admin_email=f"concurrent-downgrade-{unique}@example.com",
+                opening=PlatformOpening(operator_id="platform-admin"),
+            )
+        )
+        db.add(
+            PlatformTenantOpening(
+                idempotency_key=f"concurrent-downgrade-{unique}",
+                request_hash="e" * 64,
+                tenant_id=receipt.tenant_id,
+                initial_admin_id=receipt.initial_admin_id,
+                initial_admin_state="pending_activation",
+            )
+        )
+        await db.flush()
+
+        downgrade = await asyncio.create_subprocess_exec(
+            sys.executable,
+            "-m",
+            "alembic",
+            "downgrade",
+            "-1",
+            cwd=BACKEND_DIR,
+            env=env,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        observer = await asyncpg.connect(migrated_pg_url.replace("postgresql+asyncpg://", "postgresql://"))
+        try:
+            downgrade_waits_for_opening = False
+            for _ in range(100):
+                downgrade_waits_for_opening = await observer.fetchval(
+                    "SELECT EXISTS (SELECT 1 FROM pg_stat_activity "
+                    "WHERE datname=current_database() AND pid<>pg_backend_pid() "
+                    "AND query LIKE 'LOCK TABLE public.accounts%' AND wait_event_type='Lock')"
+                )
+                if downgrade_waits_for_opening:
+                    break
+                await asyncio.sleep(0.05)
+            assert downgrade_waits_for_opening
+            await db.commit()
+        finally:
+            await observer.close()
+
+    stdout, stderr = await asyncio.wait_for(downgrade.communicate(), timeout=10)
+    assert downgrade.returncode != 0
+    assert b"cannot downgrade 929f1ea7db75" in stdout + stderr
+    await _activate_pending_openings(factory, [receipt.tenant_id])
+    await engine.dispose()
 
 
 async def test_seed_cli_uses_control_only_for_bootstrap_then_tenant_scoped_runtime(migrated_pg_url: str) -> None:

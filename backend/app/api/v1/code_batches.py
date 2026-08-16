@@ -293,6 +293,7 @@ async def export_code_batch_endpoint(
             checksum_sha256=checksum,
             file_size_bytes=len(artifact.content),
             resource_id=batch_id,
+            code_batch_id=batch_id,
         )
         await db.commit()
     except ValueError as exc:
