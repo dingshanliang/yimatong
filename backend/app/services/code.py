@@ -796,6 +796,8 @@ async def list_code_items(
     tenant_id: uuid.UUID,
     code_batch_id: uuid.UUID | None = None,
     status: str | None = None,
+    public_id: str | None = None,
+    public_id_prefix: str | None = None,
     page: int = 1,
     page_size: int = 20,
 ) -> tuple[list[CodeItem], int]:
@@ -808,6 +810,12 @@ async def list_code_items(
     if status:
         stmt = stmt.where(CodeItem.status == status)
         count_stmt = count_stmt.where(CodeItem.status == status)
+    if public_id:
+        stmt = stmt.where(CodeItem.public_id == public_id)
+        count_stmt = count_stmt.where(CodeItem.public_id == public_id)
+    if public_id_prefix:
+        stmt = stmt.where(CodeItem.public_id.startswith(public_id_prefix, autoescape=True))
+        count_stmt = count_stmt.where(CodeItem.public_id.startswith(public_id_prefix, autoescape=True))
 
     total_result = await db.execute(count_stmt)
     total = total_result.scalar() or 0

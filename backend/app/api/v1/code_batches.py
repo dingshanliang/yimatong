@@ -574,17 +574,24 @@ async def bind_code_item_endpoint(
 async def list_code_items_endpoint(
     code_batch_id: uuid.UUID | None = Query(None),
     status: str | None = Query(None),
+    public_id: str | None = Query(None, min_length=1, max_length=20),
+    public_id_prefix: str | None = Query(None, min_length=1, max_length=20),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
     _: None = Depends(require_permission("code:export")),
 ):
+    if public_id is not None and public_id_prefix is not None:
+        raise BadRequestError("public_id and public_id_prefix cannot be used together")
+
     items, total = await list_code_items(
         db,
         tenant_id,
         code_batch_id=code_batch_id,
         status=status,
+        public_id=public_id,
+        public_id_prefix=public_id_prefix,
         page=page,
         page_size=page_size,
     )

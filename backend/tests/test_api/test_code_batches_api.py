@@ -555,6 +555,104 @@ class TestCodeItemsAPI:
         assert page1.json()["total"] == 10
 
     @pytest.mark.anyio
+    async def test_query_code_items_by_exact_public_id_and_prefix(self, client: AsyncClient, auth_setup):
+        _, headers, product_id, sku_id, production_batch_id = auth_setup
+        batch = await client.post(
+            "/api/v1/code-batches",
+            json={
+                "product_id": product_id,
+                "sku_id": sku_id,
+                "production_batch_id": production_batch_id,
+                "quantity": 5,
+            },
+            headers=headers,
+        )
+        batch_id = batch.json()["id"]
+        items = await client.get(
+            "/api/v1/code-items",
+            params={"code_batch_id": batch_id, "page_size": 5},
+            headers=headers,
+        )
+        target = items.json()["items"][0]["public_id"]
+
+        exact = await client.get(
+            "/api/v1/code-items",
+            params={"public_id": target},
+            headers=headers,
+        )
+        assert exact.status_code == 200
+        assert exact.json()["total"] == 1
+        assert [item["public_id"] for item in exact.json()["items"]] == [target]
+
+        prefix_value = target[:4]
+        prefix = await client.get(
+            "/api/v1/code-items",
+            params={"public_id_prefix": prefix_value, "page_size": 100},
+            headers=headers,
+        )
+        assert prefix.status_code == 200
+        assert prefix.json()["total"] >= 1
+        assert all(item["public_id"].startswith(prefix_value) for item in prefix.json()["items"])
+
+    @pytest.mark.anyio
+    async def test_public_id_query_is_tenant_scoped(self, client: AsyncClient, auth_setup):
+        _, owner_headers, product_id, sku_id, production_batch_id = auth_setup
+        batch = await client.post(
+            "/api/v1/code-batches",
+            json={
+                "product_id": product_id,
+                "sku_id": sku_id,
+                "production_batch_id": production_batch_id,
+                "quantity": 1,
+            },
+            headers=owner_headers,
+        )
+        items = await client.get(
+            "/api/v1/code-items",
+            params={"code_batch_id": batch.json()["id"], "page_size": 1},
+            headers=owner_headers,
+        )
+        foreign_public_id = items.json()["items"][0]["public_id"]
+
+        tenant = await client.post(
+            "/api/v1/tenants",
+            json={
+                "name": "其他码查询租户",
+                "admin_email": "other-code-query@test.com",
+                "admin_name": "Other Admin",
+                "admin_password": "Pass1234",
+            },
+            headers=_platform_admin_headers(),
+        )
+        other_token = create_access_token(
+            tenant.json()["id"],
+            "00000000-0000-0000-0000-000000000002",
+            "admin",
+        )
+        other_headers = {"Authorization": f"Bearer {other_token}"}
+
+        for params in (
+            {"public_id": foreign_public_id},
+            {"public_id_prefix": foreign_public_id[:4]},
+        ):
+            response = await client.get("/api/v1/code-items", params=params, headers=other_headers)
+            assert response.status_code == 200
+            assert response.json()["total"] == 0
+            assert response.json()["items"] == []
+
+    @pytest.mark.anyio
+    async def test_rejects_combined_exact_and_prefix_public_id_queries(self, client: AsyncClient, auth_setup):
+        _, headers, *_ = auth_setup
+
+        response = await client.get(
+            "/api/v1/code-items",
+            params={"public_id": "ABC", "public_id_prefix": "A"},
+            headers=headers,
+        )
+
+        assert response.status_code == 400
+
+    @pytest.mark.anyio
     async def test_get_single_code_item(self, client: AsyncClient, auth_setup):
         _, headers, product_id, sku_id, production_batch_id = auth_setup
 

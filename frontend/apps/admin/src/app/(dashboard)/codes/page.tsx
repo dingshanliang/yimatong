@@ -61,6 +61,14 @@ interface CodeBatch {
   production_origin?: string;
 }
 
+interface CodeLookupResult {
+  id: string;
+  code_batch_id: string;
+  public_id: string;
+  status: string;
+  code_type: string;
+}
+
 interface Product {
   id: string;
   name: string;
@@ -109,6 +117,11 @@ const STATUS_MAP: Record<string, { label: string; color: string }> = {
   printing: { label: "印刷中", color: STATUS_COLORS.warning },
   delivered: { label: "已交付", color: STATUS_COLORS.warning },
   activated: { label: "已激活", color: STATUS_COLORS.processing },
+  created: { label: "已创建", color: STATUS_COLORS.neutral },
+  bound: { label: "已绑定", color: STATUS_COLORS.success },
+  expired: { label: "已过期", color: STATUS_COLORS.neutral },
+  revoked: { label: "已撤销", color: STATUS_COLORS.error },
+  frozen: { label: "已冻结", color: STATUS_COLORS.warning },
   failed: { label: "失败", color: STATUS_COLORS.error },
 };
 
@@ -223,6 +236,15 @@ function CodesCatalog({ access }: { access: CodeAccess }) {
   >(undefined);
   const [importingId, setImportingId] = useState<string | undefined>(undefined);
   const [deliveryTarget, setDeliveryTarget] = useState<CodeBatch | null>(null);
+  const [lookupMode, setLookupMode] = useState<"exact" | "prefix">("exact");
+  const [lookupInput, setLookupInput] = useState("");
+  const [lookupQuery, setLookupQuery] = useState("");
+  const [lookupItems, setLookupItems] = useState<CodeLookupResult[]>([]);
+  const [lookupTotal, setLookupTotal] = useState(0);
+  const [lookupPage, setLookupPage] = useState(1);
+  const [lookupLoading, setLookupLoading] = useState(false);
+  const [lookupError, setLookupError] = useState(false);
+  const [lookupAttempted, setLookupAttempted] = useState(false);
   const createAttempt = useRef<
     { idempotencyKey: string; payload: string } | undefined
   >(undefined);
@@ -244,6 +266,38 @@ function CodesCatalog({ access }: { access: CodeAccess }) {
     mutate,
     retry,
   } = useCrud<CodeBatch>("/code-batches");
+
+  const runCodeLookup = async (
+    query: string,
+    targetPage = 1,
+    mode = lookupMode
+  ) => {
+    const normalized = query.trim();
+    if (!normalized || !access.canExport) return;
+
+    setLookupAttempted(true);
+    setLookupLoading(true);
+    setLookupError(false);
+    setLookupQuery(normalized);
+    try {
+      const { data } = await api.get("/code-items", {
+        params: {
+          [mode === "exact" ? "public_id" : "public_id_prefix"]: normalized,
+          page: targetPage,
+          page_size: 20,
+        },
+      });
+      setLookupItems(data.items || []);
+      setLookupTotal(data.total || 0);
+      setLookupPage(targetPage);
+    } catch {
+      setLookupItems([]);
+      setLookupTotal(0);
+      setLookupError(true);
+    } finally {
+      setLookupLoading(false);
+    }
+  };
 
   const fetchProducts = useCallback(async () => {
     setProductsLoading(true);
@@ -709,6 +763,39 @@ function CodesCatalog({ access }: { access: CodeAccess }) {
     },
   ];
 
+  const lookupColumns: ColumnsType<CodeLookupResult> = [
+    {
+      title: "公开码 / 码号",
+      dataIndex: "public_id",
+      key: "public_id",
+    },
+    {
+      title: "状态",
+      dataIndex: "status",
+      key: "status",
+      render: (value: string) => {
+        const info = STATUS_MAP[value] || {
+          label: value,
+          color: STATUS_COLORS.neutral,
+        };
+        return <Tag color={info.color}>{info.label}</Tag>;
+      },
+    },
+    {
+      title: "码类型",
+      dataIndex: "code_type",
+      key: "code_type",
+      render: (value: string) => getCodeTypeLabel(value),
+    },
+    {
+      title: "下一步",
+      key: "actions",
+      render: (_value: unknown, record: CodeLookupResult) => (
+        <Link href={`/codes/${record.code_batch_id}`}>查看所属码批次</Link>
+      ),
+    },
+  ];
+
   return (
     <div>
       {exportReasonDialog}
@@ -740,6 +827,83 @@ function CodesCatalog({ access }: { access: CodeAccess }) {
           ) : null}
         </Space>
       </div>
+      {access.canExport ? (
+        <div className="mb-4">
+          <Space wrap align="center">
+            <Typography.Text strong>按码号定位</Typography.Text>
+            <Select
+              aria-label="查询方式"
+              value={lookupMode}
+              style={{ width: 112 }}
+              options={[
+                { value: "exact", label: "精确查询" },
+                { value: "prefix", label: "前缀查询" },
+              ]}
+              onChange={(value) => {
+                setLookupMode(value);
+                setLookupAttempted(false);
+                setLookupError(false);
+                setLookupItems([]);
+                setLookupTotal(0);
+              }}
+            />
+            <Input.Search
+              aria-label="公开码或码号"
+              value={lookupInput}
+              onChange={(event) => setLookupInput(event.target.value)}
+              onSearch={(value) => void runCodeLookup(value)}
+              placeholder={
+                lookupMode === "exact"
+                  ? "输入完整公开码或码号"
+                  : "输入公开码或码号前缀"
+              }
+              enterButton="查询"
+              loading={lookupLoading}
+              maxLength={20}
+              style={{ width: 380, maxWidth: "100%" }}
+            />
+          </Space>
+          {lookupError ? (
+            <Alert
+              className="mt-3"
+              type="error"
+              showIcon
+              title="码号查询失败"
+              action={
+                <Button
+                  size="small"
+                  onClick={() => void runCodeLookup(lookupQuery, lookupPage)}
+                >
+                  重试
+                </Button>
+              }
+            />
+          ) : lookupAttempted ? (
+            <div className="mt-3">
+              <Typography.Text type="secondary">
+                {lookupMode === "exact" ? "精确查询" : "前缀查询"}结果
+              </Typography.Text>
+              <Table<CodeLookupResult>
+                className="mt-2"
+                rowKey="id"
+                size="small"
+                columns={lookupColumns}
+                dataSource={lookupItems}
+                loading={lookupLoading}
+                locale={{ emptyText: "未找到当前租户下的匹配码" }}
+                pagination={{
+                  current: lookupPage,
+                  total: lookupTotal,
+                  pageSize: 20,
+                  onChange: (nextPage) =>
+                    void runCodeLookup(lookupQuery, nextPage),
+                  showTotal: (count) => `共 ${count} 个匹配码`,
+                }}
+              />
+            </div>
+          ) : null}
+        </div>
+      ) : null}
       {error ? (
         <Alert
           type="error"

@@ -110,7 +110,80 @@ describe("CodesPage access and delivery boundaries", () => {
     expect(
       screen.queryByRole("button", { name: /标记印刷中/ })
     ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("searchbox", { name: "公开码或码号" })
+    ).not.toBeInTheDocument();
     expect(mocks.post).not.toHaveBeenCalled();
+  });
+
+  it("queries an exact public code and links the operator to its owning batch", async () => {
+    mocks.user.role = "admin";
+    mocks.get.mockImplementation(async (path: string) => {
+      if (path === "/code-items") {
+        return {
+          data: {
+            items: [
+              {
+                id: "code-item-1",
+                code_batch_id: "code-batch-1",
+                public_id: "CODE-001",
+                status: "frozen",
+                code_type: "single",
+              },
+            ],
+            total: 1,
+          },
+        };
+      }
+      return { data: { items: [] } };
+    });
+
+    render(<CodesPage />);
+
+    fireEvent.change(screen.getByRole("searchbox", { name: "公开码或码号" }), {
+      target: { value: "  CODE-001  " },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /查\s*询/ }));
+
+    await vi.waitFor(() =>
+      expect(mocks.get).toHaveBeenCalledWith("/code-items", {
+        params: {
+          public_id: "CODE-001",
+          page: 1,
+          page_size: 20,
+        },
+      })
+    );
+    expect(await screen.findByText("CODE-001")).toBeVisible();
+    expect(screen.getByText("已冻结")).toBeVisible();
+    expect(
+      screen.getByRole("link", { name: "查看所属码批次" })
+    ).toHaveAttribute("href", "/codes/code-batch-1");
+  });
+
+  it("switches to public-code prefix lookup without sending the exact filter", async () => {
+    mocks.user.role = "operator";
+    mocks.get.mockResolvedValue({ data: { items: [], total: 0 } });
+
+    render(<CodesPage />);
+
+    fireEvent.mouseDown(screen.getByRole("combobox", { name: "查询方式" }));
+    fireEvent.click(await screen.findByText("前缀查询"));
+    fireEvent.change(screen.getByRole("searchbox", { name: "公开码或码号" }), {
+      target: { value: "CODE" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /查\s*询/ }));
+
+    await vi.waitFor(() =>
+      expect(mocks.get).toHaveBeenCalledWith("/code-items", {
+        params: {
+          public_id_prefix: "CODE",
+          page: 1,
+          page_size: 20,
+        },
+      })
+    );
+    expect(await screen.findByText("未找到当前租户下的匹配码")).toBeVisible();
   });
 
   it("keeps the catalog readable while an expired plan disables every code mutation", async () => {
