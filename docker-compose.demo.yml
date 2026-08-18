@@ -1,0 +1,304 @@
+# 一码通 demo 环境栈（szxc-02 共享主机专用布局）。
+#
+# 与 docker-compose.dev.yml 的区别：
+# - 面向服务器演示：独立 PostgreSQL/Redis/MinIO（不发布端口）、强随机密钥、
+#   对外只发布 9120-9123 四个端口（9000-10000 约束内，避开 9000/9002/9109/9110/9173）。
+# - 前端沿用 Next dev server 形态：纯 HTTP 演示无法满足生产构建的
+#   HTTPS 强制校验（H5 CSP 构建期抛错、后端 production 模式强制 HTTPS + Cookie Secure），
+#   与 GTS demo 在同一主机的运行形态一致。
+# - 密钥只存在于部署目录的 .env，不进仓库。
+#
+# 布局约定（由 scripts/deploy-demo.sh 创建）：
+#   <deploy_dir>/docker-compose.yml   <- 本文件
+#   <deploy_dir>/.env                 <- 服务器上生成，含全部密钥
+#   <deploy_dir>/init_runtime_role.sql<- 服务器上生成，随机口令的受限角色
+#   <deploy_dir>/current/             <- rsync 的仓库源码
+#
+# 一次性步骤（tools profile，由部署脚本调用，不随 up 启动）：
+#   docker compose --profile tools run --rm minio-init
+#   docker compose --profile tools run --rm db-roles
+#   docker compose run --rm -e database_url="$CONTROL_DB_URL" backend uv run alembic upgrade head
+#   docker compose run --rm backend uv run python -m app.cli all   # 首次或需要重置演示数据
+name: yimatong-demo
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: yimatong-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: yimatong
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: yimatong
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U yimatong -d yimatong"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: yimatong-redis
+    restart: unless-stopped
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  minio:
+    image: minio/minio:latest
+    container_name: yimatong-minio
+    restart: unless-stopped
+    command: server /data
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  minio-init:
+    image: minio/mc:latest
+    profiles: [tools]
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set local http://minio:9000 $${MINIO_ROOT_USER} $${MINIO_ROOT_PASSWORD};
+      mc mb local/yimatong --ignore-existing;
+      mc mb local/yimatong-uploads --ignore-existing;
+      mc mb local/yimatong-exports --ignore-existing;
+      echo 'MinIO buckets created';
+      "
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+
+  # 迁移前引导：只创建受限角色（迁移中的 REVOKE/GRANT 语句直接引用角色，要求其已存在）。
+  # 授权仍由迁移后重放的 db-roles（仓库审计版脚本）完成。
+  db-roles-bootstrap:
+    image: postgres:16-alpine
+    profiles: [tools]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PGPASSWORD: ${POSTGRES_PASSWORD}
+    entrypoint: >
+      /bin/sh -c "
+      psql -h postgres -U yimatong -d yimatong -v ON_ERROR_STOP=1 -f /sql/init_role_bootstrap.sql &&
+      echo 'Runtime roles bootstrapped'
+      "
+    volumes:
+      - ./init_role_bootstrap.sql:/sql/init_role_bootstrap.sql:ro
+
+  # 以随机口令重放仓库审计版封闭权限集 + RLS 白名单授权（迁移后执行）。
+  # SQL 文件由部署脚本在服务器上生成，绝不使用仓库内 dev/CI 版本。
+  db-roles:
+    image: postgres:16-alpine
+    profiles: [tools]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PGPASSWORD: ${POSTGRES_PASSWORD}
+    entrypoint: >
+      /bin/sh -c "
+      psql -h postgres -U yimatong -d yimatong -v ON_ERROR_STOP=1 -f /sql/init_runtime_role.sql &&
+      echo 'Runtime roles ready'
+      "
+    volumes:
+      - ./init_runtime_role.sql:/sql/init_runtime_role.sql:ro
+
+  backend:
+    build:
+      context: ./current/backend
+      dockerfile: Dockerfile
+      args:
+        UV_INDEX_URL: ${UV_INDEX_URL:-}
+    image: yimatong/backend:demo
+    container_name: yimatong-backend
+    restart: unless-stopped
+    ports:
+      - "${DEMO_API_PORT:-9123}:8000"
+    environment:
+      database_url: postgresql+asyncpg://yimatong_app:${APP_DB_PASSWORD}@postgres:5432/yimatong
+      control_database_url: postgresql+asyncpg://yimatong:${POSTGRES_PASSWORD}@postgres:5432/yimatong
+      redis_url: redis://redis:6379/0
+      # 运行期 uv run 若需增量同步，走国内源，避免默认 pypi.org 慢连接
+      UV_INDEX_URL: ${UV_INDEX_URL:-}
+      ENVIRONMENT: ${ENVIRONMENT}
+      secret_key: ${SECRET_KEY}
+      AES_MASTER_KEY_V1: ${AES_MASTER_KEY_V1}
+      HMAC_PEPPER: ${HMAC_PEPPER}
+      ip_hash_secret: ${IP_HASH_SECRET}
+      base_url: ${PUBLIC_API_URL}
+      admin_public_url: ${ADMIN_PUBLIC_URL}
+      h5_public_url: ${H5_PUBLIC_URL}
+      platform_public_url: ${PLATFORM_PUBLIC_URL}
+      cors_origins: ${CORS_ORIGINS}
+      platform_admin_email: ${PLATFORM_ADMIN_EMAIL}
+      platform_admin_password_hash: ${PLATFORM_ADMIN_PASSWORD_HASH}
+      minio_endpoint: http://minio:9000
+      minio_access_key: ${MINIO_ROOT_USER}
+      minio_secret_key: ${MINIO_ROOT_PASSWORD}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 20s
+    volumes:
+      - ./current/backend:/app
+      - backend_venv:/app/.venv
+
+  worker:
+    image: yimatong/backend:demo
+    container_name: yimatong-worker
+    restart: unless-stopped
+    command:
+      [
+        "uv",
+        "run",
+        "python",
+        "-c",
+        "from app.tasks.worker import run_worker; run_worker()",
+      ]
+    environment:
+      database_url: postgresql+asyncpg://yimatong_app:${APP_DB_PASSWORD}@postgres:5432/yimatong
+      control_database_url: postgresql+asyncpg://yimatong:${POSTGRES_PASSWORD}@postgres:5432/yimatong
+      redis_url: redis://redis:6379/0
+      UV_INDEX_URL: ${UV_INDEX_URL:-}
+      ENVIRONMENT: ${ENVIRONMENT}
+      secret_key: ${SECRET_KEY}
+      AES_MASTER_KEY_V1: ${AES_MASTER_KEY_V1}
+      HMAC_PEPPER: ${HMAC_PEPPER}
+      ip_hash_secret: ${IP_HASH_SECRET}
+      minio_endpoint: http://minio:9000
+      minio_access_key: ${MINIO_ROOT_USER}
+      minio_secret_key: ${MINIO_ROOT_PASSWORD}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./current/backend:/app
+      - backend_venv:/app/.venv
+
+  admin:
+    image: node:22-alpine
+    container_name: yimatong-admin
+    restart: unless-stopped
+    working_dir: /app
+    command:
+      [
+        "sh",
+        "-c",
+        "corepack enable && corepack prepare pnpm@10.33.0 --activate && CI=true pnpm install && pnpm dev:admin",
+      ]
+    ports:
+      - "${DEMO_ADMIN_PORT:-9120}:3000"
+    environment:
+      NEXT_PUBLIC_API_URL: ${PUBLIC_API_URL}
+      COREPACK_NPM_REGISTRY: https://registry.npmmirror.com
+      NPM_CONFIG_REGISTRY: https://registry.npmmirror.com
+    depends_on:
+      backend:
+        condition: service_healthy
+    volumes:
+      - ./current/frontend:/app
+      - admin_node_modules:/app/node_modules
+      - admin_app_node_modules:/app/apps/admin/node_modules
+      - admin_shared_node_modules:/app/packages/shared/node_modules
+
+  h5:
+    image: node:22-alpine
+    container_name: yimatong-h5
+    restart: unless-stopped
+    working_dir: /app
+    command:
+      [
+        "sh",
+        "-c",
+        "corepack enable && corepack prepare pnpm@10.33.0 --activate && CI=true pnpm install && pnpm dev:h5 --port 3001",
+      ]
+    ports:
+      - "${DEMO_H5_PORT:-9121}:3001"
+    environment:
+      NEXT_PUBLIC_API_URL: ${PUBLIC_API_URL}
+      BACKEND_URL: http://backend:8000
+      COREPACK_NPM_REGISTRY: https://registry.npmmirror.com
+      NPM_CONFIG_REGISTRY: https://registry.npmmirror.com
+    depends_on:
+      backend:
+        condition: service_healthy
+    volumes:
+      - ./current/frontend:/app
+      - h5_node_modules:/app/node_modules
+      - h5_app_node_modules:/app/apps/h5/node_modules
+      - h5_shared_node_modules:/app/packages/shared/node_modules
+
+  platform:
+    image: node:22-alpine
+    container_name: yimatong-platform
+    restart: unless-stopped
+    working_dir: /app
+    command:
+      [
+        "sh",
+        "-c",
+        "corepack enable && corepack prepare pnpm@10.33.0 --activate && CI=true pnpm install && pnpm dev:platform",
+      ]
+    ports:
+      - "${DEMO_PLATFORM_PORT:-9122}:3002"
+    environment:
+      NEXT_PUBLIC_API_URL: ${PUBLIC_API_URL}
+      COREPACK_NPM_REGISTRY: https://registry.npmmirror.com
+      NPM_CONFIG_REGISTRY: https://registry.npmmirror.com
+    depends_on:
+      backend:
+        condition: service_healthy
+    volumes:
+      - ./current/frontend:/app
+      - platform_node_modules:/app/node_modules
+      - platform_app_node_modules:/app/apps/platform/node_modules
+      - platform_shared_node_modules:/app/packages/shared/node_modules
+
+volumes:
+  postgres_data:
+  redis_data:
+  minio_data:
+  backend_venv:
+  admin_node_modules:
+  admin_app_node_modules:
+  admin_shared_node_modules:
+  h5_node_modules:
+  h5_app_node_modules:
+  h5_shared_node_modules:
+  platform_node_modules:
+  platform_app_node_modules:
+  platform_shared_node_modules:
