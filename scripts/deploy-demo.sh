@@ -239,6 +239,9 @@ fi
 # ---------- 8. 启动全栈 ----------
 log "启动全部服务 ..."
 ssh_run "cd '$DEPLOY_DIR' && docker compose up -d" || die "服务启动失败"
+# backend/worker 挂载源码但 uvicorn 不带 --reload，rsync 的新代码必须重启才生效
+log "重启 backend / worker 以加载最新代码 ..."
+ssh_run "cd '$DEPLOY_DIR' && docker compose restart backend worker" || die "backend/worker 重启失败"
 
 # ---------- 9. 冒烟 ----------
 log "等待后端 /health ..."
