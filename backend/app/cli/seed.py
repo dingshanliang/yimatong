@@ -702,7 +702,9 @@ async def _ensure_demo_codes(
     if any(item.status == CodeItemStatus.created for item in items):
         raise RuntimeError("Demo code batch contains unactivated authoritative code items")
     if len(items) >= 3:
-        if items[1].status != CodeItemStatus.revoked:
+        # 生命周期契约（d297eb0518da）：void 拒绝 revoked/expired 终态，freeze 仅接受
+        # activated/bound；重跑时旧码可能已处于这些状态，需按状态过滤。
+        if items[1].status not in (CodeItemStatus.revoked, CodeItemStatus.expired):
             await revoke_code_item(
                 db,
                 tenant_id,
@@ -710,7 +712,7 @@ async def _ensure_demo_codes(
                 actor_id=str(created_by),
                 reason="source=official_seed; purpose=permanent_void_sample",
             )
-        if items[2].status != CodeItemStatus.frozen:
+        if items[2].status in (CodeItemStatus.activated, CodeItemStatus.bound):
             await freeze_code_item(
                 db,
                 tenant_id,

@@ -32,7 +32,7 @@ from app.models.channel import (
     Store,
 )
 from app.models.code import CodeBatch, CodeItem, CodeItemStatus
-from app.models.connector import Connector  # noqa: F401 - register FK for Benefit.connector_id
+from app.models.connector import BenefitDelivery, Connector  # noqa: F401 - register FK for Benefit.connector_id
 from app.models.diversion_evidence import DiversionActionReceipt, DiversionEvidence, DiversionObservation
 from app.models.diversion_history import DiversionInvestigationHistory
 from app.models.member import (
@@ -1241,25 +1241,29 @@ async def _ensure_code_batches(
     # 标记少量码为 revoked/frozen 状态（约 8%）
     revoke_count = max(1, len(all_items) // 20)  # ~5%
     freeze_count = max(1, len(all_items) // 33)  # ~3%
+    # 生命周期契约（d297eb0518da）：void 拒绝 revoked/expired 终态，freeze 仅接受
+    # activated/bound。复用旧批次重跑时旧码可能已处于这些状态，需按状态过滤。
     for item in all_items[:revoke_count]:
-        if item.status != CodeItemStatus.revoked:
-            await revoke_code_item(
-                db,
-                tenant_id,
-                item.id,
-                actor_id=str(created_by),
-                reason=f"source=official_rich_demo; purpose=permanent_void_sample; public_id={item.public_id}",
-            )
+        if item.status in (CodeItemStatus.revoked, CodeItemStatus.expired):
+            continue
+        await revoke_code_item(
+            db,
+            tenant_id,
+            item.id,
+            actor_id=str(created_by),
+            reason=f"source=official_rich_demo; purpose=permanent_void_sample; public_id={item.public_id}",
+        )
     for item in all_items[revoke_count : revoke_count + freeze_count]:
-        if item.status != CodeItemStatus.frozen:
-            await freeze_code_item(
-                db,
-                tenant_id,
-                item.id,
-                actor_id=str(created_by),
-                reason=f"source=official_rich_demo; purpose=risk_freeze_sample; public_id={item.public_id}",
-                idempotency_key=f"official-rich-demo-freeze:{tenant_id}:{item.id}",
-            )
+        if item.status not in (CodeItemStatus.activated, CodeItemStatus.bound):
+            continue
+        await freeze_code_item(
+            db,
+            tenant_id,
+            item.id,
+            actor_id=str(created_by),
+            reason=f"source=official_rich_demo; purpose=risk_freeze_sample; public_id={item.public_id}",
+            idempotency_key=f"official-rich-demo-freeze:{tenant_id}:{item.id}",
+        )
 
     refreshed_items = {
         item.id: item
@@ -2245,6 +2249,9 @@ async def _clean_demo_data(db: AsyncSession, tenant_id: uuid.UUID) -> None:
         PointTransaction,
         PointProduct,
         PointRule,
+        # benefit_deliveries 以 NO ACTION 外键引用 benefits/benefit_claims，
+        # 必须先删，否则存在发放记录时清理会 FK 报错
+        BenefitDelivery,
         BenefitClaim,
         Benefit,
         Campaign,
