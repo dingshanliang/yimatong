@@ -8,12 +8,32 @@ const mockPatch = vi.fn();
 
 vi.mock("antd", async () => {
   const actual = await vi.importActual<typeof import("antd")>("antd");
+  // ColorPicker 用桩替换：onClick 同时给 antd 6 真实签名
+  // (color, toCssString=rgb()串)；页面必须取 color.toHexString()。
+  const FakeColorPicker = ({
+    value,
+    onChange,
+  }: {
+    value?: string;
+    onChange?: (c: { toHexString: () => string }, hex: string) => void;
+  }) => (
+    <button
+      type="button"
+      aria-label="触发取色"
+      onClick={() =>
+        onChange?.({ toHexString: () => "#B91C1C" }, "rgb(185, 28, 28)")
+      }
+    >
+      {value}
+    </button>
+  );
   return {
     ...actual,
     App: {
       ...actual.App,
       useApp: () => ({ message: mockMessage }),
     },
+    ColorPicker: FakeColorPicker,
   };
 });
 
@@ -124,5 +144,18 @@ describe("BrandProfilePage", () => {
     await screen.findByLabelText("品牌 Logo");
     fireEvent.click(screen.getByRole("button", { name: "保存配置" }));
     await waitFor(() => expect(mockMessage.success).toHaveBeenCalled());
+  });
+
+  it("取色器改色后保存使用 toHexString 的 #rrggbb 值（antd 6 rgb() 第二参回归）", async () => {
+    render(<BrandProfilePage />);
+    await screen.findByLabelText("品牌 Logo");
+    fireEvent.click(screen.getByRole("button", { name: "触发取色" }));
+    fireEvent.click(screen.getByRole("button", { name: "保存配置" }));
+    await waitFor(() => {
+      expect(mockPatch).toHaveBeenCalledWith("/tenants/me", {
+        brand_profile: expect.objectContaining({ primary_color: "#b91c1c" }),
+      });
+    });
+    expect(mockMessage.error).not.toHaveBeenCalled();
   });
 });

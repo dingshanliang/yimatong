@@ -134,7 +134,9 @@ export default function BrandProfilePage() {
         dsl: {
           modules: [
             { id: "hero", type: "product_hero", enabled: true },
-            { id: "benefit", type: "benefit_claim", enabled: true },
+            // 模块类型须用页面 DSL 词表（page-dsl.ts）的 benefit_card；
+            // benefit_claim 无渲染器支持，会显示「未知模块」。
+            { id: "benefit", type: "benefit_card", enabled: true },
           ],
           tenant_branding: {
             name: "品牌预览",
@@ -237,7 +239,9 @@ export default function BrandProfilePage() {
             >
               <ColorPicker
                 value={primaryColor}
-                onChange={(_c: Color, hex: string) => setPrimaryColor(hex)}
+                // antd 6 onChange 第二参来自 toCssString()（rgb() 串），不是 hex；
+                // 必须用 Color.toHexString() 才能满足 #rrggbb 校验。
+                onChange={(c: Color) => setPrimaryColor(c.toHexString())}
                 format="hex"
                 showText
               />

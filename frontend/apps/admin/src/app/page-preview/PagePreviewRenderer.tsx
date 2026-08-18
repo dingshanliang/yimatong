@@ -13,11 +13,16 @@ import type {
   PreviewAsset,
 } from "@/lib/page-dsl";
 
+type RadiusPreset = "sm" | "md" | "lg";
+type BackgroundPreset = "canvas" | "muted" | "tinted";
+
 type PreviewConfig = PageDSL & {
   tenant_branding?: {
     name?: string;
     logo_url?: string;
     primary_color?: string;
+    radius_preset?: RadiusPreset;
+    background_preset?: BackgroundPreset;
   };
 };
 
@@ -68,6 +73,64 @@ const card: React.CSSProperties = {
   padding: 16,
   boxShadow: V.shadowSurface,
 };
+
+// 圆角预设档（与 H5 brand-theme.ts RADIUS_MAP 对齐）。
+const RADIUS_MAP: Record<
+  RadiusPreset,
+  { sm: number; md: number; lg: number; xl: number }
+> = {
+  sm: { sm: 4, md: 6, lg: 8, xl: 12 },
+  md: { sm: 6, md: 10, lg: 14, xl: 18 },
+  lg: { sm: 8, md: 14, lg: 18, xl: 24 },
+};
+
+// 背景预设的静态档（与 H5 brand-theme.ts pageBg 对齐）；tinted 需按主色调染。
+const BACKGROUND_STATIC: Record<Exclude<BackgroundPreset, "tinted">, string> = {
+  canvas: "#f6f8f5",
+  muted: "#f0f4ef",
+};
+
+function parseHex(color: string): [number, number, number] | null {
+  if (!/^#[0-9a-f]{6}$/i.test(color)) return null;
+  return [
+    parseInt(color.slice(1, 3), 16),
+    parseInt(color.slice(3, 5), 16),
+    parseInt(color.slice(5, 7), 16),
+  ];
+}
+
+/** 与 H5 brand-theme.ts mixWithWhite 同算法。 */
+function mixWithWhite(hex: string, ratio: number): string {
+  const channel = (v: number) =>
+    Math.max(0, Math.min(255, Math.round(v + (255 - v) * ratio)))
+      .toString(16)
+      .padStart(2, "0");
+  const rgb = parseHex(hex) ?? [21, 128, 61];
+  return `#${channel(rgb[0])}${channel(rgb[1])}${channel(rgb[2])}`;
+}
+
+/**
+ * 品牌槽位 → 预览根容器注入：圆角覆盖 --ymt-radius-* token（inline 自定义属性
+ * 会继承到使用 token 的卡片/按钮），页面背景按预设取色。与 H5 BrandStyle 的
+ * brandCssVars 注入机制对齐，仅覆盖本渲染器消费的变量。
+ */
+function brandContainerStyle(
+  branding: NonNullable<PreviewConfig["tenant_branding"]>
+): React.CSSProperties {
+  const radius = RADIUS_MAP[branding.radius_preset ?? "md"] ?? RADIUS_MAP.md;
+  const background =
+    branding.background_preset === "tinted"
+      ? mixWithWhite(branding.primary_color ?? "#15803d", 0.95)
+      : (BACKGROUND_STATIC[branding.background_preset ?? "canvas"] ??
+        BACKGROUND_STATIC.canvas);
+  return {
+    "--ymt-radius-sm": `${radius.sm}px`,
+    "--ymt-radius-md": `${radius.md}px`,
+    "--ymt-radius-lg": `${radius.lg}px`,
+    "--ymt-radius-xl": `${radius.xl}px`,
+    background,
+  } as React.CSSProperties;
+}
 
 export function PagePreviewRenderer() {
   const [config, setConfig] = useState<PreviewConfig | null>(null);
@@ -124,7 +187,7 @@ export function PagePreviewRenderer() {
   const brandName = branding.name || "一码通预览";
 
   return (
-    <main style={surface}>
+    <main style={{ ...surface, ...brandContainerStyle(branding) }}>
       <BrandHeader
         name={brandName}
         logoUrl={branding.logo_url}
