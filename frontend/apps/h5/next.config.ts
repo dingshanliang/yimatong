@@ -8,6 +8,19 @@ const connectSrc = buildConnectSrc(
   process.env.NEXT_PUBLIC_API_URL
 );
 
+function getAllowedDevOrigins() {
+  const origins = new Set(["127.0.0.1"]);
+  const apiUrl = process.env.NEXT_PUBLIC_API_URL;
+  if (apiUrl) {
+    try {
+      origins.add(new URL(apiUrl).hostname);
+    } catch {
+      // Invalid API URLs are handled by the app; do not weaken the dev-origin allowlist.
+    }
+  }
+  return Array.from(origins);
+}
+
 const frameAncestors =
   process.env.H5_FRAME_ANCESTORS ||
   (process.env.NODE_ENV !== "production"
@@ -39,6 +52,7 @@ if (frameAncestors === "'none'") {
 }
 
 const nextConfig: NextConfig = {
+  allowedDevOrigins: getAllowedDevOrigins(),
   transpilePackages: ["@yimatong/design-tokens", "@yimatong/shared"],
   turbopack: {
     root: path.resolve(__dirname, "../.."),

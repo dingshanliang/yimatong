@@ -42,8 +42,28 @@ ssh_run() { ssh -o ConnectTimeout=20 "$HOST" "$@"; }
 
 log "预检 $HOST ..."
 ssh_run "true" || die "SSH 不可达"
-if ssh_run "ss -tln | grep -E ':(${ADMIN_PORT}|${H5_PORT}|${PLATFORM_PORT}|${API_PORT}) '" >/dev/null 2>&1; then
-  die "目标端口 ${ADMIN_PORT}-${API_PORT} 中有已被占用者，先确认归属再重试"
+PORT_CONFLICTS=$(ssh_run "bash -s" -- \
+  "$ADMIN_PORT:yimatong-admin" \
+  "$H5_PORT:yimatong-h5" \
+  "$PLATFORM_PORT:yimatong-platform" \
+  "$API_PORT:yimatong-backend" <<'REMOTE_PORTS'
+set -euo pipefail
+for expected in "$@"; do
+  port=${expected%%:*}
+  container=${expected#*:}
+  if ! ss -tln | grep -Eq ":${port} "; then
+    continue
+  fi
+  owners=$(docker ps --filter "publish=${port}" --format '{{.Names}}')
+  if [ "$owners" != "$container" ]; then
+    printf '%s -> %s\n' "$port" "${owners:-非 Docker 进程}"
+  fi
+done
+REMOTE_PORTS
+)
+if [ -n "$PORT_CONFLICTS" ]; then
+  printf '%s\n' "$PORT_CONFLICTS" >&2
+  die "目标端口存在非本 demo 栈占用，先确认归属再重试"
 fi
 
 # 记录共享主机上既有业务容器的基线，部署后必须原样。
@@ -242,6 +262,9 @@ ssh_run "cd '$DEPLOY_DIR' && docker compose up -d" || die "服务启动失败"
 # backend/worker 挂载源码但 uvicorn 不带 --reload，rsync 的新代码必须重启才生效
 log "重启 backend / worker 以加载最新代码 ..."
 ssh_run "cd '$DEPLOY_DIR' && docker compose restart backend worker" || die "backend/worker 重启失败"
+# Next dev server 不会热加载 next.config.ts，且 rsync 期间的增量编译可能保留旧产物。
+log "重启前端服务以加载完整源码与 Next 配置 ..."
+ssh_run "cd '$DEPLOY_DIR' && docker compose restart admin h5 platform" || die "前端服务重启失败"
 
 # ---------- 9. 冒烟 ----------
 log "等待后端 /health ..."
@@ -262,7 +285,7 @@ fi
 log "等待前端入口就绪（dev server 首次安装+编译较慢）..."
 for entry in "Admin:${ADMIN_PORT}/login" "H5:${H5_PORT}/" "Platform:${PLATFORM_PORT}/login"; do
   name="${entry%%:*}"; path_port="${entry#*:}"; port="${path_port%%/*}"; path="${path_port#*/}"
-  [ -n "$path" ] || path="/"
+  [ -n "$path" ] && path="/$path" || path="/"
   code=$(ssh_run "timeout 900 bash -c '
     while :; do
       c=\$(curl -s -o /dev/null -w \"%{http_code}\" --max-time 30 http://localhost:${port}${path} 2>/dev/null) || c=000
