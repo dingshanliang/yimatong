@@ -70,6 +70,12 @@ class Settings(BaseSettings):
     h5_public_url: str = "http://localhost:3001"
     platform_public_url: str = "http://localhost:3002"
 
+    # 一码通共享会员小程序。真实 AppID/Secret 在外部交付 smoke 前保持为空；
+    # H5 降级路径不依赖这两个配置。
+    shared_wechat_miniprogram_appid: str = ""
+    shared_wechat_miniprogram_secret: str = ""
+    wechat_subscription_template_ids: dict[str, str] = Field(default_factory=dict)
+
     # 接管域名真实核验：默认使用系统 DNS 和公网 443；本地/受控验收可指定独立解析器。
     takeover_dns_nameserver: str = ""
     takeover_dns_port: int = 53

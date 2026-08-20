@@ -37,6 +37,8 @@ WEB_ROLE_PERMISSIONS: dict[str, list[str]] = {
         "order:read",
         "order:manage",
         "export:run",
+        "privacy:manage",
+        "export:sensitive_request",
         "webhook:read",
         "webhook:manage",
         "takeover:prepare",
@@ -186,6 +188,7 @@ VALID_API_KEY_ROLES = list(API_KEY_ROLE_PERMISSIONS.keys())
 ROLE_PERMISSIONS = API_KEY_ROLE_PERMISSIONS  # For webhook service
 VALID_ROLES = list(ALL_ROLE_PERMISSIONS.keys())
 VALID_PERMISSIONS = sorted(set(p for perms in ALL_ROLE_PERMISSIONS.values() for p in perms))
+VALID_PERMISSIONS = sorted(set(VALID_PERMISSIONS) | {"consumer:pii_reveal", "export:sensitive_approve"})
 
 
 def get_permissions_for_role(role: str) -> list[str]:

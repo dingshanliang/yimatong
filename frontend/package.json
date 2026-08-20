@@ -6,6 +6,7 @@
     "dev:admin": "pnpm --filter @yimatong/admin dev",
     "dev:h5": "pnpm --filter @yimatong/h5 dev",
     "dev:platform": "pnpm --filter @yimatong/platform dev",
+    "check:member-miniprogram": "pnpm --filter @yimatong/member-miniprogram check",
     "build:admin": "pnpm --filter @yimatong/admin build",
     "build:h5": "pnpm --filter @yimatong/h5 build",
     "build:platform": "pnpm --filter @yimatong/platform build",

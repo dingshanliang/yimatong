@@ -93,7 +93,7 @@ async def create_consumer_endpoint(
 )
 async def search_consumers_endpoint(
     keyword: str = Query(..., min_length=1),
-    lookup_type: str = Query("auto", pattern="^(auto|id|phone|nickname|mixed)$"),
+    lookup_type: str = Query("auto", pattern="^(auto|id|phone|nickname|membership|mixed)$"),
     limit: int = Query(20, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),

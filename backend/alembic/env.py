@@ -39,7 +39,17 @@ from app.models.integration import SyncRecord  # noqa: F401
 from app.models.invite_code import TenantInviteCode  # noqa: F401
 from app.models.invite_registration import InviteRegistrationReceipt  # noqa: F401
 from app.models.launch import LaunchRelease  # noqa: F401
-from app.models.member import ConsumerProfile, PointProduct, PointRedemption, PointRule, PointTransaction  # noqa: F401
+from app.models.member import (  # noqa: F401
+    BrandMembership,
+    BrandMembershipEvent,
+    BrandMembershipProfileLink,
+    ConsumerProfile,
+    MemberIdentityCredential,
+    PointProduct,
+    PointRedemption,
+    PointRule,
+    PointTransaction,
+)
 from app.models.page import PageTemplate, PageVersion  # noqa: F401
 from app.models.plan import PlanDefinition  # noqa: F401
 from app.models.pilot_milestone import PilotAuthorityReceipt, PilotMilestone, PilotMilestoneCorrection  # noqa: F401
@@ -89,6 +99,40 @@ from app.models.platform_config import PlatformConfig  # noqa: F401
 from app.models.visitor import AnonymousVisitor  # noqa: F401
 from app.models.webhook import ApiKey, WebhookDelivery, WebhookEndpoint  # noqa: F401
 from app.models.wecom import WeComCallbackReceipt, WeComContactWay, WeComExternalContact  # noqa: F401
+from app.models.repurchase_coupon import (  # noqa: F401
+    MemberCoupon,
+    RepurchaseCouponEvent,
+    RepurchaseCouponRuleVersion,
+)
+from app.models.commerce_integration import (  # noqa: F401
+    CommerceConnection,
+    CommerceConnectionEvent,
+    CommerceIdentityHandoff,
+    CommerceIntegrationMessage,
+    CommerceMemberReference,
+    CommerceServiceCredential,
+)
+from app.models.commerce_order import (  # noqa: F401
+    CommerceOrderFact,
+    CommerceOrderLineFact,
+    CommerceProductMapping,
+    CommerceRefundFact,
+    CommerceRepurchaseAttribution,
+)
+from app.models.member_notification import (  # noqa: F401
+    MemberChannelGrant,
+    MemberNotification,
+    MemberNotificationDelivery,
+    MemberNotificationPreference,
+)
+from app.models.repurchase_workbench import RepurchaseWorkItem, RepurchaseWorkItemEvent  # noqa: F401
+from app.models.privacy_governance import (  # noqa: F401
+    MemberPiiAccessEvent,
+    PrivacyRightsEvent,
+    PrivacyRightsRequest,
+    SensitiveMemberExport,
+    SensitiveMemberExportEvent,
+)
 
 target_metadata = Base.metadata
 

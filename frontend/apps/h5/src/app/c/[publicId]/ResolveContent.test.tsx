@@ -306,4 +306,38 @@ describe("ResolveContent recalled production batch", () => {
     expect(markup).not.toContain("data:text/html");
     expect(markup).not.toContain("javascript:");
   });
+
+  it("does not revive legacy points or points-member modules in the first-phase journey", () => {
+    const markup = renderToStaticMarkup(
+      <ResolveContent
+        mode="json"
+        publicId="PUBLIC-NO-POINTS"
+        jsonPayload={{
+          code_data: {
+            public_id: "PUBLIC-NO-POINTS",
+            status: "activated",
+            lifecycle: "active",
+            product: { name: "品牌产品" },
+            batch: { status: "active" },
+          },
+          scan_info: { is_first_scan: true },
+          page_config: {
+            modules: [
+              { id: "member", type: "member_card", enabled: true },
+              { id: "balance", type: "points_balance", enabled: true },
+              { id: "shop", type: "points_shop", enabled: true },
+              { id: "exchange", type: "points_exchange", enabled: true },
+              { id: "history", type: "points_history", enabled: true },
+            ],
+          },
+        }}
+        htmlContent={null}
+      />
+    );
+
+    expect(markup).not.toContain("我的积分");
+    expect(markup).not.toContain("积分商城");
+    expect(markup).not.toContain("积分明细");
+    expect(markup).not.toContain("立即兑换");
+  });
 });

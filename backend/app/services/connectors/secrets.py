@@ -70,7 +70,7 @@ def _get_key() -> tuple[int, bytes]:
     return kid, bytes.fromhex(key_hex)
 
 
-def encrypt_secrets(secrets: dict) -> bytes:
+def encrypt_secrets(secrets: dict, *, associated_data: bytes | None = None) -> bytes:
     """加密凭证字典，返回二进制密文。"""
     if not secrets:
         return b""
@@ -79,14 +79,14 @@ def encrypt_secrets(secrets: dict) -> bytes:
     iv = os.urandom(12)
     plaintext = json.dumps(secrets, ensure_ascii=False).encode("utf-8")
     aesgcm = AESGCM(key)
-    ciphertext_with_tag = aesgcm.encrypt(iv, plaintext, None)
+    ciphertext_with_tag = aesgcm.encrypt(iv, plaintext, associated_data)
     ciphertext = ciphertext_with_tag[:-16]
     tag = ciphertext_with_tag[-16:]
 
     return struct.pack(">H", kid) + iv + ciphertext + tag
 
 
-def decrypt_secrets(encrypted: bytes) -> dict:
+def decrypt_secrets(encrypted: bytes, *, associated_data: bytes | None = None) -> dict:
     """解密二进制密文，返回凭证字典。"""
     if not encrypted:
         return {}
@@ -106,7 +106,7 @@ def decrypt_secrets(encrypted: bytes) -> dict:
 
     aesgcm = AESGCM(key)
     try:
-        plaintext = aesgcm.decrypt(iv, ciphertext + tag, None)
+        plaintext = aesgcm.decrypt(iv, ciphertext + tag, associated_data)
     except Exception as exc:
         raise SecretsError(f"Decryption failed: {exc}") from exc
 

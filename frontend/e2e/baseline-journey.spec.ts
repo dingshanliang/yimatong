@@ -27,8 +27,9 @@ const E2E_DIR = __dirname;
 const RESULTS_DIR = path.join(E2E_DIR, ".results");
 
 const API_BASE = process.env.API_BASE_URL || "http://localhost:8000";
-const ADMIN_BASE = "http://localhost:3000";
-const H5_BASE = "http://localhost:3003";
+const ADMIN_BASE =
+  process.env.EVIDENCE_ADMIN_BASE_URL || "http://localhost:3000";
+const H5_BASE = process.env.EVIDENCE_H5_BASE_URL || "http://localhost:3003";
 const BACKEND_DIR = path.resolve(__dirname, "../../backend");
 const AUTH_DIR = path.join(__dirname, ".auth");
 const BASELINE_CTX_FILE = path.join(AUTH_DIR, "baseline-context.json");
@@ -43,6 +44,7 @@ interface BaselineContext {
   firstPublicId: string;
   product: { id: string; name: string };
   productionBatch: { id: string; batchCode: string };
+  launchRelease: { id: string; status: string };
   report?: { id: string; name: string };
   certificate?: { id: string; name: string };
 }
@@ -61,6 +63,10 @@ async function ensureBaseline(): Promise<BaselineContext> {
         ...process.env,
         database_url:
           "postgresql+asyncpg://yimatong:yimatong@localhost:5433/yimatong_dev",
+        control_database_url:
+          "postgresql+asyncpg://yimatong:yimatong@localhost:5433/yimatong_dev",
+        migration_database_url:
+          "postgresql+asyncpg://yimatong:yimatong@localhost:5433/yimatong_dev",
       },
       timeout: 90_000,
     }
@@ -76,9 +82,10 @@ async function ensureBaseline(): Promise<BaselineContext> {
     firstPublicId: summary.first_public_id,
     product: { id: summary.product.id, name: summary.product.name },
     productionBatch: {
-      id: summary.productionBatch.id,
-      batchCode: summary.productionBatch.batchCode,
+      id: summary.production_batch.id,
+      batchCode: summary.production_batch.batch_code,
     },
+    launchRelease: summary.launch_release,
     report: summary.report,
     certificate: summary.certificate,
   };
@@ -97,8 +104,9 @@ async function loginBaselineAdmin(ctx: BaselineContext): Promise<string> {
       tenant_slug: ctx.baselineTenant.slug,
     }),
   });
-  expect(res.status, `login should succeed: ${await res.text()}`).toBe(200);
-  const body = await res.json();
+  const responseText = await res.text();
+  expect(res.status, `login should succeed: ${responseText}`).toBe(200);
+  const body = JSON.parse(responseText);
   return body.access_token as string;
 }
 
@@ -107,6 +115,15 @@ async function countScanEvents(publicId: string): Promise<number> {
   const { stdout } = await promisifiedExec(
     `psql -h 127.0.0.1 -p 5433 -U yimatong -d yimatong_dev -t -A -c ` +
       `"SELECT count(*) FROM scan_events WHERE public_id = '${publicId}';"`,
+    { env: { ...process.env, PGPASSWORD: "yimatong" } }
+  );
+  return parseInt(stdout.trim(), 10) || 0;
+}
+
+async function countBrandMemberships(tenantId: string): Promise<number> {
+  const { stdout } = await promisifiedExec(
+    `psql -h 127.0.0.1 -p 5433 -U yimatong -d yimatong_dev -t -A -c ` +
+      `"SELECT count(*) FROM brand_memberships WHERE tenant_id = '${tenantId}';"`,
     { env: { ...process.env, PGPASSWORD: "yimatong" } }
   );
   return parseInt(stdout.trim(), 10) || 0;
@@ -228,6 +245,9 @@ test.describe("yimatong-zgb1 baseline journey (Admin + H5 + API + DB)", () => {
     expect(body.code_data?.lifecycle).toBe("active");
     expect(body.code_data?.product?.name).toBe(ctx.product.name);
     expect(body.brand?.name).toBeTruthy();
+    expect(typeof body.scan_token).toBe("string");
+    expect(body.scan_token.length).toBeGreaterThan(20);
+    expect(ctx.launchRelease.status).toBe("live");
     // yimatong-zgb1.2：batch 必须在 code_data 下（H5 契约位置），顶层 batch 兼容保留
     expect(body.code_data?.batch?.batch_code).toBe(
       ctx.productionBatch.batchCode
@@ -277,6 +297,41 @@ test.describe("yimatong-zgb1 baseline journey (Admin + H5 + API + DB)", () => {
         message: "scan_events row should be persisted after H5 visit",
       })
       .toBeGreaterThan(before);
+  });
+
+  test("H5 + API + DB: explicit consent creates a recoverable brand membership", async ({
+    page,
+  }) => {
+    test.setTimeout(120_000);
+    const before = await countBrandMemberships(ctx.baselineTenant.id);
+    await page.goto(`${H5_BASE}/c/${ctx.firstPublicId}`, {
+      waitUntil: "domcontentloaded",
+    });
+    await expect(
+      page.getByRole("heading", { name: "加入品牌会员" })
+    ).toBeVisible({
+      timeout: 30_000,
+    });
+    await page
+      .getByRole("checkbox", { name: "我已阅读并同意建立本品牌会员关系" })
+      .check();
+    await page.getByRole("button", { name: "确认加入会员" }).click();
+    await expect(page.getByText("已加入品牌会员", { exact: true })).toBeVisible(
+      {
+        timeout: 30_000,
+      }
+    );
+    await expect(page.getByText(/^会员编号：MBR-/)).toBeVisible();
+    await expect
+      .poll(async () => countBrandMemberships(ctx.baselineTenant.id), {
+        timeout: 15_000,
+        message: "explicit consent should persist one tenant-bound membership",
+      })
+      .toBeGreaterThan(before);
+    await page.screenshot({
+      path: path.join(RESULTS_DIR, "baseline-h5-membership-joined.png"),
+      fullPage: true,
+    });
   });
 
   test("yimatong-zgb1.4: H5 shows verification copy + DB first_scanned_at matches API", async ({

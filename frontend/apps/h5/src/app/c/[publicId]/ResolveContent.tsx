@@ -13,21 +13,20 @@ import { PrivateDomainButtons } from "@/components/PrivateDomainButtons";
 import { CampaignRules } from "@/components/CampaignRules";
 import { PrivacyPolicy } from "@/components/PrivacyPolicy";
 import { ShopRedirect } from "@/components/ShopRedirect";
-import { MemberCard } from "@/components/MemberCard";
-import { PointsBalance } from "@/components/PointsBalance";
-import { PointsExchange } from "@/components/PointsExchange";
-import { PointsShop } from "@/components/PointsShop";
 import { safePublicUrl } from "@/lib/public-url";
 import { readLatestClaimRef } from "@/lib/claim-revisit";
 import { OuterCodeGuide } from "@/components/OuterCodeGuide";
 import { RiskAlert } from "@/components/RiskAlert";
 import { DualCodeVerify } from "@/components/DualCodeVerify";
-import { PointsHistory } from "@/components/PointsHistory";
 import { ErrorPage } from "@/components/ErrorPage";
 import { BrandHeader } from "@/components/BrandHeader";
 import { ProductCard } from "@/components/ProductCard";
 import { TraceabilitySection } from "@/components/TraceabilitySection";
 import { LeadForm } from "@/components/LeadForm";
+import { MemberJoinCard } from "@/components/MemberJoinCard";
+import { MemberCouponWallet } from "@/components/MemberCouponWallet";
+import { MemberNotificationCenter } from "@/components/MemberNotificationCenter";
+import { MemberPrivacyCenter } from "@/components/MemberPrivacyCenter";
 import { FooterSection } from "@/components/FooterSection";
 import { FallbackError } from "@/components/FallbackError";
 import { BrandStyle } from "@/components/BrandStyle";
@@ -42,6 +41,7 @@ interface ResolveContentProps {
   /** 瞬时加载失败的人工重试入口（传入后 FallbackError 显示"重新查验"） */
   onRetry?: () => void;
   retrying?: boolean;
+  onScanTokenChange?: (token: string) => void;
 }
 
 type ModuleConfig = {
@@ -82,6 +82,7 @@ export function ResolveContent({
   htmlContent,
   onRetry,
   retrying,
+  onScanTokenChange,
 }: ResolveContentProps) {
   const scanToken = (jsonPayload?.scan_token as string) || undefined;
   const codeData = jsonPayload?.code_data as
@@ -119,6 +120,7 @@ export function ResolveContent({
   // localStorage 只能在 effect 里读：render 期读取会导致 SSR/hydration 标记
   // 不一致（服务端无 window）。初始渲染统一不显示，挂载后再补入口。
   const [latestClaimId, setLatestClaimId] = useState<string | null>(null);
+  const [membershipRefreshKey, setMembershipRefreshKey] = useState(0);
   useEffect(() => {
     setLatestClaimId(readLatestClaimRef(publicId));
   }, [publicId]);
@@ -215,6 +217,9 @@ export function ResolveContent({
           batchStatus={batchStatus}
           benefitsBlocked={benefitsBlocked}
           recallWarning={scanInfo?.recall_warning}
+          onScanTokenChange={onScanTokenChange}
+          membershipRefreshKey={membershipRefreshKey}
+          onMembershipReady={() => setMembershipRefreshKey((key) => key + 1)}
         />
       </BrandStyle>
     );
@@ -233,6 +238,27 @@ export function ResolveContent({
           logoUrl={tenantBrandLogo}
           primaryColor={brandSlots.primaryColor}
         />
+
+        {!benefitsBlocked && (
+          <>
+            <MemberJoinCard
+              scanToken={scanToken}
+              onScanTokenChange={onScanTokenChange}
+              onMembershipReady={() =>
+                setMembershipRefreshKey((key) => key + 1)
+              }
+            />
+            <MemberCouponWallet
+              scanToken={scanToken}
+              refreshKey={membershipRefreshKey}
+            />
+            <MemberNotificationCenter
+              scanToken={scanToken}
+              refreshKey={membershipRefreshKey}
+            />
+            <MemberPrivacyCenter scanToken={scanToken} />
+          </>
+        )}
 
         {/* 回访恢复入口（kc6d.7）：继续查看上一笔红包发放结果，不重复领取 */}
         {latestClaimId && (
@@ -563,8 +589,10 @@ function ModuleRenderer({
                 platform: "taobao" | "jd" | "douyin" | "pdd" | "other";
                 name: string;
                 url: string;
+                commerce_connection_id?: string;
               }>) || []
             }
+            scanToken={scanToken}
           />
         </div>
       );
@@ -619,51 +647,6 @@ function ModuleRenderer({
       }
       return null;
 
-    case "member_card":
-      return (
-        <div className="px-4 mt-3">
-          <MemberCard
-            consumerId={(config.consumer_id as string) || ""}
-            memberLevel={config.member_level as string}
-            totalPoints={config.total_points as number}
-          />
-        </div>
-      );
-
-    case "points_balance":
-      return (
-        <div className="px-4 mt-3">
-          <PointsBalance
-            points={(config.points as number) || 0}
-            consumerId={config.consumer_id as string}
-            scanToken={scanToken}
-          />
-        </div>
-      );
-
-    case "points_shop":
-      return (
-        <div className="px-4 mt-3">
-          <PointsShop
-            consumerId={config.consumer_id as string}
-            scanToken={scanToken}
-          />
-        </div>
-      );
-
-    case "points_exchange":
-      return (
-        <div className="px-4 mt-3">
-          <PointsExchange
-            benefitId={(config.benefit_id as string) || ""}
-            title={(config.title as string) || "积分兑换"}
-            pointsCost={(config.points_cost as number) || 0}
-            description={config.description as string}
-            scanToken={scanToken}
-          />
-        </div>
-      );
-
     case "outer_code_guide":
       return (
         <div className="px-4 mt-3">
@@ -706,17 +689,6 @@ function ModuleRenderer({
             }
             firstScanTime={scanInfo.first_scan_time as string}
             productVerified={codeData.lifecycle === "active"}
-          />
-        </div>
-      );
-
-    case "points_history":
-      if (!scanToken) return null;
-      return (
-        <div className="px-4 mt-3">
-          <PointsHistory
-            consumerId={(config.consumer_id as string) || ""}
-            scanToken={scanToken}
           />
         </div>
       );
@@ -882,6 +854,9 @@ function DefaultRender({
   batchStatus,
   benefitsBlocked,
   recallWarning,
+  onScanTokenChange,
+  membershipRefreshKey,
+  onMembershipReady,
 }: {
   publicId: string;
   scanToken?: string;
@@ -895,6 +870,9 @@ function DefaultRender({
   batchStatus?: string;
   benefitsBlocked: boolean;
   recallWarning?: unknown;
+  onScanTokenChange?: (token: string) => void;
+  membershipRefreshKey: number;
+  onMembershipReady: () => void;
 }) {
   const _product = codeData.product as Record<string, unknown> | undefined;
   const batch = codeData.batch as Record<string, unknown> | undefined;
@@ -918,6 +896,24 @@ function DefaultRender({
         showBadge
       />
       <TraceabilitySection codeData={codeData} />
+      {!benefitsBlocked && (
+        <>
+          <MemberJoinCard
+            scanToken={scanToken}
+            onScanTokenChange={onScanTokenChange}
+            onMembershipReady={onMembershipReady}
+          />
+          <MemberCouponWallet
+            scanToken={scanToken}
+            refreshKey={membershipRefreshKey}
+          />
+          <MemberNotificationCenter
+            scanToken={scanToken}
+            refreshKey={membershipRefreshKey}
+          />
+          <MemberPrivacyCenter scanToken={scanToken} />
+        </>
+      )}
       {!benefitsBlocked && (
         <div className="px-4 pb-6">
           <LeadForm publicId={publicId} scanToken={scanToken} />

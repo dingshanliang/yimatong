@@ -24,11 +24,13 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import selectinload
 
 from app.cli.lifecycle_auth import cli_lifecycle_auth_context
+from app.constants.campaign import CampaignStatus
 from app.constants.categories import get_default_categories
 from app.core.config import settings
 from app.core.database import set_session_tenant_context
 from app.models.campaign import Benefit, Campaign
 from app.models.code import CodeBatch, CodeItem, CodeItemStatus
+from app.models.launch import LaunchRelease, LaunchReleaseStatus
 from app.models.page import PageTemplate, PageVersion, PageVersionStatus, TemplateType
 from app.models.plan import PlanDefinition
 from app.models.product import (
@@ -54,10 +56,11 @@ from app.models.tenant import (
 )
 from app.services.audit import write_audit_log
 from app.services.auth import revoke_current_tenant_account_sessions
-from app.services.campaign import create_benefit, create_campaign
+from app.services.campaign import change_campaign_status, create_benefit, create_campaign, update_campaign
 from app.services.code import activate_batch, create_code_batch, mark_delivered, mark_printing
 from app.services.code_export import generate_code_csv
 from app.services.entitlement import TenantPlanExpiredError, require_active_plan, validate_feature_flags
+from app.services.launch import confirm_launch_release, create_launch_release, launch_confirmed_release
 from app.services.page import create_page_template, create_page_version, publish_page_version
 from app.services.quota import (
     lock_quota_rollout_state,
@@ -146,6 +149,8 @@ class _BaselineFacts:
     page_version_status: str
     campaign_id: uuid.UUID
     benefit_id: uuid.UUID
+    launch_release_id: uuid.UUID
+    launch_release_status: str
     report_id: uuid.UUID
     certificate_id: uuid.UUID
 
@@ -686,7 +691,7 @@ async def _ensure_campaign_and_benefit(
     campaign_name: str,
     benefit_name: str,
 ) -> tuple[Campaign, Benefit]:
-    """幂等创建活动（draft 状态，便于挂权益）+ 可幂等领取的复购权益。"""
+    """幂等创建活动 + 可幂等领取的复购权益，并经权威状态机启用活动。"""
     result = await db.execute(select(Campaign).where(Campaign.tenant_id == tenant_id, Campaign.name == campaign_name))
     campaign = result.scalar_one_or_none()
     now = utcnow()
@@ -732,7 +737,76 @@ async def _ensure_campaign_and_benefit(
         benefit = await db.get(Benefit, uuid.UUID(created_benefit["id"]), populate_existing=True)
         if benefit is None:  # pragma: no cover - authority returned the created row
             raise RuntimeError("Benefit creation lost its authority row")
+    if campaign.status == CampaignStatus.DRAFT and campaign.product_id != product_id:
+        updated = await update_campaign(db, tenant_id, campaign.id, product_id=product_id)
+        if updated is None:  # pragma: no cover - campaign was loaded in this transaction
+            raise RuntimeError("Campaign product repair lost its authority row")
+        await db.refresh(campaign)
+    if campaign.status == CampaignStatus.DRAFT:
+        changed = await change_campaign_status(db, tenant_id, campaign.id, CampaignStatus.ACTIVE)
+        if changed is None:  # pragma: no cover - campaign was loaded in this transaction
+            raise RuntimeError("Campaign activation lost its authority row")
+        await db.refresh(campaign)
+    if campaign.status != CampaignStatus.ACTIVE:
+        raise BaselineRecoveryRequired(
+            f"Baseline campaign must remain active; found '{campaign.status}' and refused to override it"
+        )
     return campaign, benefit
+
+
+async def _ensure_live_launch_release(
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    account_id: uuid.UUID,
+    *,
+    page_version_id: uuid.UUID,
+    campaign_id: uuid.UUID,
+    code_batch_id: uuid.UUID,
+) -> LaunchRelease:
+    """Create, confirm and launch the baseline release through production authorities."""
+    release = await db.scalar(
+        select(LaunchRelease).where(
+            LaunchRelease.tenant_id == tenant_id,
+            LaunchRelease.page_version_id == page_version_id,
+            LaunchRelease.campaign_id == campaign_id,
+            LaunchRelease.code_batch_id == code_batch_id,
+            LaunchRelease.status.in_(
+                (
+                    LaunchReleaseStatus.preparing,
+                    LaunchReleaseStatus.pending_confirmation,
+                    LaunchReleaseStatus.confirmed,
+                    LaunchReleaseStatus.live,
+                )
+            ),
+        )
+    )
+    if release is None:
+        release = await create_launch_release(
+            db,
+            tenant_id,
+            account_id,
+            page_version_id=page_version_id,
+            campaign_id=campaign_id,
+            code_batch_id=code_batch_id,
+            idempotency_key="baseline-release-create-v1",
+        )
+    if release.status == LaunchReleaseStatus.pending_confirmation:
+        release = await confirm_launch_release(
+            db,
+            release,
+            account_id,
+            idempotency_key="baseline-release-confirm-v1",
+        )
+    if release.status == LaunchReleaseStatus.confirmed:
+        release = await launch_confirmed_release(
+            db,
+            release,
+            account_id,
+            idempotency_key="baseline-release-launch-v1",
+        )
+    if release.status != LaunchReleaseStatus.live:
+        raise BaselineRecoveryRequired(f"Baseline launch release must be live; readiness stopped at '{release.status}'")
+    return release
 
 
 async def _ensure_assets(
@@ -924,6 +998,14 @@ async def _build_baseline_tenant(
                 CAMPAIGN_NAME,
                 BENEFIT_NAME,
             )
+            launch_release = await _ensure_live_launch_release(
+                db,
+                tenant.id,
+                admin_id,
+                page_version_id=version.id,
+                campaign_id=campaign.id,
+                code_batch_id=code_batch.id,
+            )
             report, certificate = await _ensure_assets(
                 db,
                 tenant.id,
@@ -950,6 +1032,12 @@ async def _build_baseline_tenant(
                 page_version_status=(version.status.value if hasattr(version.status, "value") else str(version.status)),
                 campaign_id=campaign.id,
                 benefit_id=benefit.id,
+                launch_release_id=launch_release.id,
+                launch_release_status=(
+                    launch_release.status.value
+                    if hasattr(launch_release.status, "value")
+                    else str(launch_release.status)
+                ),
                 report_id=report.id,
                 certificate_id=certificate.id,
             )
@@ -1098,6 +1186,10 @@ async def _build_baseline_dataset(
             },
             "campaign": {"id": str(base_facts.campaign_id), "name": CAMPAIGN_NAME},
             "benefit": {"id": str(base_facts.benefit_id), "name": BENEFIT_NAME},
+            "launch_release": {
+                "id": str(base_facts.launch_release_id),
+                "status": base_facts.launch_release_status,
+            },
             "report": {"id": str(base_facts.report_id), "name": REPORT_NAME},
             "certificate": {"id": str(base_facts.certificate_id), "name": CERTIFICATE_NAME},
             "control_brand": {"id": str(control_facts.brand_id), "name": CONTROL_BRAND_NAME},
@@ -1127,6 +1219,7 @@ def _format_summary(result: dict[str, Any]) -> str:
             f"version={result['page_version']['id']} status={result['page_version']['status']}"
         ),
         f"  campaign: {result['campaign']['name']} benefit={result['benefit']['name']}",
+        f"  release : {result['launch_release']['id']} status={result['launch_release']['status']}",
     ]
     if result["first_public_id"]:
         lines.append(f"  scan URL: /c/{result['first_public_id']}")

@@ -1,0 +1,8 @@
+{
+  "name": "@yimatong/member-miniprogram",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "check": "node scripts/validate.mjs && node --test tests/*.test.js"
+  }
+}

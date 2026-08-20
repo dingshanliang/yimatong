@@ -38,6 +38,43 @@ _RETROSPECTIVE_DETAIL_PATH = re.compile(
     r"/api/v1/retrospectives/"
     r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
 )
+_MEMBER_COUPON_STORE_TOKEN_PATH = re.compile(
+    r"/api/v1/consumers/membership/coupons/"
+    r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}/store-token"
+)
+
+
+def _is_member_coupon_scan_token_path(path: str) -> bool:
+    return path == "/api/v1/consumers/membership/coupons" or bool(_MEMBER_COUPON_STORE_TOKEN_PATH.fullmatch(path))
+
+
+def _is_member_notification_scan_token_path(path: str) -> bool:
+    return path in {
+        "/api/v1/consumers/membership/notifications",
+        "/api/v1/consumers/membership/notification-preferences",
+        "/api/v1/consumers/membership/notification-preferences/marketing-subscription",
+        "/api/v1/consumers/membership/notification-preferences/service-wechat",
+        "/api/v1/consumers/membership/notification-channel-grants",
+    }
+
+
+def _is_commerce_public_path(path: str) -> bool:
+    return path in {
+        "/api/v1/consumers/membership/commerce-handoffs",
+        "/api/v1/commerce/handoffs/redeem",
+        "/api/v1/commerce/events",
+    }
+
+
+def _is_member_miniprogram_public_path(path: str) -> bool:
+    return path in {
+        "/api/v1/consumers/membership/miniprogram-session",
+        "/api/v1/consumers/membership/miniprogram-bind",
+    }
+
+
+def _is_member_privacy_scan_token_path(path: str) -> bool:
+    return path == "/api/v1/consumers/membership/privacy-requests"
 
 
 class TenantScopeMiddleware(BaseHTTPMiddleware):
@@ -59,6 +96,9 @@ class TenantScopeMiddleware(BaseHTTPMiddleware):
             "/api/v1/auth/reset-page",
             "/api/v1/consumers/lead-capture",
             "/api/v1/consumers/me",
+            "/api/v1/consumers/membership/join",
+            "/api/v1/consumers/membership/merge",
+            "/api/v1/consumers/membership/recover",
             "/api/v1/invite-codes/register",
         }
         # scan-events / public consents 使用 scan_token 自校验（与 /c/ 同语义），不走 admin JWT。
@@ -77,6 +117,11 @@ class TenantScopeMiddleware(BaseHTTPMiddleware):
             or is_public_consent
             or request.url.path.startswith("/c/")
             or request.url.path.startswith("/api/v1/consumers/points/")
+            or _is_member_coupon_scan_token_path(request.url.path)
+            or _is_member_notification_scan_token_path(request.url.path)
+            or _is_commerce_public_path(request.url.path)
+            or _is_member_miniprogram_public_path(request.url.path)
+            or _is_member_privacy_scan_token_path(request.url.path)
             or request.url.path.startswith("/api/v1/files/public/")
             or request.url.path == "/api/v1/benefit-claims"
             # 发放状态查询（GET /benefit-claims/{id}/status）自校验 scan_token/回访凭证；

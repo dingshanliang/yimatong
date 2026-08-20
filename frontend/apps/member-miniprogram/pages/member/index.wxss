@@ -1,0 +1,207 @@
+.page {
+  padding: 28rpx 24rpx 56rpx;
+}
+.hero {
+  padding: 46rpx 36rpx;
+  border-radius: 28rpx;
+  background: linear-gradient(145deg, #173f2a, #286b48);
+  color: #fff;
+  box-shadow: 0 16rpx 40rpx rgba(18, 57, 37, 0.18);
+}
+.eyebrow {
+  display: block;
+  color: #bfe5cc;
+  font-size: 22rpx;
+  font-weight: 600;
+  letter-spacing: 1rpx;
+}
+.eyebrow.light {
+  color: rgba(255, 255, 255, 0.7);
+}
+.title {
+  display: block;
+  margin-top: 14rpx;
+  font-size: 42rpx;
+  line-height: 1.25;
+  font-weight: 700;
+}
+.description {
+  display: block;
+  margin-top: 14rpx;
+  color: rgba(255, 255, 255, 0.78);
+  font-size: 27rpx;
+  line-height: 1.65;
+}
+.proof {
+  display: inline-block;
+  margin-top: 22rpx;
+  padding: 8rpx 16rpx;
+  border-radius: 999rpx;
+  background: rgba(255, 255, 255, 0.13);
+  color: #dff4e6;
+  font-size: 22rpx;
+}
+.card,
+.member-card {
+  margin-top: 22rpx;
+  border-radius: 24rpx;
+}
+.card {
+  padding: 30rpx;
+  background: #fff;
+  box-shadow: 0 8rpx 28rpx rgba(21, 52, 34, 0.06);
+}
+.member-card {
+  padding: 32rpx;
+  background: #1c2b22;
+  color: #fff;
+}
+.member-number {
+  display: block;
+  margin-top: 8rpx;
+  font-size: 36rpx;
+  font-weight: 700;
+  letter-spacing: 1rpx;
+}
+.member-note {
+  display: block;
+  margin-top: 10rpx;
+  color: rgba(255, 255, 255, 0.65);
+  font-size: 24rpx;
+}
+.section-title {
+  font-size: 30rpx;
+  font-weight: 700;
+}
+.section-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.count {
+  color: #647269;
+  font-size: 24rpx;
+}
+.muted,
+.empty {
+  display: block;
+  color: #68766d;
+  font-size: 24rpx;
+  line-height: 1.6;
+}
+.empty {
+  padding: 30rpx 0 10rpx;
+  text-align: center;
+}
+.policy {
+  max-height: 240rpx;
+  margin: 22rpx 0;
+  padding: 22rpx;
+  overflow: auto;
+  border-radius: 18rpx;
+  background: #f4f7f2;
+}
+.policy-title,
+.policy-body {
+  display: block;
+}
+.policy-title {
+  margin-bottom: 10rpx;
+  font-size: 25rpx;
+  font-weight: 600;
+}
+.policy-body {
+  color: #667269;
+  font-size: 23rpx;
+  line-height: 1.6;
+  white-space: pre-wrap;
+}
+.agreement {
+  display: flex;
+  align-items: flex-start;
+  gap: 10rpx;
+  color: #48564d;
+  font-size: 25rpx;
+  line-height: 1.5;
+}
+.primary,
+.secondary,
+.shop,
+.text-button {
+  margin-top: 24rpx;
+  border-radius: 18rpx;
+  font-size: 27rpx;
+  font-weight: 600;
+}
+.primary {
+  background: #25734a;
+  color: #fff;
+}
+.primary[disabled] {
+  background: #a9bdb0;
+  color: rgba(255, 255, 255, 0.8);
+}
+.secondary {
+  border: 1rpx solid #25734a;
+  background: #edf7f0;
+  color: #226641;
+}
+.text-button {
+  background: transparent;
+  color: #4c6656;
+  font-weight: 500;
+}
+.coupon,
+.message {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20rpx;
+  padding: 24rpx 0;
+  border-bottom: 1rpx solid #edf0ed;
+}
+.coupon-name,
+.message-title {
+  display: block;
+  font-size: 27rpx;
+  font-weight: 600;
+}
+.amount {
+  color: #bf5c24;
+  font-size: 34rpx;
+  font-weight: 700;
+}
+.message {
+  display: block;
+}
+.shop {
+  display: flex;
+  justify-content: space-between;
+  padding: 0 24rpx;
+  background: #f2f6f2;
+  color: #214f35;
+  text-align: left;
+}
+.notice {
+  margin-top: 22rpx;
+  padding: 22rpx 26rpx;
+  border-radius: 18rpx;
+  font-size: 25rpx;
+  line-height: 1.5;
+}
+.error {
+  background: #fff2ed;
+  color: #a23e24;
+}
+.loading,
+.fallback {
+  display: block;
+  padding: 30rpx;
+  color: #6c786f;
+  text-align: center;
+  font-size: 24rpx;
+}
+.fallback {
+  padding-bottom: 0;
+  font-size: 22rpx;
+}

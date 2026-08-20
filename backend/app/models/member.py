@@ -119,6 +119,188 @@ class ConsumerProfile(Base):
     )
 
 
+class BrandMembership(Base):
+    """A consumer's explicit, tenant-owned membership relationship."""
+
+    __tablename__ = "brand_memberships"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid7)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(nullable=False)
+    membership_number: Mapped[str] = mapped_column(String(32), nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="active")
+    join_consent_id: Mapped[uuid.UUID] = mapped_column(nullable=False)
+    merged_into_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True)
+    joined_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+    __table_args__ = (
+        ForeignKeyConstraint(["tenant_id"], ["tenants.id"], name="fk_brand_memberships_tenant"),
+        ForeignKeyConstraint(
+            ["tenant_id", "join_consent_id"],
+            ["consent_records.tenant_id", "consent_records.id"],
+            name="fk_brand_memberships_join_consent",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "merged_into_id"],
+            ["brand_memberships.tenant_id", "brand_memberships.id"],
+            name="fk_brand_memberships_merged_into",
+        ),
+        UniqueConstraint("tenant_id", "id", name="uq_brand_memberships_tenant_id"),
+        UniqueConstraint("tenant_id", "membership_number", name="uq_brand_memberships_tenant_number"),
+        CheckConstraint("status IN ('active','merged')", name="ck_brand_memberships_status"),
+        CheckConstraint(
+            "(status='active' AND merged_into_id IS NULL) OR (status='merged' AND merged_into_id IS NOT NULL)",
+            name="ck_brand_memberships_merge_state",
+        ),
+        CheckConstraint("merged_into_id IS NULL OR merged_into_id<>id", name="ck_brand_memberships_not_self_merged"),
+        Index("ix_brand_memberships_tenant_join_consent", "tenant_id", "join_consent_id"),
+        Index(
+            "ix_brand_memberships_tenant_merged_into",
+            "tenant_id",
+            "merged_into_id",
+            postgresql_where=text("merged_into_id IS NOT NULL"),
+            sqlite_where=text("merged_into_id IS NOT NULL"),
+        ),
+        Index("ix_brand_memberships_tenant_joined", "tenant_id", "joined_at"),
+    )
+
+
+class BrandMembershipProfileLink(Base):
+    """Preserves every tenant profile that has been strongly linked to a member."""
+
+    __tablename__ = "brand_membership_profile_links"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid7)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(nullable=False)
+    membership_id: Mapped[uuid.UUID] = mapped_column(nullable=False)
+    consumer_profile_id: Mapped[uuid.UUID] = mapped_column(nullable=False)
+    is_primary: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default=text("false"))
+    link_reason: Mapped[str] = mapped_column(String(30), nullable=False)
+    verification_receipt_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    linked_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    __table_args__ = (
+        ForeignKeyConstraint(["tenant_id"], ["tenants.id"], name="fk_membership_profile_links_tenant"),
+        ForeignKeyConstraint(
+            ["tenant_id", "membership_id"],
+            ["brand_memberships.tenant_id", "brand_memberships.id"],
+            name="fk_membership_profile_links_membership",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "consumer_profile_id"],
+            ["consumer_profiles.tenant_id", "consumer_profiles.id"],
+            name="fk_membership_profile_links_consumer",
+        ),
+        UniqueConstraint("tenant_id", "id", name="uq_membership_profile_links_tenant_id"),
+        UniqueConstraint("tenant_id", "consumer_profile_id", name="uq_membership_profile_links_tenant_consumer"),
+        CheckConstraint(
+            "link_reason IN ('explicit_join','verified_recovery','verified_merge')",
+            name="ck_membership_profile_links_reason",
+        ),
+        CheckConstraint(
+            "length(verification_receipt_hash)=64",
+            name="ck_membership_profile_links_receipt_hash",
+        ),
+        Index("ix_membership_profile_links_tenant_member", "tenant_id", "membership_id"),
+        Index(
+            "uq_membership_profile_links_primary",
+            "tenant_id",
+            "membership_id",
+            unique=True,
+            postgresql_where=text("is_primary IS TRUE"),
+            sqlite_where=text("is_primary IS TRUE"),
+        ),
+    )
+
+
+class MemberIdentityCredential(Base):
+    """A verified, issuer-scoped credential that can restore one brand member."""
+
+    __tablename__ = "member_identity_credentials"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid7)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(nullable=False)
+    membership_id: Mapped[uuid.UUID] = mapped_column(nullable=False)
+    credential_type: Mapped[str] = mapped_column(String(30), nullable=False)
+    issuer: Mapped[str] = mapped_column(String(160), nullable=False)
+    subject_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    subject_ciphertext: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    subject_nonce: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    subject_key_id: Mapped[str] = mapped_column(String(32), nullable=False)
+    verification_receipt_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    verified_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    __table_args__ = (
+        ForeignKeyConstraint(["tenant_id"], ["tenants.id"], name="fk_member_identity_credentials_tenant"),
+        ForeignKeyConstraint(
+            ["tenant_id", "membership_id"],
+            ["brand_memberships.tenant_id", "brand_memberships.id"],
+            name="fk_member_identity_credentials_membership",
+        ),
+        UniqueConstraint("tenant_id", "id", name="uq_member_identity_credentials_tenant_id"),
+        CheckConstraint(
+            "credential_type IN ('verified_phone','wechat_openid','wechat_unionid')",
+            name="ck_member_identity_credentials_type",
+        ),
+        CheckConstraint("length(trim(issuer)) BETWEEN 1 AND 160", name="ck_member_identity_credentials_issuer"),
+        CheckConstraint("length(subject_hash)=64", name="ck_member_identity_credentials_hash"),
+        CheckConstraint(
+            "length(verification_receipt_hash)=64",
+            name="ck_member_identity_credentials_receipt_hash",
+        ),
+        CheckConstraint(
+            "length(subject_nonce)=12 AND octet_length(subject_ciphertext)>=16 "
+            "AND subject_key_id ~ '^aes-master-v[1-9][0-9]*$'",
+            name="ck_member_identity_credentials_envelope",
+        ).ddl_if(dialect="postgresql"),
+        Index("ix_member_identity_credentials_tenant_member", "tenant_id", "membership_id"),
+        Index(
+            "uq_member_identity_credentials_active_subject",
+            "tenant_id",
+            "credential_type",
+            "issuer",
+            "subject_hash",
+            unique=True,
+            postgresql_where=text("revoked_at IS NULL"),
+            sqlite_where=text("revoked_at IS NULL"),
+        ),
+    )
+
+
+class BrandMembershipEvent(Base):
+    """Append-only, PII-free receipt for membership authority changes."""
+
+    __tablename__ = "brand_membership_events"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid7)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(nullable=False)
+    membership_id: Mapped[uuid.UUID] = mapped_column(nullable=False)
+    event_type: Mapped[str] = mapped_column(String(30), nullable=False)
+    idempotency_key: Mapped[str] = mapped_column(String(100), nullable=False)
+    payload_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    __table_args__ = (
+        ForeignKeyConstraint(["tenant_id"], ["tenants.id"], name="fk_brand_membership_events_tenant"),
+        ForeignKeyConstraint(
+            ["tenant_id", "membership_id"],
+            ["brand_memberships.tenant_id", "brand_memberships.id"],
+            name="fk_brand_membership_events_membership",
+        ),
+        UniqueConstraint("tenant_id", "id", name="uq_brand_membership_events_tenant_id"),
+        UniqueConstraint("tenant_id", "idempotency_key", name="uq_brand_membership_events_idempotency"),
+        CheckConstraint(
+            "event_type IN ('joined','identity_bound','recovered','merged_source','merged_target')",
+            name="ck_brand_membership_events_type",
+        ),
+        CheckConstraint("length(payload_hash)=64", name="ck_brand_membership_events_payload_hash"),
+        Index("ix_brand_membership_events_tenant_member", "tenant_id", "membership_id", "occurred_at"),
+    )
+
+
 class ConsumerPhoneEncryptionKey(Base):
     """Deployment-global non-secret key metadata for sanctioned phone envelopes."""
 

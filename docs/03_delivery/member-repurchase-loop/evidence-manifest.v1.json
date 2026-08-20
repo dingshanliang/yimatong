@@ -1,0 +1,90 @@
+{
+  "schema_version": "1.0",
+  "dataset_version": "yimatong-member-repurchase-v1",
+  "business_chain": "REPURCHASE-BASE-001",
+  "scope": "packaging-scan-to-member-repurchase",
+  "points_enabled": false,
+  "layers": ["browser", "api", "postgresql", "external"],
+  "scenarios": [
+    {
+      "id": "main-path",
+      "evidence": [
+        "frontend/e2e/baseline-journey.spec.ts",
+        "backend/tests/test_acceptance/test_commerce_integration_rls.py"
+      ]
+    },
+    {
+      "id": "anonymous-and-consent-refusal",
+      "evidence": [
+        "frontend/apps/h5/src/components/MemberJoinCard.test.tsx",
+        "frontend/e2e/baseline-journey.spec.ts"
+      ]
+    },
+    {
+      "id": "replay-and-out-of-order",
+      "evidence": [
+        "backend/tests/test_acceptance/test_commerce_integration_rls.py",
+        "backend/tests/test_acceptance/test_repurchase_coupon_rls.py"
+      ]
+    },
+    {
+      "id": "cross-tenant",
+      "evidence": [
+        "backend/tests/test_acceptance/test_brand_membership_rls.py",
+        "backend/tests/test_acceptance/test_repurchase_coupon_rls.py",
+        "backend/tests/test_acceptance/test_commerce_integration_rls.py"
+      ]
+    },
+    {
+      "id": "cancel-full-and-partial-refund",
+      "evidence": [
+        "backend/tests/test_services/test_repurchase_coupon.py",
+        "backend/tests/test_acceptance/test_commerce_integration_rls.py"
+      ]
+    },
+    {
+      "id": "isolated-store-redemption",
+      "evidence": [
+        "backend/tests/test_acceptance/test_repurchase_coupon_rls.py"
+      ]
+    },
+    {
+      "id": "notification-failure-and-unsubscribe",
+      "evidence": [
+        "backend/tests/test_api/test_member_notification_api.py",
+        "backend/tests/test_acceptance/test_commerce_integration_rls.py"
+      ]
+    },
+    {
+      "id": "data-interruption-and-reconciliation",
+      "evidence": [
+        "backend/tests/test_services/test_repurchase_workbench.py",
+        "backend/tests/test_acceptance/test_repurchase_workbench_rls.py"
+      ]
+    },
+    {
+      "id": "privacy-rights-and-sensitive-export",
+      "evidence": [
+        "frontend/apps/admin/src/app/(dashboard)/settings/privacy/page.test.tsx",
+        "backend/tests/test_acceptance/test_privacy_governance_rls.py"
+      ]
+    }
+  ],
+  "external_registry": [
+    {
+      "capability": "shared-member-miniprogram-appid-and-release",
+      "status": "pending_external",
+      "exit_ticket": "yimatong-0vsu.27"
+    },
+    {
+      "capability": "wechat-subscription-template-and-delivery",
+      "status": "pending_external",
+      "exit_ticket": "yimatong-0vsu.27"
+    },
+    {
+      "capability": "wechat-pay-payment-refund-and-reconciliation",
+      "status": "pending_external",
+      "exit_ticket": "yimatong-0vsu.27"
+    }
+  ]
+}
