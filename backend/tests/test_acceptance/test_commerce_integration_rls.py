@@ -14,6 +14,7 @@ import asyncpg
 import pytest
 from fastapi import HTTPException
 from sqlalchemy import func, select, text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 import app.services.commerce_integration as commerce_service
@@ -25,6 +26,7 @@ from app.models.commerce_integration import (
     CommerceMemberReference,
 )
 from app.services.brand_membership import bind_verified_member_identity
+from app.services.commerce_coupon import transition_commerce_coupon
 from app.services.commerce_integration import (
     accept_commerce_event,
     commerce_repurchase_metrics,
@@ -296,7 +298,7 @@ async def test_commerce_boundary_derives_tenant_rejects_replay_and_preserves_fac
                 external_tenant_ref="commerce-tenant-a",
                 external_shop_ref="shop-a",
                 base_url="https://commerce-a.example.test/api/",
-                capabilities=["identity_handoff", "order_events", "reconciliation"],
+                capabilities=["identity_handoff", "order_events", "coupon_lifecycle", "reconciliation"],
                 idempotency_key="commerce-connect-a",
                 actor_id=actor_a,
                 auth_session_id=auth_session_a,
@@ -422,13 +424,24 @@ async def test_commerce_boundary_derives_tenant_rejects_replay_and_preserves_fac
                 "INSERT INTO member_coupons(id,tenant_id,membership_id,rule_version_id,coupon_number,status,"
                 "valid_from,valid_until,used_order_ref,used_at,authority_type,sync_status,version) "
                 "VALUES($1,$2,$3,$4,$5,'used',statement_timestamp()-interval '1 day',"
-                "statement_timestamp()+interval '29 days','ORDER-A',statement_timestamp(),"
+                "statement_timestamp()+interval '29 days','CHECKOUT-A',statement_timestamp(),"
                 "'yimatong','not_required',1)",
                 coupon_id,
                 tenant_a,
                 membership_id,
                 coupon_rule_id,
                 f"RCP-{coupon_id.hex[:16].upper()}",
+            )
+            await owner.execute(
+                "INSERT INTO repurchase_coupon_events(id,tenant_id,rule_version_id,coupon_id,event_type,"
+                "from_status,to_status,idempotency_key,payload_digest,order_ref,actor_type,details) "
+                "VALUES($1,$2,$3,$4,'committed','reserved','used',$5,$6,'CHECKOUT-A','service','{}'::json)",
+                uuid.uuid4(),
+                tenant_a,
+                coupon_rule_id,
+                coupon_id,
+                f"acceptance-commit-{coupon_id}",
+                "d" * 64,
             )
             marketing_policy = await owner.fetchrow(
                 "SELECT policy.id,policy.policy_version,policy.policy_digest FROM consumer_consent_policy_current current "
@@ -506,6 +519,7 @@ async def test_commerce_boundary_derives_tenant_rejects_replay_and_preserves_fac
                     "completed_at": None,
                     "cancelled_at": None,
                     "coupon_ref": coupon_id,
+                    "coupon_order_ref": "CHECKOUT-A",
                     "line_items": [
                         {
                             "line_ref": "LINE-A",
@@ -560,6 +574,21 @@ async def test_commerce_boundary_derives_tenant_rejects_replay_and_preserves_fac
                 )
                 is True
             )
+            duplicate_coupon_order = {
+                **event_v2,
+                "event_id": "ORDER-B",
+                "occurred_at": event_v2["occurred_at"] + timedelta(milliseconds=500),
+                "data": {**event_v2["data"], "order_ref": "ORDER-B"},
+            }
+            with pytest.raises(IntegrityError, match="uq_commerce_repurchase_attributions_coupon"):
+                async with db.begin_nested():
+                    await accept_commerce_event(
+                        db,
+                        credential=credential,
+                        connection=connection,
+                        event=duplicate_coupon_order,
+                        body_digest=hashlib.sha256(b"ORDER-B").hexdigest(),
+                    )
 
             partial_refund = {
                 **event_v2,
@@ -584,6 +613,21 @@ async def test_commerce_boundary_derives_tenant_rejects_replay_and_preserves_fac
                     ],
                 },
             }
+            partial_coupon = await transition_commerce_coupon(
+                db,
+                credential=credential,
+                connection=connection,
+                member_ref=member_ref,
+                coupon_ref=coupon_id,
+                order_id="CHECKOUT-A",
+                amount_fen=100,
+                action="reverse",
+                idempotency_key="acceptance-partial-refund",
+                goods_subtotal_fen=None,
+                line_items=[],
+                full_refund=False,
+            )
+            assert partial_coupon.status == "used"
             await accept_commerce_event(
                 db,
                 credential=credential,
@@ -615,6 +659,21 @@ async def test_commerce_boundary_derives_tenant_rejects_replay_and_preserves_fac
                     ],
                 },
             }
+            restored_coupon = await transition_commerce_coupon(
+                db,
+                credential=credential,
+                connection=connection,
+                member_ref=member_ref,
+                coupon_ref=coupon_id,
+                order_id="CHECKOUT-A",
+                amount_fen=100,
+                action="reverse",
+                idempotency_key="acceptance-full-refund",
+                goods_subtotal_fen=None,
+                line_items=[],
+                full_refund=True,
+            )
+            assert restored_coupon.status == "available"
             await accept_commerce_event(
                 db,
                 credential=credential,
@@ -1269,11 +1328,34 @@ async def test_commerce_boundary_derives_tenant_rejects_replay_and_preserves_fac
     assert b"notification deliveries are in flight; wait for leases before downgrade" in stdout + stderr
     owner = await asyncpg.connect(owner_dsn)
     try:
-        assert await owner.fetchval("SELECT version_num FROM alembic_version") == "0b91acfedc87"
+        assert await owner.fetchval("SELECT version_num FROM alembic_version") == "5e3f9a4bac21"
         await owner.execute(
             "UPDATE member_notification_deliveries SET status='suppressed',lease_token=NULL,lease_expires_at=NULL "
             "WHERE id=$1",
             withdrawn_delivery_id,
+        )
+    finally:
+        await owner.close()
+    coupon_fact_downgrade = await asyncio.create_subprocess_exec(
+        sys.executable,
+        "-m",
+        "alembic",
+        "downgrade",
+        "-1",
+        cwd=BACKEND_DIR,
+        env=env,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    stdout, stderr = await coupon_fact_downgrade.communicate()
+    assert coupon_fact_downgrade.returncode != 0
+    assert b"commerce coupon attribution facts exist; archive before downgrade" in stdout + stderr
+    owner = await asyncpg.connect(owner_dsn)
+    try:
+        assert await owner.fetchval("SELECT version_num FROM alembic_version") == "5e3f9a4bac21"
+        await owner.execute(
+            "UPDATE commerce_repurchase_attributions SET coupon_id=NULL,coupon_attributed=false "
+            "WHERE coupon_id IS NOT NULL"
         )
     finally:
         await owner.close()
@@ -1290,10 +1372,10 @@ async def test_commerce_boundary_derives_tenant_rejects_replay_and_preserves_fac
     )
     stdout, stderr = await downgrade.communicate()
     assert downgrade.returncode != 0
-    assert b"member notification facts exist; archive before downgrade" in stdout + stderr
+    assert b"partial refund receipts exist; archive before downgrade" in stdout + stderr
     owner = await asyncpg.connect(owner_dsn)
     try:
-        assert await owner.fetchval("SELECT version_num FROM alembic_version") == "c36405c62488"
+        assert await owner.fetchval("SELECT version_num FROM alembic_version") == "0b91acfedc87"
     finally:
         await owner.close()
     upgrade = await asyncio.create_subprocess_exec(

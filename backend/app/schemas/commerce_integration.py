@@ -154,6 +154,7 @@ class CommerceOrderSnapshot(BaseModel):
     completed_at: datetime | None = None
     cancelled_at: datetime | None = None
     coupon_ref: uuid.UUID | None = None
+    coupon_order_ref: str | None = Field(default=None, min_length=1, max_length=160)
     line_items: list[CommerceLineItemSnapshot]
     refunds: list[CommerceRefundSnapshot] = Field(default_factory=list)
 
@@ -176,6 +177,8 @@ class CommerceOrderSnapshot(BaseModel):
                 raise ValueError("line_original_amounts_do_not_match_product_amount")
             if sum(item.refunded_amount_fen for item in self.line_items) != self.product_refunded_amount_fen:
                 raise ValueError("line_refunded_amounts_do_not_match_product_amount")
+        if self.coupon_order_ref is not None and self.coupon_ref is None:
+            raise ValueError("coupon_order_ref_requires_coupon_ref")
         if sum(refund.order_amount_fen for refund in self.refunds) != self.order_refunded_amount_fen:
             raise ValueError("refund_order_amounts_do_not_match_order_snapshot")
         if sum(refund.product_amount_fen for refund in self.refunds) != self.product_refunded_amount_fen:

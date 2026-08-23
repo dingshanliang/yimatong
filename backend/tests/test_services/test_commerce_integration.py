@@ -266,6 +266,7 @@ def test_commerce_order_contract_rejects_inconsistent_refunds_and_event_state() 
         "event_version": 1,
         "event_type": "commerce.order.refunded",
         "occurred_at": now,
+        "member_ref": "cmr_contract",
         "data": {
             "order_ref": "ORDER-CONTRACT-1",
             "source_system": "medusa_v2",
@@ -277,6 +278,8 @@ def test_commerce_order_contract_rejects_inconsistent_refunds_and_event_state() 
             "product_refunded_amount_fen": 200,
             "coverage_status": "complete",
             "paid_at": now,
+            "coupon_ref": str(uuid.uuid4()),
+            "coupon_order_ref": "CHECKOUT-CONTRACT-1",
             "line_items": [
                 {
                     "line_ref": "line-1",
@@ -298,6 +301,12 @@ def test_commerce_order_contract_rejects_inconsistent_refunds_and_event_state() 
         },
     }
     assert CommerceIncomingEvent.model_validate(payload).data.product_refunded_amount_fen == 200
+    legacy_coupon_event = CommerceIncomingEvent.model_validate(
+        {**payload, "data": {**payload["data"], "coupon_order_ref": None}}
+    )
+    assert legacy_coupon_event.data.coupon_ref == uuid.UUID(payload["data"]["coupon_ref"])
+    with pytest.raises(ValueError, match="coupon_order_ref_requires_coupon_ref"):
+        CommerceIncomingEvent.model_validate({**payload, "data": {**payload["data"], "coupon_ref": None}})
     with pytest.raises(ValueError, match="line_refunded_amount_exceeds_original"):
         CommerceIncomingEvent.model_validate(
             {
