@@ -63,6 +63,8 @@ def _is_commerce_public_path(path: str) -> bool:
         "/api/v1/consumers/membership/commerce-handoffs",
         "/api/v1/commerce/handoffs/redeem",
         "/api/v1/commerce/events",
+        "/api/v1/commerce/coupons/eligible",
+        "/api/v1/commerce/coupons/transitions",
     }
 
 

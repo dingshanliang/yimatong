@@ -14,6 +14,10 @@ from app.schemas.commerce_integration import (
     CommerceConnectionCreate,
     CommerceConnectionCreated,
     CommerceConnectionItem,
+    CommerceCouponEligibilityRequest,
+    CommerceCouponEligibilityResponse,
+    CommerceCouponTransitionRequest,
+    CommerceCouponTransitionResponse,
     CommerceEventReceipt,
     CommerceHandoffIssued,
     CommerceHandoffRedeemed,
@@ -30,6 +34,7 @@ from app.schemas.commerce_integration import (
 )
 from app.services.brand_membership import get_brand_membership_for_profile
 from app.services.channel_access import require_brand_channel_principal
+from app.services.commerce_coupon import list_eligible_commerce_coupons, transition_commerce_coupon
 from app.services.commerce_integration import (
     _connection_dict,
     accept_commerce_event,
@@ -290,6 +295,79 @@ async def receive_commerce_event_endpoint(
         message_version=message.message_version,
         status="accepted",
         replayed=replayed,
+    )
+
+
+@commerce_integration_router.post(
+    "/commerce/coupons/eligible", response_model=CommerceCouponEligibilityResponse
+)
+async def eligible_commerce_coupons_endpoint(
+    request: Request,
+    body: CommerceCouponEligibilityRequest,
+    db: AsyncSession = Depends(get_db_for_consumer, scope="function"),
+    credential_id: uuid.UUID = Header(alias="X-Commerce-Credential-Id"),
+    timestamp: str = Header(alias="X-Commerce-Timestamp", min_length=1, max_length=20),
+    signature: str = Header(alias="X-Commerce-Signature", min_length=64, max_length=64),
+):
+    credential, connection = await resolve_commerce_credential(credential_id)
+    raw_body = await request.body()
+    verify_commerce_signature(
+        credential=credential,
+        timestamp=timestamp,
+        path=request.url.path,
+        body=raw_body,
+        signature=signature,
+    )
+    coupons = await list_eligible_commerce_coupons(
+        db,
+        credential=credential,
+        connection=connection,
+        member_ref=body.member_ref,
+        goods_subtotal_fen=body.goods_subtotal_fen,
+        line_items=[item.model_dump() for item in body.line_items],
+    )
+    return CommerceCouponEligibilityResponse(coupons=coupons)
+
+
+@commerce_integration_router.post(
+    "/commerce/coupons/transitions", response_model=CommerceCouponTransitionResponse
+)
+async def transition_commerce_coupon_endpoint(
+    request: Request,
+    body: CommerceCouponTransitionRequest,
+    db: AsyncSession = Depends(get_db_for_consumer, scope="function"),
+    credential_id: uuid.UUID = Header(alias="X-Commerce-Credential-Id"),
+    timestamp: str = Header(alias="X-Commerce-Timestamp", min_length=1, max_length=20),
+    signature: str = Header(alias="X-Commerce-Signature", min_length=64, max_length=64),
+):
+    credential, connection = await resolve_commerce_credential(credential_id)
+    raw_body = await request.body()
+    verify_commerce_signature(
+        credential=credential,
+        timestamp=timestamp,
+        path=request.url.path,
+        body=raw_body,
+        signature=signature,
+    )
+    coupon = await transition_commerce_coupon(
+        db,
+        credential=credential,
+        connection=connection,
+        member_ref=body.member_ref,
+        coupon_ref=body.coupon_ref,
+        order_id=body.order_id,
+        amount_fen=body.amount_fen,
+        action=body.action,
+        idempotency_key=body.idempotency_key,
+        goods_subtotal_fen=body.goods_subtotal_fen,
+        line_items=[item.model_dump() for item in body.line_items],
+        full_refund=body.full_refund,
+    )
+    return CommerceCouponTransitionResponse(
+        coupon_ref=coupon.id,
+        status=coupon.status,
+        discount_amount_fen=body.amount_fen,
+        reservation_expires_at=coupon.reservation_expires_at,
     )
 
 

@@ -536,6 +536,7 @@ async def reserve_member_coupon(
     eligible_subtotal_minor: int,
     idempotency_key: str,
     actor_id: uuid.UUID | None = None,
+    request_digest: str | None = None,
 ) -> MemberCoupon:
     payload = {
         "coupon_id": coupon_id,
@@ -544,6 +545,8 @@ async def reserve_member_coupon(
         "goods_subtotal_minor": goods_subtotal_minor,
         "eligible_subtotal_minor": eligible_subtotal_minor,
     }
+    if request_digest is not None:
+        payload["request_digest"] = request_digest
     payload_digest = _digest(payload)
     if _session_uses_postgresql(db):
         returned_id = await _call_authority(
@@ -622,8 +625,12 @@ async def commit_member_coupon(
     idempotency_key: str,
     actor_type: CouponActor = "service",
     actor_id: uuid.UUID | None = None,
+    amount_minor: int | None = None,
 ) -> MemberCoupon:
-    payload_digest = _digest({"coupon_id": coupon_id, "order_ref": order_ref})
+    payload = {"coupon_id": coupon_id, "order_ref": order_ref}
+    if amount_minor is not None:
+        payload["amount_minor"] = amount_minor
+    payload_digest = _digest(payload)
     if _session_uses_postgresql(db):
         event_id = uuid7()
         returned_id = await _call_authority(
@@ -693,8 +700,12 @@ async def release_member_coupon(
     order_ref: str,
     idempotency_key: str,
     actor_type: CouponActor = "service",
+    amount_minor: int | None = None,
 ) -> MemberCoupon:
-    payload_digest = _digest({"coupon_id": coupon_id, "order_ref": order_ref})
+    payload = {"coupon_id": coupon_id, "order_ref": order_ref}
+    if amount_minor is not None:
+        payload["amount_minor"] = amount_minor
+    payload_digest = _digest(payload)
     if _session_uses_postgresql(db):
         returned_id = await _call_authority(
             db,
@@ -756,8 +767,12 @@ async def reverse_member_coupon(
     order_ref: str,
     full_refund: bool,
     idempotency_key: str,
+    amount_minor: int | None = None,
 ) -> MemberCoupon:
-    payload_digest = _digest({"coupon_id": coupon_id, "order_ref": order_ref, "full_refund": full_refund})
+    payload = {"coupon_id": coupon_id, "order_ref": order_ref, "full_refund": full_refund}
+    if amount_minor is not None:
+        payload["amount_minor"] = amount_minor
+    payload_digest = _digest(payload)
     event_type = "reversed" if full_refund else "refund_recorded"
     if _session_uses_postgresql(db):
         returned_id = await _call_authority(

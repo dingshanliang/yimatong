@@ -227,6 +227,81 @@ class CommerceEventReceipt(BaseModel):
     replayed: bool
 
 
+class CommerceCouponCartLine(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    product_ref: str = Field(min_length=1, max_length=160)
+    sku_ref: str | None = Field(default=None, max_length=160)
+    quantity: int = Field(gt=0)
+    amount_fen: int = Field(ge=0)
+
+
+class CommerceCouponEligibilityRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    member_ref: str = Field(min_length=1, max_length=64)
+    cart_ref: str = Field(min_length=1, max_length=160)
+    goods_subtotal_fen: int = Field(gt=0)
+    line_items: list[CommerceCouponCartLine] = Field(min_length=1, max_length=200)
+
+    @model_validator(mode="after")
+    def validate_subtotal(self):
+        if sum(item.amount_fen for item in self.line_items) != self.goods_subtotal_fen:
+            raise ValueError("commerce_coupon_line_amounts_do_not_match_goods_subtotal")
+        return self
+
+
+class CommerceEligibleCoupon(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    coupon_ref: uuid.UUID
+    display_name: str = Field(min_length=1, max_length=80)
+    amount_fen: int = Field(gt=0)
+    minimum_spend_fen: int = Field(ge=0)
+    valid_until: datetime
+
+
+class CommerceCouponEligibilityResponse(BaseModel):
+    coupons: list[CommerceEligibleCoupon]
+
+
+class CommerceCouponTransitionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    coupon_ref: uuid.UUID
+    member_ref: str = Field(min_length=1, max_length=64)
+    order_id: str = Field(min_length=1, max_length=160)
+    amount_fen: int = Field(gt=0)
+    action: Literal["reserve", "commit", "release", "reverse"]
+    idempotency_key: str = Field(min_length=1, max_length=120)
+    goods_subtotal_fen: int | None = Field(default=None, gt=0)
+    line_items: list[CommerceCouponCartLine] = Field(default_factory=list, max_length=200)
+    full_refund: bool | None = None
+
+    @model_validator(mode="after")
+    def validate_action_payload(self):
+        if self.action == "reserve":
+            if self.goods_subtotal_fen is None or not self.line_items:
+                raise ValueError("commerce_coupon_reserve_cart_required")
+            if sum(item.amount_fen for item in self.line_items) != self.goods_subtotal_fen:
+                raise ValueError("commerce_coupon_line_amounts_do_not_match_goods_subtotal")
+        elif self.goods_subtotal_fen is not None or self.line_items:
+            raise ValueError("commerce_coupon_cart_only_allowed_for_reserve")
+        if self.action == "reverse":
+            if self.full_refund is None:
+                raise ValueError("commerce_coupon_refund_scope_required")
+        elif self.full_refund is not None:
+            raise ValueError("commerce_coupon_refund_scope_only_allowed_for_reverse")
+        return self
+
+
+class CommerceCouponTransitionResponse(BaseModel):
+    coupon_ref: uuid.UUID
+    status: Literal["available", "reserved", "used", "expired", "revoked"]
+    discount_amount_fen: int = Field(gt=0)
+    reservation_expires_at: datetime | None
+
+
 class CommerceReconciliation(BaseModel):
     connection_id: uuid.UUID
     status: str

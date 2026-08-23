@@ -14,6 +14,8 @@ def test_commerce_public_allowlist_is_exact() -> None:
     assert _is_commerce_public_path("/api/v1/consumers/membership/commerce-handoffs")
     assert _is_commerce_public_path("/api/v1/commerce/handoffs/redeem")
     assert _is_commerce_public_path("/api/v1/commerce/events")
+    assert _is_commerce_public_path("/api/v1/commerce/coupons/eligible")
+    assert _is_commerce_public_path("/api/v1/commerce/coupons/transitions")
     assert not _is_commerce_public_path("/api/v1/commerce/events/forged")
     assert not _is_commerce_public_path("/api/v1/commerce/connections")
 
@@ -21,6 +23,8 @@ def test_commerce_public_allowlist_is_exact() -> None:
 def test_commerce_public_mutations_are_bounded_before_json_materialization() -> None:
     middleware = ConnectorRequestBodyLimitMiddleware
     assert middleware._limit_for_scope(_scope("/api/v1/commerce/events")) == COMMERCE_EVENT_BODY_LIMIT
+    assert middleware._limit_for_scope(_scope("/api/v1/commerce/coupons/eligible")) == COMMERCE_EVENT_BODY_LIMIT
+    assert middleware._limit_for_scope(_scope("/api/v1/commerce/coupons/transitions")) == COMMERCE_EVENT_BODY_LIMIT
     assert (
         middleware._limit_for_scope(_scope("/api/v1/consumers/membership/commerce-handoffs"))
         == PUBLIC_CONSUMER_JSON_BODY_LIMIT

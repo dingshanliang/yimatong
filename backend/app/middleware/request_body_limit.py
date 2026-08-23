@@ -115,7 +115,11 @@ class ConnectorRequestBodyLimitMiddleware:
             return CONNECTOR_JSON_BODY_LIMIT
         if path == "/api/v1/webhooks/endpoints" or path.startswith("/api/v1/webhooks/endpoints/"):
             return WEBHOOK_JSON_BODY_LIMIT
-        if path == "/api/v1/commerce/events":
+        if path in {
+            "/api/v1/commerce/events",
+            "/api/v1/commerce/coupons/eligible",
+            "/api/v1/commerce/coupons/transitions",
+        }:
             return COMMERCE_EVENT_BODY_LIMIT
         if path.startswith("/api/v1/retrospectives/"):
             return PILOT_JSON_BODY_LIMIT
