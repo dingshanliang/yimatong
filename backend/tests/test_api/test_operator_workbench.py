@@ -48,7 +48,7 @@ async def db_session() -> AsyncGenerator[AsyncSession, None]:
 
 
 @pytest.fixture
-async def client(db_session: AsyncSession):
+async def client(db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch):
     async def override_get_db():
         yield db_session
 
@@ -58,6 +58,7 @@ async def client(db_session: AsyncSession):
     app.dependency_overrides[get_db] = override_get_db
     app.dependency_overrides[get_db_with_bypass] = override_get_db
     app.dependency_overrides[get_redis_cache] = override_get_redis_cache
+    monkeypatch.setattr("app.core.database.control_session_factory", TestSessionLocal)
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as c:
         yield c

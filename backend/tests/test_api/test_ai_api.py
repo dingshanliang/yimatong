@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.main import app
+from app.models.tenant import Tenant
 from app.utils.security import create_access_token
 from tests.conftest import TestSessionLocal
 
@@ -32,10 +33,22 @@ async def client(db_session: AsyncSession):
 
 
 @pytest.fixture
-def auth_token():
-    tenant_id = str(uuid.uuid4())
+async def ai_tenant(db_session: AsyncSession) -> str:
+    """路由级 require_tenant_feature("ai_assistant") fail-closed，需要真实 Tenant 行。"""
+    tenant = Tenant(
+        name="AI 测试租户",
+        slug=f"ai-api-{uuid.uuid4().hex[:8]}",
+        enabled_features={"ai_assistant": True},
+    )
+    db_session.add(tenant)
+    await db_session.flush()
+    return str(tenant.id)
+
+
+@pytest.fixture
+async def auth_token(ai_tenant: str) -> str:
     account_id = str(uuid.uuid4())
-    return create_access_token(tenant_id, account_id, "admin")
+    return create_access_token(ai_tenant, account_id, "admin")
 
 
 @pytest.fixture

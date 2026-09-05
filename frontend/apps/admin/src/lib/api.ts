@@ -35,6 +35,12 @@ function getDefaultApiBase() {
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || getDefaultApiBase();
 
+/**
+ * 后端 API origin（不含 /api/v1）。非 axios 场景（如 antd Upload action）
+ * 必须复用本常量拼接地址，避免与 axios baseURL 默认值不一致。
+ */
+export const API_BASE_URL = API_BASE;
+
 const api = axios.create({
   baseURL: `${API_BASE}/api/v1`,
   timeout: 15000,
@@ -238,13 +244,13 @@ export function extractErrorMessage(
       }
       return firstMessage;
     }
-    if (
-      detail &&
-      typeof detail === "object" &&
-      "msg" in detail &&
-      typeof detail.msg === "string"
-    ) {
-      return detail.msg || fallback;
+    if (detail && typeof detail === "object") {
+      if ("msg" in detail && typeof detail.msg === "string") {
+        return detail.msg || fallback;
+      }
+      if ("message" in detail && typeof detail.message === "string") {
+        return detail.message || fallback;
+      }
     }
     return fallback;
   }

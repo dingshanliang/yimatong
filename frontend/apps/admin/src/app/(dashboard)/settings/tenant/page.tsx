@@ -21,7 +21,7 @@ import {
   ArrowUpOutlined,
   ArrowDownOutlined,
 } from "@ant-design/icons";
-import api from "@/lib/api";
+import api, { extractErrorMessage } from "@/lib/api";
 import { useCategories } from "@/lib/use-categories";
 
 const { Title, Text } = Typography;
@@ -131,8 +131,8 @@ export default function TenantSettingsPage() {
       mutateCategories();
       setCategoriesDirty(false);
       message.success("品类配置已保存");
-    } catch {
-      message.error("保存品类失败");
+    } catch (error) {
+      message.error(extractErrorMessage(error, "保存品类失败"));
     } finally {
       setSavingCategories(false);
     }
@@ -196,8 +196,8 @@ export default function TenantSettingsPage() {
       });
       message.success("租户信息已更新");
       setEditing(false);
-    } catch {
-      message.error("更新失败");
+    } catch (error) {
+      message.error(extractErrorMessage(error, "更新失败"));
     } finally {
       setSaving(false);
     }

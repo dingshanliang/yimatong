@@ -37,6 +37,25 @@ interface AuthorizationItem {
   granted_at?: string;
 }
 
+const STATUS_DISPLAY: Record<string, { label: string; color: string }> = {
+  granted: { label: "已生效", color: "success" },
+  active: { label: "已生效", color: "success" },
+  expired: { label: "已过期", color: "warning" },
+  revoked: { label: "已撤销", color: "default" },
+};
+
+function renderStatus(status: string) {
+  const display = STATUS_DISPLAY[status];
+  if (!display) {
+    return <Tag>{status}</Tag>;
+  }
+  return <Tag color={display.color}>{display.label}</Tag>;
+}
+
+function canRevoke(status: string) {
+  return status !== "revoked" && status !== "expired";
+}
+
 export default function AgencyAuthorizationsPage() {
   const { message } = App.useApp();
   const canManage = useAuthStore((state) =>
@@ -97,7 +116,12 @@ export default function AgencyAuthorizationsPage() {
       okButtonProps: { danger: true },
       cancelText: "取消",
       onOk: async () => {
-        await api.delete(`/ops/authorizations/${item.id}`);
+        try {
+          await api.delete(`/ops/authorizations/${item.id}`);
+        } catch (error) {
+          message.error(extractErrorMessage(error, "撤销授权失败"));
+          throw error; // 失败时保持弹窗打开，避免误以为已撤销
+        }
         message.success("授权已撤销");
         await load();
       },
@@ -148,15 +172,16 @@ export default function AgencyAuthorizationsPage() {
                 </Space>
               ),
             },
-            { title: "状态", render: () => <Tag color="success">已生效</Tag> },
+            { title: "状态", render: (_, item) => renderStatus(item.status) },
             {
               title: "操作",
               width: 100,
-              render: (_, item) => (
-                <Button danger type="link" onClick={() => revoke(item)}>
-                  撤销
-                </Button>
-              ),
+              render: (_, item) =>
+                canRevoke(item.status) ? (
+                  <Button danger type="link" onClick={() => revoke(item)}>
+                    撤销
+                  </Button>
+                ) : null,
             },
           ]}
         />

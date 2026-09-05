@@ -431,3 +431,75 @@ class TestTenantSelfContact:
             "consent_required": True,
             "contact_email": "owner@example.com",
         }
+
+
+class TestTenantSelfComplianceSettings:
+    """回归：PATCH /tenants/me 的 compliance_settings 此前被 schema 静默丢弃，前端假保存"""
+
+    @pytest.mark.anyio
+    async def test_self_update_compliance_settings_persists(self, client: AsyncClient, sample_tenant):
+        tenant_id = sample_tenant["id"]
+        resp = await client.patch(
+            "/api/v1/tenants/me",
+            json={
+                "compliance_settings": {
+                    "privacy_version": "2.0",
+                    "privacy_content": "<p>我们收集…</p>",
+                    "retention_days": 180,
+                    "phone_auth": False,
+                }
+            },
+            headers=_auth_headers(tenant_id),
+        )
+        assert resp.status_code == 200, resp.text
+        compliance = resp.json()["compliance_settings"]
+        assert compliance["privacy_version"] == "2.0"
+        assert compliance["retention_days"] == 180
+        assert compliance["phone_auth"] is False
+
+        # GET 读回包含该数据
+        fetched = await client.get("/api/v1/tenants/me", headers=_auth_headers(tenant_id))
+        assert fetched.status_code == 200
+        compliance = fetched.json()["compliance_settings"]
+        assert compliance["privacy_content"] == "<p>我们收集…</p>"
+        assert compliance["retention_days"] == 180
+
+    @pytest.mark.anyio
+    async def test_self_update_compliance_settings_merges_instead_of_overwriting(self, client, sample_tenant):
+        """部分 key 更新按 key 合并，不覆盖已有配置（与 update_tenant merge 语义一致）"""
+        tenant_id = sample_tenant["id"]
+        seeded = await client.patch(
+            f"/api/v1/tenants/{tenant_id}",
+            json={"compliance_settings": {"consent_required": True}},
+            headers=_platform_admin_headers(),
+        )
+        assert seeded.status_code == 200
+
+        updated = await client.patch(
+            "/api/v1/tenants/me",
+            json={"compliance_settings": {"retention_days": 90}},
+            headers=_auth_headers(tenant_id),
+        )
+        assert updated.status_code == 200
+        assert updated.json()["compliance_settings"] == {
+            "consent_required": True,
+            "retention_days": 90,
+        }
+
+    @pytest.mark.anyio
+    async def test_contact_email_and_compliance_settings_merge_in_one_patch(self, client, sample_tenant):
+        """contact_email 与顶层 compliance_settings 同请求时合并写入"""
+        tenant_id = sample_tenant["id"]
+        resp = await client.patch(
+            "/api/v1/tenants/me",
+            json={
+                "contact_email": "dpo@example.com",
+                "compliance_settings": {"retention_days": 60},
+            },
+            headers=_auth_headers(tenant_id),
+        )
+        assert resp.status_code == 200
+        assert resp.json()["compliance_settings"] == {
+            "contact_email": "dpo@example.com",
+            "retention_days": 60,
+        }

@@ -15,7 +15,7 @@ from app.services.risk_access import risk_dependencies
 risk_evaluate_router = APIRouter(
     prefix="/api/v1/risk",
     tags=["risk-evaluate"],
-    dependencies=[Depends(require_tenant_feature("risk_module", db_scope="function"))],
+    dependencies=[Depends(require_tenant_feature("risk_module"))],
 )
 
 

@@ -104,6 +104,7 @@ class TenantUpdateSelf(BaseModel):
     onboarding_progress: dict | None = None
     contact_email: EmailStr | None = None
     brand_profile: dict | None = None
+    compliance_settings: dict | None = None
 
     @field_validator("brand_profile")
     @classmethod
