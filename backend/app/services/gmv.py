@@ -652,7 +652,8 @@ async def get_roi_report(
         budget = _extract_budget(camp.rules_json)
         scan_cost = None
         conversion_rate = None
-        roi = float(row.gmv) / budget if budget else 0
+        # 无预算时 ROI 不可计算，返回 None 而不是 0，避免前端把 0x 渲染成异常红
+        roi = round(float(row.gmv) / budget, 2) if budget else None
 
         results.append(
             {
@@ -667,7 +668,7 @@ async def get_roi_report(
                 "scan_cost": scan_cost,
                 "conversion_rate": conversion_rate,
                 "conversion_rate_status": "unavailable_missing_campaign_eligible_cohort",
-                "roi": round(roi, 2),
+                "roi": roi,
                 "avg_confidence": round(float(row.avg_confidence or 0), 2),
             }
         )

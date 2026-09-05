@@ -267,6 +267,43 @@ class TestGmvDashboard:
         assert item["scan_uv"] is None
         assert item["scan_cost"] is None
 
+    @pytest.mark.anyio
+    async def test_roi_allows_null_roi_when_no_budget(self, client: AsyncClient, setup_tenant, monkeypatch):
+        """无预算时 roi 返回 null，响应 schema 需放行 None。"""
+        _tid, headers = setup_tenant
+        from app.api.v1 import gmv as gmv_api
+
+        monkeypatch.setattr(
+            gmv_api,
+            "get_roi_report",
+            AsyncMock(
+                return_value=[
+                    {
+                        "campaign_id": uuid.uuid4(),
+                        "campaign_name": "no budget campaign",
+                        "status": "active",
+                        "budget": None,
+                        "attributed_gmv": 200,
+                        "attributed_orders": 2,
+                        "scan_count": None,
+                        "scan_uv": None,
+                        "scan_cost": None,
+                        "conversion_rate": None,
+                        "conversion_rate_status": "unavailable_missing_campaign_eligible_cohort",
+                        "roi": None,
+                        "avg_confidence": 1,
+                    }
+                ]
+            ),
+        )
+
+        response = await client.get("/api/v1/gmv/roi", headers=headers)
+
+        assert response.status_code == 200
+        item = response.json()[0]
+        assert item["budget"] is None
+        assert item["roi"] is None
+
 
 class TestTransactionRecord:
     """W16-004: 外部成交事件记录"""

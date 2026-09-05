@@ -1,5 +1,6 @@
 """A7-006: 码状态统计 API 测试"""
 
+import uuid
 from collections.abc import AsyncGenerator
 
 import pytest
@@ -87,13 +88,31 @@ async def auth_with_codes(client: AsyncClient):
             "production_batch_id": production_batch.json()["id"],
             "quantity": 5,
         },
+        headers={**headers, "Idempotency-Key": str(uuid.uuid4())},
+    )
+    # 激活码：生命周期要求 export → printing → delivered → activate
+    exported = await client.post(
+        f"/api/v1/code-batches/{batch.json()['id']}/export",
+        json={"reason": "码统计测试激活前置"},
+        headers={**headers, "Idempotency-Key": str(uuid.uuid4())},
+    )
+    assert exported.status_code == 200
+    printing = await client.post(
+        f"/api/v1/code-batches/{batch.json()['id']}/mark-printing",
         headers=headers,
     )
-    # 激活码
-    await client.post(
+    assert printing.status_code == 200
+    delivered = await client.post(
+        f"/api/v1/code-batches/{batch.json()['id']}/mark-delivered",
+        json={"reason": "码统计测试交付", "recipient": "test", "confirm": "deliver"},
+        headers=headers,
+    )
+    assert delivered.status_code == 200
+    activated = await client.post(
         f"/api/v1/code-batches/{batch.json()['id']}/activate",
         headers=headers,
     )
+    assert activated.status_code == 200
     return tid, headers, batch.json()["id"]
 
 

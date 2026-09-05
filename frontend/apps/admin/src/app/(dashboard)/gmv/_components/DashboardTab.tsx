@@ -93,6 +93,7 @@ export function DashboardTab() {
     by_campaign: [],
   });
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(false);
   const [dateRange, setDateRange] = useState<[Dayjs, Dayjs] | null>(null);
 
   const fetch = async () => {
@@ -105,8 +106,10 @@ export function DashboardTab() {
       }
       const { data: d } = await api.get(`/gmv/dashboard?${params}`);
       setData(d || {});
+      setError(false);
     } catch {
-      /* silent */
+      // 加载失败要区分于“暂无数据”，不能静默吞掉
+      setError(true);
     } finally {
       setLoading(false);
     }
@@ -129,6 +132,21 @@ export function DashboardTab() {
           刷新
         </Button>
       </div>
+
+      {error && (
+        <Alert
+          className="mb-4"
+          type="error"
+          showIcon
+          message="GMV 看板加载失败"
+          description="数据暂时无法加载，这不代表当前没有数据。"
+          action={
+            <Button size="small" onClick={() => void fetch()}>
+              重试
+            </Button>
+          }
+        />
+      )}
 
       {(data.unattributed_orders > 0 ||
         data.order_data_quality === "incomplete") && (

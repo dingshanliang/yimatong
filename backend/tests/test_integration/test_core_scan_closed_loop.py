@@ -462,7 +462,8 @@ class TestAnalyticsDataFlow:
         """手动写入 DailyScanStats 后，dashboard API 应返回对应数据"""
         tenant_id = uuid.UUID(full_setup["tenant_id"])
         headers = full_setup["headers"]
-        today = date.today()
+        # 统计日切统一 UTC，与 analytics 服务默认口径一致
+        today = datetime.now(UTC).date()
 
         # 手动写入统计记录（模拟异步聚合任务的结果）
         stat = DailyScanStats(

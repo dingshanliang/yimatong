@@ -32,7 +32,7 @@ type ROIItem = {
   scan_cost: null;
   conversion_rate: null;
   conversion_rate_status: "unavailable_missing_campaign_eligible_cohort";
-  roi: number;
+  roi: number | null;
   avg_confidence: number;
 };
 
@@ -83,7 +83,11 @@ const columns: ColumnsType<ROIItem> = [
     dataIndex: "roi",
     key: "roi",
     width: 80,
-    render: (v: number) => {
+    render: (v: number | null) => {
+      // 无预算时后端返回 roi=null，此时 ROI 无法计算，展示占位而非红色 0x
+      if (v === null || v === undefined) {
+        return <Text type="secondary">—</Text>;
+      }
       const color = v >= 3 ? "success" : v >= 1 ? "warning" : "danger";
       return (
         <Text type={color} strong>
@@ -97,6 +101,7 @@ const columns: ColumnsType<ROIItem> = [
 export function ROITab() {
   const [data, setData] = useState<ROIItem[]>([]);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(false);
   const [dateRange, setDateRange] = useState<[Dayjs, Dayjs] | null>(null);
 
   const fetch = async () => {
@@ -109,8 +114,10 @@ export function ROITab() {
       }
       const { data: d } = await api.get(`/gmv/roi?${params}`);
       setData(Array.isArray(d) ? d : []);
+      setError(false);
     } catch {
-      /* silent */
+      // 加载失败要区分于“暂无数据”，不能静默吞掉
+      setError(true);
     } finally {
       setLoading(false);
     }
@@ -123,8 +130,12 @@ export function ROITab() {
   // 汇总统计
   const totalGmv = data.reduce((s, r) => s + r.attributed_gmv, 0);
   const totalOrders = data.reduce((s, r) => s + r.attributed_orders, 0);
-  const avgRoi = data.length
-    ? data.reduce((s, r) => s + r.roi, 0) / data.length
+  // 平均 ROI 只统计可计算的行（无预算的 roi=null 跳过）
+  const roiValues = data
+    .map((r) => r.roi)
+    .filter((v): v is number => v !== null && v !== undefined);
+  const avgRoi = roiValues.length
+    ? roiValues.reduce((s, v) => s + v, 0) / roiValues.length
     : 0;
 
   return (
@@ -140,6 +151,21 @@ export function ROITab() {
           刷新
         </Button>
       </div>
+
+      {error && (
+        <Alert
+          className="mb-4"
+          type="error"
+          showIcon
+          message="ROI 报表加载失败"
+          description="数据暂时无法加载，这不代表当前没有数据。"
+          action={
+            <Button size="small" onClick={() => void fetch()}>
+              重试
+            </Button>
+          }
+        />
+      )}
 
       <Alert
         className="mb-4"

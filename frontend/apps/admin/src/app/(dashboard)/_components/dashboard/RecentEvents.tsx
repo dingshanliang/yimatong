@@ -1,9 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Button, Card, Empty, Spin, Timeline, Typography } from "antd";
+import { Button, Card, Empty, message, Spin, Timeline, Typography } from "antd";
 import { useRouter } from "next/navigation";
-import api from "@/lib/api";
+import api, { extractErrorMessage } from "@/lib/api";
 import { formatAuditAction } from "@/lib/audit";
 import { STATUS_TOKEN_COLORS } from "@/lib/status-colors";
 
@@ -61,8 +61,9 @@ export default function RecentEvents() {
         });
         setEvents(res.data?.events || []);
       }
-    } catch {
-      // silent
+    } catch (err) {
+      // 加载失败时给出错误提示，保留空态展示以区分“暂无数据”
+      message.error(extractErrorMessage(err, "数据加载失败"));
     } finally {
       setLoading(false);
     }

@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback } from "react";
 import {
+  Alert,
   App,
   Button,
   Card,
@@ -25,7 +26,8 @@ import {
 } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
 import dayjs, { type Dayjs } from "dayjs";
-import api from "@/lib/api";
+import axios from "axios";
+import api, { extractErrorMessage } from "@/lib/api";
 import ScanTrendChart from "@/components/ScanTrendChart";
 import {
   newExportIdempotencyKey,
@@ -72,6 +74,7 @@ export default function CampaignAnalyticsContent({
     dayjs(),
   ]);
   const [trend, setTrend] = useState<ScanTrendRow[]>([]);
+  const [trendError, setTrendError] = useState(false);
   const [loading, setLoading] = useState(false);
   const [codeBatches, setCodeBatches] = useState<CodeBatch[]>([]);
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
@@ -100,8 +103,11 @@ export default function CampaignAnalyticsContent({
         : "/analytics/scan-stats";
       const { data } = await api.get(endpoint, { params });
       setTrend(Array.isArray(data) ? data : data?.details || []);
+      setTrendError(false);
     } catch {
+      // 加载失败要区分于“暂无数据”，不能静默置空冒充空态
       setTrend([]);
+      setTrendError(true);
     } finally {
       setLoading(false);
     }
@@ -204,8 +210,35 @@ export default function CampaignAnalyticsContent({
       a.remove();
       window.URL.revokeObjectURL(url);
       message.success("导出成功");
-    } catch {
-      message.error("导出失败，请确认您有管理员权限");
+    } catch (err: unknown) {
+      // 导出是 blob 响应，错误信息需要按状态码与响应体分别处理
+      const axiosErr = axios.isAxiosError(err) ? err : undefined;
+      const status = axiosErr?.response?.status;
+      if (status === 429) {
+        const retryAfter = Number(axiosErr?.response?.headers?.["retry-after"]);
+        message.error(
+          Number.isFinite(retryAfter) && retryAfter > 0
+            ? `导出请求过于频繁，请约 ${Math.ceil(retryAfter)} 秒后重试`
+            : "导出请求过于频繁，请稍后重试"
+        );
+      } else if (status === 403) {
+        message.error("导出失败：该操作需要管理员权限");
+      } else {
+        let detail: string | undefined;
+        if (axiosErr && axiosErr.response?.data instanceof Blob) {
+          try {
+            const parsed = JSON.parse(await axiosErr.response.data.text()) as {
+              detail?: unknown;
+            };
+            if (typeof parsed.detail === "string") detail = parsed.detail;
+          } catch {
+            detail = undefined;
+          }
+        }
+        message.error(
+          detail || extractErrorMessage(err, "导出失败，请稍后重试")
+        );
+      }
     } finally {
       setExporting(false);
     }
@@ -258,13 +291,15 @@ export default function CampaignAnalyticsContent({
               }
             }}
           />
-          <Button
-            icon={<DownloadOutlined />}
-            onClick={handleExport}
-            loading={exporting}
-          >
-            导出 Excel
-          </Button>
+          {!restrictedToAnalytics && (
+            <Button
+              icon={<DownloadOutlined />}
+              onClick={handleExport}
+              loading={exporting}
+            >
+              导出 Excel
+            </Button>
+          )}
         </Space>
       </div>
 
@@ -304,6 +339,20 @@ export default function CampaignAnalyticsContent({
       </Row>
 
       <Card title="扫码趋势" className="mb-6" size="small">
+        {trendError && (
+          <Alert
+            className="mb-4"
+            type="error"
+            showIcon
+            message="趋势数据加载失败"
+            description="统计趋势暂时无法加载，这不代表当前没有数据。"
+            action={
+              <Button size="small" onClick={() => void fetchTrend()}>
+                重试
+              </Button>
+            }
+          />
+        )}
         {loading ? (
           <Skeleton active paragraph={{ rows: 4 }} />
         ) : (

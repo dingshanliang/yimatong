@@ -1,10 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Card, Empty, Select, Spin, Table } from "antd";
+import { Card, Empty, message, Select, Spin, Table } from "antd";
 import { useRouter } from "next/navigation";
 import type { ColumnsType } from "antd/es/table";
-import api from "@/lib/api";
+import api, { extractErrorMessage } from "@/lib/api";
 import { ChannelHealthScoreHeader } from "../HealthScoreHeader";
 
 interface HealthScore {
@@ -28,8 +28,9 @@ export default function ChannelHealth() {
       });
       const raw = res.data?.scores || [];
       setScores(raw.slice(0, 5));
-    } catch {
-      // silent
+    } catch (err) {
+      // 加载失败时给出错误提示，保留空态展示以区分“暂无数据”
+      message.error(extractErrorMessage(err, "数据加载失败"));
     } finally {
       setLoading(false);
     }

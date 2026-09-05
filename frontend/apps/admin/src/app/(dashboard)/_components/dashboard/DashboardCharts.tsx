@@ -1,10 +1,10 @@
 "use client";
 
-import { Card, DatePicker, Empty, Spin } from "antd";
+import { Card, DatePicker, Empty, message, Spin } from "antd";
 import { Line } from "@ant-design/charts";
 import { useCallback, useEffect, useState } from "react";
 import dayjs, { type Dayjs } from "dayjs";
-import api from "@/lib/api";
+import api, { extractErrorMessage } from "@/lib/api";
 
 interface TrendRow {
   date: string;
@@ -38,8 +38,9 @@ export default function DashboardCharts({
         },
       });
       setTrend(Array.isArray(res.data) ? res.data : []);
-    } catch {
-      // silent
+    } catch (err) {
+      // 加载失败时给出错误提示，保留空态展示以区分“暂无数据”
+      message.error(extractErrorMessage(err, "数据加载失败"));
     } finally {
       setInnerLoading(false);
     }

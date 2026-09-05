@@ -1,4 +1,8 @@
-"""统计服务层"""
+"""统计服务层
+
+统计日切统一 UTC：所有默认日期（today）使用 datetime.now(UTC).date()，
+与 aggregate_daily_stats 的 UTC 日切聚合口径保持一致。
+"""
 
 import uuid
 from datetime import UTC, date, datetime, timedelta
@@ -19,10 +23,11 @@ async def get_scan_stats(
     end_date: date | None = None,
 ) -> list[dict]:
     """获取扫码统计"""
+    # 统计日切统一 UTC
     if not start_date:
-        start_date = date.today() - timedelta(days=7)
+        start_date = datetime.now(UTC).date() - timedelta(days=7)
     if not end_date:
-        end_date = date.today()
+        end_date = datetime.now(UTC).date()
 
     result = await db.execute(
         select(DailyScanStats)
@@ -294,10 +299,11 @@ async def get_campaign_scan_stats(
 
     from app.models.code import CodeBatch
 
+    # 统计日切统一 UTC
     if not start_date:
-        start_date = date.today() - timedelta(days=30)
+        start_date = datetime.now(UTC).date() - timedelta(days=30)
     if not end_date:
-        end_date = date.today()
+        end_date = datetime.now(UTC).date()
 
     # 找到匹配的码批次
     batch_stmt = select(CodeBatch.id).where(CodeBatch.tenant_id == tenant_id)

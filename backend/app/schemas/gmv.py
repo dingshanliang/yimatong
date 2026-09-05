@@ -131,5 +131,5 @@ class GmvRoiItem(_StrictGmvModel):
     scan_cost: None
     conversion_rate: None
     conversion_rate_status: Literal["unavailable_missing_campaign_eligible_cohort"]
-    roi: float
+    roi: float | None
     avg_confidence: float

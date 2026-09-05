@@ -1,10 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Card, Empty, Spin, Table, Tag } from "antd";
+import { Card, Empty, message, Spin, Table, Tag } from "antd";
 import { useRouter } from "next/navigation";
 import type { ColumnsType } from "antd/es/table";
-import api from "@/lib/api";
+import api, { extractErrorMessage } from "@/lib/api";
 import { STATUS_COLORS } from "@/lib/status-colors";
 
 interface RankingItem {
@@ -35,8 +35,9 @@ export default function CampaignRanking() {
         params: { limit: 5 },
       });
       setItems(res.data?.items || []);
-    } catch {
-      // silent
+    } catch (err) {
+      // 加载失败时给出错误提示，保留空态展示以区分“暂无数据”
+      message.error(extractErrorMessage(err, "数据加载失败"));
     } finally {
       setLoading(false);
     }

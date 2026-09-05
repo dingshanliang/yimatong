@@ -1,8 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Alert, Card, Empty, Spin, Tag, Typography } from "antd";
-import api from "@/lib/api";
+import { Alert, Card, Empty, message, Spin, Tag, Typography } from "antd";
+import api, { extractErrorMessage } from "@/lib/api";
 
 const { Text, Title } = Typography;
 
@@ -41,8 +41,9 @@ export default function ConversionFunnel() {
         params: { days_back: 30 },
       });
       setData(res.data);
-    } catch {
-      // silent
+    } catch (err) {
+      // 加载失败时给出错误提示，保留空态展示以区分“暂无数据”
+      message.error(extractErrorMessage(err, "数据加载失败"));
     } finally {
       setLoading(false);
     }

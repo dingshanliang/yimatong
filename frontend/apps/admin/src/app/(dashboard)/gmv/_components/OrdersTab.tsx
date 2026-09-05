@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useCrud } from "@/lib/hooks";
-import api from "@/lib/api";
+import api, { extractErrorMessage } from "@/lib/api";
 import { Button, Form, Input, Modal, Select, Table, Tag, message } from "antd";
 import { UploadOutlined } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
@@ -67,14 +67,43 @@ export function OrdersTab() {
       const orders = values.orders_json
         ? JSON.parse(values.orders_json as string)
         : [];
-      await api.post("/gmv/orders/import", { orders });
-      message.success("导入成功");
+      const { data: result } = await api.post(
+        "/gmv/orders/import",
+        { source_system: "manual_upload", orders },
+        { headers: { "Idempotency-Key": crypto.randomUUID() } }
+      );
+      const failed = Number(result?.failed ?? 0);
+      if (failed > 0) {
+        const succeeded =
+          Number(result?.created ?? 0) + Number(result?.replayed ?? 0);
+        const errors: Array<Record<string, unknown>> = Array.isArray(
+          result?.errors
+        )
+          ? result.errors
+          : [];
+        const errorLines = errors
+          .slice(0, 3)
+          .map((e) => {
+            const label =
+              typeof e?.external_id === "string" && e.external_id
+                ? e.external_id
+                : `第 ${Number(e?.row ?? 0) + 1} 行`;
+            const reason =
+              typeof e?.reason === "string" && e.reason ? e.reason : "未知原因";
+            return `${label}: ${reason}`;
+          })
+          .join("；");
+        message.warning(
+          `导入完成：成功 ${succeeded} 条，失败 ${failed} 条${errorLines ? `。失败示例：${errorLines}` : ""}`
+        );
+      } else {
+        message.success("导入成功");
+      }
       setImportOpen(false);
       form.resetFields();
       mutate();
     } catch (e: unknown) {
-      const err = e as { response?: { data?: { detail?: string } } };
-      message.error(err.response?.data?.detail || "导入失败");
+      message.error(extractErrorMessage(e, "导入失败"));
     }
   };
 
@@ -138,7 +167,7 @@ export function OrdersTab() {
           >
             <Input.TextArea
               rows={8}
-              placeholder='[{"external_id":"ORD001","amount":99.9,"phone":"13800138000","channel":"taobao","source_system":"erp"}]'
+              placeholder='[{"external_id":"ORD001","amount":99.9,"order_time":"2026-09-01T10:00:00+08:00","phone":"13800138000","channel":"taobao"}]（顶层字段 source_system 由系统固定为 manual_upload，无需写入订单）'
             />
           </Form.Item>
         </Form>

@@ -183,10 +183,11 @@ class TestROIFormulas:
         assert rate == 5.0
 
     def test_zero_budget_roi(self):
+        # 无预算时 ROI 不可计算，返回 None 而不是 0（与 get_roi_report 口径一致）
         gmv = 15000
         budget = 0
-        roi = gmv / budget if budget else 0
-        assert roi == 0
+        roi = round(gmv / budget, 2) if budget else None
+        assert roi is None
 
     def test_zero_uv_conversion(self):
         orders = 50
