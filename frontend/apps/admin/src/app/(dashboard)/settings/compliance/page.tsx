@@ -18,6 +18,7 @@ import {
 } from "antd";
 import { EyeOutlined, SaveOutlined } from "@ant-design/icons";
 import api from "@/lib/api";
+import { useAuthStore } from "@/lib/auth";
 
 const { Title } = Typography;
 const { TextArea } = Input;
@@ -141,6 +142,8 @@ function sanitizePrivacyPolicyHtml(content: string) {
 }
 
 export default function CompliancePage() {
+  const tenantId = useAuthStore((state) => state.user?.tenant_id);
+
   const { message } = App.useApp();
   const [privacyForm] = Form.useForm();
   const [retentionForm] = Form.useForm();
@@ -161,7 +164,7 @@ export default function CompliancePage() {
   useEffect(() => {
     const fetchSettings = async () => {
       try {
-        const { data: tenant } = await api.get("/tenants/me");
+        const { data: tenant } = await api.get(`/tenants/${tenantId}`);
         const compliance = tenant.compliance_settings as
           Record<string, unknown> | undefined;
         if (compliance) {
@@ -191,7 +194,7 @@ export default function CompliancePage() {
     setSaving(true);
     try {
       const values = await privacyForm.validateFields();
-      await api.patch("/tenants/me", {
+      await api.patch(`/tenants/${tenantId}`, {
         compliance_settings: {
           privacy_version: values.version,
           privacy_content: values.content,
@@ -218,7 +221,7 @@ export default function CompliancePage() {
   const handleSaveAuthorization = async () => {
     setSaving(true);
     try {
-      await api.patch("/tenants/me", {
+      await api.patch(`/tenants/${tenantId}`, {
         compliance_settings: {
           phone_auth: phoneAuth,
           location_auth: locationAuth,
@@ -237,7 +240,7 @@ export default function CompliancePage() {
     setSaving(true);
     try {
       const values = await retentionForm.validateFields();
-      await api.patch("/tenants/me", {
+      await api.patch(`/tenants/${tenantId}`, {
         compliance_settings: {
           retention_days: values.retention_days,
           auto_cleanup: values.auto_cleanup,

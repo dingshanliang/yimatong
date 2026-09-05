@@ -55,7 +55,12 @@ class TestPermissions:
 
 
 class TestApiKeyLifecycleMaterial:
-    def test_derives_replayable_hmac_material_and_encrypted_secret(self):
+    def test_derives_replayable_hmac_material_and_encrypted_secret(self, monkeypatch):
+        # 摘要期望值依赖固定 pepper；不固定则随开发者 .env 的 HMAC_PEPPER 漂移
+        monkeypatch.setattr(
+            "app.core.config.settings.hmac_pepper",
+            "ab" * 32,
+        )
         arguments = {
             "tenant_id": uuid.UUID("00000000-0000-4000-8000-000000000001"),
             "actor_id": uuid.UUID("00000000-0000-4000-8000-000000000002"),
@@ -77,7 +82,7 @@ class TestApiKeyLifecycleMaterial:
             **{**arguments, "payload": {**arguments["payload"], "role": "full_access"}}
         )
 
-        assert first.idempotency_digest == "2dedbd077eb3c758086fb921a9fe8bfdb03f0fc35434dcb00f3f681b37c89d87"
+        assert first.idempotency_digest == "c6b1a6900ad63ceb5effe489512112d47975b811a792e0373712185fc6757ce5"
         assert first.secret == retried.secret
         assert first.request_fingerprint == retried.request_fingerprint
         assert first.secret != changed.secret

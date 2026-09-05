@@ -198,10 +198,6 @@ async def update_current_tenant_endpoint(
                     "message": "当前套餐未开通白标功能",
                 },
             ) from exc
-    # 合并顶层 compliance_settings 与 contact_email；update_tenant 内部按 key 合并到现有配置
-    compliance_updates: dict = dict(body.compliance_settings) if body.compliance_settings is not None else {}
-    if body.contact_email:
-        compliance_updates["contact_email"] = str(body.contact_email)
     tenant = await update_tenant(
         db,
         tenant_id,
@@ -209,7 +205,7 @@ async def update_current_tenant_endpoint(
         industry=body.industry,
         notes=body.notes,
         onboarding_progress=body.onboarding_progress,
-        compliance_settings=compliance_updates or None,
+        compliance_settings={"contact_email": str(body.contact_email)} if body.contact_email else None,
         categories=body.categories,
         brand_profile=body.brand_profile,
     )
