@@ -152,7 +152,7 @@ async def service_channel_grant_endpoint(
 
 @member_notification_router.post(
     "/member-notifications/marketing-events",
-    dependencies=[Depends(require_brand_channel_principal), Depends(require_permission("campaign:write"))],
+    dependencies=[Depends(require_brand_channel_principal), Depends(require_permission("campaign:manage"))],
 )
 async def marketing_event_endpoint(
     body: MarketingNotificationCreate,

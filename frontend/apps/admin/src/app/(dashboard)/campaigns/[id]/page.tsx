@@ -40,11 +40,14 @@ const CAMPAIGN_TYPE_MAP: Record<string, string> = {
   points: "积分",
 };
 
+// 与后端 BENEFIT_TYPES 词表对齐：platform_coupon/external_link/private_domain/
+// form_benefit/cash_red_packet（app/constants/campaign.py）。
 const BENEFIT_TYPE_MAP: Record<string, string> = {
-  coupon: "优惠券",
-  points: "积分",
-  gift: "实物礼品",
-  lottery_chance: "抽奖机会",
+  platform_coupon: "平台券",
+  external_link: "外部链接",
+  private_domain: "私域二维码",
+  form_benefit: "表单权益",
+  cash_red_packet: "现金红包",
 };
 
 const BENEFIT_PAGE_SIZE = 20;

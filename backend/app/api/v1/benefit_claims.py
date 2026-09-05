@@ -58,18 +58,6 @@ async def claim_benefit_h5(
     payload = verify_scan_token(token, expected_ip_hash=ip_hash)
     if payload is None:
         raise HTTPException(status_code=401, detail="invalid token")
-    try:
-        launch_authority = require_launch_claim_authority(payload)
-    except ValueError as exc:
-        raise HTTPException(
-            status_code=401,
-            detail={"code": "scan_token_unbound", "message": "请重新扫码后领取权益"},
-        ) from exc
-
-    # 2. 查找权益（带租户隔离：只能领取 scan_token 所属租户的权益）
-    from app.models.campaign import Benefit
-
-    benefit_id = body.benefit_id  # Pydantic 已验证为 UUID
 
     # 从 scan_token payload 中提取 tenant_id，确保只能领取同租户的权益
     token_tenant_id = payload.get("tenant_id")
@@ -82,6 +70,8 @@ async def claim_benefit_h5(
 
     # scan_token 是该公开端点的可信租户来源。业务查询前在同一事务中建立
     # PostgreSQL RLS 上下文并锁定租户套餐行，锁保持到领取/外部发放 commit。
+    # 套餐门先于 launch authority 校验：过期租户应得到明确的 403 套餐提示，
+    # 而不是 v1 合成 token 缺 launch 字段导致的 401「请重新扫码」
     from app.services.entitlement import (
         PLAN_EXPIRED_CODE,
         PLAN_EXPIRED_DETAIL,
@@ -95,6 +85,19 @@ async def claim_benefit_h5(
             status_code=403,
             content={"code": PLAN_EXPIRED_CODE, "detail": PLAN_EXPIRED_DETAIL},
         )
+
+    try:
+        launch_authority = require_launch_claim_authority(payload)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=401,
+            detail={"code": "scan_token_unbound", "message": "请重新扫码后领取权益"},
+        ) from exc
+
+    # 2. 查找权益（带租户隔离：只能领取 scan_token 所属租户的权益）
+    from app.models.campaign import Benefit
+
+    benefit_id = body.benefit_id  # Pydantic 已验证为 UUID
 
     # A scan token proves a previous scan, not current eligibility. Rebuild the
     # code -> code batch -> production batch chain under the locked tenant.

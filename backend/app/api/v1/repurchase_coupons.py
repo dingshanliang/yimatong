@@ -43,7 +43,7 @@ from app.utils import utcnow
 from app.utils.auth_rbac import require_permission
 
 repurchase_coupon_router = APIRouter(prefix="/api/v1", tags=["repurchase-coupons"])
-_ADMIN_WRITE = [Depends(require_brand_channel_principal), Depends(require_permission("campaign:write"))]
+_ADMIN_WRITE = [Depends(require_brand_channel_principal), Depends(require_permission("campaign:manage"))]
 
 
 def _rule_dict(rule) -> dict:

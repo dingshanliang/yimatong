@@ -35,10 +35,9 @@ import {
   LinkOutlined,
   PlusOutlined,
   ReloadOutlined,
-  SendOutlined,
 } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
-import api from "@/lib/api";
+import api, { extractErrorMessage } from "@/lib/api";
 import { useAuthStore } from "@/lib/auth";
 import { resolveCampaignAccess } from "@/lib/campaign-access";
 import { useCrud } from "@/lib/hooks";
@@ -191,7 +190,6 @@ export default function BenefitsPage() {
     null
   );
   const [deliveryLoading, setDeliveryLoading] = useState(false);
-  const [retryingDelivery, setRetryingDelivery] = useState(false);
   const [nameManuallyEdited, setNameManuallyEdited] = useState(false);
   const [form] = Form.useForm();
   const validityType = Form.useWatch(["config_json", "validity_type"], form);
@@ -321,9 +319,9 @@ export default function BenefitsPage() {
       try {
         const { data } = await api.get(`/connectors/deliveries/${deliveryId}`);
         setDeliveryDetail(data);
-      } catch {
+      } catch (error: unknown) {
         setDeliveryDetail(null);
-        message.error("加载发放详情失败");
+        message.error(extractErrorMessage(error, "加载发放详情失败"));
       } finally {
         setDeliveryLoading(false);
       }
@@ -337,24 +335,6 @@ export default function BenefitsPage() {
     setClaimDetailOpen(true);
     if (record.latest_delivery_id) {
       fetchDeliveryDetail(record.latest_delivery_id);
-    }
-  };
-
-  const retryDelivery = async () => {
-    if (!selectedClaim?.latest_delivery_id) return;
-    setRetryingDelivery(true);
-    try {
-      await api.post(
-        `/connectors/deliveries/${selectedClaim.latest_delivery_id}/retry`
-      );
-      message.success("已触发重试发放");
-      await fetchDeliveryDetail(selectedClaim.latest_delivery_id);
-      mutateClaims();
-      fetchSummary();
-    } catch {
-      message.error("重试发放失败");
-    } finally {
-      setRetryingDelivery(false);
     }
   };
 
@@ -445,10 +425,8 @@ export default function BenefitsPage() {
       form.resetFields();
       refreshAll();
     } catch (e: unknown) {
-      const err = e as { response?: { data?: { detail?: string } } };
       message.error(
-        err.response?.data?.detail ||
-          (editItem ? "保存权益失败" : "创建权益失败")
+        extractErrorMessage(e, editItem ? "保存权益失败" : "创建权益失败")
       );
     } finally {
       setSubmitting(false);
@@ -461,8 +439,7 @@ export default function BenefitsPage() {
       message.success("权益已删除");
       refreshAll();
     } catch (e: unknown) {
-      const err = e as { response?: { data?: { detail?: string } } };
-      message.error(err.response?.data?.detail || "删除失败");
+      message.error(extractErrorMessage(e, "删除失败"));
     }
   };
 
@@ -475,8 +452,7 @@ export default function BenefitsPage() {
       message.success("已用于当前活动");
       refreshAll();
     } catch (e: unknown) {
-      const err = e as { response?: { data?: { detail?: string } } };
-      message.error(err.response?.data?.detail || "使用权益失败");
+      message.error(extractErrorMessage(e, "使用权益失败"));
     }
   };
 
@@ -489,8 +465,7 @@ export default function BenefitsPage() {
       message.success("已取消用于当前活动");
       refreshAll();
     } catch (e: unknown) {
-      const err = e as { response?: { data?: { detail?: string } } };
-      message.error(err.response?.data?.detail || "取消使用失败");
+      message.error(extractErrorMessage(e, "取消使用失败"));
     }
   };
 
@@ -611,8 +586,8 @@ export default function BenefitsPage() {
               });
               message.success(checked ? "权益已启用" : "权益已停用");
               refreshAll();
-            } catch {
-              message.error("操作失败");
+            } catch (error: unknown) {
+              message.error(extractErrorMessage(error, "操作失败"));
             }
           }}
         />
@@ -969,14 +944,9 @@ export default function BenefitsPage() {
           selectedClaim?.latest_delivery_id &&
           (selectedClaim.delivery_status === "pending" ||
             selectedClaim.delivery_status === "failed") ? (
-            <Button
-              type="primary"
-              icon={<SendOutlined />}
-              loading={retryingDelivery}
-              onClick={retryDelivery}
-            >
-              重试发放
-            </Button>
+            <Tooltip title="发放失败时系统按重试次数自动重试，无需人工触发。">
+              <Text type="secondary">系统将自动重试</Text>
+            </Tooltip>
           ) : null
         }
       >

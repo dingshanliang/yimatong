@@ -20,7 +20,7 @@ from app.utils.auth_rbac import require_permission
 
 repurchase_workbench_router = APIRouter(prefix="/api/v1/members/repurchase-workbench", tags=["repurchase-workbench"])
 _READ = [Depends(require_brand_channel_principal), Depends(require_permission("consumer:detail"))]
-_WRITE = [Depends(require_brand_channel_principal), Depends(require_permission("campaign:write"))]
+_WRITE = [Depends(require_brand_channel_principal), Depends(require_permission("campaign:manage"))]
 
 
 def _session_id(request: Request) -> uuid.UUID:

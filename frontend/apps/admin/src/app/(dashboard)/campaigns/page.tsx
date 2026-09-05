@@ -820,9 +820,12 @@ export default function CampaignsPage() {
 
   const buildBenefitPayload = (values: CampaignFormValues) => {
     const validity = formatBenefitValidity(values);
+    // 向导的权益区块只有一个勾选项「创建基础平台券权益」，不提供其他权益类型
+    // 选择；这里显式对齐为平台券，避免看起来像随手硬编码。
+    const wizardBenefitType = "platform_coupon";
     return {
       name: values.benefit_name || "活动权益",
-      benefit_type: "platform_coupon",
+      benefit_type: wizardBenefitType,
       stock_total: values.benefit_stock_total || 0,
       per_person_limit: values.benefit_per_person_limit || 1,
       config_json: {
@@ -854,9 +857,12 @@ export default function CampaignsPage() {
               buildBenefitPayload(values)
             );
             createdBenefit = true;
-          } catch {
+          } catch (benefitErr) {
             message.warning(
-              "活动草稿已创建，但权益创建失败，请继续配置权益后再上线"
+              `活动草稿已创建，但权益创建失败：${extractErrorMessage(
+                benefitErr,
+                "请继续配置权益后再上线"
+              )}`
             );
           }
         }
@@ -1158,8 +1164,12 @@ export default function CampaignsPage() {
               <Popconfirm
                 title="确认删除草稿活动？"
                 onConfirm={async () => {
-                  await remove(record.id);
-                  message.success("活动已删除");
+                  try {
+                    await remove(record.id);
+                    message.success("活动已删除");
+                  } catch (err) {
+                    message.error(extractErrorMessage(err, "删除活动失败"));
+                  }
                 }}
               >
                 <Button size="small" danger>

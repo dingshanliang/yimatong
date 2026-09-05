@@ -71,6 +71,8 @@ vi.mock("@/lib/api", () => ({
     patch: (...args: unknown[]) => mockPatch(...args),
     delete: (...args: unknown[]) => mockDelete(...args),
   },
+  extractErrorMessage: (err: unknown, fallback = "操作失败") =>
+    err instanceof Error && err.message ? err.message : fallback,
 }));
 
 const mockSetBenefitFilter = vi.fn();
@@ -290,7 +292,7 @@ describe("BenefitsPage", () => {
     expect(mockSetClaimFilter).toHaveBeenCalledWith({ q: "consumer-001" });
   });
 
-  it("opens claim delivery detail and retries failed delivery", async () => {
+  it("opens claim delivery detail and defers failed delivery retries to the system", async () => {
     render(<BenefitsPage />);
     fireEvent.click(screen.getByRole("tab", { name: "领取记录" }));
 
@@ -301,10 +303,12 @@ describe("BenefitsPage", () => {
       expect(document.body.textContent).toContain("invalid receiver")
     );
 
-    fireEvent.click(screen.getByRole("button", { name: /重试发放/ }));
-
-    await waitFor(() =>
-      expect(mockPost).toHaveBeenCalledWith("/connectors/deliveries/d1/retry")
-    );
+    // PG 环境的重试端点对未成功发放固定返回 409（系统自动重试），
+    // 页面不得再展示人工重试入口。
+    expect(screen.getByText("系统将自动重试")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /重试发放/ })
+    ).not.toBeInTheDocument();
+    expect(mockPost).not.toHaveBeenCalled();
   });
 });

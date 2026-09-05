@@ -35,13 +35,13 @@ async def test_workbench_authority_is_tenant_scoped_audited_and_downgrade_safe(m
         assert actor is not None
         actor_id = actor["actor_id"]
         permission_id = await owner.fetchval(
-            "SELECT id FROM permissions WHERE tenant_id=$1 AND code='campaign:write'",
+            "SELECT id FROM permissions WHERE tenant_id=$1 AND code='campaign:manage'",
             tenant_a,
         )
         if permission_id is None:
             permission_id = uuid.uuid4()
             await owner.execute(
-                "INSERT INTO permissions(id,tenant_id,code,description) VALUES($1,$2,'campaign:write',$3)",
+                "INSERT INTO permissions(id,tenant_id,code,description) VALUES($1,$2,'campaign:manage',$3)",
                 permission_id,
                 tenant_a,
                 "复购运营验收权限",

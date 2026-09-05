@@ -16,6 +16,7 @@ from app.core.database import get_db
 from app.main import app
 from app.models.campaign import Benefit
 from app.models.intent_event import IntentEvent
+from app.models.page import PageTemplate, PageVersion, PageVersionStatus
 from app.models.tenant import Tenant
 from app.models.wecom import WeComContactWay
 from app.services.scan_token import create_scan_token
@@ -82,6 +83,49 @@ async def auth_setup(client: AsyncClient):
 
 def _scan_token(tenant_id: str, public_id: str) -> str:
     return create_scan_token(public_id, compute_ip_hash("127.0.0.1"), tenant_id=tenant_id)
+
+
+def _stub_live_launch_release(monkeypatch, tenant_id: str, campaign_id: str) -> uuid.UUID:
+    """让 resolver 为测试码颁发绑定真实活动/批次的 scan_token，并让 claim 校验命中同一 release。
+
+    resolver 在无 live release 时不再颁发 scan_token（scan_token=None），
+    claim 端点会用 app.services.launch.resolve_current_launch_release 复核
+    token 中的 launch authority，两处必须返回同一份 release。
+    """
+    from app.models.code import CodeItem
+
+    release_id = uuid.uuid4()
+    content_digest = "b" * 64
+
+    async def fake_resolve(db, tenant_uuid, public_id):
+        code_item = await db.scalar(
+            select(CodeItem).where(
+                CodeItem.tenant_id == uuid.UUID(str(tenant_uuid)),
+                CodeItem.public_id == public_id,
+            )
+        )
+        assert code_item is not None
+        return {
+            "release_id": release_id,
+            "page_template_id": uuid.uuid4(),
+            "page_version_id": uuid.uuid4(),
+            "campaign_id": uuid.UUID(campaign_id),
+            "code_batch_id": code_item.code_batch_id,
+            "content_digest": content_digest,
+        }
+
+    async def fake_record(*_args, **_kwargs):
+        return {
+            "release_id": release_id,
+            "observation_status": "observed",
+            "recorded_at": None,
+            "replayed": False,
+        }
+
+    monkeypatch.setattr("app.api.v1.resolver.resolve_current_launch_release", fake_resolve)
+    monkeypatch.setattr("app.api.v1.resolver.record_launch_release_valid_scan", fake_record)
+    monkeypatch.setattr("app.services.launch.resolve_current_launch_release", fake_resolve)
+    return release_id
 
 
 @pytest.mark.anyio
@@ -162,13 +206,14 @@ async def create_product(client: AsyncClient, headers: dict[str, str]) -> str:
     return product.json()["id"]
 
 
-async def create_live_scan_token(
+async def activate_code_chain(
     client: AsyncClient,
     headers: dict[str, str],
     tenant_id: str,
     product_id: str,
     label: str,
-) -> str:
+) -> tuple[str, str]:
+    """创建 sku→生产批次→码批次→激活 链路，返回 (public_id, code_batch_id)，不解析扫码页。"""
     sku = await client.post(
         "/api/v1/skus",
         json={"product_id": product_id, "code": f"WECOM-{label}", "name": f"企微规格-{label}"},
@@ -223,8 +268,19 @@ async def create_live_scan_token(
         headers=headers,
     )
     assert items.status_code == 200
+    return items.json()["items"][0]["public_id"], batch_id
+
+
+async def create_live_scan_token(
+    client: AsyncClient,
+    headers: dict[str, str],
+    tenant_id: str,
+    product_id: str,
+    label: str,
+) -> str:
+    public_id, _batch_id = await activate_code_chain(client, headers, tenant_id, product_id, label)
     resolved = await client.get(
-        f"/c/{items.json()['items'][0]['public_id']}",
+        f"/c/{public_id}",
         headers={"Accept": "application/json"},
     )
     assert resolved.status_code == 200
@@ -289,6 +345,7 @@ async def test_wecom_required_claim_rejects_public_and_mock_confirmation(client:
         headers=headers,
     )
     assert activated_campaign.status_code == 200
+    _stub_live_launch_release(monkeypatch, tenant_id, campaign.json()["id"])
     scan_token = await create_live_scan_token(client, headers, tenant_id, product_id, "REQUIRED")
 
     blocked = await client.post(
@@ -334,8 +391,10 @@ async def test_wecom_required_claim_rejects_public_and_mock_confirmation(client:
 
 
 @pytest.mark.anyio
-async def test_wecom_guide_mode_does_not_block_claim(client: AsyncClient, auth_setup):
+async def test_wecom_guide_mode_does_not_block_claim(client: AsyncClient, db_session: AsyncSession, auth_setup):
+    """guide 模式不拦截领取：领取必须真正成功，因此走真实上线发布而非 stub。"""
     tenant_id, headers = auth_setup
+    tenant_uuid = uuid.UUID(tenant_id)
     product_id = await create_product(client, headers)
     now = datetime.now(UTC)
     campaign = await client.post(
@@ -350,8 +409,9 @@ async def test_wecom_guide_mode_does_not_block_claim(client: AsyncClient, auth_s
         },
         headers=headers,
     )
+    campaign_id = campaign.json()["id"]
     benefit = await client.post(
-        f"/api/v1/campaigns/{campaign.json()['id']}/benefits",
+        f"/api/v1/campaigns/{campaign_id}/benefits",
         json={
             "name": "直接领取券",
             "benefit_type": "platform_coupon",
@@ -361,17 +421,73 @@ async def test_wecom_guide_mode_does_not_block_claim(client: AsyncClient, auth_s
         headers=headers,
     )
     activated_campaign = await client.post(
-        f"/api/v1/campaigns/{campaign.json()['id']}/status",
+        f"/api/v1/campaigns/{campaign_id}/status",
         json={"status": "active"},
         headers=headers,
     )
     assert activated_campaign.status_code == 200
-    scan_token = await create_live_scan_token(client, headers, tenant_id, product_id, "GUIDE")
+
+    public_id, code_batch_id = await activate_code_chain(client, headers, tenant_id, product_id, "GUIDE")
+
+    # 上线门禁事实：产品扫码页（active 模板 + published 版本）
+    template = PageTemplate(
+        tenant_id=tenant_uuid,
+        product_id=uuid.UUID(product_id),
+        name="引导模式扫码页",
+        template_type="product_info",
+        status="active",
+    )
+    db_session.add(template)
+    await db_session.flush()
+    version = PageVersion(
+        tenant_id=tenant_uuid,
+        page_template_id=template.id,
+        version=1,
+        config_json={"dsl_version": "1.0", "title": "正式页"},
+        status=PageVersionStatus.published,
+        published_at=datetime.now(UTC),
+        created_by_tenant_id=tenant_uuid,
+        created_by=uuid.uuid4(),
+    )
+    db_session.add(version)
+    await db_session.commit()
+
+    created_release = await client.post(
+        "/api/v1/launch-releases",
+        json={
+            "page_version_id": str(version.id),
+            "campaign_id": campaign_id,
+            "code_batch_id": code_batch_id,
+            "idempotency_key": "wecom-guide-release-001",
+        },
+        headers=headers,
+    )
+    assert created_release.status_code == 201, created_release.text
+    release_id = created_release.json()["id"]
+    confirmed = await client.post(
+        f"/api/v1/launch-releases/{release_id}/confirm",
+        json={"idempotency_key": "wecom-guide-confirm-001"},
+        headers=headers,
+    )
+    assert confirmed.status_code == 200, confirmed.text
+    launched = await client.post(
+        f"/api/v1/launch-releases/{release_id}/launch",
+        json={"idempotency_key": "wecom-guide-launch-001"},
+        headers=headers,
+    )
+    assert launched.status_code == 200, launched.text
+    assert launched.json()["status"] == "live"
+
+    resolved = await client.get(f"/c/{public_id}", headers={"Accept": "application/json"})
+    assert resolved.status_code == 200
+    scan_token = resolved.json()["scan_token"]
+    assert scan_token
+
     claimed = await client.post(
         "/api/v1/benefit-claims",
         json={"benefit_id": benefit.json()["id"], "scan_token": scan_token},
     )
-    assert claimed.status_code == 201
+    assert claimed.status_code == 201, claimed.text
     assert claimed.json()["status"] == "claimed"
 
 

@@ -598,6 +598,33 @@ class TestH5ClaimTenantIsolation:
 
         tenant_id, headers = auth_setup
         product_id = await create_product(client, headers, "停用权益码产品")
+
+        # resolver 只在存在 live release 时颁发 scan_token；这里 stub 出一份
+        # release 让 create_live_scan_token 拿到真实 telemetry token，
+        # claim 侧的 release 由下方 current_release 单独提供。
+        telemetry_release = {
+            "release_id": uuid.uuid4(),
+            "page_template_id": uuid.uuid4(),
+            "page_version_id": uuid.uuid4(),
+            "campaign_id": uuid.uuid4(),
+            "code_batch_id": uuid.uuid4(),
+            "content_digest": "c" * 64,
+        }
+
+        async def fake_resolver_record(*_args, **_kwargs):
+            return {
+                "release_id": telemetry_release["release_id"],
+                "observation_status": "observed",
+                "recorded_at": None,
+                "replayed": False,
+            }
+
+        async def fake_resolver_resolve(*_args, **_kwargs):
+            return telemetry_release
+
+        monkeypatch.setattr("app.api.v1.resolver.resolve_current_launch_release", fake_resolver_resolve)
+        monkeypatch.setattr("app.api.v1.resolver.record_launch_release_valid_scan", fake_resolver_record)
+
         telemetry_token = await create_live_scan_token(client, headers, tenant_id, product_id, "INACTIVE")
 
         # 通过 API 创建活动 + 权益
