@@ -43,9 +43,10 @@ IDENTITY_BEARING_PRODUCTION_COMMANDS = [
 def test_rich_demo_seed_never_persists_raw_wechat_openid():
     source = (BACKEND_DIR / "scripts" / "seed_demo.py").read_text()
 
+    # 演示数据不再伪造任何微信身份（明文/哈希/加密均不允许）；
+    # 消费者身份统一走 authority service（ConsumerProfile / MemberIdentityCredential）。
     assert "wechat_openid=" not in source
-    assert "hash_wechat_openid(tenant_id, openid)" in source
-    assert "encrypt_wechat_openid(" in source
+    assert "openid" not in source
 
 
 @pytest.mark.parametrize("arguments", MUTATING_COMMANDS, ids=lambda arguments: arguments[0])

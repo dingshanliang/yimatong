@@ -12,7 +12,8 @@ from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
 import typer
-from sqlalchemy import delete, func, select, text
+from sqlalchemy import delete, func, select, text, update
+from sqlalchemy.exc import IntegrityError, ProgrammingError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import selectinload
 
@@ -22,7 +23,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from app.cli.lifecycle_auth import cli_lifecycle_auth_context
 from app.core.config import settings
 from app.core.database import set_session_tenant_context
-from app.models.campaign import Benefit, BenefitClaim, Campaign, CampaignStatus
+from app.models.campaign import (
+    Benefit,
+    BenefitClaim,
+    Campaign,
+    CampaignClaimOutbox,
+    CampaignStatus,
+)
 from app.models.channel import (
     AccountChannelScope,
     CodeAllocation,
@@ -32,19 +39,47 @@ from app.models.channel import (
     Store,
 )
 from app.models.code import CodeBatch, CodeItem, CodeItemStatus
-from app.models.connector import BenefitDelivery, Connector  # noqa: F401 - register FK for Benefit.connector_id
+from app.models.commerce_integration import CommerceIdentityHandoff, CommerceMemberReference
+from app.models.commerce_order import (
+    CommerceOrderFact,
+    CommerceOrderLineFact,
+    CommerceRefundFact,
+    CommerceRepurchaseAttribution,
+)
+from app.models.connector import (
+    BenefitDelivery,
+    CampaignDeliveryCallbackAttempt,
+    Connector,  # noqa: F401 - register FK for Benefit.connector_id
+    CouponCode,
+)
+from app.models.consent import ConsentRecord, ConsumerConsentAction
 from app.models.diversion_evidence import DiversionActionReceipt, DiversionEvidence, DiversionObservation
 from app.models.diversion_history import DiversionInvestigationHistory
+from app.models.gmv import GmvAttributionConfirmation
+from app.models.launch import LaunchRelease, LaunchReleaseAction
 from app.models.member import (
+    BrandMembership,
+    BrandMembershipEvent,
+    BrandMembershipProfileLink,
     ConsumerProfile,
+    MemberIdentityCredential,
     PointProduct,
     PointRedemption,
     PointRule,
     PointTransaction,
     PointTransactionType,
 )
+from app.models.member_notification import (
+    MemberChannelGrant,
+    MemberNotification,
+    MemberNotificationDelivery,
+    MemberNotificationPreference,
+)
 from app.models.page import PageTemplate, PageVersion, PageVersionStatus
+from app.models.privacy_governance import MemberPiiAccessEvent, PrivacyRightsEvent, PrivacyRightsRequest
 from app.models.product import SKU, Brand, Product, ProductionBatch
+from app.models.repurchase_coupon import MemberCoupon, RepurchaseCouponEvent, RepurchaseCouponRuleVersion
+from app.models.risk import CampaignRiskRule, InterceptionRecord, RiskCampaignPause, RiskNotification
 from app.models.scan import ScanEvent
 from app.models.tenant import (
     Account,
@@ -58,6 +93,13 @@ from app.models.tenant import (
     TenantType,
     account_roles,
     role_permissions,
+)
+from app.models.visitor import AnonymousVisitor
+from app.models.wecom import (
+    WeComCallbackReceipt,
+    WeComContactWay,
+    WeComExternalContact,
+    WeComMemberRecoveryMarker,
 )
 from app.modules.brand_tenant_initialization import (
     BrandTenantInitialization,
@@ -2243,26 +2285,74 @@ async def _aggregate_stats(db: AsyncSession, tenant_id: uuid.UUID) -> int:
 async def _clean_demo_data(db: AsyncSession, tenant_id: uuid.UUID) -> None:
     """Delete mutable demo projections while preserving authority-owned lifecycle facts."""
     typer.echo("\U0001f9f9 正在清理演示数据...")
-    # 按依赖顺序删除
+    # 先置空 consumer_profiles.lead_consent_id 断开与 consent_records 的互引环（该列可空），
+    # 再按库级外键拓扑序（引用方在前）删除全部可变演示数据。
+    # 事件日志类表（brand_membership_events / repurchase_coupon_events 等）带不可变触发器，
+    # 其引用使其父表也可能删不掉：这类失败用 savepoint 隔离，跳过并继续，保证可清的都清掉。
+    await db.execute(update(ConsumerProfile).where(ConsumerProfile.tenant_id == tenant_id).values(lead_consent_id=None))
+    skipped: list[str] = []
     for model in [
-        PointRedemption,
-        PointTransaction,
-        PointProduct,
-        PointRule,
-        # benefit_deliveries 以 NO ACTION 外键引用 benefits/benefit_claims，
-        # 必须先删，否则存在发放记录时清理会 FK 报错
+        AnonymousVisitor,
+        CampaignDeliveryCallbackAttempt,
         BenefitDelivery,
+        CampaignClaimOutbox,
+        CouponCode,
+        CommerceRepurchaseAttribution,
+        RepurchaseCouponEvent,
+        MemberCoupon,
+        PointRedemption,
         BenefitClaim,
+        PointProduct,
+        RepurchaseCouponRuleVersion,
+        WeComCallbackReceipt,
+        WeComMemberRecoveryMarker,
+        WeComExternalContact,
+        WeComContactWay,
         Benefit,
+        BrandMembershipEvent,
+        BrandMembershipProfileLink,
+        CommerceIdentityHandoff,
+        CommerceMemberReference,
+        CommerceOrderLineFact,
+        CommerceRefundFact,
+        CommerceOrderFact,
+        MemberNotificationDelivery,
+        MemberChannelGrant,
+        MemberIdentityCredential,
+        MemberNotificationPreference,
+        MemberNotification,
+        PrivacyRightsEvent,
+        PrivacyRightsRequest,
+        BrandMembership,
+        CampaignRiskRule,
+        InterceptionRecord,
+        LaunchReleaseAction,
+        LaunchRelease,
+        RiskCampaignPause,
+        RiskNotification,
         Campaign,
+        ConsumerConsentAction,
+        GmvAttributionConfirmation,
+        MemberPiiAccessEvent,
+        PointTransaction,
         ConsumerProfile,
+        ConsentRecord,
         PageVersion,
         PageTemplate,
+        PointRule,
     ]:
-        result = await db.execute(delete(model).where(model.tenant_id == tenant_id))
-        if result.rowcount:
-            typer.echo(f"  删除 {model.__tablename__}: {result.rowcount} 条")
+        try:
+            async with db.begin_nested():
+                result = await db.execute(delete(model).where(model.tenant_id == tenant_id))
+                if result.rowcount:
+                    typer.echo(f"  删除 {model.__tablename__}: {result.rowcount} 条")
+        except (ProgrammingError, IntegrityError) as exc:
+            skipped.append(model.__tablename__)
+            reason = str(exc.orig).splitlines()[0][:80] if getattr(exc, "orig", None) else "blocked"
+            typer.echo(f"  跳过 {model.__tablename__}（{reason}）")
     await db.flush()
+    if skipped:
+        typer.echo(f"ℹ️  受不可变事实/外键保护而保留: {', '.join(skipped)}")
     typer.echo("✅ 清理完成")
 
 

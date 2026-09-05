@@ -1,6 +1,6 @@
 import uuid
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import ANY, AsyncMock
 
 import pytest
 
@@ -39,6 +39,8 @@ async def test_cli_code_batch_uses_authoritative_delivery_chain(module, monkeypa
     monkeypatch.setattr(module, "mark_delivered", delivered)
     monkeypatch.setattr(module, "activate_batch", activate)
     db = SimpleNamespace()
+    # baseline 版本要求显式传入 trusted seed owner session factory；seed 版本内部自建
+    extra_kwargs = {"seed_owner_session_factory": ANY} if module is baseline else {}
 
     result = await module._create_and_deliver_seed_code_batch(
         db,
@@ -49,6 +51,7 @@ async def test_cli_code_batch_uses_authoritative_delivery_chain(module, monkeypa
         batch_code="STABLE-CODE-BATCH",
         quantity=12,
         created_by=actor_id,
+        **extra_kwargs,
     )
 
     assert result == code_batch_id
@@ -63,7 +66,7 @@ async def test_cli_code_batch_uses_authoritative_delivery_chain(module, monkeypa
         batch_code="STABLE-CODE-BATCH",
         idempotency_key=module._seed_code_generation_idempotency_key(tenant_id, production_batch_id),
     )
-    export.assert_awaited_once_with(db, tenant_id, code_batch_id, actor_id)
+    export.assert_awaited_once_with(db, tenant_id, code_batch_id, actor_id, seed_owner_session_factory=ANY)
     printing.assert_awaited_once_with(db, tenant_id, code_batch_id, actor_id=str(actor_id))
     delivered.assert_awaited_once_with(
         db,

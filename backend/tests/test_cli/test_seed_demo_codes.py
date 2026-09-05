@@ -1,6 +1,6 @@
 import uuid
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import ANY, AsyncMock
 
 import pytest
 
@@ -59,7 +59,7 @@ async def test_demo_code_batch_uses_authoritative_generation_and_delivery_chain(
         actor_id,
         idempotency_key=seed_demo._demo_code_generation_idempotency_key(tenant_id, production_batch_id),
     )
-    export.assert_awaited_once_with(db, tenant_id, code_batch_id, actor_id)
+    export.assert_awaited_once_with(db, tenant_id, code_batch_id, actor_id, seed_owner_session_factory=ANY)
     printing.assert_awaited_once_with(db, tenant_id, code_batch_id, actor_id=str(actor_id))
     delivered.assert_awaited_once_with(
         db,
@@ -101,9 +101,7 @@ def _demo_brand_records(production_batch_id: uuid.UUID) -> list[dict]:
             "products": [
                 {
                     "product": SimpleNamespace(name="演示产品"),
-                    "skus": [
-                        {"sku": SimpleNamespace(id=uuid.uuid4()), "production_batch": production_batch_id}
-                    ],
+                    "skus": [{"sku": SimpleNamespace(id=uuid.uuid4()), "production_batch": production_batch_id}],
                 }
             ]
         }
@@ -126,9 +124,7 @@ async def _run_status_samples(items: list, monkeypatch) -> tuple[AsyncMock, Asyn
         execute=AsyncMock(side_effect=lambda *a, **k: next(exec_results)),
         scalars=AsyncMock(side_effect=lambda *a, **k: next(scalars_results)),
     )
-    returned = await seed_demo._ensure_code_batches(
-        db, tenant_id, uuid.uuid4(), _demo_brand_records(production_batch)
-    )
+    returned = await seed_demo._ensure_code_batches(db, tenant_id, uuid.uuid4(), _demo_brand_records(production_batch))
     assert [item.id for item in returned] == [item.id for item in items]
     return revoke, freeze
 
