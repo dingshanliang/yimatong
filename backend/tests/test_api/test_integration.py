@@ -161,3 +161,64 @@ class TestCrmSync:
         )
         assert resp.status_code == 200
         assert resp.json()["synced"] == 2
+
+
+_INTEGRATION_WRITE_CASES = [
+    (
+        "/api/v1/integration/batch-import",
+        "product:create",
+        {"type": "products", "items": [{"brand_id": "00000000-0000-0000-0000-0000000000aa", "name": "产品A"}]},
+    ),
+    (
+        "/api/v1/integration/erp/inventory-sync",
+        "product:update",
+        {"records": [{"batch_code": "BATCH001", "direction": "out", "quantity": 1}]},
+    ),
+    (
+        "/api/v1/integration/crm/customer-sync",
+        "consumer:detail",
+        {"customers": [{"external_id": "CRM001", "phone_hash": "hash1"}]},
+    ),
+]
+
+
+class TestIntegrationPermissions:
+    """回归：integration 写端点必须经过 RBAC 权限校验（历史上完全裸奔）。"""
+
+    @pytest.mark.anyio
+    @pytest.mark.parametrize(("path", "permission", "payload"), _INTEGRATION_WRITE_CASES)
+    async def test_viewer_rejected_for_missing_permission(
+        self, client: AsyncClient, path: str, permission: str, payload: dict
+    ):
+        """无权限角色（viewer）必须 403，且报缺失的权限码。"""
+        token = create_access_token(str(uuid.uuid4()), str(uuid.uuid4()), "viewer")
+        resp = await client.post(
+            path,
+            json=payload,
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert resp.status_code == 403
+        assert resp.json()["detail"] == f"Missing permission: {permission}"
+
+    @pytest.mark.anyio
+    @pytest.mark.parametrize(("path", "_permission", "payload"), _INTEGRATION_WRITE_CASES)
+    async def test_admin_passes_permission_layer_to_service(
+        self, client: AsyncClient, path: str, _permission: str, payload: dict, monkeypatch: pytest.MonkeyPatch
+    ):
+        """admin 必须能穿过权限层进入业务逻辑（对照 /imports/excel 与 members/consumers 同码）。"""
+
+        async def _fake_service(_db, _tenant_id, _items):
+            return 42
+
+        monkeypatch.setattr("app.api.v1.integration.batch_import_products", _fake_service)
+        monkeypatch.setattr("app.api.v1.integration.sync_inventory", _fake_service)
+        monkeypatch.setattr("app.api.v1.integration.sync_customers", _fake_service)
+
+        token = create_access_token(str(uuid.uuid4()), str(uuid.uuid4()), "admin")
+        resp = await client.post(
+            path,
+            json=payload,
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert resp.status_code == 200
+        assert resp.json() in ({"imported": 42}, {"synced": 42})

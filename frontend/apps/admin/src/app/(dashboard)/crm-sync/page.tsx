@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import {
-  App,
+  Alert,
   Button,
   Card,
   Descriptions,
@@ -10,13 +10,10 @@ import {
   Space,
   Tabs,
   Tag,
+  Tooltip,
   Typography,
 } from "antd";
-import {
-  CloudSyncOutlined,
-  ReloadOutlined,
-  SyncOutlined,
-} from "@ant-design/icons";
+import { ReloadOutlined, SyncOutlined } from "@ant-design/icons";
 import api from "@/lib/api";
 import { STATUS_COLORS } from "@/lib/status-colors";
 import { MappingsTab } from "./_components/MappingsTab";
@@ -25,13 +22,15 @@ import type { SyncMapping, SyncLog } from "./_components/types";
 
 const { Title } = Typography;
 
+const CRM_SYNC_UNAVAILABLE = "CRM 同步功能尚未接入";
+
 export default function CrmSyncPage() {
-  const { message } = App.useApp();
   const [mappings, setMappings] = useState<SyncMapping[]>([]);
   const [syncLogs, setSyncLogs] = useState<SyncLog[]>([]);
   const [mappingLoading, setMappingLoading] = useState(false);
   const [logLoading, setLogLoading] = useState(false);
-  const [syncing, setSyncing] = useState(false);
+  const [mappingsUnavailable, setMappingsUnavailable] = useState(false);
+  const [logsUnavailable, setLogsUnavailable] = useState(false);
   const [crmConfigured, setCrmConfigured] = useState(false);
   const [activeTab, setActiveTab] = useState("mappings");
 
@@ -52,8 +51,11 @@ export default function CrmSyncPage() {
     try {
       const { data } = await api.get("/crm/sync-mappings");
       setMappings(Array.isArray(data) ? data : data.items || []);
+      setMappingsUnavailable(false);
     } catch {
+      // 不再静默置空：明确告知该数据源暂不可用
       setMappings([]);
+      setMappingsUnavailable(true);
     } finally {
       setMappingLoading(false);
     }
@@ -64,8 +66,10 @@ export default function CrmSyncPage() {
     try {
       const { data } = await api.get("/crm/sync-logs");
       setSyncLogs(Array.isArray(data) ? data : data.items || []);
+      setLogsUnavailable(false);
     } catch {
       setSyncLogs([]);
+      setLogsUnavailable(true);
     } finally {
       setLogLoading(false);
     }
@@ -76,21 +80,16 @@ export default function CrmSyncPage() {
     fetchMappings();
   }, [checkCrmConfig, fetchMappings]);
 
-  const handleManualSync = async () => {
-    setSyncing(true);
-    try {
-      await api.post("/crm/trigger-sync");
-      message.success("手动同步已触发，将在下一个周期执行");
-    } catch {
-      message.info("同步功能将在下一个 cron 周期自动执行");
-    } finally {
-      setSyncing(false);
-    }
-  };
-
   return (
     <div>
       <Title level={4}>CRM 同步管理</Title>
+      <Alert
+        type="warning"
+        showIcon
+        title={CRM_SYNC_UNAVAILABLE}
+        description="后端 CRM 同步服务尚未上线，本页面为预留入口：同步映射、同步日志与手动触发同步暂不可用。连接器配置本身可在 CRM 集成配置中维护。"
+        style={{ marginBottom: 24 }}
+      />
       {!crmConfigured && (
         <Card style={{ marginBottom: 24 }}>
           <Empty
@@ -114,19 +113,20 @@ export default function CrmSyncPage() {
             )}
           </Descriptions.Item>
           <Descriptions.Item label="同步映射数">
-            {mappings.length}
+            {mappingsUnavailable ? (
+              <Tag color={STATUS_COLORS.neutral}>不可用</Tag>
+            ) : (
+              mappings.length
+            )}
           </Descriptions.Item>
         </Descriptions>
         <div style={{ marginTop: 12 }}>
           <Space>
-            <Button
-              icon={<SyncOutlined />}
-              onClick={handleManualSync}
-              loading={syncing}
-              disabled={!crmConfigured}
-            >
-              手动触发同步
-            </Button>
+            <Tooltip title={`${CRM_SYNC_UNAVAILABLE}，暂不支持手动触发同步`}>
+              <Button icon={<SyncOutlined />} disabled>
+                手动触发同步
+              </Button>
+            </Tooltip>
             <Button
               icon={<ReloadOutlined />}
               onClick={() => {
@@ -150,14 +150,30 @@ export default function CrmSyncPage() {
             {
               key: "mappings",
               label: "同步映射",
-              children: (
+              children: mappingsUnavailable ? (
+                <Alert
+                  type="warning"
+                  showIcon
+                  title="同步映射暂不可用"
+                  description="CRM 同步接口尚未接入，无法读取同步映射数据。"
+                />
+              ) : (
                 <MappingsTab mappings={mappings} loading={mappingLoading} />
               ),
             },
             {
               key: "logs",
               label: "同步日志",
-              children: <LogsTab logs={syncLogs} loading={logLoading} />,
+              children: logsUnavailable ? (
+                <Alert
+                  type="warning"
+                  showIcon
+                  title="同步日志暂不可用"
+                  description="CRM 同步接口尚未接入，无法读取同步日志数据。"
+                />
+              ) : (
+                <LogsTab logs={syncLogs} loading={logLoading} />
+              ),
             },
           ]}
         />

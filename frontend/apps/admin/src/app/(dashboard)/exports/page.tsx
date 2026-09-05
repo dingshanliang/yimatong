@@ -4,7 +4,7 @@ import { useState } from "react";
 import { Alert, App, Button, Empty, Table, Tabs, Tag, Typography } from "antd";
 import { DownloadOutlined } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
-import api from "@/lib/api";
+import api, { extractErrorMessage } from "@/lib/api";
 import {
   newExportIdempotencyKey,
   useExportReasonDialog,
@@ -12,10 +12,39 @@ import {
 import { useAuthStore } from "@/lib/auth";
 import { codeAccessForPrincipal } from "@/lib/code-access";
 import { useCrud } from "@/lib/hooks";
+import { TenantPlanReadOnlyError } from "@/lib/plan-entitlement";
 import { STATUS_COLORS } from "@/lib/status-colors";
 import { useTenantPlanReadOnly } from "../_components/TenantPlanReadOnly";
 
 const { Title } = Typography;
+
+const PLAN_EXPIRED_EXPORT_MESSAGE =
+  "当前套餐已到期，暂不能导出码表；续期后可重试。";
+
+interface ExportErrorShape {
+  response?: {
+    status?: number;
+    data?: { code?: string };
+  };
+}
+
+function isPlanExpiredRejection(error: unknown): boolean {
+  const err = error as ExportErrorShape | null;
+  return (
+    err?.response?.status === 403 &&
+    err.response.data?.code === "TENANT_PLAN_EXPIRED"
+  );
+}
+
+function exportFailureMessage(error: unknown): string {
+  if (
+    error instanceof TenantPlanReadOnlyError ||
+    isPlanExpiredRejection(error)
+  ) {
+    return PLAN_EXPIRED_EXPORT_MESSAGE;
+  }
+  return extractErrorMessage(error, "导出失败，请稍后重试");
+}
 
 interface CodeBatch {
   id: string;
@@ -132,8 +161,8 @@ function ExportsCatalog() {
       message.success("码表已导出");
       mutateBatches();
       mutateExports();
-    } catch {
-      message.error("导出失败");
+    } catch (e: unknown) {
+      message.error(exportFailureMessage(e));
     } finally {
       setExportingId(null);
     }

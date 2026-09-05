@@ -19,27 +19,52 @@ import {
 } from "antd";
 import { PlusOutlined, CopyOutlined } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
-import api from "@/lib/api";
+import api, { extractErrorMessage } from "@/lib/api";
 import { STATUS_COLORS } from "@/lib/status-colors";
 import { EVENT_OPTIONS } from "./constants";
 
 const { Text } = Typography;
 
+const WEBHOOK_CONFLICT_MESSAGE = "配置已被他人更新，已刷新请重试";
+
+interface ApiErrorShape {
+  response?: {
+    status?: number;
+    data?: { detail?: unknown };
+  };
+}
+
+interface WebhookEndpoint {
+  id: string;
+  url: string;
+  events: string[];
+  description: string | null;
+  enabled: boolean;
+  config_version: number;
+  batch_mode: boolean;
+  batch_size: number | null;
+}
+
+function isVersionConflict(error: unknown): boolean {
+  return (error as ApiErrorShape)?.response?.status === 409;
+}
+
 export function WebhooksTab() {
   const { message } = App.useApp();
-  const [items, setItems] = useState<Record<string, unknown>[]>([]);
+  const [items, setItems] = useState<WebhookEndpoint[]>([]);
   const [loading, setLoading] = useState(false);
   const [open, setOpen] = useState(false);
   const [form] = Form.useForm();
   const [secretVisible, setSecretVisible] = useState<string | null>(null);
+  const batchMode = Form.useWatch("batch_mode", form) ?? false;
 
   const fetch = async () => {
     setLoading(true);
     try {
       const { data } = await api.get("/webhooks/endpoints");
       setItems(Array.isArray(data) ? data : []);
-    } catch {
-      message.error("加载 Webhook 端点失败");
+    } catch (e: unknown) {
+      message.error(extractErrorMessage(e, "加载 Webhook 端点失败"));
     } finally {
       setLoading(false);
     }
@@ -58,32 +83,49 @@ export function WebhooksTab() {
       form.resetFields();
       fetch();
     } catch (e: unknown) {
-      const err = e as { response?: { data?: { detail?: string } } };
-      message.error(err.response?.data?.detail || "创建失败");
+      message.error(extractErrorMessage(e, "创建失败"));
     }
   };
 
-  const handleToggle = async (id: string, enabled: boolean) => {
+  const handleToggle = async (record: WebhookEndpoint, enabled: boolean) => {
     try {
-      await api.patch(`/webhooks/endpoints/${id}`, { enabled });
+      await api.patch(
+        `/webhooks/endpoints/${record.id}`,
+        { enabled },
+        {
+          headers: { "If-Match": String(record.config_version) },
+        }
+      );
       message.success(enabled ? "已启用" : "已禁用");
       fetch();
-    } catch {
-      message.error("操作失败");
+    } catch (e: unknown) {
+      if (isVersionConflict(e)) {
+        message.warning(WEBHOOK_CONFLICT_MESSAGE);
+        fetch();
+      } else {
+        message.error(extractErrorMessage(e, "操作失败"));
+      }
     }
   };
 
-  const handleDelete = async (id: string) => {
+  const handleDelete = async (record: WebhookEndpoint) => {
     try {
-      await api.delete(`/webhooks/endpoints/${id}`);
+      await api.delete(`/webhooks/endpoints/${record.id}`, {
+        headers: { "If-Match": String(record.config_version) },
+      });
       message.success("已删除");
       fetch();
-    } catch {
-      message.error("删除失败");
+    } catch (e: unknown) {
+      if (isVersionConflict(e)) {
+        message.warning(WEBHOOK_CONFLICT_MESSAGE);
+        fetch();
+      } else {
+        message.error(extractErrorMessage(e, "删除失败"));
+      }
     }
   };
 
-  const columns: ColumnsType<Record<string, unknown>> = [
+  const columns: ColumnsType<WebhookEndpoint> = [
     { title: "URL", dataIndex: "url", key: "url", ellipsis: true },
     {
       title: "事件",
@@ -104,7 +146,7 @@ export function WebhooksTab() {
       render: (v: boolean, record) => (
         <Switch
           checked={v}
-          onChange={(checked) => handleToggle(record.id as string, checked)}
+          onChange={(checked) => handleToggle(record, checked)}
         />
       ),
     },
@@ -126,7 +168,9 @@ export function WebhooksTab() {
       render: (_, record) => (
         <Popconfirm
           title="确认删除？"
-          onConfirm={() => handleDelete(record.id as string)}
+          okText="确认"
+          cancelText="取消"
+          onConfirm={() => handleDelete(record)}
         >
           <Button danger size="small">
             删除
@@ -135,6 +179,16 @@ export function WebhooksTab() {
       ),
     },
   ];
+
+  const copySecret = async () => {
+    if (!secretVisible) return;
+    try {
+      await navigator.clipboard.writeText(secretVisible);
+      message.success("已复制");
+    } catch {
+      message.warning("浏览器未允许复制，请手动选择密钥复制");
+    }
+  };
 
   return (
     <>
@@ -160,14 +214,7 @@ export function WebhooksTab() {
           description={
             <Space>
               <Text code>{secretVisible}</Text>
-              <Button
-                size="small"
-                icon={<CopyOutlined />}
-                onClick={() => {
-                  navigator.clipboard.writeText(secretVisible);
-                  message.success("已复制");
-                }}
-              >
+              <Button size="small" icon={<CopyOutlined />} onClick={copySecret}>
                 复制
               </Button>
               <Button size="small" onClick={() => setSecretVisible(null)}>
@@ -183,6 +230,8 @@ export function WebhooksTab() {
         open={open}
         onCancel={() => setOpen(false)}
         onOk={() => form.submit()}
+        okText="确定"
+        cancelText="取消"
         width={550}
       >
         <Form form={form} layout="vertical" onFinish={handleCreate}>
@@ -210,7 +259,12 @@ export function WebhooksTab() {
           <Form.Item name="batch_mode" label="批量模式" valuePropName="checked">
             <Switch />
           </Form.Item>
-          <Form.Item name="batch_size" label="批量大小" hidden={false}>
+          <Form.Item
+            name="batch_size"
+            label="批量大小"
+            hidden={!batchMode}
+            rules={[{ required: batchMode }]}
+          >
             <InputNumber min={1} max={1000} className="w-full" />
           </Form.Item>
         </Form>

@@ -7,6 +7,10 @@ import ExportsPage from "./page";
 const mocks = vi.hoisted(() => ({
   post: vi.fn(),
   useCrud: vi.fn(),
+  message: {
+    success: vi.fn(),
+    error: vi.fn(),
+  },
   user: {
     role: "viewer",
     tenant_type: "brand",
@@ -22,7 +26,7 @@ vi.mock("antd", async () => {
     App: {
       ...actual.App,
       useApp: () => ({
-        message: { success: vi.fn(), error: vi.fn() },
+        message: mocks.message,
       }),
     },
   };
@@ -30,6 +34,9 @@ vi.mock("antd", async () => {
 
 vi.mock("@/lib/api", () => ({
   default: { post: (...args: unknown[]) => mocks.post(...args) },
+  extractErrorMessage: (error: unknown, fallback: string) =>
+    (error as { response?: { data?: { detail?: string } } })?.response?.data
+      ?.detail || fallback,
 }));
 
 vi.mock("@/lib/hooks", () => ({
@@ -162,5 +169,74 @@ describe("ExportsPage access and delivery boundaries", () => {
     expect(screen.getByRole("button", { name: /导出/ })).toBeDisabled();
     fireEvent.click(screen.getByRole("button", { name: /导出/ }));
     expect(mocks.post).not.toHaveBeenCalled();
+  });
+
+  it("reports plan expiry distinctly when the export request itself is rejected", async () => {
+    mocks.user.role = "admin";
+    const batches = crudState([
+      {
+        id: "batch-completed",
+        batch_code: "CB-001",
+        quantity: 1,
+        expected_item_count: 1,
+        code_type: "single",
+        status: "completed",
+      },
+    ]);
+    mocks.useCrud.mockImplementation((path: string) =>
+      path === "/code-batches" ? batches : crudState()
+    );
+    mocks.post.mockRejectedValueOnce({
+      response: { status: 403, data: { code: "TENANT_PLAN_EXPIRED" } },
+    });
+
+    render(<ExportsPage />);
+    fireEvent.click(screen.getByRole("tab", { name: "码批次导出" }));
+    fireEvent.click(await screen.findByRole("button", { name: /导出/ }));
+    fireEvent.change(await screen.findByLabelText("导出原因"), {
+      target: { value: "  交付印刷厂  " },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "准备导出" }));
+
+    await vi.waitFor(() =>
+      expect(mocks.message.error).toHaveBeenCalledWith(
+        expect.stringContaining("套餐已到期")
+      )
+    );
+    expect(mocks.message.error).not.toHaveBeenCalledWith(
+      "导出失败，请稍后重试"
+    );
+  });
+
+  it("falls back to a specific actionable message for other export failures", async () => {
+    mocks.user.role = "admin";
+    const batches = crudState([
+      {
+        id: "batch-completed",
+        batch_code: "CB-001",
+        quantity: 1,
+        expected_item_count: 1,
+        code_type: "single",
+        status: "completed",
+      },
+    ]);
+    mocks.useCrud.mockImplementation((path: string) =>
+      path === "/code-batches" ? batches : crudState()
+    );
+    mocks.post.mockRejectedValueOnce({
+      response: { status: 500, data: { detail: "导出服务暂时不可用" } },
+    });
+
+    render(<ExportsPage />);
+    fireEvent.click(screen.getByRole("tab", { name: "码批次导出" }));
+    fireEvent.click(await screen.findByRole("button", { name: /导出/ }));
+    fireEvent.change(await screen.findByLabelText("导出原因"), {
+      target: { value: "  交付印刷厂  " },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "准备导出" }));
+
+    await vi.waitFor(() =>
+      expect(mocks.message.error).toHaveBeenCalledWith("导出服务暂时不可用")
+    );
   });
 });

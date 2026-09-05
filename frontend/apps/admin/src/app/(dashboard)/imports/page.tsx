@@ -1,58 +1,85 @@
 "use client";
 
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useState } from "react";
 import {
   Alert,
   App,
   Button,
   Card,
-  Modal,
+  Empty,
   Space,
-  Spin,
-  Table,
-  Tag,
   Typography,
   Upload,
 } from "antd";
-import {
-  DownloadOutlined,
-  InboxOutlined,
-  ReloadOutlined,
-} from "@ant-design/icons";
-import type { ColumnsType } from "antd/es/table";
-import api from "@/lib/api";
+import { DownloadOutlined, InboxOutlined } from "@ant-design/icons";
+import api, { API_BASE_URL } from "@/lib/api";
 import { useAuthStore } from "@/lib/auth";
 import { catalogAccessForPrincipal } from "@/lib/catalog-access";
-import { STATUS_COLORS } from "@/lib/status-colors";
 import { useTenantPlanReadOnly } from "../_components/TenantPlanReadOnly";
 
 const { Title, Text } = Typography;
 const { Dragger } = Upload;
 
-interface ImportRecord {
-  id: string;
-  file_name: string;
-  status: "pending" | "processing" | "completed" | "failed";
-  total_rows: number;
-  created_count: number;
-  updated_count: number;
-  failed_count: number;
-  error_detail?: string;
-  created_at: string;
+export const EXCEL_UPLOAD_ACTION = `${API_BASE_URL}/api/v1/imports/excel`;
+const MAX_SHOWN_IMPORT_ERRORS = 5;
+
+interface ImportRowError {
+  sheet?: string;
+  row?: number;
+  message?: string;
 }
 
-const STATUS_MAP: Record<string, { label: string; color: string }> = {
-  pending: { label: "等待中", color: STATUS_COLORS.neutral },
-  processing: { label: "处理中", color: STATUS_COLORS.processing },
-  completed: { label: "已完成", color: STATUS_COLORS.success },
-  failed: { label: "失败", color: STATUS_COLORS.error },
-};
+interface ImportUploadResponse {
+  success?: boolean;
+  message?: string;
+  created?: number;
+  updated?: number;
+  errors?: ImportRowError[];
+}
 
-function formatDate(dateStr?: string): string {
-  if (!dateStr) return "-";
-  const date = new Date(dateStr);
-  if (Number.isNaN(date.getTime())) return "-";
-  return date.toLocaleString("zh-CN");
+interface ImportFailure {
+  summary: string;
+  backendMessage?: string;
+  rows: ImportRowError[];
+  totalErrors: number;
+}
+
+function formatRowError(error: ImportRowError): string {
+  const location = [
+    error.sheet ? `「${error.sheet}」` : "",
+    typeof error.row === "number" ? `第 ${error.row} 行` : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+  return `${location ? location + "：" : ""}${error.message || "未知错误"}`;
+}
+
+export type ImportOutcome =
+  | { ok: true; created: number; updated: number }
+  | { ok: false; failure: ImportFailure };
+
+/** 把 /imports/excel 的 HTTP 200 响应体归类为成功或失败（含错误行摘要）。 */
+export function summarizeImportResponse(
+  resp: ImportUploadResponse | undefined
+): ImportOutcome {
+  if (resp?.success === false) {
+    const errors = Array.isArray(resp.errors) ? resp.errors : [];
+    const succeeded = (resp.created || 0) + (resp.updated || 0);
+    return {
+      ok: false,
+      failure: {
+        summary: `解析完成：成功 ${succeeded} 条，失败 ${errors.length} 条`,
+        backendMessage: resp.message,
+        rows: errors.slice(0, MAX_SHOWN_IMPORT_ERRORS),
+        totalErrors: errors.length,
+      },
+    };
+  }
+  return {
+    ok: true,
+    created: resp?.created || 0,
+    updated: resp?.updated || 0,
+  };
 }
 
 export default function ImportsPage() {
@@ -70,31 +97,8 @@ function ImportsWorkspace({ canWrite }: { canWrite: boolean }) {
   const { message } = App.useApp();
   const planReadOnly = useTenantPlanReadOnly();
   const uploadDisabled = planReadOnly || !canWrite;
-  const [records, setRecords] = useState<ImportRecord[]>([]);
-  const [loading, setLoading] = useState(false);
   const [downloading, setDownloading] = useState(false);
-  const [errorModal, setErrorModal] = useState<{
-    open: boolean;
-    title: string;
-    detail: string;
-  }>({ open: false, title: "", detail: "" });
-
-  const fetchRecords = useCallback(async () => {
-    setLoading(true);
-    try {
-      const { data } = await api.get("/imports/records");
-      setRecords(Array.isArray(data) ? data : data.items || []);
-    } catch {
-      // 接口尚未就绪时显示空列表
-      setRecords([]);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    fetchRecords();
-  }, [fetchRecords]);
+  const [lastFailure, setLastFailure] = useState<ImportFailure | null>(null);
 
   const handleDownloadTemplate = async () => {
     setDownloading(true);
@@ -127,7 +131,7 @@ function ImportsWorkspace({ canWrite }: { canWrite: boolean }) {
 
   const uploadProps = {
     name: "file",
-    action: `${process.env.NEXT_PUBLIC_API_URL || ""}/api/v1/imports/excel`,
+    action: EXCEL_UPLOAD_ACTION,
     headers: { Authorization: `Bearer ${getToken()}` },
     accept: ".xlsx",
     disabled: uploadDisabled,
@@ -143,16 +147,22 @@ function ImportsWorkspace({ canWrite }: { canWrite: boolean }) {
       file: {
         status?: string;
         name: string;
-        response?: { created?: number; updated?: number; detail?: string };
+        response?: ImportUploadResponse & { detail?: string };
       };
     }) {
       if (info.file.status === "done") {
-        const resp = info.file.response;
+        const outcome = summarizeImportResponse(info.file.response);
+        // 后端对解析失败/行级错误返回 HTTP 200 + success:false + errors[]，必须显式呈现
+        if (!outcome.ok) {
+          setLastFailure(outcome.failure);
+          return;
+        }
+        setLastFailure(null);
         message.success(
-          `导入完成: ${resp?.created || 0} 条创建, ${resp?.updated || 0} 条更新`
+          `导入完成: ${outcome.created} 条创建, ${outcome.updated} 条更新`
         );
-        fetchRecords();
       } else if (info.file.status === "error") {
+        setLastFailure(null);
         if (info.file.response?.detail === "Unsupported import file type") {
           message.error("不支持该文件格式，请上传 .xlsx 文件");
         } else {
@@ -161,89 +171,6 @@ function ImportsWorkspace({ canWrite }: { canWrite: boolean }) {
       }
     },
   };
-
-  const handleErrorClick = (record: ImportRecord) => {
-    setErrorModal({
-      open: true,
-      title: `${record.file_name} - 错误详情`,
-      detail: record.error_detail || "无详细错误信息",
-    });
-  };
-
-  const columns: ColumnsType<ImportRecord> = [
-    {
-      title: "文件名",
-      dataIndex: "file_name",
-      key: "file_name",
-      ellipsis: true,
-    },
-    {
-      title: "状态",
-      dataIndex: "status",
-      key: "status",
-      render: (status: string) => {
-        const info = STATUS_MAP[status] || {
-          label: status,
-          color: STATUS_COLORS.neutral,
-        };
-        return <Tag color={info.color}>{info.label}</Tag>;
-      },
-    },
-    { title: "总行数", dataIndex: "total_rows", key: "total_rows" },
-    {
-      title: "创建",
-      dataIndex: "created_count",
-      key: "created_count",
-      render: (v: number) => (
-        <Text
-          style={{
-            color: v > 0 ? "var(--ymt-color-feedback-success)" : undefined,
-          }}
-        >
-          {v ?? 0}
-        </Text>
-      ),
-    },
-    {
-      title: "更新",
-      dataIndex: "updated_count",
-      key: "updated_count",
-      render: (v: number) => (
-        <Text
-          style={{
-            color: v > 0 ? "var(--ymt-color-feedback-info)" : undefined,
-          }}
-        >
-          {v ?? 0}
-        </Text>
-      ),
-    },
-    {
-      title: "失败",
-      dataIndex: "failed_count",
-      key: "failed_count",
-      render: (v: number, record: ImportRecord) =>
-        v > 0 ? (
-          <Button
-            type="link"
-            size="small"
-            onClick={() => handleErrorClick(record)}
-          >
-            <Text style={{ color: "var(--ymt-color-feedback-danger)" }}>
-              {v}
-            </Text>
-          </Button>
-        ) : (
-          <Text>{v ?? 0}</Text>
-        ),
-    },
-    {
-      title: "导入时间",
-      dataIndex: "created_at",
-      key: "created_at",
-      render: (v: string) => formatDate(v),
-    },
-  ];
 
   return (
     <div>
@@ -268,65 +195,42 @@ function ImportsWorkspace({ canWrite }: { canWrite: boolean }) {
               仅支持 .xlsx 格式，请先下载模板填写数据
             </p>
           </Dragger>
+
+          {lastFailure && (
+            <Alert
+              type="error"
+              showIcon
+              title={lastFailure.summary}
+              description={
+                <div>
+                  {lastFailure.backendMessage && (
+                    <Text type="secondary">{lastFailure.backendMessage}</Text>
+                  )}
+                  <ul style={{ margin: "8px 0 0", paddingLeft: 20 }}>
+                    {lastFailure.rows.map((row, index) => (
+                      <li key={index}>{formatRowError(row)}</li>
+                    ))}
+                  </ul>
+                  {lastFailure.totalErrors > lastFailure.rows.length && (
+                    <Text type="secondary">
+                      …等共 {lastFailure.totalErrors} 条错误，请修正后重新上传
+                    </Text>
+                  )}
+                </div>
+              }
+              closable
+              onClose={() => setLastFailure(null)}
+            />
+          )}
         </Space>
       </Card>
 
-      <Card
-        title="导入记录"
-        extra={
-          <Button
-            icon={<ReloadOutlined />}
-            onClick={fetchRecords}
-            loading={loading}
-          >
-            刷新
-          </Button>
-        }
-      >
-        <Spin spinning={loading}>
-          <Table
-            columns={columns}
-            dataSource={records}
-            rowKey="id"
-            pagination={{
-              pageSize: 20,
-              showTotal: (t) => `共 ${t} 条`,
-            }}
-            locale={{ emptyText: "暂无导入记录" }}
-          />
-        </Spin>
+      <Card title="导入记录">
+        <Empty
+          image={Empty.PRESENTED_IMAGE_SIMPLE}
+          description="导入记录暂不支持保存与回查，导入结果以上传完成后的提示为准"
+        />
       </Card>
-
-      <Modal
-        open={errorModal.open}
-        title={errorModal.title}
-        onCancel={() => setErrorModal({ open: false, title: "", detail: "" })}
-        footer={
-          <Button
-            onClick={() =>
-              setErrorModal({ open: false, title: "", detail: "" })
-            }
-          >
-            关闭
-          </Button>
-        }
-        width={600}
-      >
-        <pre
-          style={{
-            maxHeight: 400,
-            overflow: "auto",
-            background: "var(--ymt-color-bg-muted)",
-            padding: 12,
-            borderRadius: "var(--ymt-radius-sm)",
-            fontSize: "var(--ymt-font-size-sm)",
-            whiteSpace: "pre-wrap",
-            wordBreak: "break-all",
-          }}
-        >
-          {errorModal.detail}
-        </pre>
-      </Modal>
     </div>
   );
 }
