@@ -282,6 +282,13 @@ async def _build_canonical_launch_manifest(
     }
 
 
+def _as_aware(value: datetime) -> datetime:
+    """SQLite 等测试驱动可能返回 naive datetime，按业务时区补齐 tzinfo。"""
+    from zoneinfo import ZoneInfo
+
+    return value if value.tzinfo is not None else value.replace(tzinfo=ZoneInfo("Asia/Shanghai"))
+
+
 async def build_launch_readiness(
     db: AsyncSession,
     tenant_id: uuid.UUID,
@@ -332,11 +339,16 @@ async def build_launch_readiness(
         and page_product_id
         and page_product_id == code_batch.product_id
     )
+    # SQLite 等驱动可能返回 naive datetime（tzinfo 不落盘），比较前统一为 aware
+    campaign_start = _as_aware(campaign.start_at) if campaign else None
+    campaign_end = _as_aware(campaign.end_at) if campaign else None
     campaign_passed = bool(
         campaign
         and campaign.status == CampaignStatus.ACTIVE
-        and campaign.start_at <= datetime.now(UTC)
-        and campaign.end_at > datetime.now(UTC)
+        and campaign_start is not None
+        and campaign_start <= datetime.now(UTC)
+        and campaign_end is not None
+        and campaign_end > datetime.now(UTC)
         and code_batch
         and campaign.product_id
         and campaign.product_id == code_batch.product_id

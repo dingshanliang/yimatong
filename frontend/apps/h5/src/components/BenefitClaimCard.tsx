@@ -109,17 +109,34 @@ function normalizeBenefitType(value: string): BenefitType {
  * 将分转换为元的显示字符串
  * 1 元 = 100 分
  */
+function normalizeUuid(value: unknown): string {
+  return typeof value === "string"
+    ? value.trim().replace(/[{}]/g, "").toLowerCase()
+    : "";
+}
+
 function claimResponse(
   value: unknown,
   benefitId: string
 ): Record<string, unknown> | null {
   if (typeof value !== "object" || value === null) return null;
   const data = value as Record<string, unknown>;
-  return data.benefit_id === benefitId ? data : null;
+  // 后端回传 canonical UUID；DSL 配置里可能带花括号/大小写差异，归一化后比较
+  return normalizeUuid(data.benefit_id) === normalizeUuid(benefitId)
+    ? data
+    : null;
 }
 
 function hasClaimReceipt(data: Record<string, unknown>): boolean {
   return typeof data.claim_id === "string" && data.claim_id.trim().length > 0;
+}
+
+/** 后端实发的会员券号（区别于页面 DSL 配置的静态券码）。 */
+function extractCouponNumber(data: Record<string, unknown>): string | null {
+  const coupon = data.coupon;
+  if (typeof coupon !== "object" || coupon === null) return null;
+  const number = (coupon as Record<string, unknown>).coupon_number;
+  return typeof number === "string" && number.trim() ? number.trim() : null;
 }
 
 function safeWechatAuthUrl(value: unknown): string | null {
@@ -167,6 +184,9 @@ export function BenefitClaimCard({
 }: BenefitClaimCardProps) {
   const [loading, setLoading] = useState(false);
   const [claimed, setClaimed] = useState(false);
+  const [claimedCouponNumber, setClaimedCouponNumber] = useState<string | null>(
+    null
+  );
   const [error, setError] = useState<string | null>(null);
   const [showPhoneModal, setShowPhoneModal] = useState(false);
   const [phone, setPhone] = useState("");
@@ -205,6 +225,7 @@ export function BenefitClaimCard({
     lastClickRef.current = 0;
     setLoading(false);
     setClaimed(false);
+    setClaimedCouponNumber(null);
     setError(null);
     setShowPhoneModal(false);
     setPhone("");
@@ -272,6 +293,8 @@ export function BenefitClaimCard({
           saveLatestClaimRef(publicId, receiptClaimId);
         }
       }
+      const couponNumber = extractCouponNumber(data);
+      if (couponNumber) setClaimedCouponNumber(couponNumber);
       setClaimed(true);
       onClaimed?.();
       if (isRedPacket) {
@@ -351,6 +374,8 @@ export function BenefitClaimCard({
 
       if (data.status === "claimed" && hasClaimReceipt(data)) {
         setWecomPrompt(null);
+        const couponNumber = extractCouponNumber(data);
+        if (couponNumber) setClaimedCouponNumber(couponNumber);
         setClaimed(true);
         onClaimed?.();
         return;
@@ -378,6 +403,14 @@ export function BenefitClaimCard({
       const detail = response?.data?.detail;
       const errorCode =
         typeof detail === "object" ? detail.code : response?.data?.code;
+      // scan_token 绑定 IP 且 30 分钟过期：网络切换/超时后 401，重试永远失败，
+      // 必须引导重新扫码
+      if (response?.status === 401) {
+        setError(
+          "领取凭证已失效（如切换了网络或停留过久），请重新扫码后再领取"
+        );
+        return;
+      }
       // 判断是否需要手机号授权
       if (errorCode === "require_auth") {
         setShowPhoneModal(true);
@@ -411,7 +444,42 @@ export function BenefitClaimCard({
           setError("该权益当前不可领取，请刷新页面查看最新活动");
           return;
         }
+        // 后端对终态/可行动场景返回中文 detail（活动已结束/权益已停用），直显而非吞成通用文案
+        if (typeof detail === "string" && detail) {
+          setError(detail);
+          return;
+        }
         setError("领取失败，请刷新页面后重试");
+        return;
+      }
+      if (errorCode === "risk_paused") {
+        setError(
+          typeof detail === "object" && detail?.message
+            ? detail.message
+            : "该码存在风险信号，权益领取暂时暂停"
+        );
+        return;
+      }
+      if (errorCode === "production_batch_unavailable") {
+        setError(
+          typeof detail === "object" && detail?.message
+            ? detail.message
+            : "该码对应生产批次当前不可领取权益"
+        );
+        return;
+      }
+      const detailMessage =
+        typeof detail === "string" && detail ? detail : null;
+      if (response?.status === 429) {
+        setError(detailMessage || "请求过于频繁，请稍后再试");
+        return;
+      }
+      if (response?.status === 410) {
+        setError(detailMessage || "该权益已被领完");
+        return;
+      }
+      if (detailMessage) {
+        setError(detailMessage);
         return;
       }
       setError("领取失败，请稍后重试");
@@ -603,10 +671,12 @@ export function BenefitClaimCard({
           </button>
           {claimed && normalizedBenefitType === "platform_coupon" && (
             <div className="mt-3 rounded-xl bg-info-bg px-3 py-2 text-center text-sm text-info">
-              {typeof configJson.coupon_code === "string" &&
-              configJson.coupon_code
-                ? `券码：${configJson.coupon_code}`
-                : "优惠券已领取，请按活动说明使用。"}
+              {claimedCouponNumber
+                ? `券码：${claimedCouponNumber}`
+                : typeof configJson.coupon_code === "string" &&
+                    configJson.coupon_code
+                  ? `券码：${configJson.coupon_code}`
+                  : "优惠券已领取，请按活动说明使用。"}
             </div>
           )}
           {claimed &&

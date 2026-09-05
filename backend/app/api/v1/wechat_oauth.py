@@ -12,7 +12,7 @@ from urllib.parse import quote, urlencode
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from fastapi.responses import RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -223,98 +223,151 @@ async def oauth_callback(
 ):
     """Consume OAuth state, bind the OpenID, and return a member-bound scan credential to H5."""
 
+    # 失败路径必须回到 H5 体验（回跳码页带失败 fragment；无法定位码页时渲染内联提示页），
+    # 不能在微信 webview 里裸吐 JSON——拒绝授权/链接过期是常态路径而非异常。
     redis = await get_redis_pool()
     if redis is None:
-        raise HTTPException(status_code=503, detail="OAuth state service unavailable")
+        return _oauth_failure_html("service_unavailable")
     callback_rate_key = _rate_key("callback-ip", get_client_ip(request))
     callback_count = await redis.incr(callback_rate_key)
     if callback_count == 1:
         await redis.expire(callback_rate_key, _STATE_TTL_SECONDS)
     if callback_count > 60:
-        raise HTTPException(status_code=429, detail="too many OAuth callback attempts")
+        return _oauth_failure_html("rate_limited")
     raw_state = await redis.get(_state_key(state))
     if not raw_state:
-        raise HTTPException(status_code=401, detail="invalid or expired OAuth state")
+        return _oauth_failure_html("state_expired")
     lock_key = f"{_state_key(state)}:processing"
     if not await redis.set(lock_key, "1", ex=_CALLBACK_LOCK_SECONDS, nx=True):
-        raise HTTPException(status_code=409, detail="OAuth state is already being processed")
+        return _oauth_failure_html("duplicate")
+    public_id_hint: str | None = None
     try:
-        state_payload = json.loads(raw_state)
-        tenant_id = uuid.UUID(state_payload["tenant_id"])
-        benefit_id = uuid.UUID(state_payload["benefit_id"])
-        scan_token = state_payload["scan_token"]
-        consent_id = uuid.UUID(state_payload["consent_id"])
-        pending_key = str(state_payload["pending_key"])
-    except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
-        await redis.delete(lock_key)
-        raise HTTPException(status_code=401, detail="invalid OAuth state") from exc
-    scan_payload = verify_scan_token(scan_token, expected_tenant_id=str(tenant_id))
-    if scan_payload is None:
-        await redis.delete(lock_key)
-        raise HTTPException(status_code=401, detail="expired scan credential")
+        try:
+            state_payload = json.loads(raw_state)
+            tenant_id = uuid.UUID(state_payload["tenant_id"])
+            benefit_id = uuid.UUID(state_payload["benefit_id"])
+            scan_token = state_payload["scan_token"]
+            consent_id = uuid.UUID(state_payload["consent_id"])
+            pending_key = str(state_payload["pending_key"])
+        except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+            raise HTTPException(status_code=401, detail="invalid OAuth state") from exc
+        scan_payload = verify_scan_token(scan_token, expected_tenant_id=str(tenant_id))
+        if scan_payload is None:
+            raise HTTPException(status_code=401, detail="expired scan credential")
+        public_id_hint = str(scan_payload["public_id"])
 
-    try:
-        authority = require_consumer_scan_authority(scan_payload)
-        await set_session_tenant_context(db, tenant_id)
-        policy = await get_current_consumer_policy(db, tenant_id, "wechat_cash_payout")
-        receipt = await get_consumer_consent_receipt_status(
-            db,
-            tenant_id=tenant_id,
-            consent_id=consent_id,
-            scan_event_id=authority.scan_event_id,
-            scan_time=authority.scan_time,
-            public_id=authority.public_id,
-            visitor_id=authority.visitor_id,
-            token_consumer_id=authority.consumer_id,
-        )
-        if (
-            receipt.get("status") != "granted"
-            or receipt.get("purpose") != "wechat_cash_payout"
-            or receipt.get("policy_version") != policy["policy_version"]
-            or receipt.get("policy_digest") != policy["policy_digest"]
-        ):
-            raise HTTPException(status_code=403, detail="consent_required")
-        connector = await _cash_connector(db, tenant_id, benefit_id)
-        # Receipt status deliberately holds a NOWAIT share lock. End this read-only
-        # phase before the callback-only authority takes its write lock in another session.
-        await db.commit()
-        appid, secret = _oauth_credentials(connector)
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            response = await client.get(
-                _TOKEN_URL,
-                params={"appid": appid, "secret": secret, "code": code, "grant_type": "authorization_code"},
+        try:
+            authority = require_consumer_scan_authority(scan_payload)
+            await set_session_tenant_context(db, tenant_id)
+            policy = await get_current_consumer_policy(db, tenant_id, "wechat_cash_payout")
+            receipt = await get_consumer_consent_receipt_status(
+                db,
+                tenant_id=tenant_id,
+                consent_id=consent_id,
+                scan_event_id=authority.scan_event_id,
+                scan_time=authority.scan_time,
+                public_id=authority.public_id,
+                visitor_id=authority.visitor_id,
+                token_consumer_id=authority.consumer_id,
             )
-        if response.status_code != 200:
-            raise HTTPException(status_code=502, detail="WeChat OAuth exchange failed")
-        oauth_data = response.json()
-        openid = oauth_data.get("openid")
-        if not isinstance(openid, str) or not openid or oauth_data.get("errcode"):
-            raise HTTPException(status_code=401, detail="WeChat OAuth was not granted")
+            if (
+                receipt.get("status") != "granted"
+                or receipt.get("purpose") != "wechat_cash_payout"
+                or receipt.get("policy_version") != policy["policy_version"]
+                or receipt.get("policy_digest") != policy["policy_digest"]
+            ):
+                raise HTTPException(status_code=403, detail="consent_required")
+            connector = await _cash_connector(db, tenant_id, benefit_id)
+            # Receipt status deliberately holds a NOWAIT share lock. End this read-only
+            # phase before the callback-only authority takes its write lock in another session.
+            await db.commit()
+            appid, secret = _oauth_credentials(connector)
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                response = await client.get(
+                    _TOKEN_URL,
+                    params={"appid": appid, "secret": secret, "code": code, "grant_type": "authorization_code"},
+                )
+            if response.status_code != 200:
+                raise HTTPException(status_code=502, detail="WeChat OAuth exchange failed")
+            oauth_data = response.json()
+            openid = oauth_data.get("openid")
+            if not isinstance(openid, str) or not openid or oauth_data.get("errcode"):
+                raise HTTPException(status_code=401, detail="WeChat OAuth was not granted")
 
-        bound = await bind_wechat_oauth_consumer_authority(
-            tenant_id=tenant_id,
-            consent_id=consent_id,
-            scan_event_id=authority.scan_event_id,
-            scan_time=authority.scan_time,
-            public_id=authority.public_id,
-            visitor_id=authority.visitor_id,
-            token_consumer_id=authority.consumer_id,
-            openid=openid,
-            benefit_id=benefit_id,
-        )
-        consumer_id = uuid.UUID(str(bound["consumer_id"]))
-        await redis.delete(_state_key(state), pending_key)
+            bound = await bind_wechat_oauth_consumer_authority(
+                tenant_id=tenant_id,
+                consent_id=consent_id,
+                scan_event_id=authority.scan_event_id,
+                scan_time=authority.scan_time,
+                public_id=authority.public_id,
+                visitor_id=authority.visitor_id,
+                token_consumer_id=authority.consumer_id,
+                openid=openid,
+                benefit_id=benefit_id,
+            )
+            consumer_id = uuid.UUID(str(bound["consumer_id"]))
+            await redis.delete(_state_key(state), pending_key)
 
-        rebound = bind_scan_token_consumer(scan_payload, consumer_id, scan_payload.get("ip_hash"))
-        h5_url = f"{settings.h5_public_url.rstrip('/')}/c/{quote(scan_payload['public_id'], safe='')}"
-        fragment = urlencode(
-            {
-                "scan_token": rebound,
-                "benefit_id": str(benefit_id),
-                "consent_id": str(consent_id),
-                "oauth": "success",
-            }
-        )
-        return RedirectResponse(f"{h5_url}#{fragment}", status_code=303)
+            rebound = bind_scan_token_consumer(scan_payload, consumer_id, scan_payload.get("ip_hash"))
+            h5_url = f"{settings.h5_public_url.rstrip('/')}/c/{quote(str(scan_payload['public_id']), safe='')}"
+            fragment = urlencode(
+                {
+                    "scan_token": rebound,
+                    "benefit_id": str(benefit_id),
+                    "consent_id": str(consent_id),
+                    "oauth": "success",
+                }
+            )
+            return RedirectResponse(f"{h5_url}#{fragment}", status_code=303)
+        except HTTPException as exc:
+            # 可定位码页的失败回跳码页；state 无效等无法定位的已在上方提前返回 HTML
+            if public_id_hint:
+                return _oauth_failure_redirect_response(exc, public_id_hint)
+            raise
     finally:
         await redis.delete(lock_key)
+
+
+def _oauth_failure_redirect_response(exc: HTTPException, public_id: str) -> RedirectResponse:
+    """把回调失败转换为携带 reason fragment 的 H5 码页回跳。"""
+
+    reason_by_detail = {
+        "expired scan credential": "scan_token_expired",
+        "consent_required": "consent_required",
+        "WeChat OAuth was not granted": "not_granted",
+        "WeChat OAuth exchange failed": "exchange_failed",
+    }
+    reason = reason_by_detail.get(str(exc.detail)) or {
+        429: "rate_limited",
+        503: "service_unavailable",
+    }.get(exc.status_code, "unknown")
+    h5_url = f"{settings.h5_public_url.rstrip('/')}/c/{quote(public_id, safe='')}"
+    return RedirectResponse(f"{h5_url}#oauth=failed&reason={reason}", status_code=303)
+
+
+_OAUTH_FAILURE_TITLES = {
+    "state_expired": "授权连接已过期",
+    "duplicate": "授权正在处理中",
+    "rate_limited": "操作过于频繁",
+    "service_unavailable": "服务暂时不可用",
+}
+
+
+def _oauth_failure_html(reason: str) -> HTMLResponse:
+    """无法定位原始码页时（如 state 过期）的兜底提示页。"""
+
+    title = _OAUTH_FAILURE_TITLES.get(reason, "授权未完成")
+    hint = "请返回微信重新扫码进入，即可重新领取权益。"
+    html = (
+        '<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8" />'
+        '<meta name="viewport" content="width=device-width, initial-scale=1" />'
+        f"<title>{title}</title></head>"
+        '<body style="margin:0;font-family:-apple-system,BlinkMacSystemFont,\'PingFang SC\',sans-serif;'
+        'background:#f5f6f7;display:flex;align-items:center;justify-content:center;min-height:100vh;">'
+        '<div style="text-align:center;padding:32px 24px;">'
+        f'<div style="font-size:40px;line-height:1;">⚠️</div>'
+        f'<h1 style="font-size:18px;color:#1f2329;margin:16px 0 8px;">{title}</h1>'
+        f'<p style="font-size:14px;color:#6b7280;margin:0;">{hint}</p>'
+        "</div></body></html>"
+    )
+    return HTMLResponse(content=html, status_code=200)

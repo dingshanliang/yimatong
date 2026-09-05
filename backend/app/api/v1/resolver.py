@@ -73,7 +73,7 @@ async def resolve_code_endpoint(
     if not rate_result.allowed:
         return JSONResponse(
             status_code=429,
-            content={"detail": "Too many requests"},
+            content={"detail": "查验过于频繁，请稍后再试"},
             headers={"Retry-After": str(rate_result.retry_after)},
         )
 

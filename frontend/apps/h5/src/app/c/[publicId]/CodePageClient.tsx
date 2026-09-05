@@ -45,7 +45,29 @@ export function CodePageClient({
             signal: controller.signal,
           }
         );
-        if (!response.ok) throw new Error("Resolver rejected the public code");
+        if (!response.ok) {
+          // resolver 的终态契约（410 voided / 404 not_found / 503 unavailable）
+          // 也带 JSON body（code_data.result），必须分发给落地页而不是落入
+          // "网络异常"重试路径——作废码/仿冒码是防伪查验的核心场景。
+          let errorBody: Record<string, unknown> | null = null;
+          try {
+            errorBody = (await response.json()) as Record<string, unknown>;
+          } catch {
+            errorBody = null;
+          }
+          const errorCodeData = errorBody?.code_data as
+            { result?: unknown } | undefined;
+          if (
+            errorBody &&
+            errorCodeData &&
+            typeof errorCodeData.result === "string"
+          ) {
+            setPayload(errorBody);
+            finish();
+            return;
+          }
+          throw new Error("Resolver rejected the public code");
+        }
         const data = (await response.json()) as Record<string, unknown>;
         const fragment = new URLSearchParams(window.location.hash.slice(1));
         const oauthScanToken = fragment.get("scan_token");
@@ -55,6 +77,16 @@ export function CodePageClient({
           if (oauthConsentId) {
             localStorage.setItem(`consent_id:${publicId}`, oauthConsentId);
           }
+        }
+        // OAuth 失败回跳（backend wechat_oauth 失败路径 303 回跳）：清掉 fragment
+        // 并把原因交给落地页展示，不让用户停在无提示的码页顶部。
+        if (fragment.get("oauth") === "failed") {
+          const reason = fragment.get("reason");
+          if (reason) data.oauth_failure = reason;
+          fragment.delete("oauth");
+          fragment.delete("reason");
+        }
+        if (fragment.get("oauth") !== null) {
           fragment.delete("oauth");
           fragment.delete("scan_token");
           fragment.delete("consent_id");

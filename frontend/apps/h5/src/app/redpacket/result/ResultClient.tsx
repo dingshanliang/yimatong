@@ -46,6 +46,10 @@ function fenToYuan(fen: number): string {
   return yuan.toFixed(2);
 }
 
+/** claim_id 必须是 UUID：损坏/旧版本存储值直接进"不可查询"终态，不做无效轮询 */
+const CLAIM_ID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 /** ISO 时间 → 本地可读到账时间（仅客户端渲染，无 hydration 比对）。 */
 function formatCompletedAt(iso: string): string {
   const date = new Date(iso);
@@ -89,7 +93,7 @@ export function RedPacketResultClient() {
   const [failureReason, setFailureReason] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!claimId) {
+    if (!claimId || !CLAIM_ID_PATTERN.test(claimId)) {
       setPhase("unavailable");
       return;
     }
@@ -97,10 +101,16 @@ export function RedPacketResultClient() {
     const startedAt = Date.now();
     let interval = POLL_INITIAL_MS;
     // 凭证只从本机存储读取：凭证属 Bearer 秘密，不进 URL/历史。
+    // 不做隐式全局 scan_token 回退——那可能带着另一个码/租户的过期凭证，
+    // 产生必然失败的请求与跨码凭证互清。
     const credential = readClaimRevisitCredential(claimId);
     const headers = credential
       ? { Authorization: `Bearer ${credential}` }
       : undefined;
+    if (!credential) {
+      setPhase("unavailable");
+      return;
+    }
 
     setPhase("processing");
 
@@ -142,8 +152,8 @@ export function RedPacketResultClient() {
         } catch (error) {
           if (cancelled) return;
           const status = errorMessageStatus(error);
-          // 查询资格失效（凭证过期/记录不可查）：停止轮询，给出客服路径。
-          if (status === 401 || status === 404) {
+          // 查询资格失效（凭证过期/记录不可查/参数非法）：停止轮询，给出客服路径。
+          if (status === 401 || status === 404 || status === 422) {
             setPhase("unavailable");
             return;
           }
@@ -244,6 +254,14 @@ export function RedPacketResultClient() {
             重新完成微信授权并领取
           </a>
         )}
+      {phase === "unavailable" && publicId && (
+        <a
+          href={`/c/${encodeURIComponent(publicId)}`}
+          className="mt-5 w-full rounded-xl border border-base bg-surface px-6 py-3 text-center text-sm font-medium text-foreground-secondary active:bg-muted"
+        >
+          重新扫码查看
+        </a>
+      )}
 
       <div className="mt-auto w-full pb-10">
         <button

@@ -29,6 +29,9 @@ export function MemberJoinCard({
   const [recovered, setRecovered] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [policyLoadFailed, setPolicyLoadFailed] = useState(false);
+  const [policyReloadKey, setPolicyReloadKey] = useState(0);
+  const [loadingPolicy, setLoadingPolicy] = useState(false);
   const joinIdempotency = useRef(crypto.randomUUID());
   const consentIdempotency = useRef(crypto.randomUUID());
   const recoveryIdempotency = useRef(crypto.randomUUID());
@@ -48,21 +51,32 @@ export function MemberJoinCard({
   useEffect(() => {
     if (!scanToken) return;
     let active = true;
+    setLoadingPolicy(true);
     apiClient
       .get("/public/consents/policy", {
         params: { purpose: "brand_membership" },
         headers: { Authorization: `Bearer ${scanToken}` },
       })
       .then(({ data }) => {
-        if (active) setPolicy(data as CurrentPolicy);
+        if (active) {
+          setPolicy(data as CurrentPolicy);
+          setPolicyLoadFailed(false);
+        }
       })
       .catch(() => {
-        if (active) setPolicy(null);
+        // 政策拉取失败不能让入会入口静默消失（转化静默流失），给出可重试的降级态
+        if (active) {
+          setPolicy(null);
+          setPolicyLoadFailed(true);
+        }
+      })
+      .finally(() => {
+        if (active) setLoadingPolicy(false);
       });
     return () => {
       active = false;
     };
-  }, [scanToken]);
+  }, [scanToken, policyReloadKey]);
 
   if (!scanToken) return null;
 
@@ -129,6 +143,24 @@ export function MemberJoinCard({
     );
   }
 
+  if (!policy && policyLoadFailed) {
+    return (
+      <section className="mx-4 mt-3 rounded-xl border border-base bg-surface p-4">
+        <h2 className="font-semibold text-foreground">加入品牌会员</h2>
+        <p className="mt-1 text-sm text-foreground-secondary">
+          会员权益暂时无法加载，请稍后重试。
+        </p>
+        <button
+          type="button"
+          onClick={() => setPolicyReloadKey((key) => key + 1)}
+          className="mt-3 w-full rounded-xl border border-base py-2.5 text-sm font-medium text-foreground-secondary"
+        >
+          重新加载
+        </button>
+      </section>
+    );
+  }
+
   if (!policy) return null;
 
   const join = async () => {
@@ -166,8 +198,15 @@ export function MemberJoinCard({
       setMembershipNumber(nextNumber);
       onScanTokenChange?.(nextToken);
       onMembershipReady?.();
-    } catch {
-      setError("入会凭据未能保存，请稍后重试");
+    } catch (err) {
+      // scan_token 绑定 IP 且 30 分钟过期：401 时重试永远失败，需重新扫码
+      const status = (err as { response?: { status?: number } } | undefined)
+        ?.response?.status;
+      setError(
+        status === 401
+          ? "会员凭证已失效（如切换了网络或停留过久），请重新扫码后再加入"
+          : "入会凭据未能保存，请稍后重试"
+      );
     } finally {
       setLoading(false);
     }

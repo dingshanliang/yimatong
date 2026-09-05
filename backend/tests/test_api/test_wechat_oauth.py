@@ -322,13 +322,16 @@ async def test_oauth_callback_rejects_replayed_state_before_database_access():
     redis.incr.return_value = 1
     redis.get.return_value = None
     db = AsyncMock()
-    with (
-        patch.object(wechat_oauth, "get_redis_pool", new=AsyncMock(return_value=redis)),
-        pytest.raises(HTTPException) as caught,
+    with patch.object(
+        wechat_oauth, "get_redis_pool", new=AsyncMock(return_value=redis)
     ):
-        await wechat_oauth.oauth_callback(_request(), "oauth-code", "used-state", db)
+        response = await wechat_oauth.oauth_callback(
+            _request(), "oauth-code", "used-state", db
+        )
 
-    assert caught.value.status_code == 401
+    # state 无效无法定位码页：返回内联中文提示页而非裸 JSON/异常
+    assert response.status_code == 200
+    assert "授权连接已过期" in response.body.decode()
     db.execute.assert_not_awaited()
     db.scalar.assert_not_awaited()
 
@@ -385,10 +388,13 @@ async def test_oauth_callback_requires_the_exact_active_consent_before_exchange(
             ),
         ),
         patch.object(wechat_oauth.httpx, "AsyncClient") as http_client,
-        pytest.raises(HTTPException) as caught,
     ):
-        await wechat_oauth.oauth_callback(_request(), "oauth-code", "b" * 64, db)
+        response = await wechat_oauth.oauth_callback(
+            _request(), "oauth-code", "b" * 64, db
+        )
 
-    assert caught.value.status_code == 403
+    # consent 不匹配：303 回跳码页并带失败 fragment，不再裸 JSON
+    assert response.status_code == 303
+    assert "oauth=failed&reason=consent_required" in response.headers["location"]
     http_client.assert_not_called()
     redis.delete.assert_awaited_with("wechat-oauth:v1:" + "b" * 64 + ":processing")

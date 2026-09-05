@@ -1,10 +1,17 @@
-import axios from "axios";
+import axios, { type InternalAxiosRequestConfig } from "axios";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "";
 const SERVER_API_BASE =
   process.env.NEXT_PUBLIC_API_URL ||
   process.env.BACKEND_URL ||
   "http://localhost:8000";
+
+declare module "axios" {
+  export interface InternalAxiosRequestConfig {
+    /** 标记该请求的 Bearer 由拦截器隐式注入（全局 scan_token） */
+    __implicitScanToken?: boolean;
+  }
+}
 
 /**
  * API 客户端 — 走 /api/v1/ 前缀
@@ -25,6 +32,7 @@ apiClient.interceptors.request.use((config) => {
     const token = scanToken || accessToken;
     if (token && !config.headers.Authorization) {
       config.headers.Authorization = `Bearer ${token}`;
+      config.__implicitScanToken = true;
     }
     // yimatong-zgb1.10：携带匿名访客 ID（first-party 稳定标识，Decision 22）
     const visitorId = localStorage.getItem("visitor_id");
@@ -38,9 +46,13 @@ apiClient.interceptors.request.use((config) => {
 apiClient.interceptors.response.use(
   (res) => res,
   (error) => {
-    // 401 时清除本地 token
+    // 401 时清除本地 token。仅当请求实际使用的是隐式注入的全局 scan_token
+    // 时才清除：调用方显式携带的回访凭证等过期，不应误删另一条链路的凭证。
     if (axios.isAxiosError(error) && error.response?.status === 401) {
-      if (typeof window !== "undefined") {
+      const request = error.config as
+        | (InternalAxiosRequestConfig & { __implicitScanToken?: boolean })
+        | undefined;
+      if (typeof window !== "undefined" && request?.__implicitScanToken) {
         localStorage.removeItem("scan_token");
       }
     }

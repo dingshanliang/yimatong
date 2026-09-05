@@ -71,6 +71,14 @@ const BATCH_BLOCKED_MODULE_TYPES = new Set([
   "dual_code_verify",
 ]);
 
+const OAUTH_FAILURE_NOTICES: Record<string, string> = {
+  scan_token_expired: "登录凭证已过期，请重新扫码后再领取权益",
+  consent_required: "隐私授权已更新，请重新同意后再领取权益",
+  not_granted: "您未完成微信授权，权益未能发放；可重新点击领取",
+  exchange_failed: "微信授权服务暂不可用，请稍后重新领取",
+  rate_limited: "操作过于频繁，请稍等片刻后再试",
+};
+
 function safeLogoUrl(value: unknown): string {
   return typeof value === "string" ? safePublicUrl(value) || "" : "";
 }
@@ -102,6 +110,13 @@ export function ResolveContent({
     scanInfo?.paused_reason === "launch_not_live";
   const benefitsBlocked =
     batchBlocksBenefits || lifecycle === "frozen" || launchPaused;
+
+  // 微信授权失败回跳（#oauth=failed&reason=...）的顶部提示文案
+  const oauthFailureReason = jsonPayload?.oauth_failure as string | undefined;
+  const oauthFailureNotice = oauthFailureReason
+    ? (OAUTH_FAILURE_NOTICES[oauthFailureReason] ??
+      "微信授权未完成，权益未能发放，请重新点击领取")
+    : null;
 
   useScanEvent({
     publicId,
@@ -143,6 +158,20 @@ export function ResolveContent({
     return <FallbackError onRetry={onRetry} retrying={retrying} />;
   if (resultCode === "unavailable")
     return <FallbackError onRetry={onRetry} retrying={retrying} />;
+  if (resultCode === "not_found") {
+    // 仿冒/不存在的码：确定性终态，不提供重试入口
+    return (
+      <div className="mx-auto max-w-md min-h-screen bg-canvas">
+        <ErrorPage
+          errorCode="not_found"
+          publicId={publicId}
+          showRetry={false}
+          supportPhone={brandSlots.supportPhone}
+          supportWecomUrl={brandSlots.supportWecomUrl}
+        />
+      </div>
+    );
+  }
 
   // yimatong-zgb1.6 AC3：frozen 码保留溯源（不再跳错误页），只在顶部显示审核中提示。
   // voided（revoked/expired）仍跳错误页（终止性，不返回溯源）。
@@ -238,6 +267,14 @@ export function ResolveContent({
           logoUrl={tenantBrandLogo}
           primaryColor={brandSlots.primaryColor}
         />
+        {oauthFailureNotice && (
+          <div
+            className="mx-4 mt-3 rounded-xl border border-warning bg-warning-bg p-3 text-sm text-warning"
+            role="alert"
+          >
+            {oauthFailureNotice}
+          </div>
+        )}
 
         {!benefitsBlocked && (
           <>
@@ -522,14 +559,15 @@ function ModuleRenderer({
         Record<string, unknown> | undefined;
       const campaignRules = campaign.rules as
         Record<string, unknown> | undefined;
+      const benefitCardId =
+        (config.benefit_id as string) || (campaignBenefit?.id as string) || "";
+      // 页面配置缺 benefit_id 且活动未带权益时不渲染领取卡，
+      // 避免展示一张点击必报错的卡片
+      if (!benefitCardId) return null;
       return (
         <div className="px-4 mt-3">
           <BenefitClaimCard
-            benefitId={
-              (config.benefit_id as string) ||
-              (campaignBenefit?.id as string) ||
-              ""
-            }
+            benefitId={benefitCardId}
             benefitType={
               (config.benefit_type as string) ||
               (campaignBenefit?.benefit_type as string) ||

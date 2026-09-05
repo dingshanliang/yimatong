@@ -7,6 +7,10 @@ const { searchParamsRef } = vi.hoisted(() => ({
   searchParamsRef: { current: "" },
 }));
 vi.mock("@/lib/api", () => ({ apiClient: { get } }));
+const { readClaimRevisitCredential } = vi.hoisted(() => ({
+  readClaimRevisitCredential: vi.fn(() => "revisit-credential-token"),
+}));
+vi.mock("@/lib/claim-revisit", () => ({ readClaimRevisitCredential }));
 vi.mock("next/navigation", () => ({
   useSearchParams: () => new URLSearchParams(searchParamsRef.current),
 }));
@@ -44,7 +48,7 @@ describe("RedPacketResultClient polling", () => {
       removeItem: (key: string) => storage.delete(key),
       clear: () => storage.clear(),
     });
-    searchParamsRef.current = "claim_id=claim-1";
+    searchParamsRef.current = "claim_id=019e7d0e-0000-7000-8000-000000000001";
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   });
 
@@ -170,13 +174,16 @@ describe("RedPacketResultClient polling", () => {
   });
 
   it("sends the stored revisit credential as the bearer token", async () => {
-    window.localStorage.setItem("yimatong:claim-revisit:claim-1", "cred-1");
+    readClaimRevisitCredential.mockReturnValue("cred-1");
     get.mockResolvedValue(statusResponse("processing"));
     const root = await renderClient();
 
-    expect(get).toHaveBeenCalledWith("/benefit-claims/claim-1/status", {
-      headers: { Authorization: "Bearer cred-1" },
-    });
+    expect(get).toHaveBeenCalledWith(
+      "/benefit-claims/019e7d0e-0000-7000-8000-000000000001/status",
+      {
+        headers: { Authorization: "Bearer cred-1" },
+      }
+    );
     await act(async () => root.unmount());
   });
 });
@@ -215,7 +222,8 @@ describe("RedPacketResultClient auth remediation", () => {
   }
 
   it("offers self-service re-auth for recipient_missing when public_id present", async () => {
-    searchParamsRef.current = "claim_id=claim-1&public_id=pk-9";
+    searchParamsRef.current =
+      "claim_id=019e7d0e-0000-7000-8000-000000000001&public_id=pk-9";
     get.mockResolvedValue(
       statusResponse("failed", { failure_reason: "recipient_missing" })
     );
@@ -228,7 +236,8 @@ describe("RedPacketResultClient auth remediation", () => {
   });
 
   it("offers no manual re-issue for channel failures", async () => {
-    searchParamsRef.current = "claim_id=claim-1&public_id=pk-9";
+    searchParamsRef.current =
+      "claim_id=019e7d0e-0000-7000-8000-000000000001&public_id=pk-9";
     get.mockResolvedValue(
       statusResponse("failed", { failure_reason: "channel_failure" })
     );
@@ -240,7 +249,7 @@ describe("RedPacketResultClient auth remediation", () => {
   });
 
   it("hides remediation without a public_id reference", async () => {
-    searchParamsRef.current = "claim_id=claim-1";
+    searchParamsRef.current = "claim_id=019e7d0e-0000-7000-8000-000000000001";
     get.mockResolvedValue(
       statusResponse("failed", { failure_reason: "recipient_missing" })
     );
