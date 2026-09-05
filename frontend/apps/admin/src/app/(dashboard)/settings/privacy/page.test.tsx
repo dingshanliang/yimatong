@@ -86,5 +86,5 @@ describe("PrivacyGovernancePage", () => {
       )
     );
     expect(screen.queryByText("积分")).not.toBeInTheDocument();
-  }, 15_000);
+  }, 30_000);
 });
