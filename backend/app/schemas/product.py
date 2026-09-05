@@ -172,7 +172,7 @@ class ProductionBatchCreate(CatalogWriteSchema):
     @model_validator(mode="after")
     def validate_date_order(self):
         if self.expiry_date < self.production_date:
-            raise ValueError("Expiry date cannot be earlier than production date")
+            raise ValueError("保质期至不能早于生产日期")
         return self
 
 
@@ -250,7 +250,7 @@ class ProductionBatchCSVRow(BaseModel):
     @model_validator(mode="after")
     def validate_date_order(self):
         if self.expiry_date < self.production_date:
-            raise ValueError("Expiry date cannot be earlier than production date")
+            raise ValueError("保质期至不能早于生产日期")
         return self
 
 

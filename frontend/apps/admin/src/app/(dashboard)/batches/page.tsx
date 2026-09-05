@@ -24,7 +24,7 @@ import ProductionBatchFormFields, {
   formatBatchSkuLabel,
   type ProductionBatchFormValues,
 } from "@/components/ProductionBatchFormFields";
-import api from "@/lib/api";
+import api, { extractErrorMessage } from "@/lib/api";
 import dayjs from "dayjs";
 import { STATUS_COLORS } from "@/lib/status-colors";
 import { useAuthStore } from "@/lib/auth";
@@ -217,8 +217,8 @@ function BatchesCatalog({
       setModalOpen(false);
       form.resetFields();
       setSelectedProduct(undefined);
-    } catch {
-      message.error("保存批次失败");
+    } catch (err) {
+      message.error(extractErrorMessage(err, "保存批次失败"));
     }
   };
 
@@ -258,8 +258,8 @@ function BatchesCatalog({
       setRecallItem(null);
       recallForm.resetFields();
       await retry();
-    } catch {
-      message.error("召回失败，请重试");
+    } catch (err) {
+      message.error(extractErrorMessage(err, "召回失败，请重试"));
     } finally {
       setRecalling(false);
     }

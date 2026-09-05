@@ -155,7 +155,7 @@ class TestBrandCRUD:
 
         resp = await client.delete(f"/api/v1/brands/{brand_id}", headers=headers)
         assert resp.status_code == 409
-        assert "product" in resp.json()["detail"].lower() or "关联" in resp.json()["detail"]
+        assert "关联" in resp.json()["detail"]
 
     @pytest.mark.anyio
     async def test_delete_brand_not_found(self, client: AsyncClient, tenant_with_auth):

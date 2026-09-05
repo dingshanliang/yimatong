@@ -108,7 +108,7 @@ async def create_brand(
 ) -> Brand:
     existing = await db.execute(select(Brand).where(Brand.tenant_id == tenant_id, Brand.name == name))
     if existing.scalar_one_or_none():
-        raise ConflictError("Brand name already exists in this tenant")
+        raise ConflictError("品牌名称已存在")
 
     brand = Brand(
         tenant_id=tenant_id,
@@ -168,7 +168,7 @@ async def update_brand(
             select(Brand).where(Brand.tenant_id == tenant_id, Brand.name == name, Brand.id != brand_id)
         )
         if existing.scalar_one_or_none():
-            raise ConflictError("Brand name already exists in this tenant")
+            raise ConflictError("品牌名称已存在")
         brand.name = name
     public_identity_changed = False
     if logo_url is not None or "logo_url" in fields_to_update:
@@ -405,7 +405,7 @@ async def create_sku(
         select(SKU).where(SKU.tenant_id == tenant_id, SKU.product_id == product_id, SKU.code == code)
     )
     if existing.scalar_one_or_none():
-        raise ConflictError("SKU code already exists for this product")
+        raise ConflictError("SKU 编码已存在")
 
     sku = SKU(
         tenant_id=tenant_id,
@@ -474,7 +474,7 @@ async def update_sku(
             )
         )
         if existing.scalar_one_or_none():
-            raise ConflictError("SKU code already exists for this product")
+            raise ConflictError("SKU 编码已存在")
         sku.code = code
     if name is not None:
         sku.name = name
@@ -553,7 +553,7 @@ async def create_production_batch(
         return result.scalar_one()
 
     if expiry_date < production_date:
-        raise BadRequestError("Expiry date cannot be earlier than production date")
+        raise BadRequestError("保质期至不能早于生产日期")
 
     product_result = await db.execute(select(Product).where(Product.id == product_id, Product.tenant_id == tenant_id))
     product = product_result.scalar_one_or_none()
@@ -564,12 +564,12 @@ async def create_production_batch(
     if not sku:
         raise NotFoundError("SKU not found")
     if sku.product_id != product_id:
-        raise BadRequestError("SKU does not belong to selected product")
+        raise BadRequestError("SKU 不属于所选产品")
     existing = await db.execute(
         select(ProductionBatch).where(ProductionBatch.tenant_id == tenant_id, ProductionBatch.batch_code == batch_code)
     )
     if existing.scalar_one_or_none():
-        raise ConflictError("Batch code already exists in this tenant")
+        raise ConflictError("生产批次号已存在")
 
     batch = ProductionBatch(
         tenant_id=tenant_id,
@@ -658,7 +658,7 @@ async def update_production_batch(
     if not batch:
         return None
     if not is_production_batch_effectively_active(batch):
-        raise ConflictError("Only an active production batch can be updated")
+        raise ConflictError("仅生效中的生产批次可编辑")
 
     if batch_code is not None:
         existing = await db.execute(
@@ -669,7 +669,7 @@ async def update_production_batch(
             )
         )
         if existing.scalar_one_or_none():
-            raise ConflictError("Batch code already exists in this tenant")
+            raise ConflictError("生产批次号已存在")
         batch.batch_code = batch_code
     if production_date is not None:
         batch.production_date = production_date
@@ -678,7 +678,7 @@ async def update_production_batch(
     if "origin" in fields_to_update:
         batch.origin = origin
     if batch.expiry_date < batch.production_date:
-        raise BadRequestError("Expiry date cannot be earlier than production date")
+        raise BadRequestError("保质期至不能早于生产日期")
 
     await db.flush()
     await db.refresh(batch)
@@ -750,7 +750,7 @@ async def recall_production_batch(
     if batch is None:
         return None
     if not is_production_batch_effectively_active(batch):
-        raise ConflictError("Only an active production batch can be recalled")
+        raise ConflictError("仅生效中的生产批次可召回")
 
     batch.status = BatchStatus.recalled
     batch.recall_reason = reason
@@ -969,12 +969,12 @@ async def import_batches_csv(
     if not sku:
         raise NotFoundError("SKU not found")
     if sku.product_id != product_id:
-        raise BadRequestError("SKU does not belong to selected product")
+        raise BadRequestError("SKU 不属于所选产品")
 
     for row_num, row in enumerate(reader, start=2):
         if row_num > max_rows + 1:
             if len(errors) < max_errors:
-                errors.append(f"Row {row_num}: row limit exceeded ({max_rows})")
+                errors.append(f"第 {row_num} 行：超出导入行数上限（{max_rows}）")
             break
         try:
             parsed = ProductionBatchCSVRow.model_validate(row)
@@ -987,7 +987,7 @@ async def import_batches_csv(
             )
             if existing.scalar_one_or_none():
                 if len(errors) < max_errors:
-                    errors.append(f"Row {row_num}: batch_code already exists")
+                    errors.append(f"第 {row_num} 行：批次号已存在")
                 continue
 
             batch = ProductionBatch(
@@ -1003,7 +1003,7 @@ async def import_batches_csv(
             imported += 1
         except ValidationError:
             if len(errors) < max_errors:
-                errors.append(f"Row {row_num}: invalid batch data")
+                errors.append(f"第 {row_num} 行：批次数据无效")
 
     if imported > 0:
         await db.flush()
@@ -1027,7 +1027,7 @@ async def delete_brand(db: AsyncSession, tenant_id: uuid.UUID, brand_id: uuid.UU
 
     has_products = await check_brand_has_products(db, tenant_id, brand_id)
     if has_products:
-        return False, "Brand has associated products"
+        return False, "品牌下存在关联产品，无法删除"
 
     await db.delete(brand)
     await db.flush()
@@ -1047,7 +1047,7 @@ async def delete_product(db: AsyncSession, tenant_id: uuid.UUID, product_id: uui
         select(func.count()).select_from(SKU).where(SKU.tenant_id == tenant_id, SKU.product_id == product_id)
     )
     if (sku_count_result.scalar() or 0) > 0:
-        return False, "Product has associated SKUs"
+        return False, "产品下存在关联 SKU，无法删除"
 
     batch_count_result = await db.execute(
         select(func.count())
@@ -1055,7 +1055,7 @@ async def delete_product(db: AsyncSession, tenant_id: uuid.UUID, product_id: uui
         .where(ProductionBatch.tenant_id == tenant_id, ProductionBatch.product_id == product_id)
     )
     if (batch_count_result.scalar() or 0) > 0:
-        return False, "Product has associated production batches"
+        return False, "产品下存在关联生产批次，无法删除"
 
     asset_count_result = await db.execute(
         select(func.count())
@@ -1063,7 +1063,7 @@ async def delete_product(db: AsyncSession, tenant_id: uuid.UUID, product_id: uui
         .where(ProductAsset.tenant_id == tenant_id, ProductAsset.product_id == product_id)
     )
     if (asset_count_result.scalar() or 0) > 0:
-        return False, "Product has associated assets"
+        return False, "产品下存在关联产品资料，无法删除"
 
     await db.delete(product)
     await release_quota(db, tenant_id, CumulativeQuotaKey.MAX_PRODUCTS)
@@ -1084,7 +1084,7 @@ async def delete_sku(db: AsyncSession, tenant_id: uuid.UUID, sku_id: uuid.UUID) 
         .where(ProductionBatch.tenant_id == tenant_id, ProductionBatch.sku_id == sku_id)
     )
     if (batch_count_result.scalar() or 0) > 0:
-        return False, "SKU has associated production batches"
+        return False, "SKU 下存在关联生产批次，无法删除"
 
     await db.delete(sku)
     await db.flush()
@@ -1136,7 +1136,7 @@ async def delete_production_batch(
         .where(CodeBatch.tenant_id == tenant_id, CodeBatch.production_batch_id == batch_id)
     )
     if (code_batch_count_result.scalar() or 0) > 0:
-        return False, "Production batch has associated code batches"
+        return False, "生产批次下存在关联码批次，无法删除"
 
     await db.delete(batch)
     await db.flush()

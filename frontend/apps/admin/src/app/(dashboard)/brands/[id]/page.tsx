@@ -81,6 +81,7 @@ interface BatchItem {
   production_date: string;
   expiry_date: string;
   status: string;
+  effective_status: string;
 }
 
 type TabItem = ProductItem | CampaignItem | CodeBatchItem | BatchItem;
@@ -395,7 +396,7 @@ function BrandDetail({ canWrite }: { canWrite: boolean }) {
     { title: "保质期至", dataIndex: "expiry_date", key: "expiry_date" },
     {
       title: "状态",
-      dataIndex: "status",
+      dataIndex: "effective_status",
       key: "status",
       render: (s: string) => {
         const info = BATCH_STATUS_MAP[s] || {

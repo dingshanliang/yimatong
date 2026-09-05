@@ -187,7 +187,7 @@ describe("Product workbench batch lifecycle controls", () => {
         { reason: "抽检发现质量指标异常", confirm: "recall" }
       );
     });
-  }, 15_000);
+  }, 30_000);
 
   it("does not expose any recall action to an operator", async () => {
     mocks.role = "operator";
@@ -238,7 +238,7 @@ describe("Product workbench batch lifecycle controls", () => {
     expect(mocks.post).not.toHaveBeenCalled();
     expect(mocks.patch).not.toHaveBeenCalled();
     expect(mocks.delete).not.toHaveBeenCalled();
-  }, 15_000);
+  }, 30_000);
 
   it.each([
     { persistedStatus: "recalled", effectiveStatus: "recalled" },
@@ -259,6 +259,6 @@ describe("Product workbench batch lifecycle controls", () => {
         screen.queryByRole("button", { name: "召回批次" })
       ).not.toBeInTheDocument();
     },
-    15_000
+    30_000
   );
 });

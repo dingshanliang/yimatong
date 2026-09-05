@@ -156,7 +156,7 @@ class TestSKUCRUD:
             headers=headers,
         )
         assert resp.status_code == 409
-        assert "already exists" in resp.json()["detail"].lower()
+        assert "已存在" in resp.json()["detail"]
 
     @pytest.mark.anyio
     async def test_update_sku(self, client: AsyncClient, tenant_with_auth, product_id):
@@ -240,7 +240,7 @@ class TestSKUCRUD:
 
         del_resp = await client.delete(f"/api/v1/skus/{sku_id}", headers=headers)
         assert del_resp.status_code == 409
-        assert "batch" in del_resp.json()["detail"].lower()
+        assert "生产批次" in del_resp.json()["detail"]
 
     @pytest.mark.anyio
     async def test_delete_sku_not_found(self, client: AsyncClient, tenant_with_auth):

@@ -49,6 +49,7 @@ interface ProductionBatchItem {
   expiry_date: string;
   origin?: string;
   status: string;
+  effective_status: string;
 }
 
 interface CodeBatchItem {
@@ -243,7 +244,7 @@ function SKUDetail() {
     },
     {
       title: "状态",
-      dataIndex: "status",
+      dataIndex: "effective_status",
       key: "status",
       render: (s: string) => {
         const info = BATCH_STATUS_MAP[s] || {

@@ -1,8 +1,7 @@
 """A4-006: 码查询与列表 API 验收测试"""
 
-from collections.abc import AsyncGenerator
-
 import uuid
+from collections.abc import AsyncGenerator
 
 import pytest
 from httpx import ASGITransport, AsyncClient

@@ -339,7 +339,7 @@ class TestProductCRUD:
 
         del_resp = await client.delete(f"/api/v1/products/{product_id}", headers=headers)
         assert del_resp.status_code == 409
-        assert "sku" in del_resp.json()["detail"].lower()
+        assert "SKU" in del_resp.json()["detail"]
 
     @pytest.mark.anyio
     async def test_delete_product_not_found(self, client: AsyncClient, tenant_with_auth):

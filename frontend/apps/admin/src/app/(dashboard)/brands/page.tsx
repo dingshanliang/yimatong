@@ -8,14 +8,20 @@ import {
   Button,
   Empty,
   Input,
+  Popconfirm,
   Space,
   Switch,
   Table,
   Typography,
 } from "antd";
-import { PlusOutlined, SearchOutlined } from "@ant-design/icons";
+import {
+  DeleteOutlined,
+  PlusOutlined,
+  SearchOutlined,
+} from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
 import BrandFormModal from "./_components/BrandFormModal";
+import { extractErrorMessage } from "@/lib/api";
 import { useCrud } from "@/lib/hooks";
 import { formatDate } from "@/lib/format";
 import { useAuthStore } from "@/lib/auth";
@@ -41,10 +47,18 @@ export default function BrandsPage() {
     return <Alert type="warning" showIcon title="当前账号无权访问品牌目录" />;
   }
 
-  return <BrandsCatalog canWrite={access.canWrite} />;
+  return (
+    <BrandsCatalog canWrite={access.canWrite} canDelete={access.canDelete} />
+  );
 }
 
-function BrandsCatalog({ canWrite }: { canWrite: boolean }) {
+function BrandsCatalog({
+  canWrite,
+  canDelete,
+}: {
+  canWrite: boolean;
+  canDelete: boolean;
+}) {
   const router = useRouter();
   const { message } = App.useApp();
   const planReadOnly = useTenantPlanReadOnly();
@@ -71,6 +85,7 @@ function BrandsCatalog({ canWrite }: { canWrite: boolean }) {
     setPage,
     setFilter,
     update,
+    remove,
     mutate,
     retry,
   } = useCrud<Brand>("/brands");
@@ -123,8 +138,8 @@ function BrandsCatalog({ canWrite }: { canWrite: boolean }) {
                 status: checked ? "active" : "inactive",
               });
               message.success(checked ? "已启用" : "已停用");
-            } catch {
-              message.error("状态更新失败");
+            } catch (err) {
+              message.error(extractErrorMessage(err, "状态更新失败"));
             }
           }}
         />
@@ -156,6 +171,34 @@ function BrandsCatalog({ canWrite }: { canWrite: boolean }) {
           >
             编辑
           </Button>
+          {canDelete && (
+            <Popconfirm
+              title="确认删除"
+              description={`删除品牌「${record.name}」？有关联资源时将被阻止。`}
+              onConfirm={async () => {
+                try {
+                  await remove(record.id);
+                  message.success("品牌已删除");
+                } catch (err) {
+                  message.error(
+                    extractErrorMessage(err, "删除失败，请检查是否有关联资源")
+                  );
+                }
+              }}
+              okText="删除"
+              okButtonProps={{ danger: true }}
+            >
+              <Button
+                type="link"
+                size="small"
+                danger
+                disabled={writesDisabled}
+                icon={<DeleteOutlined />}
+              >
+                删除
+              </Button>
+            </Popconfirm>
+          )}
         </Space>
       ),
     },

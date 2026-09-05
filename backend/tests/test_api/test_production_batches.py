@@ -448,7 +448,7 @@ class TestProductionBatchCRUD:
             headers=headers,
         )
         assert resp.status_code == 409
-        assert "already exists" in resp.json()["detail"].lower()
+        assert "已存在" in resp.json()["detail"]
 
     @pytest.mark.anyio
     async def test_create_batch_rejects_sku_from_another_product(self, client: AsyncClient, tenant_with_auth, sku_id):
@@ -479,7 +479,7 @@ class TestProductionBatchCRUD:
         )
 
         assert resp.status_code == 400
-        assert "does not belong" in resp.json()["detail"]
+        assert "不属于" in resp.json()["detail"]
 
     @pytest.mark.anyio
     async def test_batch_date_validation_and_origin_clear(self, client: AsyncClient, tenant_with_auth, sku_id):
@@ -737,7 +737,7 @@ class TestProductionBatchCRUD:
         )
 
         assert response.status_code == 200
-        assert response.json() == {"imported": 0, "errors": ["Row 2: invalid batch data"]}
+        assert response.json() == {"imported": 0, "errors": ["第 2 行：批次数据无效"]}
         after = await db_session.scalar(select(func.count()).select_from(ProductionBatch))
         assert after == before
         audit.assert_not_awaited()
@@ -769,7 +769,7 @@ class TestProductionBatchCRUD:
         )
 
         assert response.status_code == 200
-        assert response.json() == {"imported": 1, "errors": ["Row 2: invalid batch data"]}
+        assert response.json() == {"imported": 1, "errors": ["第 2 行：批次数据无效"]}
         persisted = await db_session.scalar(
             select(ProductionBatch).where(
                 ProductionBatch.tenant_id == uuid.UUID(tenant_with_auth[0]),

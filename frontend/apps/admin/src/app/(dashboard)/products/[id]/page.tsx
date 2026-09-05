@@ -319,6 +319,7 @@ function ProductWorkbench({
   const { categories: tenantCategories } = useCategories();
 
   const [productForm] = Form.useForm();
+  const [importForm] = Form.useForm();
   const [assetForm] = Form.useForm();
   const [skuForm] = Form.useForm();
   const [batchForm] = Form.useForm<ProductionBatchFormValues>();
@@ -1708,6 +1709,7 @@ function ProductWorkbench({
           </div>
         ) : (
           <Form
+            form={importForm}
             layout="vertical"
             disabled={writesDisabled}
             onFinish={handleImportCsv}
@@ -1739,12 +1741,13 @@ function ProductWorkbench({
                 onChange={(e) => {
                   const file = e.target.files?.[0];
                   if (file) {
-                    const form = e.target.closest("form") as HTMLFormElement;
-                    const skuSelect = form?.querySelector(
-                      '[name="sku_id"]'
-                    ) as HTMLSelectElement;
+                    // antd Select 的 DOM 无 name 属性，必须从 Form 实例取用户选择的 SKU，
+                    // 否则多 SKU 产品会静默导入到第一个 SKU
+                    const skuId =
+                      (importForm?.getFieldValue("sku_id") as string) ||
+                      skus[0]?.id;
                     handleImportCsv({
-                      sku_id: skuSelect?.value || skus[0]?.id,
+                      sku_id: skuId,
                       file,
                     } as unknown as { sku_id: string; file: File });
                   }

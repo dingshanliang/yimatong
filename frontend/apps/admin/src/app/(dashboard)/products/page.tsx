@@ -181,8 +181,10 @@ function ProductsCatalog({
       setModalOpen(false);
       form.resetFields();
       router.push(`/products/${data.id}`);
-    } catch {
-      message.error(editItem ? "更新失败" : "创建失败");
+    } catch (err) {
+      message.error(
+        extractErrorMessage(err, editItem ? "更新失败" : "创建失败")
+      );
     } finally {
       setSaving(false);
     }
@@ -205,8 +207,8 @@ function ProductsCatalog({
       message.success("品牌已创建并选中");
       setBrandModalOpen(false);
       brandForm.resetFields();
-    } catch {
-      message.error("品牌创建失败");
+    } catch (err) {
+      message.error(extractErrorMessage(err, "品牌创建失败"));
     } finally {
       setBrandCreating(false);
     }
@@ -283,8 +285,8 @@ function ProductsCatalog({
                   status: checked ? "active" : "inactive",
                 });
                 message.success(checked ? "已启用" : "已禁用");
-              } catch {
-                message.error("状态更新失败");
+              } catch (err) {
+                message.error(extractErrorMessage(err, "状态更新失败"));
               }
             }}
           />

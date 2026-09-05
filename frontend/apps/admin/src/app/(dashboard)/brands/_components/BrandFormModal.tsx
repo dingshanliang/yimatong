@@ -2,7 +2,7 @@
 
 import { App, Form, Input, Modal } from "antd";
 import ImageUploadInput from "@/components/ImageUploadInput";
-import api from "@/lib/api";
+import api, { extractErrorMessage } from "@/lib/api";
 import { validateCatalogPublicUrl } from "@/lib/catalog-public-url";
 
 interface Brand {
@@ -47,8 +47,10 @@ export default function BrandFormModal({
       }
       onSuccess();
       form.resetFields();
-    } catch {
-      message.error(mode === "edit" ? "更新失败" : "创建失败");
+    } catch (err) {
+      message.error(
+        extractErrorMessage(err, mode === "edit" ? "更新失败" : "创建失败")
+      );
     }
   };
 

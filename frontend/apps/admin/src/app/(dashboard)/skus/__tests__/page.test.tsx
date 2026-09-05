@@ -57,6 +57,7 @@ describe("SKUsPage dependent options", () => {
       page: 1,
       loading: false,
       error: undefined,
+      filters: {},
       setPage: vi.fn(),
       setFilter: vi.fn(),
       create: vi.fn(),

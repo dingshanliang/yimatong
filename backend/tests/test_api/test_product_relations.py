@@ -177,4 +177,4 @@ class TestProductRelations:
 
         resp = await client.delete(f"/api/v1/brands/{brand_id}", headers=headers)
         assert resp.status_code == 409
-        assert "product" in resp.json()["detail"].lower()
+        assert "关联" in resp.json()["detail"]

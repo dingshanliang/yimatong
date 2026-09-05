@@ -22,7 +22,7 @@ import SKUFormFields, {
   buildSkuPayload,
   type SKUFormValues,
 } from "@/components/SKUFormFields";
-import api from "@/lib/api";
+import api, { extractErrorMessage } from "@/lib/api";
 import { useAuthStore } from "@/lib/auth";
 import { catalogAccessForPrincipal } from "@/lib/catalog-access";
 import { useTenantPlanReadOnly } from "../_components/TenantPlanReadOnly";
@@ -78,6 +78,7 @@ function SKUsCatalog({ canWrite }: { canWrite: boolean }) {
     error,
     setPage,
     setFilter,
+    filters,
     create,
     update,
     retry,
@@ -144,8 +145,10 @@ function SKUsCatalog({ canWrite }: { canWrite: boolean }) {
         setModalOpen(false);
         form.resetFields();
       }
-    } catch {
-      message.error(editItem ? "更新失败" : "创建失败");
+    } catch (err) {
+      message.error(
+        extractErrorMessage(err, editItem ? "更新失败" : "创建失败")
+      );
     }
   };
 
@@ -197,8 +200,8 @@ function SKUsCatalog({ canWrite }: { canWrite: boolean }) {
                 status: checked ? "active" : "inactive",
               });
               message.success(checked ? "已启用" : "已停用");
-            } catch {
-              message.error("状态更新失败");
+            } catch (err) {
+              message.error(extractErrorMessage(err, "状态更新失败"));
             }
           }}
         />
@@ -241,7 +244,11 @@ function SKUsCatalog({ canWrite }: { canWrite: boolean }) {
             loading={productsLoading}
             allowClear
             style={{ width: 200 }}
-            value={undefined}
+            value={
+              filters.product_id !== undefined
+                ? String(filters.product_id)
+                : undefined
+            }
             onChange={(v) => {
               setFilter(v ? { product_id: v } : {});
             }}
