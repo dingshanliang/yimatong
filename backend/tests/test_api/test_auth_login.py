@@ -357,13 +357,14 @@ class TestAccountLocking:
             )
             assert resp.status_code == 401
 
-        # 第6次用正确密码也应该失败（锁定中）
+        # 第6次用正确密码也应被拒（锁定中），但提示可区分且有出路
         resp = await client.post(
             "/api/v1/auth/login",
             json={"email": "login@test.com", "password": "Password1"},
             headers=headers,
         )
-        assert resp.status_code == 401
+        assert resp.status_code == 423
+        assert "锁定" in resp.json()["detail"]
 
     @pytest.mark.anyio
     async def test_locked_account_has_locked_until_set(

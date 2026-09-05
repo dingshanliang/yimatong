@@ -52,7 +52,10 @@ function matchesRoute(pathname: string, routes: string[]): boolean {
 export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
-  const isPublicPath = PUBLIC_PATHS.some((p) => pathname.startsWith(p));
+  // 与 matchesRoute 一致：精确匹配或子路径，避免 /loginX 之类前缀误放行
+  const isPublicPath = PUBLIC_PATHS.some(
+    (p) => pathname === p || pathname.startsWith(p + "/")
+  );
 
   // 邀请注册必须能从交付链接直接进入，也不能被浏览器里残留的失效登录 cookie 阻断。
   if (pathname === "/register" || pathname.startsWith("/register/")) {

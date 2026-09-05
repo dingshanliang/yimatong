@@ -232,7 +232,11 @@ export function extractErrorMessage(
           return null;
         })
         .find(Boolean);
-      return firstMessage || fallback;
+      // pydantic 校验错误原文是英文实现细节，直接透出不可行动；无中文可用时给通用指引
+      if (!firstMessage || !/[\u4e00-\u9fff]/.test(firstMessage)) {
+        return "提交的信息格式有误，请检查各填写项后重试";
+      }
+      return firstMessage;
     }
     if (
       detail &&

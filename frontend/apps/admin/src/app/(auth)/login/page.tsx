@@ -154,10 +154,17 @@ export default function LoginPage() {
       const data = (err as { response?: { data?: { detail?: string } } })
         ?.response?.data;
       const detail = data?.detail;
-      if (detail?.toLowerCase().includes("locked")) {
-        message.error("账户已被锁定，请 15 分钟后再试");
-      } else if (detail) {
+      if (typeof detail === "string" && detail.includes("锁定")) {
         message.error(detail);
+      } else if (typeof detail === "string" && detail) {
+        message.error(detail);
+      } else if (!(err as { response?: unknown }).response) {
+        // 本地节流、网络中断等非服务端错误不能伪装成凭证错误
+        message.error(
+          err instanceof Error && err.message
+            ? err.message
+            : "网络异常，请稍后重试"
+        );
       } else {
         message.error("登录失败，请检查邮箱和密码");
       }
@@ -218,53 +225,57 @@ export default function LoginPage() {
           </Title>
           <Text type="secondary">包装扫码增长 SaaS 管理后台</Text>
         </div>
-        <div className="admin-muted-panel mb-6 rounded-md border p-3">
-          <div className="mb-3 flex items-center justify-between">
-            <Text strong>演示快捷账号</Text>
-            <Tag color={STATUS_COLORS.success}>Demo Ready</Tag>
-          </div>
-          <Space orientation="vertical" className="w-full" size={8}>
-            {DEMO_ACCOUNTS.map((account) => (
-              <span key={account.key}>
-                {account.platform && (
-                  <Divider className="!my-2" plain>
-                    <Text type="secondary" className="!text-xs">
-                      平台管理
-                    </Text>
-                  </Divider>
-                )}
-                <Button
-                  block
-                  className="!h-auto !justify-start !py-3 text-left"
-                  icon={account.icon}
-                  loading={loadingAccount === account.key}
-                  onClick={() => handleDemoLogin(account)}
-                >
-                  <span className="flex w-full items-center justify-between gap-3">
-                    <span className="min-w-0">
-                      <span className="block font-medium">{account.label}</span>
-                      <span className="block truncate text-xs text-text-muted">
-                        {account.description}
+        {process.env.NODE_ENV !== "production" && (
+          <div className="admin-muted-panel mb-6 rounded-md border p-3">
+            <div className="mb-3 flex items-center justify-between">
+              <Text strong>演示快捷账号</Text>
+              <Tag color={STATUS_COLORS.success}>Demo Ready</Tag>
+            </div>
+            <Space orientation="vertical" className="w-full" size={8}>
+              {DEMO_ACCOUNTS.map((account) => (
+                <span key={account.key}>
+                  {account.platform && (
+                    <Divider className="!my-2" plain>
+                      <Text type="secondary" className="!text-xs">
+                        平台管理
+                      </Text>
+                    </Divider>
+                  )}
+                  <Button
+                    block
+                    className="!h-auto !justify-start !py-3 text-left"
+                    icon={account.icon}
+                    loading={loadingAccount === account.key}
+                    onClick={() => handleDemoLogin(account)}
+                  >
+                    <span className="flex w-full items-center justify-between gap-3">
+                      <span className="min-w-0">
+                        <span className="block font-medium">
+                          {account.label}
+                        </span>
+                        <span className="block truncate text-xs text-text-muted">
+                          {account.description}
+                        </span>
                       </span>
+                      <Tag
+                        className="m-0"
+                        color={
+                          account.role === "platform_admin"
+                            ? "purple"
+                            : account.role === "admin"
+                              ? "gold"
+                              : "blue"
+                        }
+                      >
+                        {account.role}
+                      </Tag>
                     </span>
-                    <Tag
-                      className="m-0"
-                      color={
-                        account.role === "platform_admin"
-                          ? "purple"
-                          : account.role === "admin"
-                            ? "gold"
-                            : "blue"
-                      }
-                    >
-                      {account.role}
-                    </Tag>
-                  </span>
-                </Button>
-              </span>
-            ))}
-          </Space>
-        </div>
+                  </Button>
+                </span>
+              ))}
+            </Space>
+          </div>
+        )}
         <Form
           data-testid="admin-login-form"
           data-hydrated={hydrated}

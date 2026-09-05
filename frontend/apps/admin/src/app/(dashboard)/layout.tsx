@@ -573,12 +573,13 @@ function DashboardInner({ children }: { children: React.ReactNode }) {
           const children = (item as any).children;
           if (!Array.isArray(children)) return item;
           const filtered = filterItems(children) ?? [];
-          // If group itself is not allowed and has no children, remove it
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           const groupKey = (item as any).key as string;
-          if (filtered.length === 0 || !isAllowed(groupKey)) {
-            // Group is blocked or empty - remove if empty
-            if (filtered.length === 0) return null;
+          // 组内无可见子项时移除；blocklist 模式下组键被显式封禁也整组移除
+          //（allowlist 的组键通常不在清单内，仅按子项过滤）
+          if (filtered.length === 0) return null;
+          if (policy.mode === "blocklist" && !isAllowed(groupKey)) {
+            return null;
           }
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           return { ...(item as any), children: filtered } as any;

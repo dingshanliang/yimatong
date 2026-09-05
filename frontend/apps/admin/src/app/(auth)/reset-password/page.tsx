@@ -55,11 +55,17 @@ function ResetPasswordForm() {
       });
       setPageState("success");
     } catch (err) {
-      const data = (err as { response?: { data?: { detail?: string } } })
-        ?.response?.data;
-      const detail = data?.detail || "重置失败，请重试或联系管理员";
-      setErrorMsg(detail);
-      message.error(detail);
+      const response = (
+        err as { response?: { status?: number; data?: { detail?: string } } }
+      )?.response;
+      const detail = response?.data?.detail || "重置失败，请重试或联系管理员";
+      if (response?.status && response.status < 500) {
+        // 链接过期/无效等确定性失败：切到错误结果页给出持久出路，而非停留表单
+        setErrorMsg(detail);
+        setPageState("error");
+      } else {
+        message.error(detail);
+      }
     } finally {
       setSubmitting(false);
     }

@@ -12,7 +12,7 @@ from app.main import app
 from app.models.audit import PlatformAuditLog
 from app.models.tenant import Account
 from app.utils.security import create_access_token, hash_password, verify_password
-from tests.conftest import TestSessionLocal
+from tests.conftest import SharedSecurityCacheState, TestSessionLocal
 
 
 @pytest.fixture
@@ -22,11 +22,13 @@ async def db_session() -> AsyncGenerator[AsyncSession, None]:
 
 
 @pytest.fixture
-async def client(db_session: AsyncSession, shared_security_cache):
-    # Password routes exercise JWT revocation checks on every request. Keep the
-    # focused API suite independent from a developer's local Redis availability.
-    del shared_security_cache
-
+async def client(
+    db_session: AsyncSession,
+    shared_security_cache: SharedSecurityCacheState,
+) -> AsyncGenerator[AsyncClient, None]:
+    # Password routes exercise JWT revocation and rate limiting on every
+    # request. Keep the focused API suite independent from a developer's local
+    # Redis availability by using the deterministic in-memory stubs.
     async def override_get_db():
         yield db_session
 
@@ -94,6 +96,29 @@ class TestChangePassword:
         result = await db_session.execute(select(Account).where(Account.id == seeded_account.id))
         account = result.scalar_one()
         assert verify_password("NewPass34", account.hashed_password)
+
+        # 验证写入了改密审计
+        audit = (
+            await db_session.execute(select(PlatformAuditLog).where(PlatformAuditLog.action == "password_changed"))
+        ).scalar_one()
+        assert audit.operator_id == str(seeded_account.id)
+        assert audit.target_tenant_id == str(seeded_account.tenant_id)
+
+    @pytest.mark.anyio
+    async def test_change_password_rate_limited(
+        self,
+        client: AsyncClient,
+        seeded_account,
+        shared_security_cache: SharedSecurityCacheState,
+    ):
+        shared_security_cache.rate_counts[f"change_password:{seeded_account.id}"] = 10
+        headers = _auth_headers(str(seeded_account.tenant_id), str(seeded_account.id))
+        resp = await client.post(
+            "/api/v1/auth/change-password",
+            json={"old_password": "OldPass12", "new_password": "NewPass34"},
+            headers=headers,
+        )
+        assert resp.status_code == 429
 
     @pytest.mark.anyio
     async def test_change_password_wrong_old(self, client: AsyncClient, seeded_account):

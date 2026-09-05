@@ -43,7 +43,14 @@ async def change_password(
     db: AsyncSession = Depends(get_db),
     account_id: uuid.UUID = Depends(get_current_account_id),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
+    cache: AsyncRedisCache = Depends(get_redis_cache),
 ):
+    # 旧密码试错与其他认证边界一致地限流，防止会话被劫持后暴力猜旧密码
+    allowed, _ = await cache.rate_limit_check_shared(
+        f"change_password:{account_id}", max_attempts=10, window_seconds=60
+    )
+    if not allowed:
+        raise HTTPException(status_code=429, detail="操作过于频繁，请稍后再试")
     result = await db.execute(select(Account).where(Account.id == account_id, Account.tenant_id == tenant_id))
     account = result.scalar_one_or_none()
     if not account:
@@ -54,6 +61,13 @@ async def change_password(
     account.hashed_password = hash_password(body.new_password)
     account.must_change_password = False
     account.auth_version += 1
+    await write_audit_log(
+        db,
+        operator_id=str(account_id),
+        target_tenant_id=str(tenant_id),
+        action="password_changed",
+        resource=f"account:{account_id}",
+    )
     await db.commit()
     response = JSONResponse(content={"detail": "Password changed"})
     clear_auth_cookies(response)

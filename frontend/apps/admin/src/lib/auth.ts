@@ -6,6 +6,20 @@ import api, {
   registerAuthInterceptorHandlers,
 } from "./api";
 
+/** 刷新请求本身可达但被服务端拒绝，会话判定失效；网络/5xx 不属于此类。 */
+export class RefreshUnavailableError extends Error {
+  constructor() {
+    super("登录刷新暂时不可用");
+    this.name = "RefreshUnavailableError";
+  }
+}
+
+function isAuthRejection(error: unknown): boolean {
+  const status = (error as { response?: { status?: number } })?.response
+    ?.status;
+  return status === 400 || status === 401 || status === 403;
+}
+
 export interface AuthUser {
   account_id: string;
   tenant_id: string;
@@ -304,9 +318,13 @@ async function _doSilentRefresh(): Promise<string | null> {
     }
   } catch (error) {
     if (error instanceof AgencyContextRevalidationError) throw error;
-    // refresh 失败，清除登录态
-    useAuthStore.getState().clearSession();
-    return null;
+    if (isAuthRejection(error)) {
+      // 服务端明确拒绝刷新：会话确实失效，清除登录态
+      useAuthStore.getState().clearSession();
+      return null;
+    }
+    // 网络/5xx 等暂时性失败：保留仍有效的会话，交由调用方决定是否重试
+    throw new RefreshUnavailableError();
   }
 }
 

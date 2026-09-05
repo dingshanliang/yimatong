@@ -280,7 +280,12 @@ async def authenticate_login(
     assert account is not None  # 已通过密码验证，一定存在
 
     if account.locked_until and account.locked_until > now:
-        raise AuthError(401, "邮箱或密码不正确")
+        # 密码已验证通过，锁定信息不构成枚举泄露；给用户可行动的出路
+        remaining_minutes = max(1, -((now - account.locked_until).total_seconds() // 60))
+        raise AuthError(
+            423,
+            f"登录失败次数过多，账户已临时锁定，请约 {remaining_minutes} 分钟后再试或联系管理员重置密码",
+        )
 
     if not account.is_active:
         raise AuthError(403, "账户已停用，请联系租户管理员")
