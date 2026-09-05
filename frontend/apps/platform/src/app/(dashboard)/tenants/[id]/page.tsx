@@ -25,6 +25,7 @@ import {
   PlayCircleOutlined,
 } from "@ant-design/icons";
 import { useRouter, useParams } from "next/navigation";
+import { isAxiosError } from "axios";
 import dayjs from "dayjs";
 import useSWR from "swr";
 import api from "@/lib/api";
@@ -72,7 +73,7 @@ export default function TenantDetailPage() {
   const [savingBasic, setSavingBasic] = useState(false);
   const [savingPlan, setSavingPlan] = useState(false);
 
-  const { data, mutate, isLoading } = useSWR<TenantDetail>(
+  const { data, mutate, isLoading, error } = useSWR<TenantDetail>(
     `/platform/tenants/${tenantId}`
   );
   const { data: planDefinitions } =
@@ -84,6 +85,32 @@ export default function TenantDetailPage() {
     return (
       <div style={{ textAlign: "center", padding: 80 }}>
         <Spin size="large" />
+      </div>
+    );
+  }
+
+  if (error) {
+    // 404 才是"租户不存在"；其余错误（网络/服务端）应允许重试而不是误报。
+    if (isAxiosError(error) && error.response?.status === 404) {
+      return (
+        <div style={{ textAlign: "center", padding: 80 }}>
+          <Text type="secondary">租户不存在</Text>
+        </div>
+      );
+    }
+    return (
+      <div style={{ textAlign: "center", padding: 80 }}>
+        <Alert
+          type="error"
+          showIcon
+          message="加载租户详情失败"
+          description={extractErrorMessage(error, "请稍后重试")}
+          action={
+            <Button size="small" onClick={() => mutate()}>
+              重试
+            </Button>
+          }
+        />
       </div>
     );
   }

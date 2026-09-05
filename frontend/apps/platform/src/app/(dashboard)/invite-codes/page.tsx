@@ -16,6 +16,7 @@ import type { ColumnsType } from "antd/es/table";
 import {
   CopyOutlined,
   PauseCircleOutlined,
+  PlayCircleOutlined,
   PlusOutlined,
 } from "@ant-design/icons";
 import dayjs from "dayjs";
@@ -141,6 +142,16 @@ export default function InviteCodesPage() {
     });
   };
 
+  const reactivate = async (invite: InviteCode) => {
+    try {
+      await api.patch(`/invite-codes/${invite.id}/status?active=true`);
+      message.success("邀请码已重新启用");
+      await mutate();
+    } catch (error) {
+      message.error(extractErrorMessage(error, "重新启用失败"));
+    }
+  };
+
   const columns: ColumnsType<InviteCode> = [
     {
       title: "邀请码",
@@ -202,6 +213,15 @@ export default function InviteCodesPage() {
                 onClick={() => deactivate(invite)}
               >
                 停用
+              </Button>
+            )}
+            {invite.status === "inactive" && (
+              <Button
+                type="link"
+                icon={<PlayCircleOutlined />}
+                onClick={() => reactivate(invite)}
+              >
+                重新启用
               </Button>
             )}
           </Space>

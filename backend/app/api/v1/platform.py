@@ -192,7 +192,7 @@ async def platform_login(
 
     if not settings.platform_admin_password_hash:
         raise HTTPException(status_code=500, detail="Platform admin not configured")
-    if body.email != settings.platform_admin_email or not verify_password(
+    if normalized_email != settings.platform_admin_email.strip().lower() or not verify_password(
         body.password, settings.platform_admin_password_hash
     ):
         raise HTTPException(status_code=401, detail="Invalid credentials")

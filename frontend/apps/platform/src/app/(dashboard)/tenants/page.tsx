@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react";
 import {
+  Alert,
   App,
   Button,
   Card,
@@ -98,7 +99,7 @@ export default function TenantsPage() {
     return `/platform/tenants?${p.toString()}`;
   }, [page, pageSize, statusFilter, planFilter, search]);
 
-  const { data, mutate, isLoading } = useSWR<{
+  const { data, mutate, isLoading, error } = useSWR<{
     items: Tenant[];
     total: number;
   }>(swrKey);
@@ -354,6 +355,20 @@ export default function TenantsPage() {
       </div>
 
       <Card>
+        {error && (
+          <Alert
+            type="error"
+            showIcon
+            style={{ marginBottom: 16 }}
+            message="加载租户列表失败"
+            description={extractErrorMessage(error, "请稍后重试")}
+            action={
+              <Button size="small" onClick={() => mutate()}>
+                重试
+              </Button>
+            }
+          />
+        )}
         <Space style={{ marginBottom: 16 }} wrap>
           <Input.Search
             placeholder="搜索名称或 Slug"

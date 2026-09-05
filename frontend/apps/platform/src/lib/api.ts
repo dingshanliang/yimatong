@@ -22,7 +22,13 @@ api.interceptors.response.use(
   (res) => res,
   async (error) => {
     if (error.response?.status === 401) {
-      if (typeof window !== "undefined") {
+      // 登录接口自身的 401 是"凭证错误"，必须留给登录页展示错误，
+      // 不能整页跳转 /login 冲掉错误提示。
+      const requestUrl: unknown = error.config?.url;
+      const isLoginRequest =
+        typeof requestUrl === "string" &&
+        requestUrl.includes("/platform/auth/login");
+      if (!isLoginRequest && typeof window !== "undefined") {
         logoutHandler?.();
         window.location.href = "/login";
       }

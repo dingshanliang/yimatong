@@ -39,7 +39,10 @@ export default function AuditLogsPage() {
   const url = useMemo(() => {
     const params = new URLSearchParams();
     if (dateRange?.[0]) params.set("start_time", dateRange[0].toISOString());
-    if (dateRange?.[1]) params.set("end_time", dateRange[1].toISOString());
+    // 结束日期取当天末尾，保证结束日整天的日志都被包含。
+    if (dateRange?.[1]) {
+      params.set("end_time", dateRange[1].endOf("day").toISOString());
+    }
     params.set("limit", "200");
     return `/platform/audit-logs?${params.toString()}`;
   }, [dateRange]);

@@ -11,6 +11,7 @@ import {
   Modal,
   Row,
   Switch,
+  Tag,
   Typography,
   message,
 } from "antd";
@@ -60,6 +61,7 @@ export default function PlansPage() {
       display_name: plan.display_name,
       description: plan.description,
       price_yearly: plan.price_yearly / 100, // cents → yuan
+      is_active: plan.is_active,
       max_codes: plan.quota_defaults?.max_codes,
       max_scans: plan.quota_defaults?.max_scans,
       max_campaigns: plan.quota_defaults?.max_campaigns,
@@ -88,7 +90,10 @@ export default function PlansPage() {
       };
 
       if (editPlan) {
-        await api.patch(`/platform/plans/${editPlan.id}`, payload);
+        await api.patch(`/platform/plans/${editPlan.id}`, {
+          ...payload,
+          is_active: Boolean(values.is_active),
+        });
         message.success("更新成功");
       } else {
         await api.post("/platform/plans", {
@@ -203,16 +208,9 @@ export default function PlansPage() {
                   ))}
               </div>
               {!plan.is_active && (
-                <Text
-                  type="danger"
-                  style={{
-                    fontSize: "var(--ymt-font-size-xs)",
-                    marginTop: 8,
-                    display: "block",
-                  }}
-                >
+                <Tag color="error" style={{ marginTop: 8 }}>
                   已停用
-                </Text>
+                </Tag>
               )}
             </Card>
           </Col>
@@ -256,6 +254,16 @@ export default function PlansPage() {
           <Form.Item name="description" label="描述">
             <Input.TextArea rows={2} />
           </Form.Item>
+          {editPlan && (
+            <Form.Item
+              name="is_active"
+              label="启用状态"
+              valuePropName="checked"
+              extra="停用后该套餐不再出现在租户的可选套餐列表中，已有租户配置不受影响。"
+            >
+              <Switch />
+            </Form.Item>
+          )}
           <Form.Item name="price_yearly" label="年费（元）" initialValue={0}>
             <InputNumber min={0} style={{ width: "100%" }} suffix="元/年" />
           </Form.Item>

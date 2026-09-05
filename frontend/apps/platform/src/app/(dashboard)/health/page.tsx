@@ -1,5 +1,6 @@
 "use client";
 
+import { isAxiosError } from "axios";
 import {
   Button,
   Card,
@@ -70,12 +71,22 @@ export default function HealthPage() {
   const handleRefresh = async () => {
     setRefreshing(true);
     try {
-      await api.post("/platform/health/refresh");
+      // 健康度重算扫描全量租户，耗时远超全局 15s 默认值，单独放宽到 2 分钟。
+      await api.post("/platform/health/refresh", undefined, {
+        timeout: 120000,
+      });
       message.success("健康度数据已刷新");
       mutate("/platform/health-overview");
       mutate("/platform/health-tenants");
     } catch (err) {
-      message.error(extractErrorMessage(err, "刷新失败"));
+      if (
+        isAxiosError(err) &&
+        (err.code === "ECONNABORTED" || err.code === "ETIMEDOUT")
+      ) {
+        message.error("重算耗时较长，请稍后刷新查看结果");
+      } else {
+        message.error(extractErrorMessage(err, "刷新失败"));
+      }
     } finally {
       setRefreshing(false);
     }
