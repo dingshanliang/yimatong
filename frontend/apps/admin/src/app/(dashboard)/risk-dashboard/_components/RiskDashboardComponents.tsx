@@ -8,9 +8,13 @@ import {
   Button,
   Card,
   Col,
+  Empty,
+  List,
+  Popover,
   Row,
   Select,
   Space,
+  Spin,
   Statistic,
   Table,
   Tag,
@@ -32,8 +36,13 @@ import { ChannelConversionRateHeader } from "../../_components/MetricHeaders";
 
 /* ---------- SSE Alert Indicator ---------- */
 
+type AlertListItem = Record<string, unknown> & { key: string };
+
 export function AlertIndicator({ tenantId }: { tenantId: string | null }) {
   const [alerts, setAlerts] = useState<Record<string, unknown>[]>([]);
+  const [recentAlerts, setRecentAlerts] = useState<AlertListItem[]>([]);
+  const [listLoading, setListLoading] = useState(false);
+  const [open, setOpen] = useState(false);
   const [connected, setConnected] = useState(false);
   const eventSourceRef = useRef<EventSource | null>(null);
   const retryCountRef = useRef(0);
@@ -47,6 +56,35 @@ export function AlertIndicator({ tenantId }: { tenantId: string | null }) {
       void connectRef.current();
     }, delay);
   }, []);
+
+  // 弹层打开时拉取最近告警（GET /risk-alerts），与 SSE 实时推送互补
+  const fetchRecentAlerts = useCallback(async () => {
+    setListLoading(true);
+    try {
+      const { data } = await api.get("/risk-alerts", {
+        params: { page: 1, page_size: 10 },
+      });
+      const items = (Array.isArray(data) ? data : data?.items || []) as Record<
+        string,
+        unknown
+      >[];
+      setRecentAlerts(
+        items.map((item, i) => ({
+          ...item,
+          key: String(item.id ?? `db-${i}`),
+        }))
+      );
+    } catch {
+      setRecentAlerts([]);
+    } finally {
+      setListLoading(false);
+    }
+  }, []);
+
+  const handleOpenChange = (next: boolean) => {
+    setOpen(next);
+    if (next) void fetchRecentAlerts();
+  };
 
   useEffect(() => {
     const doConnect = async () => {
@@ -102,6 +140,65 @@ export function AlertIndicator({ tenantId }: { tenantId: string | null }) {
     };
   }, [tenantId, scheduleRetry]);
 
+  // SSE 实时消息排在最前（无 resolved 字段，视为待处理），其后是库里最近告警；
+  // 按 public_id + detail 去重，避免同一条告警（实时 + 落库）重复展示
+  const combined: AlertListItem[] = [
+    ...alerts.map((item, i) => ({ ...item, key: `live-${i}` })),
+    ...recentAlerts.filter(
+      (item) =>
+        !alerts.some(
+          (live) =>
+            live.public_id === item.public_id && live.detail === item.detail
+        )
+    ),
+  ].slice(0, 20);
+
+  const popoverContent = (
+    <div style={{ width: 320 }}>
+      {listLoading ? (
+        <div className="flex justify-center py-4">
+          <Spin size="small" />
+        </div>
+      ) : combined.length === 0 ? (
+        <Empty
+          image={Empty.PRESENTED_IMAGE_SIMPLE}
+          description="暂无风控告警"
+        />
+      ) : (
+        <List
+          size="small"
+          dataSource={combined}
+          renderItem={(item) => (
+            <List.Item>
+              <div className="w-full">
+                <div className="flex items-center justify-between gap-2 mb-1">
+                  <Tag color={STATUS_COLORS.warning}>
+                    {String(item.alert_type ?? "告警")}
+                  </Tag>
+                  {typeof item.resolved === "boolean" && (
+                    <Tag
+                      color={
+                        item.resolved
+                          ? STATUS_COLORS.success
+                          : STATUS_COLORS.error
+                      }
+                    >
+                      {item.resolved ? "已处理" : "待处理"}
+                    </Tag>
+                  )}
+                </div>
+                <div className="text-xs text-text-muted break-all">
+                  {String(item.public_id ?? "")}
+                  {item.detail ? ` · ${String(item.detail)}` : ""}
+                </div>
+              </div>
+            </List.Item>
+          )}
+        />
+      )}
+    </div>
+  );
+
   return (
     <>
       {!connected && retryCountRef.current > 0 && (
@@ -113,15 +210,24 @@ export function AlertIndicator({ tenantId }: { tenantId: string | null }) {
           className="mb-4"
         />
       )}
-      <Badge count={alerts.length} size="small" offset={[2, 0]}>
-        <Button
-          icon={<BellOutlined />}
-          type={connected ? "default" : "dashed"}
-          size="small"
-        >
-          {connected ? "实时告警" : "未连接"}
-        </Button>
-      </Badge>
+      <Popover
+        content={popoverContent}
+        title="最近风控告警"
+        trigger="click"
+        placement="bottomRight"
+        open={open}
+        onOpenChange={handleOpenChange}
+      >
+        <Badge count={alerts.length} size="small" offset={[2, 0]}>
+          <Button
+            icon={<BellOutlined />}
+            type={connected ? "default" : "dashed"}
+            size="small"
+          >
+            {connected ? "实时告警" : "未连接"}
+          </Button>
+        </Badge>
+      </Popover>
     </>
   );
 }

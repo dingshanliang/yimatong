@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { App, Button, Form, Input, Modal, Table, Tag } from "antd";
+import { Alert, App, Button, Form, Input, Modal, Table, Tag } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import api, { extractErrorMessage } from "@/lib/api";
 import { useCrud } from "@/lib/hooks";
@@ -33,11 +33,26 @@ function campaignStatusLabel(status: string) {
 
 export function PausesTab({ access }: { access: RiskAccess }) {
   const { message } = App.useApp();
-  const { items, total, page, loading, setPage, mutate } =
+  const { items, total, page, loading, setPage, mutate, error, retry } =
     useCrud<CampaignPause>("/risk-rules/pauses", { enabled: access.canRead });
   const [selected, setSelected] = useState<CampaignPause | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [form] = Form.useForm<{ reason: string }>();
+
+  if (error) {
+    return (
+      <Alert
+        type="error"
+        showIcon
+        title="风控暂停记录加载失败"
+        action={
+          <Button size="small" onClick={() => void retry()}>
+            重试
+          </Button>
+        }
+      />
+    );
+  }
 
   const resume = async ({ reason }: { reason: string }) => {
     if (!selected) return;

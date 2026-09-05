@@ -10,6 +10,7 @@ import {
   Form,
   Input,
   Modal,
+  Popconfirm,
   Select,
   Space,
   Switch,
@@ -58,10 +59,12 @@ export function RulesTab({ access }: { access: RiskAccess }) {
         { enabled, expected_version: rule.version },
         { headers: { "Idempotency-Key": crypto.randomUUID() } }
       );
-      await mutate();
       message.success(enabled ? "已启用" : "已禁用");
-    } catch {
-      message.error("操作失败");
+    } catch (e: unknown) {
+      message.error(extractErrorMessage(e, "规则启停失败，请重试"));
+    } finally {
+      // 无论成败都刷新列表：保证 expected_version 始终为服务端最新版本，避免后续操作连续 409
+      await mutate();
     }
   };
 
@@ -95,13 +98,35 @@ export function RulesTab({ access }: { access: RiskAccess }) {
       title: "启用",
       dataIndex: "enabled",
       key: "enabled",
-      render: (v: boolean, record) => (
-        <Switch
-          checked={v}
-          disabled={!access.canManage}
-          onChange={(checked) => void toggleEnabled(record, checked)}
-        />
-      ),
+      render: (v: boolean, record) => {
+        // block 类规则停用影响线上拦截，需二次确认；确认前 Switch 保持受控不翻转
+        const disablingBlock = record.action === "block" && v;
+        const sw = (
+          <Switch
+            checked={v}
+            disabled={!access.canManage}
+            onChange={
+              disablingBlock
+                ? undefined
+                : (checked) => void toggleEnabled(record, checked)
+            }
+          />
+        );
+        if (!disablingBlock) return sw;
+        return (
+          <Popconfirm
+            title="确认停用该拦截规则？"
+            description="停用后命中该规则的扫码请求将不再被拦截。"
+            okText="确认停用"
+            cancelText="取消"
+            onConfirm={() => {
+              void toggleEnabled(record, false);
+            }}
+          >
+            {sw}
+          </Popconfirm>
+        );
+      },
     },
   ];
 

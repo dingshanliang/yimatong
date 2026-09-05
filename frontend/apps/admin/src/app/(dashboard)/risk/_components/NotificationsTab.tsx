@@ -27,25 +27,48 @@ export function NotificationsTab() {
 }
 
 function NotificationsWorkspace() {
-  const { items, total, page, loading, setPage, mutate } =
+  const { items, total, page, loading, setPage, mutate, error, retry } =
     useCrud<RiskNotification>("/risk-notifications");
 
   const markRead = async (id: string) => {
-    await api.post(`/risk-notifications/${id}/read`, undefined, {
-      headers: { "Idempotency-Key": crypto.randomUUID() },
-    });
-    mutate();
+    try {
+      await api.post(`/risk-notifications/${id}/read`, undefined, {
+        headers: { "Idempotency-Key": crypto.randomUUID() },
+      });
+      mutate();
+    } catch {
+      message.error("标记已读失败，请重试");
+    }
   };
 
   const markAllRead = async () => {
-    await api.post("/risk-notifications/mark-all-read", undefined, {
-      headers: { "Idempotency-Key": crypto.randomUUID() },
-    });
-    message.success("已全部标记为已读");
-    mutate();
+    try {
+      await api.post("/risk-notifications/mark-all-read", undefined, {
+        headers: { "Idempotency-Key": crypto.randomUUID() },
+      });
+      message.success("已全部标记为已读");
+      mutate();
+    } catch {
+      message.error("批量标记已读失败，请重试");
+    }
   };
 
   const unreadCount = items.filter((n) => !n.read).length;
+
+  if (error) {
+    return (
+      <Alert
+        type="error"
+        showIcon
+        title="风控通知加载失败"
+        action={
+          <Button size="small" onClick={() => void retry()}>
+            重试
+          </Button>
+        }
+      />
+    );
+  }
 
   return (
     <div>

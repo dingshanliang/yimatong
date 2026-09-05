@@ -2,7 +2,16 @@
 
 import { useCrud } from "@/lib/hooks";
 import { STATUS_COLORS, STATUS_TOKEN_COLORS } from "@/lib/status-colors";
-import { Badge, Descriptions, Modal, Switch, Table, Tag } from "antd";
+import {
+  Alert,
+  Badge,
+  Button,
+  Descriptions,
+  Modal,
+  Switch,
+  Table,
+  Tag,
+} from "antd";
 import type { ColumnsType } from "antd/es/table";
 import { useState } from "react";
 
@@ -84,7 +93,7 @@ const columns: ColumnsType<Interception> = [
 
 export function InterceptionsTab() {
   const [autoOnly, setAutoOnly] = useState(false);
-  const { items, total, page, loading, setPage, setFilter } =
+  const { items, total, page, loading, setPage, setFilter, error, retry } =
     useCrud<Interception>("/risk-rules/interceptions");
   const [detail, setDetail] = useState<Interception | null>(null);
 
@@ -96,6 +105,21 @@ export function InterceptionsTab() {
       setFilter({});
     }
   };
+
+  if (error) {
+    return (
+      <Alert
+        type="error"
+        showIcon
+        title="拦截记录加载失败"
+        action={
+          <Button size="small" onClick={() => void retry()}>
+            重试
+          </Button>
+        }
+      />
+    );
+  }
 
   return (
     <>

@@ -21,7 +21,7 @@ import {
   CheckCircleOutlined,
 } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
-import api from "@/lib/api";
+import api, { extractErrorMessage } from "@/lib/api";
 import { useAuthStore } from "@/lib/auth";
 import {
   channelAccessForPrincipal,
@@ -84,6 +84,7 @@ function AntiDiversionWorkspace({ access }: { access: ChannelAccess }) {
   const [resolvingClue, setResolvingClue] = useState<DiversionClue | null>(
     null
   );
+  const [submitting, setSubmitting] = useState(false);
 
   const loadClues = useCallback(async () => {
     setLoading(true);
@@ -129,7 +130,16 @@ function AntiDiversionWorkspace({ access }: { access: ChannelAccess }) {
     loadStats();
   }, [loadStats]);
 
-  const handleResolve = async (clue: DiversionClue, action: string) => {
+  const handleResolve = async (
+    clue: DiversionClue,
+    action: string
+  ): Promise<boolean> => {
+    // 后端 DiversionTransitionRequest.reason 上限 500 字符
+    if (resolutionNote.trim().length > 500) {
+      message.error("结论依据不能超过 500 字");
+      return false;
+    }
+    setSubmitting(true);
     try {
       await api.post(
         `/risk-dashboard/diversion-clues/${clue.id}/transition`,
@@ -144,8 +154,12 @@ function AntiDiversionWorkspace({ access }: { access: ChannelAccess }) {
       message.success("线索已处理");
       loadClues();
       loadStats();
-    } catch {
-      message.error("处理失败");
+      return true;
+    } catch (e: unknown) {
+      message.error(extractErrorMessage(e, "处理失败，请重试"));
+      return false;
+    } finally {
+      setSubmitting(false);
     }
   };
 
@@ -314,13 +328,24 @@ function AntiDiversionWorkspace({ access }: { access: ChannelAccess }) {
       <Modal
         title="处理窜货线索"
         open={resolveModalOpen}
-        onOk={() => {
-          if (resolvingClue) {
-            void handleResolve(resolvingClue, resolveAction);
+        confirmLoading={submitting}
+        onOk={async () => {
+          // 提交成功后才关闭弹窗，失败时保留现场供修改重试
+          if (!resolvingClue) {
+            setResolveModalOpen(false);
+            return;
           }
-          setResolveModalOpen(false);
+          const ok = await handleResolve(resolvingClue, resolveAction);
+          if (ok) {
+            setResolveModalOpen(false);
+            setResolvingClue(null);
+            setResolutionNote("");
+          }
         }}
-        onCancel={() => setResolveModalOpen(false)}
+        onCancel={() => {
+          setResolveModalOpen(false);
+          setResolvingClue(null);
+        }}
         okButtonProps={{ disabled: !resolutionNote.trim() }}
       >
         {resolvingClue && (
@@ -349,7 +374,7 @@ function AntiDiversionWorkspace({ access }: { access: ChannelAccess }) {
                 className="mt-3"
                 aria-label="结论依据"
                 placeholder="填写结论依据"
-                maxLength={2000}
+                maxLength={500}
                 showCount
                 value={resolutionNote}
                 onChange={(event) => setResolutionNote(event.target.value)}

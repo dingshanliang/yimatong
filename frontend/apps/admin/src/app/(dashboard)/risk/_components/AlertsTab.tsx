@@ -3,7 +3,7 @@
 import { useCrud } from "@/lib/hooks";
 import { Alert, App, Button, Popconfirm, Table, Tag } from "antd";
 import type { ColumnsType } from "antd/es/table";
-import api from "@/lib/api";
+import api, { extractErrorMessage } from "@/lib/api";
 import { useAuthStore } from "@/lib/auth";
 import { riskAccessForPrincipal } from "@/lib/risk-access";
 import { STATUS_COLORS } from "@/lib/status-colors";
@@ -71,9 +71,15 @@ function AlertsWorkspace() {
             title="确认标记为已处理？"
             onConfirm={async () => {
               if (planReadOnly) return;
-              await api.post(`/risk-alerts/${record.id as string}/resolve`);
-              message.success("已处理");
-              mutate();
+              try {
+                // onConfirm 返回 Promise 时 Popconfirm 的确认按钮自带 loading
+                await api.post(`/risk-alerts/${record.id as string}/resolve`);
+                message.success("已处理");
+              } catch (e: unknown) {
+                message.error(extractErrorMessage(e, "处理失败，请重试"));
+              } finally {
+                mutate();
+              }
             }}
           >
             <Button size="small" type="link" disabled={planReadOnly}>

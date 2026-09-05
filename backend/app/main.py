@@ -217,6 +217,11 @@ async def lifespan(app):
 
     init_risk_auto_handler()
 
+    # 订阅 risk.alert 事件，将风控告警实时广播进 SSE 告警流
+    from app.api.v1.risk_dashboard import init_alert_broadcaster
+
+    init_alert_broadcaster()
+
     # 初始化积分自动发放处理器
     from app.services.point_auto_handler import init_point_auto_handler
 

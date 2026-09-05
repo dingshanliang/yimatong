@@ -49,7 +49,8 @@ function SummaryIndicators() {
     setLoading(true);
     try {
       const [alertRes, diversionRes, healthRes] = await Promise.allSettled([
-        api.get("/risk-dashboard/alerts", {
+        // GET /api/v1/risk-alerts 的 total 即满足过滤条件的告警数
+        api.get("/risk-alerts", {
           params: { page: 1, page_size: 1, resolved: false },
         }),
         api.get("/risk-dashboard/diversion-summary", {

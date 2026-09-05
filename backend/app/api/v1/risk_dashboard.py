@@ -291,6 +291,29 @@ def _broadcast_alert(tenant_id: str, alert_data: dict) -> None:
             pass  # 丢弃过旧消息
 
 
+async def _handle_risk_alert_event(event_type: str, data: dict, tenant_id: str) -> None:
+    """event_bus 订阅：把服务层产生的 risk.alert 告警广播进该租户的 SSE 队列。"""
+    _broadcast_alert(tenant_id, data)
+
+
+_alert_broadcaster_registered = False
+
+
+def init_alert_broadcaster() -> None:
+    """注册 risk.alert 事件订阅（幂等），应用启动时在 lifespan 中调用。
+
+    订阅放在 risk_dashboard 模块而不是 services/risk.py，避免 service 层
+    反向依赖 API 模块；event_bus 本身无反向依赖，无循环 import。
+    """
+    global _alert_broadcaster_registered
+    if _alert_broadcaster_registered:
+        return
+    from app.core.event_bus import event_bus
+
+    event_bus.add_handler("risk.alert", _handle_risk_alert_event)
+    _alert_broadcaster_registered = True
+
+
 @risk_dashboard_router.post(
     "/alerts/ticket", dependencies=[Depends(_require_risk_feature), *risk_dependencies("risk:read")]
 )

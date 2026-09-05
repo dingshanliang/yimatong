@@ -254,6 +254,8 @@ class TestDiversionSummary:
         assert resp.status_code == 200
         data = resp.json()
         assert data["total"] >= 3
+        # 风控中心「未处理窜货线索」指标直接消费该字段
+        assert data["unresolved_count"] == 3
         assert len(data["by_distributor"]) >= 1
 
     @pytest.mark.anyio
@@ -291,7 +293,10 @@ class TestDiversionSummary:
             headers=headers,
         )
         assert resp.status_code == 200
-        assert resp.json()["total"] >= 1
+        body = resp.json()
+        assert body["total"] >= 1
+        # resolved=false 过滤时 total 即未处理数；unresolved_count 与过滤解耦，仍统计全租户未处理
+        assert body["unresolved_count"] == 1
 
     @pytest.mark.anyio
     async def test_transition_diversion_uses_strict_authority_contract(

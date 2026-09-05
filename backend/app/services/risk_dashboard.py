@@ -174,6 +174,14 @@ async def get_diversion_summary(
     total_result = await db.execute(count_stmt)
     total = total_result.scalar() or 0
 
+    # 未处理数：与 total/resolved 过滤解耦，供风控中心指标卡直接展示
+    unresolved_result = await db.execute(
+        select(func.count())
+        .select_from(DiversionClue)
+        .where(DiversionClue.tenant_id == tenant_id, DiversionClue.resolved.is_(False))
+    )
+    unresolved_count = unresolved_result.scalar() or 0
+
     clues_result = await db.execute(
         stmt.order_by(DiversionClue.id.desc()).offset((page - 1) * page_size).limit(page_size)
     )
@@ -216,6 +224,7 @@ async def get_diversion_summary(
 
     return {
         "total": total,
+        "unresolved_count": unresolved_count,
         "items": items,
         "by_distributor": by_distributor,
     }
