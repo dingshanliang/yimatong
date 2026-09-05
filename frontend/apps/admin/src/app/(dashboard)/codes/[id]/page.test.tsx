@@ -44,6 +44,7 @@ vi.mock("@/lib/api", () => ({
     get: (...args: unknown[]) => mocks.get(...args),
     post: (...args: unknown[]) => mocks.post(...args),
   },
+  extractErrorMessage: (_error: unknown, fallback: string) => fallback,
 }));
 
 vi.mock("@/lib/auth", () => ({
@@ -308,5 +309,73 @@ describe("CodeBatchDetailPage boundaries", () => {
     fireEvent.click(screen.getByRole("button", { name: "冻结整批" }));
     fireEvent.click(screen.getByRole("button", { name: "永久作废整批" }));
     expect(mocks.post).not.toHaveBeenCalled();
+  });
+
+  it("derives a fully voided batch terminal state and hides export and lifecycle actions", async () => {
+    mocks.batchStatus = "activated";
+    mocks.itemStatus = "revoked";
+
+    render(<CodeBatchDetailPage />);
+
+    expect(await screen.findByText("CODE-001")).toBeVisible();
+    expect(screen.getAllByText("已作废").length).toBeGreaterThan(0);
+    expect(
+      screen.queryByRole("button", { name: /导出码表/ })
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "冻结整批" })
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "永久作废整批" })
+    ).not.toBeInTheDocument();
+    expect(screen.getByText("当前状态暂无可用操作")).toBeVisible();
+  });
+
+  it("derives a fully frozen batch terminal state while keeping single-code recovery", async () => {
+    mocks.batchStatus = "activated";
+    mocks.itemStatus = "frozen";
+
+    render(<CodeBatchDetailPage />);
+
+    expect(await screen.findByText("CODE-001")).toBeVisible();
+    expect(screen.getAllByText("已冻结").length).toBeGreaterThan(0);
+    expect(
+      screen.queryByRole("button", { name: /导出码表/ })
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "冻结整批" })
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "永久作废整批" })
+    ).not.toBeInTheDocument();
+    expect(screen.getByText("当前状态暂无可用操作")).toBeVisible();
+    expect(screen.getByRole("button", { name: /恢\s*复/ })).toBeVisible();
+  });
+
+  it("warns that voiding one code forfeits the batch export before the batch is exported", async () => {
+    mocks.batchStatus = "completed";
+
+    render(<CodeBatchDetailPage />);
+
+    expect(await screen.findByText("CODE-001")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "永久作废" }));
+    expect(screen.getByRole("dialog")).toHaveTextContent(
+      "作废后该批次将无法导出码表，请确认是否继续。"
+    );
+  });
+
+  it("does not warn about batch export when the batch is already activated", async () => {
+    mocks.batchStatus = "activated";
+
+    render(<CodeBatchDetailPage />);
+
+    expect(await screen.findByText("CODE-001")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "永久作废" }));
+    expect(screen.getByRole("dialog")).toHaveTextContent(
+      "作废后不可恢复，消费者将无法再使用该码。"
+    );
+    expect(
+      screen.queryByText("作废后该批次将无法导出码表，请确认是否继续。")
+    ).not.toBeInTheDocument();
   });
 });

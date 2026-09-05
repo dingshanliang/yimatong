@@ -1,13 +1,16 @@
 """A6-010: 端到端扫码流程后端测试"""
 
+import uuid
 from collections.abc import AsyncGenerator
 
 import pytest
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy import update as sa_update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.main import app
+from app.models.campaign import Campaign, CampaignStatus
 from app.utils.security import create_access_token
 from tests.conftest import TestSessionLocal
 
@@ -42,7 +45,7 @@ async def client(db_session: AsyncSession):
 
 
 @pytest.fixture
-async def e2e_setup(client: AsyncClient):
+async def e2e_setup(client: AsyncClient, db_session: AsyncSession):
     """完整链路：租户→品牌→产品→SKU→码批次→模板→发布"""
     resp = await client.post(
         "/api/v1/tenants",
@@ -89,7 +92,7 @@ async def e2e_setup(client: AsyncClient):
             "batch_code": "E2E-001",
             "quantity": 3,
         },
-        headers=headers,
+        headers={**headers, "Idempotency-Key": str(uuid.uuid4())},
     )
     batch_id = batch.json()["id"]
 
@@ -113,8 +116,76 @@ async def e2e_setup(client: AsyncClient):
         headers=headers,
     )
 
-    # 激活码
+    # 激活码（同步生成的批次为 completed 状态，需先走 导出→印刷→交付 生命周期）
+    exported = await client.post(
+        f"/api/v1/code-batches/{batch_id}/export",
+        json={"reason": "E2E测试导出"},
+        headers={**headers, "Idempotency-Key": str(uuid.uuid4())},
+    )
+    assert exported.status_code in (200, 201), f"导出码批次失败: {exported.text}"
+    printing = await client.post(f"/api/v1/code-batches/{batch_id}/mark-printing", headers=headers)
+    assert printing.status_code in (200, 201), f"标记印刷失败: {printing.text}"
+    delivered = await client.post(
+        f"/api/v1/code-batches/{batch_id}/mark-delivered",
+        json={"reason": "E2E测试交付", "recipient": "测试收货人", "confirm": "deliver"},
+        headers=headers,
+    )
+    assert delivered.status_code in (200, 201), f"标记交付失败: {delivered.text}"
     await client.post(f"/api/v1/code-batches/{batch_id}/activate", headers=headers)
+
+    # 创建并激活活动（resolver 需要 live LaunchRelease 才渲染模板页）
+    campaign = await client.post(
+        "/api/v1/campaigns",
+        json={
+            "name": "E2E首扫活动",
+            "campaign_type": "coupon",
+            "product_id": prod.json()["id"],
+            "start_at": "2026-01-01T00:00:00",
+            "end_at": "2026-12-31T23:59:59",
+            "rules_json": {
+                "campaign_goal": "first_scan_coupon",
+                "participation_condition_type": "first_scan",
+                "participation_conditions": "首次扫码用户可参与",
+                "claim_limits": {"per_user": 1, "per_day": 1},
+                "validity_period": {"type": "campaign_period"},
+                "disclaimer": "本活动最终解释权归品牌方所有",
+                "minor_notice": "未成年人请在监护人陪同下参与",
+                "customer_service_contact": "400-000-0000",
+            },
+        },
+        headers=headers,
+    )
+    assert campaign.status_code in (200, 201), f"创建活动失败: {campaign.text}"
+    # 激活活动（直接在 DB 中设置状态，绕过业务 blocker 检查）
+    await db_session.execute(
+        sa_update(Campaign).where(Campaign.id == uuid.UUID(campaign.json()["id"])).values(status=CampaignStatus.ACTIVE)
+    )
+    await db_session.commit()
+
+    # 创建、确认并上线扫码页发布
+    release = await client.post(
+        "/api/v1/launch-releases",
+        json={
+            "page_version_id": ver.json()["id"],
+            "campaign_id": campaign.json()["id"],
+            "code_batch_id": batch_id,
+            "idempotency_key": str(uuid.uuid4()),
+        },
+        headers=headers,
+    )
+    assert release.status_code in (200, 201), f"创建上线发布失败: {release.text}"
+    confirmed_release = await client.post(
+        f"/api/v1/launch-releases/{release.json()['id']}/confirm",
+        json={"idempotency_key": str(uuid.uuid4())},
+        headers=headers,
+    )
+    assert confirmed_release.status_code == 200, f"确认上线发布失败: {confirmed_release.text}"
+    launched = await client.post(
+        f"/api/v1/launch-releases/{release.json()['id']}/launch",
+        json={"idempotency_key": str(uuid.uuid4())},
+        headers=headers,
+    )
+    assert launched.status_code == 200, f"上线发布失败: {launched.text}"
 
     items = await client.get(
         f"/api/v1/code-items?code_batch_id={batch_id}",

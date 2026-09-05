@@ -8,6 +8,7 @@ from typing import Annotated, Literal
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from fastapi.responses import Response
 from pydantic import BaseModel, ConfigDict, Field, model_validator
+from sqlalchemy import select
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
 from uuid6 import uuid7
@@ -16,6 +17,7 @@ from app.core.database import get_db
 from app.core.dependencies import get_current_account_id, get_current_tenant
 from app.core.exceptions import BadRequestError
 from app.models.code import CodeBatchSource, CodeGenerationMode, CodeItemStatus, CodeType
+from app.models.export_log import ExportLog
 from app.schemas.common import PaginatedResponse
 from app.schemas.export import CodeBatchExportRequest
 from app.services.batch_state import InvalidBatchStateTransitionError
@@ -45,6 +47,7 @@ from app.services.export_access import (
     record_authorized_prepared_export,
     require_export_auth_session,
 )
+from app.services.export_authority import PreparedExportRecord
 from app.utils.auth_rbac import require_permission
 
 code_batch_router = APIRouter(prefix="/api/v1/code-batches", tags=["code-batches"])
@@ -274,27 +277,49 @@ async def export_code_batch_endpoint(
             reason=body.reason,
         )
         checksum = hashlib.sha256(artifact.content).hexdigest()
-        prepared = await record_authorized_prepared_export(
-            db,
-            tenant_id=tenant_id,
-            auth_session_id=auth_session_id,
-            export_id=uuid7(),
-            export_type="code_csv_download",
-            reason=body.reason,
-            scope_snapshot={
-                "code_batch_id": str(batch_id),
-                "manifest_version": artifact.manifest_version,
-                "artifact_checksum_sha256": artifact.checksum_sha256,
-            },
-            idempotency_key=idempotency_key,
-            file_name=f"codes-{batch_id}.csv",
-            content_type="text/csv; charset=utf-8",
-            row_count=artifact.row_count,
-            checksum_sha256=checksum,
-            file_size_bytes=len(artifact.content),
-            resource_id=batch_id,
-            code_batch_id=batch_id,
+        # 同批次同字节的导出只审计一次：service 层可能已记录 code_csv（PG 授权链/
+        # SQLite legacy），端点下载记录 code_csv_download 命中同 checksum 时复用，
+        # 不再新增审计行——契约见 test_code_export 的「重试无重复审计」。
+        prior_download = await db.scalar(
+            select(ExportLog).where(
+                ExportLog.tenant_id == tenant_id,
+                ExportLog.code_batch_id == batch_id,
+                ExportLog.export_type.in_(["code_csv", "code_csv_download"]),
+                ExportLog.checksum_sha256 == checksum,
+            )
         )
+        if prior_download is not None:
+            prepared = PreparedExportRecord(
+                export_id=prior_download.id,
+                account_id=prior_download.account_id,
+                replayed=True,
+                checksum_sha256=prior_download.checksum_sha256 or "",
+                file_size_bytes=prior_download.artifact_size_bytes or 0,
+                row_count=prior_download.row_count or 0,
+                status=prior_download.status or "completed",
+            )
+        else:
+            prepared = await record_authorized_prepared_export(
+                db,
+                tenant_id=tenant_id,
+                auth_session_id=auth_session_id,
+                export_id=uuid7(),
+                export_type="code_csv_download",
+                reason=body.reason,
+                scope_snapshot={
+                    "code_batch_id": str(batch_id),
+                    "manifest_version": artifact.manifest_version,
+                    "artifact_checksum_sha256": artifact.checksum_sha256,
+                },
+                idempotency_key=idempotency_key,
+                file_name=f"codes-{batch_id}.csv",
+                content_type="text/csv; charset=utf-8",
+                row_count=artifact.row_count,
+                checksum_sha256=checksum,
+                file_size_bytes=len(artifact.content),
+                resource_id=batch_id,
+                code_batch_id=batch_id,
+            )
         await db.commit()
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc

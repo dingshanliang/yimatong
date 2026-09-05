@@ -10,7 +10,7 @@
 
 import uuid
 from collections.abc import AsyncGenerator
-from datetime import date, timedelta
+from datetime import UTC, date, datetime, timedelta
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -121,7 +121,7 @@ async def full_setup(client: AsyncClient, db_session: AsyncSession):
             "batch_code": "RICE-2026-001",
             "quantity": 5,
         },
-        headers=headers,
+        headers={**headers, "Idempotency-Key": str(uuid.uuid4())},
     )
     assert batch.status_code in (200, 201), f"创建码批次失败: {batch.text}"
     batch_id = batch.json()["id"]
@@ -205,9 +205,55 @@ async def full_setup(client: AsyncClient, db_session: AsyncSession):
     )
     assert benefit.status_code in (200, 201), f"创建权益失败: {benefit.text}"
 
-    # 9. 激活码批次
+    # 8.5 将权益挂到活动（权益与活动的关联已拆分为独立 attach 接口）
+    attach = await client.post(
+        f"/api/v1/campaigns/{campaign.json()['id']}/benefits/{benefit.json()['id']}/attach",
+        headers=headers,
+    )
+    assert attach.status_code == 200, f"挂载权益失败: {attach.text}"
+
+    # 9. 激活码批次（同步生成的批次为 completed 状态，需先走 导出→印刷→交付 生命周期）
+    exported = await client.post(
+        f"/api/v1/code-batches/{batch_id}/export",
+        json={"reason": "集成测试导出"},
+        headers={**headers, "Idempotency-Key": str(uuid.uuid4())},
+    )
+    assert exported.status_code in (200, 201), f"导出码批次失败: {exported.text}"
+    printing = await client.post(f"/api/v1/code-batches/{batch_id}/mark-printing", headers=headers)
+    assert printing.status_code in (200, 201), f"标记印刷失败: {printing.text}"
+    delivered = await client.post(
+        f"/api/v1/code-batches/{batch_id}/mark-delivered",
+        json={"reason": "集成测试交付", "recipient": "测试收货人", "confirm": "deliver"},
+        headers=headers,
+    )
+    assert delivered.status_code in (200, 201), f"标记交付失败: {delivered.text}"
     activate = await client.post(f"/api/v1/code-batches/{batch_id}/activate", headers=headers)
     assert activate.status_code in (200, 201), f"激活码批次失败: {activate.text}"
+
+    # 9.5 创建并上线扫码页发布（resolver 需要 live LaunchRelease 才下发 scan_token/页面配置）
+    release = await client.post(
+        "/api/v1/launch-releases",
+        json={
+            "page_version_id": ver.json()["id"],
+            "campaign_id": campaign.json()["id"],
+            "code_batch_id": batch_id,
+            "idempotency_key": str(uuid.uuid4()),
+        },
+        headers=headers,
+    )
+    assert release.status_code in (200, 201), f"创建上线发布失败: {release.text}"
+    confirmed_release = await client.post(
+        f"/api/v1/launch-releases/{release.json()['id']}/confirm",
+        json={"idempotency_key": str(uuid.uuid4())},
+        headers=headers,
+    )
+    assert confirmed_release.status_code == 200, f"确认上线发布失败: {confirmed_release.text}"
+    launched = await client.post(
+        f"/api/v1/launch-releases/{release.json()['id']}/launch",
+        json={"idempotency_key": str(uuid.uuid4())},
+        headers=headers,
+    )
+    assert launched.status_code == 200, f"上线发布失败: {launched.text}"
 
     # 10. 获取生成的码
     items = await client.get(
@@ -614,12 +660,13 @@ class TestBenefitClaimClosedLoop:
         )
         assert claim1.status_code == 201
 
-        # 重复领取应被拦截
+        # 重复领取按幂等契约重放首次结果（201 + 同一 claim_id），不重复扣减库存
         claim2 = await client.post(
             "/api/v1/benefit-claims",
             json={"benefit_id": benefit_id, "scan_token": scan_token},
         )
-        assert claim2.status_code == 409, f"重复领取应返回 409，实际 {claim2.status_code}"
+        assert claim2.status_code == 201, f"幂等重放应返回 201，实际 {claim2.status_code}"
+        assert claim2.json()["claim_id"] == claim1.json()["claim_id"]
 
     @pytest.mark.anyio
     async def test_claim_record_in_db(self, client: AsyncClient, full_setup, db_session: AsyncSession):
@@ -659,8 +706,8 @@ class TestBenefitClaimClosedLoop:
             json={"benefit_id": benefit_id, "scan_token": scan_token},
         )
 
-        # 验证库存减少
-        await db_session.reset()
+        # 验证库存减少（测试 client 复用同一事务且不自动提交，需先提交才能读到扣减结果）
+        await db_session.commit()
         after = await db_session.execute(select(Benefit).where(Benefit.id == uuid.UUID(benefit_id)))
         stock_after = after.scalar_one().stock_used
         assert stock_after == stock_before + 1, f"库存应从 {stock_before} 减到 {stock_before + 1}，实际 {stock_after}"
@@ -727,9 +774,18 @@ class TestCodeStateTransitions:
         """
         public_id = full_setup["public_ids"][3]
 
-        # 冻结码
+        # 冻结码（需满足 ck_code_items_frozen_provenance 约束的冻结溯源字段）
         await db_session.execute(
-            CodeItem.__table__.update().where(CodeItem.__table__.c.public_id == public_id).values(status="frozen")
+            CodeItem.__table__.update()
+            .where(CodeItem.__table__.c.public_id == public_id)
+            .values(
+                status="frozen",
+                frozen_from_status="activated",
+                frozen_at=datetime.now(UTC),
+                frozen_by="integration-test",
+                freeze_reason="集成测试冻结",
+                freeze_provenance_version=1,
+            )
         )
         await db_session.commit()
 
@@ -757,7 +813,7 @@ class TestCodeStateTransitions:
                 "batch_code": "INACTIVE-001",
                 "quantity": 1,
             },
-            headers=headers,
+            headers={**headers, "Idempotency-Key": str(uuid.uuid4())},
         )
         items = await client.get(
             f"/api/v1/code-items?code_batch_id={batch.json()['id']}",
@@ -765,10 +821,11 @@ class TestCodeStateTransitions:
         )
         public_id = items.json()["items"][0]["public_id"]
 
+        # 未激活批次的码 fail-closed 返回 404（不泄露码存在性）；「未激活」提示
+        # 仅在批次已激活但单码为 created 时出现（unactivated 200 契约，resolver.py）
         resp = await client.get(f"/c/{public_id}", headers={"Accept": "application/json"})
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["code_data"]["status"] == "created", f"未激活码应返回 created，实际 {data['code_data']['status']}"
+        assert resp.status_code == 404
+        assert resp.json()["code_data"]["result"] == "not_found"
 
     @pytest.mark.anyio
     async def test_invalid_public_id_404(self, client: AsyncClient):

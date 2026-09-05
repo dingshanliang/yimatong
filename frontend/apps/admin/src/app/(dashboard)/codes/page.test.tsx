@@ -35,6 +35,7 @@ vi.mock("@/lib/api", () => ({
     get: (...args: unknown[]) => mocks.get(...args),
     post: (...args: unknown[]) => mocks.post(...args),
   },
+  extractErrorMessage: (_error: unknown, fallback: string) => fallback,
 }));
 
 vi.mock("@/lib/hooks", () => ({
@@ -389,5 +390,27 @@ describe("CodesPage access and delivery boundaries", () => {
     ).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /重.*试/ }));
     expect(retry).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the generate entry open when product options fail to load", async () => {
+    mocks.user.role = "operator";
+    mocks.get.mockImplementation(async (path: string) => {
+      if (path === "/products") {
+        throw new Error("products unavailable");
+      }
+      return { data: { items: [] } };
+    });
+
+    render(<CodesPage />);
+
+    const generateButton = await screen.findByRole("button", {
+      name: /生成码批次/,
+    });
+    await vi.waitFor(() => expect(generateButton).toBeEnabled());
+    fireEvent.click(generateButton);
+    expect(screen.getByRole("dialog")).toHaveTextContent("码来源");
+    await vi.waitFor(() =>
+      expect(screen.getByRole("dialog")).toHaveTextContent("产品选项加载失败")
+    );
   });
 });

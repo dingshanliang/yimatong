@@ -27,7 +27,7 @@ import {
   UploadOutlined,
 } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
-import api from "@/lib/api";
+import api, { extractErrorMessage } from "@/lib/api";
 import {
   newExportIdempotencyKey,
   useExportReasonDialog,
@@ -416,8 +416,8 @@ function CodesCatalog({ access }: { access: CodeAccess }) {
       );
       resetCreateState();
       mutate();
-    } catch {
-      message.error("创建失败");
+    } catch (error) {
+      message.error(extractErrorMessage(error, "创建失败"));
     } finally {
       setCreating(false);
     }
@@ -447,8 +447,8 @@ function CodesCatalog({ access }: { access: CodeAccess }) {
       await api.post(`/code-batches/${id}/activate`);
       message.success("码批次已激活");
       mutate();
-    } catch {
-      message.error("激活失败");
+    } catch (error) {
+      message.error(extractErrorMessage(error, "激活失败"));
     } finally {
       setActivatingId(undefined);
     }
@@ -486,8 +486,10 @@ function CodesCatalog({ access }: { access: CodeAccess }) {
       link.remove();
       window.URL.revokeObjectURL(url);
       message.success("码表已导出，可用于打印二维码或交付印刷");
-    } catch {
-      message.error("导出失败，请确认码批次状态和账号权限");
+    } catch (error) {
+      message.error(
+        extractErrorMessage(error, "导出失败，请确认码批次状态和账号权限")
+      );
     } finally {
       setExportingId(undefined);
     }
@@ -542,8 +544,8 @@ function CodesCatalog({ access }: { access: CodeAccess }) {
       await api.post(`/code-batches/${id}/mark-printing`);
       message.success("已标记为印刷中");
       mutate();
-    } catch {
-      message.error("标记印刷中失败");
+    } catch (error) {
+      message.error(extractErrorMessage(error, "标记印刷中失败"));
     } finally {
       setMarkingPrintingId(undefined);
     }
@@ -562,8 +564,8 @@ function CodesCatalog({ access }: { access: CodeAccess }) {
       setDeliveryTarget(null);
       deliveryForm.resetFields();
       mutate();
-    } catch {
-      message.error("标记已交付失败");
+    } catch (error) {
+      message.error(extractErrorMessage(error, "标记已交付失败"));
     } finally {
       setMarkingDeliveredId(undefined);
     }
@@ -585,8 +587,13 @@ function CodesCatalog({ access }: { access: CodeAccess }) {
       });
       message.success("既有码导入完成，码批次已进入可导出状态");
       mutate();
-    } catch {
-      message.error("既有码导入失败，请核对数量、格式和码值唯一性");
+    } catch (error) {
+      message.error(
+        extractErrorMessage(
+          error,
+          "既有码导入失败，请核对数量、格式和码值唯一性"
+        )
+      );
     } finally {
       setImportingId(undefined);
     }
@@ -820,7 +827,7 @@ function CodesCatalog({ access }: { access: CodeAccess }) {
               type="primary"
               icon={<PlusOutlined />}
               onClick={() => setCreateOpen(true)}
-              disabled={planReadOnly || productsLoading || productsError}
+              disabled={planReadOnly || productsLoading}
             >
               生成码批次
             </Button>

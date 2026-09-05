@@ -5,6 +5,7 @@ import { useParams } from "next/navigation";
 import {
   Alert,
   App,
+  Button,
   Collapse,
   Descriptions,
   Input,
@@ -12,7 +13,7 @@ import {
   Tabs,
   Typography,
 } from "antd";
-import api from "@/lib/api";
+import api, { extractErrorMessage } from "@/lib/api";
 import {
   inspectPageReadiness,
   validateDSL,
@@ -46,6 +47,7 @@ export default function PageEditorPage() {
   const [version, setVersion] = useState<PageVersion | null>(null);
   const [dsl, setDsl] = useState<PageDSL>(createEmptyDSL());
   const [saving, setSaving] = useState(false);
+  const [creatingDraft, setCreatingDraft] = useState(false);
   const [activeTab, setActiveTab] = useState("modules");
   const [selectedModuleId, setSelectedModuleId] = useState<string | null>(null);
 
@@ -147,8 +149,8 @@ export default function PageEditorPage() {
       setSaving(true);
       await api.patch(`/page-versions/${version.id}`, { config_json: dsl });
       message.success("保存成功");
-    } catch {
-      message.error("保存失败");
+    } catch (err) {
+      message.error(extractErrorMessage(err, "保存失败"));
     } finally {
       setSaving(false);
     }
@@ -171,6 +173,24 @@ export default function PageEditorPage() {
       /* ignore */
     }
   }, [params.id]);
+
+  const isDraft = version?.status === "draft";
+
+  const handleCreateDraft = useCallback(async () => {
+    if (creatingDraft) return;
+    setCreatingDraft(true);
+    try {
+      await api.post(`/page-templates/${params.id}/versions`, {
+        config_json: dsl,
+      });
+      message.success("已基于当前版本创建草稿");
+      await refreshData();
+    } catch (err) {
+      message.error(extractErrorMessage(err, "创建草稿失败"));
+    } finally {
+      setCreatingDraft(false);
+    }
+  }, [creatingDraft, dsl, message, params.id, refreshData]);
 
   const handlePublish = useCallback(() => {
     if (!version) return;
@@ -241,11 +261,18 @@ export default function PageEditorPage() {
         try {
           setSaving(true);
           await api.patch(`/page-versions/${version.id}`, { config_json: dsl });
-          await api.post(`/page-versions/${version.id}/publish`);
-          message.success("草稿已发布，消费者扫码可能看到此页面");
-          await refreshData();
-        } catch {
-          message.error("发布失败");
+          try {
+            await api.post(`/page-versions/${version.id}/publish`);
+            message.success("草稿已发布，消费者扫码可能看到此页面");
+            await refreshData();
+          } catch (publishErr) {
+            // 草稿已保存成功，只反馈发布失败原因
+            message.error(
+              `草稿已保存，但发布失败：${extractErrorMessage(publishErr, "请稍后重试")}`
+            );
+          }
+        } catch (err) {
+          message.error(extractErrorMessage(err, "发布失败"));
         } finally {
           setSaving(false);
         }
@@ -284,6 +311,25 @@ export default function PageEditorPage() {
         onSave={handleSave}
         onPublish={handlePublish}
       />
+      {!isDraft && (
+        <Alert
+          className="!rounded-none"
+          type="warning"
+          showIcon
+          message="当前查看的是已发布版本（只读）"
+          description="已发布版本不可直接修改。编辑前请先基于当前版本创建草稿。"
+          action={
+            <Button
+              size="small"
+              type="primary"
+              loading={creatingDraft}
+              onClick={() => void handleCreateDraft()}
+            >
+              基于当前版本创建草稿
+            </Button>
+          }
+        />
+      )}
       <div className="flex flex-1 overflow-hidden">
         <div className="w-130 shrink-0 overflow-y-auto border-r bg-bg-container p-4">
           {readiness.blockingIssues.length > 0 ? (

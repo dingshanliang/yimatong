@@ -132,6 +132,14 @@ const STATUS_LABELS: Record<string, string> = {
   failed: "失败",
 };
 
+const IMPORT_STATUS_LABELS: Record<string, string> = {
+  dry_run: "预检完成",
+  submitted: "已排队导入",
+  importing: "导入中",
+  completed: "导入完成",
+  failed: "导入失败",
+};
+
 const CAPABILITY_LABELS: Record<string, string> = {
   marketing: "营销",
   traceability: "溯源",
@@ -316,6 +324,45 @@ export default function TakeoverPage() {
       setActionLoading(false);
     }
     return false;
+  };
+
+  const downloadImportErrors = async (job: ImportJob) => {
+    if (!selected) return;
+    try {
+      const { data } = await api.post(
+        `/takeovers/${selected.id}/imports/${job.id}/errors.csv`,
+        undefined,
+        { responseType: "blob" }
+      );
+      const url = URL.createObjectURL(
+        new Blob([data], { type: "text/csv; charset=utf-8" })
+      );
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `import-${job.id}-errors.csv`;
+      link.click();
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      message.error(extractErrorMessage(error, "下载错误明细失败"));
+    }
+  };
+
+  const retryFailedRows = async (job: ImportJob) => {
+    if (!selected || !access.canPrepare || planReadOnly) return;
+    setActionLoading(true);
+    try {
+      const { data } = await api.post<ImportJob>(
+        `/takeovers/${selected.id}/imports/${job.id}/retry-failed`
+      );
+      message.success(
+        `重试完成：${data.counts.valid} 行可导入，${data.counts.failed} 行仍需修复`
+      );
+      await loadProjectDetails(selected);
+    } catch (error) {
+      message.error(extractErrorMessage(error, "重试失败行失败"));
+    } finally {
+      setActionLoading(false);
+    }
   };
 
   const submitImport = async (job: ImportJob) => {
@@ -950,7 +997,9 @@ export default function TakeoverPage() {
                         dataIndex: "status",
                         key: "status",
                         render: (value: string) => (
-                          <Tag color={statusColor(value)}>{value}</Tag>
+                          <Tag color={statusColor(value)}>
+                            {IMPORT_STATUS_LABELS[value] || value}
+                          </Tag>
                         ),
                       },
                       {
@@ -971,10 +1020,37 @@ export default function TakeoverPage() {
                       {
                         title: "操作",
                         key: "action",
-                        render: (_, record) =>
-                          access.canPrepare &&
-                          record.status === "dry_run" &&
-                          record.counts.failed === 0 ? (
+                        render: (_, record) => {
+                          if (
+                            !access.canPrepare ||
+                            record.status !== "dry_run"
+                          ) {
+                            return null;
+                          }
+                          if (record.counts.failed > 0) {
+                            return (
+                              <Space size={4}>
+                                <Button
+                                  type="link"
+                                  size="small"
+                                  onClick={() =>
+                                    void downloadImportErrors(record)
+                                  }
+                                >
+                                  下载错误明细
+                                </Button>
+                                <Button
+                                  type="link"
+                                  size="small"
+                                  disabled={planReadOnly}
+                                  onClick={() => void retryFailedRows(record)}
+                                >
+                                  重试失败行
+                                </Button>
+                              </Space>
+                            );
+                          }
+                          return (
                             <Button
                               type="link"
                               disabled={planReadOnly}
@@ -982,7 +1058,8 @@ export default function TakeoverPage() {
                             >
                               确认正式导入
                             </Button>
-                          ) : null,
+                          );
+                        },
                       },
                     ]}
                   />

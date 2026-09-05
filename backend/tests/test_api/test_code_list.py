@@ -2,6 +2,8 @@
 
 from collections.abc import AsyncGenerator
 
+import uuid
+
 import pytest
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -92,7 +94,7 @@ async def setup_batch_with_codes(client: AsyncClient):
             "production_batch_id": production_batch.json()["id"],
             "quantity": 5,
         },
-        headers=headers,
+        headers={**headers, "Idempotency-Key": str(uuid.uuid4())},
     )
     batch_id = batch.json()["id"]
     return tid, headers, batch_id
@@ -207,11 +209,25 @@ class TestCodeBatchStats:
         stats = detail.json()["stats"]
         assert stats["created"] == 5
 
-        # 激活批次
-        await client.post(
+        # 同步生成的批次为 completed，需走 导出→印刷→交付→激活 生命周期
+        exported = await client.post(
+            f"/api/v1/code-batches/{batch_id}/export",
+            json={"reason": "生命周期测试导出"},
+            headers={**headers, "Idempotency-Key": str(uuid.uuid4())},
+        )
+        assert exported.status_code == 200, exported.text
+        await client.post(f"/api/v1/code-batches/{batch_id}/mark-printing", headers=headers)
+        delivered = await client.post(
+            f"/api/v1/code-batches/{batch_id}/mark-delivered",
+            json={"reason": "生命周期测试交付", "recipient": "测试收货方", "confirm": "deliver"},
+            headers=headers,
+        )
+        assert delivered.status_code == 200, delivered.text
+        activated = await client.post(
             f"/api/v1/code-batches/{batch_id}/activate",
             headers=headers,
         )
+        assert activated.status_code == 200, activated.text
 
         # 激活后：全部 activated
         detail = await client.get(

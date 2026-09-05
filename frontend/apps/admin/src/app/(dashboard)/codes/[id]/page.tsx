@@ -23,7 +23,7 @@ import {
 } from "antd";
 import { ArrowLeftOutlined, DownloadOutlined } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
-import api from "@/lib/api";
+import api, { extractErrorMessage } from "@/lib/api";
 import {
   newExportIdempotencyKey,
   useExportReasonDialog,
@@ -116,6 +116,36 @@ const GENERATION_MODE_LABELS: Record<string, string> = {
   batch_level: "一批一码",
 };
 
+interface BatchTerminalDisplay {
+  label: string;
+  color: string;
+}
+
+/**
+ * 整批冻结/作废后 batch.status 仍停留在 activated，这里用已加载的码明细
+ * 派生批次终态展示：全部作废 → 「已作废」；全部处于冻结/作废且至少一个
+ * 冻结 → 「已冻结」。无法判定（明细未加载或状态混合）时返回 null，
+ * 沿用 batch.status 原始展示。
+ */
+function deriveTerminalBatchDisplay(
+  items: Pick<CodeItemRow, "status">[]
+): BatchTerminalDisplay | null {
+  if (items.length === 0) return null;
+  const statuses = new Set(items.map((item) => item.status));
+  if (statuses.size === 1 && statuses.has("revoked")) {
+    return { label: "已作废", color: STATUS_COLORS.error };
+  }
+  const allFrozenOrRevoked =
+    statuses.has("frozen") &&
+    [...statuses].every(
+      (status) => status === "frozen" || status === "revoked"
+    );
+  if (allFrozenOrRevoked) {
+    return { label: "已冻结", color: STATUS_COLORS.warning };
+  }
+  return null;
+}
+
 export default function CodeBatchDetailPage() {
   const user = useAuthStore((state) => state.user);
   const access = codeAccessForPrincipal(user);
@@ -152,6 +182,10 @@ function CodeBatchDetailWorkspace({ access }: { access: CodeAccess }) {
   const [batchVoidOpen, setBatchVoidOpen] = useState(false);
   const [batchLifecycleLoading, setBatchLifecycleLoading] = useState(false);
   const [itemRefreshKey, setItemRefreshKey] = useState(0);
+  const [panelItems, setPanelItems] = useState<CodeItemRow[]>([]);
+  const handlePanelItemsLoaded = useCallback((items: CodeItemRow[]) => {
+    setPanelItems(items);
+  }, []);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -180,8 +214,8 @@ function CodeBatchDetailWorkspace({ access }: { access: CodeAccess }) {
       await api.post(`/code-batches/${batch.id}/activate`);
       message.success("码批次已激活");
       load();
-    } catch {
-      message.error("激活失败");
+    } catch (error) {
+      message.error(extractErrorMessage(error, "激活失败"));
     } finally {
       setActivating(false);
     }
@@ -255,8 +289,10 @@ function CodeBatchDetailWorkspace({ access }: { access: CodeAccess }) {
       link.remove();
       window.URL.revokeObjectURL(url);
       message.success("码表已导出");
-    } catch {
-      message.error("导出失败，请确认码批次状态和账号权限");
+    } catch (error) {
+      message.error(
+        extractErrorMessage(error, "导出失败，请确认码批次状态和账号权限")
+      );
     } finally {
       setExporting(false);
     }
@@ -269,8 +305,8 @@ function CodeBatchDetailWorkspace({ access }: { access: CodeAccess }) {
       await api.post(`/code-batches/${batch.id}/mark-printing`);
       message.success("已标记为印刷中");
       load();
-    } catch {
-      message.error("标记印刷中失败");
+    } catch (error) {
+      message.error(extractErrorMessage(error, "标记印刷中失败"));
     } finally {
       setMarkingPrinting(false);
     }
@@ -285,8 +321,8 @@ function CodeBatchDetailWorkspace({ access }: { access: CodeAccess }) {
       setDeliveryOpen(false);
       deliveryForm.resetFields();
       load();
-    } catch {
-      message.error("标记已交付失败");
+    } catch (error) {
+      message.error(extractErrorMessage(error, "标记已交付失败"));
     } finally {
       setMarkingDelivered(false);
     }
@@ -305,8 +341,10 @@ function CodeBatchDetailWorkspace({ access }: { access: CodeAccess }) {
       batchFreezeForm.resetFields();
       setItemRefreshKey((key) => key + 1);
       await load();
-    } catch {
-      message.error("整批冻结失败，请刷新状态后重试");
+    } catch (error) {
+      message.error(
+        extractErrorMessage(error, "整批冻结失败，请刷新状态后重试")
+      );
     } finally {
       setBatchLifecycleLoading(false);
     }
@@ -324,8 +362,10 @@ function CodeBatchDetailWorkspace({ access }: { access: CodeAccess }) {
       batchVoidForm.resetFields();
       setItemRefreshKey((key) => key + 1);
       await load();
-    } catch {
-      message.error("整批作废失败，请刷新状态后重试");
+    } catch (error) {
+      message.error(
+        extractErrorMessage(error, "整批作废失败，请刷新状态后重试")
+      );
     } finally {
       setBatchLifecycleLoading(false);
     }
@@ -367,10 +407,12 @@ function CodeBatchDetailWorkspace({ access }: { access: CodeAccess }) {
     );
   }
 
-  const statusInfo = STATUS_MAP[batch.status] || {
-    label: batch.status,
-    color: STATUS_COLORS.neutral,
-  };
+  const terminalDisplay = deriveTerminalBatchDisplay(panelItems);
+  const statusInfo = terminalDisplay ||
+    STATUS_MAP[batch.status] || {
+      label: batch.status,
+      color: STATUS_COLORS.neutral,
+    };
   const stats = batch.stats || {};
   const totalStats = Object.values(stats).reduce((a, b) => a + b, 0);
   const activatedCount = stats.activated || stats.scanned || 0;
@@ -477,6 +519,7 @@ function CodeBatchDetailWorkspace({ access }: { access: CodeAccess }) {
           <Card title="操作" size="small">
             <Space orientation="vertical" style={{ width: "100%" }}>
               {access.canExport &&
+                !terminalDisplay &&
                 [
                   "activated",
                   "completed",
@@ -527,34 +570,38 @@ function CodeBatchDetailWorkspace({ access }: { access: CodeAccess }) {
                   激活码批次
                 </Button>
               )}
-              {access.canManage && batch.status === "activated" && (
-                <>
-                  <Button
-                    block
-                    onClick={() => setBatchFreezeOpen(true)}
-                    disabled={planReadOnly}
-                  >
-                    冻结整批
-                  </Button>
-                  <Button
-                    block
-                    danger
-                    onClick={() => setBatchVoidOpen(true)}
-                    disabled={planReadOnly}
-                  >
-                    永久作废整批
-                  </Button>
-                </>
-              )}
-              {![
+              {access.canManage &&
+                batch.status === "activated" &&
+                !terminalDisplay && (
+                  <>
+                    <Button
+                      block
+                      onClick={() => setBatchFreezeOpen(true)}
+                      disabled={planReadOnly}
+                    >
+                      冻结整批
+                    </Button>
+                    <Button
+                      block
+                      danger
+                      onClick={() => setBatchVoidOpen(true)}
+                      disabled={planReadOnly}
+                    >
+                      永久作废整批
+                    </Button>
+                  </>
+                )}
+              {(![
                 "activated",
                 "completed",
                 "exported",
                 "printing",
                 "delivered",
-              ].includes(batch.status) && (
-                <Text type="secondary">当前状态暂无可用操作</Text>
-              )}
+              ].includes(batch.status) ||
+                (terminalDisplay !== null &&
+                  !["exported", "printing", "delivered"].includes(
+                    batch.status
+                  ))) && <Text type="secondary">当前状态暂无可用操作</Text>}
             </Space>
           </Card>
         </Col>
@@ -565,6 +612,8 @@ function CodeBatchDetailWorkspace({ access }: { access: CodeAccess }) {
           disabled={planReadOnly}
           riskLifecycleEnabled={riskLifecycleEnabled}
           refreshKey={itemRefreshKey}
+          batchStatus={batch.status}
+          onItemsLoaded={handlePanelItemsLoaded}
         />
       ) : null}
       <Modal
@@ -690,11 +739,15 @@ function CodeItemsLifecyclePanel({
   disabled,
   riskLifecycleEnabled,
   refreshKey,
+  batchStatus,
+  onItemsLoaded,
 }: {
   batchId: string;
   disabled: boolean;
   riskLifecycleEnabled: boolean;
   refreshKey: number;
+  batchStatus: string;
+  onItemsLoaded: (items: CodeItemRow[]) => void;
 }) {
   const { message, modal } = App.useApp();
   const [voidForm] = Form.useForm<ItemVoidFormValues>();
@@ -716,18 +769,21 @@ function CodeItemsLifecyclePanel({
         const { data } = await api.get("/code-items", {
           params: { code_batch_id: batchId, page: targetPage, page_size: 20 },
         });
-        setItems(data.items || []);
+        const nextItems: CodeItemRow[] = data.items || [];
+        setItems(nextItems);
         setTotal(data.total || 0);
         setPage(targetPage);
+        onItemsLoaded(nextItems);
       } catch {
         setItems([]);
         setTotal(0);
         setError(true);
+        onItemsLoaded([]);
       } finally {
         setLoading(false);
       }
     },
-    [batchId]
+    [batchId, onItemsLoaded]
   );
 
   useEffect(() => {
@@ -746,8 +802,8 @@ function CodeItemsLifecyclePanel({
       setFreezeTarget(null);
       freezeForm.resetFields();
       await loadItems(page);
-    } catch {
-      message.error("冻结失败，请刷新状态后重试");
+    } catch (error) {
+      message.error(extractErrorMessage(error, "冻结失败，请刷新状态后重试"));
     } finally {
       setMutatingId(null);
     }
@@ -760,8 +816,8 @@ function CodeItemsLifecyclePanel({
       await api.post(`/risk-alerts/code-items/${item.id}/unfreeze`);
       message.success("码已恢复到冻结前状态");
       await loadItems(page);
-    } catch {
-      message.error("恢复失败，请刷新状态后重试");
+    } catch (error) {
+      message.error(extractErrorMessage(error, "恢复失败，请刷新状态后重试"));
     } finally {
       setMutatingId(null);
     }
@@ -779,8 +835,8 @@ function CodeItemsLifecyclePanel({
       setVoidTarget(null);
       voidForm.resetFields();
       await loadItems(page);
-    } catch {
-      message.error("作废失败，请刷新状态后重试");
+    } catch (error) {
+      message.error(extractErrorMessage(error, "作废失败，请刷新状态后重试"));
     } finally {
       setMutatingId(null);
     }
@@ -963,6 +1019,14 @@ function CodeItemsLifecyclePanel({
           showIcon
           title="作废后不可恢复，消费者将无法再使用该码。"
         />
+        {batchStatus === "completed" ? (
+          <Alert
+            className="mb-3"
+            type="warning"
+            showIcon
+            title="作废后该批次将无法导出码表，请确认是否继续。"
+          />
+        ) : null}
         <Form<ItemVoidFormValues>
           name="code-item-void"
           form={voidForm}
