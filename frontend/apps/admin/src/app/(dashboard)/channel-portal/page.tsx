@@ -64,9 +64,10 @@ export default function ChannelPortalPage() {
         if (active) setError(true);
         return null;
       }),
+      // 门户身份无 risk:read，窜货预警走 portal 专用端点（按经销商范围过滤）
       api
-        .get("/risk-notifications", {
-          params: { notification_type: "diversion_alert", page_size: 10 },
+        .get("/channels/portal/distributor/diversion-alerts", {
+          params: { page_size: 10 },
         })
         .then(({ data }) => data?.items ?? [])
         .catch(() => []),

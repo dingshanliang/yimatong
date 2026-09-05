@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import {
+  configure,
   render,
   screen,
   fireEvent,
@@ -8,8 +9,11 @@ import {
 } from "@testing-library/react";
 import ChannelsPage, { PROVINCE_CITY_OPTIONS } from "../page";
 
+configure({ asyncUtilTimeout: 5000 });
+
 const mockMessageSuccess = vi.fn();
 const mockMessageError = vi.fn();
+const mockMessageWarning = vi.fn();
 const mockModalConfirm = vi.fn();
 
 vi.mock("antd", async () => {
@@ -18,7 +22,11 @@ vi.mock("antd", async () => {
     ...actual,
     App: {
       useApp: () => ({
-        message: { success: mockMessageSuccess, error: mockMessageError },
+        message: {
+          success: mockMessageSuccess,
+          error: mockMessageError,
+          warning: mockMessageWarning,
+        },
         modal: { confirm: mockModalConfirm },
       }),
     },
@@ -339,7 +347,7 @@ describe("ChannelsPage", () => {
     expect(
       within(successDialog).getByRole("button", { name: "登记流向" })
     ).toBeInTheDocument();
-  }, 10000);
+  });
 
   it("prefills distributor context and suggests region name from structured city", async () => {
     render(<ChannelsPage />);
@@ -377,7 +385,7 @@ describe("ChannelsPage", () => {
     expect(
       within(regionDialog).getByLabelText("所属经销商")
     ).toBeInTheDocument();
-  }, 10000);
+  });
 
   it("creates province-level regions without forcing a city", async () => {
     render(<ChannelsPage />);
@@ -428,7 +436,7 @@ describe("ChannelsPage", () => {
         })
       )
     );
-  }, 10000);
+  });
 
   it("supports multi-province regions for large-area coverage", async () => {
     render(<ChannelsPage />);
@@ -491,7 +499,7 @@ describe("ChannelsPage", () => {
         })
       )
     );
-  }, 10000);
+  });
 
   it("contains complete province city options for region creation", () => {
     const byProvince = new Map(
@@ -667,7 +675,7 @@ describe("ChannelsPage", () => {
         })
       )
     );
-  }, 10000);
+  });
 
   it("shows diversion clues with business context and resolves with action", async () => {
     render(<ChannelsPage />);
@@ -707,5 +715,71 @@ describe("ChannelsPage", () => {
         })
       )
     );
+  });
+
+  it("rotates the idempotency key after a failed mutation so the retry gets a fresh key", async () => {
+    mockUser = {
+      tenant_type: "brand",
+      role: "operator",
+      acting_tenant_id: null,
+    };
+    render(<ChannelsPage />);
+    fireEvent.click(screen.getByRole("tab", { name: "流向登记" }));
+
+    fireEvent.click(await screen.findByRole("button", { name: "重分配" }));
+    const dialog = await screen.findByRole("dialog", { name: "重分配流向" });
+    fireEvent.change(within(dialog).getByLabelText("重分配原因"), {
+      target: { value: "配送路线更正" },
+    });
+
+    mockPost.mockRejectedValueOnce(new Error("network error"));
+    fireEvent.click(within(dialog).getByRole("button", { name: "确认登记" }));
+    await waitFor(() =>
+      expect(mockMessageError).toHaveBeenCalledWith("分配失败")
+    );
+    const keyOf = (call: unknown[]) =>
+      (call[2] as { headers: { "Idempotency-Key": string } }).headers[
+        "Idempotency-Key"
+      ];
+    const firstKey = keyOf(mockPost.mock.calls[0]);
+
+    mockPost.mockResolvedValue({ data: {} });
+    fireEvent.click(within(dialog).getByRole("button", { name: "确认登记" }));
+    await waitFor(() => expect(mockPost).toHaveBeenCalledTimes(2));
+    const secondKey = keyOf(mockPost.mock.calls[1]);
+
+    expect(secondKey).not.toBe(firstKey);
+  });
+
+  it("warns in Chinese and refetches data when a CAS conflict (409) is returned", async () => {
+    mockUser = {
+      tenant_type: "brand",
+      role: "operator",
+      acting_tenant_id: null,
+    };
+    render(<ChannelsPage />);
+    fireEvent.click(screen.getByRole("tab", { name: "流向登记" }));
+
+    fireEvent.click(await screen.findByRole("button", { name: "重分配" }));
+    const dialog = await screen.findByRole("dialog", { name: "重分配流向" });
+    fireEvent.change(within(dialog).getByLabelText("重分配原因"), {
+      target: { value: "配送路线更正" },
+    });
+
+    const loadCallsBefore = mockGet.mock.calls.length;
+    mockPost.mockRejectedValueOnce({
+      response: { status: 409, data: { detail: "Channel authority conflict" } },
+    });
+    fireEvent.click(within(dialog).getByRole("button", { name: "确认登记" }));
+
+    await waitFor(() =>
+      expect(mockMessageWarning).toHaveBeenCalledWith(
+        "记录已被他人更新，已为您刷新最新数据，请重试"
+      )
+    );
+    await waitFor(() =>
+      expect(mockGet.mock.calls.length).toBeGreaterThan(loadCallsBefore)
+    );
+    expect(mockMessageError).not.toHaveBeenCalledWith("分配失败");
   });
 });

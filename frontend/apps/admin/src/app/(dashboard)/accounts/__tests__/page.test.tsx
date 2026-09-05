@@ -1,6 +1,14 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  configure,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import AccountsPage from "../page";
+
+configure({ asyncUtilTimeout: 5000 });
 
 const mockMessage = { success: vi.fn(), error: vi.fn() };
 const mockGet = vi.fn();

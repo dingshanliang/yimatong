@@ -1142,6 +1142,244 @@ class TestChannelAccountScopes:
         assert summary.json()["scope"]["name"] == "门店入口店"
 
 
+class TestDistributorPortalDiversionAlerts:
+    """渠道门户身份没有 risk:read，窜货预警必须走 portal 专用端点并按账号范围过滤。"""
+
+    @pytest.mark.anyio
+    async def test_distributor_portal_alerts_scoped_to_account_scope(
+        self,
+        client: AsyncClient,
+        setup_tenant,
+        db_session: AsyncSession,
+    ):
+        tid, headers, *_ = setup_tenant
+        own = await client.post(
+            "/api/v1/channels/distributors",
+            json={"name": "预警经销商", "code": "DIST-ALERT-OWN"},
+            headers={**headers, "Idempotency-Key": str(uuid4())},
+        )
+        other = await client.post(
+            "/api/v1/channels/distributors",
+            json={"name": "无关经销商", "code": "DIST-ALERT-OTHER"},
+            headers={**headers, "Idempotency-Key": str(uuid4())},
+        )
+        own_distributor_id = UUID(own.json()["id"])
+        other_distributor_id = UUID(other.json()["id"])
+
+        own_item_id, other_item_id = uuid4(), uuid4()
+        from app.models.channel import DiversionClue
+        from app.models.risk import RiskNotification
+
+        db_session.add_all(
+            [
+                DiversionClue(
+                    tenant_id=UUID(tid),
+                    public_id="ALERTOWN01",
+                    code_item_id=own_item_id,
+                    distributor_id=own_distributor_id,
+                    expected_region="上海",
+                    detected_city="北京",
+                    ip_hash="ip-alert-own",
+                    resolved=False,
+                ),
+                DiversionClue(
+                    tenant_id=UUID(tid),
+                    public_id="ALERTOTH01",
+                    code_item_id=other_item_id,
+                    distributor_id=other_distributor_id,
+                    expected_region="上海",
+                    detected_city="北京",
+                    ip_hash="ip-alert-other",
+                    resolved=False,
+                ),
+                RiskNotification(
+                    tenant_id=UUID(tid),
+                    notification_type="diversion_alert",
+                    title="疑似窜货：ALERTOWN01",
+                    detail="预期区域：上海，实际扫码城市：北京",
+                    code_item_id=own_item_id,
+                    read=False,
+                ),
+                RiskNotification(
+                    tenant_id=UUID(tid),
+                    notification_type="diversion_alert",
+                    title="疑似窜货：ALERTOTH01",
+                    detail="其他经销商范围的通知",
+                    code_item_id=other_item_id,
+                    read=False,
+                ),
+                # 非窜货类型通知即使落在同一批码上也不应出现在门户预警里
+                RiskNotification(
+                    tenant_id=UUID(tid),
+                    notification_type="rule_hit",
+                    title="风控规则命中",
+                    detail="",
+                    code_item_id=own_item_id,
+                    read=False,
+                ),
+            ]
+        )
+        await db_session.commit()
+
+        org = Organization(tenant_id=UUID(tid), name="预警组织")
+        db_session.add(org)
+        await db_session.flush()
+        account = Account(
+            tenant_id=UUID(tid),
+            organization_id=org.id,
+            email="alert-dist@test.com",
+            name="预警经销商账号",
+            hashed_password=hash_password("Pass1234"),
+        )
+        db_session.add(account)
+        await db_session.flush()
+        await db_session.refresh(account)
+
+        scope_resp = await client.post(
+            "/api/v1/channels/account-scopes",
+            json={
+                "account_id": str(account.id),
+                "scope_type": "distributor",
+                "distributor_id": str(own_distributor_id),
+            },
+            headers={**headers, "Idempotency-Key": str(uuid4())},
+        )
+        assert scope_resp.status_code == 201
+
+        scoped_token = create_access_token(tid, str(account.id), "distributor")
+        resp = await client.get(
+            "/api/v1/channels/portal/distributor/diversion-alerts",
+            headers={"Authorization": f"Bearer {scoped_token}"},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["total"] == 1
+        assert len(data["items"]) == 1
+        assert data["items"][0]["title"] == "疑似窜货：ALERTOWN01"
+        assert data["items"][0]["read"] is False
+
+    @pytest.mark.anyio
+    async def test_region_scope_falls_back_for_distributor_portal_alerts(
+        self,
+        client: AsyncClient,
+        setup_tenant,
+        db_session: AsyncSession,
+    ):
+        tid, headers, *_ = setup_tenant
+        dist = await client.post(
+            "/api/v1/channels/distributors",
+            json={"name": "区域预警经销商", "code": "DIST-ALERT-REGION"},
+            headers=headers,
+        )
+        region = await client.post(
+            "/api/v1/channels/regions",
+            json={"name": "预警区域", "code": "REG-ALERT", "city": "上海", "distributor_id": dist.json()["id"]},
+            headers={**headers, "Idempotency-Key": str(uuid4())},
+        )
+        region_id = UUID(region.json()["id"])
+        item_id = uuid4()
+
+        from app.models.channel import DiversionClue
+        from app.models.risk import RiskNotification
+
+        notification = RiskNotification(
+            tenant_id=UUID(tid),
+            notification_type="diversion_alert",
+            title="疑似窜货：区域预警",
+            detail="预期区域：上海，实际扫码城市：北京",
+            code_item_id=item_id,
+            read=False,
+        )
+        db_session.add_all(
+            [
+                DiversionClue(
+                    tenant_id=UUID(tid),
+                    public_id="ALERTREG01",
+                    code_item_id=item_id,
+                    region_id=region_id,
+                    expected_region="上海",
+                    detected_city="北京",
+                    ip_hash="ip-alert-region",
+                    resolved=False,
+                ),
+                notification,
+            ]
+        )
+        await db_session.commit()
+
+        org = Organization(tenant_id=UUID(tid), name="区域预警组织")
+        db_session.add(org)
+        await db_session.flush()
+        account = Account(
+            tenant_id=UUID(tid),
+            organization_id=org.id,
+            email="alert-region@test.com",
+            name="区域预警账号",
+            hashed_password=hash_password("Pass1234"),
+        )
+        db_session.add(account)
+        await db_session.flush()
+        await db_session.refresh(account)
+
+        scope_resp = await client.post(
+            "/api/v1/channels/account-scopes",
+            json={"account_id": str(account.id), "scope_type": "region", "region_id": str(region_id)},
+            headers={**headers, "Idempotency-Key": str(uuid4())},
+        )
+        assert scope_resp.status_code == 201
+
+        scoped_token = create_access_token(tid, str(account.id), "distributor")
+        resp = await client.get(
+            "/api/v1/channels/portal/distributor/diversion-alerts",
+            headers={"Authorization": f"Bearer {scoped_token}"},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["total"] == 1
+        assert data["items"][0]["title"] == "疑似窜货：区域预警"
+
+    @pytest.mark.anyio
+    async def test_portal_alerts_reject_non_portal_principals(self, client: AsyncClient, setup_tenant):
+        tid, _headers, *_ = setup_tenant
+        admin_token = create_access_token(tid, str(uuid4()), "admin")
+        resp = await client.get(
+            "/api/v1/channels/portal/distributor/diversion-alerts",
+            headers={"Authorization": f"Bearer {admin_token}"},
+        )
+        assert resp.status_code == 403
+        assert resp.json()["detail"] == "Distributor portal access required"
+
+    @pytest.mark.anyio
+    async def test_portal_alerts_404_when_account_has_no_scope(
+        self,
+        client: AsyncClient,
+        setup_tenant,
+        db_session: AsyncSession,
+    ):
+        tid, headers, *_ = setup_tenant
+        org = Organization(tenant_id=UUID(tid), name="无范围组织")
+        db_session.add(org)
+        await db_session.flush()
+        account = Account(
+            tenant_id=UUID(tid),
+            organization_id=org.id,
+            email="no-scope@test.com",
+            name="无范围账号",
+            hashed_password=hash_password("Pass1234"),
+        )
+        db_session.add(account)
+        await db_session.flush()
+        await db_session.refresh(account)
+
+        scoped_token = create_access_token(tid, str(account.id), "distributor")
+        resp = await client.get(
+            "/api/v1/channels/portal/distributor/diversion-alerts",
+            headers={"Authorization": f"Bearer {scoped_token}"},
+        )
+        assert resp.status_code == 404
+        assert resp.json()["detail"] == "Distributor scope not found"
+
+
 class TestChannelOverview:
     @pytest.mark.anyio
     async def test_overview_returns_channel_metrics(self, client: AsyncClient, setup_tenant):

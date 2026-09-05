@@ -37,6 +37,7 @@ from app.services.channel import (
     get_store_stats,
     list_account_scopes,
     list_allocations,
+    list_distributor_portal_diversion_alerts,
     list_distributors,
     list_diversion_clues,
     list_regions,
@@ -650,6 +651,36 @@ async def distributor_portal_summary_endpoint(
     if not summary:
         raise HTTPException(404, "Distributor scope not found")
     return summary
+
+
+@channel_router.get(
+    "/portal/distributor/diversion-alerts",
+    summary="经销商门户窜货预警",
+    dependencies=[Depends(require_distributor_portal_principal)],
+)
+async def distributor_portal_diversion_alerts_endpoint(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(10, ge=1, le=100),
+    db: AsyncSession = Depends(get_db, scope="function"),
+    tenant_id: uuid.UUID = Depends(get_current_tenant),
+    account_id: uuid.UUID = Depends(get_current_account_id),
+):
+    # 渠道门户身份无 risk:read，窜货预警必须走 portal 专用端点并按账号渠道范围过滤
+    alerts = await list_distributor_portal_diversion_alerts(
+        db,
+        tenant_id,
+        account_id,
+        page=page,
+        page_size=page_size,
+    )
+    if alerts is None:
+        raise HTTPException(404, "Distributor scope not found")
+    return PaginatedResponse(
+        items=alerts["items"],
+        total=alerts["total"],
+        page=alerts["page"],
+        page_size=alerts["page_size"],
+    )
 
 
 @channel_router.get(

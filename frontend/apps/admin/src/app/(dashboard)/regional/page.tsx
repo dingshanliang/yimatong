@@ -2,10 +2,12 @@
 
 import { useEffect, useState } from "react";
 import {
+  Alert,
   Button,
   Card,
   Form,
   Input,
+  message,
   Modal,
   Select,
   Table,
@@ -15,7 +17,9 @@ import {
 } from "antd";
 import { PlusOutlined } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
-import api from "@/lib/api";
+import api, { extractErrorMessage } from "@/lib/api";
+import { useAuthStore } from "@/lib/auth";
+import { channelAccessForPrincipal } from "@/lib/channel-access";
 import { STATUS_COLORS } from "@/lib/status-colors";
 import { MembersTab } from "./_components/MembersTab";
 import { TemplatesTab } from "./_components/TemplatesTab";
@@ -75,19 +79,24 @@ const orgColumns: ColumnsType<Org> = [
 ];
 
 export default function RegionalPage() {
+  const user = useAuthStore((state) => state.user);
+  const access = channelAccessForPrincipal(user);
   const [orgs, setOrgs] = useState<Org[]>([]);
   const [loading, setLoading] = useState(false);
+  const [loadError, setLoadError] = useState(false);
   const [selectedOrgId, setSelectedOrgId] = useState<string>("");
   const [open, setOpen] = useState(false);
   const [form] = Form.useForm();
 
   const fetchOrgs = async () => {
     setLoading(true);
+    setLoadError(false);
     try {
       const { data } = await api.get("/regional/orgs");
       setOrgs(Array.isArray(data) ? data : []);
-    } catch {
-      /* silent */
+    } catch (err) {
+      setLoadError(true);
+      message.error(extractErrorMessage(err, "加载区域组织失败"));
     } finally {
       setLoading(false);
     }
@@ -96,17 +105,20 @@ export default function RegionalPage() {
   const handleCreate = async (values: { name: string; org_type: string }) => {
     try {
       await api.post("/regional/orgs", values);
+      message.success("区域组织已创建");
       setOpen(false);
       form.resetFields();
       fetchOrgs();
-    } catch {
-      /* silent */
+    } catch (err) {
+      message.error(extractErrorMessage(err, "创建区域组织失败"));
     }
   };
 
   useEffect(() => {
+    if (!access.canRead) return;
     fetchOrgs();
-  }, []);
+    // fetchOrgs 每次渲染重建，无资格参与依赖；canRead 变化（登录态水合）时补拉一次
+  }, [access.canRead]);
 
   const selectedOrgName = orgs.find((o) => o.id === selectedOrgId)?.name || "";
 
@@ -122,7 +134,9 @@ export default function RegionalPage() {
         params: { page_size: 100 },
       })
       .then(({ data }) => setMembersList(data.items || []))
-      .catch(() => {});
+      .catch((err) =>
+        message.error(extractErrorMessage(err, "加载成员列表失败"))
+      );
   }, [selectedOrgId]);
 
   const tabItems = [
@@ -162,6 +176,11 @@ export default function RegionalPage() {
     },
   ];
 
+  // 后端读路由要求 channel:read（viewer 无任何权限码）；写按钮仅 admin/operator 可见
+  if (!access.canRead) {
+    return <Alert type="warning" message="当前账号无区域组织管理权限" />;
+  }
+
   return (
     <div>
       <Title level={4} className="!mb-2">
@@ -175,14 +194,31 @@ export default function RegionalPage() {
         <span className="text-sm text-text-muted">
           {selectedOrgId ? `当前组织: ${selectedOrgName}` : "请选择一个组织"}
         </span>
-        <Button
-          type="primary"
-          icon={<PlusOutlined />}
-          onClick={() => setOpen(true)}
-        >
-          新建组织
-        </Button>
+        {access.canManage && (
+          <Button
+            type="primary"
+            icon={<PlusOutlined />}
+            onClick={() => setOpen(true)}
+          >
+            新建组织
+          </Button>
+        )}
       </div>
+
+      {loadError && (
+        <Alert
+          type="error"
+          showIcon
+          className="mb-4"
+          message="区域组织加载失败"
+          description="请检查网络后重试；多次失败请联系管理员。"
+          action={
+            <Button size="small" onClick={fetchOrgs}>
+              重试
+            </Button>
+          }
+        />
+      )}
 
       <Card size="small" className="mb-6">
         <Table

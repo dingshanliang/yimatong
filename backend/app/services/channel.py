@@ -1542,6 +1542,77 @@ async def get_distributor_portal_summary(db: AsyncSession, tenant_id: uuid.UUID,
     }
 
 
+async def list_distributor_portal_diversion_alerts(
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    account_id: uuid.UUID,
+    page: int = 1,
+    page_size: int = 10,
+) -> dict | None:
+    """经销商门户窜货预警：按账号渠道范围过滤 diversion_alert 风控通知。
+
+    渠道门户身份没有 risk:read 权限，不能直接访问 /risk-notifications；
+    这里复用 portal summary 的范围解析（distributor 优先，回退 region），
+    通过窜货线索上的经销商/区域归属把通知限制在调用方自己的范围内。
+    返回 None 表示账号没有绑定渠道范围。
+    """
+    from app.models.risk import RiskNotification
+
+    scope = await get_account_scope(db, tenant_id, account_id, "distributor")
+    scope_conditions: list = []
+    if scope is not None and scope.distributor_id:
+        scope_conditions.append(DiversionClue.distributor_id == scope.distributor_id)
+    else:
+        region_scope = await get_account_scope(db, tenant_id, account_id, "region")
+        if region_scope is None or not region_scope.region_id:
+            return None
+        scope_conditions.append(DiversionClue.region_id == region_scope.region_id)
+
+    scoped_item_ids = (
+        select(DiversionClue.code_item_id)
+        .where(
+            DiversionClue.tenant_id == tenant_id,
+            DiversionClue.code_item_id.isnot(None),
+            *scope_conditions,
+        )
+        .scalar_subquery()
+    )
+    conditions = (
+        RiskNotification.tenant_id == tenant_id,
+        RiskNotification.notification_type == "diversion_alert",
+        RiskNotification.code_item_id.in_(scoped_item_ids),
+    )
+    total = (await db.execute(select(func.count()).select_from(RiskNotification).where(*conditions))).scalar() or 0
+    rows = (
+        (
+            await db.execute(
+                select(RiskNotification)
+                .where(*conditions)
+                .order_by(RiskNotification.id.desc())
+                .offset((page - 1) * page_size)
+                .limit(page_size)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return {
+        "items": [
+            {
+                "id": str(n.id),
+                "title": n.title,
+                "detail": n.detail,
+                "read": n.read,
+                "created_at": _dt(n.created_at),
+            }
+            for n in rows
+        ],
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+    }
+
+
 async def get_store_portal_summary(db: AsyncSession, tenant_id: uuid.UUID, account_id: uuid.UUID) -> dict | None:
     scope = await get_account_scope(db, tenant_id, account_id, "store")
     if not scope or not scope.store_id:

@@ -852,6 +852,29 @@ function ChannelsWorkspace({ access }: { access: ChannelAccess }) {
   const completeMutationIntent = (intent: string) => {
     mutationKeysRef.current.delete(intent);
   };
+
+  const isConflictError = (err: unknown) =>
+    typeof err === "object" &&
+    err !== null &&
+    (err as { response?: { status?: number } }).response?.status === 409;
+
+  // 失败同样轮换幂等键：同 key 携带新 payload 重试会撞 409；
+  // authority CAS 冲突（409）单独给出可行动提示并重拉最新数据。
+  const failMutationIntent = (
+    err: unknown,
+    intent: string,
+    fallback: string
+  ) => {
+    completeMutationIntent(intent);
+    if (isConflictError(err)) {
+      messageRef.current.warning(
+        "记录已被他人更新，已为您刷新最新数据，请重试"
+      );
+      loadData();
+    } else {
+      messageRef.current.error(extractErrorMessage(err, fallback));
+    }
+  };
   const [tenantFeatures, setTenantFeatures] = useState<Record<string, boolean>>(
     {}
   );
@@ -1236,7 +1259,7 @@ function ChannelsWorkspace({ access }: { access: ChannelAccess }) {
       completeMutationIntent(mutationIntent);
       loadData();
     } catch (err) {
-      messageRef.current.error(extractErrorMessage(err, "保存失败"));
+      failMutationIntent(err, mutationIntent, "保存失败");
     } finally {
       setEntitySaving(false);
     }
@@ -1332,7 +1355,7 @@ function ChannelsWorkspace({ access }: { access: ChannelAccess }) {
       allocationForm.resetFields();
       loadData();
     } catch (err) {
-      messageRef.current.error(extractErrorMessage(err, "分配失败"));
+      failMutationIntent(err, mutationIntent, "分配失败");
     }
   };
 
@@ -1381,7 +1404,7 @@ function ChannelsWorkspace({ access }: { access: ChannelAccess }) {
       archiveAllocationForm.resetFields();
       loadData();
     } catch (err) {
-      messageRef.current.error(extractErrorMessage(err, "归档失败"));
+      failMutationIntent(err, mutationIntent, "归档失败");
     }
   };
 
@@ -1400,7 +1423,7 @@ function ChannelsWorkspace({ access }: { access: ChannelAccess }) {
       scopeForm.resetFields();
       loadData();
     } catch (err) {
-      messageRef.current.error(extractErrorMessage(err, "绑定失败"));
+      failMutationIntent(err, mutationIntent, "绑定失败");
     }
   };
 
@@ -1416,7 +1439,7 @@ function ChannelsWorkspace({ access }: { access: ChannelAccess }) {
       messageRef.current.success("入口账号绑定已解除");
       loadData();
     } catch (err) {
-      messageRef.current.error(extractErrorMessage(err, "解除绑定失败"));
+      failMutationIntent(err, mutationIntent, "解除绑定失败");
     }
   };
 
@@ -1457,7 +1480,7 @@ function ChannelsWorkspace({ access }: { access: ChannelAccess }) {
       resolveForm.resetFields();
       loadData();
     } catch (err) {
-      messageRef.current.error(extractErrorMessage(err, "处理失败"));
+      failMutationIntent(err, mutationIntent, "处理失败");
     }
   };
 
@@ -1480,7 +1503,7 @@ function ChannelsWorkspace({ access }: { access: ChannelAccess }) {
       });
       loadData();
     } catch (err) {
-      messageRef.current.error(extractErrorMessage(err, "重开失败"));
+      failMutationIntent(err, mutationIntent, "重开失败");
     }
   };
 
@@ -1505,7 +1528,7 @@ function ChannelsWorkspace({ access }: { access: ChannelAccess }) {
       messageRef.current.success("调查证据已保存");
       await openInvestigation(currentClue);
     } catch (err) {
-      messageRef.current.error(extractErrorMessage(err, "证据保存失败"));
+      failMutationIntent(err, mutationIntent, "证据保存失败");
     }
   };
 
@@ -1553,7 +1576,7 @@ function ChannelsWorkspace({ access }: { access: ChannelAccess }) {
               messageRef.current.success(checked ? "已启用" : "已停用");
               loadData();
             } catch (err) {
-              messageRef.current.error(extractErrorMessage(err, "操作失败"));
+              failMutationIntent(err, mutationIntent, "操作失败");
             }
           }}
         />
@@ -1638,7 +1661,7 @@ function ChannelsWorkspace({ access }: { access: ChannelAccess }) {
               messageRef.current.success(checked ? "已启用" : "已停用");
               loadData();
             } catch (err) {
-              messageRef.current.error(extractErrorMessage(err, "操作失败"));
+              failMutationIntent(err, mutationIntent, "操作失败");
             }
           }}
         />
@@ -1703,7 +1726,7 @@ function ChannelsWorkspace({ access }: { access: ChannelAccess }) {
               messageRef.current.success(checked ? "已启用" : "已停用");
               loadData();
             } catch (err) {
-              messageRef.current.error(extractErrorMessage(err, "操作失败"));
+              failMutationIntent(err, mutationIntent, "操作失败");
             }
           }}
         />

@@ -1,4 +1,8 @@
-"""区域品牌/协会 API"""
+"""区域品牌/协会 API
+
+权限模型：与渠道管理共享既有权限码——写路由 channel:manage、读路由 channel:read
+（admin/operator 均持有；viewer 与渠道门户身份均无，防止越权）。
+"""
 
 import uuid
 
@@ -28,6 +32,7 @@ from app.services.regional import (
     update_member,
     verify_org_access,
 )
+from app.utils.auth_rbac import require_permission
 
 regional_router = APIRouter(prefix="/api/v1/regional", tags=["regional"])
 
@@ -60,7 +65,12 @@ class ProductAuthCreate(BaseModel):
 # ── 组织 ──────────────────────────────────────────
 
 
-@regional_router.post("/orgs", status_code=201, summary="创建组织")
+@regional_router.post(
+    "/orgs",
+    status_code=201,
+    summary="创建组织",
+    dependencies=[Depends(require_permission("channel:manage"))],
+)
 async def create_org_endpoint(
     body: RegionalOrgCreate,
     db: AsyncSession = Depends(get_db),
@@ -70,7 +80,7 @@ async def create_org_endpoint(
     return await regional_org_summary(db, org)
 
 
-@regional_router.get("/orgs", summary="组织列表")
+@regional_router.get("/orgs", summary="组织列表", dependencies=[Depends(require_permission("channel:read"))])
 async def list_orgs_endpoint(
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant),
@@ -79,7 +89,7 @@ async def list_orgs_endpoint(
     return [await regional_org_summary(db, org) for org in orgs]
 
 
-@regional_router.get("/orgs/{org_id}", summary="组织详情")
+@regional_router.get("/orgs/{org_id}", summary="组织详情", dependencies=[Depends(require_permission("channel:read"))])
 async def get_org_endpoint(
     org_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
@@ -92,7 +102,12 @@ async def get_org_endpoint(
 # ── 成员企业 ──────────────────────────────────────
 
 
-@regional_router.post("/orgs/{org_id}/members", status_code=201, summary="添加成员")
+@regional_router.post(
+    "/orgs/{org_id}/members",
+    status_code=201,
+    summary="添加成员",
+    dependencies=[Depends(require_permission("channel:manage"))],
+)
 async def add_member_endpoint(
     org_id: uuid.UUID,
     body: MemberAdd,
@@ -110,7 +125,11 @@ async def add_member_endpoint(
     }
 
 
-@regional_router.get("/orgs/{org_id}/members", summary="成员列表")
+@regional_router.get(
+    "/orgs/{org_id}/members",
+    summary="成员列表",
+    dependencies=[Depends(require_permission("channel:read"))],
+)
 async def list_members_endpoint(
     org_id: uuid.UUID,
     status: str | None = Query(None),
@@ -138,7 +157,11 @@ async def list_members_endpoint(
     }
 
 
-@regional_router.put("/orgs/{org_id}/members/{member_id}", summary="更新成员")
+@regional_router.put(
+    "/orgs/{org_id}/members/{member_id}",
+    summary="更新成员",
+    dependencies=[Depends(require_permission("channel:manage"))],
+)
 async def update_member_endpoint(
     org_id: uuid.UUID,
     member_id: uuid.UUID,
@@ -159,7 +182,11 @@ async def update_member_endpoint(
     }
 
 
-@regional_router.delete("/orgs/{org_id}/members/{member_id}", summary="移除成员")
+@regional_router.delete(
+    "/orgs/{org_id}/members/{member_id}",
+    summary="移除成员",
+    dependencies=[Depends(require_permission("channel:manage"))],
+)
 async def remove_member_endpoint(
     org_id: uuid.UUID,
     member_id: uuid.UUID,
@@ -174,7 +201,12 @@ async def remove_member_endpoint(
 # ── 模板 ──────────────────────────────────────────
 
 
-@regional_router.post("/orgs/{org_id}/templates", status_code=201, summary="创建模板")
+@regional_router.post(
+    "/orgs/{org_id}/templates",
+    status_code=201,
+    summary="创建模板",
+    dependencies=[Depends(require_permission("channel:manage"))],
+)
 async def create_template_endpoint(
     org_id: uuid.UUID,
     body: TemplateCreate,
@@ -186,7 +218,11 @@ async def create_template_endpoint(
     return {"id": str(template.id), "org_id": str(template.org_id), "name": template.name, "config": template.config}
 
 
-@regional_router.get("/orgs/{org_id}/templates", summary="模板列表")
+@regional_router.get(
+    "/orgs/{org_id}/templates",
+    summary="模板列表",
+    dependencies=[Depends(require_permission("channel:read"))],
+)
 async def list_templates_endpoint(
     org_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
@@ -197,7 +233,11 @@ async def list_templates_endpoint(
     return [{"id": str(t.id), "org_id": str(t.org_id), "name": t.name, "config": t.config} for t in templates]
 
 
-@regional_router.post("/orgs/{org_id}/templates/{template_id}/publish", summary="下发模板到成员企业")
+@regional_router.post(
+    "/orgs/{org_id}/templates/{template_id}/publish",
+    summary="下发模板到成员企业",
+    dependencies=[Depends(require_permission("channel:manage"))],
+)
 async def publish_template_endpoint(
     org_id: uuid.UUID,
     template_id: uuid.UUID,
@@ -211,7 +251,12 @@ async def publish_template_endpoint(
 # ── 产品授权 ──────────────────────────────────────
 
 
-@regional_router.post("/orgs/{org_id}/products", status_code=201, summary="产品授权")
+@regional_router.post(
+    "/orgs/{org_id}/products",
+    status_code=201,
+    summary="产品授权",
+    dependencies=[Depends(require_permission("channel:manage"))],
+)
 async def authorize_product_endpoint(
     org_id: uuid.UUID,
     body: ProductAuthCreate,
@@ -231,7 +276,11 @@ async def authorize_product_endpoint(
 # ── 看板 ──────────────────────────────────────────
 
 
-@regional_router.get("/orgs/{org_id}/dashboard", summary="汇总看板")
+@regional_router.get(
+    "/orgs/{org_id}/dashboard",
+    summary="汇总看板",
+    dependencies=[Depends(require_permission("channel:read"))],
+)
 async def dashboard_endpoint(
     org_id: uuid.UUID,
     days_back: int = Query(30, ge=1, le=365),
@@ -257,7 +306,12 @@ class WhitelabelUpdate(BaseModel):
     primary_color: str = "#000000"
 
 
-@regional_router.post("/orgs/{org_id}/code-rules", status_code=201, summary="创建码规则")
+@regional_router.post(
+    "/orgs/{org_id}/code-rules",
+    status_code=201,
+    summary="创建码规则",
+    dependencies=[Depends(require_permission("channel:manage"))],
+)
 async def create_code_rule_endpoint(
     org_id: uuid.UUID,
     body: CodeRuleCreate,
@@ -275,7 +329,11 @@ async def create_code_rule_endpoint(
     }
 
 
-@regional_router.get("/orgs/{org_id}/code-rules", summary="码规则列表")
+@regional_router.get(
+    "/orgs/{org_id}/code-rules",
+    summary="码规则列表",
+    dependencies=[Depends(require_permission("channel:read"))],
+)
 async def list_code_rules_endpoint(
     org_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
@@ -286,7 +344,11 @@ async def list_code_rules_endpoint(
     return [{"id": str(r.id), "rule_name": r.rule_name, "pattern": r.pattern, "prefix": r.prefix} for r in rules]
 
 
-@regional_router.get("/orgs/{org_id}/advanced-dashboard", summary="高级看板")
+@regional_router.get(
+    "/orgs/{org_id}/advanced-dashboard",
+    summary="高级看板",
+    dependencies=[Depends(require_permission("channel:read"))],
+)
 async def advanced_dashboard_endpoint(
     org_id: uuid.UUID,
     days_back: int = Query(30, ge=7, le=365),
@@ -297,7 +359,11 @@ async def advanced_dashboard_endpoint(
     return await get_advanced_dashboard(db, org_id, days_back=days_back)
 
 
-@regional_router.put("/orgs/{org_id}/whitelabel", summary="设置白标")
+@regional_router.put(
+    "/orgs/{org_id}/whitelabel",
+    summary="设置白标",
+    dependencies=[Depends(require_permission("channel:manage"))],
+)
 async def set_whitelabel_endpoint(
     org_id: uuid.UUID,
     body: WhitelabelUpdate,
@@ -315,7 +381,11 @@ async def set_whitelabel_endpoint(
     }
 
 
-@regional_router.get("/orgs/{org_id}/whitelabel", summary="获取白标配置")
+@regional_router.get(
+    "/orgs/{org_id}/whitelabel",
+    summary="获取白标配置",
+    dependencies=[Depends(require_permission("channel:read"))],
+)
 async def get_whitelabel_endpoint(
     org_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
@@ -343,7 +413,12 @@ class UnifiedCampaignCreate(BaseModel):
     member_ids: list[str] | None = None  # 指定成员企业，空则全部
 
 
-@regional_router.post("/orgs/{org_id}/unified-campaigns", status_code=201, summary="创建统一活动")
+@regional_router.post(
+    "/orgs/{org_id}/unified-campaigns",
+    status_code=201,
+    summary="创建统一活动",
+    dependencies=[Depends(require_permission("channel:manage"))],
+)
 async def create_unified_campaign_endpoint(
     org_id: uuid.UUID,
     body: UnifiedCampaignCreate,
@@ -357,7 +432,11 @@ async def create_unified_campaign_endpoint(
     return campaign
 
 
-@regional_router.get("/orgs/{org_id}/unified-campaigns", summary="统一活动列表")
+@regional_router.get(
+    "/orgs/{org_id}/unified-campaigns",
+    summary="统一活动列表",
+    dependencies=[Depends(require_permission("channel:read"))],
+)
 async def list_unified_campaigns_endpoint(
     org_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
@@ -380,7 +459,11 @@ class DataIsolationPolicy(BaseModel):
     member_data_visibility: str = "brand_all"  # own_only | brand_all
 
 
-@regional_router.get("/orgs/{org_id}/data-policy", summary="数据隔离策略")
+@regional_router.get(
+    "/orgs/{org_id}/data-policy",
+    summary="数据隔离策略",
+    dependencies=[Depends(require_permission("channel:read"))],
+)
 async def get_data_policy_endpoint(
     org_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
@@ -398,7 +481,11 @@ async def get_data_policy_endpoint(
     return {"org_id": str(org_id), "policy": policy}
 
 
-@regional_router.put("/orgs/{org_id}/data-policy", summary="更新数据隔离策略")
+@regional_router.put(
+    "/orgs/{org_id}/data-policy",
+    summary="更新数据隔离策略",
+    dependencies=[Depends(require_permission("channel:manage"))],
+)
 async def update_data_policy_endpoint(
     org_id: uuid.UUID,
     body: DataIsolationPolicy,
@@ -425,7 +512,11 @@ class WhitelabelConfigUpdate(BaseModel):
     custom_css: str | None = None
 
 
-@regional_router.get("/orgs/{org_id}/whitelabel-config", summary="获取白标配置（增强版）")
+@regional_router.get(
+    "/orgs/{org_id}/whitelabel-config",
+    summary="获取白标配置（增强版）",
+    dependencies=[Depends(require_permission("channel:read"))],
+)
 async def get_whitelabel_config_endpoint(
     org_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
@@ -460,7 +551,11 @@ async def get_whitelabel_config_endpoint(
     }
 
 
-@regional_router.put("/orgs/{org_id}/whitelabel-config", summary="更新白标配置")
+@regional_router.put(
+    "/orgs/{org_id}/whitelabel-config",
+    summary="更新白标配置",
+    dependencies=[Depends(require_permission("channel:manage"))],
+)
 async def update_whitelabel_config_endpoint(
     org_id: uuid.UUID,
     body: WhitelabelConfigUpdate,
@@ -492,7 +587,12 @@ class DomainCreate(BaseModel):
     domain: str
 
 
-@regional_router.post("/orgs/{org_id}/domains", status_code=201, summary="添加自定义域名")
+@regional_router.post(
+    "/orgs/{org_id}/domains",
+    status_code=201,
+    summary="添加自定义域名",
+    dependencies=[Depends(require_permission("channel:manage"))],
+)
 async def add_domain_endpoint(
     org_id: uuid.UUID,
     body: DomainCreate,
@@ -512,7 +612,11 @@ async def add_domain_endpoint(
     }
 
 
-@regional_router.get("/orgs/{org_id}/domains", summary="域名列表")
+@regional_router.get(
+    "/orgs/{org_id}/domains",
+    summary="域名列表",
+    dependencies=[Depends(require_permission("channel:read"))],
+)
 async def list_domains_endpoint(
     org_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
@@ -534,7 +638,11 @@ async def list_domains_endpoint(
     ]
 
 
-@regional_router.post("/orgs/{org_id}/domains/{domain_id}/verify", summary="验证域名")
+@regional_router.post(
+    "/orgs/{org_id}/domains/{domain_id}/verify",
+    summary="验证域名",
+    dependencies=[Depends(require_permission("channel:manage"))],
+)
 async def verify_domain_endpoint(
     org_id: uuid.UUID,
     domain_id: uuid.UUID,
@@ -548,7 +656,12 @@ async def verify_domain_endpoint(
     return {"success": ok}
 
 
-@regional_router.delete("/orgs/{org_id}/domains/{domain_id}", status_code=204, summary="删除域名")
+@regional_router.delete(
+    "/orgs/{org_id}/domains/{domain_id}",
+    status_code=204,
+    summary="删除域名",
+    dependencies=[Depends(require_permission("channel:manage"))],
+)
 async def remove_domain_endpoint(
     org_id: uuid.UUID,
     domain_id: uuid.UUID,
