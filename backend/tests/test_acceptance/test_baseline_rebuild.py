@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import uuid
 from collections.abc import AsyncGenerator
 
@@ -118,7 +119,7 @@ class TestCleanEnvRebuild:
 
     async def test_baseline_seed_creates_required_entities(self, bypass_session, migrated_pg_url):
         """门禁 AC：基准租户具备首条扫码旅程默认权限与业务数据。"""
-        await seed_baseline(migrated_pg_url)
+        first_summary = await seed_baseline(migrated_pg_url)
         # seed_baseline 提交后，bypass_session 需要新事务才能看到新数据
         await bypass_session.rollback()
         await bypass_session.execute(text("SET LOCAL app.bypass_rls = 'true'"))
@@ -127,6 +128,8 @@ class TestCleanEnvRebuild:
         assert evidence["db_assertions"]["baseline_tenant"]["slug"] == BASELINE_TENANT_SLUG
         assert evidence["db_assertions"]["control_tenant"]["slug"] == CONTROL_TENANT_SLUG
         assert evidence["db_assertions"]["code_items"]["count"] == 20
+        assert evidence["db_assertions"]["live_launch_release"]["count"] == 1
+        assert first_summary["launch_release"]["status"] == "live"
 
     async def test_baseline_seed_idempotent(self, bypass_session, migrated_pg_url):
         """门禁 AC：同一初始化流程连续运行两次不产生重复记录或状态漂移。"""
@@ -140,6 +143,7 @@ class TestCleanEnvRebuild:
             uuid.UUID(second_summary["baseline_tenant"]["id"]),
             uuid.UUID(second_summary["control_tenant"]["id"]),
         }
+        assert first_summary["launch_release"] == second_summary["launch_release"]
         await bypass_session.rollback()
         await bypass_session.execute(text("SET LOCAL app.bypass_rls = 'true'"))
         evidence = await verify_no_duplicate_on_rerun(bypass_session)
@@ -516,8 +520,8 @@ class TestScanRecordingEvidence:
         engine = create_async_engine(migrated_pg_url)
         factory = async_sessionmaker(engine, expire_on_commit=False)
 
-        # 并发 8 次记录扫码（不同会话模拟并发请求）。yimatong superuser 连接绕过 RLS，
-        # 与生产 resolver 经 bypass 上下文写入 scan_events 的实际行为一致。
+        # 并发 8 次记录扫码（不同会话模拟并发请求）。权威函数即使面对 owner 连接也要求
+        # 显式租户上下文，与生产 resolver 的 fail-closed 边界一致。
         async with factory() as db:
             await db.execute(text("SET LOCAL app.bypass_rls = 'true'"))
             before = int(
@@ -532,8 +536,15 @@ class TestScanRecordingEvidence:
 
         async def _one_scan():
             async with factory() as db:
+                await db.execute(
+                    text("SELECT set_config('app.tenant_id',:tenant_id,true)"),
+                    {"tenant_id": tenant_id},
+                )
                 await record_scan_event(
-                    db, uuid.UUID(tenant_id), public_id=public_id, ip_hash=f"ip-{uuid.uuid4().hex[:8]}"
+                    db,
+                    uuid.UUID(tenant_id),
+                    public_id=public_id,
+                    ip_hash=hashlib.sha256(uuid.uuid4().bytes).hexdigest(),
                 )
                 await db.commit()
 
@@ -569,13 +580,29 @@ class TestScanRecordingEvidence:
 
         # 连续 2 次（同 IP 同 UA 也应记录两次 —— 这是当前行为）
         async with factory() as db:
+            await db.execute(
+                text("SELECT set_config('app.tenant_id',:tenant_id,true)"),
+                {"tenant_id": tenant_id},
+            )
             await record_scan_event(
-                db, uuid.UUID(tenant_id), public_id=public_id, ip_hash="same-ip", user_agent="same-ua"
+                db,
+                uuid.UUID(tenant_id),
+                public_id=public_id,
+                ip_hash=hashlib.sha256(b"same-ip").hexdigest(),
+                user_agent="same-ua",
             )
             await db.commit()
         async with factory() as db:
+            await db.execute(
+                text("SELECT set_config('app.tenant_id',:tenant_id,true)"),
+                {"tenant_id": tenant_id},
+            )
             await record_scan_event(
-                db, uuid.UUID(tenant_id), public_id=public_id, ip_hash="same-ip", user_agent="same-ua"
+                db,
+                uuid.UUID(tenant_id),
+                public_id=public_id,
+                ip_hash=hashlib.sha256(b"same-ip").hexdigest(),
+                user_agent="same-ua",
             )
             await db.commit()
 

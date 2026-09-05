@@ -49,7 +49,7 @@ async def _one(
 ) -> dict:
     statement = text(sql)
     if json_params:
-        statement = statement.bindparams(*(bindparam(name, type_=JSONB) for name in json_params))
+        statement = statement.bindparams(*(bindparam(name, type_=JSONB(none_as_null=True)) for name in json_params))
     try:
         row = (await db.execute(statement, params)).mappings().one()
     except DBAPIError as exc:

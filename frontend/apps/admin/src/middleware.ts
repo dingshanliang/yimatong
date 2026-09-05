@@ -42,6 +42,7 @@ const BRAND_ONLY_ROUTES = [
   "/risk",
   "/launch-checklist",
   "/settings/agency-authorizations",
+  "/settings/privacy",
 ];
 
 function matchesRoute(pathname: string, routes: string[]): boolean {

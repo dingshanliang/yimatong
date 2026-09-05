@@ -36,6 +36,7 @@ const enUS: Record<string, string> = {
   "menu.settings": "Settings",
   "menu.roles": "Roles & Permissions",
   "menu.compliance": "Compliance",
+  "menu.privacy": "Privacy Governance",
   "menu.tenant": "Tenant Settings",
   "menu.brand-profile": "Branding",
   "menu.custom-domain": "Custom Domain",

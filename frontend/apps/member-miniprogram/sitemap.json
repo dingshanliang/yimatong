@@ -1,0 +1,4 @@
+{
+  "desc": "一码通共享会员小程序",
+  "rules": [{ "action": "disallow", "page": "*" }]
+}

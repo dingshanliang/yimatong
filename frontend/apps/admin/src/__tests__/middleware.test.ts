@@ -67,6 +67,15 @@ describe("admin middleware password-change gate", () => {
 });
 
 describe("admin middleware agency scope gate", () => {
+  it("keeps privacy governance inside an active brand context", () => {
+    const response = middleware(
+      request("/settings/privacy", { tenant_type: "agency", role: "operator" })
+    );
+
+    expect(response.status).toBe(307);
+    expect(response.headers.get("location")).toBe("http://localhost/agency");
+  });
+
   const actingPayload = {
     sub: "agency-account",
     tenant_id: "agency-tenant",

@@ -1,0 +1,2 @@
+<web-view wx:if="{{url}}" src="{{url}}"></web-view>
+<view wx:else class="error">{{error || '正在进入购买渠道…'}}</view>

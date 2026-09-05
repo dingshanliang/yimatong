@@ -216,6 +216,33 @@ async def claim_benefit_h5(
     except (ClaimEligibilityError, ValueError) as exc:
         raise HTTPException(status_code=409, detail="活动或权益当前不可领取") from exc
 
+    # A platform coupon becomes a durable member asset only when a published
+    # authoritative rule is explicitly linked to this benefit. Preflight the
+    # active membership before claim admission so inventory is never consumed
+    # without a recoverable wallet asset.
+    coupon_rule = None
+    coupon_membership = None
+    if benefit.benefit_type == "platform_coupon":
+        from app.models.repurchase_coupon import RepurchaseCouponRuleVersion
+        from app.services.brand_membership import get_brand_membership_for_profile
+
+        coupon_rule = await db.scalar(
+            select(RepurchaseCouponRuleVersion).where(
+                RepurchaseCouponRuleVersion.tenant_id == tid,
+                RepurchaseCouponRuleVersion.benefit_id == benefit.id,
+            )
+        )
+        if coupon_rule is not None:
+            if coupon_rule.status != "published":
+                raise HTTPException(status_code=409, detail="coupon_rule_not_issuable")
+            try:
+                coupon_consumer_id = uuid.UUID(str(consumer_id))
+            except (TypeError, ValueError) as exc:
+                raise HTTPException(status_code=409, detail="active_membership_required") from exc
+            coupon_membership = await get_brand_membership_for_profile(db, tid, coupon_consumer_id)
+            if coupon_membership is None:
+                raise HTTPException(status_code=409, detail="active_membership_required")
+
     # 5. 红包类权益只解析 OAuth/connector 前置条件。实际扣减与发放同样先走
     # claim+outbox，HTTP 请求内绝不调用外部支付。
     if benefit.benefit_type == "cash_red_packet":
@@ -290,7 +317,34 @@ async def claim_benefit_h5(
     if _is_successful_claim_outcome(outcome):
         from app.services.benefit_claim_status import build_claim_success_payload
 
-        return await build_claim_success_payload(db, benefit, result, consumer_id)
+        response = await build_claim_success_payload(db, benefit, result, consumer_id)
+        if coupon_rule is not None and coupon_membership is not None:
+            from app.services.consent import require_consumer_scan_authority
+            from app.services.repurchase_coupon import issue_member_coupon
+
+            scan_authority = require_consumer_scan_authority(payload)
+            claim_id = uuid.UUID(str(result.get("claim_id") or result.get("claim", {}).get("id")))
+            coupon = await issue_member_coupon(
+                db,
+                tenant_id=tid,
+                membership_id=uuid.UUID(str(coupon_membership["membership_id"])),
+                rule_version_id=coupon_rule.id,
+                source_claim_id=claim_id,
+                source_scan_event_id=scan_authority.scan_event_id,
+                source_scan_time=scan_authority.scan_time,
+                source_public_id=scan_authority.public_id,
+                idempotency_key=f"coupon-issue:{claim_id}",
+                actor_type="consumer",
+                actor_id=scan_authority.consumer_id,
+            )
+            response["coupon"] = {
+                "id": str(coupon.id),
+                "coupon_number": coupon.coupon_number,
+                "status": coupon.status,
+                "valid_from": coupon.valid_from.isoformat(),
+                "valid_until": coupon.valid_until.isoformat(),
+            }
+        return response
     if outcome == "risk_paused":
         # yimatong-zgb1.7 AC3：风险状态下服务端阻断权益领取
         raise HTTPException(

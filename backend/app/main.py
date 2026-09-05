@@ -21,6 +21,7 @@ from app.api.v1.campaigns import campaign_router
 from app.api.v1.channel_analytics import channel_analytics_router
 from app.api.v1.channels import channel_router
 from app.api.v1.code_batches import code_batch_router, code_item_router
+from app.api.v1.commerce_integrations import commerce_integration_router
 from app.api.v1.connectors import connector_router
 from app.api.v1.consents import consent_router
 from app.api.v1.consumers import consumer_router
@@ -32,6 +33,7 @@ from app.api.v1.industry_templates import template_router
 from app.api.v1.integration import integration_router
 from app.api.v1.invite_codes import router as invite_codes_router
 from app.api.v1.launch_releases import router as launch_release_router
+from app.api.v1.member_notifications import member_notification_router
 from app.api.v1.members import member_router
 from app.api.v1.open_api import open_api_router
 from app.api.v1.ops import ops_router
@@ -43,10 +45,13 @@ from app.api.v1.pilot_milestones import platform_router as platform_pilot_milest
 from app.api.v1.pilot_milestones import router as pilot_milestone_router
 from app.api.v1.platform import router as platform_router
 from app.api.v1.prd_compat import prd_compat_router
+from app.api.v1.privacy_governance import consumer_privacy_router, privacy_governance_router
 from app.api.v1.private_domain import private_domain_router
 from app.api.v1.products import asset_router, batch_router, brand_router, product_router, sku_router
 from app.api.v1.public_pages import public_page_router
 from app.api.v1.regional import regional_router
+from app.api.v1.repurchase_coupons import repurchase_coupon_router
+from app.api.v1.repurchase_workbench import repurchase_workbench_router
 from app.api.v1.resolver import resolver_router
 from app.api.v1.retrospectives import router as retrospectives_router
 from app.api.v1.risk import risk_router
@@ -364,6 +369,12 @@ app.include_router(roles_router)
 app.include_router(scan_event_router)
 app.include_router(consumer_router)
 app.include_router(benefit_claim_router)
+app.include_router(repurchase_coupon_router)
+app.include_router(repurchase_workbench_router)
+app.include_router(privacy_governance_router)
+app.include_router(consumer_privacy_router)
+app.include_router(commerce_integration_router)
+app.include_router(member_notification_router)
 app.include_router(benefit_claim_status_router)
 app.include_router(consent_router)
 app.include_router(wechat_oauth_router)

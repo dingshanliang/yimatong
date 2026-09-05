@@ -5,7 +5,7 @@ import uuid
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 class ConsumerCreateRequest(BaseModel):
@@ -18,6 +18,38 @@ class ConsumerCreateRequest(BaseModel):
         if v is not None and not re.match(r"^1[3-9]\d{9}$", v):
             raise ValueError("手机号格式不正确")
         return v
+
+
+class MembershipJoinRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    consent_id: uuid.UUID
+    idempotency_key: str = Field(min_length=8, max_length=100)
+
+
+class MembershipRecoveryRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    recovery_token: str = Field(min_length=32, max_length=4096)
+    idempotency_key: str = Field(min_length=8, max_length=100)
+
+
+class MembershipMergeRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    current_recovery_token: str = Field(min_length=32, max_length=4096)
+    target_recovery_token: str = Field(min_length=32, max_length=4096)
+    idempotency_key: str = Field(min_length=8, max_length=100)
+
+
+class MiniProgramSessionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    js_code: str = Field(min_length=1, max_length=256)
+
+
+class MiniProgramIdentityBindRequest(MiniProgramSessionRequest):
+    idempotency_key: str = Field(min_length=8, max_length=100)
 
 
 class AwardPointsRequest(BaseModel):

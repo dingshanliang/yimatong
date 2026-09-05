@@ -37,11 +37,12 @@ from app.cli.baseline import (
 )
 from app.models.campaign import Benefit, Campaign
 from app.models.code import CodeBatch, CodeItem
+from app.models.launch import LaunchRelease, LaunchReleaseStatus
 from app.models.page import PageTemplate, PageVersion, PageVersionStatus
 from app.models.product import SKU, Brand, Product, ProductionBatch
 from app.models.tenant import Tenant
 
-DATASET_VERSION = "yimatong-zgb1.1-v1"
+DATASET_VERSION = "yimatong-member-repurchase-v1"
 
 
 def _evidence(
@@ -134,6 +135,19 @@ async def verify_baseline_presence(db: AsyncSession) -> dict[str, Any]:
         assertions["published_page_version"] = {"count": published, "expected_gte": 1}
         if published < 1:
             failures.append("no published page version")
+
+        result = await db.execute(
+            select(func.count())
+            .select_from(LaunchRelease)
+            .where(
+                LaunchRelease.tenant_id == base_id,
+                LaunchRelease.status == LaunchReleaseStatus.live,
+            )
+        )
+        live_releases = int(result.scalar_one())
+        assertions["live_launch_release"] = {"count": live_releases, "expected": 1}
+        if live_releases != 1:
+            failures.append(f"live launch release expected 1 got {live_releases}")
 
     return _evidence(
         scenario="baseline_presence",

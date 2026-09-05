@@ -28,6 +28,21 @@ from app.models.base import Base  # noqa: E402
 from app.models.campaign import Benefit, BenefitClaim, Campaign, CampaignStatus  # noqa: E402, F401
 from app.models.channel import AccountChannelScope, Distributor, DiversionClue, Region, Store  # noqa: E402, F401
 from app.models.code import CodeBatch, CodeBatchStatus, CodeItem, CodeItemStatus  # noqa: E402, F401
+from app.models.commerce_integration import (  # noqa: E402, F401
+    CommerceConnection,
+    CommerceConnectionEvent,
+    CommerceIdentityHandoff,
+    CommerceIntegrationMessage,
+    CommerceMemberReference,
+    CommerceServiceCredential,
+)
+from app.models.commerce_order import (  # noqa: E402, F401
+    CommerceOrderFact,
+    CommerceOrderLineFact,
+    CommerceProductMapping,
+    CommerceRefundFact,
+    CommerceRepurchaseAttribution,
+)
 from app.models.connector import BenefitDelivery, Connector, CouponCode, CouponPool  # noqa: E402, F401
 from app.models.consent import ConsentRecord  # noqa: E402, F401
 from app.models.diversion_evidence import DiversionEvidence  # noqa: E402, F401
@@ -47,9 +62,22 @@ from app.models.member import (  # noqa: E402, F401
     PointRule,
     PointTransaction,
 )
+from app.models.member_notification import (  # noqa: E402, F401
+    MemberChannelGrant,
+    MemberNotification,
+    MemberNotificationDelivery,
+    MemberNotificationPreference,
+)
 from app.models.page import PageTemplate, PageVersion, PageVersionStatus  # noqa: E402, F401
 from app.models.pilot_milestone import PilotMilestone  # noqa: E402, F401
 from app.models.plan import PlanDefinition, QuotaRolloutPhase, QuotaRolloutState  # noqa: E402
+from app.models.privacy_governance import (  # noqa: E402, F401
+    MemberPiiAccessEvent,
+    PrivacyRightsEvent,
+    PrivacyRightsRequest,
+    SensitiveMemberExport,
+    SensitiveMemberExportEvent,
+)
 from app.models.private_domain import PrivateDomainConfig  # noqa: E402, F401
 from app.models.product import SKU, Brand, Product, ProductionBatch  # noqa: E402, F401
 
@@ -62,6 +90,12 @@ from app.models.regional import (  # noqa: E402, F401
     RegionalTemplate,
     WhitelabelConfig,
 )
+from app.models.repurchase_coupon import (  # noqa: E402, F401
+    MemberCoupon,
+    RepurchaseCouponEvent,
+    RepurchaseCouponRuleVersion,
+)
+from app.models.repurchase_workbench import RepurchaseWorkItem, RepurchaseWorkItemEvent  # noqa: E402, F401
 from app.models.retrospective import Retrospective  # noqa: E402, F401
 from app.models.risk import (  # noqa: E402, F401
     CampaignRiskRule,

@@ -1,0 +1,57 @@
+<view class="page">
+  <view class="hero">
+    <text class="eyebrow">一码通会员服务 · {{brandName}}</text>
+    <text class="title">{{productName || '品牌会员专区'}}</text>
+    <text class="description">{{productDescription}}</text>
+    <text class="proof" wx:if="{{productName}}">包装码已查验</text>
+  </view>
+
+  <view class="notice error" wx:if="{{error}}" role="alert">{{error}}</view>
+  <view class="loading" wx:if="{{loading}}">正在载入品牌专区…</view>
+
+  <view class="card" wx:if="{{policy && !membership}}">
+    <text class="section-title">加入品牌会员</text>
+    <text class="muted">入会后可跨入口恢复券包与消息；匿名查看产品信息不受影响。</text>
+    <view class="policy">
+      <text class="policy-title">{{policy.policy_title}}</text>
+      <text class="policy-body">{{policy.policy_content}}</text>
+    </view>
+    <checkbox-group bindchange="onAgreementChange">
+      <label class="agreement"><checkbox value="agree" color="#25734a" />我已阅读并同意建立本品牌会员关系</label>
+    </checkbox-group>
+    <button class="primary" disabled="{{!agreed || busy}}" bindtap="joinMember">{{busy ? '正在保存…' : '确认加入会员'}}</button>
+  </view>
+
+  <view class="member-card" wx:if="{{membership}}">
+    <text class="eyebrow light">品牌会员</text>
+    <text class="member-number">{{membership.membership_number}}</text>
+    <text class="member-note">会员身份、券包和消息可在本品牌入口持续恢复</text>
+  </view>
+
+  <view class="card" wx:if="{{membership}}">
+    <view class="section-row">
+      <text class="section-title">我的复购券</text>
+      <text class="count">{{coupons.length}} 张</text>
+    </view>
+    <text class="empty" wx:if="{{coupons.length === 0}}">符合活动条件的复购券会自动进入这里。</text>
+    <view class="coupon" wx:for="{{coupons}}" wx:key="id">
+      <view><text class="coupon-name">{{item.name}}</text><text class="muted">状态：{{item.status}}</text></view>
+      <text class="amount">¥{{item.amount_minor / 100}}</text>
+    </view>
+  </view>
+
+  <view class="card" wx:if="{{membership}}">
+    <view class="section-row"><text class="section-title">消息中心</text><text class="count">{{notifications.length}} 条</text></view>
+    <text class="empty" wx:if="{{notifications.length === 0}}">订单、退款和优惠券事实会保留在这里。</text>
+    <view class="message" wx:for="{{notifications}}" wx:key="id"><text class="message-title">{{item.title}}</text><text class="muted">{{item.body}}</text></view>
+    <button class="secondary" wx:if="{{!preference.marketing_enabled}}" disabled="{{busy}}" bindtap="enableMarketingReminder">开启优惠提醒</button>
+    <button class="text-button" wx:else disabled="{{busy}}" bindtap="disableMarketingReminder">退订营销提醒</button>
+  </view>
+
+  <view class="card" wx:if="{{shops.length}}">
+    <text class="section-title">官方购买渠道</text>
+    <button class="shop" wx:for="{{shops}}" wx:key="url" data-index="{{index}}" bindtap="openShop"><text>{{item.name}}</text><text>去购买 ›</text></button>
+  </view>
+
+  <text class="fallback">如小程序服务未配置或暂不可用，请返回包装码并使用 H5 入口。</text>
+</view>

@@ -236,6 +236,97 @@ def hash_wechat_openid(tenant_id: uuid.UUID, openid: str) -> str:
     ).hexdigest()
 
 
+def _member_identity_material(
+    tenant_id: uuid.UUID,
+    credential_type: str,
+    issuer: str,
+    subject: str,
+) -> bytes:
+    if credential_type not in {"verified_phone", "wechat_openid", "wechat_unionid"}:
+        raise CryptoError("Invalid member identity type")
+    if not issuer or len(issuer) > 160 or not subject or len(subject) > 256:
+        raise CryptoError("Invalid member identity subject")
+    return (
+        b"member-identity-v1\0"
+        + tenant_id.bytes
+        + b"\0"
+        + credential_type.encode("ascii")
+        + b"\0"
+        + issuer.encode("utf-8")
+        + b"\0"
+        + subject.encode("utf-8")
+    )
+
+
+def hash_member_identity_subject(
+    tenant_id: uuid.UUID,
+    credential_type: str,
+    issuer: str,
+    subject: str,
+) -> str:
+    """Return a tenant and issuer scoped lookup digest for a verified identity."""
+
+    return hmac.new(
+        _get_provider().get_pepper(),
+        _member_identity_material(tenant_id, credential_type, issuer, subject),
+        hashlib.sha256,
+    ).hexdigest()
+
+
+def _member_identity_aad(
+    tenant_id: uuid.UUID,
+    membership_id: uuid.UUID,
+    credential_type: str,
+    issuer: str,
+) -> bytes:
+    return (
+        b"member-identity-envelope-v1\0"
+        + tenant_id.bytes
+        + b"\0"
+        + membership_id.bytes
+        + b"\0"
+        + credential_type.encode("ascii")
+        + b"\0"
+        + issuer.encode("utf-8")
+    )
+
+
+def encrypt_member_identity_subject(
+    tenant_id: uuid.UUID,
+    membership_id: uuid.UUID,
+    credential_type: str,
+    issuer: str,
+    subject: str,
+) -> tuple[bytes, bytes, str]:
+    _member_identity_material(tenant_id, credential_type, issuer, subject)
+    return encrypt_bytes(
+        subject.encode("utf-8"),
+        aad=_member_identity_aad(tenant_id, membership_id, credential_type, issuer),
+    )
+
+
+def decrypt_member_identity_subject(
+    tenant_id: uuid.UUID,
+    membership_id: uuid.UUID,
+    credential_type: str,
+    issuer: str,
+    ciphertext: bytes,
+    nonce: bytes,
+    key_id: str,
+) -> str:
+    try:
+        subject = decrypt_bytes(
+            ciphertext,
+            nonce=nonce,
+            key_id=key_id,
+            aad=_member_identity_aad(tenant_id, membership_id, credential_type, issuer),
+        ).decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise CryptoError("Invalid member identity envelope") from exc
+    _member_identity_material(tenant_id, credential_type, issuer, subject)
+    return subject
+
+
 def encrypt_wechat_openid(
     tenant_id: uuid.UUID,
     consumer_id: uuid.UUID,

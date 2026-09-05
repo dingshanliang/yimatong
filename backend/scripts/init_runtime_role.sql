@@ -129,6 +129,33 @@ CREATE TEMP TABLE runtime_restricted_mutation_relation_allowlist (
 ) ON COMMIT DROP;
 INSERT INTO runtime_restricted_mutation_relation_allowlist (table_name)
 VALUES ('agency_authorizations'),
+       ('commerce_connection_events'),
+       ('commerce_connections'),
+       ('commerce_identity_handoffs'),
+       ('commerce_integration_messages'),
+       ('commerce_member_references'),
+       ('commerce_order_facts'),
+       ('commerce_order_line_facts'),
+       ('commerce_product_mappings'),
+       ('commerce_refund_facts'),
+       ('commerce_repurchase_attributions'),
+       ('commerce_service_credentials'),
+       ('brand_membership_events'),
+       ('brand_membership_profile_links'),
+       ('brand_memberships'),
+       ('member_coupons'),
+       ('member_channel_grants'),
+       ('member_notification_deliveries'),
+       ('member_notification_preferences'),
+       ('member_notifications'),
+       ('repurchase_coupon_events'),
+       ('repurchase_coupon_rule_versions'),
+       ('repurchase_work_item_events'),
+       ('repurchase_work_items'),
+       ('privacy_rights_requests'),
+       ('privacy_rights_events'),
+       ('member_pii_access_events'),
+       ('sensitive_member_export_events'),
        ('benefit_deliveries'),
        ('benefit_claims'),
        ('benefits'),
@@ -163,6 +190,9 @@ VALUES ('agency_authorizations'),
        ('pilot_milestones'),
        ('retrospectives');
 INSERT INTO runtime_restricted_mutation_relation_allowlist (table_name)
+SELECT 'member_identity_credentials'::name
+WHERE to_regclass('public.member_identity_credentials') IS NOT NULL;
+INSERT INTO runtime_restricted_mutation_relation_allowlist (table_name)
 SELECT 'consent_records'::name WHERE to_regclass('public.consent_records') IS NOT NULL;
 INSERT INTO runtime_restricted_mutation_relation_allowlist (table_name)
 SELECT relation_name::name FROM unnest(ARRAY[
@@ -187,6 +217,138 @@ VALUES ('platform_audit_log');
 -- touching the otherwise control-only auth_sessions relation.
 DO $$
 BEGIN
+    IF to_regprocedure('public.mutate_commerce_connection_authority(uuid,jsonb)') IS NOT NULL THEN
+        REVOKE ALL ON FUNCTION public.mutate_commerce_connection_authority(uuid,jsonb) FROM PUBLIC;
+        GRANT EXECUTE ON FUNCTION public.mutate_commerce_connection_authority(uuid,jsonb) TO yimatong_app;
+    END IF;
+    IF to_regprocedure('public.ensure_commerce_member_reference_authority(uuid,jsonb)') IS NOT NULL THEN
+        REVOKE ALL ON FUNCTION public.ensure_commerce_member_reference_authority(uuid,jsonb) FROM PUBLIC;
+        REVOKE ALL ON FUNCTION public.ensure_commerce_member_reference_authority(uuid,jsonb) FROM yimatong_app;
+        REVOKE ALL ON FUNCTION public.ensure_commerce_member_reference_authority(uuid,jsonb) FROM yimatong_callback;
+    END IF;
+    IF to_regprocedure('public.mutate_commerce_handoff_authority(uuid,jsonb)') IS NOT NULL THEN
+        REVOKE ALL ON FUNCTION public.mutate_commerce_handoff_authority(uuid,jsonb) FROM PUBLIC;
+        REVOKE ALL ON FUNCTION public.mutate_commerce_handoff_authority(uuid,jsonb) FROM yimatong_app;
+        GRANT EXECUTE ON FUNCTION public.mutate_commerce_handoff_authority(uuid,jsonb) TO yimatong_callback;
+    END IF;
+    IF to_regprocedure('public.accept_commerce_message_authority(uuid,jsonb)') IS NOT NULL THEN
+        REVOKE ALL ON FUNCTION public.accept_commerce_message_authority(uuid,jsonb) FROM PUBLIC;
+        REVOKE ALL ON FUNCTION public.accept_commerce_message_authority(uuid,jsonb) FROM yimatong_app;
+        GRANT EXECUTE ON FUNCTION public.accept_commerce_message_authority(uuid,jsonb) TO yimatong_callback;
+    END IF;
+    IF to_regprocedure('public.create_commerce_product_mapping_authority(uuid,jsonb)') IS NOT NULL THEN
+        REVOKE ALL ON FUNCTION public.create_commerce_product_mapping_authority(uuid,jsonb) FROM PUBLIC;
+        REVOKE ALL ON FUNCTION public.create_commerce_product_mapping_authority(uuid,jsonb) FROM yimatong_callback;
+        GRANT EXECUTE ON FUNCTION public.create_commerce_product_mapping_authority(uuid,jsonb) TO yimatong_app;
+    END IF;
+    IF to_regprocedure('public.project_commerce_order_event_authority(uuid,uuid)') IS NOT NULL THEN
+        REVOKE ALL ON FUNCTION public.project_commerce_order_event_authority(uuid,uuid) FROM PUBLIC;
+        REVOKE ALL ON FUNCTION public.project_commerce_order_event_authority(uuid,uuid) FROM yimatong_app;
+        GRANT EXECUTE ON FUNCTION public.project_commerce_order_event_authority(uuid,uuid) TO yimatong_callback;
+    END IF;
+    IF to_regprocedure('public.mutate_member_notification_preference_authority(uuid,jsonb)') IS NOT NULL THEN
+        REVOKE ALL ON FUNCTION public.mutate_member_notification_preference_authority(uuid,jsonb) FROM PUBLIC;
+        GRANT EXECUTE ON FUNCTION public.mutate_member_notification_preference_authority(uuid,jsonb) TO yimatong_app;
+    END IF;
+    IF to_regprocedure('public.record_commerce_member_notification_authority(uuid,uuid)') IS NOT NULL THEN
+        REVOKE ALL ON FUNCTION public.record_commerce_member_notification_authority(uuid,uuid) FROM PUBLIC;
+        REVOKE ALL ON FUNCTION public.record_commerce_member_notification_authority(uuid,uuid) FROM yimatong_app;
+        GRANT EXECUTE ON FUNCTION public.record_commerce_member_notification_authority(uuid,uuid) TO yimatong_callback;
+    END IF;
+    IF to_regprocedure('public.record_coupon_member_notification_authority(uuid,uuid)') IS NOT NULL THEN
+        REVOKE ALL ON FUNCTION public.record_coupon_member_notification_authority(uuid,uuid) FROM PUBLIC;
+        GRANT EXECUTE ON FUNCTION public.record_coupon_member_notification_authority(uuid,uuid) TO yimatong_app;
+    END IF;
+    IF to_regprocedure('public.mutate_member_notification_delivery_authority(uuid,jsonb)') IS NOT NULL THEN
+        REVOKE ALL ON FUNCTION public.mutate_member_notification_delivery_authority(uuid,jsonb) FROM PUBLIC;
+        REVOKE ALL ON FUNCTION public.mutate_member_notification_delivery_authority(uuid,jsonb) FROM yimatong_app;
+        GRANT EXECUTE ON FUNCTION public.mutate_member_notification_delivery_authority(uuid,jsonb) TO yimatong_callback;
+    END IF;
+    IF to_regprocedure('public.lease_member_notification_delivery_authority(uuid,uuid,uuid)') IS NOT NULL THEN
+        REVOKE ALL ON FUNCTION public.lease_member_notification_delivery_authority(uuid,uuid,uuid) FROM PUBLIC;
+        REVOKE ALL ON FUNCTION public.lease_member_notification_delivery_authority(uuid,uuid,uuid) FROM yimatong_callback;
+        GRANT EXECUTE ON FUNCTION public.lease_member_notification_delivery_authority(uuid,uuid,uuid) TO yimatong_app;
+    END IF;
+    IF to_regprocedure('public.create_member_marketing_notification_authority(uuid,jsonb)') IS NOT NULL THEN
+        REVOKE ALL ON FUNCTION public.create_member_marketing_notification_authority(uuid,jsonb) FROM PUBLIC;
+        GRANT EXECUTE ON FUNCTION public.create_member_marketing_notification_authority(uuid,jsonb) TO yimatong_app;
+    END IF;
+    IF to_regprocedure('public.mutate_repurchase_coupon_rule_authority(uuid,text,jsonb)') IS NOT NULL THEN
+        REVOKE ALL ON FUNCTION public.mutate_repurchase_coupon_rule_authority(uuid,text,jsonb) FROM PUBLIC;
+        GRANT EXECUTE ON FUNCTION public.mutate_repurchase_coupon_rule_authority(uuid,text,jsonb) TO yimatong_app;
+    END IF;
+    IF to_regprocedure('public.mutate_member_coupon_authority(uuid,text,jsonb)') IS NOT NULL THEN
+        REVOKE ALL ON FUNCTION public.mutate_member_coupon_authority(uuid,text,jsonb) FROM PUBLIC;
+        GRANT EXECUTE ON FUNCTION public.mutate_member_coupon_authority(uuid,text,jsonb) TO yimatong_app;
+    END IF;
+    IF to_regprocedure('public.mutate_repurchase_work_item_authority(uuid,jsonb)') IS NOT NULL THEN
+        REVOKE ALL ON FUNCTION public.mutate_repurchase_work_item_authority(uuid,jsonb) FROM PUBLIC;
+        GRANT EXECUTE ON FUNCTION public.mutate_repurchase_work_item_authority(uuid,jsonb) TO yimatong_app;
+    END IF;
+    IF to_regprocedure('public.create_consumer_privacy_request_authority(uuid,jsonb)') IS NOT NULL THEN
+        REVOKE ALL ON FUNCTION public.create_consumer_privacy_request_authority(uuid,jsonb) FROM PUBLIC;
+        GRANT EXECUTE ON FUNCTION public.create_consumer_privacy_request_authority(uuid,jsonb) TO yimatong_app;
+    END IF;
+    IF to_regprocedure('public.mutate_privacy_rights_authority(uuid,jsonb)') IS NOT NULL THEN
+        REVOKE ALL ON FUNCTION public.mutate_privacy_rights_authority(uuid,jsonb) FROM PUBLIC;
+        GRANT EXECUTE ON FUNCTION public.mutate_privacy_rights_authority(uuid,jsonb) TO yimatong_app;
+    END IF;
+    IF to_regprocedure('public.record_member_pii_access_authority(uuid,jsonb)') IS NOT NULL THEN
+        REVOKE ALL ON FUNCTION public.record_member_pii_access_authority(uuid,jsonb) FROM PUBLIC;
+        GRANT EXECUTE ON FUNCTION public.record_member_pii_access_authority(uuid,jsonb) TO yimatong_app;
+    END IF;
+    IF to_regprocedure('public.mutate_sensitive_member_export_authority(uuid,jsonb)') IS NOT NULL THEN
+        REVOKE ALL ON FUNCTION public.mutate_sensitive_member_export_authority(uuid,jsonb) FROM PUBLIC;
+        GRANT EXECUTE ON FUNCTION public.mutate_sensitive_member_export_authority(uuid,jsonb) TO yimatong_app;
+    END IF;
+    IF to_regprocedure('public.purge_expired_sensitive_exports_authority(uuid,integer)') IS NOT NULL THEN
+        REVOKE ALL ON FUNCTION public.purge_expired_sensitive_exports_authority(uuid,integer) FROM PUBLIC;
+        GRANT EXECUTE ON FUNCTION public.purge_expired_sensitive_exports_authority(uuid,integer) TO yimatong_app;
+    END IF;
+    IF to_regprocedure('public.reapply_completed_privacy_controls_authority(uuid)') IS NOT NULL THEN
+        REVOKE ALL ON FUNCTION public.reapply_completed_privacy_controls_authority(uuid) FROM PUBLIC;
+        GRANT EXECUTE ON FUNCTION public.reapply_completed_privacy_controls_authority(uuid) TO yimatong_app;
+    END IF;
+    IF to_regprocedure(
+        'public.create_brand_membership_authority(uuid,uuid,uuid,timestamp with time zone,text,text,uuid,boolean,uuid,text,uuid,uuid,text,text)'
+    ) IS NOT NULL THEN
+        REVOKE ALL ON FUNCTION public.create_brand_membership_authority(
+            uuid,uuid,uuid,timestamptz,text,text,uuid,boolean,uuid,text,uuid,uuid,text,text
+        ) FROM PUBLIC;
+        GRANT EXECUTE ON FUNCTION public.create_brand_membership_authority(
+            uuid,uuid,uuid,timestamptz,text,text,uuid,boolean,uuid,text,uuid,uuid,text,text
+        ) TO yimatong_app;
+    END IF;
+    IF to_regprocedure(
+        'public.bind_brand_member_identity_authority(uuid,uuid,uuid,text,text,text,bytea,bytea,text,text,uuid,text,text)'
+    ) IS NOT NULL THEN
+        REVOKE ALL ON FUNCTION public.bind_brand_member_identity_authority(
+            uuid,uuid,uuid,text,text,text,bytea,bytea,text,text,uuid,text,text
+        ) FROM PUBLIC;
+        GRANT EXECUTE ON FUNCTION public.bind_brand_member_identity_authority(
+            uuid,uuid,uuid,text,text,text,bytea,bytea,text,text,uuid,text,text
+        ) TO yimatong_app;
+    END IF;
+    IF to_regprocedure(
+        'public.recover_brand_membership_authority(uuid,uuid,uuid,uuid,uuid,uuid,text,text)'
+    ) IS NOT NULL THEN
+        REVOKE ALL ON FUNCTION public.recover_brand_membership_authority(
+            uuid,uuid,uuid,uuid,uuid,uuid,text,text
+        ) FROM PUBLIC;
+        GRANT EXECUTE ON FUNCTION public.recover_brand_membership_authority(
+            uuid,uuid,uuid,uuid,uuid,uuid,text,text
+        ) TO yimatong_app;
+    END IF;
+    IF to_regprocedure(
+        'public.merge_brand_memberships_authority(uuid,uuid,uuid,uuid,uuid,uuid,text,text,uuid,uuid,text,jsonb)'
+    ) IS NOT NULL THEN
+        REVOKE ALL ON FUNCTION public.merge_brand_memberships_authority(
+            uuid,uuid,uuid,uuid,uuid,uuid,text,text,uuid,uuid,text,jsonb
+        ) FROM PUBLIC;
+        GRANT EXECUTE ON FUNCTION public.merge_brand_memberships_authority(
+            uuid,uuid,uuid,uuid,uuid,uuid,text,text,uuid,uuid,text,jsonb
+        ) TO yimatong_app;
+    END IF;
     IF to_regprocedure('public.get_current_consumer_consent_policy(uuid,text)') IS NOT NULL THEN
         REVOKE ALL ON FUNCTION public.get_current_consumer_consent_policy(uuid,text) FROM PUBLIC;
         GRANT EXECUTE ON FUNCTION public.get_current_consumer_consent_policy(uuid,text) TO yimatong_app;
@@ -461,7 +623,7 @@ SELECT unnest(ARRAY[
     'auth_sessions', 'consumed_refresh_tokens', 'invite_registration_receipts',
     'operator_campaign_manage_grants', 'organization_parent_repair_backups',
     'platform_auth_sessions', 'platform_configs', 'platform_tenant_openings',
-    'role_template_backups', 'tenant_invite_codes',
+    'role_template_backups', 'sensitive_member_exports', 'tenant_invite_codes',
     'tenant_platform_role_assignment_backups'
 ]::name[]);
 INSERT INTO runtime_control_relation_allowlist (table_name)
@@ -556,7 +718,7 @@ BEGIN
         UNION ALL SELECT table_name FROM runtime_public_relation_allowlist
         UNION ALL SELECT table_name FROM runtime_read_only_global_relation_allowlist
     ) AS orm_registry;
-    IF registry_count <> 116
+    IF registry_count <> 145
         + (CASE WHEN to_regclass('public.takeover_domain_claims') IS NULL THEN 0 ELSE 1 END)
         + (CASE WHEN to_regclass('public.consumer_phone_encryption_keys') IS NULL THEN 0 ELSE 1 END)
         + (CASE WHEN to_regclass('public.campaign_delivery_callback_attempts') IS NULL THEN 0 ELSE 1 END)
@@ -875,6 +1037,16 @@ GRANT EXECUTE ON FUNCTION public.record_prepared_export(
     bigint, uuid, uuid, integer, bytea, bytea, text, text
 ) TO yimatong_app;
 
+-- Sensitive member exports expose only workflow metadata. Encrypted artifacts,
+-- nonces, key ids, and one-time token digests remain function-only.
+GRANT SELECT (
+    id, tenant_id, requester_account_id, approver_account_id, status, reason,
+    recipient_purpose, requested_fields, filters, includes_full_pii, row_count,
+    artifact_size_bytes, checksum_sha256, expires_at, downloaded_at, deleted_at,
+    created_at, updated_at
+) ON TABLE public.sensitive_member_exports TO yimatong_app;
+GRANT SELECT ON TABLE public.sensitive_member_export_summaries TO yimatong_app;
+
 -- Deliberately public catalog data used by tenant requests is read-only.
 GRANT SELECT ON TABLE public.plan_definitions TO yimatong_app;
 GRANT SELECT ON TABLE public.quota_rollout_state TO yimatong_app;
@@ -1127,5 +1299,15 @@ BEGIN
     END LOOP;
 END
 $$;
+
+-- Commerce credential ciphertext and handoff token digests are callback/control
+-- secrets. Runtime receives only the non-secret columns needed for status and
+-- reconciliation; SECURITY DEFINER functions retain full-row authority.
+REVOKE SELECT ON public.commerce_service_credentials FROM yimatong_app;
+GRANT SELECT(id,tenant_id,connection_id,direction,version,key_prefix,valid_from,valid_until,
+    overlap_until,revoked_at,created_at) ON public.commerce_service_credentials TO yimatong_app;
+REVOKE SELECT ON public.commerce_identity_handoffs FROM yimatong_app;
+GRANT SELECT(id,tenant_id,connection_id,member_reference_id,expires_at,redeemed_at,created_at)
+    ON public.commerce_identity_handoffs TO yimatong_app;
 
 COMMIT;

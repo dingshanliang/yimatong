@@ -461,6 +461,11 @@ function DashboardInner({ children }: { children: React.ReactNode }) {
           label: t("menu.compliance"),
         },
         {
+          key: "/settings/privacy",
+          icon: <SafetyCertificateOutlined />,
+          label: t("menu.privacy"),
+        },
+        {
           key: "/settings/tenant",
           icon: <ShopOutlined />,
           label: t("menu.tenant"),

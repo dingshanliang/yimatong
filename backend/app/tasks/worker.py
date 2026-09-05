@@ -19,6 +19,7 @@ from uuid6 import uuid7
 from app.core.config import settings
 from app.models.webhook import WebhookDelivery, WebhookEndpoint
 from app.services.campaign_claim_worker import poll_campaign_claim_outbox
+from app.services.member_notification_sender import poll_member_notification_deliveries
 from app.services.takeover import poll_pending_takeover_imports
 from app.services.webhook_sender import deliver, should_retry
 
@@ -367,6 +368,27 @@ async def cleanup_old_deliveries() -> int:
     return count
 
 
+async def maintain_member_privacy_retention() -> int:
+    """Purge expired sensitive exports and reapply completed rights after recovery."""
+    from app.core.database import async_session_factory, control_session_factory
+    from app.models.tenant import Tenant, TenantStatus
+    from app.services.privacy_governance import maintain_privacy_retention
+
+    async with control_session_factory() as control_db:
+        tenant_ids = list(
+            await control_db.scalars(select(Tenant.id).where(Tenant.status == TenantStatus.active).order_by(Tenant.id))
+        )
+
+    changed = 0
+    for tenant_id in tenant_ids:
+        async with async_session_factory() as db, db.begin():
+            result = await maintain_privacy_retention(db, tenant_id)
+            changed += result["restored_controls"] + result["purged_exports"]
+    if changed:
+        logger.info("Applied %d member privacy retention controls", changed)
+    return changed
+
+
 async def worker_loop() -> None:
     """Worker 主循环：从 Redis 队列取任务 + 定期轮询重试。"""
     import redis.asyncio as aioredis
@@ -382,6 +404,7 @@ async def worker_loop() -> None:
 
             await expand_committed_events()
             await poll_ready_deliveries()
+            await poll_member_notification_deliveries()
         except Exception:
             logger.exception("Webhook durable outbox poll error")
         try:
@@ -426,6 +449,10 @@ async def worker_loop() -> None:
                 await cleanup_old_deliveries()
             except Exception:
                 logger.exception("Cleanup error")
+            try:
+                await maintain_member_privacy_retention()
+            except Exception:
+                logger.exception("Member privacy retention cleanup error")
             # 同时触发试点到期复盘生成（beads: yimatong-bgag.2）
             try:
                 await poll_retrospective_generation()

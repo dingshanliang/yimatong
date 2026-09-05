@@ -81,8 +81,13 @@ describe("CodePageClient", () => {
 
     await act(async () => {
       root.render(
-        <CodePageClient publicId="CODE-TWO" apiBase="https://api.example" />
+        <CodePageClient
+          publicId="CODE-TWO"
+          apiBase="https://api.example"
+          retryDelayMs={0}
+        />
       );
+      await new Promise((resolve) => setTimeout(resolve, 0));
     });
 
     expect(resolveContent).toHaveBeenCalledWith(
@@ -129,6 +134,46 @@ describe("CodePageClient", () => {
     await act(async () => root.unmount());
   });
 
+  it("preserves a member recovery credential while removing OAuth secrets", async () => {
+    window.history.replaceState(
+      null,
+      "",
+      "/c/CODE-RECOVER?source=member#oauth=success&scan_token=member-token&consent_id=consent-1&member_recovery_token=recovery-token"
+    );
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>().mockResolvedValue(
+        new Response(
+          JSON.stringify({ scan_token: "anonymous-token", code_data: {} }),
+          {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          }
+        )
+      )
+    );
+    const root = createRoot(container);
+
+    await act(async () => {
+      root.render(
+        <CodePageClient publicId="CODE-RECOVER" apiBase="https://api.example" />
+      );
+    });
+
+    expect(resolveContent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        jsonPayload: expect.objectContaining({ scan_token: "member-token" }),
+      }),
+      undefined
+    );
+    expect(window.location.pathname).toBe("/c/CODE-RECOVER");
+    expect(window.location.search).toBe("?source=member");
+    expect(window.location.hash).toBe("#member_recovery_token=recovery-token");
+    expect(window.location.hash).not.toContain("member-token");
+    expect(window.location.hash).not.toContain("consent-1");
+    await act(async () => root.unmount());
+  });
+
   it("never renders a non-success resolver JSON as a verified product", async () => {
     const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
       new Response(JSON.stringify({ result: "not_found" }), {
@@ -141,8 +186,13 @@ describe("CodePageClient", () => {
 
     await act(async () => {
       root.render(
-        <CodePageClient publicId="MISSING-CODE" apiBase="https://api.example" />
+        <CodePageClient
+          publicId="MISSING-CODE"
+          apiBase="https://api.example"
+          retryDelayMs={0}
+        />
       );
+      await new Promise((resolve) => setTimeout(resolve, 0));
     });
 
     expect(resolveContent).toHaveBeenCalledWith(

@@ -55,7 +55,15 @@ export function CodePageClient({
           if (oauthConsentId) {
             localStorage.setItem(`consent_id:${publicId}`, oauthConsentId);
           }
-          window.history.replaceState(null, "", window.location.pathname);
+          fragment.delete("oauth");
+          fragment.delete("scan_token");
+          fragment.delete("consent_id");
+          const remainingFragment = fragment.toString();
+          window.history.replaceState(
+            null,
+            "",
+            `${window.location.pathname}${window.location.search}${remainingFragment ? `#${remainingFragment}` : ""}`
+          );
         }
         const scanInfo = data.scan_info as { visitor_id?: string } | undefined;
         if (scanInfo?.visitor_id)
@@ -68,9 +76,13 @@ export function CodePageClient({
         // 失败界面提供人工"重新查验"（kc6d.3）。
         if (!retriedOnce) {
           retriedOnce = true;
-          setTimeout(() => {
-            if (!controller.signal.aborted) void load();
-          }, retryDelayMs);
+          if (retryDelayMs === 0) {
+            void load();
+          } else {
+            setTimeout(() => {
+              if (!controller.signal.aborted) void load();
+            }, retryDelayMs);
+          }
           return;
         }
         setPayload(null);
@@ -90,6 +102,12 @@ export function CodePageClient({
     setReloadKey((key) => key + 1);
   }, [retrying]);
 
+  const handleScanTokenChange = useCallback((scanToken: string) => {
+    setPayload((current) =>
+      current ? { ...current, scan_token: scanToken } : current
+    );
+  }, []);
+
   if (!loaded) {
     return (
       <div className="mx-auto max-w-md p-8 text-center">正在查验产品信息…</div>
@@ -103,6 +121,7 @@ export function CodePageClient({
       htmlContent={null}
       onRetry={handleRetry}
       retrying={retrying}
+      onScanTokenChange={handleScanTokenChange}
     />
   );
 }

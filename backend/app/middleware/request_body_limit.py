@@ -13,12 +13,24 @@ RISK_RULE_JSON_BODY_LIMIT = 64 * 1024
 WECOM_CALLBACK_BODY_LIMIT = 64 * 1024
 GMV_JSON_BODY_LIMIT = 256 * 1024
 WEBHOOK_JSON_BODY_LIMIT = 64 * 1024
+COMMERCE_EVENT_BODY_LIMIT = 64 * 1024
 PILOT_JSON_BODY_LIMIT = 64 * 1024
 _MUTATION_METHODS = {"POST", "PUT", "PATCH"}
 _PUBLIC_CONSUMER_MUTATIONS = {
     "/api/v1/benefit-claims",
     "/api/v1/public/consents",
     "/api/v1/consumers/lead-capture",
+    "/api/v1/consumers/membership/join",
+    "/api/v1/consumers/membership/merge",
+    "/api/v1/consumers/membership/recover",
+    "/api/v1/consumers/membership/miniprogram-session",
+    "/api/v1/consumers/membership/miniprogram-bind",
+    "/api/v1/consumers/membership/privacy-requests",
+    "/api/v1/consumers/membership/commerce-handoffs",
+    "/api/v1/consumers/membership/notification-preferences/marketing-subscription",
+    "/api/v1/consumers/membership/notification-preferences/service-wechat",
+    "/api/v1/consumers/membership/notification-channel-grants",
+    "/api/v1/commerce/handoffs/redeem",
     "/api/v1/public/leads",
 }
 
@@ -103,6 +115,12 @@ class ConnectorRequestBodyLimitMiddleware:
             return CONNECTOR_JSON_BODY_LIMIT
         if path == "/api/v1/webhooks/endpoints" or path.startswith("/api/v1/webhooks/endpoints/"):
             return WEBHOOK_JSON_BODY_LIMIT
+        if path in {
+            "/api/v1/commerce/events",
+            "/api/v1/commerce/coupons/eligible",
+            "/api/v1/commerce/coupons/transitions",
+        }:
+            return COMMERCE_EVENT_BODY_LIMIT
         if path.startswith("/api/v1/retrospectives/"):
             return PILOT_JSON_BODY_LIMIT
         if path.startswith("/api/v1/platform/tenants/") and path.endswith("/pilot-milestones/corrections"):

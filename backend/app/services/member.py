@@ -13,6 +13,8 @@ from app.core.database import _session_uses_postgresql, get_request_security_cre
 from app.models.auth_security import AuthSession
 from app.models.campaign import Benefit
 from app.models.member import (
+    BrandMembership,
+    BrandMembershipProfileLink,
     ConsumerProfile,
     MemberLevel,
     PointProduct,
@@ -294,7 +296,26 @@ async def get_member_overview(db: AsyncSession, tenant_id: uuid.UUID) -> dict:
             )
         )
     ).scalar() or 0
+    active_memberships = (
+        await db.execute(
+            select(func.count()).select_from(BrandMembership).where(
+                BrandMembership.tenant_id == tenant_id,
+                BrandMembership.status == "active",
+            )
+        )
+    ).scalar() or 0
+    joined_7d = (
+        await db.execute(
+            select(func.count()).select_from(BrandMembership).where(
+                BrandMembership.tenant_id == tenant_id,
+                BrandMembership.status == "active",
+                BrandMembership.joined_at >= since,
+            )
+        )
+    ).scalar() or 0
     return {
+        "active_memberships": int(active_memberships),
+        "joined_7d": int(joined_7d),
         "enabled_rules": int(enabled_rules),
         "active_products": int(active_products),
         "points_awarded_7d": int(points_awarded),
@@ -336,6 +357,39 @@ def serialize_consumer_profile(consumer: ConsumerProfile) -> dict:
     }
 
 
+async def _membership_summaries(
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    consumer_ids: list[uuid.UUID],
+) -> dict[uuid.UUID, dict]:
+    if not consumer_ids:
+        return {}
+    rows = (
+        await db.execute(
+            select(BrandMembershipProfileLink.consumer_profile_id, BrandMembership)
+            .join(
+                BrandMembership,
+                (BrandMembership.tenant_id == BrandMembershipProfileLink.tenant_id)
+                & (BrandMembership.id == BrandMembershipProfileLink.membership_id),
+            )
+            .where(
+                BrandMembershipProfileLink.tenant_id == tenant_id,
+                BrandMembershipProfileLink.consumer_profile_id.in_(consumer_ids),
+                BrandMembership.status == "active",
+            )
+        )
+    ).all()
+    return {
+        consumer_id: {
+            "id": str(membership.id),
+            "number": membership.membership_number,
+            "status": membership.status,
+            "joined_at": membership.joined_at.isoformat() if membership.joined_at else None,
+        }
+        for consumer_id, membership in rows
+    }
+
+
 async def search_consumers(
     db: AsyncSession,
     tenant_id: uuid.UUID,
@@ -354,7 +408,9 @@ async def search_consumers(
             uuid.UUID(value)
             normalized_type = "id"
         except ValueError:
-            normalized_type = "phone" if value.isdigit() else "nickname"
+            normalized_type = "membership" if value.upper().startswith("MBR-") else (
+                "phone" if value.isdigit() else "nickname"
+            )
 
     conditions = [ConsumerProfile.tenant_id == tenant_id]
     if normalized_type == "id":
@@ -365,6 +421,23 @@ async def search_consumers(
     elif normalized_type == "phone":
         conditions.append(ConsumerProfile.lead_contact_suppressed.is_(False))
         conditions.append(ConsumerProfile.phone_hash == hash_phone(value))
+    elif normalized_type == "membership":
+        conditions.append(
+            ConsumerProfile.id.in_(
+                select(BrandMembershipProfileLink.consumer_profile_id)
+                .join(
+                    BrandMembership,
+                    (BrandMembership.tenant_id == BrandMembershipProfileLink.tenant_id)
+                    & (BrandMembership.id == BrandMembershipProfileLink.membership_id),
+                )
+                .where(
+                    BrandMembershipProfileLink.tenant_id == tenant_id,
+                    BrandMembership.tenant_id == tenant_id,
+                    BrandMembership.membership_number == value.upper(),
+                    BrandMembership.status == "active",
+                )
+            )
+        )
     else:
         escaped = value.replace("%", r"\%").replace("_", r"\_")
         if normalized_type == "nickname":
@@ -391,7 +464,12 @@ async def search_consumers(
     result = await db.execute(
         select(ConsumerProfile).where(*conditions).order_by(ConsumerProfile.id.desc()).limit(limit)
     )
-    return [serialize_consumer_profile(c) for c in result.scalars().all()]
+    consumers = list(result.scalars().all())
+    memberships = await _membership_summaries(db, tenant_id, [consumer.id for consumer in consumers])
+    return [
+        serialize_consumer_profile(consumer) | {"membership": memberships.get(consumer.id)}
+        for consumer in consumers
+    ]
 
 
 async def create_point_rule(
@@ -479,12 +557,14 @@ async def get_consumer_profile(
     )
     recent_txns = list(txn_result.scalars().all())
 
+    membership = (await _membership_summaries(db, tenant_id, [consumer.id])).get(consumer.id)
     return {
         "id": str(consumer.id),
         "nickname": None if consumer.lead_contact_suppressed else consumer.nickname,
         "phone": _masked_phone(consumer),
         "member_level": consumer.member_level,
         "total_points": consumer.total_points,
+        "membership": membership,
         "recent_transactions": [
             {
                 "id": str(t.id),

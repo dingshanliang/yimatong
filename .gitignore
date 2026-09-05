@@ -59,5 +59,8 @@ login-page.png
 # Independent review loop run state (session artifact, not reusable config)
 .agents/independent-review-loop.yaml
 
+# Dogfood session output (report + screenshots/videos, session evidence)
+dogfood-output/
+
 # Generated marketing artifacts (source md + generator script are tracked)
 docs/04_marketing_sales/*.docx
