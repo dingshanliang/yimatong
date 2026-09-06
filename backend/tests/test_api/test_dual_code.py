@@ -266,12 +266,61 @@ class TestInnerCodeResolve:
         items = items_resp.json()["items"]
         inner_code = next(i for i in items if i["code_type"] == "inner")
 
-        resolve_resp = await client.get(f"/c/{inner_code['public_id']}")
+        resolve_resp = await client.get(
+            f"/c/{inner_code['public_id']}",
+            headers={"User-Agent": "Mozilla/5.0 (iPhone) MicroMessenger/8.0"},
+        )
         # 未发布 launch release 时 HTML 走默认降级页；内码验真交互由 H5 JSON
         # 路径的 dual_code_verify 模块承载（见 ResolveContent），此处验证内码
         # 可解析且不泄露外码内容。
         assert resolve_resp.status_code == 200
         assert inner_code["public_id"] in resolve_resp.text
+
+    @pytest.mark.anyio
+    async def test_inner_code_browser_scan_gets_wechat_guide(self, client: AsyncClient, setup_tenant):
+        """系统相机（非微信 UA）扫内码返回微信引导页，而非近乎空白的降级页"""
+        tid, headers, brand_id, product_id, sku_id, production_batch_id = setup_tenant
+        batch = await client.post(
+            "/api/v1/code-batches",
+            json={
+                "product_id": product_id,
+                "sku_id": sku_id,
+                "production_batch_id": production_batch_id,
+                "quantity": 2,
+                "code_type": "paired",
+            },
+            headers={**headers, "Idempotency-Key": str(uuid.uuid4())},
+        )
+        batch_id = batch.json()["id"]
+        await client.post(
+            f"/api/v1/code-batches/{batch_id}/export",
+            json={"reason": "双码测试导出"},
+            headers={**headers, "Idempotency-Key": str(uuid.uuid4())},
+        )
+        await client.post(f"/api/v1/code-batches/{batch_id}/mark-printing", headers=headers)
+        await client.post(
+            f"/api/v1/code-batches/{batch_id}/mark-delivered",
+            json={"reason": "双码测试交付", "recipient": "测试收货人", "confirm": "deliver"},
+            headers=headers,
+        )
+        await client.post(
+            f"/api/v1/code-batches/{batch_id}/activate",
+            headers=headers,
+        )
+
+        items_resp = await client.get(
+            f"/api/v1/code-items?code_batch_id={batch_id}",
+            headers=headers,
+        )
+        items = items_resp.json()["items"]
+        inner_code = next(i for i in items if i["code_type"] == "inner")
+
+        resolve_resp = await client.get(f"/c/{inner_code['public_id']}")
+        assert resolve_resp.status_code == 200
+        assert "请使用微信扫一扫" in resolve_resp.text
+        # 引导页是固定文案，不透出码明细或内部状态
+        assert inner_code["public_id"] not in resolve_resp.text
+        assert "status" not in resolve_resp.text
 
 
 class TestPairQuery:

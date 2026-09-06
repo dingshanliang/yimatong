@@ -53,6 +53,36 @@ NOT_FOUND_PAGE = """<!DOCTYPE html>
 <h2>该二维码无效</h2><p>请核实后重试</p>
 </body></html>"""
 
+# 非微信浏览器（系统相机等）扫码引导页：落地页 modules DSL 与权益链路
+# 均按微信场景设计，此页替代近乎空白的降级渲染。
+WECHAT_GUIDE_PAGE = """<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>请使用微信扫码</title>
+<style>
+body { font-family: system-ui,-apple-system,sans-serif; margin: 0; min-height: 100vh;
+  display: flex; align-items: center; justify-content: center; background: #f8f9fa;
+  padding: 24px; box-sizing: border-box; }
+.card { background: #fff; border-radius: 16px; padding: 36px 24px; max-width: 22rem;
+  text-align: center; box-shadow: 0 2px 12px rgba(0,0,0,0.08); }
+.badge { display: inline-block; background: #07c160; color: #fff; font-size: 14px;
+  padding: 4px 14px; border-radius: 999px; }
+h1 { font-size: 1.25rem; margin: 16px 0 8px; color: #1a1a1a; }
+p { color: #666; font-size: 0.95rem; line-height: 1.7; margin: 4px 0; }
+</style>
+</head>
+<body>
+<main class="card">
+  <span class="badge">微信</span>
+  <h1>请使用微信扫一扫</h1>
+  <p>本页的溯源查验与领奖功能需要在微信中打开。</p>
+  <p>打开微信，点击右上角「+」选择「扫一扫」，重新扫描包装上的二维码即可。</p>
+</main>
+</body>
+</html>"""
+
 REVOKED_PAGE = """<!DOCTYPE html>
 <html lang="zh-CN">
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">

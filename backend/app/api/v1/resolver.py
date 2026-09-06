@@ -22,6 +22,7 @@ from app.services.page_templates import (
     NOT_FOUND_PAGE,
     OUTER_LANDING_PAGE,
     REVOKED_PAGE,
+    WECHAT_GUIDE_PAGE,
     build_code_page,
 )
 from app.services.public_id import validate_public_id
@@ -281,7 +282,7 @@ async def resolve_code_endpoint(
         return JSONResponse(content=resp)
 
     # 9. HTML 模式
-    return await _html_response(db, data, public_id, launch_paused=launch_paused)
+    return await _html_response(db, data, public_id, user_agent=user_agent, launch_paused=launch_paused)
 
 
 # -- 内部辅助函数 --
@@ -505,11 +506,24 @@ async def _record_scan(
     return scan_info
 
 
-async def _html_response(db: AsyncSession, data: dict, public_id: str, *, launch_paused: bool = False):
+async def _html_response(
+    db: AsyncSession,
+    data: dict,
+    public_id: str,
+    *,
+    user_agent: str = "",
+    launch_paused: bool = False,
+):
     code_type = data.get("code_type", CodeType.single)
 
     if code_type == CodeType.outer:
         return HTMLResponse(content=OUTER_LANDING_PAGE.format(public_id=public_id))
+
+    # 非微信浏览器（系统相机、其他 App 内置浏览器）打开时，落地页 modules
+    # DSL 与权益链路均按微信场景设计，返回固定引导页替代近乎空白的降级渲染。
+    # 终止状态（作废/过期/未启用）在进入本函数前已返回专用提示页，不受影响。
+    if parse_environment(user_agent) != "wechat":
+        return HTMLResponse(content=WECHAT_GUIDE_PAGE)
 
     if launch_paused:
         return HTMLResponse(content=build_code_page(data))
