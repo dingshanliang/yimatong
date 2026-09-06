@@ -36,6 +36,7 @@ const DEMO_ACCOUNTS = [
     role: "admin",
     email: "admin@demo.com",
     password: "Admin1234",
+    tenantSlug: "demo",
     description: "查看全量经营、码、活动和权限",
     icon: <CrownOutlined />,
   },
@@ -45,16 +46,18 @@ const DEMO_ACCOUNTS = [
     role: "operator",
     email: "ops@demo.com",
     password: "Ops123456",
+    tenantSlug: "demo",
     description: "配置产品、页面、码和活动",
     icon: <TeamOutlined />,
   },
   {
     key: "agency",
-    label: "代运营顾问",
-    role: "operator",
-    email: "agency@demo.com",
-    password: "Agency1234",
-    description: "代客户维护日常运营动作",
+    label: "代运营工作台",
+    role: "admin",
+    email: "agency_admin@demo.com",
+    password: "demopass",
+    tenantSlug: "demo-agency",
+    description: "登录 demo-agency 代运营工作区，管理授权客户",
     icon: <UserSwitchOutlined />,
   },
   {
@@ -63,6 +66,7 @@ const DEMO_ACCOUNTS = [
     role: "distributor",
     email: "dist@demo.com",
     password: "Dist123456",
+    tenantSlug: "demo",
     description: "查看收货流向、区域门店统计和异常线索",
     icon: <TeamOutlined />,
     route: "/channel-portal",
@@ -73,6 +77,7 @@ const DEMO_ACCOUNTS = [
     role: "store_guide",
     email: "store@demo.com",
     password: "Store123456",
+    tenantSlug: "demo",
     description: "查看本店资料、收货批次和扫码趋势",
     icon: <ShopOutlined />,
     route: "/store-portal",
@@ -83,6 +88,7 @@ const DEMO_ACCOUNTS = [
     role: "platform_admin",
     email: "platform@yimatong.cn",
     password: "Platform1234",
+    tenantSlug: "demo",
     description: "管理租户、套餐、审计日志和全局配置",
     icon: <GlobalOutlined />,
     platform: true,
@@ -200,12 +206,12 @@ export default function LoginPage() {
         form.setFieldsValue({
           email: account.email,
           password: account.password,
-          tenant_slug: "demo",
+          tenant_slug: account.tenantSlug,
         });
         await onFinish(
           { email: account.email, password: account.password },
           account.route ?? "/",
-          "demo"
+          account.tenantSlug
         );
       }
     } finally {

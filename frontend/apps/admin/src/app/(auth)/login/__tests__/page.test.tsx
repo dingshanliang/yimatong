@@ -1,4 +1,5 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { App } from "antd";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import LoginPage from "../page";
@@ -37,5 +38,50 @@ describe("LoginPage registration handoff", () => {
     expect(screen.getByPlaceholderText("例如 demo")).toHaveValue("new-brand");
     expect(screen.getByPlaceholderText("密码")).toHaveValue("");
     expect(sessionStorage.getItem("registration-login-handoff")).toBeNull();
+  });
+});
+
+describe("LoginPage demo accounts", () => {
+  beforeEach(() => {
+    mockLogin.mockReset();
+    mockLogin.mockResolvedValue(undefined);
+    window.sessionStorage.clear();
+  });
+
+  it("logs the agency demo button into the demo-agency workspace", async () => {
+    render(
+      <App>
+        <LoginPage />
+      </App>
+    );
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: /代运营工作台/ })
+    );
+
+    await waitFor(() => {
+      expect(mockLogin).toHaveBeenCalledWith(
+        "agency_admin@demo.com",
+        "demopass",
+        { tenantSlug: "demo-agency" }
+      );
+    });
+    expect(screen.getByPlaceholderText("例如 demo")).toHaveValue("demo-agency");
+  });
+
+  it("keeps brand demo buttons in the demo workspace", async () => {
+    render(
+      <App>
+        <LoginPage />
+      </App>
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: /品牌管理员/ }));
+
+    await waitFor(() => {
+      expect(mockLogin).toHaveBeenCalledWith("admin@demo.com", "Admin1234", {
+        tenantSlug: "demo",
+      });
+    });
   });
 });
