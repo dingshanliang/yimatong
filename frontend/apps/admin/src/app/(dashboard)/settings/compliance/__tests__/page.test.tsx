@@ -22,6 +22,7 @@ vi.mock("@/lib/api", () => ({
     get: (...args: unknown[]) => mockGet(...args),
     patch: (...args: unknown[]) => mockPatch(...args),
   },
+  registerAuthInterceptorHandlers: vi.fn(),
 }));
 
 describe("CompliancePage privacy policy preview", () => {
