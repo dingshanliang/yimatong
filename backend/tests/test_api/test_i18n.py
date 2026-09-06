@@ -4,6 +4,7 @@ from collections.abc import AsyncGenerator
 
 import pytest
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
@@ -124,3 +125,64 @@ class TestTranslationWorkflow:
         )
         assert resp.status_code == 200
         assert resp.json()["updated"] == 2
+
+
+class TestI18nWriteGuard:
+    """i18n 写路由需要 tenant:manage 权限并写入审计。"""
+
+    @pytest.mark.anyio
+    async def test_write_requires_tenant_manage_permission(self, client: AsyncClient, setup_tenant):
+        tid, _headers = setup_tenant
+        operator_token = create_access_token(tid, "00000000-0000-0000-0000-000000000002", "operator")
+        operator_headers = {"Authorization": f"Bearer {operator_token}"}
+
+        create_resp = await client.post(
+            "/api/v1/i18n/translations",
+            json={"key": "welcome_text", "locale": "zh", "value": "欢迎扫码"},
+            headers=operator_headers,
+        )
+        assert create_resp.status_code == 403
+
+        batch_resp = await client.post(
+            "/api/v1/i18n/translations/batch",
+            json={"translations": [{"key": "k", "locale": "zh", "value": "v"}]},
+            headers=operator_headers,
+        )
+        assert batch_resp.status_code == 403
+
+        # 读取保持任意登录角色可用
+        list_resp = await client.get("/api/v1/i18n/translations", headers=operator_headers)
+        assert list_resp.status_code == 200
+
+    @pytest.mark.anyio
+    async def test_create_and_delete_write_audit_log(self, client: AsyncClient, setup_tenant, db_session):
+        from app.models.audit import PlatformAuditLog
+
+        tid, headers = setup_tenant
+        create_resp = await client.post(
+            "/api/v1/i18n/translations",
+            json={"key": "audit_key", "locale": "zh", "value": "审计"},
+            headers=headers,
+        )
+        assert create_resp.status_code == 201
+        translation_id = create_resp.json()["id"]
+
+        delete_resp = await client.delete(
+            f"/api/v1/i18n/translations/{translation_id}",
+            headers=headers,
+        )
+        assert delete_resp.status_code == 204
+
+        actions = (
+            (
+                await db_session.execute(
+                    select(PlatformAuditLog.action).where(
+                        PlatformAuditLog.target_tenant_id == tid,
+                        PlatformAuditLog.action.in_(["translation_create", "translation_delete"]),
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert set(actions) == {"translation_create", "translation_delete"}

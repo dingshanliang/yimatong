@@ -15,6 +15,7 @@ import {
 import { PlusOutlined } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
 import api from "@/lib/api";
+import { useAuthStore } from "@/lib/auth";
 import { useI18n } from "@/lib/i18n";
 import { STATUS_COLORS } from "@/lib/status-colors";
 
@@ -33,6 +34,9 @@ export default function I18nPage() {
   const [form] = Form.useForm();
   const { message } = App.useApp();
   const { t } = useI18n();
+  // 与后端 require_permission("tenant:manage") 一致：仅管理员可写。
+  const role = useAuthStore((state) => state.user?.role);
+  const canManage = role === "admin";
 
   const fetch = async () => {
     setLoading(true);
@@ -107,14 +111,22 @@ export default function I18nPage() {
           />
         </Space>
         <Space>
-          <Button onClick={handleBatch}>{t("i18n.batch_import")}</Button>
-          <Button
-            type="primary"
-            icon={<PlusOutlined />}
-            onClick={() => setOpen(true)}
-          >
-            {t("i18n.new_translation")}
-          </Button>
+          {canManage ? (
+            <>
+              <Button onClick={handleBatch}>{t("i18n.batch_import")}</Button>
+              <Button
+                type="primary"
+                icon={<PlusOutlined />}
+                onClick={() => setOpen(true)}
+              >
+                {t("i18n.new_translation")}
+              </Button>
+            </>
+          ) : (
+            <span className="text-sm text-text-muted">
+              仅管理员可修改多语言文案
+            </span>
+          )}
         </Space>
       </div>
 
