@@ -198,7 +198,11 @@ class TestE2EScanFlow:
     @pytest.mark.anyio
     async def test_scan_returns_page_content(self, client: AsyncClient, e2e_setup):
         _, _, public_ids = e2e_setup
-        resp = await client.get(f"/c/{public_ids[0]}")
+        # 落地页渲染按微信场景设计；非微信 UA 返回引导页（见 resolver）
+        resp = await client.get(
+            f"/c/{public_ids[0]}",
+            headers={"User-Agent": "Mozilla/5.0 (iPhone) MicroMessenger/8.0"},
+        )
         assert resp.status_code == 200
         assert "E2E品牌" in resp.text
         assert "E2E产品" in resp.text
