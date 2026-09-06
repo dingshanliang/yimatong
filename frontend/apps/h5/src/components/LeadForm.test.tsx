@@ -121,7 +121,9 @@ describe("LeadForm consent authority", () => {
     expect(post.mock.calls[1][1]).not.toHaveProperty("public_id");
     expect(container.textContent).toContain("已提交");
     expect(localStorage.getItem("consumer_id")).toBe(CONSUMER_ID);
-    expect(localStorage.getItem("scan_token")).toBe(scanTokenFor());
+    expect(localStorage.getItem("yimatong:scan-token:code-1")).toBe(
+      scanTokenFor()
+    );
     expect(localStorage.getItem("lead_consent_id:code-1")).toBe(RECEIPT_ID);
     await act(async () => {
       Array.from(container.querySelectorAll("button"))
@@ -189,7 +191,7 @@ describe("LeadForm consent authority", () => {
       expect(container.textContent).not.toContain("提交成功");
       expect(container.textContent).toContain("提交失败");
       expect(localStorage.getItem("consumer_id")).toBeNull();
-      expect(localStorage.getItem("scan_token")).toBeNull();
+      expect(localStorage.getItem("yimatong:scan-token:code-1")).toBeNull();
       expect(localStorage.getItem("lead_consent_id:code-1")).toBeNull();
       await act(async () => root.unmount());
     }

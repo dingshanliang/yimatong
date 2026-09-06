@@ -4,6 +4,7 @@ import { Check } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { apiClient } from "@/lib/api";
 import { loadConsentReceiptStatus } from "@/lib/consentReceiptStatus";
+import { saveScanToken } from "@/lib/scan-token-store";
 
 interface LeadFormProps {
   publicId: string;
@@ -267,7 +268,8 @@ export function LeadForm({
       if (!capturedIdentity) throw new Error("lead receipt unavailable");
       if (typeof window !== "undefined") {
         localStorage.setItem("consumer_id", capturedIdentity.consumerId);
-        localStorage.setItem("scan_token", capturedIdentity.scanToken);
+        // 凭证按码隔离存储（键含 publicId），不再写全局 scan_token。
+        saveScanToken(publicId, capturedIdentity.scanToken);
       }
       authorityToken.current = capturedIdentity.scanToken;
       if (grantedConsentId) {

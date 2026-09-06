@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { apiClient } from "@/lib/api";
+import { saveScanToken } from "@/lib/scan-token-store";
 
 interface CurrentPolicy {
   purpose: string;
@@ -13,12 +14,15 @@ interface CurrentPolicy {
 
 interface MemberJoinCardProps {
   scanToken?: string;
+  /** 当前码 public_id：入会返回的新凭证按码隔离存储。 */
+  publicId?: string;
   onScanTokenChange?: (token: string) => void;
   onMembershipReady?: () => void;
 }
 
 export function MemberJoinCard({
   scanToken,
+  publicId,
   onScanTokenChange,
   onMembershipReady,
 }: MemberJoinCardProps) {
@@ -194,7 +198,10 @@ export function MemberJoinCard({
       if (typeof nextToken !== "string" || typeof nextNumber !== "string") {
         throw new Error("invalid membership receipt");
       }
-      localStorage.setItem("scan_token", nextToken);
+      if (publicId) {
+        // 新凭证按码隔离存储；无 publicId（异常上下文）时只走内存链路。
+        saveScanToken(publicId, nextToken);
+      }
       setMembershipNumber(nextNumber);
       onScanTokenChange?.(nextToken);
       onMembershipReady?.();

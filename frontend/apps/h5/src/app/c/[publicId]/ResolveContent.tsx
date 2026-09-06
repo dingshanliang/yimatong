@@ -280,6 +280,7 @@ export function ResolveContent({
           <>
             <MemberJoinCard
               scanToken={scanToken}
+              publicId={publicId}
               onScanTokenChange={onScanTokenChange}
               onMembershipReady={() =>
                 setMembershipRefreshKey((key) => key + 1)
@@ -938,6 +939,7 @@ function DefaultRender({
         <>
           <MemberJoinCard
             scanToken={scanToken}
+            publicId={publicId}
             onScanTokenChange={onScanTokenChange}
             onMembershipReady={onMembershipReady}
           />

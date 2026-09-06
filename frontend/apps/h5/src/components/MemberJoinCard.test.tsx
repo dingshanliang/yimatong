@@ -68,6 +68,7 @@ describe("MemberJoinCard", () => {
       root.render(
         <MemberJoinCard
           scanToken="anonymous-scan-token"
+          publicId="code-1"
           onScanTokenChange={onScanTokenChange}
           onMembershipReady={onMembershipReady}
         />
@@ -97,7 +98,9 @@ describe("MemberJoinCard", () => {
         idempotency_key: expect.any(String),
       })
     );
-    expect(localStorage.getItem("scan_token")).toBe("member-bound-token");
+    expect(localStorage.getItem("yimatong:scan-token:code-1")).toBe(
+      "member-bound-token"
+    );
     expect(onScanTokenChange).toHaveBeenCalledWith("member-bound-token");
     expect(onMembershipReady).toHaveBeenCalledOnce();
     expect(container.textContent).toContain("MBR-202608200001");

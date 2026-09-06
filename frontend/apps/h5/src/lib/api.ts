@@ -1,4 +1,8 @@
 import axios, { type InternalAxiosRequestConfig } from "axios";
+import {
+  clearActiveScanToken,
+  readActiveScanToken,
+} from "@/lib/scan-token-store";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "";
 const SERVER_API_BASE =
@@ -8,7 +12,7 @@ const SERVER_API_BASE =
 
 declare module "axios" {
   export interface InternalAxiosRequestConfig {
-    /** 标记该请求的 Bearer 由拦截器隐式注入（全局 scan_token） */
+    /** 标记该请求的 Bearer 由拦截器隐式注入（当前码的 scan_token） */
     __implicitScanToken?: boolean;
   }
 }
@@ -25,9 +29,9 @@ const apiClient = axios.create({
 
 apiClient.interceptors.request.use((config) => {
   if (typeof window !== "undefined") {
-    // 优先从 localStorage 读取 scan_token，其次读 access_token；
+    // 隐式凭证按码隔离：只注入当前激活码的 scan_token，其次读 access_token；
     // 调用方已显式携带 Authorization（如回访凭证）时不再覆盖。
-    const scanToken = localStorage.getItem("scan_token");
+    const scanToken = readActiveScanToken();
     const accessToken = localStorage.getItem("access_token");
     const token = scanToken || accessToken;
     if (token && !config.headers.Authorization) {
@@ -46,14 +50,14 @@ apiClient.interceptors.request.use((config) => {
 apiClient.interceptors.response.use(
   (res) => res,
   (error) => {
-    // 401 时清除本地 token。仅当请求实际使用的是隐式注入的全局 scan_token
+    // 401 时清除本地 token。仅当请求实际使用的是隐式注入的 scan_token
     // 时才清除：调用方显式携带的回访凭证等过期，不应误删另一条链路的凭证。
     if (axios.isAxiosError(error) && error.response?.status === 401) {
       const request = error.config as
         | (InternalAxiosRequestConfig & { __implicitScanToken?: boolean })
         | undefined;
       if (typeof window !== "undefined" && request?.__implicitScanToken) {
-        localStorage.removeItem("scan_token");
+        clearActiveScanToken();
       }
     }
     return Promise.reject(error);

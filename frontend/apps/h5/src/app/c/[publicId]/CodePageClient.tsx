@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { API_BASE } from "@/lib/api";
+import { saveScanToken, setScanTokenScope } from "@/lib/scan-token-store";
 import { ResolveContent } from "./ResolveContent";
 
 /** 瞬时失败自动重试一次的退避间隔（可注入以便测试）。 */
@@ -33,6 +34,9 @@ export function CodePageClient({
     const load = async () => {
       try {
         if (!apiBase) throw new Error("Public API URL is not configured");
+        // 隐式凭证按码隔离：先声明当前码作用域（同时清理历史全局键），
+        // 后续组件的隐式请求只会携带本码的 scan_token。
+        setScanTokenScope(publicId);
         const visitorId = localStorage.getItem("visitor_id");
         const response = await fetch(
           `${apiBase}/c/${encodeURIComponent(publicId)}`,
@@ -74,6 +78,9 @@ export function CodePageClient({
         const oauthConsentId = fragment.get("consent_id");
         if (fragment.get("oauth") === "success" && oauthScanToken) {
           data.scan_token = oauthScanToken;
+          // OAuth 回跳签发的新凭证按码持久化：会员中心等依赖隐式注入的
+          // 组件在授权回跳后立即可用，且不会串到其他码。
+          saveScanToken(publicId, oauthScanToken);
           if (oauthConsentId) {
             localStorage.setItem(`consent_id:${publicId}`, oauthConsentId);
           }
