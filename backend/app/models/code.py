@@ -150,6 +150,10 @@ class CodeBatch(Base):
             name="ck_code_batches_expected_item_count_cap",
         ),
         CheckConstraint(
+            "exported_item_count IS NULL OR (exported_item_count BETWEEN 1 AND 10000)",
+            name="ck_code_batches_exported_item_count_cap",
+        ),
+        CheckConstraint(
             "contract_version = 0 OR ("
             "(source = 'generated' AND generation_mode = 'batch_level' AND code_type = 'single' "
             "AND quantity = 1 AND expected_item_count = 1) OR "
@@ -211,6 +215,9 @@ class CodeBatch(Base):
     )
     export_manifest_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True, index=True)
     exported_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Rows actually bound to the export artifact. NULL for batches exported
+    # before exclusion-aware exports; replay falls back to expected_item_count.
+    exported_item_count: Mapped[int | None] = mapped_column(nullable=True)
     printing_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     delivered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     delivery_recipient: Mapped[str | None] = mapped_column(String(255), nullable=True)

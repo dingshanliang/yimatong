@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   get: vi.fn(),
   post: vi.fn(),
   useCrud: vi.fn(),
+  modalConfirm: vi.fn(),
   user: {
     role: "viewer",
     tenant_type: "brand",
@@ -24,7 +25,7 @@ vi.mock("antd", async () => {
       ...actual.App,
       useApp: () => ({
         message: { success: vi.fn(), error: vi.fn(), warning: vi.fn() },
-        modal: { confirm: vi.fn() },
+        modal: { confirm: mocks.modalConfirm },
       }),
     },
   };
@@ -36,6 +37,14 @@ vi.mock("@/lib/api", () => ({
     post: (...args: unknown[]) => mocks.post(...args),
   },
   extractErrorMessage: (_error: unknown, fallback: string) => fallback,
+}));
+
+vi.mock("@/components/ExportReasonDialog", () => ({
+  newExportIdempotencyKey: () => "test-idempotency-key",
+  useExportReasonDialog: () => ({
+    requestReason: () => Promise.resolve("补印原因"),
+    exportReasonDialog: null,
+  }),
 }));
 
 vi.mock("@/lib/hooks", () => ({
@@ -220,6 +229,56 @@ describe("CodesPage access and delivery boundaries", () => {
     expect(
       screen.queryByRole("button", { name: /激活码批次/ })
     ).not.toBeInTheDocument();
+  });
+
+  it("offers excluding voided codes when the batch export is rejected as non-deliverable", async () => {
+    mocks.user.role = "admin";
+    const csvBlob = new Blob(["public_id\nCODE-2\n"], { type: "text/csv" });
+    mocks.post
+      .mockRejectedValueOnce({
+        response: {
+          status: 409,
+          data: new Blob(
+            [JSON.stringify({ error_code: "CODE_BATCH_ITEM_NOT_DELIVERABLE" })],
+            { type: "application/json" }
+          ),
+        },
+      })
+      .mockResolvedValueOnce({
+        data: csvBlob,
+        headers: {
+          "content-disposition": 'attachment; filename="codes-x.csv"',
+          "x-excluded-item-count": "1",
+        },
+      });
+
+    render(<CodesPage />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /导出码表/ }));
+
+    await vi.waitFor(() => expect(mocks.post).toHaveBeenCalledTimes(1));
+    expect(mocks.post).toHaveBeenNthCalledWith(
+      1,
+      "/code-batches/code-batch-1/export",
+      { reason: "补印原因" },
+      expect.objectContaining({ responseType: "blob" })
+    );
+    expect(mocks.modalConfirm).toHaveBeenCalledTimes(1);
+    const confirmOptions = mocks.modalConfirm.mock.calls[0][0] as {
+      title: string;
+      onOk: () => Promise<void>;
+    };
+    expect(confirmOptions.title).toContain("已作废");
+
+    await confirmOptions.onOk();
+
+    await vi.waitFor(() => expect(mocks.post).toHaveBeenCalledTimes(2));
+    expect(mocks.post).toHaveBeenNthCalledWith(
+      2,
+      "/code-batches/code-batch-1/export",
+      { reason: "补印原因", exclude_voided: true },
+      expect.objectContaining({ responseType: "blob" })
+    );
   });
 
   it("imports an exact CSV into an imported-source staging batch", async () => {

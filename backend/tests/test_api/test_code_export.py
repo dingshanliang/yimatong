@@ -337,3 +337,108 @@ class TestCodeExport:
         assert batch.printing_at is not None
         assert batch.delivered_at is not None
         assert batch.delivery_recipient == "华东包装厂"
+
+
+async def _revoke_item(client: AsyncClient, headers: dict[str, str], item_id: str) -> None:
+    resp = await client.post(
+        f"/api/v1/code-items/{item_id}/revoke",
+        json={"reason": "排除式导出测试作废", "confirm": "void"},
+        headers=headers,
+    )
+    assert resp.status_code == 200
+
+
+class TestCodeExportExcludeVoided:
+    @pytest.mark.anyio
+    async def test_first_export_excludes_voided_items_when_requested(
+        self, client: AsyncClient, db_session: AsyncSession, batch_with_codes
+    ):
+        _, headers, batch_id = batch_with_codes
+        batch_uuid = uuid.UUID(batch_id)
+        item = await db_session.scalar(select(CodeItem).where(CodeItem.code_batch_id == batch_uuid).limit(1))
+        await _revoke_item(client, headers, str(item.id))
+
+        resp = await client.post(
+            f"/api/v1/code-batches/{batch_id}/export",
+            json={"reason": "排除作废码补印", "exclude_voided": True},
+            headers={**headers, "Idempotency-Key": str(uuid.uuid4())},
+        )
+
+        assert resp.status_code == 200
+        assert resp.headers["X-Code-Item-Count"] == "4"
+        assert resp.headers["X-Excluded-Item-Count"] == "1"
+        assert item.public_id not in resp.text
+        batch = await db_session.get(CodeBatch, batch_uuid)
+        await db_session.refresh(batch)
+        assert batch.status == CodeBatchStatus.exported
+        assert batch.exported_item_count == 4
+
+    @pytest.mark.anyio
+    async def test_first_export_with_voided_items_still_blocked_without_flag(
+        self, client: AsyncClient, db_session: AsyncSession, batch_with_codes
+    ):
+        _, headers, batch_id = batch_with_codes
+        batch_uuid = uuid.UUID(batch_id)
+        item = await db_session.scalar(select(CodeItem).where(CodeItem.code_batch_id == batch_uuid).limit(1))
+        await _revoke_item(client, headers, str(item.id))
+
+        resp = await _export_code_batch(client, batch_id, headers)
+
+        assert resp.status_code == 409
+        assert resp.json()["error_code"] == "CODE_BATCH_ITEM_NOT_DELIVERABLE"
+        batch = await db_session.get(CodeBatch, batch_uuid)
+        await db_session.refresh(batch)
+        assert batch.status == CodeBatchStatus.completed
+        assert batch.export_manifest_id is None
+
+    @pytest.mark.anyio
+    async def test_replay_export_regenerates_fresh_bytes_excluding_voided_items(
+        self, client: AsyncClient, db_session: AsyncSession, batch_with_codes
+    ):
+        _, headers, batch_id = batch_with_codes
+        batch_uuid = uuid.UUID(batch_id)
+        first = await _export_code_batch(client, batch_id, headers)
+        assert first.status_code == 200
+        batch = await db_session.get(CodeBatch, batch_uuid)
+        manifest_id_before = batch.export_manifest_id
+
+        items = (
+            await db_session.execute(select(CodeItem).where(CodeItem.code_batch_id == batch_uuid).limit(1))
+        ).scalars().all()
+        voided = items[0]
+        await _revoke_item(client, headers, str(voided.id))
+
+        reprint = await client.post(
+            f"/api/v1/code-batches/{batch_id}/export",
+            json={"reason": "作废后补印", "exclude_voided": True},
+            headers={**headers, "Idempotency-Key": str(uuid.uuid4())},
+        )
+        assert reprint.status_code == 200
+        assert reprint.headers["X-Code-Item-Count"] == "4"
+        assert reprint.headers["X-Excluded-Item-Count"] == "1"
+        assert voided.public_id not in reprint.text
+        assert reprint.content != first.content
+        await db_session.refresh(batch)
+        assert batch.export_manifest_id == manifest_id_before
+        assert batch.exported_item_count == 5
+
+        plain_replay = await _export_code_batch(client, batch_id, headers)
+        assert plain_replay.status_code == 200
+        assert plain_replay.content == first.content
+
+    @pytest.mark.anyio
+    async def test_exclusion_export_without_voided_items_replays_original_bytes(
+        self, client: AsyncClient, batch_with_codes
+    ):
+        _, headers, batch_id = batch_with_codes
+        first = await _export_code_batch(client, batch_id, headers)
+
+        replay = await client.post(
+            f"/api/v1/code-batches/{batch_id}/export",
+            json={"reason": "无作废码排除导出", "exclude_voided": True},
+            headers={**headers, "Idempotency-Key": str(uuid.uuid4())},
+        )
+
+        assert replay.status_code == 200
+        assert replay.content == first.content
+        assert replay.headers["X-Excluded-Item-Count"] == "0"

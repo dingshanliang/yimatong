@@ -40,6 +40,9 @@ class CodeCSVArtifact:
     row_count: int
     checksum_sha256: str
     manifest_version: int
+    # Number of voided/expired items excluded from this artifact (0 for full
+    # exports and byte-identical replays).
+    excluded_item_count: int = 0
 
 
 def _artifact_aad(tenant_id: uuid.UUID, batch_id: uuid.UUID, manifest_version: int) -> bytes:
@@ -166,7 +169,13 @@ def spreadsheet_safe(value: object) -> str:
     return text
 
 
-def _validate_item_contract(batch, items: list[CodeItem]) -> None:
+def _validate_item_contract(batch, items: list[CodeItem], *, expected_count: int | None = None) -> None:
+    """Validate the export artifact against the batch's authoritative contract.
+
+    ``expected_count`` narrows the item-count assertions for exclusion-aware
+    exports; batch-level shape checks still use the stored generation contract.
+    """
+    expected = batch.expected_item_count if expected_count is None else expected_count
     if batch.contract_version not in {0, 1} or not 1 <= batch.expected_item_count <= 10_000:
         raise ConflictError("Code batch contract version is invalid", error_code="CODE_BATCH_CONTRACT_INVALID")
     if batch.source == CodeBatchSource.generated:
@@ -191,7 +200,7 @@ def _validate_item_contract(batch, items: list[CodeItem]) -> None:
         shape_is_valid = False
     if not shape_is_valid:
         raise ConflictError("Code batch generation shape is invalid", error_code="CODE_BATCH_CONTRACT_INVALID")
-    if len(items) != batch.expected_item_count:
+    if len(items) != expected:
         raise ConflictError(
             "Code batch item count does not match its authoritative contract",
             error_code="CODE_BATCH_ITEM_COUNT_MISMATCH",
@@ -224,13 +233,31 @@ def _validate_item_contract(batch, items: list[CodeItem]) -> None:
     pairs: dict[uuid.UUID | None, Counter] = defaultdict(Counter)
     for item in items:
         pairs[item.pair_id][item.code_type] += 1
-    if None in pairs or len(pairs) * 2 != batch.expected_item_count:
+    if None in pairs or len(pairs) * 2 != expected:
         raise ConflictError("Paired-code batch is incomplete", error_code="CODE_BATCH_PAIR_MISMATCH")
     if any(counts != Counter({CodeType.outer: 1, CodeType.inner: 1}) for counts in pairs.values()):
         raise ConflictError("Paired-code batch is incomplete", error_code="CODE_BATCH_PAIR_MISMATCH")
 
 
-def _build_code_csv(batch, items: list[CodeItem]) -> CodeCSVArtifact:
+def _partition_deliverable_items(items: list[CodeItem]) -> tuple[list[CodeItem], list[CodeItem]]:
+    """Split items into the exportable subset and everything excluded.
+
+    Excluded covers voided/expired items plus, for paired batches, the intact
+    partner of any excluded item — a pair cannot be printed half.
+    """
+    voided_ids = {item.id for item in items if item.status not in _DELIVERABLE_ITEM_STATES}
+    if not voided_ids:
+        return items, []
+    excluded_ids = set(voided_ids)
+    for item in items:
+        if item.pair_id is not None and item.id not in excluded_ids and item.pair_id in voided_ids:
+            excluded_ids.add(item.id)
+    deliverable = [item for item in items if item.id not in excluded_ids]
+    excluded = [item for item in items if item.id in excluded_ids]
+    return deliverable, excluded
+
+
+def _build_code_csv(batch, items: list[CodeItem], *, excluded_item_count: int = 0) -> CodeCSVArtifact:
     production_batch = batch.production_batch
     fieldnames = [
         "public_id",
@@ -280,6 +307,7 @@ def _build_code_csv(batch, items: list[CodeItem]) -> CodeCSVArtifact:
         row_count=len(items),
         checksum_sha256=hashlib.sha256(content).hexdigest(),
         manifest_version=CODE_CSV_MANIFEST_VERSION,
+        excluded_item_count=excluded_item_count,
     )
 
 
@@ -291,6 +319,7 @@ async def _generate_code_csv(
     *,
     auth_session_id: uuid.UUID | None = None,
     reason: str | None = None,
+    exclude_voided: bool = False,
     seed_owner_session_factory: async_sessionmaker[AsyncSession] | None = None,
 ) -> CodeCSVArtifact:
     """Generate or replay complete deterministic bytes under one transaction."""
@@ -305,13 +334,46 @@ async def _generate_code_csv(
     if batch.status in _REPLAYABLE_EXPORT_STATES:
         if batch.export_manifest_id is None:
             raise ConflictError("Export manifest is unavailable", error_code="CODE_BATCH_EXPORT_MANIFEST_MISSING")
-        return await _load_persisted_artifact(
-            db,
-            tenant_id=tenant_id,
-            batch_id=batch_id,
-            manifest_id=batch.export_manifest_id,
-            expected_item_count=batch.expected_item_count,
+        bound_expected = batch.exported_item_count or batch.expected_item_count
+        if not exclude_voided:
+            return await _load_persisted_artifact(
+                db,
+                tenant_id=tenant_id,
+                batch_id=batch_id,
+                manifest_id=batch.export_manifest_id,
+                expected_item_count=bound_expected,
+            )
+        # 排除式重导出（补印）：以当前存活可交付码为子集生成全新字节，
+        # 不改写批次已绑定的首个权威工件；审计由端点的 code_csv_download
+        # 记录（scope_snapshot 标注排除数量）。作废码为 0 时字节与原工件
+        # 一致，直接复用重放。
+        live_items = list(
+            await db.scalars(
+                select(CodeItem)
+                .where(CodeItem.tenant_id == tenant_id, CodeItem.code_batch_id == batch_id)
+                .order_by(CodeItem.public_id.asc())
+            )
         )
+        export_items, excluded = _partition_deliverable_items(live_items)
+        if not excluded:
+            return await _load_persisted_artifact(
+                db,
+                tenant_id=tenant_id,
+                batch_id=batch_id,
+                manifest_id=batch.export_manifest_id,
+                expected_item_count=bound_expected,
+            )
+        if not export_items:
+            raise ConflictError(
+                "Code batch has no deliverable code items left",
+                error_code="CODE_BATCH_ITEM_NOT_DELIVERABLE",
+            )
+        _validate_item_contract(
+            batch,
+            export_items,
+            expected_count=batch.expected_item_count - len(excluded),
+        )
+        return _build_code_csv(batch, export_items, excluded_item_count=len(excluded))
 
     items = list(
         await db.scalars(
@@ -320,8 +382,23 @@ async def _generate_code_csv(
             .order_by(CodeItem.public_id.asc())
         )
     )
-    _validate_item_contract(batch, items)
-    artifact = _build_code_csv(batch, items)
+    export_items, excluded = _partition_deliverable_items(items)
+    if excluded and not exclude_voided:
+        raise ConflictError(
+            "Code batch contains non-deliverable code items",
+            error_code="CODE_BATCH_ITEM_NOT_DELIVERABLE",
+        )
+    if excluded and not export_items:
+        raise ConflictError(
+            "Code batch has no deliverable code items left",
+            error_code="CODE_BATCH_ITEM_NOT_DELIVERABLE",
+        )
+    _validate_item_contract(
+        batch,
+        export_items,
+        expected_count=batch.expected_item_count - len(excluded),
+    )
+    artifact = _build_code_csv(batch, export_items, excluded_item_count=len(excluded))
     if len(artifact.content) > CODE_CSV_MAX_ARTIFACT_BYTES:
         raise ConflictError("Export artifact exceeds the size limit", error_code="CODE_BATCH_EXPORT_TOO_LARGE")
     ciphertext, nonce, key_id = encrypt_bytes(
@@ -341,6 +418,7 @@ async def _generate_code_csv(
                 scope_snapshot={
                     "code_batch_id": str(batch_id),
                     "expected_item_count": batch.expected_item_count,
+                    "excluded_item_count": len(excluded),
                     "manifest_version": artifact.manifest_version,
                     "sort": ["public_id", "asc"],
                 },
@@ -418,6 +496,7 @@ async def _generate_code_csv(
         manifest_id = legacy_manifest.id
     batch.export_manifest_id = manifest_id
     batch.exported_at = utcnow()
+    batch.exported_item_count = artifact.row_count
     batch.contract_version = 1
     batch.status = CodeBatchStatus.exported
     await db.flush()
@@ -431,6 +510,7 @@ async def generate_authorized_code_csv(
     *,
     auth_session_id: uuid.UUID,
     reason: str,
+    exclude_voided: bool = False,
 ) -> CodeCSVArtifact:
     """Prepare an HTTP export through durable session authority."""
 
@@ -440,6 +520,7 @@ async def generate_authorized_code_csv(
         batch_id,
         auth_session_id=auth_session_id,
         reason=reason,
+        exclude_voided=exclude_voided,
     )
 
 

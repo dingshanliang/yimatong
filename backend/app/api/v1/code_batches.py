@@ -275,6 +275,7 @@ async def export_code_batch_endpoint(
             batch_id,
             auth_session_id=auth_session_id,
             reason=body.reason,
+            exclude_voided=body.exclude_voided,
         )
         checksum = hashlib.sha256(artifact.content).hexdigest()
         # 同批次同字节的导出只审计一次：service 层可能已记录 code_csv（PG 授权链/
@@ -308,6 +309,8 @@ async def export_code_batch_endpoint(
                 reason=body.reason,
                 scope_snapshot={
                     "code_batch_id": str(batch_id),
+                    "exclude_voided": body.exclude_voided,
+                    "excluded_item_count": artifact.excluded_item_count,
                     "manifest_version": artifact.manifest_version,
                     "artifact_checksum_sha256": artifact.checksum_sha256,
                 },
@@ -332,6 +335,7 @@ async def export_code_batch_endpoint(
             "Content-Disposition": f"attachment; filename=codes-{batch_id}.csv",
             "X-Code-Manifest-Version": str(artifact.manifest_version),
             "X-Code-Item-Count": str(artifact.row_count),
+            "X-Excluded-Item-Count": str(artifact.excluded_item_count),
             "X-Content-SHA256": prepared.checksum_sha256,
             "X-Export-Id": str(prepared.export_id),
             "Content-Length": str(prepared.file_size_bytes),

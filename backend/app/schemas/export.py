@@ -49,7 +49,8 @@ class RiskExportRequest(ExportReasonRequest):
 
 
 class CodeBatchExportRequest(ExportReasonRequest):
-    pass
+    # 排除已作废/过期码后导出（补印场景）；默认 False 保持全量契约。
+    exclude_voided: bool = False
 
 
 class TakeoverErrorExportRequest(ExportReasonRequest):

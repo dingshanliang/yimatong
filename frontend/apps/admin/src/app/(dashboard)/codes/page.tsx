@@ -179,6 +179,22 @@ function getDownloadFilename(
   return filenameMatch?.[1] || fallback;
 }
 
+async function readErrorCode(error: unknown): Promise<string | null> {
+  const data = (error as { response?: { data?: unknown } })?.response?.data;
+  if (data instanceof Blob) {
+    try {
+      const parsed = JSON.parse(await data.text()) as { error_code?: string };
+      return parsed.error_code ?? null;
+    } catch {
+      return null;
+    }
+  }
+  if (data && typeof data === "object" && "error_code" in data) {
+    return String((data as { error_code?: unknown }).error_code);
+  }
+  return null;
+}
+
 function getProductDisplay(record: CodeBatch) {
   return record.product_name || "未获取到产品名称";
 }
@@ -454,39 +470,76 @@ function CodesCatalog({ access }: { access: CodeAccess }) {
     }
   };
 
+  const performExport = async (
+    record: CodeBatch,
+    reason: string,
+    excludeVoided: boolean
+  ) => {
+    const response = await api.post<Blob>(
+      `/code-batches/${record.id}/export`,
+      excludeVoided ? { reason, exclude_voided: true } : { reason },
+      {
+        headers: { "Idempotency-Key": newExportIdempotencyKey() },
+        responseType: "blob",
+      }
+    );
+    const blob = response.data;
+    if (!blob || blob.size === 0) {
+      message.warning("当前码批次暂无可导出的码，请检查生成状态");
+      return;
+    }
+
+    const url = window.URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = getDownloadFilename(
+      response.headers["content-disposition"],
+      `codes-${record.id}.csv`
+    );
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.URL.revokeObjectURL(url);
+    const excludedCount = Number(
+      response.headers["x-excluded-item-count"] ?? "0"
+    );
+    message.success(
+      excludedCount > 0
+        ? `已排除 ${excludedCount} 个作废/过期码，有效码表导出成功（已记入导出审计）`
+        : "码表已导出，可用于打印二维码或交付印刷"
+    );
+  };
+
   const handleExport = async (record: CodeBatch) => {
     if (planReadOnly || !access.canExport) return;
     const reason = await requestReason();
     if (!reason) return;
     setExportingId(record.id);
     try {
-      const response = await api.post<Blob>(
-        `/code-batches/${record.id}/export`,
-        { reason },
-        {
-          headers: { "Idempotency-Key": newExportIdempotencyKey() },
-          responseType: "blob",
-        }
-      );
-      const blob = response.data;
-      if (!blob || blob.size === 0) {
-        message.warning("当前码批次暂无可导出的码，请检查生成状态");
+      await performExport(record, reason, false);
+    } catch (error) {
+      if ((await readErrorCode(error)) === "CODE_BATCH_ITEM_NOT_DELIVERABLE") {
+        modal.confirm({
+          title: "批次内存在已作废或已过期的码",
+          content:
+            "整批导出会被拒绝。可排除这些码，仅导出剩余有效码用于补印；排除数量会记入导出审计。",
+          okText: "排除后导出有效码",
+          cancelText: "取消",
+          onOk: async () => {
+            try {
+              await performExport(record, reason, true);
+            } catch (retryError) {
+              message.error(
+                extractErrorMessage(
+                  retryError,
+                  "导出失败，请确认码批次状态和账号权限"
+                )
+              );
+            }
+          },
+        });
         return;
       }
-
-      const url = window.URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.href = url;
-      link.download = getDownloadFilename(
-        response.headers["content-disposition"],
-        `codes-${record.id}.csv`
-      );
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      window.URL.revokeObjectURL(url);
-      message.success("码表已导出，可用于打印二维码或交付印刷");
-    } catch (error) {
       message.error(
         extractErrorMessage(error, "导出失败，请确认码批次状态和账号权限")
       );
