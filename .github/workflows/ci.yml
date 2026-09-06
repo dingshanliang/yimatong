@@ -70,8 +70,15 @@ jobs:
       - name: App lint
         run: pnpm lint
 
-      - name: Admin tests
-        run: pnpm test:admin
+      - name: Admin tests (shard 1/2)
+        run: pnpm --filter @yimatong/admin exec vitest run --shard=1/2
+        env:
+          CI: "true"
+
+      - name: Admin tests (shard 2/2)
+        run: pnpm --filter @yimatong/admin exec vitest run --shard=2/2
+        env:
+          CI: "true"
 
       - name: Build workspace
         run: pnpm build
