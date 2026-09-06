@@ -2,7 +2,7 @@
 
 import hashlib
 import uuid
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 
 from sqlalchemy import and_, func, select, text
 from sqlalchemy.exc import DBAPIError
@@ -741,14 +741,19 @@ async def list_attributions(
 async def aggregate_daily_stats(
     db: AsyncSession,
     tenant_id: uuid.UUID,
-    target_date: datetime | None = None,
+    target_date: datetime | date | None = None,
 ) -> int:
-    """聚合并 upsert 日统计（供定时任务调用）"""
-    from app.utils import utcnow
+    """聚合并 upsert 日统计（供定时任务调用；日界按 Asia/Shanghai 统计时区）"""
+    from app.utils.stats_clock import STATS_TIMEZONE, stats_day_bounds_utc, stats_today
 
-    date = target_date or utcnow()
-    day_start = date.replace(hour=0, minute=0, second=0, microsecond=0)
-    day_end = day_start + timedelta(days=1)
+    if target_date is None:
+        target_day = stats_today()
+    elif isinstance(target_date, datetime):
+        aware = target_date if target_date.tzinfo is not None else target_date.replace(tzinfo=STATS_TIMEZONE)
+        target_day = aware.astimezone(STATS_TIMEZONE).date()
+    else:
+        target_day = target_date
+    day_start, day_end = stats_day_bounds_utc(target_day)
 
     # 扫码统计
     scan_count = (

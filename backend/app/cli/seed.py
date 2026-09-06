@@ -751,8 +751,10 @@ async def _ensure_scan_events(db: AsyncSession, tenant_id: uuid.UUID, activated_
                 )
         db.add_all(events)
         await db.flush()
+    from app.utils.stats_clock import stats_today
+
     for offset in range(7):
-        await aggregate_daily_stats(db, tenant_id, (now - timedelta(days=offset)).date())
+        await aggregate_daily_stats(db, tenant_id, stats_today() - timedelta(days=offset))
 
 
 def _channel_seed_idem(tenant_id: uuid.UUID, action: str, natural_key: str) -> str:

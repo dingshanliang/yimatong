@@ -1,7 +1,6 @@
 """渠道分析服务：按渠道维度聚合扫码数据、健康评分、转化率对比"""
 
 import uuid
-from datetime import UTC, date, datetime, timedelta
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -10,6 +9,7 @@ from app.models.channel import CodeAllocation, Distributor, Region, Store
 from app.models.code import CodeBatch, CodeItem
 from app.models.product import SKU, Product, ProductionBatch  # noqa: F401 - register CodeBatch relationships
 from app.models.scan import ScanEvent
+from app.utils.stats_clock import stats_cutoff_utc
 
 # ── 维度配置 ────────────────────────────────────────
 
@@ -51,7 +51,7 @@ async def get_scan_by_channel(
         return [], 0
 
     cfg = _DIMENSION_CONFIG[dimension]
-    cutoff = datetime.combine(date.today() - timedelta(days=days_back), datetime.min.time(), tzinfo=UTC)
+    cutoff = stats_cutoff_utc(days_back)
     id_field = cfg["id_field"]
     group_col = cfg["group_col"]()
 

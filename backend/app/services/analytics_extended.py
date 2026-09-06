@@ -10,6 +10,7 @@ from app.models.campaign import BenefitClaim
 from app.models.product import SKU, Product, ProductionBatch  # noqa: F401 - register CodeBatch relationships
 from app.models.scan import ScanEvent
 from app.models.tenant import Tenant
+from app.utils.stats_clock import stats_cutoff_utc, stats_day_bounds_utc, stats_today
 
 
 def _as_date(value: date | datetime | str | None) -> date | None:
@@ -285,7 +286,7 @@ async def get_alerts(
 ) -> dict:
     """获取状态提醒：码余量、活动异常、套餐到期"""
     alerts: list[dict] = []
-    today = date.today()
+    today = stats_today()
 
     # 1. 码余量预警
     from app.models.code import CodeItem, CodeItemStatus
@@ -377,8 +378,7 @@ async def get_campaign_ranking(
     """Rank confirmed campaign results without an untrusted scan denominator."""
     from app.models.campaign import Campaign
 
-    today = date.today()
-    start_dt = datetime(today.year, today.month, today.day, tzinfo=UTC) - timedelta(days=days_back)
+    start_dt = stats_cutoff_utc(days_back)
 
     campaigns_result = await db.execute(select(Campaign).where(Campaign.tenant_id == tenant_id))
     campaigns = campaigns_result.scalars().all()
@@ -419,10 +419,10 @@ async def get_recent_events(
 ) -> dict:
     """获取最近业务事件时间线"""
     events: list[dict] = []
-    today = date.today()
+    today = stats_today()
     yesterday = today - timedelta(days=1)
-    yesterday_dt = datetime(yesterday.year, yesterday.month, yesterday.day, tzinfo=UTC)
-    today_dt = datetime(today.year, today.month, today.day, tzinfo=UTC)
+    yesterday_dt = stats_day_bounds_utc(yesterday)[0]
+    today_dt = stats_day_bounds_utc(today)[0]
 
     # 1. 昨日扫码变化
     from app.models.analytics import DailyScanStats

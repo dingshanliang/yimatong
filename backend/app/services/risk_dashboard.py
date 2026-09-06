@@ -3,7 +3,6 @@
 import csv
 import io
 import uuid
-from datetime import UTC, date, datetime, timedelta
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -13,6 +12,7 @@ from app.models.diversion_evidence import DiversionEvidence
 from app.models.diversion_history import DiversionInvestigationHistory
 from app.models.risk import RiskAlert
 from app.models.scan import ScanEvent
+from app.utils.stats_clock import stats_cutoff_utc
 
 # 导出行数上限，与分析看板导出一致，避免无界查询耗尽 worker 内存。
 _EXPORT_ROW_LIMIT = 50_000
@@ -27,7 +27,7 @@ async def get_repeat_scan_stats(
     days_back: int = 30,
 ) -> tuple[list[dict], int]:
     """按码统计重复扫码次数"""
-    cutoff = datetime.combine(date.today() - timedelta(days=days_back), datetime.min.time(), tzinfo=UTC)
+    cutoff = stats_cutoff_utc(days_back)
     subq = (
         select(
             ScanEvent.public_id,
@@ -125,7 +125,7 @@ async def get_cross_region_trend(
     days_back: int = 30,
 ) -> list[dict]:
     """跨区扫码趋势（按天统计）"""
-    cutoff = datetime.combine(date.today() - timedelta(days=days_back), datetime.min.time(), tzinfo=UTC)
+    cutoff = stats_cutoff_utc(days_back)
 
     # UUID v7 前 48 位是毫秒时间戳，用 PostgreSQL 函数提取日期
     from sqlalchemy import Date as SqlDate

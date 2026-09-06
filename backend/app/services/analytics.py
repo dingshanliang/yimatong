@@ -1,11 +1,11 @@
 """统计服务层
 
-统计日切统一 UTC：所有默认日期（today）使用 datetime.now(UTC).date()，
-与 aggregate_daily_stats 的 UTC 日切聚合口径保持一致。
+统计日切统一 Asia/Shanghai（见 app/utils/stats_clock.py）：所有默认日期
+（today）与日界都取统计时区，与 aggregate_daily_stats 的聚合口径保持一致。
 """
 
 import uuid
-from datetime import UTC, date, datetime, timedelta
+from datetime import date, timedelta
 
 from sqlalchemy import Integer, and_, case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -14,6 +14,12 @@ from app.models.analytics import DailyScanStats
 from app.models.campaign import BenefitClaim
 from app.models.code import CodeItem
 from app.models.scan import ScanEvent
+from app.utils.stats_clock import (
+    STATS_TZ_NAME,
+    stats_cutoff_utc,
+    stats_day_bounds_utc,
+    stats_today,
+)
 
 
 async def get_scan_stats(
@@ -23,11 +29,11 @@ async def get_scan_stats(
     end_date: date | None = None,
 ) -> list[dict]:
     """获取扫码统计"""
-    # 统计日切统一 UTC
+    # 统计日切统一 Asia/Shanghai
     if not start_date:
-        start_date = datetime.now(UTC).date() - timedelta(days=7)
+        start_date = stats_today() - timedelta(days=7)
     if not end_date:
-        end_date = datetime.now(UTC).date()
+        end_date = stats_today()
 
     result = await db.execute(
         select(DailyScanStats)
@@ -83,9 +89,8 @@ async def get_dashboard(
     days_back: int = 30,
 ) -> dict:
     """获取看板数据"""
-    today = datetime.now(UTC).date()
+    today = stats_today()
     current_week_start = today - timedelta(days=6)
-    cutoff = today - timedelta(days=days_back)
 
     # 今日统计
     today_result = await db.execute(
@@ -111,7 +116,7 @@ async def get_dashboard(
     trend = await get_scan_stats(db, tenant_id, current_week_start, today)
 
     # 环境占比（从 scan_events 查询，限制日期范围避免全表扫描）
-    cutoff_dt = datetime(cutoff.year, cutoff.month, cutoff.day, tzinfo=UTC)
+    cutoff_dt = stats_cutoff_utc(days_back, today=today)
     env_result = await db.execute(
         select(ScanEvent.environment, func.count())
         .where(ScanEvent.tenant_id == tenant_id, ScanEvent.scan_time >= cutoff_dt)
@@ -206,11 +211,8 @@ async def aggregate_daily_stats(
     tenant_id: uuid.UUID,
     target_date: date,
 ) -> dict:
-    """聚合同一天的扫码事件到汇总表"""
-    from datetime import UTC, datetime
-
-    start = datetime(target_date.year, target_date.month, target_date.day, tzinfo=UTC)
-    end = start + timedelta(days=1)
+    """聚合同一天的扫码事件到汇总表（日界按 Asia/Shanghai 统计时区）"""
+    start, end = stats_day_bounds_utc(target_date)
 
     result = await db.execute(
         select(
@@ -293,17 +295,18 @@ async def get_campaign_scan_stats(
 ) -> list[dict]:
     """获取活动维度的扫码统计
 
-    通过 Campaign.product_id → CodeBatch.product_id → CodeItem → ScanEvent 关联
+    通过 Campaign.product_id → CodeBatch.product_id → CodeItem → ScanEvent 关联。
+    日界按 Asia/Shanghai 统计时区：PG 用 timezone() 把 timestamptz 转到
+    统计时区再按自然日分组。
     """
-    from datetime import UTC, datetime
-
+    from app.core.database import _session_uses_postgresql
     from app.models.code import CodeBatch
 
-    # 统计日切统一 UTC
+    # 统计日切统一 Asia/Shanghai
     if not start_date:
-        start_date = datetime.now(UTC).date() - timedelta(days=30)
+        start_date = stats_today() - timedelta(days=30)
     if not end_date:
-        end_date = datetime.now(UTC).date()
+        end_date = stats_today()
 
     # 找到匹配的码批次
     batch_stmt = select(CodeBatch.id).where(CodeBatch.tenant_id == tenant_id)
@@ -339,13 +342,19 @@ async def get_campaign_scan_stats(
     if not public_ids:
         return []
 
-    # 按日期分组统计 scan_events
-    start_dt = datetime(start_date.year, start_date.month, start_date.day, tzinfo=UTC)
-    end_dt = datetime(end_date.year, end_date.month, end_date.day, tzinfo=UTC) + timedelta(days=1)
+    # 按日期分组统计 scan_events（日界取统计时区，SQL 比较用 UTC 规范化）
+    start_dt, _ = stats_day_bounds_utc(start_date)
+    _, end_dt = stats_day_bounds_utc(end_date)
+
+    day_expr = (
+        func.date_trunc("day", func.timezone(STATS_TZ_NAME, ScanEvent.scan_time))
+        if _session_uses_postgresql(db)
+        else ScanEvent.scan_time
+    )
 
     result = await db.execute(
         select(
-            func.date_trunc("day", ScanEvent.scan_time).label("day"),
+            day_expr.label("day"),
             func.count().label("total_scans"),
             func.count(ScanEvent.public_id.distinct()).label("uv"),
             func.sum(ScanEvent.is_first_scan.cast(Integer)).label("first_scans"),

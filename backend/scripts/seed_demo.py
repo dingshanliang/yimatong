@@ -2266,8 +2266,10 @@ async def _ensure_page_templates(
 async def _aggregate_stats(db: AsyncSession, tenant_id: uuid.UUID) -> int:
     """批量聚合 60 天的 DailyScanStats"""
     days_done = 0
+    from app.utils.stats_clock import stats_today
+
     for offset in range(TOTAL_DAYS):
-        target_date = date.today() - timedelta(days=offset)
+        target_date = stats_today() - timedelta(days=offset)
         await aggregate_daily_stats(db, tenant_id, target_date)
         days_done += 1
         # 每 10 天 flush 一次，避免事务过大

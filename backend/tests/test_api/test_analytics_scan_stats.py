@@ -5,6 +5,7 @@ from datetime import date
 
 import pytest
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
@@ -98,3 +99,52 @@ class TestScanStatsAPI:
             headers=headers,
         )
         assert resp.status_code == 200
+
+
+class TestStatsClockDayBoundary:
+    """统计日切 Asia/Shanghai：UTC 16:00 后的事件属于统计时区的次日。"""
+
+    @pytest.mark.asyncio
+    async def test_aggregate_buckets_by_shanghai_day(self, db_session: AsyncSession):
+        import uuid
+        from datetime import UTC, datetime
+
+        from app.models.scan import ScanEvent
+        from app.services.analytics import aggregate_daily_stats
+
+        tid = uuid.uuid4()
+        # 2026-09-05 17:00 UTC = 2026-09-06 01:00（上海）→ 统计日 2026-09-06
+        boundary_event = ScanEvent(
+            tenant_id=tid,
+            public_id="TZ-BOUNDARY-1",
+            scan_time=datetime(2026, 9, 5, 17, 0, tzinfo=UTC),
+            is_first_scan=True,
+            environment="wechat",
+        )
+        # 2026-09-05 15:00 UTC = 2026-09-05 23:00（上海）→ 统计日 2026-09-05
+        same_day_event = ScanEvent(
+            tenant_id=tid,
+            public_id="TZ-SAMEDAY-1",
+            scan_time=datetime(2026, 9, 5, 15, 0, tzinfo=UTC),
+            is_first_scan=True,
+            environment="wechat",
+        )
+        db_session.add_all([boundary_event, same_day_event])
+        await db_session.commit()
+
+        await aggregate_daily_stats(db_session, tid, date(2026, 9, 5))
+        await aggregate_daily_stats(db_session, tid, date(2026, 9, 6))
+        await db_session.commit()
+
+        rows = {
+            row.date: row.total_scans
+            for row in (
+                await db_session.execute(
+                    select(DailyScanStats).where(DailyScanStats.tenant_id == tid)
+                )
+            )
+            .scalars()
+            .all()
+        }
+        assert rows[date(2026, 9, 5)] == 1
+        assert rows[date(2026, 9, 6)] == 1
