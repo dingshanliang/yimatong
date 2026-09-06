@@ -852,3 +852,177 @@ describe("BenefitClaimCard delivery state", () => {
     await act(async () => root.unmount());
   });
 });
+
+describe("BenefitClaimCard wechat oauth auto-resume", () => {
+  let container: HTMLDivElement;
+
+  function makeSessionStorage() {
+    const storage = new Map<string, string>();
+    return {
+      getItem: (key: string) => storage.get(key) ?? null,
+      setItem: (key: string, value: string) => storage.set(key, String(value)),
+      removeItem: (key: string) => storage.delete(key),
+      clear: () => storage.clear(),
+      _map: storage,
+    };
+  }
+  let sessionStorageMock: ReturnType<typeof makeSessionStorage>;
+
+  beforeEach(() => {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    post.mockReset();
+    push.mockReset();
+    sessionStorageMock = makeSessionStorage();
+    vi.stubGlobal("sessionStorage", sessionStorageMock);
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    container.remove();
+  });
+
+  it("auto-resumes the pending claim once after the oauth redirect injects a fresh token", async () => {
+    sessionStorageMock.setItem(
+      "yimatong:claim-resume:pub-1",
+      JSON.stringify({ benefit_id: "benefit-1", saved_at: Date.now() })
+    );
+    post.mockResolvedValue({
+      data: {
+        status: "claimed",
+        benefit_id: "benefit-1",
+        claim_id: "claim-resumed",
+      },
+    });
+    const onClaimed = vi.fn();
+    const root = createRoot(container);
+    await act(async () => {
+      root.render(
+        <BenefitClaimCard
+          benefitId="benefit-1"
+          benefitType="platform_coupon"
+          title="优惠券"
+          scanToken="fresh-scan-token"
+          publicId="pub-1"
+          onClaimed={onClaimed}
+        />
+      );
+    });
+
+    expect(post).toHaveBeenCalledTimes(1);
+    expect(post).toHaveBeenCalledWith(
+      "/benefit-claims",
+      { benefit_id: "benefit-1" },
+      {
+        signal: expect.any(AbortSignal),
+        headers: { Authorization: "Bearer fresh-scan-token" },
+      }
+    );
+    // 意图用后即焚：再次渲染（普通刷新语义）不再自动领取
+    expect(
+      sessionStorageMock.getItem("yimatong:claim-resume:pub-1")
+    ).toBeNull();
+    expect(onClaimed).toHaveBeenCalledTimes(1);
+    await act(async () => root.unmount());
+  });
+
+  it("does not auto-resume for another benefit or without a saved intent", async () => {
+    sessionStorageMock.setItem(
+      "yimatong:claim-resume:pub-1",
+      JSON.stringify({ benefit_id: "benefit-other", saved_at: Date.now() })
+    );
+    const root = createRoot(container);
+    await act(async () => {
+      root.render(
+        <BenefitClaimCard
+          benefitId="benefit-1"
+          benefitType="platform_coupon"
+          title="优惠券"
+          scanToken="fresh-scan-token"
+          publicId="pub-1"
+        />
+      );
+    });
+
+    expect(post).not.toHaveBeenCalled();
+    // 不匹配的意图同样被消费，避免后续渲染误触发
+    expect(
+      sessionStorageMock.getItem("yimatong:claim-resume:pub-1")
+    ).toBeNull();
+    await act(async () => root.unmount());
+  });
+
+  it("does not auto-resume without a scan token", async () => {
+    sessionStorageMock.setItem(
+      "yimatong:claim-resume:pub-1",
+      JSON.stringify({ benefit_id: "benefit-1", saved_at: Date.now() })
+    );
+    const root = createRoot(container);
+    await act(async () => {
+      root.render(
+        <BenefitClaimCard
+          benefitId="benefit-1"
+          benefitType="platform_coupon"
+          title="优惠券"
+          publicId="pub-1"
+        />
+      );
+    });
+
+    expect(post).not.toHaveBeenCalled();
+    await act(async () => root.unmount());
+  });
+
+  it("saves the resume intent before leaving for wechat oauth", async () => {
+    const authUrl =
+      "https://open.weixin.qq.com/connect/oauth2/authorize?appid=test#wechat_redirect";
+    post
+      .mockResolvedValueOnce({
+        data: {
+          status: "require_wechat_auth",
+          benefit_id: "benefit-1",
+          auth_url_path: "/wechat/auth-url",
+        },
+      })
+      .mockResolvedValueOnce({ data: { auth_url: authUrl } });
+    const root = createRoot(container);
+    await act(async () => {
+      root.render(
+        <BenefitClaimCard
+          benefitId="benefit-1"
+          benefitType="cash_red_packet"
+          title="现金红包"
+          scanToken="scan-token"
+          publicId="pub-1"
+        />
+      );
+    });
+    await act(async () =>
+      container
+        .querySelector<HTMLInputElement>('input[type="checkbox"]')
+        ?.click()
+    );
+    const originalWindow = globalThis.window;
+    const redirectedLocation = { href: "" };
+    vi.stubGlobal("window", {
+      location: redirectedLocation,
+      sessionStorage: sessionStorageMock,
+    });
+    await act(async () =>
+      container.querySelector<HTMLButtonElement>("button")?.click()
+    );
+
+    expect(redirectedLocation.href).toBe(authUrl);
+    const saved = sessionStorageMock.getItem("yimatong:claim-resume:pub-1");
+    expect(saved).not.toBeNull();
+    const intent = JSON.parse(saved ?? "{}") as {
+      benefit_id?: string;
+      saved_at?: number;
+    };
+    expect(intent.benefit_id).toBe("benefit-1");
+    expect(typeof intent.saved_at).toBe("number");
+    vi.stubGlobal("window", originalWindow);
+    await act(async () => root.unmount());
+  });
+});

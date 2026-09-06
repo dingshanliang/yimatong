@@ -7,6 +7,10 @@ import {
   saveClaimRevisitCredential,
   saveLatestClaimRef,
 } from "@/lib/claim-revisit";
+import {
+  consumeClaimResumeIntent,
+  saveClaimResumeIntent,
+} from "@/lib/claim-resume";
 
 /** 权益类型 */
 type BenefitType =
@@ -360,6 +364,9 @@ export function BenefitClaimCard({
           const authData = authRes.data as { auth_url?: unknown };
           const authUrl = safeWechatAuthUrl(authData.auth_url);
           if (authUrl) {
+            // 记录待领意图：授权回跳后凭新 scan_token 自动续领，
+            // 用户不必再点一次（intent 存 sessionStorage，用后即焚）。
+            if (publicId) saveClaimResumeIntent(publicId, benefitId);
             window.location.href = authUrl;
             return;
           }
@@ -497,6 +504,20 @@ export function BenefitClaimCard({
     isCurrentRequest,
     handlePendingReceipt,
   ]);
+
+  // 微信授权回跳后的自动续领：只有明确保存过待领意图（点过领取 → 跳授权
+  // → 回跳）才触发，意图读取即焚并带 TTL，普通刷新/回退不会重复领取。
+  const handleClaimRef = useRef(handleClaim);
+  useEffect(() => {
+    handleClaimRef.current = handleClaim;
+  }, [handleClaim]);
+  useEffect(() => {
+    if (!publicId || !scanToken) return;
+    if (!consumeClaimResumeIntent(publicId, benefitId)) return;
+    handleClaimRef.current();
+    // 仅在授权回跳（新 scan_token 注入）时评估一次意图；续领经 ref 取最新闭包。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [publicId, scanToken, benefitId]);
 
   const handlePhoneSubmit = useCallback(async () => {
     if (!phone || phone.length < 11) return;
