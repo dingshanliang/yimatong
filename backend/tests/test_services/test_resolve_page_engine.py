@@ -232,7 +232,11 @@ class TestResolvePageEngine:
     @pytest.mark.anyio
     async def test_resolve_renders_template(self, client: AsyncClient, full_setup):
         _, _, public_id = full_setup
-        resp = await client.get(f"/c/{public_id}")
+        # 微信 UA：落地页模板渲染按微信场景设计；非微信 UA 走引导页（见 resolver）
+        resp = await client.get(
+            f"/c/{public_id}",
+            headers={"User-Agent": "Mozilla/5.0 (iPhone) MicroMessenger/8.0"},
+        )
         assert resp.status_code == 200
         assert "引擎品牌" in resp.text
         assert "引擎产品" in resp.text
@@ -298,6 +302,9 @@ class TestResolvePageEngine:
         )
         public_id = items.json()["items"][0]["public_id"]
 
-        resp = await client.get(f"/c/{public_id}")
+        resp = await client.get(
+            f"/c/{public_id}",
+            headers={"User-Agent": "Mozilla/5.0 (iPhone) MicroMessenger/8.0"},
+        )
         assert resp.status_code == 200
         assert "产品信息" in resp.text
