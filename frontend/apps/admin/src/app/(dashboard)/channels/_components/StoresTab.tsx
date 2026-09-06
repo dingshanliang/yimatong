@@ -8,24 +8,24 @@ interface TabProps {
   access: ChannelAccess;
 }
 
-export function AssignTab({ w, access }: TabProps) {
-  const { allocations, loading, setAllocationOpen, allocationColumns } = w;
+export function StoresTab({ w, access }: TabProps) {
+  const { stores, loading, openEntityModal, storeColumns } = w;
   return (
     <>
-      {access.canAllocate && (
+      {access.canManage && (
         <div className="mb-4 flex justify-end">
           <Button
             type="primary"
             icon={<PlusOutlined />}
-            onClick={() => setAllocationOpen(true)}
+            onClick={() => openEntityModal("store")}
           >
-            新建流向
+            新建门店
           </Button>
         </div>
       )}
       <Table
-        columns={allocationColumns}
-        dataSource={allocations.items}
+        columns={storeColumns}
+        dataSource={stores.items}
         rowKey="id"
         loading={loading}
       />

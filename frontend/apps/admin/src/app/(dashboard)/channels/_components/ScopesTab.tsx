@@ -1,6 +1,6 @@
 import type { ChannelsWorkspaceApi } from "./useChannelsWorkspace";
 import { Button, Table } from "antd";
-import { PlusOutlined } from "@ant-design/icons";
+import { SafetyCertificateOutlined } from "@ant-design/icons";
 import type { ChannelAccess } from "@/lib/channel-access";
 
 interface TabProps {
@@ -8,24 +8,24 @@ interface TabProps {
   access: ChannelAccess;
 }
 
-export function AssignTab({ w, access }: TabProps) {
-  const { allocations, loading, setAllocationOpen, allocationColumns } = w;
+export function ScopesTab({ w, access }: TabProps) {
+  const { scopes, loading, setScopeOpen, scopeColumns } = w;
   return (
     <>
-      {access.canAllocate && (
+      {access.canScope && (
         <div className="mb-4 flex justify-end">
           <Button
             type="primary"
-            icon={<PlusOutlined />}
-            onClick={() => setAllocationOpen(true)}
+            icon={<SafetyCertificateOutlined />}
+            onClick={() => setScopeOpen(true)}
           >
-            新建流向
+            绑定入口账号
           </Button>
         </div>
       )}
       <Table
-        columns={allocationColumns}
-        dataSource={allocations.items}
+        columns={scopeColumns}
+        dataSource={scopes}
         rowKey="id"
         loading={loading}
       />

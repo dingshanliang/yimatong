@@ -1,5 +1,5 @@
 import type { ChannelsWorkspaceApi } from "./useChannelsWorkspace";
-import { Button, Table } from "antd";
+import { Button, Empty, Table } from "antd";
 import { PlusOutlined } from "@ant-design/icons";
 import type { ChannelAccess } from "@/lib/channel-access";
 
@@ -8,26 +8,29 @@ interface TabProps {
   access: ChannelAccess;
 }
 
-export function AssignTab({ w, access }: TabProps) {
-  const { allocations, loading, setAllocationOpen, allocationColumns } = w;
+export function DistributorsTab({ w, access }: TabProps) {
+  const { distributors, loading, openEntityModal, distributorColumns } = w;
   return (
     <>
-      {access.canAllocate && (
+      {access.canManage && (
         <div className="mb-4 flex justify-end">
           <Button
             type="primary"
             icon={<PlusOutlined />}
-            onClick={() => setAllocationOpen(true)}
+            onClick={() => openEntityModal("distributor")}
           >
-            新建流向
+            新建经销商
           </Button>
         </div>
       )}
       <Table
-        columns={allocationColumns}
-        dataSource={allocations.items}
+        columns={distributorColumns}
+        dataSource={distributors.items}
         rowKey="id"
         loading={loading}
+        locale={{
+          emptyText: <Empty description="先新建经销商，再绑定区域和门店" />,
+        }}
       />
     </>
   );
