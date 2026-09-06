@@ -30,11 +30,20 @@ interface AuditLog {
   timestamp: string;
 }
 
+interface AuditLogPage {
+  items: AuditLog[];
+  total: number;
+  page: number;
+  page_size: number;
+}
+
 export default function AuditLogsPage() {
   const [dateRange, setDateRange] = useState<
     [dayjs.Dayjs | null, dayjs.Dayjs | null] | null
   >(null);
   const [searchText, setSearchText] = useState("");
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
 
   const url = useMemo(() => {
     const params = new URLSearchParams();
@@ -43,14 +52,15 @@ export default function AuditLogsPage() {
     if (dateRange?.[1]) {
       params.set("end_time", dateRange[1].endOf("day").toISOString());
     }
-    params.set("limit", "200");
+    params.set("page", String(page));
+    params.set("page_size", String(pageSize));
     return `/platform/audit-logs?${params.toString()}`;
-  }, [dateRange]);
+  }, [dateRange, page, pageSize]);
 
-  const { data, isLoading } = useSWR<AuditLog[]>(url);
+  const { data, isLoading } = useSWR<AuditLogPage>(url);
 
-  // Client-side filtering
-  const filtered = data?.filter((log) => {
+  // 当前页内的关键词过滤；跨页检索通过日期范围缩小窗口。
+  const filtered = data?.items.filter((log) => {
     if (!searchText) return true;
     const lower = searchText.toLowerCase();
     return (
@@ -67,9 +77,6 @@ export default function AuditLogsPage() {
       dataIndex: "timestamp",
       key: "timestamp",
       width: 170,
-      sorter: (a, b) =>
-        new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime(),
-      defaultSortOrder: "descend",
       render: (v: string) => dayjs(v).format("YYYY-MM-DD HH:mm:ss"),
     },
     {
@@ -137,7 +144,10 @@ export default function AuditLogsPage() {
         <Space style={{ marginBottom: 16 }} wrap>
           <RangePicker
             value={dateRange}
-            onChange={(dates) => setDateRange(dates)}
+            onChange={(dates) => {
+              setDateRange(dates);
+              setPage(1);
+            }}
             placeholder={["开始时间", "结束时间"]}
           />
           {dateRange && (
@@ -151,7 +161,10 @@ export default function AuditLogsPage() {
             allowClear
             style={{ width: 250 }}
             value={searchText}
-            onChange={(e) => setSearchText(e.target.value)}
+            onChange={(e) => {
+              setSearchText(e.target.value);
+              setPage(1);
+            }}
           />
         </Space>
 
@@ -161,9 +174,15 @@ export default function AuditLogsPage() {
           dataSource={filtered ?? []}
           loading={isLoading}
           pagination={{
-            pageSize: 20,
+            current: page,
+            pageSize,
+            total: data?.total ?? 0,
             showSizeChanger: true,
             showTotal: (t) => `共 ${t} 条记录`,
+            onChange: (p, ps) => {
+              setPage(p);
+              setPageSize(ps);
+            },
           }}
           scroll={{ x: 800 }}
           size="middle"

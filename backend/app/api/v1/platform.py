@@ -30,7 +30,7 @@ from app.modules.brand_tenant_initialization import (
 )
 from app.modules.initial_admin_activation import InitialAdminActivation, InitialAdminNotPending
 from app.schemas.common import PaginatedResponse
-from app.services.audit import query_audit_logs, write_audit_log
+from app.services.audit import query_audit_logs, query_audit_logs_page, write_audit_log
 from app.services.auth import logout_session
 from app.services.entitlement import is_plan_expired, validate_feature_flags
 from app.services.platform_auth import (
@@ -75,6 +75,13 @@ class AuditLogRead(BaseModel):
     timestamp: datetime
 
     model_config = {"from_attributes": True}
+
+
+class AuditLogPage(BaseModel):
+    items: list[AuditLogRead]
+    total: int
+    page: int
+    page_size: int
 
 
 class TenantCreate(BaseModel):
@@ -636,16 +643,23 @@ async def delete_tenant(
 # ---------------------------------------------------------------------------
 
 
-@router.get("/audit-logs", response_model=list[AuditLogRead])
+@router.get("/audit-logs", response_model=AuditLogPage)
 async def list_audit_logs(
     db: AsyncSession = Depends(get_db_with_bypass),
     start_time: datetime | None = Query(None),
     end_time: datetime | None = Query(None),
-    limit: int = Query(100, ge=1, le=500),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=200),
     _role: str = Depends(require_role("platform_admin")),
 ):
-    """查询审计记录（支持时间范围过滤）"""
-    return await query_audit_logs(db, start_time=start_time, end_time=end_time, limit=limit)
+    """分页查询审计记录（支持时间范围过滤），保证超量历史可回看"""
+    return await query_audit_logs_page(
+        db,
+        start_time=start_time,
+        end_time=end_time,
+        page=page,
+        page_size=page_size,
+    )
 
 
 # ---------------------------------------------------------------------------

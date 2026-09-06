@@ -152,6 +152,38 @@ async def query_audit_logs(
     return list(result.scalars().all())
 
 
+async def query_audit_logs_page(
+    db: AsyncSession,
+    *,
+    start_time: datetime | None = None,
+    end_time: datetime | None = None,
+    page: int = 1,
+    page_size: int = 50,
+) -> dict:
+    """分页查询平台审计记录（含总数），保证超期历史可回看。"""
+    conditions = []
+    if start_time:
+        conditions.append(PlatformAuditLog.timestamp >= start_time)
+    if end_time:
+        conditions.append(PlatformAuditLog.timestamp <= end_time)
+
+    total = (await db.execute(select(func.count()).select_from(PlatformAuditLog).where(*conditions))).scalar_one()
+    logs = list(
+        (
+            await db.execute(
+                select(PlatformAuditLog)
+                .where(*conditions)
+                .order_by(PlatformAuditLog.timestamp.desc(), PlatformAuditLog.id.desc())
+                .offset((page - 1) * page_size)
+                .limit(page_size)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return {"items": logs, "total": total, "page": page, "page_size": page_size}
+
+
 async def query_tenant_audit_logs(
     db: AsyncSession,
     tenant_id: uuid.UUID,

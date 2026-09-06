@@ -798,10 +798,43 @@ class TestPlatformAuditLogs:
         resp = await client.get("/api/v1/platform/audit-logs", headers=_platform_headers())
         assert resp.status_code == 200
         data = resp.json()
-        assert isinstance(data, list)
-        assert len(data) >= 1
-        assert data[0]["operator_id"] == "admin-1"
-        assert data[0]["action"] == "read"
+        assert data["total"] >= 1
+        assert data["page"] == 1
+        assert len(data["items"]) >= 1
+        newest = data["items"][0]
+        assert newest["operator_id"] == "admin-1"
+        assert newest["action"] == "read"
+
+    @pytest.mark.anyio
+    async def test_list_audit_logs_paginates_beyond_first_page(self, client: AsyncClient, db_session: AsyncSession):
+        from app.services.audit import write_audit_log
+
+        for i in range(5):
+            await write_audit_log(db_session, "admin-pg", "tenant-pg", "read", f"tenants/{i}")
+
+        first = await client.get(
+            "/api/v1/platform/audit-logs",
+            params={"page": 1, "page_size": 2},
+            headers=_platform_headers(),
+        )
+        assert first.status_code == 200
+        first_page = first.json()
+        assert first_page["page"] == 1
+        assert first_page["page_size"] == 2
+        assert first_page["total"] >= 5
+        assert len(first_page["items"]) == 2
+
+        second = await client.get(
+            "/api/v1/platform/audit-logs",
+            params={"page": 2, "page_size": 2},
+            headers=_platform_headers(),
+        )
+        assert second.status_code == 200
+        second_page = second.json()
+        assert len(second_page["items"]) == 2
+        first_ids = {row["id"] for row in first_page["items"]}
+        second_ids = {row["id"] for row in second_page["items"]}
+        assert first_ids.isdisjoint(second_ids)
 
     @pytest.mark.anyio
     async def test_audit_logs_require_platform_admin(self, client: AsyncClient):
