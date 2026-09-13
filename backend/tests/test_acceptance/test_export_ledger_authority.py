@@ -773,6 +773,81 @@ async def test_code_manifest_idempotency_binds_complete_encryption_envelope(migr
         await owner.close()
 
 
+async def test_code_download_replay_probe_reads_only_authorized_columns(migrated_pg_url: str) -> None:
+    """码批次下载查重契约（u8c5 / kc6d E2E 暴露）。
+
+    runtime 角色对 export_logs 只有列级 SELECT：密文信封列仅可经
+    SECURITY DEFINER getter 读取。下载查重探针因此必须只读授权列——
+    任何全列读取（ORM select(ExportLog)）都会被权限模型拒绝。
+    """
+    owner = await asyncpg.connect(_owner_dsn(migrated_pg_url))
+    runtime = await asyncpg.connect(_runtime_dsn(migrated_pg_url))
+    try:
+        ids = await _seed_catalog(owner, "u08c-dedup")
+        await _grant_permission(owner, ids, "code:export")
+        session_id = await _session(owner, ids)
+        receipt = await _insert_receipt(owner, ids)
+        batch_id = await _insert_batch(owner, ids, receipt, quantity=1, expected_item_count=1)
+        await _insert_items(owner, ids["tenant"], batch_id, 1)
+        await owner.execute(
+            "UPDATE code_batches SET status='completed' WHERE tenant_id=$1 AND id=$2",
+            ids["tenant"],
+            batch_id,
+        )
+        await runtime.execute("SELECT set_config('app.tenant_id',$1,false)", str(ids["tenant"]))
+
+        # 首次导出由 service 层 PG 授权链审计为 code_csv（含密文信封）。
+        checksum = hashlib.sha256(b"code artifact").hexdigest()
+        row = await _call(
+            runtime,
+            ids,
+            session_id,
+            export_type="code_csv",
+            idem="dedup-first-export",
+            file_name="codes.csv",
+            content_type="text/csv; charset=utf-8",
+            row_count=1,
+            resource_id=batch_id,
+            code_batch_id=batch_id,
+            manifest_version=1,
+            artifact_ciphertext=b"\x00" * 33,
+            artifact_nonce=b"\x00" * 12,
+            artifact_scheme="aes-256-gcm-v1",
+            artifact_key_id="k1",
+            checksum=checksum,
+            file_size=17,
+        )
+        export_id = row["export_id"]
+
+        # 下载查重探针与端点列契约一致：只读授权列即可命中既有审计行。
+        probe = await runtime.fetchrow(
+            "SELECT id, account_id, checksum_sha256, artifact_size_bytes, row_count, status "
+            "FROM public.export_logs "
+            "WHERE tenant_id=$1 AND code_batch_id=$2 "
+            "AND export_type IN ('code_csv','code_csv_download') AND checksum_sha256=$3",
+            ids["tenant"],
+            batch_id,
+            checksum,
+        )
+        assert probe is not None
+        assert probe["id"] == export_id
+        assert probe["status"] == "completed"
+
+        # 密文信封列 deny-by-default：全列读取（旧实现形状）必须被权限模型拒绝。
+        with pytest.raises(asyncpg.InsufficientPrivilegeError):
+            await runtime.fetchrow(
+                "SELECT * FROM public.export_logs "
+                "WHERE tenant_id=$1 AND code_batch_id=$2 "
+                "AND export_type IN ('code_csv','code_csv_download') AND checksum_sha256=$3",
+                ids["tenant"],
+                batch_id,
+                checksum,
+            )
+    finally:
+        await runtime.close()
+        await owner.close()
+
+
 async def test_staged_populated_cutover_cic_retry_downgrade_and_fact_guard(migrated_pg_url: str) -> None:
     database_name = f"yimatong_acceptance_u8c_stage_{uuid.uuid4().hex[:10]}"
     database_url = make_url(migrated_pg_url).set(database=database_name).render_as_string(hide_password=False)
