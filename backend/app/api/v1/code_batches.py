@@ -281,14 +281,25 @@ async def export_code_batch_endpoint(
         # 同批次同字节的导出只审计一次：service 层可能已记录 code_csv（PG 授权链/
         # SQLite legacy），端点下载记录 code_csv_download 命中同 checksum 时复用，
         # 不再新增审计行——契约见 test_code_export 的「重试无重复审计」。
-        prior_download = await db.scalar(
-            select(ExportLog).where(
-                ExportLog.tenant_id == tenant_id,
-                ExportLog.code_batch_id == batch_id,
-                ExportLog.export_type.in_(["code_csv", "code_csv_download"]),
-                ExportLog.checksum_sha256 == checksum,
+        # runtime 角色对 export_logs 只有列级 SELECT（密文信封列仅限
+        # SECURITY DEFINER getter），查重探针必须只读授权列，禁止全列 ORM 加载。
+        prior_download = (
+            await db.execute(
+                select(
+                    ExportLog.id,
+                    ExportLog.account_id,
+                    ExportLog.checksum_sha256,
+                    ExportLog.artifact_size_bytes,
+                    ExportLog.row_count,
+                    ExportLog.status,
+                ).where(
+                    ExportLog.tenant_id == tenant_id,
+                    ExportLog.code_batch_id == batch_id,
+                    ExportLog.export_type.in_(["code_csv", "code_csv_download"]),
+                    ExportLog.checksum_sha256 == checksum,
+                )
             )
-        )
+        ).one_or_none()
         if prior_download is not None:
             prepared = PreparedExportRecord(
                 export_id=prior_download.id,
