@@ -232,6 +232,7 @@ async def lifespan(app):
     import app.services.connectors.coupon_pool  # noqa: F401
     import app.services.connectors.generic_http  # noqa: F401
     import app.services.connectors.wechat_pay_transfer  # noqa: F401
+    import app.services.connectors.youzan  # noqa: F401
 
     yield
 

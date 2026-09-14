@@ -40,7 +40,8 @@ class Connector(Base):
     __table_args__ = (
         CheckConstraint(
             "NOT (config::jsonb ?| ARRAY['oa_appsecret','cert_private_key','api_v3_key',"
-            "'api_key','api_secret','callback_secret','mch_key','secret'])",
+            "'api_key','api_secret','callback_secret','mch_key','secret','client_secret',"
+            "'access_token','refresh_token','token_expires_at','token_refreshed_at'])",
             name="ck_connectors_config_has_no_plaintext_secrets",
         ).ddl_if(dialect="postgresql"),
         UniqueConstraint("tenant_id", "id", name="uq_connectors_tenant_id_id"),

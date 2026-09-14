@@ -20,14 +20,19 @@ class SecretsError(Exception):
 
 SENSITIVE_CONFIG_KEYS = frozenset(
     {
+        "access_token",
         "api_key",
         "api_secret",
         "api_v3_key",
         "callback_secret",
         "cert_private_key",
+        "client_secret",
         "mch_key",
         "oa_appsecret",
+        "refresh_token",
         "secret",
+        "token_expires_at",
+        "token_refreshed_at",
     }
 )
 

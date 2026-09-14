@@ -102,6 +102,9 @@ class Settings(BaseSettings):
     deepseek_model_advanced: str = "deepseek-v4-pro"
     ai_daily_limit_per_tenant: int = 100
 
+    # 有赞开放平台（YouzanAdapter）网关；指向本地 mock 用于契约测试
+    youzan_api_base_url: str = "https://open.youzanyun.com"
+
     # Logging
     log_level: str = "INFO"
     log_format: str = "human"  # "human" | "json"
