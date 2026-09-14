@@ -1,8 +1,9 @@
 ---
 status: active
-last_verified: 2026-06-03
+last_verified: 2026-09-14
 accuracy: high
 ---
+
 # 外部系统与电商权益集成方案
 
 ## 1. 集成原则
@@ -71,19 +72,19 @@ accuracy: high
 
 ## 3. 平台策略
 
-| 平台 | 第一版策略 | 深度集成策略 |
-|---|---|---|
-| 有赞 | 链接 + 券码池 | API 发券、订单回流 |
-| 微盟 | 链接 + 券码池 | API 发券、订单回流 |
-| 微信支付商家券 | 先作为高级连接器 | 创建、发放、核销、对账 |
-| 支付宝商家券 | 先作为高级连接器 | 创建、投放、领取、核销 |
-| 淘宝/天猫 | 链接、口令、推广转链 | 看商家/开放平台权限 |
-| 京东 | 链接、联盟/店铺活动 | 看商家/开放平台权限 |
-| 抖店 | 抖音内跳转/链接 | 看小程序/电商插件权限 |
-| 快手小店 | 跳转配置 | 后续按权限接入 |
-| 自建商城 | 优先深度对接 | API 发券、订单回流、会员同步 |
-| 企业微信 | 加企微、渠道活码、标签 | SCRM 数据回流视权限 |
-| 公众号/小程序 | 跳转、订阅消息 | 用户授权、会员、积分对接 |
+| 平台           | 第一版策略             | 深度集成策略                                      |
+| -------------- | ---------------------- | ------------------------------------------------- |
+| 有赞           | 链接 + 券码池          | API 发券（已实现 YouzanAdapter，见 §6）、订单回流 |
+| 微盟           | 链接 + 券码池          | API 发券、订单回流                                |
+| 微信支付商家券 | 先作为高级连接器       | 创建、发放、核销、对账                            |
+| 支付宝商家券   | 先作为高级连接器       | 创建、投放、领取、核销                            |
+| 淘宝/天猫      | 链接、口令、推广转链   | 看商家/开放平台权限                               |
+| 京东           | 链接、联盟/店铺活动    | 看商家/开放平台权限                               |
+| 抖店           | 抖音内跳转/链接        | 看小程序/电商插件权限                             |
+| 快手小店       | 跳转配置               | 后续按权限接入                                    |
+| 自建商城       | 优先深度对接           | API 发券、订单回流、会员同步                      |
+| 企业微信       | 加企微、渠道活码、标签 | SCRM 数据回流视权限                               |
+| 公众号/小程序  | 跳转、订阅消息         | 用户授权、会员、积分对接                          |
 
 ## 4. 与客户内部系统集成
 
@@ -122,3 +123,44 @@ accuracy: high
 ```text
 客户必须先使用 GTS 才能使用一码通。
 ```
+
+## 6. 有赞 L3 API 发券落地指引（YouzanAdapter）
+
+状态：**代码与契约测试已完成；真实店铺联调为 `pending_external`**（与一码通轻量品牌仓的证据分级一致）。协议常量全部隔离在 `backend/app/utils/youzan.py`，联调校准只改该文件。
+
+### 6.1 前提条件
+
+- 品牌方在有赞拥有店铺，并在[有赞开放平台](https://open.youzan.com/)创建**自用型（工具型）应用**，取得 `client_id` / `client_secret`；ISV 服务市场分发模式不在本期范围。
+- 品牌有赞店铺使用的微信 appid 与一码通 H5 授权 appid **一致**，openid 才能互认（发券目标用户以 openid 定位）；不一致时发放会在联调阶段失败，属于配置问题而非代码问题。
+- 有赞云 API 按调用计费/套餐（[服务费规则](https://doc.youzanyun.com/resource/doc/3493)），品牌侧需保持额度。
+
+### 6.2 API 契约（联调校准基线）
+
+以下契约经官方文档与社区资料交叉整理，**以 [doc.youzanyun.com](https://doc.youzanyun.com/) 为准**；接入真实店铺前需逐项校准：
+
+| 项         | 契约                                                                                                                                                                        |
+| ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| API 网关   | `POST {base}/api/{method}/{version}`，`base` 默认 `https://open.youzanyun.com`（`settings.youzan_api_base_url` 可覆盖，用于契约测试）                                       |
+| 公共参数   | `app_id`、`method`、`version`、`timestamp`、`format=json`、`v=1.0`、`sign`，授权接口另带 `access_token`                                                                     |
+| 签名算法   | 除 `sign` 外全部参数按 key ASCII 升序拼接 `k1v1k2v2...`，首尾各拼 `client_secret`，取 MD5 大写十六进制                                                                      |
+| token 端点 | `POST {base}/auth/token`（form）：`grant_type=authorize`（自用型静默获取）/ `refresh_token`（刷新）；`access_token` 有效期 7 天，`refresh_token` 有效期 28 天且**单次有效** |
+| 发券接口   | `youzan.ump.coupon.take`：`coupon_id`（有赞券模板 ID，配在权益 `config_json`）+ 目标用户（openid）；响应取发放记录 ID 作为 `external_id`                                    |
+| 核销记录   | `kdt.ump.coupon.consume.verifylogs.get` 系列，用于回调超时后的 `reconcile` 对账                                                                                             |
+| 消息推送   | 有赞云控制台配置推送地址为 `{base_url}/api/v1/connectors/connectors/{id}/callback`；POST 携带 `msg` 与 `sign`，验签为同构 MD5（密钥包裹 msg）                               |
+
+### 6.3 一码通侧配置流程
+
+```text
+品牌后台 → 连接器 → 新建（类型：有赞）
+→ 填 client_id（config）、client_secret（secrets，加密存储）
+→ 复制回调地址到有赞云控制台消息订阅
+→ 在有赞后台创建券模板，把券模板 ID 配到扫码权益的 config_json.coupon_id
+→ 用「测试连接」验证凭证
+```
+
+### 6.4 运行时行为
+
+- **token 生命周期**：`access_token`/`refresh_token` 加密存于连接器 `secrets_encrypted`；worker 在发放前经 `prepare` 钩子检查并在临期时刷新回写（行级锁防并发双刷烧掉单次 refresh_token）；自用型应用可通过 `grant_type=authorize` 静默重取兜底。
+- **发放幂等**：以 claim ID 为幂等锚点，outbox 租约保证同一时间只有一次在途请求；外部 ID 取有赞发放记录 ID，回调按该 ID 精确匹配发放记录结算。
+- **钱包闭环**：发放结算成功后，外部券写入消费者券钱包（`authority_type=external`、`sync_status=synchronized`），H5 钱包可见、门店核销守卫生效；有赞侧核销事件经回调 `external_consume` 回流本地状态。
+- **openid 同意边界**：发放前校验消费者隐私同意（`wechat_benefit_delivery` 场景），未同意则该次发放失败并走重试/死信流程，不静默使用 openid。

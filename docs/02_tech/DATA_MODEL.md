@@ -1,6 +1,6 @@
 ---
 status: active
-last_verified: 2026-06-08
+last_verified: 2026-09-14
 accuracy: high
 ---
 
@@ -56,182 +56,182 @@ erDiagram
 
 ### tenants (tenant.py)
 
-| 字段 | 类型 | 说明 |
-|---|---|---|
-| id | uuid | 租户 ID |
-| name | string | 租户名称 |
-| slug | string | URL 标识 |
-| tenant_type | enum | brand, regional_org, agency, platform |
-| status | enum | trial, active, suspended, expired |
-| industry | string | 行业 |
-| plan | string | 套餐标识 |
-| plan_expires_at | datetime | 套餐过期时间 |
-| quota | jsonb | 额度配置 |
-| compliance_settings | jsonb | 合规设置 |
-| onboarding_progress | jsonb | 开通进度 |
-| enabled_features | jsonb | 启用的功能 |
-| custom_domain | string | 客户自有域名 |
+| 字段                | 类型     | 说明                                  |
+| ------------------- | -------- | ------------------------------------- |
+| id                  | uuid     | 租户 ID                               |
+| name                | string   | 租户名称                              |
+| slug                | string   | URL 标识                              |
+| tenant_type         | enum     | brand, regional_org, agency, platform |
+| status              | enum     | trial, active, suspended, expired     |
+| industry            | string   | 行业                                  |
+| plan                | string   | 套餐标识                              |
+| plan_expires_at     | datetime | 套餐过期时间                          |
+| quota               | jsonb    | 额度配置                              |
+| compliance_settings | jsonb    | 合规设置                              |
+| onboarding_progress | jsonb    | 开通进度                              |
+| enabled_features    | jsonb    | 启用的功能                            |
+| custom_domain       | string   | 客户自有域名                          |
 
 ### organizations (tenant.py)
 
-| 字段 | 类型 | 说明 |
-|---|---|---|
-| id | uuid | 组织 ID |
-| tenant_id | uuid | 租户 |
-| parent_id | uuid | 上级组织 |
-| org_type | enum | platform, agency, regional_org, brand, distributor, store, print_partner |
-| name | string | 组织名称 |
-| status | enum | active, disabled |
+| 字段      | 类型   | 说明                                                                     |
+| --------- | ------ | ------------------------------------------------------------------------ |
+| id        | uuid   | 组织 ID                                                                  |
+| tenant_id | uuid   | 租户                                                                     |
+| parent_id | uuid   | 上级组织                                                                 |
+| org_type  | enum   | platform, agency, regional_org, brand, distributor, store, print_partner |
+| name      | string | 组织名称                                                                 |
+| status    | enum   | active, disabled                                                         |
 
 ### accounts (tenant.py)
 
-| 字段 | 类型 | 说明 |
-|---|---|---|
-| id | uuid | 账户 ID |
-| tenant_id | uuid | 租户 |
-| organization_id | uuid | 组织 |
-| email | string | 邮箱 |
-| hashed_password | string | 密码哈希 |
-| name | string | 姓名 |
-| failed_login_attempts | int | 失败登录次数 |
-| locked_until | datetime | 锁定截止 |
-| last_login_at | datetime | 最后登录 |
+| 字段                  | 类型     | 说明         |
+| --------------------- | -------- | ------------ |
+| id                    | uuid     | 账户 ID      |
+| tenant_id             | uuid     | 租户         |
+| organization_id       | uuid     | 组织         |
+| email                 | string   | 邮箱         |
+| hashed_password       | string   | 密码哈希     |
+| name                  | string   | 姓名         |
+| failed_login_attempts | int      | 失败登录次数 |
+| locked_until          | datetime | 锁定截止     |
+| last_login_at         | datetime | 最后登录     |
 
 ### roles / permissions (tenant.py)
 
-| 字段 | 类型 | 说明 |
-|---|---|---|
-| id | uuid | ID |
-| tenant_id | uuid | 租户 |
-| name | string | 名称 |
-| code | string | 权限编码（permissions 表） |
-| description | string | 说明 |
+| 字段        | 类型   | 说明                       |
+| ----------- | ------ | -------------------------- |
+| id          | uuid   | ID                         |
+| tenant_id   | uuid   | 租户                       |
+| name        | string | 名称                       |
+| code        | string | 权限编码（permissions 表） |
+| description | string | 说明                       |
 
 ### plan_definitions (plan.py)
 
-| 字段 | 类型 | 说明 |
-|---|---|---|
-| id | uuid | 套餐 ID |
-| name | string | 套餐标识 |
-| display_name | string | 显示名 |
-| price_yearly | decimal | 年价 |
-| quota_defaults | jsonb | 默认额度 |
-| feature_flags | jsonb | 功能开关 |
-| is_active | boolean | 是否启用 |
-| sort_order | int | 排序 |
+| 字段           | 类型    | 说明     |
+| -------------- | ------- | -------- |
+| id             | uuid    | 套餐 ID  |
+| name           | string  | 套餐标识 |
+| display_name   | string  | 显示名   |
+| price_yearly   | decimal | 年价     |
+| quota_defaults | jsonb   | 默认额度 |
+| feature_flags  | jsonb   | 功能开关 |
+| is_active      | boolean | 是否启用 |
+| sort_order     | int     | 排序     |
 
 ## 3. 产品资料库（product.py）
 
 ### brands
 
-| 字段 | 类型 | 说明 |
-|---|---|---|
-| id | uuid | 品牌 ID |
-| tenant_id | uuid | 租户 |
-| name | string | 品牌名称 |
-| logo_url | string | Logo |
-| description | text | 描述 |
-| status | enum | draft, active, archived |
-| external_id | string | 外部 ID |
-| source_system | string | 来源系统 |
+| 字段          | 类型   | 说明                    |
+| ------------- | ------ | ----------------------- |
+| id            | uuid   | 品牌 ID                 |
+| tenant_id     | uuid   | 租户                    |
+| name          | string | 品牌名称                |
+| logo_url      | string | Logo                    |
+| description   | text   | 描述                    |
+| status        | enum   | draft, active, archived |
+| external_id   | string | 外部 ID                 |
+| source_system | string | 来源系统                |
 
 ### products
 
-| 字段 | 类型 | 说明 |
-|---|---|---|
-| id | uuid | 产品 ID |
-| tenant_id | uuid | 租户 |
-| brand_id | uuid | 品牌 |
-| name | string | 产品名称 |
-| category | string | 品类 |
-| origin | string | 产地 |
-| image_url | string | 图片 |
-| story_title | string | 故事标题 |
-| story_content | text | 故事内容 |
-| description | text | 产品介绍 |
-| status | enum | draft, active, archived |
-| external_id | string | 外部 ID |
-| source_system | string | 来源系统 |
+| 字段          | 类型   | 说明                    |
+| ------------- | ------ | ----------------------- |
+| id            | uuid   | 产品 ID                 |
+| tenant_id     | uuid   | 租户                    |
+| brand_id      | uuid   | 品牌                    |
+| name          | string | 产品名称                |
+| category      | string | 品类                    |
+| origin        | string | 产地                    |
+| image_url     | string | 图片                    |
+| story_title   | string | 故事标题                |
+| story_content | text   | 故事内容                |
+| description   | text   | 产品介绍                |
+| status        | enum   | draft, active, archived |
+| external_id   | string | 外部 ID                 |
+| source_system | string | 来源系统                |
 
 ### skus
 
-| 字段 | 类型 | 说明 |
-|---|---|---|
-| id | uuid | SKU ID |
-| tenant_id | uuid | 租户 |
-| product_id | uuid | 产品 |
-| code | string | SKU 编码 |
-| name | string | 名称 |
-| specifications | jsonb | 规格 |
-| package_type | string | 包装类型 |
-| barcode | string | 条形码/GTIN |
-| image_url | string | 图片 |
-| status | enum | draft, active, archived |
+| 字段           | 类型   | 说明                    |
+| -------------- | ------ | ----------------------- |
+| id             | uuid   | SKU ID                  |
+| tenant_id      | uuid   | 租户                    |
+| product_id     | uuid   | 产品                    |
+| code           | string | SKU 编码                |
+| name           | string | 名称                    |
+| specifications | jsonb  | 规格                    |
+| package_type   | string | 包装类型                |
+| barcode        | string | 条形码/GTIN             |
+| image_url      | string | 图片                    |
+| status         | enum   | draft, active, archived |
 
 ### production_batches
 
-| 字段 | 类型 | 说明 |
-|---|---|---|
-| id | uuid | 批次 ID |
-| tenant_id | uuid | 租户 |
-| product_id | uuid | 产品 |
-| sku_id | uuid | SKU |
-| batch_code | string | 批次号 |
-| production_date | date | 生产日期 |
-| expiry_date | date | 保质期截止 |
-| origin | string | 产地 |
-| status | enum | draft, active, archived |
+| 字段            | 类型   | 说明                    |
+| --------------- | ------ | ----------------------- |
+| id              | uuid   | 批次 ID                 |
+| tenant_id       | uuid   | 租户                    |
+| product_id      | uuid   | 产品                    |
+| sku_id          | uuid   | SKU                     |
+| batch_code      | string | 批次号                  |
+| production_date | date   | 生产日期                |
+| expiry_date     | date   | 保质期截止              |
+| origin          | string | 产地                    |
+| status          | enum   | draft, active, archived |
 
 ### product_assets
 
-| 字段 | 类型 | 说明 |
-|---|---|---|
-| id | uuid | 资料 ID |
-| tenant_id | uuid | 租户 |
-| product_id | uuid | 产品 |
-| asset_type | enum | 检测报告、资质证书、素材等 |
-| name | string | 名称 |
-| file_url | string | 文件 URL |
-| image_url | string | 图片 URL |
-| issuer | string | 发证方 |
-| valid_until | date | 有效期 |
-| status | enum | draft, active, archived |
+| 字段        | 类型   | 说明                       |
+| ----------- | ------ | -------------------------- |
+| id          | uuid   | 资料 ID                    |
+| tenant_id   | uuid   | 租户                       |
+| product_id  | uuid   | 产品                       |
+| asset_type  | enum   | 检测报告、资质证书、素材等 |
+| name        | string | 名称                       |
+| file_url    | string | 文件 URL                   |
+| image_url   | string | 图片 URL                   |
+| issuer      | string | 发证方                     |
+| valid_until | date   | 有效期                     |
+| status      | enum   | draft, active, archived    |
 
 ## 4. 码管理（code.py）
 
 ### code_batches
 
-| 字段 | 类型 | 说明 |
-|---|---|---|
-| id | uuid | 码批次 ID |
-| tenant_id | uuid | 租户 |
-| code_type | enum | batch_code, item_code, outer_inner_pair, box_code |
-| generation_mode | enum | 生成方式 |
-| quantity | int | 数量 |
-| batch_code | string | 批次编码 |
-| product_id | uuid | 产品 |
-| sku_id | uuid | SKU |
-| production_batch_id | uuid | 生产批次 |
-| distributor_id | uuid | 经销商 |
-| region_id | uuid | 预期区域 |
-| status | enum | generated, exported, printing, delivered, pending_activation, active, frozen, voided |
-| created_by | uuid | 创建人 |
+| 字段                | 类型   | 说明                                                                                 |
+| ------------------- | ------ | ------------------------------------------------------------------------------------ |
+| id                  | uuid   | 码批次 ID                                                                            |
+| tenant_id           | uuid   | 租户                                                                                 |
+| code_type           | enum   | batch_code, item_code, outer_inner_pair, box_code                                    |
+| generation_mode     | enum   | 生成方式                                                                             |
+| quantity            | int    | 数量                                                                                 |
+| batch_code          | string | 批次编码                                                                             |
+| product_id          | uuid   | 产品                                                                                 |
+| sku_id              | uuid   | SKU                                                                                  |
+| production_batch_id | uuid   | 生产批次                                                                             |
+| distributor_id      | uuid   | 经销商                                                                               |
+| region_id           | uuid   | 预期区域                                                                             |
+| status              | enum   | generated, exported, printing, delivered, pending_activation, active, frozen, voided |
+| created_by          | uuid   | 创建人                                                                               |
 
 ### code_items
 
-| 字段 | 类型 | 说明 |
-|---|---|---|
-| id | uuid | 内部 ID |
-| tenant_id | uuid | 租户 |
-| code_batch_id | uuid | 码批次 |
-| public_id | string | 对外短码 ID，不可枚举 |
-| code_type | enum | single, outer, inner, box |
-| pair_id | uuid | 内外码配对 |
-| status | enum | created, activated, bound, expired, revoked, frozen |
-| activated_at | datetime | 激活时间 |
-| bound_at | datetime | 绑定时间 |
-| revoked_at | datetime | 撤销时间 |
-| first_scanned_at | datetime | 首次扫码时间（用于原子首扫判断） |
+| 字段             | 类型     | 说明                                                |
+| ---------------- | -------- | --------------------------------------------------- |
+| id               | uuid     | 内部 ID                                             |
+| tenant_id        | uuid     | 租户                                                |
+| code_batch_id    | uuid     | 码批次                                              |
+| public_id        | string   | 对外短码 ID，不可枚举                               |
+| code_type        | enum     | single, outer, inner, box                           |
+| pair_id          | uuid     | 内外码配对                                          |
+| status           | enum     | created, activated, bound, expired, revoked, frozen |
+| activated_at     | datetime | 激活时间                                            |
+| bound_at         | datetime | 绑定时间                                            |
+| revoked_at       | datetime | 撤销时间                                            |
+| first_scanned_at | datetime | 首次扫码时间（用于原子首扫判断）                    |
 
 > **索引**：`ix_code_items_public_id` (UNIQUE), `ix_code_items_tenant_batch`, `ix_code_items_tenant_status`, `ix_code_items_pair`
 
@@ -239,118 +239,118 @@ erDiagram
 
 ### page_templates
 
-| 字段 | 类型 | 说明 |
-|---|---|---|
-| id | uuid | 模板 ID |
-| tenant_id | uuid | 租户 |
-| product_id | uuid | 产品 |
-| name | string | 模板名称 |
-| template_type | string | 模板类型 |
-| status | enum | draft, active, archived |
-| description | text | 描述 |
+| 字段          | 类型   | 说明                    |
+| ------------- | ------ | ----------------------- |
+| id            | uuid   | 模板 ID                 |
+| tenant_id     | uuid   | 租户                    |
+| product_id    | uuid   | 产品                    |
+| name          | string | 模板名称                |
+| template_type | string | 模板类型                |
+| status        | enum   | draft, active, archived |
+| description   | text   | 描述                    |
 
 ### page_versions
 
-| 字段 | 类型 | 说明 |
-|---|---|---|
-| id | uuid | 页面版本 ID |
-| tenant_id | uuid | 租户 |
-| page_template_id | uuid | 模板 |
-| version | int | 版本号 |
-| status | enum | draft, preview, published, offline, archived |
-| config_json | jsonb | 页面配置 DSL |
-| published_at | datetime | 发布时间 |
-| created_by | uuid | 创建人 |
+| 字段             | 类型     | 说明                                         |
+| ---------------- | -------- | -------------------------------------------- |
+| id               | uuid     | 页面版本 ID                                  |
+| tenant_id        | uuid     | 租户                                         |
+| page_template_id | uuid     | 模板                                         |
+| version          | int      | 版本号                                       |
+| status           | enum     | draft, preview, published, offline, archived |
+| config_json      | jsonb    | 页面配置 DSL                                 |
+| published_at     | datetime | 发布时间                                     |
+| created_by       | uuid     | 创建人                                       |
 
 ## 6. 活动与权益（campaign.py）
 
 ### campaigns
 
-| 字段 | 类型 | 说明 |
-|---|---|---|
-| id | uuid | 活动 ID |
-| tenant_id | uuid | 租户 |
-| name | string | 活动名称 |
-| campaign_type | enum | coupon, points, lottery, lead, private_domain, mixed |
-| product_id | uuid | 关联产品 |
-| start_at | datetime | 开始时间 |
-| end_at | datetime | 结束时间 |
-| status | enum | draft, active, paused, ended |
-| rules_json | jsonb | 活动规则 |
-| description | text | 描述 |
+| 字段          | 类型     | 说明                                                 |
+| ------------- | -------- | ---------------------------------------------------- |
+| id            | uuid     | 活动 ID                                              |
+| tenant_id     | uuid     | 租户                                                 |
+| name          | string   | 活动名称                                             |
+| campaign_type | enum     | coupon, points, lottery, lead, private_domain, mixed |
+| product_id    | uuid     | 关联产品                                             |
+| start_at      | datetime | 开始时间                                             |
+| end_at        | datetime | 结束时间                                             |
+| status        | enum     | draft, active, paused, ended                         |
+| rules_json    | jsonb    | 活动规则                                             |
+| description   | text     | 描述                                                 |
 
 ### benefits
 
-| 字段 | 类型 | 说明 |
-|---|---|---|
-| id | uuid | 权益 ID |
-| tenant_id | uuid | 租户 |
-| campaign_id | uuid | 活动 |
-| name | string | 权益名称 |
-| benefit_type | enum | platform_coupon, external_link, code_pool, api_coupon, gift, points, private_domain, offline_verify |
-| config_json | jsonb | 权益配置 |
-| connector_id | uuid | 外部连接器 |
-| stock_total | int | 总库存 |
-| stock_used | int | 已发放 |
-| per_person_limit | int | 每人限领 |
-| status | enum | active, disabled |
+| 字段             | 类型   | 说明                                                                                                |
+| ---------------- | ------ | --------------------------------------------------------------------------------------------------- |
+| id               | uuid   | 权益 ID                                                                                             |
+| tenant_id        | uuid   | 租户                                                                                                |
+| campaign_id      | uuid   | 活动                                                                                                |
+| name             | string | 权益名称                                                                                            |
+| benefit_type     | enum   | platform_coupon, external_link, code_pool, api_coupon, gift, points, private_domain, offline_verify |
+| config_json      | jsonb  | 权益配置                                                                                            |
+| connector_id     | uuid   | 外部连接器                                                                                          |
+| stock_total      | int    | 总库存                                                                                              |
+| stock_used       | int    | 已发放                                                                                              |
+| per_person_limit | int    | 每人限领                                                                                            |
+| status           | enum   | active, disabled                                                                                    |
 
 ### benefit_claims
 
-| 字段 | 类型 | 说明 |
-|---|---|---|
-| id | uuid | 领取记录 ID |
-| tenant_id | uuid | 租户 |
-| benefit_id | uuid | 权益 |
-| campaign_id | uuid | 活动 |
-| consumer_id | uuid | 消费者 |
-| idempotency_key | string | 幂等键 |
-| claim_type | string | 领取类型 |
-| status | enum | claimed, delivered, failed, cancelled |
-| delivery_status | enum | pending, delivered, failed |
+| 字段            | 类型   | 说明                                  |
+| --------------- | ------ | ------------------------------------- |
+| id              | uuid   | 领取记录 ID                           |
+| tenant_id       | uuid   | 租户                                  |
+| benefit_id      | uuid   | 权益                                  |
+| campaign_id     | uuid   | 活动                                  |
+| consumer_id     | uuid   | 消费者                                |
+| idempotency_key | string | 幂等键                                |
+| claim_type      | string | 领取类型                              |
+| status          | enum   | claimed, delivered, failed, cancelled |
+| delivery_status | enum   | pending, delivered, failed            |
 
 ## 7. 消费者与会员（member.py + consent.py）
 
 ### consumer_profiles (member.py)
 
-| 字段 | 类型 | 说明 |
-|---|---|---|
-| id | uuid | 消费者 ID |
-| tenant_id | uuid | 租户 |
-| wechat_openid | string | 微信 openid |
-| phone_hash | string | 手机号哈希 |
+| 字段            | 类型   | 说明               |
+| --------------- | ------ | ------------------ |
+| id              | uuid   | 消费者 ID          |
+| tenant_id       | uuid   | 租户               |
+| wechat_openid   | string | 微信 openid        |
+| phone_hash      | string | 手机号哈希         |
 | phone_encrypted | string | AES-GCM 加密手机号 |
-| nickname | string | 昵称 |
-| member_level | string | 会员等级 |
-| tags | jsonb | 用户标签 |
-| total_points | int | 累计积分 |
-| extra_data | jsonb | 扩展数据 |
+| nickname        | string | 昵称               |
+| member_level    | string | 会员等级           |
+| tags            | jsonb  | 用户标签           |
+| total_points    | int    | 累计积分           |
+| extra_data      | jsonb  | 扩展数据           |
 
 ### point_transactions (member.py)
 
-| 字段 | 类型 | 说明 |
-|---|---|---|
-| id | uuid | 流水 ID |
-| tenant_id | uuid | 租户 |
-| consumer_id | uuid | 消费者 |
-| amount | int | 变动金额 |
-| balance_after | int | 变动后余额 |
-| txn_type | enum | earn, spend, expire, adjust |
-| reason | string | 原因 |
-| reference_id | uuid | 关联 ID |
-| expires_at | datetime | 积分过期时间 |
+| 字段          | 类型     | 说明                        |
+| ------------- | -------- | --------------------------- |
+| id            | uuid     | 流水 ID                     |
+| tenant_id     | uuid     | 租户                        |
+| consumer_id   | uuid     | 消费者                      |
+| amount        | int      | 变动金额                    |
+| balance_after | int      | 变动后余额                  |
+| txn_type      | enum     | earn, spend, expire, adjust |
+| reason        | string   | 原因                        |
+| reference_id  | uuid     | 关联 ID                     |
+| expires_at    | datetime | 积分过期时间                |
 
 ### point_rules (member.py)
 
-| 字段 | 类型 | 说明 |
-|---|---|---|
-| id | uuid | 规则 ID |
-| tenant_id | uuid | 租户 |
-| rule_type | string | 规则类型 |
-| points | int | 积分值 |
-| enabled | boolean | 是否启用 |
-| daily_limit | int | 每日上限 |
-| config | jsonb | 规则配置 |
+| 字段        | 类型    | 说明     |
+| ----------- | ------- | -------- |
+| id          | uuid    | 规则 ID  |
+| tenant_id   | uuid    | 租户     |
+| rule_type   | string  | 规则类型 |
+| points      | int     | 积分值   |
+| enabled     | boolean | 是否启用 |
+| daily_limit | int     | 每日上限 |
+| config      | jsonb   | 规则配置 |
 
 ### point_products / point_redemptions (member.py)
 
@@ -358,92 +358,93 @@ erDiagram
 
 ### consent_records (consent.py)
 
-| 字段 | 类型 | 说明 |
-|---|---|---|
-| id | uuid | 授权记录 ID |
-| tenant_id | uuid | 租户 |
-| consumer_id | uuid | 消费者 |
-| consent_type | enum | privacy_policy, mobile, wechat, form, subscription_message, marketing_opt_in |
-| status | enum | granted, withdrawn |
-| public_id | string | 公开 ID |
-| ip_hash | string | IP 哈希 |
-| granted_at | datetime | 授权时间 |
-| withdrawn_at | datetime | 撤回时间 |
-| evidence_json | jsonb | 授权证据 |
+| 字段          | 类型     | 说明                                                                         |
+| ------------- | -------- | ---------------------------------------------------------------------------- |
+| id            | uuid     | 授权记录 ID                                                                  |
+| tenant_id     | uuid     | 租户                                                                         |
+| consumer_id   | uuid     | 消费者                                                                       |
+| consent_type  | enum     | privacy_policy, mobile, wechat, form, subscription_message, marketing_opt_in |
+| status        | enum     | granted, withdrawn                                                           |
+| public_id     | string   | 公开 ID                                                                      |
+| ip_hash       | string   | IP 哈希                                                                      |
+| granted_at    | datetime | 授权时间                                                                     |
+| withdrawn_at  | datetime | 撤回时间                                                                     |
+| evidence_json | jsonb    | 授权证据                                                                     |
 
 ## 8. 扫码事件（scan.py）
 
 ### scan_events
 
-| 字段 | 类型 | 说明 |
-|---|---|---|
-| id | uuid | 事件 ID |
-| tenant_id | uuid | 租户 |
-| public_id | string | 码 ID |
-| scan_time | datetime | 扫码时间 |
-| ip_hash | string | IP 哈希 |
-| user_agent | string | UA |
-| is_first_scan | boolean | 是否首扫 |
-| environment | string | 扫码环境 (wechat/alipay/browser) |
+| 字段          | 类型     | 说明                             |
+| ------------- | -------- | -------------------------------- |
+| id            | uuid     | 事件 ID                          |
+| tenant_id     | uuid     | 租户                             |
+| public_id     | string   | 码 ID                            |
+| scan_time     | datetime | 扫码时间                         |
+| ip_hash       | string   | IP 哈希                          |
+| user_agent    | string   | UA                               |
+| is_first_scan | boolean  | 是否首扫                         |
+| environment   | string   | 扫码环境 (wechat/alipay/browser) |
 
 > **索引**：`ix_scan_events_public_id`, `ix_scan_events_tenant_time`, `ix_scan_events_ip`, `ix_scan_events_environment`
+>
 > > **分区策略**：按月分区（`scan_events_YYYY_MM`），分区键 `scan_time`
 
 ## 9. 渠道与区域（channel.py）
 
 ### distributors
 
-| 字段 | 类型 | 说明 |
-|---|---|---|
-| id | uuid | 经销商 ID |
-| tenant_id | uuid | 租户 |
-| name | string | 名称 |
-| code | string | 编码 |
-| contact_name | string | 联系人 |
+| 字段                    | 类型   | 说明             |
+| ----------------------- | ------ | ---------------- |
+| id                      | uuid   | 经销商 ID        |
+| tenant_id               | uuid   | 租户             |
+| name                    | string | 名称             |
+| code                    | string | 编码             |
+| contact_name            | string | 联系人           |
 | contact_phone_encrypted | string | AES-GCM 加密电话 |
-| contact_phone_hash | string | 电话哈希 |
-| status | enum | active, disabled |
+| contact_phone_hash      | string | 电话哈希         |
+| status                  | enum   | active, disabled |
 
 ### regions
 
-| 字段 | 类型 | 说明 |
-|---|---|---|
-| id | uuid | 区域 ID |
-| tenant_id | uuid | 租户 |
-| name | string | 名称 |
-| code | string | 编码 |
-| province | string | 省 |
-| city | string | 市 |
-| coverage_type | enum | 覆盖类型 |
-| coverage_areas | jsonb | 覆盖区域 |
-| distributor_id | uuid | 经销商 |
-| status | enum | active, disabled |
+| 字段           | 类型   | 说明             |
+| -------------- | ------ | ---------------- |
+| id             | uuid   | 区域 ID          |
+| tenant_id      | uuid   | 租户             |
+| name           | string | 名称             |
+| code           | string | 编码             |
+| province       | string | 省               |
+| city           | string | 市               |
+| coverage_type  | enum   | 覆盖类型         |
+| coverage_areas | jsonb  | 覆盖区域         |
+| distributor_id | uuid   | 经销商           |
+| status         | enum   | active, disabled |
 
 ### stores
 
-| 字段 | 类型 | 说明 |
-|---|---|---|
-| id | uuid | 门店 ID |
-| tenant_id | uuid | 租户 |
-| name | string | 名称 |
-| code | string | 编码 |
-| region_id | uuid | 区域 |
-| distributor_id | uuid | 经销商 |
-| address | string | 地址 |
-| status | enum | active, disabled |
+| 字段           | 类型   | 说明             |
+| -------------- | ------ | ---------------- |
+| id             | uuid   | 门店 ID          |
+| tenant_id      | uuid   | 租户             |
+| name           | string | 名称             |
+| code           | string | 编码             |
+| region_id      | uuid   | 区域             |
+| distributor_id | uuid   | 经销商           |
+| address        | string | 地址             |
+| status         | enum   | active, disabled |
 
 ### code_allocations
 
-| 字段 | 类型 | 说明 |
-|---|---|---|
-| id | uuid | 分配 ID |
-| tenant_id | uuid | 租户 |
-| batch_id | uuid | 码批次 |
-| store_id | uuid | 门店 |
-| region_id | uuid | 区域 |
-| distributor_id | uuid | 经销商 |
-| quantity | int | 数量 |
-| allocated_at | datetime | 分配时间 |
+| 字段           | 类型     | 说明     |
+| -------------- | -------- | -------- |
+| id             | uuid     | 分配 ID  |
+| tenant_id      | uuid     | 租户     |
+| batch_id       | uuid     | 码批次   |
+| store_id       | uuid     | 门店     |
+| region_id      | uuid     | 区域     |
+| distributor_id | uuid     | 经销商   |
+| quantity       | int      | 数量     |
+| allocated_at   | datetime | 分配时间 |
 
 ### diversion_clues
 
@@ -457,13 +458,13 @@ erDiagram
 
 ### regional_orgs
 
-| 字段 | 类型 | 说明 |
-|---|---|---|
-| id | uuid | 组织 ID |
-| tenant_id | uuid | 租户 |
-| name | string | 名称 |
-| org_type | string | 组织类型 |
-| config | jsonb | 配置 |
+| 字段      | 类型   | 说明     |
+| --------- | ------ | -------- |
+| id        | uuid   | 组织 ID  |
+| tenant_id | uuid   | 租户     |
+| name      | string | 名称     |
+| org_type  | string | 组织类型 |
+| config    | jsonb  | 配置     |
 
 ### regional_org_members / regional_templates / regional_product_auths / regional_code_rules
 
@@ -481,16 +482,16 @@ erDiagram
 
 ### risk_alerts
 
-| 字段 | 类型 | 说明 |
-|---|---|---|
-| id | uuid | 告警 ID |
-| tenant_id | uuid | 租户 |
-| alert_type | string | 告警类型 |
-| public_id | string | 码 ID |
-| code_item_id | uuid | 码项 |
-| detail | jsonb | 详情 |
-| ip_hash | string | IP 哈希 |
-| resolved | boolean | 是否已处理 |
+| 字段         | 类型    | 说明       |
+| ------------ | ------- | ---------- |
+| id           | uuid    | 告警 ID    |
+| tenant_id    | uuid    | 租户       |
+| alert_type   | string  | 告警类型   |
+| public_id    | string  | 码 ID      |
+| code_item_id | uuid    | 码项       |
+| detail       | jsonb   | 详情       |
+| ip_hash      | string  | IP 哈希    |
+| resolved     | boolean | 是否已处理 |
 
 ### risk_rules
 
@@ -512,15 +513,15 @@ erDiagram
 
 ### connectors
 
-| 字段 | 类型 | 说明 |
-|---|---|---|
-| id | uuid | 连接器 ID |
-| tenant_id | uuid | 租户 |
-| name | string | 名称 |
-| connector_type | string | 类型 |
-| config | jsonb | 配置 |
-| secrets_encrypted | string | 加密密钥 |
-| enabled | boolean | 是否启用 |
+| 字段              | 类型    | 说明                                                                          |
+| ----------------- | ------- | ----------------------------------------------------------------------------- |
+| id                | uuid    | 连接器 ID                                                                     |
+| tenant_id         | uuid    | 租户                                                                          |
+| name              | string  | 名称                                                                          |
+| connector_type    | string  | 类型（coupon_pool / generic_http / wechat_pay_transfer / wecom_crm / youzan） |
+| config            | jsonb   | 配置（明文密钥被应用层黑名单 + DB CHECK 双重禁止）                            |
+| secrets_encrypted | string  | 加密密钥（AES-256-GCM 信封；有赞还托管 access_token/refresh_token 生命周期）  |
+| enabled           | boolean | 是否启用                                                                      |
 
 ### coupon_pools / coupon_codes
 
@@ -530,21 +531,40 @@ erDiagram
 
 权益投递记录：status、retry_count、max_retries、next_retry_at。
 
+### 外部权威券钱包状态机（member_coupons，youzan 路径）
+
+`authority_type='external'` 的券由 `mutate_member_coupon_authority` 的扩展动作写入
+（`yimatong_app` 仅经该 SQL 函数写 member_coupons）：
+
+```text
+领取（claim API，预检已发布规则 + 活跃会员）
+  → external_issue：sync_status='pending'，事件 external_sync_pending
+worker 发放成功 → external_sync_confirm：pending|error → synchronized
+worker 终态失败 → external_mark_error：pending → error（sync_error 记录原因）
+外部平台核销回流（回调 coupon_transition）
+  → external_consume：available → used（仅 synchronized；used 不要求本地订单/门店引用）
+```
+
+幂等锚点：`uq_member_coupons_tenant_claim`（一 claim 一券）与
+`uq_member_coupons_external_ref`（tenant + connector + external_coupon_ref 唯一）；
+事件经 `repurchase_coupon_events.idempotency_key` 重放安全。核销守卫：reserve /
+store_redeem / 商城 token 对未 synchronized 的外部券拒绝（`coupon_external_pending`）。
+
 ## 13. 代理授权（tenant.py）
 
 ### agency_authorizations
 
-| 字段 | 类型 | 说明 |
-|---|---|---|
-| id | uuid | 授权 ID |
-| agency_tenant_id | uuid | 代运营租户 |
-| client_tenant_id | uuid | 品牌客户租户 |
-| scope | json | 授权范围 |
-| status | enum | active, revoked, expired |
-| granted_by | uuid | 授权人 |
-| granted_at | datetime | 授权时间 |
-| revoked_at | datetime | 撤回时间 |
-| expires_at | datetime | 过期时间 |
+| 字段             | 类型     | 说明                     |
+| ---------------- | -------- | ------------------------ |
+| id               | uuid     | 授权 ID                  |
+| agency_tenant_id | uuid     | 代运营租户               |
+| client_tenant_id | uuid     | 品牌客户租户             |
+| scope            | json     | 授权范围                 |
+| status           | enum     | active, revoked, expired |
+| granted_by       | uuid     | 授权人                   |
+| granted_at       | datetime | 授权时间                 |
+| revoked_at       | datetime | 撤回时间                 |
+| expires_at       | datetime | 过期时间                 |
 
 **约束**：每个 (agency_tenant_id, client_tenant_id) 组合只允许一条 status='active' 的记录。
 
@@ -552,16 +572,16 @@ erDiagram
 
 ### webhook_endpoints
 
-| 字段 | 类型 | 说明 |
-|---|---|---|
-| id | uuid | 端点 ID |
-| tenant_id | uuid | 租户 |
-| url | string | 回调 URL |
-| events | jsonb | 订阅事件类型 |
-| secret | string | 签名密钥 |
-| enabled | boolean | 是否启用 |
-| batch_mode | boolean | 批量模式 |
-| batch_size | int | 批量大小 |
+| 字段       | 类型    | 说明         |
+| ---------- | ------- | ------------ |
+| id         | uuid    | 端点 ID      |
+| tenant_id  | uuid    | 租户         |
+| url        | string  | 回调 URL     |
+| events     | jsonb   | 订阅事件类型 |
+| secret     | string  | 签名密钥     |
+| enabled    | boolean | 是否启用     |
+| batch_mode | boolean | 批量模式     |
+| batch_size | int     | 批量大小     |
 
 ### api_keys
 
@@ -588,37 +608,48 @@ API Key 管理：name、key、role、permissions、revoked、expires_at。
 ## 16. 其他模型
 
 ### analytics.py
+
 - **daily_scan_stats** — 日扫码统计：date、total_scans、uv、first_scans、rescans
 
 ### tenant_health.py
+
 - **tenant_health_metrics** — 租户健康指标：last_scan_at、scans_last_7d/30d、active_campaigns、days_until_expiry、health_score
 
 ### export_log.py
+
 - **export_log** — 导出记录：export_type、resource_id、file_name、row_count、status
 
 ### audit.py
+
 - **platform_audit_logs** — 平台审计日志：operator_id、target_tenant_id、action、resource
 
 ### sync_mapping.py
+
 - **sync_mappings** — 同步映射：local_entity_type、local_entity_id、source_system、external_id、sync_direction
 
 ### private_domain.py
+
 - **private_domain_configs** — 私域配置：config_type、name、config
 
 ### i18n.py
+
 - **translations** — 翻译：key、locale、value
 
 ### ai_generation.py
+
 - **ai_generations** — AI 生成记录：type、target_type、target_id、input_snapshot、output_data、model_version
 
 ### wecom.py
+
 - **wecom_contact_ways** — 企微联系方式：connector_id、campaign_id、config_id、qr_code、user_ids
 - **wecom_external_contacts** — 企微外部联系人：external_userid、consumer_id、unionid、added_at
 
 ### integration.py
+
 - **sync_records** — 同步记录：sync_type、external_id、data
 
 ### tenant.py（ops_tasks）
+
 - **ops_tasks** — 代运营任务：assigned_to、title、status、priority、due_date
 
 ## 17. 状态机
