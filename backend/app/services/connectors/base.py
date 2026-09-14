@@ -5,6 +5,8 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.models.connector import Connector
 
 
@@ -20,11 +22,18 @@ class DeliveryResult:
 
 @dataclass
 class CallbackResult:
-    """适配器 parse_callback() 的返回值。"""
+    """适配器 parse_callback() 的返回值。
+
+    status="ignored" 表示事件与本适配器的发放结算无关（端点直接 200，不结算、不 422）；
+    此时可选携带 coupon_transition（如 "external_consume"）与 external_coupon_ref，
+    由回调端点转交钱包权威函数做外部核销状态回流。
+    """
 
     external_id: str | None = None
-    status: str = "pending"  # "success" | "pending" | "failed"
+    status: str = "pending"  # "success" | "pending" | "failed" | "ignored"
     external_data: dict = field(default_factory=dict)
+    coupon_transition: str | None = None
+    external_coupon_ref: str | None = None
 
 
 class BaseConnectorAdapter(ABC):
@@ -67,3 +76,28 @@ class BaseConnectorAdapter(ABC):
     ) -> bool:
         """验证回调请求的签名/来源。默认拒绝，子类必须覆盖以启用回调。"""
         return False
+
+    async def prepare(self, db: AsyncSession, connector: Connector) -> Connector:
+        """发放/同步前的准备钩子（如 OAuth token 检查与刷新回写）。
+
+        默认原样返回；需要凭证生命周期管理的适配器（youzan 等）覆盖此方法。
+        返回的 connector 供调用方构造 runtime 视图。
+        """
+        return connector
+
+    async def on_delivery_success(
+        self,
+        db: AsyncSession,
+        *,
+        tenant_id,
+        claim_id,
+        delivery_id,
+        external_id: str,
+        consumer_id: str,
+        benefit_config: dict,
+    ) -> None:
+        """发放结算成功后的适配器钩子（如外部券写入消费者钱包）。
+
+        默认无操作；调用方在记录发放结果成功后调用，与主结果同事务提交。
+        """
+        return None

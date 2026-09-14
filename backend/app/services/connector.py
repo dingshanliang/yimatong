@@ -249,5 +249,17 @@ async def update_connector(
 
 
 async def test_connection(connector: Connector) -> dict:
-    """测试连接器连通性（模拟）"""
+    """测试连接器连通性。
+
+    适配器实现 test_connection(config)（config 为公开配置与解密 secrets 的合并视图）时
+    走真实校验；未实现的类型保持模拟应答。
+    """
+    from app.services.connectors import get_adapter
+    from app.services.connectors.secrets import connector_with_runtime_secrets
+
+    adapter = get_adapter(connector)
+    if hasattr(adapter, "test_connection"):
+        runtime_connector = connector_with_runtime_secrets(connector)
+        ok, message = await adapter.test_connection(dict(runtime_connector.config))
+        return {"success": ok, "message": message, "connector_type": connector.connector_type}
     return {"success": True, "message": "连接正常", "connector_type": connector.connector_type}

@@ -116,18 +116,64 @@ async def _fail(
     )
 
 
+async def _resolve_consumer_openid(db, tenant_id: uuid.UUID, consumer_id: str, *, scenario: str) -> str:
+    """校验隐私同意并解密消费者 openid。
+
+    未授权、无 openid 或档案缺失时抛 LookupError，走发放失败重试链；
+    scenario 区分现金 payout 与权益发放两类同意场景。
+    """
+    from app.models.consent import ConsentRecord, ConsentStatus, ConsentType
+    from app.models.member import ConsumerProfile
+    from app.utils.crypto import decrypt_wechat_openid
+
+    try:
+        member_id = uuid.UUID(consumer_id)
+    except ValueError:
+        raise LookupError("consumer_profile_missing") from None
+    member = await db.scalar(
+        select(ConsumerProfile).where(
+            ConsumerProfile.id == member_id,
+            ConsumerProfile.tenant_id == tenant_id,
+        )
+    )
+    consent_status = None
+    if member is not None:
+        consent_status = await db.scalar(
+            select(ConsentRecord.status)
+            .where(
+                ConsentRecord.tenant_id == tenant_id,
+                ConsentRecord.consumer_id == member_id,
+                ConsentRecord.consent_type == ConsentType.privacy,
+                ConsentRecord.scenario == scenario,
+            )
+            .order_by(ConsentRecord.granted_at.desc())
+            .limit(1)
+        )
+    if (
+        member is None
+        or consent_status != ConsentStatus.granted
+        or not member.wechat_openid_ciphertext
+        or not member.wechat_openid_nonce
+        or not member.wechat_openid_key_id
+    ):
+        raise LookupError("open_id_consent_unavailable")
+    return decrypt_wechat_openid(
+        tenant_id,
+        member.id,
+        member.wechat_openid_ciphertext,
+        member.wechat_openid_nonce,
+        member.wechat_openid_key_id,
+    )
+
+
 async def _process_leased(tenant_id: uuid.UUID, leased: dict) -> bool:
     from app.core.database import async_session_factory, set_session_tenant_context
     from app.models.campaign import Benefit, BenefitClaim
     from app.models.connector import Connector
-    from app.models.consent import ConsentRecord, ConsentStatus, ConsentType
-    from app.models.member import ConsumerProfile
     from app.services.benefit_delivery_handler import _get_circuit_breaker
     from app.services.connectors import get_adapter
     from app.services.connectors.coupon_pool import CouponPoolAdapter
-    from app.services.connectors.generic_http import GenericHttpAdapter
     from app.services.connectors.secrets import connector_with_runtime_secrets
-    from app.utils.crypto import decrypt_wechat_openid
 
     outbox_id = uuid.UUID(str(leased["outbox_id"]))
     claim_id = uuid.UUID(str(leased["claim_id"]))
@@ -166,48 +212,11 @@ async def _process_leased(tenant_id: uuid.UUID, leased: dict) -> bool:
             delivery_config = dict(benefit.config_json or {})
             delivery_config["benefit_type"] = benefit.benefit_type
             delivery_config["idempotency_key"] = str(claim.id)
+            adapter = get_adapter(connector)
             if benefit.benefit_type == "cash_red_packet":
-                member = None
-                try:
-                    member_id = uuid.UUID(claim.consumer_id)
-                except ValueError:
-                    member_id = None
-                if member_id is not None:
-                    member = await db.scalar(
-                        select(ConsumerProfile).where(
-                            ConsumerProfile.id == member_id,
-                            ConsumerProfile.tenant_id == tenant_id,
-                        )
-                    )
-                consent_status = None
-                if member_id is not None:
-                    consent_status = await db.scalar(
-                        select(ConsentRecord.status)
-                        .where(
-                            ConsentRecord.tenant_id == tenant_id,
-                            ConsentRecord.consumer_id == member_id,
-                            ConsentRecord.consent_type == ConsentType.privacy,
-                            ConsentRecord.scenario == "wechat_cash_payout",
-                        )
-                        .order_by(ConsentRecord.granted_at.desc())
-                        .limit(1)
-                    )
-                if (
-                    member is None
-                    or consent_status != ConsentStatus.granted
-                    or not member.wechat_openid_ciphertext
-                    or not member.wechat_openid_nonce
-                    or not member.wechat_openid_key_id
-                    or not claim.reserved_amount
-                ):
+                if not claim.reserved_amount:
                     raise LookupError("cash_recipient_unavailable")
-                openid = decrypt_wechat_openid(
-                    tenant_id,
-                    member.id,
-                    member.wechat_openid_ciphertext,
-                    member.wechat_openid_nonce,
-                    member.wechat_openid_key_id,
-                )
+                openid = await _resolve_consumer_openid(db, tenant_id, claim.consumer_id, scenario="wechat_cash_payout")
                 delivery_config.update(
                     {
                         "amount": claim.reserved_amount,
@@ -216,13 +225,19 @@ async def _process_leased(tenant_id: uuid.UUID, leased: dict) -> bool:
                         "transfer_remark": delivery_config.get("transfer_remark", "扫码领红包"),
                     }
                 )
+            elif getattr(adapter, "requires_openid", False):
+                # 外部权益适配器（youzan 等）声明需要 openid 定位外部用户
+                delivery_config["openid"] = await _resolve_consumer_openid(
+                    db, tenant_id, claim.consumer_id, scenario="wechat_benefit_delivery"
+                )
 
             circuit_breaker = _get_circuit_breaker(connector)
             if not circuit_breaker.is_available():
                 raise ConnectionError("connector_circuit_open")
-            runtime_connector = connector_with_runtime_secrets(connector)
-            adapter = get_adapter(runtime_connector)
-            if leased.get("callback_timed_out") and isinstance(adapter, GenericHttpAdapter):
+            # prepare 可能返回带刷新 token 的 transient 视图（不污染 ORM connector）
+            prepared_connector = await adapter.prepare(db, connector)
+            runtime_connector = connector_with_runtime_secrets(prepared_connector)
+            if leased.get("callback_timed_out") and hasattr(adapter, "reconcile"):
                 stable_provider_key = str(leased.get("external_id") or claim.id)
                 result = await adapter.reconcile(runtime_connector, stable_provider_key)
             elif isinstance(adapter, CouponPoolAdapter):
@@ -234,17 +249,37 @@ async def _process_leased(tenant_id: uuid.UUID, leased: dict) -> bool:
                 raise RuntimeError("connector_delivery_failed")
             circuit_breaker.record_success()
             stable_external_id = str(delivery_config.get("out_bill_no") or result.external_id or claim.id)
+            delivery_id = uuid.UUID(str(leased["delivery_id"])) if leased.get("delivery_id") else uuid7()
             await _record_delivery_result(
                 db,
                 tenant_id,
                 outbox_id,
                 lease_token,
-                uuid.UUID(str(leased["delivery_id"])) if leased.get("delivery_id") else uuid7(),
+                delivery_id,
                 connector.id,
                 result.status,
                 stable_external_id,
                 _normalize_delivery_result(result.external_data),
             )
+            if result.status == "success":
+                # 钩子失败绝不回滚发放结算：外部券停留 pending 由工作台兜底
+                try:
+                    await adapter.on_delivery_success(
+                        db,
+                        tenant_id=tenant_id,
+                        claim_id=claim_id,
+                        delivery_id=delivery_id,
+                        external_id=stable_external_id,
+                        consumer_id=claim.consumer_id,
+                        benefit_config=delivery_config,
+                    )
+                except Exception as hook_exc:
+                    logger.warning(
+                        "Delivery success hook failed tenant=%s outbox=%s error=%s",
+                        tenant_id,
+                        outbox_id,
+                        hook_exc,
+                    )
             await db.commit()
             return True
     except Exception as exc:
@@ -253,6 +288,21 @@ async def _process_leased(tenant_id: uuid.UUID, leased: dict) -> bool:
         async with async_session_factory() as db:
             await set_session_tenant_context(db, tenant_id)
             await _fail(db, tenant_id, outbox_id, lease_token, error_code, retry_seconds)
+            if attempt_count + 1 >= max_attempts:
+                # 终态失败：把 pending 外部券钱包资产标记 error（无资产时 no-op）
+                try:
+                    from app.services.external_coupon_wallet import mark_external_coupon_sync_error_by_claim
+
+                    await mark_external_coupon_sync_error_by_claim(
+                        db, tenant_id=tenant_id, claim_id=claim_id, reason=error_code
+                    )
+                except Exception as mark_exc:
+                    logger.warning(
+                        "External coupon sync-error marking failed tenant=%s claim=%s error=%s",
+                        tenant_id,
+                        claim_id,
+                        mark_exc,
+                    )
             await db.commit()
         logger.warning(
             "Campaign claim delivery deferred tenant=%s outbox=%s error_code=%s",

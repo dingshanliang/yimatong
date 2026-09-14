@@ -19,6 +19,7 @@ import app.services.connectors.coupon_pool  # noqa: F401
 import app.services.connectors.generic_http  # noqa: F401
 import app.services.connectors.wechat_pay_transfer  # noqa: F401
 import app.services.connectors.wecom_crm  # noqa: F401
+import app.services.connectors.youzan  # noqa: F401
 from app.core.database import bootstrap_tenant_row, get_db
 from app.core.dependencies import get_current_tenant
 from app.models.connector import BenefitDelivery, Connector
@@ -474,8 +475,10 @@ async def sync_stock_endpoint(
     if not connector.enabled:
         raise HTTPException(status_code=400, detail="Connector is disabled")
 
-    runtime_connector = connector_with_runtime_secrets(connector)
-    adapter = get_adapter(runtime_connector)
+    adapter = get_adapter(connector)
+    # prepare 可能返回带刷新 token 的 transient 视图；ORM connector 仅用于 config 回写
+    prepared = await adapter.prepare(db, connector)
+    runtime_connector = connector_with_runtime_secrets(prepared)
     try:
         available = await adapter.sync_stock(runtime_connector)
         connector.config = {**public_connector_config(connector.config), "stock": {"available": available}}
@@ -550,6 +553,22 @@ async def delivery_callback_endpoint(
 
     # 解析回调
     result = await adapter.parse_callback(connector, body, headers)
+
+    if result.status == "ignored":
+        # 事件与本适配器的发放结算无关（如外部券核销回流），直接确认避免外部平台永久重推；
+        # 携带 coupon_transition 时转交钱包权威函数做外部状态回流。
+        if result.coupon_transition == "external_consume" and result.external_coupon_ref:
+            from app.services.external_coupon_wallet import consume_external_coupon
+
+            consumed = await consume_external_coupon(
+                db,
+                connector.tenant_id,
+                connector.id,
+                result.external_coupon_ref,
+                result.external_data,
+            )
+            return {"status": "ignored", "coupon_transition": "consumed" if consumed else "no_match"}
+        return {"status": "ignored"}
 
     if not result.external_id or result.status not in {"success", "failed"}:
         raise HTTPException(status_code=422, detail="Callback result is not settleable")

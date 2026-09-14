@@ -62,34 +62,33 @@ class WeChatWorkCrmAdapter(BaseConnectorAdapter):
 
     # ── 连接测试 ───────────────────────────────────────────────
 
-    async def test_connection(self, config: dict, secrets: dict) -> dict:
+    async def test_connection(self, config: dict) -> tuple[bool, str]:
         """测试企业微信连接是否正常。
 
         Args:
-            config: 连接器配置（暂未使用）
-            secrets: 解密后的凭证 {"corpid": "...", "secret": "..."}
+            config: 公开配置与解密 secrets 的合并视图 {"corpid": "...", "secret": "..."}
 
         Returns:
-            {"success": True/False, "message": "描述信息"}
+            (是否成功, 描述信息)
         """
-        corpid = secrets.get("corpid")
-        secret = secrets.get("secret")
+        corpid = config.get("corpid")
+        secret = config.get("secret")
 
         if not corpid or not secret:
-            return {"success": False, "message": "corpid 和 secret 不能为空"}
+            return False, "corpid 和 secret 不能为空"
 
         client = WeChatWorkClient(corpid=corpid, secret=secret)
         try:
             token = await client.get_access_token()
             if token:
-                return {"success": True, "message": "企业微信连接测试成功，access_token 已获取"}
-            return {"success": False, "message": "access_token 获取失败"}
+                return True, "企业微信连接测试成功，access_token 已获取"
+            return False, "access_token 获取失败"
         except WeComAPIError as e:
             logger.warning("企业微信连接测试失败: errcode=%d, errmsg=%s", e.errcode, e.errmsg)
-            return {"success": False, "message": f"连接失败（错误码 {e.errcode}）: {e.errmsg}"}
+            return False, f"连接失败（错误码 {e.errcode}）: {e.errmsg}"
         except Exception as e:
             logger.exception("企业微信连接测试异常")
-            return {"success": False, "message": f"连接异常: {e}"}
+            return False, f"连接异常: {e}"
         finally:
             await client.close()
 
