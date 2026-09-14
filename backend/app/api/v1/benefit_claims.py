@@ -225,16 +225,40 @@ async def claim_benefit_h5(
     # without a recoverable wallet asset.
     coupon_rule = None
     coupon_membership = None
+    coupon_rule_is_external = False
     if benefit.benefit_type == "platform_coupon":
         from app.models.repurchase_coupon import RepurchaseCouponRuleVersion
         from app.services.brand_membership import get_brand_membership_for_profile
 
-        coupon_rule = await db.scalar(
-            select(RepurchaseCouponRuleVersion).where(
-                RepurchaseCouponRuleVersion.tenant_id == tid,
-                RepurchaseCouponRuleVersion.benefit_id == benefit.id,
+        if benefit.connector_id is not None:
+            # 外部连接器券（如有赞）：规则经 config_json.rule_version_id 显式挂接
+            # （规则权威禁止把规则直接挂到 connector 权益），券模板 ID 也必须就位；
+            # 领取前同样要求已发布规则 + 活跃会员，钱包资产以 pending 状态先行落库。
+            coupon_rule_is_external = True
+            external_config = benefit.config_json or {}
+            config_rule_id = external_config.get("rule_version_id")
+            if not external_config.get("coupon_id"):
+                raise HTTPException(status_code=409, detail="external_coupon_template_missing")
+            try:
+                config_rule_uuid = uuid.UUID(str(config_rule_id))
+            except (TypeError, ValueError) as exc:
+                raise HTTPException(status_code=409, detail="external_coupon_rule_not_configured") from exc
+            coupon_rule = await db.scalar(
+                select(RepurchaseCouponRuleVersion).where(
+                    RepurchaseCouponRuleVersion.tenant_id == tid,
+                    RepurchaseCouponRuleVersion.id == config_rule_uuid,
+                )
             )
-        )
+            if coupon_rule is None:
+                # 规则被删或误配：fail-fast，避免发放成功但无钱包资产、核销回流永远 no_match
+                raise HTTPException(status_code=409, detail="external_coupon_rule_not_configured")
+        else:
+            coupon_rule = await db.scalar(
+                select(RepurchaseCouponRuleVersion).where(
+                    RepurchaseCouponRuleVersion.tenant_id == tid,
+                    RepurchaseCouponRuleVersion.benefit_id == benefit.id,
+                )
+            )
         if coupon_rule is not None:
             if coupon_rule.status != "published":
                 raise HTTPException(status_code=409, detail="coupon_rule_not_issuable")
@@ -323,23 +347,41 @@ async def claim_benefit_h5(
         response = await build_claim_success_payload(db, benefit, result, consumer_id)
         if coupon_rule is not None and coupon_membership is not None:
             from app.services.consent import require_consumer_scan_authority
-            from app.services.repurchase_coupon import issue_member_coupon
 
             scan_authority = require_consumer_scan_authority(payload)
             claim_id = uuid.UUID(str(result.get("claim_id") or result.get("claim", {}).get("id")))
-            coupon = await issue_member_coupon(
-                db,
-                tenant_id=tid,
-                membership_id=uuid.UUID(str(coupon_membership["membership_id"])),
-                rule_version_id=coupon_rule.id,
-                source_claim_id=claim_id,
-                source_scan_event_id=scan_authority.scan_event_id,
-                source_scan_time=scan_authority.scan_time,
-                source_public_id=scan_authority.public_id,
-                idempotency_key=f"coupon-issue:{claim_id}",
-                actor_type="consumer",
-                actor_id=scan_authority.consumer_id,
-            )
+            if coupon_rule_is_external:
+                from app.services.external_coupon_wallet import issue_external_member_coupon
+
+                coupon = await issue_external_member_coupon(
+                    db,
+                    tenant_id=tid,
+                    membership_id=uuid.UUID(str(coupon_membership["membership_id"])),
+                    rule_version_id=coupon_rule.id,
+                    claim_id=claim_id,
+                    connector_id=benefit.connector_id,
+                    source_scan_event_id=scan_authority.scan_event_id,
+                    source_scan_time=scan_authority.scan_time,
+                    source_public_id=scan_authority.public_id,
+                    idempotency_key=f"external-coupon-issue:{claim_id}",
+                    actor_id=scan_authority.consumer_id,
+                )
+            else:
+                from app.services.repurchase_coupon import issue_member_coupon
+
+                coupon = await issue_member_coupon(
+                    db,
+                    tenant_id=tid,
+                    membership_id=uuid.UUID(str(coupon_membership["membership_id"])),
+                    rule_version_id=coupon_rule.id,
+                    source_claim_id=claim_id,
+                    source_scan_event_id=scan_authority.scan_event_id,
+                    source_scan_time=scan_authority.scan_time,
+                    source_public_id=scan_authority.public_id,
+                    idempotency_key=f"coupon-issue:{claim_id}",
+                    actor_type="consumer",
+                    actor_id=scan_authority.consumer_id,
+                )
             response["coupon"] = {
                 "id": str(coupon.id),
                 "coupon_number": coupon.coupon_number,

@@ -191,7 +191,8 @@ class MemberCoupon(Base):
             name="ck_member_coupons_reservation",
         ),
         CheckConstraint(
-            "(status='used' AND used_at IS NOT NULL AND (used_order_ref IS NOT NULL OR used_store_id IS NOT NULL)) OR "
+            "(status='used' AND used_at IS NOT NULL AND (used_order_ref IS NOT NULL OR used_store_id IS NOT NULL "
+            "OR authority_type='external')) OR "
             "(status<>'used' AND used_at IS NULL AND used_order_ref IS NULL AND used_store_id IS NULL)",
             name="ck_member_coupons_usage",
         ),
@@ -219,6 +220,15 @@ class MemberCoupon(Base):
             unique=True,
             postgresql_where=text("source_claim_id IS NOT NULL"),
             sqlite_where=text("source_claim_id IS NOT NULL"),
+        ),
+        Index(
+            "uq_member_coupons_external_ref",
+            "tenant_id",
+            "external_connector_id",
+            "external_coupon_ref",
+            unique=True,
+            postgresql_where=text("authority_type='external'"),
+            sqlite_where=text("authority_type='external'"),
         ),
         Index("ix_member_coupons_wallet", "tenant_id", "membership_id", "status", "valid_until"),
     )
