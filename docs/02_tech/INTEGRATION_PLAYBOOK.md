@@ -1,6 +1,6 @@
 ---
 status: active
-last_verified: 2026-09-14
+last_verified: 2026-09-15
 accuracy: high
 ---
 
@@ -75,7 +75,7 @@ accuracy: high
 | 平台           | 第一版策略             | 深度集成策略                                      |
 | -------------- | ---------------------- | ------------------------------------------------- |
 | 有赞           | 链接 + 券码池          | API 发券（已实现 YouzanAdapter，见 §6）、订单回流 |
-| 微盟           | 链接 + 券码池          | API 发券、订单回流                                |
+| 微盟           | 链接 + 券码池          | API 发券（已实现 WeimobAdapter，见 §7）、订单回流 |
 | 微信支付商家券 | 先作为高级连接器       | 创建、发放、核销、对账                            |
 | 支付宝商家券   | 先作为高级连接器       | 创建、投放、领取、核销                            |
 | 淘宝/天猫      | 链接、口令、推广转链   | 看商家/开放平台权限                               |
@@ -164,3 +164,52 @@ accuracy: high
 - **发放幂等**：以 claim ID 为幂等锚点，outbox 租约保证同一时间只有一次在途请求；外部 ID 取有赞发放记录 ID，回调按该 ID 精确匹配发放记录结算。
 - **钱包闭环**：发放结算成功后，外部券写入消费者券钱包（`authority_type=external`、`sync_status=synchronized`），H5 钱包可见、门店核销守卫生效；有赞侧核销事件经回调 `external_consume` 回流本地状态。
 - **openid 同意边界**：发放前校验消费者隐私同意（`wechat_benefit_delivery` 场景），未同意则该次发放失败并走重试/死信流程，不静默使用 openid。
+
+## 7. 微盟 L3 API 发券落地指引（WeimobAdapter）
+
+状态：**代码与契约测试已完成；真实店铺联调为 `pending_external`**。协议常量全部隔离在 `backend/app/utils/weimob.py`，联调校准只改该文件。契约基线经 [doc.weimobcloud.com](https://doc.weimobcloud.com) 官方文档（WOS v2.0）冻结。
+
+### 7.1 前提条件
+
+- 品牌方在微盟拥有店铺，并在微盟开放平台创建**自用型（自有型）应用**，取得 `client_id` / `client_secret`；工具型/服务市场分发模式不在本期范围（微盟明确禁止绕过服务市场授权）。
+- 自用型正式店铺仅支持客户端凭证模式（`client_credentials`），token 7 天有效、无 refresh_token；测试店铺的授权码模式不在生产路径。
+- **身份桥（与有赞的最大差异）**：微盟消费者主键是 wid，openid 不互认（微盟商城是另一套 appid 命名空间）。本期以**手机号**桥接——`customer/import` 用消费者手机号换 wid（手机号是微盟官方 wid 合并键，幂等）。要求：
+  - 消费者在一码通 H5 完成手机号绑定，且对 `wechat_benefit_delivery` 场景授予隐私同意（缺任一，发放 fail-fast 进重试链，不静默降级）；
+  - 商家侧会员在微盟商城绑定**同一手机号**后，券才会出现在其商城会员中心；也可线下凭一码通 H5 展示的券码核销。
+  - 备选桥（未实现，联调期视情况另立任务）：unionid 导入（需一码通侧新增 unionid 采集）、`openUserId` SSO（会产生孤立 wid，仅适合纯线下核销场景）。
+- 发券与导入需组织架构参数 `vid` / `vid_type`（B 端店铺设置/组织架构），连同 `shop_id` / `shop_type` 一起配在连接器公开 config。
+- token 获取限流 1 万次/日、API 100 万次/日（clientId+店铺粒度），正常发放频次远低于限值。
+
+### 7.2 API 契约（联调校准基线）
+
+以 [doc.weimobcloud.com](https://doc.weimobcloud.com) 为准；接入真实店铺前需逐项校准：
+
+| 项         | 契约                                                                                                                                                                                                         |
+| ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| API 网关   | `POST {base}{path}?accesstoken=TOKEN`，`base` 默认 `https://dopen.weimob.com`（`settings.weimob_api_base_url` 可覆盖）；路径形如 `/apigw/weimob_crm/v2.0/{endpoint}`，token 走 query param                   |
+| 请求签名   | 无独立签名算法，仅凭 accesstoken 鉴权                                                                                                                                                                        |
+| token 端点 | `POST {base}/fuwu/b/oauth2/token`（query：`grant_type=client_credentials&client_id&client_secret&shop_id&shop_type`）；`access_token` 7 天（expires_in=604799），临期重取即续，无 refresh_token              |
+| 身份桥     | `weimob_crm/v2.0/customer/import`：`{phone, vid}` → `successList[{wid}]`；同手机号幂等返回既有 wid（官方合并键）                                                                                             |
+| 发券接口   | `weimob_crm/v2.0/coupon/receive`：`couponNums[{couponTemplateId, num, requestId}]` + `wid` + `scene=945000`（API 发券固定值）+ `vid` + `vidType`；响应 `couponResultList[].codes[]` 为券码，即 `external_id` |
+| 对账接口   | `weimob_crm/v2.0/coupon/getList`（按券码批量查），供回调超时后的 `reconcile` 对账                                                                                                                            |
+| 消息推送   | 微盟云控制台「消息订阅」配置推送地址为 `{base_url}/api/v1/connectors/connectors/{id}/callback`；信封 `{id, topic, event, bosId, sign, msgBody}`，`sign = md5(clientId + id + msgBody + clientSecret)`        |
+
+**联调一号校准点**：文档未明示 sign 计算时 msgBody（JSON 对象）的精确序列化形式。`utils/weimob.py` 的 `verify_push_signature` 逐候选比对（原始串/紧凑 dumps/sort_keys dumps，大小写不敏感），真实推送到达后确认实际形式并收敛为单一候选。其余校准点：`customer/import` 响应字段名（successList/failedList）、coupon/getList 的列表字段名（当前按 couponList/coupons/list/records 探测）。
+
+### 7.3 一码通侧配置流程
+
+```text
+品牌后台 → 连接器 → 新建（类型：微盟）
+→ 填 client_id、shop_id、shop_type、vid、vid_type（config）、client_secret（secrets，加密存储）
+→ 复制回调地址到微盟云控制台消息订阅
+→ 在微盟后台创建券模板，把券模板 ID 配到扫码权益的 config_json.coupon_id
+→ 用「测试连接」验证凭证（client_credentials 探测）
+```
+
+### 7.4 运行时行为
+
+- **token 生命周期**：`access_token` 加密存于连接器 `secrets_encrypted`；`prepare` 钩子在临期（剩余 <24h）时用独立租户上下文会话重取并回写（行级锁 + 双重检查防并发重取），返回 transient 视图避免脏写。
+- **发放幂等与身份**：以 claim ID 作为 coupon/receive 的 `requestId`；先 `customer/import` 手机号换 wid，再发券；`external_id` = 券码（codes 首个），回调 `receiveCoupon` 事件按同源 `msgBody.code` 精确匹配结算。
+- **钱包闭环**：与有赞共用外部券钱包（`external_issue → external_sync_confirm → external_consume`），无平台特判；`consumeCoupon` 推送经回调 `ignored + coupon_transition=external_consume` 回流本地券状态。
+- **回调 ACK 契约**：微盟要求 2 秒内返回 `{"code":{"errcode":0,"errmsg":"success"}}`，否则重推 5 次（5s/30s/60s/5min/10min）并有熔断；适配器经 `callback_ack_payload` 钩子覆盖响应体，仅影响微盟连接器。
+- **手机号同意边界**：发放前校验 `wechat_benefit_delivery` 场景隐私同意（consent purpose 已随迁移 a34cfb8027f0 播种，公开授予端点可用）+ 手机号信封存在；`lead_contact_suppressed`（隐私治理抑制）视同不可用。

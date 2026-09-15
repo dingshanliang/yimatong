@@ -1,6 +1,6 @@
 ---
 status: active
-last_verified: 2026-09-14
+last_verified: 2026-09-15
 accuracy: high
 ---
 
@@ -531,10 +531,12 @@ erDiagram
 
 权益投递记录：status、retry_count、max_retries、next_retry_at。
 
-### 外部权威券钱包状态机（member_coupons，youzan 路径）
+### 外部权威券钱包状态机（member_coupons，youzan / weimob 共用路径）
 
 `authority_type='external'` 的券由 `mutate_member_coupon_authority` 的扩展动作写入
-（`yimatong_app` 仅经该 SQL 函数写 member_coupons）：
+（`yimatong_app` 仅经该 SQL 函数写 member_coupons）；writer 为 youzan 与 weimob 两个
+适配器（经 claim API + worker 钩子），状态机本身按 `external_connector_id` 泛化、
+无平台特判：
 
 ```text
 领取（claim API，预检已发布规则 + 活跃会员）

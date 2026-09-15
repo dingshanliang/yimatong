@@ -1,6 +1,6 @@
 ---
 status: active
-last_verified: 2026-09-14
+last_verified: 2026-09-15
 accuracy: high
 ---
 
@@ -286,13 +286,15 @@ GET    /api/v1/connectors/deliveries/{delivery_id} → 投递详情
 连接器类型与回调语义说明：
 
 - 注册类型由后端适配器注册表提供（`GET /connectors/connectors/types`），当前含
-  `coupon_pool / generic_http / wechat_pay_transfer / wecom_crm / youzan`；有赞（`youzan`）
-  的凭证配置与协议契约见 `INTEGRATION_PLAYBOOK.md` §6。
-- `POST /test` 对实现了 `test_connection` 的适配器（youzan、wecom_crm）执行真实凭证校验，
+  `coupon_pool / generic_http / wechat_pay_transfer / wecom_crm / youzan / weimob`；
+  有赞（`youzan`）、微盟（`weimob`）的凭证配置与协议契约见 `INTEGRATION_PLAYBOOK.md` §6/§7。
+- `POST /test` 对实现了 `test_connection` 的适配器（youzan、weimob、wecom_crm）执行真实凭证校验，
   其余类型保持模拟应答。
 - `POST /callback` 支持适配器返回 `status="ignored"`：事件与发放结算无关时直接 200
   `{"status":"ignored"}`，不结算也不 422；携带 `coupon_transition="external_consume"` 时
   转交外部券钱包权威函数做核销回流（200 `{"status":"ignored","coupon_transition":"consumed"|"no_match"}`）。
+  实现了 `callback_ack_payload` 钩子的适配器（微盟）按平台契约覆盖 2xx 响应体
+  （`{"code":{"errcode":0,"errmsg":"success"}}`），403/422 拒绝路径不变。
 
 ## 10. 数据分析（analytics.py + analytics_dashboard.py + channel_analytics.py）
 

@@ -1,6 +1,6 @@
 ---
 status: active
-last_verified: 2026-09-14
+last_verified: 2026-09-15
 accuracy: high
 ---
 
@@ -63,14 +63,16 @@ accuracy: high
 - 连接器凭证（client_secret、access_token、refresh_token、token 有效期等）全部经
   AES-256-GCM 信封加密存于 `connectors.secrets_encrypted`；应用层
   `SENSITIVE_CONFIG_KEYS` 与数据库 CHECK 约束双重禁止明文落入公开 `config`。
-- 外部 OAuth token 生命周期（有赞 7 天 access_token / 28 天单次 refresh_token）由
-  适配器 `prepare` 钩子在发放/同步前维护：行级锁防并发双刷，独立事务提交避免
-  refresh_token 丢失。
+- 外部 OAuth token 生命周期（有赞 7 天 access_token / 28 天单次 refresh_token；微盟
+  client_credentials 7 天、无 refresh_token、临期重取）由适配器 `prepare` 钩子在
+  发放/同步前维护：行级锁防并发双刷，独立租户上下文事务提交。
 - 外部平台回调端点无 JWT，防线为 Redis IP 限流（fail-closed）→ 适配器签名验证
   （默认拒绝）→ 连接器身份限流 → PG 专用回调角色 + SQL 权威函数。
-- 经连接器对外发放权益使用消费者 openid 时，必须先取得场景化隐私同意
-  （现金 `wechat_cash_payout`、外部权益 `wechat_benefit_delivery`），未同意走发放
-  失败重试链，绝不静默使用。
+- 经连接器对外发放权益使用消费者 openid 或手机号时，必须先取得场景化隐私同意
+  （现金 `wechat_cash_payout`、外部权益 `wechat_benefit_delivery`，consent purpose
+  已随迁移 a34cfb8027f0 播种、公开授予端点可用），未同意走发放失败重试链，绝不
+  静默使用；微盟以手机号桥接外部会员（customer/import 换 wid），手机号仅在该
+  同意场景下解密出域，且隐私治理抑制（lead_contact_suppressed）视同不可用。
 
 ## 5. 营销触达合规
 
