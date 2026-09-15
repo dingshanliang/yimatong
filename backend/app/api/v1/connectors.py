@@ -19,6 +19,7 @@ import app.services.connectors.coupon_pool  # noqa: F401
 import app.services.connectors.generic_http  # noqa: F401
 import app.services.connectors.wechat_pay_transfer  # noqa: F401
 import app.services.connectors.wecom_crm  # noqa: F401
+import app.services.connectors.weimob  # noqa: F401
 import app.services.connectors.youzan  # noqa: F401
 from app.core.database import bootstrap_tenant_row, get_db
 from app.core.dependencies import get_current_tenant
@@ -567,7 +568,13 @@ async def delivery_callback_endpoint(
                 result.external_coupon_ref,
                 result.external_data,
             )
+            ack = await adapter.callback_ack_payload(result)
+            if ack is not None:
+                return ack
             return {"status": "ignored", "coupon_transition": "consumed" if consumed else "no_match"}
+        ack = await adapter.callback_ack_payload(result)
+        if ack is not None:
+            return ack
         return {"status": "ignored"}
 
     if not result.external_id or result.status not in {"success", "failed"}:
@@ -618,6 +625,9 @@ async def delivery_callback_endpoint(
             delivery.next_retry_at = None
         await db.flush()
 
+    ack = await adapter.callback_ack_payload(result)
+    if ack is not None:
+        return ack
     return {"status": "ok"}
 
 

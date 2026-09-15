@@ -105,6 +105,9 @@ class Settings(BaseSettings):
     # 有赞开放平台（YouzanAdapter）网关；指向本地 mock 用于契约测试
     youzan_api_base_url: str = "https://open.youzanyun.com"
 
+    # 微盟开放平台（WeimobAdapter）网关；指向本地 mock 用于契约测试
+    weimob_api_base_url: str = "https://dopen.weimob.com"
+
     # Logging
     log_level: str = "INFO"
     log_format: str = "human"  # "human" | "json"

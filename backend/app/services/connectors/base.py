@@ -80,10 +80,19 @@ class BaseConnectorAdapter(ABC):
     async def prepare(self, db: AsyncSession, connector: Connector) -> Connector:
         """发放/同步前的准备钩子（如 OAuth token 检查与刷新回写）。
 
-        默认原样返回；需要凭证生命周期管理的适配器（youzan 等）覆盖此方法。
+        默认原样返回；需要凭证生命周期管理的适配器（youzan、weimob 等）覆盖此方法。
         返回的 connector 供调用方构造 runtime 视图。
         """
         return connector
+
+    async def callback_ack_payload(self, callback_result: CallbackResult) -> dict | None:
+        """回调成功处理（ignored 或结算完成）后的响应体覆盖钩子。
+
+        默认 None（端点返回统一内部形状）；外部平台对回调 ACK 响应有固定
+        契约时覆盖（如 weimob 要求 {"code":{"errcode":0,...}}，否则重推）。
+        仅影响 2xx 响应体，403/422 拒绝路径不走此钩子。
+        """
+        return None
 
     async def on_delivery_success(
         self,

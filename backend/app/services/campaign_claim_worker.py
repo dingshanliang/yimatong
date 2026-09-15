@@ -116,15 +116,16 @@ async def _fail(
     )
 
 
-async def _resolve_consumer_openid(db, tenant_id: uuid.UUID, consumer_id: str, *, scenario: str) -> str:
-    """校验隐私同意并解密消费者 openid。
+async def _consumer_with_scenario_consent(
+    db, tenant_id: uuid.UUID, consumer_id: str, *, scenario: str, denied_reason: str
+):
+    """定位消费者档案并校验 scenario 级隐私同意，返回档案行。
 
-    未授权、无 openid 或档案缺失时抛 LookupError，走发放失败重试链；
-    scenario 区分现金 payout 与权益发放两类同意场景。
+    档案缺失、ID 非法或未授权时抛 LookupError（denied_reason 区分身份类别），
+    走发放失败重试链；openid 与手机号两类身份解析共用本核心。
     """
     from app.models.consent import ConsentRecord, ConsentStatus, ConsentType
     from app.models.member import ConsumerProfile
-    from app.utils.crypto import decrypt_wechat_openid
 
     try:
         member_id = uuid.UUID(consumer_id)
@@ -149,13 +150,23 @@ async def _resolve_consumer_openid(db, tenant_id: uuid.UUID, consumer_id: str, *
             .order_by(ConsentRecord.granted_at.desc())
             .limit(1)
         )
-    if (
-        member is None
-        or consent_status != ConsentStatus.granted
-        or not member.wechat_openid_ciphertext
-        or not member.wechat_openid_nonce
-        or not member.wechat_openid_key_id
-    ):
+    if member is None or consent_status != ConsentStatus.granted:
+        raise LookupError(denied_reason)
+    return member
+
+
+async def _resolve_consumer_openid(db, tenant_id: uuid.UUID, consumer_id: str, *, scenario: str) -> str:
+    """校验隐私同意并解密消费者 openid。
+
+    未授权、无 openid 或档案缺失时抛 LookupError，走发放失败重试链；
+    scenario 区分现金 payout 与权益发放两类同意场景。
+    """
+    from app.utils.crypto import decrypt_wechat_openid
+
+    member = await _consumer_with_scenario_consent(
+        db, tenant_id, consumer_id, scenario=scenario, denied_reason="open_id_consent_unavailable"
+    )
+    if not member.wechat_openid_ciphertext or not member.wechat_openid_nonce or not member.wechat_openid_key_id:
         raise LookupError("open_id_consent_unavailable")
     return decrypt_wechat_openid(
         tenant_id,
@@ -163,6 +174,33 @@ async def _resolve_consumer_openid(db, tenant_id: uuid.UUID, consumer_id: str, *
         member.wechat_openid_ciphertext,
         member.wechat_openid_nonce,
         member.wechat_openid_key_id,
+    )
+
+
+async def _resolve_consumer_phone(db, tenant_id: uuid.UUID, consumer_id: str, *, scenario: str) -> str:
+    """校验隐私同意并解密消费者手机号（外部权益适配器如 weimob 以手机号桥接外部会员）。
+
+    lead_contact_suppressed（隐私治理抑制）视同不可用；未授权、无手机号或
+    档案缺失时抛 LookupError，走发放失败重试链。
+    """
+    from app.utils.crypto import decrypt_consumer_phone
+
+    member = await _consumer_with_scenario_consent(
+        db, tenant_id, consumer_id, scenario=scenario, denied_reason="phone_consent_unavailable"
+    )
+    if (
+        member.lead_contact_suppressed
+        or not member.phone_ciphertext
+        or not member.phone_nonce
+        or not member.phone_key_id
+    ):
+        raise LookupError("phone_consent_unavailable")
+    return decrypt_consumer_phone(
+        member.tenant_id,
+        member.id,
+        member.phone_ciphertext,
+        member.phone_nonce,
+        member.phone_key_id,
     )
 
 
@@ -228,6 +266,11 @@ async def _process_leased(tenant_id: uuid.UUID, leased: dict) -> bool:
             elif getattr(adapter, "requires_openid", False):
                 # 外部权益适配器（youzan 等）声明需要 openid 定位外部用户
                 delivery_config["openid"] = await _resolve_consumer_openid(
+                    db, tenant_id, claim.consumer_id, scenario="wechat_benefit_delivery"
+                )
+            elif getattr(adapter, "requires_phone", False):
+                # 外部权益适配器（weimob 等）声明需要手机号桥接外部会员
+                delivery_config["phone"] = await _resolve_consumer_phone(
                     db, tenant_id, claim.consumer_id, scenario="wechat_benefit_delivery"
                 )
 
