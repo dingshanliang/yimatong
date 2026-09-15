@@ -39,6 +39,7 @@ export const TYPE_LABELS: Record<string, string> = {
   generic_http: "通用 HTTP",
   coupon_pool: "券码池",
   youzan: "有赞",
+  weimob: "微盟",
   wechat_pay: "微信支付商家券",
   alipay: "支付宝商家券",
 };
