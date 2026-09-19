@@ -94,6 +94,10 @@ jobs:
         working-directory: ./backend
         env:
           database_url: postgresql+asyncpg://yimatong_app:yimatong_app@localhost:5432/yimatong_dev
+          # Platform-admin / cross-tenant flows run on the control engine with
+          # an elevated principal (mirrors production topology); falling back
+          # to the restricted runtime role denies platform_auth_sessions DML.
+          control_database_url: postgresql+asyncpg://yimatong:yimatong@localhost:5432/yimatong_dev
           redis_url: redis://localhost:6380/0
           secret_key: ci-secret-key-for-e2e-tests-minimum-32-chars
           AES_MASTER_KEY_V1: f18d81c3b455f9a5a01db6a8546fc5acc242b51cbc4ae70ec99654e091f38a4b
