@@ -21,23 +21,11 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 from uuid6 import uuid7
 
+from app.models._constraint_text import contains_only as _contains_only
 from app.models.base import Base
 
 _EMPTY_DIGEST = "0" * 64
 _JSON_DOCUMENT = JSON().with_variant(JSONB(), "postgresql")
-
-
-def _contains_only(column: str, allowed: str) -> str:
-    """Build a PostgreSQL/SQLite-compatible exact character whitelist.
-
-    trim()/btrim strips allowed characters from both ends, so the result is
-    empty iff no other character occurs anywhere in the value. Must stay
-    flat: the nested-replace formulation overflows older SQLite parser
-    stacks (CI's SQLite 3.45 failed CREATE TABLE export_logs on a 67-deep
-    chain) and is semantically identical here.
-    """
-
-    return f"trim({column}, '{allowed}') = ''"
 
 
 class ExportLog(Base):

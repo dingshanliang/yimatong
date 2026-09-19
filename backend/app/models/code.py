@@ -18,17 +18,8 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from uuid6 import uuid7
 
+from app.models._constraint_text import contains_only as _contains_only
 from app.models.base import Base
-
-
-def _contains_only(column: str, allowed: str) -> str:
-    """Build a PostgreSQL/SQLite-compatible exact character whitelist.
-
-    Flat on purpose: nested replace() chains overflow older SQLite parser
-    stacks during CREATE TABLE. See export_log._contains_only.
-    """
-
-    return f"trim({column}, '{allowed}') = ''"
 
 
 class CodeBatchStatus(StrEnum):
