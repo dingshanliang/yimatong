@@ -14,12 +14,17 @@ from sqlalchemy import (
     Index,
     LargeBinary,
     String,
+    UniqueConstraint,
     func,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 from uuid6 import uuid7
 
 from app.models.base import Base
+
+# 迁移在 PG 上以 jsonb 建列（c04d5e6f7a8b），SQLite 测试建表保持通用 JSON。
+_JSON_DOCUMENT = JSON().with_variant(JSONB(), "postgresql")
 
 
 class CommerceConnection(Base):
@@ -30,7 +35,7 @@ class CommerceConnection(Base):
     external_tenant_ref: Mapped[str] = mapped_column(String(120), nullable=False)
     external_shop_ref: Mapped[str] = mapped_column(String(120), nullable=False)
     base_url: Mapped[str] = mapped_column(String(500), nullable=False)
-    capabilities: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+    capabilities: Mapped[list[str]] = mapped_column(_JSON_DOCUMENT, nullable=False, default=list)
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="active")
     version: Mapped[int] = mapped_column(BigInteger, nullable=False, default=1)
     created_by: Mapped[uuid.UUID | None] = mapped_column(nullable=True)
@@ -45,7 +50,7 @@ class CommerceConnection(Base):
             ["accounts.tenant_id", "accounts.id"],
             name="fk_commerce_connections_tenant_creator",
         ),
-        Index("uq_commerce_connections_tenant_id", "tenant_id", "id", unique=True),
+        UniqueConstraint("tenant_id", "id", name="uq_commerce_connections_tenant_id"),
         Index(
             "uq_commerce_connections_active_tenant",
             "tenant_id",
@@ -84,9 +89,9 @@ class CommerceServiceCredential(Base):
             ["commerce_connections.tenant_id", "commerce_connections.id"],
             name="fk_commerce_credentials_tenant_connection",
         ),
-        Index("uq_commerce_credentials_tenant_id", "tenant_id", "id", unique=True),
-        Index("uq_commerce_credentials_prefix", "key_prefix", unique=True),
-        Index("uq_commerce_credentials_version", "tenant_id", "connection_id", "direction", "version", unique=True),
+        UniqueConstraint("tenant_id", "id", name="uq_commerce_credentials_tenant_id"),
+        UniqueConstraint("key_prefix", name="uq_commerce_credentials_prefix"),
+        UniqueConstraint("tenant_id", "connection_id", "direction", "version", name="uq_commerce_credentials_version"),
         Index("ix_commerce_credentials_active", "tenant_id", "connection_id", "direction", "valid_until"),
         CheckConstraint(
             "direction IN ('yimatong_to_commerce','commerce_to_yimatong')",
@@ -124,9 +129,9 @@ class CommerceMemberReference(Base):
             ["brand_memberships.tenant_id", "brand_memberships.id"],
             name="fk_commerce_member_refs_tenant_membership",
         ),
-        Index("uq_commerce_member_refs_tenant_id", "tenant_id", "id", unique=True),
-        Index("uq_commerce_member_refs_member", "tenant_id", "connection_id", "membership_id", unique=True),
-        Index("uq_commerce_member_refs_ref", "tenant_id", "connection_id", "member_ref", unique=True),
+        UniqueConstraint("tenant_id", "id", name="uq_commerce_member_refs_tenant_id"),
+        UniqueConstraint("tenant_id", "connection_id", "membership_id", name="uq_commerce_member_refs_member"),
+        UniqueConstraint("tenant_id", "connection_id", "member_ref", name="uq_commerce_member_refs_ref"),
         Index("ix_commerce_member_refs_membership", "tenant_id", "membership_id"),
         Index(
             "uq_commerce_member_refs_external",
@@ -163,8 +168,8 @@ class CommerceIdentityHandoff(Base):
             ["commerce_member_references.tenant_id", "commerce_member_references.id"],
             name="fk_commerce_handoffs_tenant_member_ref",
         ),
-        Index("uq_commerce_handoffs_tenant_id", "tenant_id", "id", unique=True),
-        Index("uq_commerce_handoffs_digest", "token_digest", unique=True),
+        UniqueConstraint("tenant_id", "id", name="uq_commerce_handoffs_tenant_id"),
+        UniqueConstraint("token_digest", name="uq_commerce_handoffs_digest"),
         Index("ix_commerce_handoffs_expiry", "tenant_id", "connection_id", "expires_at"),
         Index("ix_commerce_handoffs_member_ref", "tenant_id", "member_reference_id"),
         CheckConstraint("expires_at>created_at", name="ck_commerce_handoffs_validity"),
@@ -183,7 +188,7 @@ class CommerceIntegrationMessage(Base):
     message_type: Mapped[str] = mapped_column(String(80), nullable=False)
     credential_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True)
     occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    payload: Mapped[dict] = mapped_column(JSON, nullable=False)
+    payload: Mapped[dict] = mapped_column(_JSON_DOCUMENT, nullable=False)
     payload_digest: Mapped[str] = mapped_column(String(64), nullable=False)
     status: Mapped[str] = mapped_column(String(20), nullable=False)
     attempt_count: Mapped[int] = mapped_column(nullable=False, default=0)
@@ -202,15 +207,14 @@ class CommerceIntegrationMessage(Base):
             ["commerce_service_credentials.tenant_id", "commerce_service_credentials.id"],
             name="fk_commerce_messages_tenant_credential",
         ),
-        Index("uq_commerce_messages_tenant_id", "tenant_id", "id", unique=True),
-        Index(
-            "uq_commerce_messages_business_key",
+        UniqueConstraint("tenant_id", "id", name="uq_commerce_messages_tenant_id"),
+        UniqueConstraint(
             "tenant_id",
             "connection_id",
             "direction",
             "message_id",
             "message_version",
-            unique=True,
+            name="uq_commerce_messages_business_key",
         ),
         Index("ix_commerce_messages_reconcile", "tenant_id", "connection_id", "direction", "status", "created_at"),
         Index("ix_commerce_messages_credential", "tenant_id", "credential_id"),
@@ -237,7 +241,7 @@ class CommerceConnectionEvent(Base):
     idempotency_key: Mapped[str] = mapped_column(String(120), nullable=False)
     payload_digest: Mapped[str] = mapped_column(String(64), nullable=False)
     actor_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True)
-    details: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    details: Mapped[dict] = mapped_column(_JSON_DOCUMENT, nullable=False, default=dict)
     occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     __table_args__ = (
@@ -246,8 +250,8 @@ class CommerceConnectionEvent(Base):
             ["commerce_connections.tenant_id", "commerce_connections.id"],
             name="fk_commerce_events_tenant_connection",
         ),
-        Index("uq_commerce_events_tenant_id", "tenant_id", "id", unique=True),
-        Index("uq_commerce_events_idempotency", "tenant_id", "idempotency_key", unique=True),
+        UniqueConstraint("tenant_id", "id", name="uq_commerce_events_tenant_id"),
+        UniqueConstraint("tenant_id", "idempotency_key", name="uq_commerce_events_idempotency"),
         Index("ix_commerce_events_connection_time", "tenant_id", "connection_id", "occurred_at"),
         CheckConstraint(
             "event_type IN ('connected','credential_rotated','credential_revoked','disconnected',"

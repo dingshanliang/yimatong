@@ -217,6 +217,17 @@ def include_object(object, name: str | None, type_: str, reflected: bool, compar
             return False
         if name == "scan_events_default" or SCAN_EVENT_PARTITION_NAME.fullmatch(name):
             return False
+    if type_ == "foreign_key_constraint":
+        # PostgreSQL expands an FK that references the partitioned scan_events
+        # table into one auto-named constraint per child partition (e.g.
+        # member_coupons fkey0..N). Those reflections cannot be matched against
+        # the single logical FK declared on the model, so exclude them from the
+        # autogen comparison; the partition tables themselves are excluded above.
+        referred_tables = {element.target_fullname.split(".")[-2] for element in object.elements}
+        if any(
+            table == "scan_events_default" or SCAN_EVENT_PARTITION_NAME.fullmatch(table) for table in referred_tables
+        ):
+            return False
     return True
 
 

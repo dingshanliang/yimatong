@@ -16,6 +16,7 @@ from sqlalchemy import (
     String,
     UniqueConstraint,
     func,
+    text,
 )
 from sqlalchemy.dialects import postgresql
 from sqlalchemy.orm import Mapped, mapped_column
@@ -149,6 +150,7 @@ class CommerceOrderLineFact(Base):
             ["tenant_id", "order_fact_id"],
             ["commerce_order_facts.tenant_id", "commerce_order_facts.id"],
             name="fk_commerce_order_lines_order",
+            ondelete="CASCADE",
         ),
         ForeignKeyConstraint(
             ["tenant_id", "product_id"],
@@ -193,6 +195,7 @@ class CommerceRefundFact(Base):
             ["tenant_id", "order_fact_id"],
             ["commerce_order_facts.tenant_id", "commerce_order_facts.id"],
             name="fk_commerce_refund_facts_order",
+            ondelete="CASCADE",
         ),
         ForeignKeyConstraint(
             ["tenant_id", "message_row_id"],
@@ -238,6 +241,7 @@ class CommerceRepurchaseAttribution(Base):
             ["tenant_id", "order_fact_id"],
             ["commerce_order_facts.tenant_id", "commerce_order_facts.id"],
             name="fk_commerce_repurchase_attr_order",
+            ondelete="CASCADE",
         ),
         ForeignKeyConstraint(
             ["tenant_id", "membership_id"],
@@ -258,6 +262,14 @@ class CommerceRepurchaseAttribution(Base):
         UniqueConstraint("tenant_id", "order_fact_id", name="uq_commerce_repurchase_attr_order"),
         Index("ix_commerce_repurchase_attr_occurrence", "tenant_id", "occurrence_at"),
         Index("ix_commerce_repurchase_attr_cohort", "tenant_id", "member_cohort_at"),
+        Index(
+            "uq_commerce_repurchase_attributions_coupon",
+            "tenant_id",
+            "coupon_id",
+            unique=True,
+            postgresql_where=text("coupon_id IS NOT NULL"),
+            sqlite_where=text("coupon_id IS NOT NULL"),
+        ),
         CheckConstraint(
             "coverage_status IN ('complete','partial','missing')",
             name="ck_commerce_repurchase_attr_coverage",
