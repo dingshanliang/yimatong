@@ -28,12 +28,16 @@ _JSON_DOCUMENT = JSON().with_variant(JSONB(), "postgresql")
 
 
 def _contains_only(column: str, allowed: str) -> str:
-    """Build a PostgreSQL/SQLite-compatible exact character whitelist."""
+    """Build a PostgreSQL/SQLite-compatible exact character whitelist.
 
-    remainder = column
-    for character in allowed:
-        remainder = f"replace({remainder}, '{character}', '')"
-    return f"{remainder} = ''"
+    trim()/btrim strips allowed characters from both ends, so the result is
+    empty iff no other character occurs anywhere in the value. Must stay
+    flat: the nested-replace formulation overflows older SQLite parser
+    stacks (CI's SQLite 3.45 failed CREATE TABLE export_logs on a 67-deep
+    chain) and is semantically identical here.
+    """
+
+    return f"trim({column}, '{allowed}') = ''"
 
 
 class ExportLog(Base):

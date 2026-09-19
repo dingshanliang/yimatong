@@ -22,12 +22,13 @@ from app.models.base import Base
 
 
 def _contains_only(column: str, allowed: str) -> str:
-    """Build a PostgreSQL/SQLite-compatible exact character whitelist."""
+    """Build a PostgreSQL/SQLite-compatible exact character whitelist.
 
-    remainder = column
-    for character in allowed:
-        remainder = f"replace({remainder}, '{character}', '')"
-    return f"{remainder} = ''"
+    Flat on purpose: nested replace() chains overflow older SQLite parser
+    stacks during CREATE TABLE. See export_log._contains_only.
+    """
+
+    return f"trim({column}, '{allowed}') = ''"
 
 
 class CodeBatchStatus(StrEnum):
