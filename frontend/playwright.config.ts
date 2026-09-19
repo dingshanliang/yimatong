@@ -11,6 +11,9 @@ import { defineConfig, devices } from "@playwright/test";
 
 export default defineConfig({
   testDir: "./e2e",
+  // Only Playwright specs live here; e2e/*-global-teardown.test.ts are vitest
+  // unit tests for teardown helpers and crash Playwright's loader on import.
+  testMatch: "**/*.spec.ts",
   // The Platform control plane has its own bootstrap, server lifecycle, and
   // cookie boundary. It is executed through playwright.platform.config.ts.
   testIgnore: "platform-auth.spec.ts",
