@@ -73,6 +73,15 @@ jobs:
       - name: App lint
         run: pnpm lint
 
+      # Must precede vitest: src/test/performance.test.ts measures the .next
+      # production output and fails when no build exists.
+      - name: Build workspace
+        run: pnpm build
+        env:
+          # H5's CSP gate rejects non-HTTPS API origins in production builds.
+          # The CI artifact is never served; this origin only lands in headers.
+          NEXT_PUBLIC_API_URL: https://ci-build.invalid
+
       # maxWorkers=2: heavy jsdom suites flake (findByText waitFor deadlines)
       # when forks oversubscribe the 4-vCPU runner.
       - name: Admin tests (shard 1/2)
@@ -84,13 +93,6 @@ jobs:
         run: pnpm --filter @yimatong/admin exec vitest run --shard=2/2 --maxWorkers=2
         env:
           CI: "true"
-
-      - name: Build workspace
-        run: pnpm build
-        env:
-          # H5's CSP gate rejects non-HTTPS API origins in production builds.
-          # The CI artifact is never served; this origin only lands in headers.
-          NEXT_PUBLIC_API_URL: https://ci-build.invalid
 
   # ── Design gates: token snapshot + contrast + 禁硬编码门禁 ──
   design-gates:

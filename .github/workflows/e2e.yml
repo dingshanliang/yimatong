@@ -131,9 +131,11 @@ jobs:
         working-directory: ./frontend
         run: pnpm exec playwright install --with-deps chromium
 
-      - name: Build shared package
+      - name: Build workspace packages
         working-directory: ./frontend
-        run: pnpm build:shared
+        # design-tokens' dist/theme.css is gitignored; the apps' dev servers
+        # resolve it through the package exports field, so it must be built.
+        run: pnpm build:shared && pnpm build:tokens
 
       - name: Run E2E tests
         working-directory: ./frontend
