@@ -147,6 +147,10 @@ jobs:
           CI: true
         run: pnpm test:e2e
 
+      - name: Dump backend log on failure
+        if: failure()
+        run: tail -n 200 /tmp/backend.log || true
+
       - name: Upload Playwright report
         if: failure()
         uses: actions/upload-artifact@v4
