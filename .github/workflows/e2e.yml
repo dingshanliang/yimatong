@@ -99,6 +99,9 @@ jobs:
           AES_MASTER_KEY_V1: f18d81c3b455f9a5a01db6a8546fc5acc242b51cbc4ae70ec99654e091f38a4b
           HMAC_PEPPER: 7c9cade78554566742f263539bd4ff404493e9b9ed6939168da7ad5ceb3813cd
           cors_origins: "*"
+          # bcrypt("platform_admin_2026") — the specs' platform-admin login
+          # credentials; the backend refuses platform login without a hash.
+          platform_admin_password_hash: "$2b$12$SofVmPLUVbAkRTQo8svj9OzqNSfZj9HFDc2m3U9K3dqgSEe1CA3B."
         run: |
           nohup uv run uvicorn app.main:app --host 0.0.0.0 --port 8000 > /tmp/backend.log 2>&1 &
           echo $! > /tmp/backend.pid
