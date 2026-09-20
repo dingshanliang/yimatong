@@ -64,3 +64,6 @@ dogfood-output/
 
 # Generated marketing artifacts (source md + generator script are tracked)
 docs/04_marketing_sales/*.docx
+
+# Playwright 运行期证据截图（spec 每次运行重新生成）
+frontend/e2e/.results/
