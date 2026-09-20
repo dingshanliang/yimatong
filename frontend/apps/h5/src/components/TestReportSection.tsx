@@ -6,7 +6,10 @@ import { safePublicUrl } from "@/lib/public-url";
 
 interface Report {
   id: string;
-  title: string;
+  /** 权威 resolver 契约字段（/c/{publicId} 的 code_data.test_reports[].name） */
+  name?: string;
+  /** 编辑器预览路径的别名（PreviewRenderer 由 asset.name 映射而来） */
+  title?: string;
   summary?: string;
   image_url?: string;
   file_url?: string;
@@ -47,7 +50,7 @@ export function TestReportSection({ reports }: TestReportSectionProps) {
                 {/* 报告标题 + 日期 */}
                 <div className="flex items-start justify-between gap-2">
                   <h4 className="text-sm font-semibold text-foreground">
-                    {report.title}
+                    {report.name ?? report.title}
                   </h4>
                   {report.date && (
                     <span className="shrink-0 text-xs text-foreground-tertiary">

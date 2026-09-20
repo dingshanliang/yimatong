@@ -517,6 +517,8 @@ function CodesCatalog({ access }: { access: CodeAccess }) {
     setExportingId(record.id);
     try {
       await performExport(record, reason, false);
+      // 服务端导出即完成 completed→exported 状态迁移，列表需同步刷新
+      mutate();
     } catch (error) {
       if ((await readErrorCode(error)) === "CODE_BATCH_ITEM_NOT_DELIVERABLE") {
         modal.confirm({
@@ -528,6 +530,7 @@ function CodesCatalog({ access }: { access: CodeAccess }) {
           onOk: async () => {
             try {
               await performExport(record, reason, true);
+              mutate();
             } catch (retryError) {
               message.error(
                 extractErrorMessage(
