@@ -286,6 +286,23 @@ class TestTenantOnboarding:
         assert audit.operator_id == "00000000-0000-0000-0000-000000000001"
         assert audit.details == {"step": "create_product"}
 
+    @pytest.mark.anyio
+    async def test_sequential_steps_accumulate(self, client: AsyncClient, sample_tenant):
+        """回归：JSON 列曾因原地修改同一 dict 不触发变更检测，只有第一步被持久化。"""
+        for step in ("create_product", "create_batch", "create_page"):
+            response = await client.post(
+                f"/api/v1/tenants/me/onboarding/step/{step}",
+                headers=_auth_headers(sample_tenant["id"]),
+            )
+            assert response.status_code == 200
+
+        progress = await client.get(
+            "/api/v1/tenants/me/onboarding",
+            headers=_auth_headers(sample_tenant["id"]),
+        )
+        completed = set(progress.json()["completed_steps"])
+        assert {"create_product", "create_batch", "create_page"}.issubset(completed)
+
 
 class TestDeleteTenant:
     @pytest.mark.anyio

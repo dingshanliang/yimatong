@@ -225,10 +225,12 @@ async def complete_onboarding_step(db: AsyncSession, tenant_id: uuid.UUID, step:
     tenant = await get_tenant(db, tenant_id)
     if not tenant:
         return None
-    progress = tenant.onboarding_progress or {}
+    # 必须整体替换为新 dict：原地修改 JSON 列的同一对象不会触发
+    # SQLAlchemy 的属性变更检测，导致除第一步外的进度静默丢失。
+    progress = dict(tenant.onboarding_progress or {})
     completed = set(progress.get("completed_steps", []))
     completed.add(step)
-    progress["completed_steps"] = list(completed)
+    progress["completed_steps"] = [s for s in ONBOARDING_STEPS if s in completed]
     tenant.onboarding_progress = progress
     await db.flush()
     await db.refresh(tenant)

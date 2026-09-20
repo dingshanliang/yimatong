@@ -34,7 +34,10 @@ async def list_roles(
     _role: str = Depends(require_role("admin", "operator")),
 ):
     result = await db.execute(
-        select(Role).where(Role.tenant_id == tenant_id, Role.name.in_(("admin", "operator", "viewer")))
+        select(Role).where(
+            Role.tenant_id == tenant_id,
+            Role.name.in_(("admin", "operator", "viewer", "distributor", "store_guide")),
+        )
     )
     return result.scalars().all()
 

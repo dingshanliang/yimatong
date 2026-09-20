@@ -173,7 +173,9 @@ async def create_account(
             select(Role).where(
                 Role.id.in_(role_ids),
                 Role.tenant_id == tenant_id,
-                Role.name.in_(("admin", "operator", "viewer")),
+                # distributor/store_guide 是无通用权限的渠道门户主体身份，
+                # 与三种业务角色一样允许指派；门户端点另行校验渠道范围。
+                Role.name.in_(("admin", "operator", "viewer", "distributor", "store_guide")),
             )
         )
         roles = list(result.scalars().all())

@@ -109,7 +109,13 @@ class BrandTenantInitialization:
         rollout_state = await lock_quota_rollout_state(self._db)
         quota_epoch_active = is_current_quota_epoch_active(rollout_state)
 
-        role_templates = {name: tuple(WEB_ROLE_PERMISSIONS.get(name, ())) for name in ("admin", "operator", "viewer")}
+        # 五个内置角色一并落库：distributor/store_guide 是渠道门户的
+        # 主体绑定身份（无通用 RBAC 权限），缺种子会让租户永远无法开通
+        # 渠道门户账号（角色创建 API 只认内置角色，事后无法补建）。
+        role_templates = {
+            name: tuple(WEB_ROLE_PERMISSIONS.get(name, ()))
+            for name in ("admin", "operator", "viewer", "distributor", "store_guide")
+        }
         permission_codes = tuple(dict.fromkeys(code for codes in role_templates.values() for code in codes))
         if not role_templates["admin"] or any(len(codes) != len(set(codes)) for codes in role_templates.values()):
             raise PermissionTemplateInvalid("品牌管理员权限模板无效")
@@ -158,7 +164,13 @@ class BrandTenantInitialization:
         self._db.add_all([organization, account, quota_usage])
         await self._db.flush()
 
-        role_descriptions = {"admin": "品牌管理员", "operator": "运营人员", "viewer": "无业务操作权限成员"}
+        role_descriptions = {
+            "admin": "品牌管理员",
+            "operator": "运营人员",
+            "viewer": "无业务操作权限成员",
+            "distributor": "经销商门户身份（按渠道范围绑定）",
+            "store_guide": "门店导购门户身份（按渠道范围绑定）",
+        }
         roles = {
             name: Role(tenant_id=tenant_id, name=name, description=role_descriptions[name]) for name in role_templates
         }
