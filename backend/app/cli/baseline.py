@@ -645,11 +645,15 @@ async def _ensure_page(
     config_json: dict[str, Any] = {
         "modules": [
             {"id": "hero", "type": "product_hero", "enabled": True, "config": {"show_verify_badge": True}},
+            # zgb1.4：验真状态（首次验证/重复查验 + 累计查验）
+            {"id": "verify", "type": "verification_status", "enabled": True, "config": {}},
             {
                 "id": "trace",
                 "type": "light_traceability",
                 "enabled": True,
-                "config": {"fields": ["origin", "production_date", "expiry_date"]},
+                "config": {
+                    "fields": ["origin", "production_date", "expiry_date", "batch_code"],
+                },
             },
             {
                 "id": "benefit",
@@ -662,6 +666,9 @@ async def _ensure_page(
                     "description": "基准验收用可幂等领取的权益",
                 },
             },
+            # zgb1.2：消费者必须能看到权威检测报告与资质证书
+            {"id": "reports", "type": "test_reports", "enabled": True, "config": {}},
+            {"id": "certs", "type": "certificates", "enabled": True, "config": {}},
         ],
         "routing": {"default_page": True, "campaign_periods": []},
     }
@@ -998,6 +1005,15 @@ async def _build_baseline_tenant(
                 CAMPAIGN_NAME,
                 BENEFIT_NAME,
             )
+            # 资产必须在 release 之前就绪：public_assets 是上线 digest 的
+            # 输入，先上线后建资产会让首个消费者扫码即判 release 失效。
+            report, certificate = await _ensure_assets(
+                db,
+                tenant.id,
+                product.id,
+                REPORT_NAME,
+                CERTIFICATE_NAME,
+            )
             launch_release = await _ensure_live_launch_release(
                 db,
                 tenant.id,
@@ -1005,13 +1021,6 @@ async def _build_baseline_tenant(
                 page_version_id=version.id,
                 campaign_id=campaign.id,
                 code_batch_id=code_batch.id,
-            )
-            report, certificate = await _ensure_assets(
-                db,
-                tenant.id,
-                product.id,
-                REPORT_NAME,
-                CERTIFICATE_NAME,
             )
             await refresh_quota_usage_from_authoritative_rows(db, tenant.id)
             first_active = next(
