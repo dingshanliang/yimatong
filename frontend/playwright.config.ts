@@ -14,9 +14,21 @@ export default defineConfig({
   // Only Playwright specs live here; e2e/*-global-teardown.test.ts are vitest
   // unit tests for teardown helpers and crash Playwright's loader on import.
   testMatch: "**/*.spec.ts",
-  // The Platform control plane has its own bootstrap, server lifecycle, and
-  // cookie boundary. It is executed through playwright.platform.config.ts.
-  testIgnore: "platform-auth.spec.ts",
+  // Suites with dedicated configs own their bootstrap (backend.mjs lifecycle,
+  // platform cookie boundary) and cannot run under this config's harness:
+  //   platform-auth / platform-tenant-lifecycle / u01* / u02* / u05a
+  // Run them via playwright.<suite>.config.ts; CI coverage is tracked in bd.
+  testIgnore: [
+    "platform-auth.spec.ts",
+    "platform-tenant-lifecycle.spec.ts",
+    "u01d-account-governance.spec.ts",
+    "u01e-agency-authorization.spec.ts",
+    "u01f-plan-expiry.spec.ts",
+    "u01h-api-credentials.spec.ts",
+    "u02a-catalog.spec.ts",
+    "u02b-authoritative-batch.spec.ts",
+    "u05a-page-authority.spec.ts",
+  ],
   fullyParallel: false, // core flow tests must run serially
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,
@@ -47,14 +59,17 @@ export default defineConfig({
 
   webServer: [
     {
-      command: "NEXT_PUBLIC_H5_URL=http://localhost:3003 pnpm dev:admin",
+      command:
+        "NEXT_PUBLIC_API_URL=${E2E_API_ORIGIN:-http://localhost:8000} " +
+        "NEXT_PUBLIC_H5_URL=http://localhost:3003 pnpm dev:admin",
       url: "http://localhost:3000/login",
       reuseExistingServer: !process.env.CI,
       timeout: 120_000,
     },
     {
       command:
-        "cd apps/h5 && NEXT_PUBLIC_API_URL=http://localhost:8000 BACKEND_URL=http://localhost:8000 PORT=3003 pnpm dev",
+        "cd apps/h5 && NEXT_PUBLIC_API_URL=${E2E_API_ORIGIN:-http://localhost:8000} " +
+        "BACKEND_URL=${E2E_API_ORIGIN:-http://localhost:8000} PORT=3003 pnpm dev",
       url: "http://localhost:3003",
       reuseExistingServer: !process.env.CI,
       timeout: 120_000,

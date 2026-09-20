@@ -30,6 +30,15 @@ const API_BASE = process.env.API_BASE_URL || "http://localhost:8000";
 const ADMIN_BASE =
   process.env.EVIDENCE_ADMIN_BASE_URL || "http://localhost:3000";
 const H5_BASE = process.env.EVIDENCE_H5_BASE_URL || "http://localhost:3003";
+// 直连 PG 的只读证据查询与 baseline CLI 子进程共用同一组连接参数。
+// 默认值是本机 infra 栈（5433/yimatong_dev）；CI 在 e2e.yml 里覆盖为
+// 服务容器拓扑（localhost:5432）。
+const DB_HOST = process.env.E2E_DB_HOST || "127.0.0.1";
+const DB_PORT = process.env.E2E_DB_PORT || "5433";
+const DB_NAME = process.env.E2E_DB_NAME || "yimatong_dev";
+const DB_USER = process.env.E2E_DB_USER || "yimatong";
+const DB_PASSWORD = process.env.E2E_DB_PASSWORD || "yimatong";
+const DB_ADMIN_URL = `postgresql+asyncpg://${DB_USER}:${DB_PASSWORD}@${DB_HOST}:${DB_PORT}/${DB_NAME}`;
 const BACKEND_DIR = path.resolve(__dirname, "../../backend");
 const AUTH_DIR = path.join(__dirname, ".auth");
 const BASELINE_CTX_FILE = path.join(AUTH_DIR, "baseline-context.json");
@@ -50,10 +59,16 @@ interface BaselineContext {
 }
 
 /**
- * 运行 `app.cli baseline build`，幂等构建基准数据到运行中的 infra PG。
- * 注意：infra PG 在 5433；CLI 通过环境变量 database_url 覆盖（.env 默认 5432 是 stale 的）。
+ * 运行 `app.cli baseline build`，幂等构建基准数据到运行中的 PG。
+ * 连接参数经 E2E_DB_* 环境变量注入（本机 infra 5433 / CI 服务容器 5432）。
+ * 只覆盖 database_url：CLI 的全部读写走单一引擎，若再显式给
+ * control_database_url 会启用第二个连接池，跨连接的事务可见性会把
+ * confirm→launch 的幂等推进打断（digest 判变 → release invalidated）。
  */
 async function ensureBaseline(): Promise<BaselineContext> {
+  // 三个 URL 必须显式指向同一目标库：本机 backend/.env 会给缺省键补上
+  // dev 库值，任何遗漏都会让 CLI 的 control/runtime 分裂到两个数据库
+  // （表现为 release invalidated 或 tenant disappeared）。
   const out = execSync(
     "uv run python -m app.cli baseline build --target baseline-base --json",
     {
@@ -61,12 +76,9 @@ async function ensureBaseline(): Promise<BaselineContext> {
       encoding: "utf-8",
       env: {
         ...process.env,
-        database_url:
-          "postgresql+asyncpg://yimatong:yimatong@localhost:5433/yimatong_dev",
-        control_database_url:
-          "postgresql+asyncpg://yimatong:yimatong@localhost:5433/yimatong_dev",
-        migration_database_url:
-          "postgresql+asyncpg://yimatong:yimatong@localhost:5433/yimatong_dev",
+        database_url: DB_ADMIN_URL,
+        control_database_url: DB_ADMIN_URL,
+        migration_database_url: DB_ADMIN_URL,
       },
       timeout: 90_000,
     }
@@ -113,18 +125,18 @@ async function loginBaselineAdmin(ctx: BaselineContext): Promise<string> {
 async function countScanEvents(publicId: string): Promise<number> {
   // 只读 pg 直连（与验收 verifier 同源），证明 H5 访问真正持久化。
   const { stdout } = await promisifiedExec(
-    `psql -h 127.0.0.1 -p 5433 -U yimatong -d yimatong_dev -t -A -c ` +
+    `psql -h ${DB_HOST} -p ${DB_PORT} -U ${DB_USER} -d ${DB_NAME} -t -A -c ` +
       `"SELECT count(*) FROM scan_events WHERE public_id = '${publicId}';"`,
-    { env: { ...process.env, PGPASSWORD: "yimatong" } }
+    { env: { ...process.env, PGPASSWORD: DB_PASSWORD } }
   );
   return parseInt(stdout.trim(), 10) || 0;
 }
 
 async function countBrandMemberships(tenantId: string): Promise<number> {
   const { stdout } = await promisifiedExec(
-    `psql -h 127.0.0.1 -p 5433 -U yimatong -d yimatong_dev -t -A -c ` +
+    `psql -h ${DB_HOST} -p ${DB_PORT} -U ${DB_USER} -d ${DB_NAME} -t -A -c ` +
       `"SELECT count(*) FROM brand_memberships WHERE tenant_id = '${tenantId}';"`,
-    { env: { ...process.env, PGPASSWORD: "yimatong" } }
+    { env: { ...process.env, PGPASSWORD: DB_PASSWORD } }
   );
   return parseInt(stdout.trim(), 10) || 0;
 }
@@ -135,15 +147,19 @@ async function countBrandMemberships(tenantId: string): Promise<number> {
  */
 async function readFirstScannedAt(publicId: string): Promise<string | null> {
   const { stdout } = await promisifiedExec(
-    `psql -h 127.0.0.1 -p 5433 -U yimatong -d yimatong_dev -t -A -c ` +
+    `psql -h ${DB_HOST} -p ${DB_PORT} -U ${DB_USER} -d ${DB_NAME} -t -A -c ` +
       `"SELECT first_scanned_at FROM code_items WHERE public_id = '${publicId}';"`,
-    { env: { ...process.env, PGPASSWORD: "yimatong" } }
+    { env: { ...process.env, PGPASSWORD: DB_PASSWORD } }
   );
   const v = stdout.trim();
   return v ? v : null;
 }
 
-async function attachAuthCookie(page: Page, token: string) {
+async function attachAuthCookie(
+  page: Page,
+  token: string,
+  ctx: BaselineContext
+) {
   await page.context().addCookies([
     {
       name: "access_token",
@@ -156,13 +172,28 @@ async function attachAuthCookie(page: Page, token: string) {
       sameSite: "Lax",
     },
   ]);
-  await page.context().addInitScript((t) => {
-    try {
-      localStorage.setItem("access_token", t);
-    } catch {
-      /* ignore */
+  await page.context().addInitScript(
+    (state) => {
+      try {
+        localStorage.setItem("access_token", state.token);
+        // Admin 的会话引导从持久化 auth_store 起步（与 global-setup 的
+        // storageState 同构）；缺它时应用启动卡在加载态、不发起任何请求。
+        localStorage.setItem("auth_store", JSON.stringify(state.authStore));
+      } catch {
+        /* ignore */
+      }
+    },
+    {
+      token,
+      authStore: {
+        account_id: "baseline-admin",
+        tenant_id: ctx.baselineTenant.id,
+        role: "admin",
+        email: ctx.baselineTenant.adminEmail,
+        name: "基准品牌管理员",
+      },
     }
-  }, token);
+  );
 }
 
 test.describe("yimatong-zgb1 baseline journey (Admin + H5 + API + DB)", () => {
@@ -183,7 +214,7 @@ test.describe("yimatong-zgb1 baseline journey (Admin + H5 + API + DB)", () => {
     page,
   }) => {
     test.setTimeout(120_000);
-    await attachAuthCookie(page, token);
+    await attachAuthCookie(page, token, ctx);
     // 直接进入产品列表（已通过 API 登录获得 cookie）
     await page.goto(`${ADMIN_BASE}/products`, {
       waitUntil: "domcontentloaded",

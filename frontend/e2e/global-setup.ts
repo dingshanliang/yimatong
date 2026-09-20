@@ -236,7 +236,9 @@ export default async function globalSetup() {
     "/api/v1/platform/tenants",
     {
       name: "E2E Test Tenant",
-      plan: "free",
+      // pro: channel-flow exercises the channel_portal feature, which is
+      // entitlement-gated (fail-closed) on free/starter plans.
+      plan: "pro",
       admin_email: TEST_EMAIL,
       admin_name: "E2E Admin",
     },
@@ -505,6 +507,19 @@ export default async function globalSetup() {
       },
     ],
   };
+
+  // The seeded entities complete every onboarding step for real; register the
+  // progress so the welcome wizard does not overlay every page for the fresh
+  // tenant (its dismissal only persists in per-context sessionStorage).
+  for (const step of [
+    "create_product",
+    "create_batch",
+    "create_page",
+    "create_campaign",
+    "activate",
+  ]) {
+    await apiPost(`/api/v1/tenants/me/onboarding/step/${step}`, {}, token);
+  }
 
   const ctx: TestContext = {
     token,

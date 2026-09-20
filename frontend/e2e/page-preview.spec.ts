@@ -17,7 +17,10 @@ interface TestContext {
 }
 
 function loadContext(): TestContext {
-  const raw = readFileSync(path.join(__dirname, ".auth", "context.json"), "utf-8");
+  const raw = readFileSync(
+    path.join(__dirname, ".auth", "context.json"),
+    "utf-8"
+  );
   return JSON.parse(raw) as TestContext;
 }
 
@@ -33,9 +36,16 @@ async function newH5Context(browser: Browser) {
 }
 
 /** 向 H5 预览页注入 DSL 并等待渲染 */
-async function injectDSLAndWait(page: Page, dsl: unknown, waitForText: string, timeout = 10000) {
+async function injectDSLAndWait(
+  page: Page,
+  dsl: unknown,
+  waitForText: string,
+  timeout = 10000
+) {
   // 等 React hydration 完成
-  await expect(page.getByText("等待编辑器数据")).toBeVisible({ timeout: 15000 });
+  await expect(page.getByText("等待编辑器数据")).toBeVisible({
+    timeout: 15000,
+  });
 
   await page.evaluate((payload) => {
     setTimeout(() => {
@@ -53,7 +63,9 @@ test.describe("页面编辑器预览集成", () => {
     await page.goto(`/pages/${ctx.pageTemplateId}/edit`);
 
     // Wait for editor to finish loading (not "加载中...")
-    await expect(page.getByText("加载中...")).not.toBeVisible({ timeout: 15000 });
+    await expect(page.getByText("加载中...")).not.toBeVisible({
+      timeout: 15000,
+    });
     await page.waitForTimeout(2000);
 
     const bodyText = await page.locator("body").innerText();
@@ -75,15 +87,34 @@ test.describe("页面编辑器预览集成", () => {
     const page = await h5.newPage();
     await page.goto("/preview");
 
-    await injectDSLAndWait(page, {
-      modules: [
-        { id: "hero", type: "product_hero", enabled: true, config: { title_template: "测试产品" } },
-        { id: "verify", type: "verification_status", enabled: true },
-        { id: "trace", type: "light_traceability", enabled: true, config: {} },
-        { id: "benefit", type: "benefit_card", enabled: true, config: { benefit_type: "coupon", title: "领取优惠券" } },
-      ],
-      tenant_branding: { name: "测试品牌", primary_color: "#1677ff" },
-    }, "测试品牌");
+    await injectDSLAndWait(
+      page,
+      {
+        modules: [
+          {
+            id: "hero",
+            type: "product_hero",
+            enabled: true,
+            config: { title_template: "测试产品" },
+          },
+          { id: "verify", type: "verification_status", enabled: true },
+          {
+            id: "trace",
+            type: "light_traceability",
+            enabled: true,
+            config: {},
+          },
+          {
+            id: "benefit",
+            type: "benefit_card",
+            enabled: true,
+            config: { benefit_type: "coupon", title: "领取优惠券" },
+          },
+        ],
+        tenant_branding: { name: "测试品牌", primary_color: "#1677ff" },
+      },
+      "测试品牌"
+    );
 
     await expect(page.getByText("测试产品")).toBeVisible();
     await expect(page.getByText("验证通过")).toBeVisible();
@@ -97,17 +128,46 @@ test.describe("页面编辑器预览集成", () => {
     const page = await h5.newPage();
     await page.goto("/preview");
 
-    await injectDSLAndWait(page, {
-      modules: [
-        { id: "member", type: "member_card", enabled: true, config: { member_level: "gold", total_points: 320 } },
-        { id: "points", type: "points_balance", enabled: true, config: { points: 320 } },
-        { id: "exchange", type: "points_exchange", enabled: true, config: { title: "积分兑换测试", points_cost: 100 } },
-        { id: "risk", type: "risk_alert", enabled: true, config: { alert_type: "frequency", detail: "频繁扫码提示" } },
-        { id: "dual", type: "dual_code_verify", enabled: true, config: {} },
-        { id: "outer", type: "outer_code_guide", enabled: true, config: { brand_name: "阶段二品牌" } },
-      ],
-      tenant_branding: { name: "阶段二品牌" },
-    }, "阶段二品牌");
+    await injectDSLAndWait(
+      page,
+      {
+        modules: [
+          {
+            id: "member",
+            type: "member_card",
+            enabled: true,
+            config: { member_level: "gold", total_points: 320 },
+          },
+          {
+            id: "points",
+            type: "points_balance",
+            enabled: true,
+            config: { points: 320 },
+          },
+          {
+            id: "exchange",
+            type: "points_exchange",
+            enabled: true,
+            config: { title: "积分兑换测试", points_cost: 100 },
+          },
+          {
+            id: "risk",
+            type: "risk_alert",
+            enabled: true,
+            config: { alert_type: "frequency", detail: "频繁扫码提示" },
+          },
+          { id: "dual", type: "dual_code_verify", enabled: true, config: {} },
+          {
+            id: "outer",
+            type: "outer_code_guide",
+            enabled: true,
+            config: { brand_name: "阶段二品牌" },
+          },
+        ],
+        tenant_branding: { name: "阶段二品牌" },
+      },
+      "阶段二品牌"
+    );
 
     await expect(page.getByText("金卡会员").first()).toBeVisible();
     await expect(page.getByText("积分兑换测试")).toBeVisible();
@@ -122,10 +182,14 @@ test.describe("页面编辑器预览集成", () => {
     const page = await h5.newPage();
     await page.goto("/preview");
 
-    await injectDSLAndWait(page, {
-      modules: [],
-      tenant_branding: { name: "空页面品牌" },
-    }, "空页面品牌");
+    await injectDSLAndWait(
+      page,
+      {
+        modules: [],
+        tenant_branding: { name: "空页面品牌" },
+      },
+      "空页面品牌"
+    );
 
     const bodyText = await page.locator("body").innerText();
     expect(bodyText).toContain("空页面品牌");
@@ -138,13 +202,27 @@ test.describe("页面编辑器预览集成", () => {
     const page = await h5.newPage();
     await page.goto("/preview");
 
-    await injectDSLAndWait(page, {
-      modules: [
-        { id: "enabled1", type: "product_hero", enabled: true, config: { title_template: "启用模块" } },
-        { id: "disabled1", type: "benefit_card", enabled: false, config: { title: "禁用模块", benefit_type: "coupon" } },
-      ],
-      tenant_branding: { name: "禁用测试" },
-    }, "禁用测试");
+    await injectDSLAndWait(
+      page,
+      {
+        modules: [
+          {
+            id: "enabled1",
+            type: "product_hero",
+            enabled: true,
+            config: { title_template: "启用模块" },
+          },
+          {
+            id: "disabled1",
+            type: "benefit_card",
+            enabled: false,
+            config: { title: "禁用模块", benefit_type: "coupon" },
+          },
+        ],
+        tenant_branding: { name: "禁用测试" },
+      },
+      "禁用测试"
+    );
 
     await expect(page.getByText("启用模块")).toBeVisible();
     await expect(page.getByText("禁用模块")).not.toBeVisible();
@@ -157,13 +235,23 @@ test.describe("页面编辑器预览集成", () => {
     const page = await h5.newPage();
     await page.goto("/preview");
 
-    await injectDSLAndWait(page, {
-      modules: [{
-        id: "custom", type: "custom_html", enabled: true,
-        config: { html: "<div style='padding:16px;background:#f0f9ff;color:#333'>自定义横幅内容</div>" },
-      }],
-      tenant_branding: { name: "HTML测试" },
-    }, "自定义横幅内容");
+    await injectDSLAndWait(
+      page,
+      {
+        modules: [
+          {
+            id: "custom",
+            type: "custom_html",
+            enabled: true,
+            config: {
+              html: "<div style='padding:16px;background:#f0f9ff;color:#333'>自定义横幅内容</div>",
+            },
+          },
+        ],
+        tenant_branding: { name: "HTML测试" },
+      },
+      "自定义横幅内容"
+    );
 
     await h5.close();
   });
@@ -176,22 +264,23 @@ test.describe("编辑器设备预览切换", () => {
     await page.goto(`/pages/${ctx.pageTemplateId}/edit`);
 
     // Wait for editor to finish loading (not "加载中...")
-    await expect(page.getByText("加载中...")).not.toBeVisible({ timeout: 15000 });
+    await expect(page.getByText("加载中...")).not.toBeVisible({
+      timeout: 15000,
+    });
     await page.waitForTimeout(2000);
 
-    // The device preset select is inside PreviewPanel
-    const selects = page.locator(".ant-select");
-    const count = await selects.count();
-    expect(count).toBeGreaterThan(0);
+    // 设备预设 Select 以当前值（iPhone 15）定位，避开编辑器其他下拉
+    const deviceSelect = page
+      .locator(".ant-select")
+      .filter({ hasText: "iPhone 15" })
+      .first();
+    await deviceSelect.click();
+    await page
+      .locator(".ant-select-dropdown:visible")
+      .getByText("iPhone SE")
+      .click();
 
-    await selects.first().click();
-    await page.waitForTimeout(300);
-    const option = page.locator(".ant-select-item-option").getByText("iPhone SE");
-    if (await option.isVisible().catch(() => false)) {
-      await option.click();
-    }
-
-    await page.waitForTimeout(2000);
+    await page.waitForTimeout(1000);
     // Verify iframe still visible after device switch
     const iframeElement = page.locator("iframe").first();
     await expect(iframeElement).toBeVisible();
@@ -230,14 +319,19 @@ test.describe("JSON 编辑器与预览同步", () => {
         id: `test-html-${Date.now()}`,
         type: "custom_html",
         enabled: true,
-        config: { html: "<div style='padding:12px;color:red'>E2E预览测试标记</div>" },
+        config: {
+          html: "<div style='padding:12px;color:red'>E2E预览测试标记</div>",
+        },
       });
       await textarea.fill(JSON.stringify(dsl, null, 2));
       await page.waitForTimeout(3000);
 
       const iframe = page.frame({ url: /\/preview/ });
       if (iframe) {
-        const hasMarker = await iframe.getByText("E2E预览测试标记").isVisible().catch(() => false);
+        const hasMarker = await iframe
+          .getByText("E2E预览测试标记")
+          .isVisible()
+          .catch(() => false);
         expect(typeof hasMarker).toBe("boolean");
       }
     } catch {

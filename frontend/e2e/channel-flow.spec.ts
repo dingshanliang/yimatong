@@ -5,6 +5,7 @@
  */
 
 import { expect, test } from "@playwright/test";
+import { randomUUID } from "crypto";
 import { readFileSync } from "fs";
 import path from "path";
 
@@ -26,7 +27,10 @@ interface AuthUser {
 }
 
 function loadContext(): TestContext {
-  const raw = readFileSync(path.join(__dirname, ".auth", "context.json"), "utf-8");
+  const raw = readFileSync(
+    path.join(__dirname, ".auth", "context.json"),
+    "utf-8"
+  );
   return JSON.parse(raw) as TestContext;
 }
 
@@ -42,15 +46,38 @@ async function apiRequest(
       "Content-Type": "application/json",
       Authorization: `Bearer ${token}`,
       Accept: "application/json",
+      // 渠道写接口要求幂等键（≤36 字符，每次随机不去重）
+      ...(method === "POST" ? { "Idempotency-Key": randomUUID() } : {}),
     },
     body: body ? JSON.stringify(body) : undefined,
   });
   const text = await res.text();
   const json = text ? JSON.parse(text) : {};
   if (!res.ok) {
-    throw new Error(`${method} ${endpoint} failed: ${res.status} ${res.statusText} - ${text.slice(0, 200)}`);
+    throw new Error(
+      `${method} ${endpoint} failed: ${res.status} ${res.statusText} - ${text.slice(0, 200)}`
+    );
   }
   return json;
+}
+
+/** 幂等确保渠道门户角色存在，返回角色 id。 */
+async function ensurePortalRole(name: string): Promise<string> {
+  const roles = (await apiRequest(
+    "GET",
+    "/api/v1/roles",
+    ctx.token
+  )) as unknown as Array<{
+    id: string;
+    name: string;
+  }>;
+  const existing = roles.find((r) => r.name === name);
+  if (existing) return existing.id;
+  const created = await apiRequest("POST", "/api/v1/roles", ctx.token, {
+    name,
+    description: "渠道门户身份（e2e）",
+  });
+  return created.id as string;
 }
 
 async function login(email: string, password: string): Promise<string> {
@@ -98,52 +125,86 @@ const ctx = loadContext();
 test.use({ storageState: path.join(__dirname, ".auth", "state.json") });
 
 test.describe.serial("渠道管理闭环", () => {
-  test("品牌方配置渠道后，经销商和门店入口可查看范围内数据", async ({ browser, page }) => {
+  test("品牌方配置渠道后，经销商和门店入口可查看范围内数据", async ({
+    browser,
+    page,
+  }) => {
     const suffix = Date.now();
 
-    const distributor = await apiRequest("POST", "/api/v1/channels/distributors", ctx.token, {
-      name: `E2E 经销商 ${suffix}`,
-      contact_name: "渠道负责人",
-      contact_phone: "13800000000",
-    });
-    const region = await apiRequest("POST", "/api/v1/channels/regions", ctx.token, {
-      name: `E2E 区域 ${suffix}`,
-      province: "上海",
-      city: "上海",
-      distributor_id: distributor.id,
-    });
-    const store = await apiRequest("POST", "/api/v1/channels/stores", ctx.token, {
-      name: `E2E 门店 ${suffix}`,
-      region_id: region.id,
-      distributor_id: distributor.id,
-      address: "上海市黄浦区测试路 1 号",
-    });
+    const distributor = await apiRequest(
+      "POST",
+      "/api/v1/channels/distributors",
+      ctx.token,
+      {
+        name: `E2E 经销商 ${suffix}`,
+        contact_name: "渠道负责人",
+        contact_phone: "13800000000",
+      }
+    );
+    const region = await apiRequest(
+      "POST",
+      "/api/v1/channels/regions",
+      ctx.token,
+      {
+        name: `E2E 区域 ${suffix}`,
+        province: "上海",
+        city: "上海",
+        distributor_id: distributor.id,
+      }
+    );
+    const store = await apiRequest(
+      "POST",
+      "/api/v1/channels/stores",
+      ctx.token,
+      {
+        name: `E2E 门店 ${suffix}`,
+        region_id: region.id,
+        distributor_id: distributor.id,
+        address: "上海市黄浦区测试路 1 号",
+      }
+    );
     await apiRequest("POST", "/api/v1/channels/code-allocations", ctx.token, {
       batch_id: ctx.codeBatchId,
       target_type: "region",
       region_id: region.id,
       quantity: 1,
+      // 渠道分配要求审计原因
+      reason: "e2e 渠道闭环验证分配",
     });
 
     const org = await apiRequest("POST", "/api/v1/organizations", ctx.token, {
       name: `E2E 渠道组织 ${suffix}`,
     });
+    // 渠道门户身份要求账号真实持有 distributor/store_guide 角色（服务端
+    // 从 JWT role claim 校验），这两个角色只由 demo seed 预置，这里幂等补建。
+    const distRoleId = await ensurePortalRole("distributor");
+    const storeRoleId = await ensurePortalRole("store_guide");
     const distEmail = `e2e-dist-${suffix}@example.com`;
     const storeEmail = `e2e-store-${suffix}@example.com`;
-    const distAccount = await apiRequest("POST", "/api/v1/accounts", ctx.token, {
-      email: distEmail,
-      name: "E2E 经销商账号",
-      password: TEST_PASSWORD,
-      organization_id: org.id,
-      role_ids: [],
-    });
-    const storeAccount = await apiRequest("POST", "/api/v1/accounts", ctx.token, {
-      email: storeEmail,
-      name: "E2E 门店账号",
-      password: TEST_PASSWORD,
-      organization_id: org.id,
-      role_ids: [],
-    });
+    const distAccount = await apiRequest(
+      "POST",
+      "/api/v1/accounts",
+      ctx.token,
+      {
+        email: distEmail,
+        name: "E2E 经销商账号",
+        password: TEST_PASSWORD,
+        organization_id: org.id,
+        role_ids: [distRoleId],
+      }
+    );
+    const storeAccount = await apiRequest(
+      "POST",
+      "/api/v1/accounts",
+      ctx.token,
+      {
+        email: storeEmail,
+        name: "E2E 门店账号",
+        password: TEST_PASSWORD,
+        organization_id: org.id,
+        role_ids: [storeRoleId],
+      }
+    );
     await apiRequest("POST", "/api/v1/channels/account-scopes", ctx.token, {
       account_id: distAccount.id,
       scope_type: "distributor",
@@ -156,7 +217,9 @@ test.describe.serial("渠道管理闭环", () => {
     });
 
     await page.goto("/channels");
-    await expect(page.getByRole("heading", { name: "渠道管理" })).toBeVisible({ timeout: 15000 });
+    await expect(page.getByRole("heading", { name: "渠道管理" })).toBeVisible({
+      timeout: 15000,
+    });
     await expect(page.getByText(distributor.name as string)).toBeVisible();
     await page.getByRole("tab", { name: "流向登记" }).click();
     await expect(page.getByText(region.name as string)).toBeVisible();
@@ -176,9 +239,13 @@ test.describe.serial("渠道管理闭环", () => {
     });
     const distPage = await distContext.newPage();
     await distPage.goto("/channel-portal");
-    await expect(distPage.getByRole("heading", { name: "经销商工作台" })).toBeVisible({ timeout: 15000 });
+    await expect(
+      distPage.getByRole("heading", { name: "经销商工作台" })
+    ).toBeVisible({ timeout: 15000 });
     await expect(distPage.getByText(distributor.name as string)).toBeVisible();
-    await expect(distPage.getByText(region.name as string).first()).toBeVisible();
+    await expect(
+      distPage.getByText(region.name as string).first()
+    ).toBeVisible();
     await distContext.close();
 
     const storeToken = await login(storeEmail, TEST_PASSWORD);
@@ -193,7 +260,9 @@ test.describe.serial("渠道管理闭环", () => {
     });
     const storePage = await storeContext.newPage();
     await storePage.goto("/store-portal");
-    await expect(storePage.getByRole("heading", { name: "门店工作台" })).toBeVisible({ timeout: 15000 });
+    await expect(
+      storePage.getByRole("heading", { name: "门店工作台" })
+    ).toBeVisible({ timeout: 15000 });
     await expect(storePage.getByText(store.name as string)).toBeVisible();
     await expect(storePage.getByText("上海市黄浦区测试路 1 号")).toBeVisible();
     await storeContext.close();
