@@ -255,17 +255,10 @@ async def _build_canonical_launch_manifest(
             "recall_reason": production_batch.recall_reason if production_batch else None,
             "recalled_at": _manifest_value(production_batch.recalled_at) if production_batch else None,
         },
-        "sample_code": (
-            {
-                "id": str(sample_code.id),
-                "public_id": sample_code.public_id,
-                "status": _manifest_value(sample_code.status),
-                "code_type": _manifest_value(sample_code.code_type),
-                "code_batch_id": str(sample_code.code_batch_id),
-            }
-            if sample_code
-            else None
-        ),
+        # sample_code 不进 canonical manifest/digest：它是"当前可用的已激活
+        # 样本码"这一运行时抽样，消费者首扫后选择会漂移；样本身份不是品牌
+        # 确认的内容，进 digest 会在上线后把 live release 误判 invalidated
+        # （快照仍单独携带样本码供展示与 readiness 检查）。
         "takeover": [
             {
                 "id": str(project.id),
@@ -443,13 +436,43 @@ async def build_launch_readiness(
         sample_code=sample_code,
         ready=snapshot["ready"],
     )
-    return snapshot, _digest(manifest), page_version, manifest
+    digest = _digest(manifest)
+    if _session_uses_postgresql(db):
+        # PG 权威口径：digest 必须与 resolve_current_launch_release 在扫码时
+        # 用的 compute_launch_readiness 完全一致。Python 的 json.dumps 与
+        # jsonb::text 是两种 canonical 文本（分隔符/键序不同），曾导致
+        # Python 路径写入的 release 一被消费者扫码即判 invalidated。
+        row = (
+            (
+                await db.execute(
+                    text(
+                        "SELECT manifest, content_digest FROM public.compute_launch_readiness("
+                        ":tenant_id, :page_version_id, :campaign_id, :code_batch_id)"
+                    ),
+                    {
+                        "tenant_id": tenant_id,
+                        "page_version_id": page_version_id,
+                        "campaign_id": campaign_id,
+                        "code_batch_id": code_batch_id,
+                    },
+                )
+            )
+            .mappings()
+            .one()
+        )
+        manifest = dict(row["manifest"])
+        digest = str(row["content_digest"])
+    return snapshot, digest, page_version, manifest
 
 
 def serialize_launch_release(release: LaunchRelease) -> dict:
     snapshot = release.readiness_snapshot or {}
     manifest = release.readiness_manifest or {}
-    sample = manifest.get("sample_code") if manifest.get("version") == 3 else None
+    # 样本码从快照取展示信息；digest manifest 已不再携带 sample_code
+    # （运行时抽样不属于品牌确认内容，见 compute_launch_readiness）。
+    sample = snapshot.get("sample_code") if snapshot.get("version") == 3 else None
+    if sample is None and manifest.get("version") == 3:
+        sample = manifest.get("sample_code")
     sample_status = sample.get("status") if isinstance(sample, dict) else None
     readiness_sample_code = None
     if isinstance(sample, dict) and isinstance(sample.get("public_id"), str):
